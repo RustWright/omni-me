@@ -12,10 +12,13 @@
 ### Questions & Answers
 
 **1. What is the goal of the project?**
-[Answer]
+Two layers:
+
+- **Deliverable:** A personal all-in-one app for budgeting, journaling, goals, tasks, decisions, and life management.
+- **Underlying motivation:** Extreme curiosity leads to information overload and anxiety about losing track. LLMs now make it possible to not just collect personal data, but meaningfully process it. The app serves two goals: (1) accelerate personal growth by having an intelligent feedback loop on your own life, and (2) create an objective record of that growth to replace vague feelings with verifiable history. A third key driver is **data sovereignty** — every need this app addresses is served by existing products that monetize user data; building it yourself keeps that data under personal control and positions well for the coming age of AI.
 
 **2. Who will be the primary user/consumer (who benefits)?**
-[Answer]
+Solely the user themselves. No multi-user or sharing features needed.
 
 **3. What does success look like?**
 [Answer]
