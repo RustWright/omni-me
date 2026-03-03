@@ -12,7 +12,7 @@
 ### Questions & Answers
 
 **1. What is the goal of the project?**
-A personal all-in-one app for budgeting, journaling, goals, tasks, decisions, and life management.
+[Answer]
 
 **2. Who will be the primary user/consumer (who benefits)?**
 [Answer]
