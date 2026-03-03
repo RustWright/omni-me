@@ -32,7 +32,11 @@ Core requirement underlying both: the data being collected is actually being pro
 - **Final product:** Doesn't exist — this is an evergreen personal tool that will always be iterated on; no planned end state.
 
 **5. Why does this project matter to you right now? What's driving this need?**
-[Answer]
+The idea has existed for a while but now the pain is acute and the excuses are gone:
+- **Active pain:** Tax season is forcing a painful document hunt that better organization would have prevented
+- **Ongoing loss:** Consuming interesting books and ideas daily but losing them to distraction before implementing anything
+- **Enablers removed:** A website is already set up to track development, and LLM coding agents make building this solo realistic in a way it wasn't before
+- The honest answer: should have started a year ago. Starting now because there's no good reason not to anymore.
 
 ---
 
