@@ -27,7 +27,9 @@ Daily use as a first choice, not a fallback. The test is: would you reach for it
 Core requirement underlying both: the data being collected is actually being processed in a way that serves the original purpose (growth acceleration + verifiable record).
 
 **4. What are the time/urgency expectations?**
-[Answer]
+- **MVP:** End of March 2026 (~4 weeks)
+- **Full-featured prototype:** Before September 2026 (~7 months)
+- **Final product:** Doesn't exist — this is an evergreen personal tool that will always be iterated on; no planned end state.
 
 **5. Why does this project matter to you right now? What's driving this need?**
 [Answer]
