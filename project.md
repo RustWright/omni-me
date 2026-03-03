@@ -1,0 +1,222 @@
+# Project: omni-me
+
+**Status:** Active
+**Last Updated:** 2026-03-02
+
+---
+
+## Session 1: Project Initiation
+
+**Date:** 2026-03-02
+
+### Questions & Answers
+
+**1. What is the goal of the project?**
+A personal all-in-one app for budgeting, journaling, goals, tasks, decisions, and life management.
+
+**2. Who will be the primary user/consumer (who benefits)?**
+[Answer]
+
+**3. What does success look like?**
+[Answer]
+
+**4. What are the time/urgency expectations?**
+[Answer]
+
+**5. Why does this project matter to you right now? What's driving this need?**
+[Answer]
+
+---
+
+## Session 2: Project Architecture
+
+**Date:** [Date]
+
+### Architectural Decisions
+
+#### Decision: [Decision Name]
+**Alternatives Considered:**
+- Option A: [brief description]
+- Option B: [brief description]
+- Option C: [brief description]
+
+**Trade-offs Discussed:**
+- [Trade-off 1]
+- [Trade-off 2]
+- [Trade-off 3]
+
+**Decision Made:** [Chosen option]
+
+**Deciding Factors:** [Why this choice was made]
+
+---
+
+#### Decision: [Decision Name]
+**Alternatives Considered:**
+- [List alternatives]
+
+**Trade-offs Discussed:**
+- [List trade-offs]
+
+**Decision Made:** [Chosen option]
+
+**Deciding Factors:** [Rationale]
+
+---
+
+[Repeat above structure for each major architectural decision]
+
+### Proof-of-Concept Needs
+- [Critical assumption 1 to validate]
+- [Critical assumption 2 to validate]
+
+### Risk Review
+**Risks Identified:**
+- [Risk 1]: [Mitigation strategy]
+- [Risk 2]: [Mitigation strategy]
+
+**Reference:** See `architecture.md` for complete architectural documentation
+
+---
+
+## Cycle 1: [Cycle Name/Goal - e.g., "MVP Implementation"]
+
+### Session 3: Planning
+
+**Date:** [Date]
+
+**Objective:** [What this cycle aims to accomplish]
+
+**Scope:** [What's included and what's excluded]
+
+**High-Level Phases:**
+1. [Phase 1 - e.g., "Set up project structure"]
+2. [Phase 2 - e.g., "Implement core functionality"]
+3. [Phase 3 - e.g., "Add basic error handling"]
+
+**Reference:** See `tasks.md` for detailed atomic task breakdown
+
+---
+
+### Session 4: Implementation
+
+**Date Started:** [Date]
+**Date Completed:** [Date]
+
+**Planned Work:**
+[Brief summary of what was planned in Session 3]
+
+**Actual Work:**
+[Brief summary of what was actually accomplished - note any deviations from plan]
+
+**Key Commits:**
+- `[commit hash]`: [brief description]
+- `[commit hash]`: [brief description]
+- `[commit hash]`: [brief description]
+
+**Notes:**
+[Any blockers, surprises, or important observations]
+
+---
+
+### Session 5: Testing & User Catchup
+
+**Date:** [Date]
+
+#### Phase A: User Test Writing
+**Areas Tested:**
+- [Area/module 1]
+- [Area/module 2]
+- [Area/module 3]
+
+#### Phase B: Test Review
+**Test Coverage Review:**
+- Gaps identified: [Any coverage gaps found during review]
+- Additional tests added: [Tests added to address gaps]
+
+**Feedback for Next Cycle:**
+- [Improvement or feature to consider]
+- [Issue discovered that needs addressing]
+- [Architectural concern to revisit]
+
+**Milestone Commit:** `[commit hash]`
+
+---
+
+## Cycle 2: [Cycle Name/Goal]
+
+### Session 3: Planning
+
+**Date:** [Date]
+
+**Feedback Incorporated from Previous Cycle:**
+- [Feedback item from Cycle 1 and how it's being addressed]
+
+**Objective:** [What this cycle aims to accomplish]
+
+**Scope:** [What's included and excluded]
+
+**High-Level Phases:**
+1. [Phase 1]
+2. [Phase 2]
+3. [Phase 3]
+
+**Reference:** See `tasks.md` for detailed atomic task breakdown
+
+---
+
+### Session 4: Implementation
+
+**Date Started:** [Date]
+**Date Completed:** [Date]
+
+**Planned Work:**
+[Brief summary]
+
+**Actual Work:**
+[Brief summary with deviations]
+
+**Key Commits:**
+- `[commit hash]`: [description]
+
+---
+
+### Session 5: Testing & User Catchup
+
+**Date:** [Date]
+
+#### Phase A: User Test Writing
+**Areas Tested:**
+- [Area 1]
+- [Area 2]
+
+#### Phase B: Test Review
+**Test Coverage Review:**
+- Gaps identified: [Gaps]
+- Additional tests added: [Tests]
+
+**Feedback for Next Cycle:**
+- [Feedback items]
+
+**Milestone Commit:** `[commit hash]`
+
+---
+
+## Cycle N: [Continue pattern as needed]
+
+---
+
+## Lifecycle Events
+
+### Status Change: [Event Type - e.g., "Paused"]
+**Date:** [Date]
+**Reason:** [Why the state changed - e.g., "Motivation changed - need shifted to different priority"]
+**Potential Resume Conditions:** [If paused, under what conditions might you resume]
+**Notes:** [Additional context]
+
+---
+
+### Status Change: [Event Type]
+**Date:** [Date]
+**Reason:** [Why]
+**Notes:** [Context]
