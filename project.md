@@ -21,7 +21,10 @@ Two layers:
 Solely the user themselves. No multi-user or sharing features needed.
 
 **3. What does success look like?**
-[Answer]
+Daily use as a first choice, not a fallback. The test is: would you reach for it naturally? Concrete example — tax season: if finances had been tracked for the past year, you could file with confidence knowing exact spend, reliable data, archived invoices/receipts/images. Two dimensions of success:
+- **Usage:** It's built, used, and *wanted* — the preferred tool for everything it's intended to cover
+- **Adaptability:** It can grow (and shrink) with evolving needs over time — not a static product
+Core requirement underlying both: the data being collected is actually being processed in a way that serves the original purpose (growth acceleration + verifiable record).
 
 **4. What are the time/urgency expectations?**
 [Answer]
