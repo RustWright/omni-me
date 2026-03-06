@@ -46,54 +46,31 @@ The idea has existed for a while but now the pain is acute and the excuses are g
 
 ---
 
-## Session 2: Project Architecture
+## Session 2: Research Session
 
-**Date:** [Date]
+**Date:** 2026-03-05
 
-### Architectural Decisions
+**Summary:** Dedicated research session before architecture decisions. Reviewed all 13 features, all service options, and finalized core technical choices. Output captured in `research.md`.
 
-#### Decision: [Decision Name]
-**Alternatives Considered:**
-- Option A: [brief description]
-- Option B: [brief description]
-- Option C: [brief description]
+**Key Decisions Made:**
+- **Deployment:** Tauri v2 (Android APK, sideloaded) + PWA fallback. Dioxus for UI, CodeMirror 6 for editor.
+- **VPS:** DigitalOcean 2GB Droplet (~$12 USD/month, $200 credit). Planned Hetzner migration before credit expires.
+- **CI/CD:** GitHub Actions → DigitalOcean (high priority, same workflow as personal website)
+- **LLM:** Gemini Flash free API. Trait-based abstraction to add Claude API later.
+- **Database:** SurrealDB (multi-model, Rust-native, schema-flexible, graph support)
+- **Sync:** Event Sourcing (append-only immutable events, no conflict resolution needed, schema-flexible)
+- **Editor:** CodeMirror 6 (same editor as Obsidian, excellent Android touch support, MIT)
+- **Data model:** Single note type, LLM derives all structure. Tool calling + structured output for consistency.
+- **LLM pipeline architecture:** Structured output mode + tool/function calling + deterministic pre-processing + prompt versioning + confidence review gates
 
-**Trade-offs Discussed:**
-- [Trade-off 1]
-- [Trade-off 2]
-- [Trade-off 3]
+**Feature decisions:** All 13 features reviewed. See `research.md` Section 5 for full service map.
 
-**Decision Made:** [Chosen option]
+**MVP Scope (end of March 2026):**
+- Week 1: Infrastructure (Tauri + SurrealDB + Event Store + Sync + CI/CD + LLM pipeline + CodeMirror)
+- Weeks 2-3: Journal/Notes feature + Routine Manager
+- Validates: APK sideloading, multi-device sync, LLM pipeline
 
-**Deciding Factors:** [Why this choice was made]
-
----
-
-#### Decision: [Decision Name]
-**Alternatives Considered:**
-- [List alternatives]
-
-**Trade-offs Discussed:**
-- [List trade-offs]
-
-**Decision Made:** [Chosen option]
-
-**Deciding Factors:** [Rationale]
-
----
-
-[Repeat above structure for each major architectural decision]
-
-### Proof-of-Concept Needs
-- [Critical assumption 1 to validate]
-- [Critical assumption 2 to validate]
-
-### Risk Review
-**Risks Identified:**
-- [Risk 1]: [Mitigation strategy]
-- [Risk 2]: [Mitigation strategy]
-
-**Reference:** See `architecture.md` for complete architectural documentation
+**Reference:** See `research.md` for complete research documentation
 
 ---
 
