@@ -4,22 +4,11 @@ This project follows the structured process defined in `PROJECT_PROCESS.md`.
 
 ## Session Management
 
-### At Session Start
-1. Read `project.md` to understand current state and which session comes next
-2. Read `PROJECT_PROCESS.md` if needed to refresh on session details
-3. Confirm with user which session we're starting
-4. If resuming mid-session, read relevant files (`tasks.md`, `architecture.md`) for context
+See `~/.claude/CLAUDE.md` for git pull/push/submodule sync protocol — that file governs all session start/end git operations.
 
-### At Session End
-When the user indicates they want to end the session or take a break or the session comes to its natural conclusion:
-
-1. **Remind user to export:** Ask them to run `/export` command
-2. **Provide filename:** `session-0X-[type]-cycle-Y.txt`
-   - Examples: `session-01-initiation.txt`, `session-03-planning-cycle-1.txt`
-3. **Confirm save location:** `.log/` directory
-4. **Update project.md:** Add/update session summary in the Session Log section
-5. **Update tasks.md:** If Session 4, ensure task statuses are current
-6. **Suggest commit:** Remind user to commit changes if appropriate
+Project-specific session steps:
+- **Start:** Read `project.md` to find current state and next session. Confirm with user before proceeding. If resuming mid-session, read `tasks.md` and `architecture.md` for context.
+- **End:** Remind user to run `/export`, save to `.log/` as `session-0X-[type]-cycle-Y.txt`. Update `project.md` session log. Update `tasks.md` if Session 4.
 
 ### Session Flow Reference
 ```
