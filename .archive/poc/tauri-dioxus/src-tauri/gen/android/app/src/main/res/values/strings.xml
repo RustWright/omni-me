@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">tauri-dioxus-poc</string>
+    <string name="main_activity_title">tauri-dioxus-poc</string>
+</resources>
