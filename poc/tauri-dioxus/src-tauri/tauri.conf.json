@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "productName": "tauri-dioxus-poc",
+  "version": "0.1.0",
+  "identifier": "com.omni-me.poc",
+  "build": {
+    "beforeDevCommand": "cd /home/me/productive_learning/projects/omni-me/poc/tauri-dioxus/frontend && dx build --platform web",
+    "beforeBuildCommand": "cd /home/me/productive_learning/projects/omni-me/poc/tauri-dioxus/frontend && dx build --platform web --release",
+    "frontendDist": "../frontend/target/dx/frontend/release/web/public"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Tauri + Dioxus POC",
+        "width": 800,
+        "height": 600
+      }
+    ],
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null
+    }
+  }
+}

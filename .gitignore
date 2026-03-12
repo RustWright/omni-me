@@ -1,0 +1,5 @@
+.log/
+target/
+node_modules/
+poc/tauri-dioxus/src-tauri/gen/android/
+*.apk
