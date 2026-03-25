@@ -12,6 +12,7 @@
 | Session 3: Architecture | 2026-03-07 | Complete | Formalized `architecture.md` — security review, risk assessment (5 risks with mitigations) |
 | Session 3: Planning (Cycle 1) | 2026-03-08 | Complete | 38 tasks across 7 phases. PWA deferred. All Claude Code. 3 parallel tracks for core infrastructure. Output: `tasks.md` |
 | Session 4: Implementation | 2026-03-08 | In Progress | Phase 0 POCs all passed (desktop + Android). SurrealDB, Tauri, Dioxus, CodeMirror validated. |
+| Session 4: Phase 1 | 2026-03-25 | Complete | Workspace scaffold (1.1), SurrealDB connection layer (1.4), Axum server (1.5), CI/CD workflow (1.3). VPS deferred — DO rejected payment, going to Hetzner when stable. |
 
 ---
 
