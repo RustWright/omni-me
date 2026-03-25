@@ -5,6 +5,9 @@ pub use error::DbError;
 use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, SurrealKv};
 
+/// Re-exported database handle type. Consumers use this instead of importing surrealdb directly.
+pub type Database = Surreal<Db>;
+
 const NAMESPACE: &str = "omni";
 const DATABASE: &str = "main";
 

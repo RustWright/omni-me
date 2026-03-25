@@ -24,9 +24,10 @@
 
 | Component | Choice | Details |
 |-----------|--------|---------|
-| VPS | DigitalOcean 2GB Droplet | ~$12 USD/month, $200 credit (~16 months free). Migrate to Hetzner before credit expires |
-| CI/CD | GitHub Actions → DigitalOcean | git push → auto-build → auto-deploy. Same workflow as personal website |
-| Backend | Rust (Axum) | VPS server-side logic |
+| VPS | Hetzner CX22 (deferred) | ~€4.50/month. DigitalOcean rejected payment — skipping DO, going straight to Hetzner when features are stable |
+| Local dev | Desktop server + Tailscale | Phone↔desktop sync via Tailscale mesh VPN during development. Same networking model as production |
+| CI/CD | GitHub Actions | Build + test + artifacts. Deploy step added when VPS provisioned |
+| Backend | Rust (Axum) | Runs locally during dev, VPS in production |
 
 > Research: `research.md` Section 2
 

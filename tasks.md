@@ -21,13 +21,13 @@ Go/no-go gates. Fallbacks in `architecture.md`.
 
 ## Phase 1: Project Skeleton + Infrastructure (Days 3-5)
 
-- [ ] **1.1** Rust workspace (`tauri-app`, `core`, `server`) [M] `depends:P1,P3` — Tauri v2 + Dioxus wired, `.gitignore`, `cargo build` passes
-- [ ] **1.2** VPS provisioning [M] — DO 2GB Droplet, SSH key-only, UFW, unattended-upgrades, Tailscale, Rust, SurrealDB server (localhost)
-- [ ] **1.3** CI/CD: GitHub Actions → VPS [M] `depends:1.1,1.2` — build server → SCP → systemd restart, health check
-- [ ] **1.4** SurrealDB connection layer [M] `depends:P2,1.1` — `core` crate, embedded + remote modes, `events` + `sync_state` tables
-- [ ] **1.5** Axum server skeleton [S] `depends:1.1,1.4` — `/health`, SurrealDB, CORS, tracing, graceful shutdown
+- [x] **1.1** Rust workspace (`tauri-app`, `core`, `server`) [M] `depends:P1,P3` — Tauri v2 + Dioxus wired, `.gitignore`, `cargo build` passes
+- [ ] **1.2** VPS provisioning [DEFERRED] — Hetzner CX22, SSH key-only, UFW, Tailscale, Rust, SurrealDB. Deferred: develop locally, provision when features are stable.
+- [ ] **1.3** CI/CD: GitHub Actions [M] `depends:1.1` — build + test + APK artifact. Deploy step added when VPS is provisioned.
+- [x] **1.4** SurrealDB connection layer [M] `depends:P2,1.1` — `core` crate, embedded mode, `events` + `sync_state` tables
+- [x] **1.5** Axum server skeleton [S] `depends:1.1,1.4` — `/health`, SurrealDB, CORS, tracing, graceful shutdown
 
-**Parallel:** 1.1+1.4 (Group A) and 1.2 (Group B). Then 1.3 and 1.5.
+**Parallel:** 1.1+1.4 (Group A). 1.3 no longer depends on 1.2.
 
 ---
 
