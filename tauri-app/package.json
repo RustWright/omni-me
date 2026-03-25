@@ -1,0 +1,6 @@
+{
+  "name": "omni-me-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frontend assets for omni-me (CodeMirror added in Phase 4)"
+}

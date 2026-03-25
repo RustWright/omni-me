@@ -1,5 +1,9 @@
 .log/
 target/
 node_modules/
-poc/tauri-dioxus/src-tauri/gen/android/
+tauri-app/src-tauri/gen/android/
 *.apk
+*.db
+*.db-*
+surreal_data/
+.reference/

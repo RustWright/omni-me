@@ -1,0 +1,7 @@
+[package]
+name = "omni-me-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+omni-me-core = { path = "../core" }

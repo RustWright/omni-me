@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "productName": "omni-me",
+  "version": "0.1.0",
+  "identifier": "com.omni-me.app",
+  "build": {
+    "beforeDevCommand": "cd frontend && dx build --platform web --release",
+    "beforeBuildCommand": "cd frontend && dx build --platform web --release",
+    "frontendDist": "../frontend/target/dx/frontend/release/web/public"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "omni-me",
+        "width": 1024,
+        "height": 768
+      }
+    ],
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null
+    }
+  }
+}
