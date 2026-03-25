@@ -45,14 +45,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: tauri-app/frontend
+          cache-bin: false
 
       - name: Install dioxus-cli
         uses: cargo-bins/cargo-binstall@main
       - name: Binstall dx
-        run: cargo binstall dioxus-cli --no-confirm
+        run: cargo binstall dioxus-cli --no-confirm --force
 
       - name: Build frontend
         working-directory: tauri-app/frontend
-        run: |
-          export PATH="$CARGO_HOME/bin:$PATH"
-          dx build --platform web --release
+        run: dx build --platform web --release
