@@ -13,6 +13,14 @@ jobs:
   build-and-test:
     name: Build & Test (Workspace)
     runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'pull_request' ||
+      contains(toJSON(github.event.commits.*.modified), 'core/') ||
+      contains(toJSON(github.event.commits.*.modified), 'server/') ||
+      contains(toJSON(github.event.commits.*.added), 'core/') ||
+      contains(toJSON(github.event.commits.*.added), 'server/') ||
+      contains(toJSON(github.event.commits.*.modified), 'Cargo') ||
+      contains(toJSON(github.event.commits.*.added), 'Cargo')
 
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +40,10 @@ jobs:
   build-frontend:
     name: Build Frontend (WASM)
     runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'pull_request' ||
+      contains(toJSON(github.event.commits.*.modified), 'tauri-app/frontend/') ||
+      contains(toJSON(github.event.commits.*.added), 'tauri-app/frontend/')
 
     steps:
       - uses: actions/checkout@v4
