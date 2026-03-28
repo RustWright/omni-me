@@ -1,17 +1,13 @@
 use axum::{Router, Json, routing::get};
-use omni_me_core::db::Database;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tokio::signal;
 
+use omni_me_server::{AppState, routes};
+
 const DB_PATH: &str = "surreal_data/server.db";
 const LISTEN_ADDR: &str = "0.0.0.0:3000";
-
-#[derive(Clone)]
-struct AppState {
-    db: Arc<Database>,
-}
 
 #[tokio::main]
 async fn main() {
@@ -30,6 +26,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/health", get(health))
+        .merge(routes::sync_routes())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

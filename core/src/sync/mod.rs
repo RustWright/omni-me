@@ -1,1 +1,3 @@
-// Phase 2: Sync client
+mod client;
+
+pub use client::{SyncClient, SyncError, SyncResult};
