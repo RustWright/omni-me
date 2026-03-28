@@ -6,4 +6,20 @@ edition = "2024"
 [dependencies]
 dioxus = { version = "0.7", features = ["web"] }
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "HtmlElement",
+    "Element",
+    "Node",
+    "console",
+] }
 serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+gloo-timers = { version = "0.3", features = ["futures"] }
+
+# Declare as standalone workspace so cargo doesn't try to join
+# the parent workspace (frontend is built separately by `dx build`)
+[workspace]

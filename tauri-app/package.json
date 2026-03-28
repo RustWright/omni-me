@@ -2,5 +2,17 @@
   "name": "omni-me-frontend",
   "version": "0.1.0",
   "private": true,
-  "description": "Frontend assets for omni-me (CodeMirror added in Phase 4)"
+  "description": "Frontend assets for omni-me (CodeMirror added in Phase 4)",
+  "scripts": {
+    "build:editor": "npx esbuild assets/js/editor.js --bundle --outfile=assets/js/editor.bundle.js"
+  },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/state": "^6.5.4",
+    "@codemirror/view": "^6.39.16",
+    "codemirror": "^6.0.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.3"
+  }
 }
