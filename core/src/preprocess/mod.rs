@@ -29,7 +29,7 @@ pub fn preprocess(text: &str) -> PreprocessResult {
 
 /// Extract HTTP/HTTPS URLs from text.
 fn extract_urls(text: &str) -> Vec<String> {
-    let re = Regex::new(r"https?://[^\s\)\]>,;\"']+").expect("valid url regex");
+    let re = Regex::new(r#"https?://[^\s\)\]>,;"']+"#).expect("valid url regex");
     re.find_iter(text)
         .map(|m| {
             let url = m.as_str();
