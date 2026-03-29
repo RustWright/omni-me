@@ -8,3 +8,4 @@ tauri-app/src-tauri/gen/android/
 surreal_data/
 .reference/
 .tmp/
+.claude/worktrees/
