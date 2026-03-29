@@ -275,3 +275,11 @@ pub async fn invoke_get_sync_info() -> Result<SyncInfo, String> {
     struct Args {}
     invoke("get_sync_info", &Args {}).await
 }
+
+pub async fn invoke_update_server_url(server_url: &str) -> Result<(), String> {
+    #[derive(serde::Serialize)]
+    struct Args<'a> {
+        server_url: &'a str,
+    }
+    invoke_unit("update_server_url", &Args { server_url }).await
+}

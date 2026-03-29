@@ -11,20 +11,21 @@ use omni_me_core::events::{
 
 const DB_NAME: &str = "local.db";
 const DEVICE_ID_FILE: &str = "device_id";
+const SERVER_URL_FILE: &str = "server_url";
 const DEFAULT_SERVER_URL: &str = "http://localhost:3000";
 
-/// Load device_id from file, or generate and persist a new one.
-fn load_or_create_device_id(app_data: &Path) -> String {
-    let path = app_data.join(DEVICE_ID_FILE);
-    if let Ok(id) = std::fs::read_to_string(&path) {
-        let id = id.trim().to_string();
-        if !id.is_empty() {
-            return id;
+/// Load a string value from a file, or use a default and persist it.
+fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> String) -> String {
+    let path = app_data.join(filename);
+    if let Ok(val) = std::fs::read_to_string(&path) {
+        let val = val.trim().to_string();
+        if !val.is_empty() {
+            return val;
         }
     }
-    let id = ulid::Ulid::new().to_string();
-    let _ = std::fs::write(&path, &id);
-    id
+    let val = default_fn();
+    let _ = std::fs::write(&path, &val);
+    val
 }
 
 pub struct AppState {
@@ -32,7 +33,8 @@ pub struct AppState {
     pub event_store: SurrealEventStore,
     pub projections: ProjectionRunner,
     pub device_id: String,
-    pub server_url: String,
+    pub server_url: tokio::sync::RwLock<String>,
+    pub app_data_dir: std::path::PathBuf,
 }
 
 /// Remove stale SurrealKV LOCK file if the owning process is no longer alive.
@@ -92,9 +94,12 @@ pub fn run() {
                     .await
                     .expect("failed to initialize projections");
 
-                let device_id = load_or_create_device_id(&app_data);
-                let server_url =
-                    std::env::var("OMNI_SERVER_URL").unwrap_or(DEFAULT_SERVER_URL.to_string());
+                let device_id = load_or_create(&app_data, DEVICE_ID_FILE, || {
+                    ulid::Ulid::new().to_string()
+                });
+                let server_url = load_or_create(&app_data, SERVER_URL_FILE, || {
+                    std::env::var("OMNI_SERVER_URL").unwrap_or(DEFAULT_SERVER_URL.to_string())
+                });
 
                 tracing::info!(device_id = %device_id, server_url = %server_url, "App initialized");
 
@@ -103,7 +108,8 @@ pub fn run() {
                     event_store,
                     projections,
                     device_id,
-                    server_url,
+                    server_url: tokio::sync::RwLock::new(server_url),
+                    app_data_dir: app_data,
                 });
             });
 
@@ -130,6 +136,7 @@ pub fn run() {
             // Sync
             commands::sync::trigger_sync,
             commands::sync::get_sync_info,
+            commands::sync::update_server_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

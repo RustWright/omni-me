@@ -6,13 +6,14 @@ use crate::AppState;
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn trigger_sync(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+    let server_url = state.server_url.read().await.clone();
     tracing::info!(
-        server_url = %state.server_url,
+        server_url = %server_url,
         device_id = %state.device_id,
         "trigger_sync"
     );
 
-    let client = SyncClient::new(state.server_url.clone(), state.device_id.clone());
+    let client = SyncClient::new(server_url, state.device_id.clone());
 
     let result = client.sync(&state.db).await.map_err(|e| {
         tracing::warn!(error = %e, "sync failed");
@@ -29,10 +30,26 @@ pub async fn trigger_sync(state: State<'_, AppState>) -> Result<SyncStatus, Stri
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_sync_info(state: State<'_, AppState>) -> Result<SyncInfo, String> {
+    let server_url = state.server_url.read().await.clone();
     Ok(SyncInfo {
-        server_url: state.server_url.clone(),
+        server_url,
         device_id: state.device_id.clone(),
     })
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn update_server_url(
+    state: State<'_, AppState>,
+    server_url: String,
+) -> Result<(), String> {
+    tracing::info!(new_url = %server_url, "update_server_url");
+    let path = state.app_data_dir.join(crate::SERVER_URL_FILE);
+    std::fs::write(&path, &server_url).map_err(|e| {
+        tracing::warn!(error = %e, "failed to persist server_url");
+        e.to_string()
+    })?;
+    *state.server_url.write().await = server_url;
+    Ok(())
 }
 
 #[derive(serde::Serialize)]

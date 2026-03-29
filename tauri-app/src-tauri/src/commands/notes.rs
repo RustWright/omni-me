@@ -131,9 +131,10 @@ pub async fn process_note_llm(
         .ok_or_else(|| format!("Note '{note_id}' not found"))?;
 
     // Send to server for LLM processing
+    let server_url = state.server_url.read().await.clone();
     let client = reqwest::Client::new();
     let resp = client
-        .post(format!("{}/notes/{}/process", state.server_url, note_id))
+        .post(format!("{}/notes/{}/process", server_url, note_id))
         .json(&serde_json::json!({
             "raw_text": note.raw_text,
             "device_id": state.device_id,
