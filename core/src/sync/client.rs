@@ -124,14 +124,21 @@ impl SyncClient {
     ) -> Result<DateTime<Utc>, SyncError> {
         let device_id = self.device_id.clone();
         let mut resp = db
-            .query("SELECT last_sync_timestamp FROM sync_state WHERE device_id = $device_id")
+            .query("SELECT * FROM sync_state WHERE device_id = $device_id")
             .bind(("device_id", device_id))
             .await
             .map_err(|e| SyncError::Local(e.to_string()))?;
 
-        let ts: Option<String> = resp
-            .take("last_sync_timestamp")
-            .map_err(|e| SyncError::Local(e.to_string()))?;
+        let raw: Vec<serde_json::Value> = resp
+            .take(0)
+            .map_err(|e| SyncError::Local(format!("take raw: {e}")))?;
+
+        let ts = raw.first()
+            .and_then(|r| r.get("last_sync_timestamp"))
+            .and_then(|v| match v {
+                serde_json::Value::String(s) => Some(s.clone()),
+                _ => v.as_str().map(|s| s.to_string()),
+            });
 
         match ts {
             Some(s) => DateTime::parse_from_rfc3339(&s)
@@ -153,16 +160,18 @@ impl SyncClient {
     ) -> Result<(), SyncError> {
         let device_id = self.device_id.clone();
         let ts = timestamp.to_rfc3339();
-        db.query(
+        let mut resp = db.query(
             "UPSERT sync_state SET
                 device_id = $device_id,
-                last_sync_timestamp = $ts
+                last_sync_timestamp = type::datetime($ts)
              WHERE device_id = $device_id",
         )
         .bind(("device_id", device_id))
         .bind(("ts", ts))
         .await
         .map_err(|e| SyncError::Local(e.to_string()))?;
+
+        let _: Result<Vec<serde_json::Value>, _> = resp.take(0);
 
         Ok(())
     }
