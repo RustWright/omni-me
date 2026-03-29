@@ -85,9 +85,10 @@ impl SyncClient {
         let pull_resp = self.pull_events(&last_sync).await?;
         let pulled = pull_resp.events.len();
 
-        // 2. Append pulled events locally
+        // 2. Append pulled events locally, preserving their server-assigned IDs
         for event in &pull_resp.events {
             let new_event = NewEvent {
+                id: Some(event.id.clone()),
                 event_type: event.event_type.clone(),
                 aggregate_id: event.aggregate_id.clone(),
                 timestamp: event.timestamp,
@@ -100,18 +101,19 @@ impl SyncClient {
                 .map_err(|e| SyncError::Local(e.to_string()))?;
         }
 
-        // 3. Gather local events since last sync (by this device only)
+        // 3. Update sync timestamp after successful pull (before push).
+        //    If push fails later, we won't re-pull the same events next sync.
+        let new_timestamp = pull_resp.sync_timestamp;
+        self.update_last_sync_timestamp(db, &new_timestamp).await?;
+
+        // 4. Gather local events since last sync (by this device only)
         let local_events = self.get_local_events_since(&store, &last_sync).await?;
         let pushed = local_events.len();
 
-        // 4. Push local events to server
+        // 5. Push local events to server
         if !local_events.is_empty() {
             self.push_events(&local_events).await?;
         }
-
-        // 5. Update sync state
-        let new_timestamp = pull_resp.sync_timestamp;
-        self.update_last_sync_timestamp(db, &new_timestamp).await?;
 
         Ok(SyncResult { pulled, pushed })
     }
@@ -200,6 +202,7 @@ impl SyncClient {
         let new_events: Vec<NewEvent> = events
             .iter()
             .map(|e| NewEvent {
+                id: Some(e.id.clone()),
                 event_type: e.event_type.clone(),
                 aggregate_id: e.aggregate_id.clone(),
                 timestamp: e.timestamp,

@@ -166,6 +166,7 @@ mod tests {
 
         let event = store
             .append(NewEvent {
+                id: None,
                 event_type: "note_created".into(),
                 aggregate_id: "note-abc".into(),
                 timestamp: Utc::now(),
@@ -198,6 +199,7 @@ mod tests {
 
         let e1 = store
             .append(NewEvent {
+                id: None,
                 event_type: "note_created".into(),
                 aggregate_id: "note-upd".into(),
                 timestamp: Utc::now(),
@@ -212,6 +214,7 @@ mod tests {
 
         let e2 = store
             .append(NewEvent {
+                id: None,
                 event_type: "note_updated".into(),
                 aggregate_id: "note-upd".into(),
                 timestamp: Utc::now(),
@@ -244,6 +247,7 @@ mod tests {
 
         let e1 = store
             .append(NewEvent {
+                id: None,
                 event_type: "note_created".into(),
                 aggregate_id: "note-llm".into(),
                 timestamp: Utc::now(),
@@ -258,6 +262,7 @@ mod tests {
 
         let e2 = store
             .append(NewEvent {
+                id: None,
                 event_type: "note_llm_processed".into(),
                 aggregate_id: "note-llm".into(),
                 timestamp: Utc::now(),

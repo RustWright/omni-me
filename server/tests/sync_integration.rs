@@ -91,6 +91,7 @@ async fn device_a_pushes_device_b_pulls() {
     // Device A creates a note event locally
     let event = store_a
         .append(NewEvent {
+            id: None,
             event_type: "note_created".into(),
             aggregate_id: "note-sync-1".into(),
             timestamp: Utc::now(),
@@ -109,6 +110,7 @@ async fn device_a_pushes_device_b_pulls() {
         .json(&PushRequest {
             device_id: "device-a".into(),
             events: vec![NewEvent {
+                id: Some(event.id.clone()),
                 event_type: event.event_type.clone(),
                 aggregate_id: event.aggregate_id.clone(),
                 timestamp: event.timestamp,
@@ -154,6 +156,7 @@ async fn device_a_pushes_device_b_pulls() {
     for pulled_event in &pull_resp.events {
         store_b
             .append(NewEvent {
+                id: Some(pulled_event.id.clone()),
                 event_type: pulled_event.event_type.clone(),
                 aggregate_id: pulled_event.aggregate_id.clone(),
                 timestamp: pulled_event.timestamp,
@@ -183,6 +186,7 @@ async fn concurrent_events_sync_both_devices() {
     // Device A creates an event
     let event_a = store_a
         .append(NewEvent {
+            id: None,
             event_type: "note_created".into(),
             aggregate_id: "note-a".into(),
             timestamp: Utc::now(),
@@ -195,6 +199,7 @@ async fn concurrent_events_sync_both_devices() {
     // Device B creates an event
     let event_b = store_b
         .append(NewEvent {
+            id: None,
             event_type: "routine_group_created".into(),
             aggregate_id: "routine-b".into(),
             timestamp: Utc::now(),
@@ -214,6 +219,7 @@ async fn concurrent_events_sync_both_devices() {
         .json(&PushRequest {
             device_id: "device-a".into(),
             events: vec![NewEvent {
+                id: Some(event_a.id.clone()),
                 event_type: event_a.event_type.clone(),
                 aggregate_id: event_a.aggregate_id.clone(),
                 timestamp: event_a.timestamp,
@@ -234,6 +240,7 @@ async fn concurrent_events_sync_both_devices() {
         .json(&PushRequest {
             device_id: "device-b".into(),
             events: vec![NewEvent {
+                id: Some(event_b.id.clone()),
                 event_type: event_b.event_type.clone(),
                 aggregate_id: event_b.aggregate_id.clone(),
                 timestamp: event_b.timestamp,
@@ -288,10 +295,11 @@ async fn concurrent_events_sync_both_devices() {
     assert_eq!(pull_b.events[0].device_id, "device-a");
 
     // After syncing, both devices should have all events locally
-    // Device A stores pulled events
+    // Device A stores pulled events, preserving server IDs
     for e in &pull_a.events {
         store_a
             .append(NewEvent {
+                id: Some(e.id.clone()),
                 event_type: e.event_type.clone(),
                 aggregate_id: e.aggregate_id.clone(),
                 timestamp: e.timestamp,
@@ -302,10 +310,11 @@ async fn concurrent_events_sync_both_devices() {
             .unwrap();
     }
 
-    // Device B stores pulled events
+    // Device B stores pulled events, preserving server IDs
     for e in &pull_b.events {
         store_b
             .append(NewEvent {
+                id: Some(e.id.clone()),
                 event_type: e.event_type.clone(),
                 aggregate_id: e.aggregate_id.clone(),
                 timestamp: e.timestamp,

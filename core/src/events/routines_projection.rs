@@ -253,6 +253,7 @@ mod tests {
 
         let e1 = store
             .append(NewEvent {
+                id: None,
                 event_type: "routine_group_created".into(),
                 aggregate_id: "morning".into(),
                 timestamp: Utc::now(),
@@ -268,6 +269,7 @@ mod tests {
 
         let e2 = store
             .append(NewEvent {
+                id: None,
                 event_type: "routine_item_added".into(),
                 aggregate_id: "item-1".into(),
                 timestamp: Utc::now(),
@@ -308,6 +310,7 @@ mod tests {
 
         let e1 = store
             .append(NewEvent {
+                id: None,
                 event_type: "routine_item_completed".into(),
                 aggregate_id: "completion-1".into(),
                 timestamp: Utc::now(),
@@ -324,6 +327,7 @@ mod tests {
 
         let e2 = store
             .append(NewEvent {
+                id: None,
                 event_type: "routine_item_skipped".into(),
                 aggregate_id: "completion-2".into(),
                 timestamp: Utc::now(),
@@ -364,6 +368,7 @@ mod tests {
 
         let e1 = store
             .append(NewEvent {
+                id: None,
                 event_type: "routine_group_created".into(),
                 aggregate_id: "evening".into(),
                 timestamp: Utc::now(),
@@ -379,6 +384,7 @@ mod tests {
 
         let e2 = store
             .append(NewEvent {
+                id: None,
                 event_type: "routine_group_modified".into(),
                 aggregate_id: "evening".into(),
                 timestamp: Utc::now(),

@@ -15,6 +15,7 @@ const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(40);
 pub struct GeminiClient {
     api_key: String,
     model: String,
+    base_url: String,
     http: reqwest::Client,
     last_request: Arc<Mutex<Instant>>,
 }
@@ -27,6 +28,7 @@ impl GeminiClient {
         Self {
             api_key,
             model: "gemini-2.0-flash".to_string(),
+            base_url: "https://generativelanguage.googleapis.com".to_string(),
             http: reqwest::Client::new(),
             last_request: Arc::new(Mutex::new(
                 Instant::now()
@@ -36,11 +38,17 @@ impl GeminiClient {
         }
     }
 
+    #[cfg(test)]
+    fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = base_url;
+        self
+    }
+
     /// Build the API endpoint URL.
     fn endpoint(&self) -> String {
         format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            self.model, self.api_key
+            "{}/v1beta/models/{}:generateContent?key={}",
+            self.base_url, self.model, self.api_key
         )
     }
 
@@ -198,64 +206,8 @@ mod tests {
     use wiremock::matchers::{method, path_regex};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// Since GeminiClient builds its own URL, we need to create a version
-    /// that uses the mock server URL. We'll test the logic by creating a
-    /// testable client.
-    struct TestableGeminiClient {
-        inner: GeminiClient,
-        base_url: String,
-    }
-
-    impl TestableGeminiClient {
-        fn new(server: &MockServer) -> Self {
-            Self {
-                inner: GeminiClient::new("test-key".to_string()),
-                base_url: server.uri(),
-            }
-        }
-
-        fn endpoint(&self) -> String {
-            format!(
-                "{}/v1beta/models/{}:generateContent",
-                self.base_url, self.inner.model
-            )
-        }
-
-        async fn send_request(&self, body: Value) -> Result<Value, LlmError> {
-            self.inner.rate_limit().await;
-
-            let response = self
-                .inner
-                .http
-                .post(&self.endpoint())
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| LlmError::NetworkError(e.to_string()))?;
-
-            let status = response.status();
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                return Err(LlmError::RateLimited);
-            }
-
-            let response_body: Value = response
-                .json()
-                .await
-                .map_err(|e| {
-                    LlmError::ParseError(format!("Failed to parse response JSON: {e}"))
-                })?;
-
-            if !status.is_success() {
-                let error_msg = response_body["error"]["message"]
-                    .as_str()
-                    .unwrap_or("Unknown API error");
-                return Err(LlmError::ApiError(format!(
-                    "HTTP {status}: {error_msg}"
-                )));
-            }
-
-            Ok(response_body)
-        }
+    fn test_client(server: &MockServer) -> GeminiClient {
+        GeminiClient::new("test-key".to_string()).with_base_url(server.uri())
     }
 
     fn gemini_text_response(text: &str) -> Value {
@@ -295,7 +247,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = TestableGeminiClient::new(&server);
+        let client = test_client(&server);
         let body = json!({
             "contents": [{ "parts": [{ "text": "Say hello" }] }]
         });
@@ -317,7 +269,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = TestableGeminiClient::new(&server);
+        let client = test_client(&server);
         let body = json!({
             "contents": [{ "parts": [{ "text": "Extract data" }] }],
             "generationConfig": {
@@ -343,7 +295,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = TestableGeminiClient::new(&server);
+        let client = test_client(&server);
         let body = json!({
             "contents": [{ "parts": [{ "text": "Process this note" }] }],
             "tools": GeminiClient::tool_defs_to_gemini(&super::super::tools::default_note_tools())
@@ -369,7 +321,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = TestableGeminiClient::new(&server);
+        let client = test_client(&server);
         let body = json!({"contents": [{"parts": [{"text": "test"}]}]});
         let result = client.send_request(body).await;
         assert!(result.is_err());
@@ -391,7 +343,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = TestableGeminiClient::new(&server);
+        let client = test_client(&server);
         let body = json!({"contents": [{"parts": [{"text": "test"}]}]});
         let result = client.send_request(body).await;
         assert!(matches!(result.unwrap_err(), LlmError::RateLimited));
@@ -410,7 +362,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = TestableGeminiClient::new(&server);
+        let client = test_client(&server);
 
         let start = Instant::now();
         let body1 = json!({"contents": [{"parts": [{"text": "first"}]}]});
@@ -438,7 +390,7 @@ mod tests {
         let gemini_tools = GeminiClient::tool_defs_to_gemini(&tools);
         let declarations = &gemini_tools[0]["functionDeclarations"];
         assert!(declarations.is_array());
-        assert_eq!(declarations.as_array().unwrap().len(), 3);
+        assert_eq!(declarations.as_array().unwrap().len(), 5);
         assert_eq!(declarations[0]["name"], "create_tag");
     }
 

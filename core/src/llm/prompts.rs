@@ -85,17 +85,21 @@ impl Default for PromptRegistry {
 /// Built-in prompt template for processing journal notes.
 pub static NOTE_PROCESS_V1: PromptTemplate = PromptTemplate {
     name: "note_process_v1",
-    version: "1.0.0",
-    template: "You are a personal life assistant. Analyze the following journal entry and extract: \
-1) tags (list of relevant topics), 2) mood (single word), 3) summary (1-2 sentences), \
-4) any actionable tasks mentioned. Use the provided tools to structure your response.\n\n\
-Pre-processed data:\n\
-URLs: {{urls}}\n\
-Dates: {{dates}}\n\
-Amounts: {{amounts}}\n\n\
+    version: "2.0.0",
+    template: "You are a personal life assistant. Analyze the following journal entry and use the \
+provided tools to extract all relevant structured data. Call each tool as many times as needed.\n\n\
+Extract:\n\
+- Tags: topic categories (use create_tag for each)\n\
+- Mood: overall emotional tone (use assess_mood once)\n\
+- Tasks: any actionable items mentioned (use extract_task for each)\n\
+- Dates: any dates or time references, including relative ones like 'tomorrow' or 'next week' — \
+interpret them relative to the entry date if possible (use extract_date for each)\n\
+- Expenses: any spending, costs, or financial amounts mentioned, even approximate ones like \
+'about 15 bucks' or '~R200' (use extract_expense for each)\n\n\
+Pre-extracted URLs (exact matches): {{urls}}\n\n\
 Journal entry:\n\
 {{raw_text}}",
-    description: "Process a journal entry to extract tags, mood, summary, and tasks",
+    description: "Process a journal entry to extract tags, mood, tasks, dates, and expenses",
 };
 
 #[cfg(test)]
@@ -108,7 +112,7 @@ mod tests {
         let registry = PromptRegistry::new();
         let tmpl = registry.get("note_process_v1");
         assert!(tmpl.is_some());
-        assert_eq!(tmpl.unwrap().version, "1.0.0");
+        assert_eq!(tmpl.unwrap().version, "2.0.0");
     }
 
     #[test]
@@ -122,16 +126,11 @@ mod tests {
         let registry = PromptRegistry::new();
         let context = json!({
             "urls": "https://example.com",
-            "dates": "2026-03-27",
-            "amounts": "$15.00",
             "raw_text": "Had a great day!"
         });
         let rendered = registry.render("note_process_v1", &context).unwrap();
         assert!(rendered.contains("https://example.com"));
-        assert!(rendered.contains("2026-03-27"));
-        assert!(rendered.contains("$15.00"));
         assert!(rendered.contains("Had a great day!"));
-        // Placeholders should be gone
         assert!(!rendered.contains("{{urls}}"));
         assert!(!rendered.contains("{{raw_text}}"));
     }
@@ -141,12 +140,9 @@ mod tests {
         let registry = PromptRegistry::new();
         let context = json!({
             "urls": ["https://a.com", "https://b.com"],
-            "dates": ["2026-03-27"],
-            "amounts": [],
             "raw_text": "Test entry"
         });
         let rendered = registry.render("note_process_v1", &context).unwrap();
-        // Arrays should be serialized as JSON strings
         assert!(rendered.contains("https://a.com"));
         assert!(rendered.contains("https://b.com"));
     }
@@ -185,7 +181,7 @@ mod tests {
     #[test]
     fn test_prompt_template_fields() {
         assert_eq!(NOTE_PROCESS_V1.name, "note_process_v1");
-        assert_eq!(NOTE_PROCESS_V1.version, "1.0.0");
+        assert_eq!(NOTE_PROCESS_V1.version, "2.0.0");
         assert!(NOTE_PROCESS_V1.template.contains("personal life assistant"));
         assert!(NOTE_PROCESS_V1.description.contains("journal entry"));
     }
@@ -195,12 +191,10 @@ mod tests {
         let registry = PromptRegistry::new();
         let context = json!({
             "urls": null,
-            "dates": null,
-            "amounts": null,
             "raw_text": "Hello"
         });
         let rendered = registry.render("note_process_v1", &context).unwrap();
-        assert!(rendered.contains("URLs: \n"));
+        assert!(rendered.contains("Pre-extracted URLs (exact matches): \n"));
         assert!(rendered.contains("Hello"));
     }
 }
