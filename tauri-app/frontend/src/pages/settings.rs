@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::bridge;
+use crate::{bridge, types::SyncStatus};
 
 #[component]
 pub fn SettingsPage() -> Element {
@@ -130,7 +130,16 @@ pub fn SettingsPage() -> Element {
                         font-weight: 500;
                     ",
                     onclick: move |_| {
-                        sync_status.set(Some("TODO: implement sync".into()));
+                        sync_status.set(Some("Syncing...".into()));
+                                    spawn(async move {
+                                        match bridge::invoke_trigger_sync().await {
+                                            Ok(synced_status) => {
+                                                let SyncStatus{pulled, pushed} = synced_status;
+                                                sync_status.set(Some(format!("Sync complete:\nItems pulled:{pulled}\nItems pushed:{pushed}")));
+                                            }
+                                            Err(e) => sync_status.set(Some(format!("Error: {e}"))),
+                                        }
+                                    });
                     },
                     "Sync Now"
                 }
