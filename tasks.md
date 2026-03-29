@@ -98,7 +98,7 @@ Module: `tauri-app/src/`, `tauri-app/assets/js/`
 - [x] **7.6** Editor config fixes [S] — add line wrapping, remove line numbers (CodeMirror config)
 - [x] **7.1a** Sync wiring [M] `depends:2.7` — persist device_id, expose trigger_sync Tauri command, bridge helper
 - [x] **7.4** Settings screen [S] `depends:7.1a` — server URL field, device ID display, "Sync Now" button
-- [ ] **7.1b** Local network sync test [S] `depends:7.1a,7.4` — verify sync desktop-to-desktop via localhost
+- [x] **7.1b** Local network sync test [S] `depends:7.1a,7.4` — verify sync desktop-to-desktop via localhost
 - [ ] **7.3** Android APK debug build [M] `depends:7.1a` — tauri android init, fix asset copying, debug-signed APK, sideload + test
 - [ ] **7.1c** Tailscale setup + mobile sync test [S] `depends:7.3` — install Tailscale, test phone↔desktop sync
 
