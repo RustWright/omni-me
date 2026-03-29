@@ -4,7 +4,10 @@
   "private": true,
   "description": "Frontend assets for omni-me (CodeMirror added in Phase 4)",
   "scripts": {
-    "build:editor": "npx esbuild assets/js/editor.js --bundle --outfile=assets/js/editor.bundle.js"
+    "build:editor": "npx esbuild assets/js/editor.js --bundle --outfile=assets/js/editor.bundle.js",
+    "build:frontend": "cd frontend && dx build --platform web --release",
+    "copy:editor": "mkdir -p frontend/target/dx/frontend/release/web/public/assets/js && cp assets/js/editor.bundle.js frontend/target/dx/frontend/release/web/public/assets/js/",
+    "build": "npm ci && npm run build:editor && npm run build:frontend && npm run copy:editor"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.omni-me.app",
   "build": {
-    "beforeDevCommand": "cd frontend && dx build --platform web --release",
-    "beforeBuildCommand": "cd frontend && dx build --platform web --release",
+    "beforeDevCommand": "npm run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../frontend/target/dx/frontend/release/web/public"
   },
   "app": {

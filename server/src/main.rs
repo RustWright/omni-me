@@ -27,6 +27,7 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .merge(routes::sync_routes())
+        .merge(routes::notes_routes())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

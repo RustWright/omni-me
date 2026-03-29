@@ -1,6 +1,7 @@
 mod bridge;
 mod components;
 mod pages;
+mod types;
 
 use dioxus::prelude::*;
 

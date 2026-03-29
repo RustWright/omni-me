@@ -7,3 +7,4 @@ tauri-app/src-tauri/gen/android/
 *.db-*
 surreal_data/
 .reference/
+.tmp/
