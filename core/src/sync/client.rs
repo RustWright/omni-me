@@ -156,7 +156,7 @@ impl SyncClient {
         db.query(
             "UPSERT sync_state SET
                 device_id = $device_id,
-                last_sync_timestamp = type::datetime($ts)
+                last_sync_timestamp = $ts
              WHERE device_id = $device_id",
         )
         .bind(("device_id", device_id))

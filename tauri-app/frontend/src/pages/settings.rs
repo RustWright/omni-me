@@ -113,11 +113,6 @@ pub fn SettingsPage() -> Element {
                     }
                 }
 
-                // TODO(human): Implement the sync trigger handler
-                // This button should call bridge::invoke_trigger_sync() and display
-                // the result (pulled/pushed counts) or error in sync_status.
-                // Consider: should sync be disabled while in progress? What feedback
-                // should the user see during a sync that takes a few seconds?
                 button {
                     style: "
                         padding: 10px 20px;
