@@ -94,8 +94,8 @@ Module: `tauri-app/src/`, `tauri-app/assets/js/`
 
 ## Phase 7: Integration + Polish (Days 14-17)
 
-- [ ] **7.5** Tracing [S] — add tracing + tracing-subscriber to Tauri app, instrument commands with info/warn logging
-- [ ] **7.6** Editor config fixes [S] — add line wrapping, remove line numbers (CodeMirror config)
+- [x] **7.5** Tracing [S] — add tracing + tracing-subscriber to Tauri app, instrument commands with info/warn logging
+- [x] **7.6** Editor config fixes [S] — add line wrapping, remove line numbers (CodeMirror config)
 - [ ] **7.1a** Sync wiring [M] `depends:2.7` — persist device_id, expose trigger_sync Tauri command, bridge helper
 - [ ] **7.4** Settings screen [S] `depends:7.1a` — server URL field, device ID display, "Sync Now" button
 - [ ] **7.1b** Local network sync test [S] `depends:7.1a,7.4` — verify sync desktop-to-desktop via localhost

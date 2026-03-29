@@ -10,7 +10,22 @@ use omni_me_core::events::{
 };
 
 const DB_NAME: &str = "local.db";
+const DEVICE_ID_FILE: &str = "device_id";
 const DEFAULT_SERVER_URL: &str = "http://localhost:3000";
+
+/// Load device_id from file, or generate and persist a new one.
+fn load_or_create_device_id(app_data: &Path) -> String {
+    let path = app_data.join(DEVICE_ID_FILE);
+    if let Ok(id) = std::fs::read_to_string(&path) {
+        let id = id.trim().to_string();
+        if !id.is_empty() {
+            return id;
+        }
+    }
+    let id = ulid::Ulid::new().to_string();
+    let _ = std::fs::write(&path, &id);
+    id
+}
 
 pub struct AppState {
     pub db: Database,
@@ -77,7 +92,7 @@ pub fn run() {
                     .await
                     .expect("failed to initialize projections");
 
-                let device_id = ulid::Ulid::new().to_string();
+                let device_id = load_or_create_device_id(&app_data);
                 let server_url =
                     std::env::var("OMNI_SERVER_URL").unwrap_or(DEFAULT_SERVER_URL.to_string());
 
@@ -112,6 +127,9 @@ pub fn run() {
             commands::routines::modify_routine_group,
             commands::routines::get_completions_for_date,
             commands::routines::get_routine_history,
+            // Sync
+            commands::sync::trigger_sync,
+            commands::sync::get_sync_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

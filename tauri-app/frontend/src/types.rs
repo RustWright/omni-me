@@ -45,6 +45,20 @@ pub struct CompletionEntry {
     pub reason: Option<String>,
 }
 
+/// Result of a sync operation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncStatus {
+    pub pulled: usize,
+    pub pushed: usize,
+}
+
+/// Current sync configuration info.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyncInfo {
+    pub server_url: String,
+    pub device_id: String,
+}
+
 /// LLM processing result from the server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmResult {

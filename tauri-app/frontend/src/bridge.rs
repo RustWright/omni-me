@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::types::{
-    CompletionEntry, LlmResult, NoteListItem, RoutineGroup, RoutineItem,
+    CompletionEntry, LlmResult, NoteListItem, RoutineGroup, RoutineItem, SyncInfo, SyncStatus,
 };
 
 // Tauri IPC
@@ -260,4 +260,18 @@ pub async fn invoke_get_routine_history(
         days: u32,
     }
     invoke("get_routine_history", &Args { group_id, days }).await
+}
+
+// --- Sync ---
+
+pub async fn invoke_trigger_sync() -> Result<SyncStatus, String> {
+    #[derive(serde::Serialize)]
+    struct Args {}
+    invoke("trigger_sync", &Args {}).await
+}
+
+pub async fn invoke_get_sync_info() -> Result<SyncInfo, String> {
+    #[derive(serde::Serialize)]
+    struct Args {}
+    invoke("get_sync_info", &Args {}).await
 }
