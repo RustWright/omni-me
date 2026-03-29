@@ -94,10 +94,13 @@ Module: `tauri-app/src/`, `tauri-app/assets/js/`
 
 ## Phase 7: Integration + Polish (Days 14-17)
 
-- [ ] **7.1** Sync-on-open [S] `depends:2.7,4.1` — wire SyncClient into Tauri setup hook, status indicator, toast errors, refresh read models
-- [ ] **7.3** Android APK final [S] `depends:all` — release build, debug-signed, full test (notes, LLM, routines, sync), document sideload
-- [ ] **7.4** Settings screen [S] `depends:4.1` — API key (secure storage), VPS URL, device name, last sync, "Sync Now", "Rebuild Projections"
-- [ ] **7.5** Error handling + logging [M] `depends:all` — tracing throughout, Dioxus error boundaries, user-friendly messages
+- [ ] **7.5** Tracing [S] — add tracing + tracing-subscriber to Tauri app, instrument commands with info/warn logging
+- [ ] **7.6** Editor config fixes [S] — add line wrapping, remove line numbers (CodeMirror config)
+- [ ] **7.1a** Sync wiring [M] `depends:2.7` — persist device_id, expose trigger_sync Tauri command, bridge helper
+- [ ] **7.4** Settings screen [S] `depends:7.1a` — server URL field, device ID display, "Sync Now" button
+- [ ] **7.1b** Local network sync test [S] `depends:7.1a,7.4` — verify sync desktop-to-desktop via localhost
+- [ ] **7.3** Android APK debug build [M] `depends:7.1a` — tauri android init, fix asset copying, debug-signed APK, sideload + test
+- [ ] **7.1c** Tailscale setup + mobile sync test [S] `depends:7.3` — install Tailscale, test phone↔desktop sync
 
 ---
 
@@ -138,6 +141,13 @@ Days 14-17: Integration
 Items identified during cycle 1 review that are deferred but must be addressed:
 
 - [ ] **Auth on sync endpoints** — `/sync/push` and `/sync/pull` accept `device_id` from request body with no verification. Any client on the network can impersonate a device or read others' events. Acceptable for MVP behind Tailscale, but needs at minimum a shared-secret API key header before deploying to Hetzner.
+- [ ] **UI testing workflow** — Replace manual screenshot-based testing with a streamlined workflow (Playwright, visual regression, or similar). Research and implement early in Cycle 2 before major UI work.
+- [ ] **Delete routine groups/items** — No delete functionality exists yet
+- [ ] **Edit routine items** — Can edit groups but not individual items
+- [ ] **Undo complete/skip** — No way to reverse a routine completion or skip
+- [ ] **Search clear button** — Add X/clear button in journal search field
+- [ ] **Duration unit label** — Show "min" or similar next to duration input in routine items
+- [ ] **Note titles** — Display note title (first line or derived) in list view instead of raw text preview
 
 ---
 

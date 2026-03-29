@@ -1,4 +1,4 @@
-import { EditorView, basicSetup } from "codemirror";
+import { EditorView, minimalSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 
@@ -23,7 +23,7 @@ window.createEditor = function (elementId, initialContent, onChange) {
     return;
   }
 
-  const extensions = [basicSetup, markdown()];
+  const extensions = [minimalSetup, markdown(), EditorView.lineWrapping];
 
   // Add change listener if callback provided
   if (typeof onChange === "function") {

@@ -12,6 +12,7 @@ pub async fn create_note(
     raw_text: String,
     date: String,
 ) -> Result<NoteRow, String> {
+    tracing::info!(date = %date, len = raw_text.len(), "create_note");
     let note_id = ulid::Ulid::new().to_string();
 
     let event = NewEvent {
@@ -46,16 +47,24 @@ pub async fn create_note(
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteRow>, String> {
+    tracing::debug!("list_notes");
     queries::list_notes(&state.db, 100, 0)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            tracing::warn!(error = %e, "list_notes failed");
+            e.to_string()
+        })
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_note(state: State<'_, AppState>, id: String) -> Result<NoteRow, String> {
+    tracing::debug!(id = %id, "get_note");
     queries::get_note(&state.db, &id)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| {
+            tracing::warn!(id = %id, error = %e, "get_note failed");
+            e.to_string()
+        })?
         .ok_or_else(|| format!("Note '{id}' not found"))
 }
 
@@ -65,6 +74,7 @@ pub async fn update_note(
     id: String,
     raw_text: String,
 ) -> Result<(), String> {
+    tracing::info!(id = %id, len = raw_text.len(), "update_note");
     let event = NewEvent {
         id: None,
         event_type: EventType::NoteUpdated.to_string(),
@@ -97,12 +107,16 @@ pub async fn search_notes(
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<NoteRow>, String> {
+    tracing::debug!(query = %query, "search_notes");
     if query.trim().is_empty() {
         return Ok(vec![]);
     }
     queries::search_notes(&state.db, &query)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            tracing::warn!(query = %query, error = %e, "search_notes failed");
+            e.to_string()
+        })
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -110,6 +124,7 @@ pub async fn process_note_llm(
     state: State<'_, AppState>,
     note_id: String,
 ) -> Result<serde_json::Value, String> {
+    tracing::info!(note_id = %note_id, "process_note_llm");
     let note = queries::get_note(&state.db, &note_id)
         .await
         .map_err(|e| e.to_string())?

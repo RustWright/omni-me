@@ -13,6 +13,7 @@ pub async fn create_routine_group(
     frequency: String,
     time_of_day: String,
 ) -> Result<RoutineGroupRow, String> {
+    tracing::info!(name = %name, frequency = %frequency, time_of_day = %time_of_day, "create_routine_group");
     let group_id = ulid::Ulid::new().to_string();
 
     let event = NewEvent {
@@ -63,6 +64,7 @@ pub async fn add_routine_item(
     duration_min: u32,
     order: u32,
 ) -> Result<RoutineItemRow, String> {
+    tracing::info!(group_id = %group_id, name = %name, "add_routine_item");
     let item_id = ulid::Ulid::new().to_string();
 
     let event = NewEvent {
@@ -119,6 +121,7 @@ pub async fn complete_routine_item(
     group_id: String,
     date: String,
 ) -> Result<(), String> {
+    tracing::info!(item_id = %item_id, group_id = %group_id, date = %date, "complete_routine_item");
     let event = NewEvent {
         id: None,
         event_type: EventType::RoutineItemCompleted.to_string(),
@@ -156,6 +159,7 @@ pub async fn skip_routine_item(
     date: String,
     reason: Option<String>,
 ) -> Result<(), String> {
+    tracing::info!(item_id = %item_id, group_id = %group_id, date = %date, "skip_routine_item");
     let event = NewEvent {
         id: None,
         event_type: EventType::RoutineItemSkipped.to_string(),
@@ -192,6 +196,7 @@ pub async fn modify_routine_group(
     changes: serde_json::Value,
     justification: Option<String>,
 ) -> Result<(), String> {
+    tracing::info!(group_id = %group_id, "modify_routine_group");
     let event = NewEvent {
         id: None,
         event_type: EventType::RoutineGroupModified.to_string(),

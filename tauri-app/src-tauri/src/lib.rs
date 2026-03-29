@@ -29,7 +29,7 @@ fn clear_stale_lock(db_path: &Path) {
         if let Ok(pid) = contents.trim().parse::<u32>() {
             let alive = Path::new(&format!("/proc/{}", pid)).exists();
             if !alive {
-                eprintln!("Removing stale SurrealKV LOCK (pid {} not running)", pid);
+                tracing::warn!(pid, "Removing stale SurrealKV LOCK (pid not running)");
                 let _ = std::fs::remove_file(&lock_path);
             }
         }
@@ -37,6 +37,13 @@ fn clear_stale_lock(db_path: &Path) {
 }
 
 pub fn run() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "omni_me_app=debug".into()),
+        )
+        .init();
+
     tauri::Builder::default()
         .setup(|app| {
             // Store DB in the OS app data dir (e.g. ~/.local/share/com.omni-me.app/)
@@ -73,6 +80,8 @@ pub fn run() {
                 let device_id = ulid::Ulid::new().to_string();
                 let server_url =
                     std::env::var("OMNI_SERVER_URL").unwrap_or(DEFAULT_SERVER_URL.to_string());
+
+                tracing::info!(device_id = %device_id, server_url = %server_url, "App initialized");
 
                 handle.manage(AppState {
                     db,
