@@ -100,7 +100,7 @@ Module: `tauri-app/src/`, `tauri-app/assets/js/`
 - [x] **7.4** Settings screen [S] `depends:7.1a` — server URL field, device ID display, "Sync Now" button
 - [x] **7.1b** Local network sync test [S] `depends:7.1a,7.4` — verify sync desktop-to-desktop via localhost
 - [x] **7.3** Android APK debug build [M] `depends:7.1a` — tauri android init, fix asset copying, debug-signed APK, sideload + test
-- [ ] **7.1c** Tailscale setup + mobile sync test [S] `depends:7.3` — install Tailscale, test phone↔desktop sync
+- [x] **7.1c** Tailscale setup + mobile sync test [S] `depends:7.3` — install Tailscale, test phone↔desktop sync
 
 ---
 
@@ -148,6 +148,8 @@ Items identified during cycle 1 review that are deferred but must be addressed:
 - [ ] **Search clear button** — Add X/clear button in journal search field
 - [ ] **Duration unit label** — Show "min" or similar next to duration input in routine items
 - [ ] **Note titles** — Display note title (first line or derived) in list view instead of raw text preview
+- [ ] **Sync push error handling** — Server push handler returns 200 even when all appends fail (silently swallows errors). Should return error status code so client knows push failed.
+- [ ] **SurrealKV stability** — Server's SurrealKV panicked with "commit queue overflow" after running ~24h, corrupting the DB connection. Investigate cause, consider restart/reconnect strategy.
 
 ---
 

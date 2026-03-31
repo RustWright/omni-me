@@ -1,7 +1,7 @@
 # Project: omni-me
 
-**Status:** Active
-**Last Updated:** 2026-03-07
+**Status:** Cycle 1 Complete
+**Last Updated:** 2026-03-30
 
 ## Session Log
 
@@ -11,8 +11,10 @@
 | Session 2: Research | 2026-03-05 | Complete | All 13 features reviewed, core tech decisions finalized (Tauri v2, Dioxus, SurrealDB, Event Sourcing, Gemini Flash). Output: `research.md` |
 | Session 3: Architecture | 2026-03-07 | Complete | Formalized `architecture.md` — security review, risk assessment (5 risks with mitigations) |
 | Session 3: Planning (Cycle 1) | 2026-03-08 | Complete | 38 tasks across 7 phases. PWA deferred. All Claude Code. 3 parallel tracks for core infrastructure. Output: `tasks.md` |
-| Session 4: Implementation | 2026-03-08 | In Progress | Phase 0 POCs all passed (desktop + Android). SurrealDB, Tauri, Dioxus, CodeMirror validated. |
+| Session 4: Implementation | 2026-03-08 | Complete | Phase 0 POCs all passed (desktop + Android). SurrealDB, Tauri, Dioxus, CodeMirror validated. |
 | Session 4: Phase 1 | 2026-03-25 | Complete | Workspace scaffold (1.1), SurrealDB connection layer (1.4), Axum server (1.5), CI/CD workflow (1.3). VPS deferred — DO rejected payment, going to Hetzner when stable. |
+| Session 4: Phases 2-6 | 2026-03-29 | Complete | Event store + sync, LLM pipeline, UI shell + CodeMirror, Journal/Notes, Routine Manager — all features functional on desktop. Code review done (6 fixes applied). |
+| Session 4: Phase 7 | 2026-03-30 | Complete | Tracing, editor fixes, sync wiring, settings page, Android APK, Tailscale sync. Fixed projection apply after sync pull. Found SurrealKV stability issue (commit queue overflow after ~24h). Cycle 1 complete — all features working, sync verified phone→server→desktop. |
 
 ---
 

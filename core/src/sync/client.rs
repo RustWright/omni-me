@@ -30,6 +30,7 @@ impl std::error::Error for SyncError {}
 pub struct SyncResult {
     pub pulled: usize,
     pub pushed: usize,
+    pub pulled_events: Vec<Event>,
 }
 
 /// Request body for POST /sync/push
@@ -115,7 +116,11 @@ impl SyncClient {
             self.push_events(&local_events).await?;
         }
 
-        Ok(SyncResult { pulled, pushed })
+        Ok(SyncResult {
+            pulled,
+            pushed,
+            pulled_events: pull_resp.events,
+        })
     }
 
     async fn get_last_sync_timestamp(
