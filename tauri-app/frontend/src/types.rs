@@ -7,7 +7,6 @@ pub struct NoteListItem {
     pub raw_text: String,
     pub date: String,
     pub tags: Vec<String>,
-    pub mood: Option<String>,
     pub summary: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -63,17 +62,10 @@ pub struct SyncInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmResult {
     pub tags: Vec<String>,
-    pub mood: Option<MoodResult>,
     pub tasks: Vec<TaskResult>,
     pub dates: Vec<DateResult>,
     pub expenses: Vec<ExpenseResult>,
     pub summary: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MoodResult {
-    pub mood: String,
-    pub confidence: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

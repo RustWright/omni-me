@@ -13,20 +13,12 @@ use super::tools::{LlmResponse, default_note_tools};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteProcessingResult {
     pub tags: Vec<String>,
-    pub mood: Option<MoodAssessment>,
     pub tasks: Vec<ExtractedTask>,
     pub dates: Vec<ExtractedDate>,
     pub expenses: Vec<ExtractedExpense>,
     pub summary: Option<String>,
     pub urls: Vec<String>,
     pub metadata: CallMetadata,
-}
-
-/// A mood assessment extracted from a journal entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MoodAssessment {
-    pub mood: String,
-    pub confidence: f64,
 }
 
 /// A task extracted from a journal entry.
@@ -126,7 +118,6 @@ pub async fn process_note(
 
     let result = NoteProcessingResult {
         tags: result_data.tags,
-        mood: result_data.mood,
         tasks: result_data.tasks,
         dates: result_data.dates,
         expenses: result_data.expenses,
@@ -165,7 +156,6 @@ pub async fn process_note(
 /// Intermediate struct for collecting parsed tool call results.
 struct ParsedToolCalls {
     tags: Vec<String>,
-    mood: Option<MoodAssessment>,
     tasks: Vec<ExtractedTask>,
     dates: Vec<ExtractedDate>,
     expenses: Vec<ExtractedExpense>,
@@ -192,7 +182,6 @@ fn interpret_tool_calls(response: LlmResponse) -> Result<ParsedToolCalls, Pipeli
     match response {
         LlmResponse::Text(text_response) => Ok(ParsedToolCalls {
             tags: vec![],
-            mood: None,
             tasks: vec![],
             dates: vec![],
             expenses: vec![],
@@ -203,18 +192,11 @@ fn interpret_tool_calls(response: LlmResponse) -> Result<ParsedToolCalls, Pipeli
             let mut tasks = Vec::new();
             let mut dates = Vec::new();
             let mut expenses = Vec::new();
-            let mut mood: Option<MoodAssessment> = None;
 
             for tc in tool_call_vec {
                 match tc.name.as_str() {
                     "create_tag" => {
                         tags.push(require_str(&tc.arguments, "tag", "create_tag")?);
-                    }
-                    "assess_mood" => {
-                        mood = Some(MoodAssessment {
-                            mood: require_str(&tc.arguments, "mood", "assess_mood")?,
-                            confidence: require_f64(&tc.arguments, "confidence", "assess_mood")?,
-                        });
                     }
                     "extract_task" => {
                         tasks.push(ExtractedTask {
@@ -241,7 +223,6 @@ fn interpret_tool_calls(response: LlmResponse) -> Result<ParsedToolCalls, Pipeli
 
             Ok(ParsedToolCalls {
                 tags,
-                mood,
                 tasks,
                 dates,
                 expenses,
@@ -315,10 +296,6 @@ mod tests {
                 arguments: json!({"tag": "food"}),
             },
             ToolCall {
-                name: "assess_mood".to_string(),
-                arguments: json!({"mood": "content", "confidence": 0.8}),
-            },
-            ToolCall {
                 name: "extract_task".to_string(),
                 arguments: json!({"description": "Buy groceries", "priority": "medium"}),
             },
@@ -334,9 +311,6 @@ mod tests {
 
         let result = interpret_tool_calls(response).unwrap();
         assert_eq!(result.tags, vec!["shopping", "food"]);
-        assert!(result.mood.is_some());
-        assert_eq!(result.mood.as_ref().unwrap().mood, "content");
-        assert!((result.mood.as_ref().unwrap().confidence - 0.8).abs() < f64::EPSILON);
         assert_eq!(result.tasks.len(), 1);
         assert_eq!(result.tasks[0].description, "Buy groceries");
         assert_eq!(result.dates.len(), 1);
@@ -352,7 +326,6 @@ mod tests {
         let response = LlmResponse::Text("The entry seems positive.".to_string());
         let result = interpret_tool_calls(response).unwrap();
         assert!(result.tags.is_empty());
-        assert!(result.mood.is_none());
         assert!(result.tasks.is_empty());
         assert_eq!(
             result.summary,
@@ -365,7 +338,6 @@ mod tests {
         let response = LlmResponse::ToolCalls(vec![]);
         let result = interpret_tool_calls(response).unwrap();
         assert!(result.tags.is_empty());
-        assert!(result.mood.is_none());
         assert!(result.tasks.is_empty());
     }
 

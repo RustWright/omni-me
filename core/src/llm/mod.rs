@@ -7,7 +7,7 @@ mod tools;
 pub use client::{LlmClient, LlmError};
 pub use gemini::GeminiClient;
 pub use pipeline::{
-    ExtractedDate, ExtractedExpense, ExtractedTask, MoodAssessment, NoteProcessingResult,
+    ExtractedDate, ExtractedExpense, ExtractedTask, NoteProcessingResult,
     PipelineError, process_note,
 };
 pub use prompts::{CallMetadata, PromptRegistry, PromptTemplate};

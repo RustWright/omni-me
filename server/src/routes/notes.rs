@@ -19,17 +19,10 @@ pub struct ProcessNoteRequest {
 #[derive(Debug, Serialize)]
 pub struct ProcessNoteResponse {
     pub tags: Vec<String>,
-    pub mood: Option<MoodResponse>,
     pub tasks: Vec<TaskResponse>,
     pub dates: Vec<DateResponse>,
     pub expenses: Vec<ExpenseResponse>,
     pub summary: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MoodResponse {
-    pub mood: String,
-    pub confidence: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,10 +72,6 @@ async fn process_note_handler(
 
     Ok(Json(ProcessNoteResponse {
         tags: result.tags,
-        mood: result.mood.map(|m| MoodResponse {
-            mood: m.mood,
-            confidence: m.confidence,
-        }),
         tasks: result.tasks.into_iter().map(|t| TaskResponse {
             description: t.description,
             priority: t.priority,

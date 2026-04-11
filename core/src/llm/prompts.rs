@@ -90,7 +90,6 @@ pub static NOTE_PROCESS_V1: PromptTemplate = PromptTemplate {
 provided tools to extract all relevant structured data. Call each tool as many times as needed.\n\n\
 Extract:\n\
 - Tags: topic categories (use create_tag for each)\n\
-- Mood: overall emotional tone (use assess_mood once)\n\
 - Tasks: any actionable items mentioned (use extract_task for each)\n\
 - Dates: any dates or time references, including relative ones like 'tomorrow' or 'next week' — \
 interpret them relative to the entry date if possible (use extract_date for each)\n\
@@ -99,7 +98,7 @@ interpret them relative to the entry date if possible (use extract_date for each
 Pre-extracted URLs (exact matches): {{urls}}\n\n\
 Journal entry:\n\
 {{raw_text}}",
-    description: "Process a journal entry to extract tags, mood, tasks, dates, and expenses",
+    description: "Process a journal entry to extract tags, tasks, dates, and expenses",
 };
 
 #[cfg(test)]

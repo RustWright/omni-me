@@ -30,7 +30,7 @@ pub enum LlmResponse {
 
 /// Returns the default set of tool definitions for note processing.
 ///
-/// Includes: `create_tag`, `extract_task`, `assess_mood`, `extract_date`, `extract_expense`.
+/// Includes: `create_tag`, `extract_task`, `extract_date`, `extract_expense`.
 pub fn default_note_tools() -> Vec<ToolDef> {
     vec![
         ToolDef {
@@ -64,26 +64,6 @@ pub fn default_note_tools() -> Vec<ToolDef> {
                     }
                 },
                 "required": ["description", "priority"]
-            }),
-        },
-        ToolDef {
-            name: "assess_mood".to_string(),
-            description: "Assess the overall mood of the journal entry".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "mood": {
-                        "type": "string",
-                        "description": "Single word describing the mood"
-                    },
-                    "confidence": {
-                        "type": "number",
-                        "description": "Confidence level from 0 to 1",
-                        "minimum": 0.0,
-                        "maximum": 1.0
-                    }
-                },
-                "required": ["mood", "confidence"]
             }),
         },
         ToolDef {
@@ -136,7 +116,7 @@ mod tests {
     #[test]
     fn test_default_note_tools_count() {
         let tools = default_note_tools();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 4);
     }
 
     #[test]
@@ -145,7 +125,7 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["create_tag", "extract_task", "assess_mood", "extract_date", "extract_expense"]
+            vec!["create_tag", "extract_task", "extract_date", "extract_expense"]
         );
     }
 
@@ -178,12 +158,4 @@ mod tests {
         assert_eq!(enum_vals.len(), 3);
     }
 
-    #[test]
-    fn test_assess_mood_schema_has_range() {
-        let tools = default_note_tools();
-        let assess_mood = &tools[2];
-        let confidence = &assess_mood.parameters["properties"]["confidence"];
-        assert_eq!(confidence["minimum"], 0.0);
-        assert_eq!(confidence["maximum"], 1.0);
-    }
 }

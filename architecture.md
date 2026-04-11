@@ -92,7 +92,7 @@ event: { id, type, aggregate_id, timestamp, device_id, payload: {flexible JSON} 
 ```
 note_created       → {raw_text, date}
 note_updated       → {note_id, raw_text}
-note_llm_processed → {note_id, prompt_version, model, derived: {tags, insights, tasks, mood, ...}}
+note_llm_processed → {note_id, prompt_version, model, derived: {tags, insights, tasks, ...}}
 ```
 
 Re-process any note with a better model/prompt at any time. Raw input is never modified.

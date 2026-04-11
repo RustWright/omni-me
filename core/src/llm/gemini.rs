@@ -260,7 +260,7 @@ mod tests {
     async fn test_complete_json() {
         let server = MockServer::start().await;
 
-        let json_response = r#"{"tags": ["work", "meeting"], "mood": "focused"}"#;
+        let json_response = r#"{"tags": ["work", "meeting"], "category": "productivity"}"#;
         Mock::given(method("POST"))
             .and(path_regex(r"/v1beta/models/.+:generateContent"))
             .respond_with(
@@ -279,7 +279,7 @@ mod tests {
         let response = client.send_request(body).await.unwrap();
         let text = GeminiClient::extract_text(&response).unwrap();
         let parsed: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(parsed["mood"], "focused");
+        assert_eq!(parsed["category"], "productivity");
         assert_eq!(parsed["tags"][0], "work");
     }
 
@@ -390,7 +390,7 @@ mod tests {
         let gemini_tools = GeminiClient::tool_defs_to_gemini(&tools);
         let declarations = &gemini_tools[0]["functionDeclarations"];
         assert!(declarations.is_array());
-        assert_eq!(declarations.as_array().unwrap().len(), 5);
+        assert_eq!(declarations.as_array().unwrap().len(), 4);
         assert_eq!(declarations[0]["name"], "create_tag");
     }
 
@@ -414,8 +414,8 @@ mod tests {
                         },
                         {
                             "functionCall": {
-                                "name": "assess_mood",
-                                "args": {"mood": "happy", "confidence": 0.9}
+                                "name": "extract_task",
+                                "args": {"description": "Review PR", "priority": "high"}
                             }
                         }
                     ]
@@ -425,7 +425,7 @@ mod tests {
         let calls = GeminiClient::parse_tool_calls(&response).unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].name, "create_tag");
-        assert_eq!(calls[1].name, "assess_mood");
+        assert_eq!(calls[1].name, "extract_task");
     }
 
     #[test]

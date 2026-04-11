@@ -24,7 +24,7 @@ Reference screenshots: `.reference/` directory
 ## Journal — List View (with notes)
 
 - [ ] Notes are grouped by date (Today / Yesterday / Older)
-- [ ] Each note card shows preview text, date, tag count, mood badge
+- [ ] Each note card shows preview text, date, tag count
 - [ ] Clicking a note opens it in the editor for editing
 - [ ] List refreshes after saving a new or edited note
 
@@ -57,7 +57,7 @@ Reference screenshots: `.reference/` directory
 - [ ] Shows "Process with AI" button (only for saved notes)
 - [ ] Save button persists changes
 - [ ] Process with AI triggers server-side LLM processing
-- [ ] LLM results display: tags, mood, tasks, dates, expenses, summary
+- [ ] LLM results display: tags, tasks, dates, expenses, summary
 
 ## Routines — Daily Checklist (empty state)
 

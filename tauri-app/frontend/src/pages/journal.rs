@@ -230,12 +230,6 @@ fn NoteCard(note: NoteListItem, on_click: EventHandler<String>) -> Element {
                         "{note.tags.len()} tags"
                     }
                 }
-                if let Some(mood) = &note.mood {
-                    span {
-                        style: "background: #f0f0e8; padding: 1px 6px; border-radius: 4px;",
-                        "{mood}"
-                    }
-                }
             }
         }
     }
@@ -384,16 +378,6 @@ fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
                             "{tag}"
                         }
                     }
-                }
-            }
-
-            // Mood
-            if let Some(mood) = &result.mood {
-                div {
-                    style: "margin-bottom: 10px; font-size: 13px;",
-                    span { style: "font-weight: 600; color: #888;", "Mood: " }
-                    span { "{mood.mood}" }
-                    span { style: "color: #aaa; margin-left: 4px;", "({mood.confidence:.0}%)" }
                 }
             }
 

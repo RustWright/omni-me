@@ -11,7 +11,6 @@ pub struct NoteRow {
     pub date: String,
     pub tags: Vec<String>,
     pub summary: Option<String>,
-    pub mood: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -53,7 +52,7 @@ pub struct CompletionRow {
 pub async fn list_notes(db: &Database, limit: u32, offset: u32) -> Result<Vec<NoteRow>, DbError> {
     let mut resp = db
         .query(
-            "SELECT meta::id(id) AS id, raw_text, date, tags, summary, mood,
+            "SELECT meta::id(id) AS id, raw_text, date, tags, summary,
                     <string> created_at AS created_at, <string> updated_at AS updated_at
              FROM notes
              ORDER BY date DESC, created_at DESC
@@ -71,7 +70,7 @@ pub async fn list_notes(db: &Database, limit: u32, offset: u32) -> Result<Vec<No
 pub async fn get_note(db: &Database, id: &str) -> Result<Option<NoteRow>, DbError> {
     let mut resp = db
         .query(
-            "SELECT meta::id(id) AS id, raw_text, date, tags, summary, mood,
+            "SELECT meta::id(id) AS id, raw_text, date, tags, summary,
                     <string> created_at AS created_at, <string> updated_at AS updated_at
              FROM type::record('notes', $id)",
         )
@@ -86,7 +85,7 @@ pub async fn get_note(db: &Database, id: &str) -> Result<Option<NoteRow>, DbErro
 pub async fn search_notes(db: &Database, query: &str) -> Result<Vec<NoteRow>, DbError> {
     let mut resp = db
         .query(
-            "SELECT meta::id(id) AS id, raw_text, date, tags, summary, mood,
+            "SELECT meta::id(id) AS id, raw_text, date, tags, summary,
                     <string> created_at AS created_at, <string> updated_at AS updated_at
              FROM notes
              WHERE string::lowercase(raw_text) CONTAINS string::lowercase($query)

@@ -26,7 +26,6 @@ impl Projection for NotesProjection {
              DEFINE FIELD IF NOT EXISTS tags ON notes TYPE array;
              DEFINE FIELD IF NOT EXISTS tags.* ON notes TYPE string;
              DEFINE FIELD IF NOT EXISTS summary ON notes TYPE option<string>;
-             DEFINE FIELD IF NOT EXISTS mood ON notes TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS created_at ON notes TYPE datetime;
              DEFINE FIELD IF NOT EXISTS updated_at ON notes TYPE datetime;",
         )
@@ -65,7 +64,6 @@ impl NotesProjection {
                 date: $date,
                 tags: [],
                 summary: NONE,
-                mood: NONE,
                 created_at: type::datetime($ts),
                 updated_at: type::datetime($ts)
             }",
@@ -113,7 +111,6 @@ impl NotesProjection {
             })
             .unwrap_or_default();
         let summary = derived["summary"].as_str().map(String::from);
-        let mood = derived["mood"].as_str().map(String::from);
 
         // Use the note_id from the payload (the aggregate this LLM processing is for)
         let note_id = event.payload["note_id"]
@@ -126,13 +123,11 @@ impl NotesProjection {
             "UPDATE type::record('notes', $note_id) SET
                 tags = $tags,
                 summary = $summary,
-                mood = $mood,
                 updated_at = type::datetime($ts)",
         )
         .bind(("note_id", note_id))
         .bind(("tags", tags))
         .bind(("summary", summary))
-        .bind(("mood", mood))
         .bind(("ts", ts))
         .await
         .map_err(|e| EventError::Projection(e.to_string()))?;
@@ -272,9 +267,8 @@ mod tests {
                     "prompt_version": "v1",
                     "model": "gemini-flash",
                     "derived": {
-                        "tags": ["journal", "mood"],
-                        "summary": "A positive journal entry.",
-                        "mood": "happy"
+                        "tags": ["journal", "positive"],
+                        "summary": "A positive journal entry."
                     }
                 }),
             })
@@ -289,12 +283,5 @@ mod tests {
             .unwrap();
         let summary: Option<String> = resp.take("summary").unwrap();
         assert_eq!(summary.as_deref(), Some("A positive journal entry."));
-
-        let mut resp = db
-            .query("SELECT * FROM type::record('notes', 'note-llm')")
-            .await
-            .unwrap();
-        let mood: Option<String> = resp.take("mood").unwrap();
-        assert_eq!(mood.as_deref(), Some("happy"));
     }
 }
