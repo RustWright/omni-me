@@ -1,3 +1,5 @@
 mod client;
 
-pub use client::{SyncClient, SyncError, SyncResult};
+pub use client::{
+    PullRequest, PullResponse, PushRequest, PushResponse, SyncClient, SyncError, SyncResult,
+};

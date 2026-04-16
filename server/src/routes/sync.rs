@@ -4,40 +4,13 @@ use axum::{
     extract::State,
     routing::post,
 };
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::Utc;
 
-use omni_me_core::events::{Event, EventStore, NewEvent, SurrealEventStore};
+use axum::http::StatusCode;
+use omni_me_core::events::{EventStore, EventType, SurrealEventStore, validate_payload};
+use omni_me_core::sync::{PullRequest, PullResponse, PushRequest, PushResponse};
 
 use crate::AppState;
-
-/// Request body for POST /sync/push
-#[derive(Debug, Deserialize)]
-pub struct PushRequest {
-    #[allow(dead_code)]
-    pub device_id: String,
-    pub events: Vec<NewEvent>,
-}
-
-/// Response for POST /sync/push
-#[derive(Debug, Serialize)]
-pub struct PushResponse {
-    pub count: usize,
-}
-
-/// Request body for POST /sync/pull
-#[derive(Debug, Deserialize)]
-pub struct PullRequest {
-    pub device_id: String,
-    pub since: DateTime<Utc>,
-}
-
-/// Response for POST /sync/pull
-#[derive(Debug, Serialize)]
-pub struct PullResponse {
-    pub events: Vec<Event>,
-    pub sync_timestamp: DateTime<Utc>,
-}
 
 /// Build the sync router (nested under /sync).
 pub fn sync_routes() -> Router<AppState> {
@@ -46,23 +19,38 @@ pub fn sync_routes() -> Router<AppState> {
         .route("/sync/pull", post(pull_handler))
 }
 
+const MAX_EVENTS_PER_PUSH: usize = 100;
+
 async fn push_handler(
     State(state): State<AppState>,
     Json(body): Json<PushRequest>,
-) -> Json<PushResponse> {
-    let store = SurrealEventStore::new((*state.db).clone());
-    let mut count = 0;
-
-    for event in body.events {
-        match store.append(event).await {
-            Ok(_) => count += 1,
-            Err(e) => {
-                tracing::warn!("failed to append event during push: {e}");
-            }
-        }
+) -> Result<Json<PushResponse>, (StatusCode, String)> {
+    if body.events.len() > MAX_EVENTS_PER_PUSH {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("too many events: {} (max {})", body.events.len(), MAX_EVENTS_PER_PUSH),
+        ));
     }
 
-    Json(PushResponse { count })
+    // Validate all events before appending any
+    for (i, event) in body.events.iter().enumerate() {
+        let event_type: EventType = event.event_type.parse().map_err(|e: String| {
+            (StatusCode::BAD_REQUEST, format!("event[{i}]: {e}"))
+        })?;
+        validate_payload(&event_type, &event.payload).map_err(|e| {
+            (StatusCode::BAD_REQUEST, format!("event[{i}]: {e}"))
+        })?;
+    }
+
+    let store = SurrealEventStore::new((*state.db).clone());
+    let count = body.events.len();
+
+    store.append_batch(body.events).await.map_err(|e| {
+        tracing::warn!("failed to append events during push: {e}");
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to store events: {e}"))
+    })?;
+
+    Ok(Json(PushResponse { count }))
 }
 
 async fn pull_handler(

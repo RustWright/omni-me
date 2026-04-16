@@ -1,4 +1,4 @@
-use axum::{Router, Json, routing::get};
+use axum::{Router, Json, routing::get, extract::DefaultBodyLimit};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -22,12 +22,17 @@ async fn main() {
         .await
         .expect("failed to connect to SurrealDB");
 
-    let state = AppState { db: Arc::new(db) };
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .expect("GEMINI_API_KEY must be set");
+    let llm_client = Arc::new(omni_me_core::llm::GeminiClient::new(api_key));
+
+    let state = AppState { db: Arc::new(db), llm_client };
 
     let app = Router::new()
         .route("/health", get(health))
         .merge(routes::sync_routes())
         .merge(routes::notes_routes())
+        .layer(DefaultBodyLimit::max(256 * 1024))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

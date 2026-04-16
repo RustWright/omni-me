@@ -52,6 +52,7 @@ pub async fn update_server_url(
     server_url: String,
 ) -> Result<(), String> {
     tracing::info!(new_url = %server_url, "update_server_url");
+    let _ = tauri::Url::parse(&server_url).map_err(|e| format!("invalid URL: {e}"))?;
     let path = state.app_data_dir.join(crate::SERVER_URL_FILE);
     std::fs::write(&path, &server_url).map_err(|e| {
         tracing::warn!(error = %e, "failed to persist server_url");

@@ -1,5 +1,10 @@
+use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+
+static URL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"https?://[^\s\)\]>,;"']+"#).expect("valid url regex")
+});
 
 /// Result of deterministic pre-processing on raw text.
 /// Only extracts data that requires exact matching (URLs).
@@ -18,8 +23,7 @@ pub fn preprocess(text: &str) -> PreprocessResult {
 
 /// Extract HTTP/HTTPS URLs from text.
 fn extract_urls(text: &str) -> Vec<String> {
-    let re = Regex::new(r#"https?://[^\s\)\]>,;"']+"#).expect("valid url regex");
-    re.find_iter(text)
+    URL_REGEX.find_iter(text)
         .map(|m| {
             let url = m.as_str();
             // Strip trailing punctuation that's likely not part of the URL

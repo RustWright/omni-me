@@ -30,8 +30,15 @@ impl Projection for NotesProjection {
              DEFINE FIELD IF NOT EXISTS updated_at ON notes TYPE datetime;",
         )
         .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
+        Ok(())
+    }
+
+    async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
+        db.query("DELETE FROM notes;")
+            .await
+    ?;
         Ok(())
     }
 
@@ -73,7 +80,7 @@ impl NotesProjection {
         .bind(("date", date))
         .bind(("ts", ts))
         .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
         Ok(())
     }
@@ -95,7 +102,7 @@ impl NotesProjection {
         .bind(("raw_text", raw_text))
         .bind(("ts", ts))
         .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
         Ok(())
     }
@@ -130,7 +137,7 @@ impl NotesProjection {
         .bind(("summary", summary))
         .bind(("ts", ts))
         .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
         Ok(())
     }

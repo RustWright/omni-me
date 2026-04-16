@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -28,10 +30,7 @@ pub enum LlmResponse {
     Structured(Value),
 }
 
-/// Returns the default set of tool definitions for note processing.
-///
-/// Includes: `create_tag`, `extract_task`, `extract_date`, `extract_expense`.
-pub fn default_note_tools() -> Vec<ToolDef> {
+static DEFAULT_NOTE_TOOLS: LazyLock<Vec<ToolDef>> = LazyLock::new(|| {
     vec![
         ToolDef {
             name: "create_tag".to_string(),
@@ -107,6 +106,14 @@ pub fn default_note_tools() -> Vec<ToolDef> {
             }),
         },
     ]
+});
+
+/// Returns the default set of tool definitions for note processing.
+///
+/// Includes: `create_tag`, `extract_task`, `extract_date`, `extract_expense`.
+/// Built once on first call, then reused.
+pub fn default_note_tools() -> &'static [ToolDef] {
+    &DEFAULT_NOTE_TOOLS
 }
 
 #[cfg(test)]

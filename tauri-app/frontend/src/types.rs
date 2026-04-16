@@ -58,6 +58,12 @@ pub struct SyncInfo {
     pub device_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimezoneInfo {
+    pub timezone: String,
+    pub is_override: bool,
+}
+
 /// LLM processing result from the server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmResult {
@@ -66,6 +72,8 @@ pub struct LlmResult {
     pub dates: Vec<DateResult>,
     pub expenses: Vec<ExpenseResult>,
     pub summary: Option<String>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

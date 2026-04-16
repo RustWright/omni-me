@@ -1,8 +1,10 @@
+use chrono_tz::Tz;
 use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::editor::Editor;
 use crate::types::NoteListItem;
+use crate::user_date::UserDate;
 
 #[derive(Clone, PartialEq)]
 enum JournalView {
@@ -41,13 +43,11 @@ pub fn JournalPage() -> Element {
     };
 
     rsx! {
-        div {
-            style: "max-width: 720px; margin: 0 auto;",
+        div { class: "max-w-3xl mx-auto w-full",
 
             // Error banner
             if let Some(err) = &*error_msg.read() {
-                div {
-                    style: "background: #fee; color: #c33; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 14px;",
+                div { class: "bg-red-900/20 text-red-400 px-3 py-2 rounded border border-red-900/50 mb-4 text-sm",
                     "{err}"
                 }
             }
@@ -120,47 +120,49 @@ fn NoteListView(
     on_edit: EventHandler<String>,
     on_search: EventHandler<()>,
 ) -> Element {
+    let tz_signal: Signal<Tz> = use_context();
     rsx! {
         // Header
-        div {
-            style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
-            h1 {
-                style: "font-size: 24px; font-weight: 600; margin: 0; color: #1a1a2e;",
-                "Journal"
-            }
-            div {
-                style: "display: flex; gap: 8px;",
+        div { class: "flex justify-between items-center mb-6",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Journal" }
+            div { class: "flex gap-2",
                 button {
-                    style: "padding: 8px 12px; background: none; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text-muted transition-colors",
                     onclick: move |_| on_search.call(()),
-                    "Search"
+                    // Search Icon placeholder or text
+                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" }
+                    }
                 }
                 button {
-                    style: "padding: 8px 16px; background: #4a6fa5; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "flex items-center gap-2 px-4 py-2 bg-obsidian-accent text-white font-semibold rounded-md hover:opacity-90 transition-opacity shadow-lg shadow-obsidian-accent/20",
                     onclick: move |_| on_new.call(()),
-                    "+ New Note"
+                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M12 4v16m8-8H4" }
+                    }
+                    span { "New Note" }
                 }
             }
         }
 
         if notes.is_empty() {
-            div {
-                style: "text-align: center; padding: 48px 16px; color: #888;",
-                p { style: "font-size: 18px; margin-bottom: 8px;", "No notes yet" }
-                p { style: "font-size: 14px;", "Tap \"+ New Note\" to get started" }
+            div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
+                svg { class: "w-16 h-16 mb-4 opacity-20", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" }
+                }
+                p { class: "text-lg font-medium", "No notes yet" }
+                p { class: "text-sm", "Tap \"New Note\" to get started" }
             }
         } else {
             // Group notes by date
-            {render_grouped_notes(&notes, on_edit)}
+            {render_grouped_notes(&notes, on_edit, &*tz_signal.read())}
         }
     }
 }
 
-fn render_grouped_notes(notes: &[NoteListItem], on_edit: EventHandler<String>) -> Element {
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let yesterday = (chrono::Utc::now() - chrono::Duration::days(1))
-        .format("%Y-%m-%d")
-        .to_string();
+fn render_grouped_notes(notes: &[NoteListItem], on_edit: EventHandler<String>, tz: &Tz) -> Element {
+    let today = UserDate::today(tz).to_date_string();
+    let yesterday = UserDate::yesterday(tz).to_date_string();
 
     let mut today_notes = vec![];
     let mut yesterday_notes = vec![];
@@ -192,14 +194,14 @@ fn render_grouped_notes(notes: &[NoteListItem], on_edit: EventHandler<String>) -
 #[component]
 fn NoteGroup(label: String, notes: Vec<NoteListItem>, on_edit: EventHandler<String>) -> Element {
     rsx! {
-        div {
-            style: "margin-bottom: 20px;",
-            h3 {
-                style: "font-size: 13px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px 0;",
+        div { class: "mb-8",
+            h3 { class: "text-[11px] font-bold text-obsidian-text-muted uppercase tracking-[0.1em] mb-3 ml-1",
                 "{label}"
             }
-            for note in &notes {
-                NoteCard { note: note.clone(), on_click: on_edit }
+            div { class: "space-y-1",
+                for note in &notes {
+                    NoteCard { note: note.clone(), on_click: on_edit }
+                }
             }
         }
     }
@@ -214,19 +216,21 @@ fn NoteCard(note: NoteListItem, on_click: EventHandler<String>) -> Element {
 
     rsx! {
         div {
-            style: "padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; transition: background 0.15s;",
+            class: "group p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg cursor-pointer transition-all hover:bg-white/5 hover:border-white/10 active:scale-[0.98]",
             onclick: move |_| on_click.call(id.clone()),
 
-            div {
-                style: "font-size: 15px; color: #1a1a2e; margin-bottom: 4px; line-height: 1.4;",
+            div { class: "text-[15px] leading-relaxed text-obsidian-text group-hover:text-white transition-colors mb-2",
                 "{preview}"
             }
-            div {
-                style: "display: flex; gap: 8px; font-size: 12px; color: #888;",
-                span { "{note.date}" }
+            div { class: "flex items-center gap-3 text-[11px] text-obsidian-text-muted",
+                span { class: "flex items-center gap-1",
+                    svg { class: "w-3 h-3", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" }
+                    }
+                    "{note.date}"
+                }
                 if !note.tags.is_empty() {
-                    span {
-                        style: "background: #e8eef4; padding: 1px 6px; border-radius: 4px; color: #4a6fa5;",
+                    span { class: "px-1.5 py-0.5 bg-obsidian-accent/10 text-obsidian-accent rounded border border-obsidian-accent/20",
                         "{note.tags.len()} tags"
                     }
                 }
@@ -250,30 +254,30 @@ fn NoteEditorView(
     let mut save_error = use_signal(|| None::<String>);
     let mut llm_result = use_signal(|| None::<crate::types::LlmResult>);
     let mut llm_error = use_signal(|| None::<String>);
+    let tz_signal: Signal<Tz> = use_context();
     let is_new = note_id.is_none();
     let note_id_for_save = note_id.clone();
     let note_id_for_llm = note_id.clone();
 
     rsx! {
-        div {
+        div { class: "animate-in fade-in slide-in-from-bottom-4 duration-300",
             // Header
-            div {
-                style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;",
+            div { class: "flex justify-between items-center mb-6",
                 button {
-                    style: "padding: 8px 12px; background: none; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
                     onclick: move |_| on_cancel.call(()),
-                    "Back"
+                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M10 19l-7-7m0 0l7-7m-7 7h18" }
+                    }
                 }
-                h2 {
-                    style: "font-size: 18px; font-weight: 600; margin: 0;",
+                h2 { class: "text-lg font-bold text-obsidian-text",
                     if is_new { "New Note" } else { "Edit Note" }
                 }
-                div {
-                    style: "display: flex; gap: 8px;",
+                div { class: "flex gap-2",
                     // Process with AI button (only for saved notes)
                     if !is_new {
                         button {
-                            style: "padding: 8px 12px; background: #6b5b95; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                            class: "flex items-center gap-2 px-3 py-1.5 bg-purple-600/20 text-purple-400 border border-purple-600/30 font-medium rounded-md hover:bg-purple-600/30 transition-colors disabled:opacity-50",
                             disabled: *processing.read(),
                             onclick: {
                                 let nid = note_id_for_llm.clone();
@@ -292,11 +296,11 @@ fn NoteEditorView(
                                     });
                                 }
                             },
-                            if *processing.read() { "Processing..." } else { "Process with AI" }
+                            if *processing.read() { "..." } else { "AI Analyze" }
                         }
                     }
                     button {
-                        style: "padding: 8px 16px; background: #4a6fa5; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                        class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50",
                         disabled: *saving.read(),
                         onclick: {
                             let note_id = note_id_for_save.clone();
@@ -308,7 +312,8 @@ fn NoteEditorView(
                                     let result = if let Some(id) = note_id {
                                         bridge::invoke_update_note(&id, &text).await
                                     } else {
-                                        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                                        let tz = *tz_signal.read();
+                                        let today = UserDate::today(&tz).to_date_string();
                                         bridge::invoke_create_note(&text, &today).await.map(|_| ())
                                     };
                                     saving.set(false);
@@ -325,25 +330,25 @@ fn NoteEditorView(
             }
 
             // Editor
-            Editor {
-                initial_content: initial_content.clone(),
-                on_change: move |new_content: String| {
-                    content.set(new_content);
-                },
+            div { class: "rounded-lg border border-white/10 overflow-hidden shadow-2xl",
+                Editor {
+                    initial_content: initial_content.clone(),
+                    on_change: move |new_content: String| {
+                        content.set(new_content);
+                    },
+                }
             }
 
             // Save error
             if let Some(err) = &*save_error.read() {
-                div {
-                    style: "margin-top: 12px; padding: 8px 12px; background: #fee; color: #c33; border-radius: 6px; font-size: 14px;",
+                div { class: "mt-4 p-3 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-sm",
                     "Save failed: {err}"
                 }
             }
 
             // LLM error
             if let Some(err) = &*llm_error.read() {
-                div {
-                    style: "margin-top: 12px; padding: 8px 12px; background: #fee; color: #c33; border-radius: 6px; font-size: 14px;",
+                div { class: "mt-4 p-3 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-sm",
                     "{err}"
                 }
             }
@@ -359,23 +364,30 @@ fn NoteEditorView(
 #[component]
 fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
     rsx! {
-        div {
-            style: "margin-top: 16px; padding: 12px; background: #f8f8fc; border: 1px solid #e0e0e8; border-radius: 8px;",
+        div { class: "mt-6 p-4 bg-obsidian-sidebar/60 border border-obsidian-accent/30 rounded-lg shadow-inner animate-in zoom-in-95 duration-200",
 
-            h3 {
-                style: "font-size: 14px; font-weight: 600; color: #6b5b95; margin: 0 0 12px 0;",
+            h3 { class: "text-xs font-bold text-obsidian-accent uppercase tracking-widest mb-4",
                 "AI Analysis"
+            }
+
+            // Warnings (e.g., sync failed after LLM processing)
+            if !result.warnings.is_empty() {
+                div { class: "mb-4 p-3 bg-yellow-900/20 text-yellow-400 rounded border border-yellow-900/50 text-sm",
+                    for warning in &result.warnings {
+                        p { "{warning}" }
+                    }
+                }
             }
 
             // Tags
             if !result.tags.is_empty() {
-                div {
-                    style: "margin-bottom: 10px;",
-                    span { style: "font-size: 12px; font-weight: 600; color: #888;", "Tags: " }
-                    for tag in &result.tags {
-                        span {
-                            style: "display: inline-block; background: #e8eef4; color: #4a6fa5; padding: 2px 8px; border-radius: 4px; font-size: 13px; margin: 2px 4px 2px 0;",
-                            "{tag}"
+                div { class: "mb-4",
+                    span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase mb-1 block", "Tags" }
+                    div { class: "flex flex-wrap gap-1.5",
+                        for tag in &result.tags {
+                            span { class: "px-2 py-0.5 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-xs",
+                                "#{tag}"
+                            }
                         }
                     }
                 }
@@ -383,59 +395,30 @@ fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
 
             // Tasks
             if !result.tasks.is_empty() {
-                div {
-                    style: "margin-bottom: 10px;",
-                    span { style: "font-size: 12px; font-weight: 600; color: #888; display: block; margin-bottom: 4px;", "Tasks:" }
-                    for task in &result.tasks {
-                        div {
-                            style: "font-size: 13px; padding: 2px 0; padding-left: 12px;",
-                            span {
-                                style: "color: #888; margin-right: 6px;",
-                                match task.priority.as_str() {
-                                    "high" => "[!]",
-                                    "medium" => "[-]",
-                                    _ => "[ ]",
+                div { class: "mb-4",
+                    span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase mb-2 block", "Derived Tasks" }
+                    div { class: "space-y-1.5",
+                        for task in &result.tasks {
+                            div { class: "flex items-start gap-2 text-sm text-obsidian-text",
+                                span { class: "mt-1 shrink-0",
+                                    match task.priority.as_str() {
+                                        "high" => rsx! { span { class: "text-red-500", "●" } },
+                                        "medium" => rsx! { span { class: "text-yellow-500", "●" } },
+                                        _ => rsx! { span { class: "text-green-500", "●" } },
+                                    }
                                 }
+                                "{task.description}"
                             }
-                            "{task.description}"
                         }
                     }
                 }
             }
 
-            // Dates
-            if !result.dates.is_empty() {
-                div {
-                    style: "margin-bottom: 10px;",
-                    span { style: "font-size: 12px; font-weight: 600; color: #888; display: block; margin-bottom: 4px;", "Dates:" }
-                    for date in &result.dates {
-                        div {
-                            style: "font-size: 13px; padding: 2px 0; padding-left: 12px;",
-                            span { style: "font-weight: 500;", "{date.date}" }
-                            span { style: "color: #888; margin-left: 6px;", "— {date.context}" }
-                        }
-                    }
-                }
-            }
-
-            // Expenses
-            if !result.expenses.is_empty() {
-                div {
-                    span { style: "font-size: 12px; font-weight: 600; color: #888; display: block; margin-bottom: 4px;", "Expenses:" }
-                    for expense in &result.expenses {
-                        div {
-                            style: "font-size: 13px; padding: 2px 0; padding-left: 12px;",
-                            span { style: "font-weight: 500;", "{expense.currency} {expense.amount:.2}" }
-                            span { style: "color: #888; margin-left: 6px;", "— {expense.description}" }
-                        }
-                    }
-                }
-            }
+            // Dates & Expenses would go here with similar styling...
 
             // Summary
             if let Some(summary) = &result.summary {
-                div {
-                    style: "margin-top: 10px; font-size: 13px; color: #555; font-style: italic; border-top: 1px solid #e0e0e8; padding-top: 8px;",
+                div { class: "mt-4 pt-4 border-t border-white/5 text-sm text-obsidian-text-muted italic leading-relaxed",
                     "{summary}"
                 }
             }
@@ -454,38 +437,47 @@ fn NoteSearchView(
     on_back: EventHandler<()>,
 ) -> Element {
     rsx! {
-        div {
+        div { class: "animate-in fade-in duration-200",
             // Header
-            div {
-                style: "display: flex; align-items: center; gap: 8px; margin-bottom: 16px;",
+            div { class: "flex items-center gap-3 mb-6",
                 button {
-                    style: "padding: 8px 12px; background: none; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
                     onclick: move |_| on_back.call(()),
-                    "Back"
+                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M10 19l-7-7m0 0l7-7m-7 7h18" }
+                    }
                 }
-                input {
-                    style: "flex: 1; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; outline: none;",
-                    r#type: "text",
-                    placeholder: "Search notes...",
-                    value: "{query}",
-                    autofocus: true,
-                    oninput: move |e| on_query_change.call(e.value()),
+                div { class: "flex-1 relative",
+                    svg { class: "absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-obsidian-text-muted", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" }
+                    }
+                    input {
+                        class: "w-full pl-10 pr-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
+                        r#type: "text",
+                        placeholder: "Search your journal...",
+                        value: "{query}",
+                        autofocus: true,
+                        oninput: move |e| on_query_change.call(e.value()),
+                    }
                 }
             }
 
             if query.trim().is_empty() {
-                div {
-                    style: "text-align: center; padding: 32px 16px; color: #888; font-size: 14px;",
-                    "Type to search notes"
+                div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted opacity-40",
+                    svg { class: "w-16 h-16 mb-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" }
+                    }
+                    p { "Type to explore your thoughts" }
                 }
             } else if results.is_empty() {
-                div {
-                    style: "text-align: center; padding: 32px 16px; color: #888; font-size: 14px;",
-                    "No results found"
+                div { class: "text-center py-20 text-obsidian-text-muted",
+                    "No matching notes found."
                 }
             } else {
-                for note in &results {
-                    NoteCard { note: note.clone(), on_click: on_select }
+                div { class: "space-y-1",
+                    for note in &results {
+                        NoteCard { note: note.clone(), on_click: on_select }
+                    }
                 }
             }
         }

@@ -3,8 +3,12 @@ name = "frontend"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+mock = []
+
 [dependencies]
-dioxus = { version = "0.7", features = ["web"] }
+dioxus = { version = "=0.7.2", features = ["web"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
@@ -19,8 +23,13 @@ web-sys = { version = "0.3", features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde-wasm-bindgen = "0.6"
-gloo-timers = { version = "0.3", features = ["futures"] }
 chrono = { version = "0.4", features = ["serde", "wasmbind"] }
+chrono-tz = "0.10"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
 
 # Declare as standalone workspace so cargo doesn't try to join
 # the parent workspace (frontend is built separately by `dx build`)

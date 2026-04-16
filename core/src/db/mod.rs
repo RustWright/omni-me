@@ -18,12 +18,12 @@ const DATABASE: &str = "main";
 pub async fn connect(path: &str) -> Result<Surreal<Db>, DbError> {
     let db = Surreal::new::<SurrealKv>(path)
         .await
-        .map_err(|e| DbError::Connection(e.to_string()))?;
+        .map_err(DbError::Connection)?;
 
     db.use_ns(NAMESPACE)
         .use_db(DATABASE)
         .await
-        .map_err(|e| DbError::Connection(e.to_string()))?;
+        .map_err(DbError::Connection)?;
 
     init_schema(&db).await?;
 
@@ -50,7 +50,7 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
         ",
     )
     .await
-    .map_err(|e| DbError::Schema(e.to_string()))?;
+    .map_err(DbError::Schema)?;
 
     Ok(())
 }

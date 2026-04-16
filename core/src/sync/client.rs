@@ -1,29 +1,19 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 use crate::db::Database;
 use crate::events::{Event, EventStore, NewEvent, SurrealEventStore};
 
 /// Error type for sync operations.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SyncError {
+    #[error("sync network error: {0}")]
     Network(String),
+    #[error("sync server error: {0}")]
     Server(String),
+    #[error("sync local error: {0}")]
     Local(String),
 }
-
-impl fmt::Display for SyncError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SyncError::Network(msg) => write!(f, "sync network error: {msg}"),
-            SyncError::Server(msg) => write!(f, "sync server error: {msg}"),
-            SyncError::Local(msg) => write!(f, "sync local error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for SyncError {}
 
 /// Result of a sync operation.
 #[derive(Debug)]
@@ -34,31 +24,30 @@ pub struct SyncResult {
 }
 
 /// Request body for POST /sync/push
-#[derive(Debug, Serialize)]
-struct PushRequest {
-    device_id: String,
-    events: Vec<NewEvent>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PushRequest {
+    pub device_id: String,
+    pub events: Vec<NewEvent>,
 }
 
 /// Response from POST /sync/push
-#[derive(Debug, Deserialize)]
-struct PushResponse {
-    count: usize,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PushResponse {
+    pub count: usize,
 }
 
 /// Request body for POST /sync/pull
-#[derive(Debug, Serialize)]
-struct PullRequest {
-    device_id: String,
-    since: DateTime<Utc>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PullRequest {
+    pub device_id: String,
+    pub since: DateTime<Utc>,
 }
 
 /// Response from POST /sync/pull
-#[derive(Debug, Deserialize)]
-struct PullResponse {
-    events: Vec<Event>,
-    #[allow(dead_code)]
-    sync_timestamp: DateTime<Utc>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PullResponse {
+    pub events: Vec<Event>,
+    pub sync_timestamp: DateTime<Utc>,
 }
 
 /// Client that syncs local events with a remote server.
@@ -165,7 +154,7 @@ impl SyncClient {
     ) -> Result<(), SyncError> {
         let device_id = self.device_id.clone();
         let ts = timestamp.to_rfc3339();
-        let mut resp = db.query(
+        db.query(
             "UPSERT sync_state SET
                 device_id = $device_id,
                 last_sync_timestamp = type::datetime($ts)
@@ -175,8 +164,6 @@ impl SyncClient {
         .bind(("ts", ts))
         .await
         .map_err(|e| SyncError::Local(e.to_string()))?;
-
-        let _: Result<Vec<serde_json::Value>, _> = resp.take(0);
 
         Ok(())
     }
@@ -212,44 +199,49 @@ impl SyncClient {
 
     async fn push_events(&self, events: &[Event]) -> Result<usize, SyncError> {
         let url = format!("{}/sync/push", self.server_url);
+        let mut total = 0;
 
-        let new_events: Vec<NewEvent> = events
-            .iter()
-            .map(|e| NewEvent {
-                id: Some(e.id.clone()),
-                event_type: e.event_type.clone(),
-                aggregate_id: e.aggregate_id.clone(),
-                timestamp: e.timestamp,
-                device_id: e.device_id.clone(),
-                payload: e.payload.clone(),
-            })
-            .collect();
+        for chunk in events.chunks(100) {
+            let new_events: Vec<NewEvent> = chunk
+                .iter()
+                .map(|e| NewEvent {
+                    id: Some(e.id.clone()),
+                    event_type: e.event_type.clone(),
+                    aggregate_id: e.aggregate_id.clone(),
+                    timestamp: e.timestamp,
+                    device_id: e.device_id.clone(),
+                    payload: e.payload.clone(),
+                })
+                .collect();
 
-        let body = PushRequest {
-            device_id: self.device_id.clone(),
-            events: new_events,
-        };
+            let body = PushRequest {
+                device_id: self.device_id.clone(),
+                events: new_events,
+            };
 
-        let resp = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| SyncError::Network(e.to_string()))?;
+            let resp = self
+                .http
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| SyncError::Network(e.to_string()))?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(SyncError::Server(format!("push failed ({status}): {body}")));
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(SyncError::Server(format!("push failed ({status}): {body}")));
+            }
+
+            let push_resp: PushResponse = resp
+                .json()
+                .await
+                .map_err(|e| SyncError::Network(format!("failed to parse push response: {e}")))?;
+
+            total += push_resp.count;
         }
 
-        let push_resp: PushResponse = resp
-            .json()
-            .await
-            .map_err(|e| SyncError::Network(format!("failed to parse push response: {e}")))?;
-
-        Ok(push_resp.count)
+        Ok(total)
     }
 
     async fn get_local_events_since(
@@ -257,13 +249,10 @@ impl SyncClient {
         store: &SurrealEventStore,
         since: &DateTime<Utc>,
     ) -> Result<Vec<Event>, SyncError> {
-        // Get events from this device only (we only push our own events)
-        let mut all = store
-            .get_since(*since, None)
+        // Get events from this device only (filtered at the DB layer)
+        store
+            .get_since_by_device(*since, &self.device_id)
             .await
-            .map_err(|e| SyncError::Local(e.to_string()))?;
-
-        all.retain(|e| e.device_id == self.device_id);
-        Ok(all)
+            .map_err(|e| SyncError::Local(e.to_string()))
     }
 }

@@ -2,34 +2,16 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
-use std::fmt;
 
 use crate::db::Database;
 
-/// Error type for event store operations.
-#[derive(Debug)]
+/// Error type for event store and projection operations.
+#[derive(Debug, thiserror::Error)]
 pub enum EventError {
-    Store(String),
+    #[error("database error: {0}")]
+    Db(#[from] surrealdb::Error),
+    #[error("event validation error: {0}")]
     Validation(String),
-    Projection(String),
-}
-
-impl fmt::Display for EventError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EventError::Store(msg) => write!(f, "event store error: {msg}"),
-            EventError::Validation(msg) => write!(f, "event validation error: {msg}"),
-            EventError::Projection(msg) => write!(f, "projection error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for EventError {}
-
-impl From<surrealdb::Error> for EventError {
-    fn from(err: surrealdb::Error) -> Self {
-        EventError::Store(err.to_string())
-    }
 }
 
 /// A persisted event with a generated ID.
@@ -61,11 +43,21 @@ pub trait EventStore: Send + Sync {
     /// Append a new event, generating a ULID for the id.
     async fn append(&self, event: NewEvent) -> Result<Event, EventError>;
 
+    /// Append multiple events atomically. All succeed or all fail.
+    async fn append_batch(&self, events: Vec<NewEvent>) -> Result<Vec<Event>, EventError>;
+
     /// Get all events since a given timestamp, optionally excluding a specific device.
     async fn get_since(
         &self,
         since: DateTime<Utc>,
         exclude_device: Option<&str>,
+    ) -> Result<Vec<Event>, EventError>;
+
+    /// Get events from a specific device since a given timestamp.
+    async fn get_since_by_device(
+        &self,
+        since: DateTime<Utc>,
+        device_id: &str,
     ) -> Result<Vec<Event>, EventError>;
 
     /// Get all events for a given aggregate, ordered by timestamp.
@@ -109,7 +101,7 @@ impl EventStore for SurrealEventStore {
             .bind(("device_id", event.device_id.clone()))
             .bind(("payload", event.payload.clone()))
             .await
-            .map_err(|e| EventError::Store(e.to_string()))?;
+?;
 
         Ok(Event {
             id,
@@ -119,6 +111,56 @@ impl EventStore for SurrealEventStore {
             device_id: event.device_id,
             payload: event.payload,
         })
+    }
+
+    async fn append_batch(&self, events: Vec<NewEvent>) -> Result<Vec<Event>, EventError> {
+        if events.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Build a transactional query with unique parameter names per event
+        let mut query_parts = vec!["BEGIN TRANSACTION;".to_string()];
+        let mut result_events = Vec::with_capacity(events.len());
+
+        for (i, event) in events.iter().enumerate() {
+            let id = event.id.clone().unwrap_or_else(|| ulid::Ulid::new().to_string());
+            query_parts.push(format!(
+                "INSERT INTO events {{
+                    id: type::record('events', $id_{i}),
+                    event_type: $event_type_{i},
+                    aggregate_id: $aggregate_id_{i},
+                    timestamp: type::datetime($timestamp_{i}),
+                    device_id: $device_id_{i},
+                    payload: $payload_{i}
+                }} ON DUPLICATE KEY UPDATE id = id;"
+            ));
+            result_events.push(Event {
+                id,
+                event_type: event.event_type.clone(),
+                aggregate_id: event.aggregate_id.clone(),
+                timestamp: event.timestamp,
+                device_id: event.device_id.clone(),
+                payload: event.payload.clone(),
+            });
+        }
+
+        query_parts.push("COMMIT TRANSACTION;".to_string());
+        let query_str = query_parts.join("\n");
+
+        let mut query = self.db.query(query_str.as_str());
+        for (i, result_event) in result_events.iter().enumerate() {
+            query = query
+                .bind((format!("id_{i}"), result_event.id.clone()))
+                .bind((format!("event_type_{i}"), result_event.event_type.clone()))
+                .bind((format!("aggregate_id_{i}"), result_event.aggregate_id.clone()))
+                .bind((format!("timestamp_{i}"), result_event.timestamp.to_rfc3339()))
+                .bind((format!("device_id_{i}"), result_event.device_id.clone()))
+                .bind((format!("payload_{i}"), events[i].payload.clone()));
+        }
+
+        query.await?;
+
+        Ok(result_events)
     }
 
     async fn get_since(
@@ -154,11 +196,41 @@ impl EventStore for SurrealEventStore {
             .bind(("since", since_str))
             .bind(("exclude_device", exclude))
             .await
-            .map_err(|e| EventError::Store(e.to_string()))?;
+?;
 
         let rows: Vec<EventRow> = response
             .take(0)
-            .map_err(|e| EventError::Store(e.to_string()))?;
+?;
+
+        rows.into_iter().map(Event::try_from).collect()
+    }
+
+    async fn get_since_by_device(
+        &self,
+        since: DateTime<Utc>,
+        device_id: &str,
+    ) -> Result<Vec<Event>, EventError> {
+        let since_str = since.to_rfc3339();
+        let device = device_id.to_string();
+
+        let mut response = self
+            .db
+            .query(
+                "SELECT meta::id(id) AS eid, event_type, aggregate_id,
+                        <string> timestamp AS ts, timestamp,
+                        device_id, payload
+                 FROM events
+                 WHERE timestamp > type::datetime($since) AND device_id = $device
+                 ORDER BY timestamp ASC",
+            )
+            .bind(("since", since_str))
+            .bind(("device", device))
+            .await
+?;
+
+        let rows: Vec<EventRow> = response
+            .take(0)
+?;
 
         rows.into_iter().map(Event::try_from).collect()
     }
@@ -178,11 +250,11 @@ impl EventStore for SurrealEventStore {
             )
             .bind(("aggregate_id", agg_id))
             .await
-            .map_err(|e| EventError::Store(e.to_string()))?;
+?;
 
         let rows: Vec<EventRow> = response
             .take(0)
-            .map_err(|e| EventError::Store(e.to_string()))?;
+?;
 
         rows.into_iter().map(Event::try_from).collect()
     }
@@ -206,7 +278,7 @@ impl TryFrom<EventRow> for Event {
     fn try_from(row: EventRow) -> Result<Self, Self::Error> {
         let timestamp = DateTime::parse_from_rfc3339(&row.ts)
             .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| EventError::Store(format!("invalid timestamp '{}': {e}", row.ts)))?;
+            .map_err(|e| EventError::Validation(format!("invalid timestamp '{}': {e}", row.ts)))?;
 
         let payload = row.payload.into_json_value();
 
@@ -339,5 +411,43 @@ mod tests {
         let events = store.get_since(early, Some("device-a")).await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].device_id, "device-b");
+    }
+
+    #[tokio::test]
+    async fn get_since_by_device_includes_only_target() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+
+        let ts = Utc::now();
+
+        store
+            .append(NewEvent {
+                id: None,
+                event_type: "note_created".into(),
+                aggregate_id: "n1".into(),
+                timestamp: ts,
+                device_id: "device-a".into(),
+                payload: serde_json::json!({"raw_text": "from A", "date": "2026-03-27"}),
+            })
+            .await
+            .unwrap();
+
+        store
+            .append(NewEvent {
+                id: None,
+                event_type: "note_created".into(),
+                aggregate_id: "n2".into(),
+                timestamp: ts,
+                device_id: "device-b".into(),
+                payload: serde_json::json!({"raw_text": "from B", "date": "2026-03-27"}),
+            })
+            .await
+            .unwrap();
+
+        let early = ts - chrono::Duration::seconds(10);
+        let events = store.get_since_by_device(early, "device-a").await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].device_id, "device-a");
+        assert_eq!(events[0].aggregate_id, "n1");
     }
 }

@@ -3,9 +3,10 @@ use std::sync::Arc;
 use axum::{Router, routing::get, Json};
 use chrono::{DateTime, Utc};
 use omni_me_core::db;
-use omni_me_core::events::{Event, EventStore, NewEvent, SurrealEventStore};
+use omni_me_core::events::{EventStore, NewEvent, SurrealEventStore};
+use omni_me_core::llm::GeminiClient;
+use omni_me_core::sync::{PullRequest, PullResponse, PushRequest, PushResponse};
 use omni_me_server::{AppState, routes};
-use serde::{Deserialize, Serialize};
 use tower_http::cors::CorsLayer;
 
 /// Spin up a real Axum server on a random port with its own temp SurrealDB.
@@ -19,6 +20,7 @@ async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
 
     let state = AppState {
         db: Arc::new(server_db),
+        llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
     };
 
     let app = Router::new()
@@ -51,32 +53,6 @@ async fn device_db() -> db::Database {
     let db = db::connect(path.to_str().unwrap()).await.unwrap();
     std::mem::forget(dir);
     db
-}
-
-// --- Sync protocol types (matching server routes) ---
-
-#[derive(Debug, Serialize)]
-struct PushRequest {
-    device_id: String,
-    events: Vec<NewEvent>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PushResponse {
-    count: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct PullRequest {
-    device_id: String,
-    since: DateTime<Utc>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PullResponse {
-    events: Vec<Event>,
-    #[allow(dead_code)]
-    sync_timestamp: DateTime<Utc>,
 }
 
 #[tokio::test]
@@ -330,4 +306,89 @@ async fn concurrent_events_sync_both_devices() {
     let b_all = store_b.get_since(epoch, None).await.unwrap();
     assert_eq!(a_all.len(), 2);
     assert_eq!(b_all.len(), 2);
+}
+
+#[tokio::test]
+async fn push_rejects_unknown_event_type() {
+    let (server_url, _handle) = start_server().await;
+    let http = reqwest::Client::new();
+
+    let resp = http
+        .post(format!("{server_url}/sync/push"))
+        .json(&PushRequest {
+            device_id: "device-a".into(),
+            events: vec![NewEvent {
+                id: None,
+                event_type: "note_crated".into(), // typo
+                aggregate_id: "note-1".into(),
+                timestamp: Utc::now(),
+                device_id: "device-a".into(),
+                payload: serde_json::json!({"raw_text": "hello", "date": "2026-04-12"}),
+            }],
+        })
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 400);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("unknown event type"), "expected unknown event type error, got: {body}");
+}
+
+#[tokio::test]
+async fn push_rejects_too_many_events() {
+    let (server_url, _handle) = start_server().await;
+    let http = reqwest::Client::new();
+
+    let events: Vec<NewEvent> = (0..101)
+        .map(|i| NewEvent {
+            id: None,
+            event_type: "note_created".into(),
+            aggregate_id: format!("note-{i}"),
+            timestamp: Utc::now(),
+            device_id: "device-a".into(),
+            payload: serde_json::json!({"raw_text": "hello", "date": "2026-04-12"}),
+        })
+        .collect();
+
+    let resp = http
+        .post(format!("{server_url}/sync/push"))
+        .json(&PushRequest {
+            device_id: "device-a".into(),
+            events,
+        })
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 400);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("too many events"), "expected too many events error, got: {body}");
+}
+
+#[tokio::test]
+async fn push_rejects_malformed_payload() {
+    let (server_url, _handle) = start_server().await;
+    let http = reqwest::Client::new();
+
+    let resp = http
+        .post(format!("{server_url}/sync/push"))
+        .json(&PushRequest {
+            device_id: "device-a".into(),
+            events: vec![NewEvent {
+                id: None,
+                event_type: "note_created".into(),
+                aggregate_id: "note-1".into(),
+                timestamp: Utc::now(),
+                device_id: "device-a".into(),
+                payload: serde_json::json!({"raw_text": "hello"}), // missing "date"
+            }],
+        })
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 400);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("invalid payload"), "expected payload validation error, got: {body}");
 }

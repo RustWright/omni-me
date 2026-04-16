@@ -44,35 +44,14 @@ pub struct ExtractedExpense {
 }
 
 /// Errors that can occur during note processing.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PipelineError {
-    Llm(LlmError),
-    Event(crate::events::EventError),
+    #[error("LLM error: {0}")]
+    Llm(#[from] LlmError),
+    #[error("Event error: {0}")]
+    Event(#[from] crate::events::EventError),
+    #[error("Processing error: {0}")]
     Processing(String),
-}
-
-impl std::fmt::Display for PipelineError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PipelineError::Llm(e) => write!(f, "LLM error: {e}"),
-            PipelineError::Event(e) => write!(f, "Event error: {e}"),
-            PipelineError::Processing(msg) => write!(f, "Processing error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for PipelineError {}
-
-impl From<LlmError> for PipelineError {
-    fn from(e: LlmError) -> Self {
-        PipelineError::Llm(e)
-    }
-}
-
-impl From<crate::events::EventError> for PipelineError {
-    fn from(e: crate::events::EventError) -> Self {
-        PipelineError::Event(e)
-    }
 }
 
 /// Process a journal note through the full LLM pipeline.
@@ -103,7 +82,7 @@ pub async fn process_note(
 
     // Step 3: Call LLM with tools
     let tools = default_note_tools();
-    let model_name = "gemini-2.0-flash";
+    let model_name = llm.model_name();
     let response = llm.complete_with_tools(&prompt, &tools).await?;
 
     // Step 4: Parse tool calls into structured result
@@ -249,6 +228,10 @@ mod tests {
 
     #[async_trait]
     impl LlmClient for _MockLlmClient {
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+
         async fn complete(&self, _prompt: &str) -> Result<String, LlmError> {
             Ok("mock".to_string())
         }

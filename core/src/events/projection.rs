@@ -18,6 +18,9 @@ pub trait Projection: Send + Sync {
 
     /// Initialize any tables/indexes this projection requires.
     async fn init_schema(&self, db: &Database) -> Result<(), EventError>;
+
+    /// Delete all data from this projection's tables (used before rebuild).
+    async fn clear_tables(&self, db: &Database) -> Result<(), EventError>;
 }
 
 /// Runs projections over events, tracking which events have been processed.
@@ -42,7 +45,7 @@ impl ProjectionRunner {
                  DEFINE INDEX IF NOT EXISTS idx_pv_name ON projection_versions FIELDS name UNIQUE;",
             )
             .await
-            .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
         for proj in &self.projections {
             proj.init_schema(&self.db).await?;
@@ -62,7 +65,7 @@ impl ProjectionRunner {
                 .bind(("name", name))
                 .bind(("version", version))
                 .await
-                .map_err(|e| EventError::Projection(e.to_string()))?;
+    ?;
         }
 
         Ok(())
@@ -74,9 +77,11 @@ impl ProjectionRunner {
             for proj in &self.projections {
                 proj.apply(event, &self.db).await?;
             }
+        }
 
-            // Update last_event_id for all projections
-            let event_id = event.id.clone();
+        // Update last_event_id once after all events are applied
+        if let Some(last) = events.last() {
+            let event_id = last.id.clone();
             for proj in &self.projections {
                 let name = proj.name().to_string();
                 self.db
@@ -87,7 +92,7 @@ impl ProjectionRunner {
                     .bind(("event_id", event_id.clone()))
                     .bind(("name", name))
                     .await
-                    .map_err(|e| EventError::Projection(e.to_string()))?;
+        ?;
             }
         }
 
@@ -105,8 +110,9 @@ impl ProjectionRunner {
 
         let events = store.get_since(epoch, None).await?;
 
-        // Re-initialize schemas (clears read tables)
+        // Clear all projection tables, then re-initialize schemas
         for proj in &self.projections {
+            proj.clear_tables(&self.db).await?;
             proj.init_schema(&self.db).await?;
         }
 
@@ -144,6 +150,10 @@ mod tests {
         }
 
         async fn init_schema(&self, _db: &Database) -> Result<(), EventError> {
+            Ok(())
+        }
+
+        async fn clear_tables(&self, _db: &Database) -> Result<(), EventError> {
             Ok(())
         }
     }
@@ -214,5 +224,13 @@ mod tests {
 
         runner.apply_events(&events).await.unwrap();
         assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+        // Verify last_event_id points to the final event
+        let mut resp = db
+            .query("SELECT last_event_id FROM projection_versions WHERE name = 'counting'")
+            .await
+            .unwrap();
+        let last_id: Option<String> = resp.take("last_event_id").unwrap();
+        assert_eq!(last_id.as_deref(), Some("e2"));
     }
 }

@@ -72,7 +72,7 @@ impl GeminiClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| LlmError::NetworkError(e.to_string()))?;
+            .map_err(|e| LlmError::NetworkError(e.without_url().to_string()))?;
 
         let status = response.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -82,7 +82,7 @@ impl GeminiClient {
         let response_body: Value = response
             .json()
             .await
-            .map_err(|e| LlmError::ParseError(format!("Failed to parse response JSON: {e}")))?;
+            .map_err(|e| LlmError::ParseError(format!("Failed to parse response JSON: {}", e.without_url())))?;
 
         if !status.is_success() {
             let error_msg = response_body["error"]["message"]
@@ -147,6 +147,10 @@ impl GeminiClient {
 
 #[async_trait]
 impl LlmClient for GeminiClient {
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+
     async fn complete(&self, prompt: &str) -> Result<String, LlmError> {
         let body = json!({
             "contents": [{ "parts": [{ "text": prompt }] }]
@@ -432,5 +436,37 @@ mod tests {
     fn test_gemini_client_default_model() {
         let client = GeminiClient::new("key".to_string());
         assert_eq!(client.model, "gemini-2.0-flash");
+    }
+
+    #[tokio::test]
+    async fn test_network_error_does_not_leak_api_key() {
+        let secret_key = "super-secret-api-key-12345";
+        let client = GeminiClient::new(secret_key.to_string())
+            .with_base_url("http://127.0.0.1:1".to_string()); // unreachable port
+
+        let body = json!({"contents": [{"parts": [{"text": "test"}]}]});
+        let err = client.send_request(body).await.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(!err_msg.contains(secret_key), "API key leaked in network error: {err_msg}");
+    }
+
+    #[tokio::test]
+    async fn test_parse_error_does_not_leak_api_key() {
+        let server = MockServer::start().await;
+        let secret_key = "super-secret-api-key-67890";
+
+        Mock::given(method("POST"))
+            .and(path_regex(r"/v1beta/models/.+:generateContent"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not valid json"))
+            .mount(&server)
+            .await;
+
+        let client = GeminiClient::new(secret_key.to_string())
+            .with_base_url(server.uri());
+
+        let body = json!({"contents": [{"parts": [{"text": "test"}]}]});
+        let err = client.send_request(body).await.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(!err_msg.contains(secret_key), "API key leaked in parse error: {err_msg}");
     }
 }

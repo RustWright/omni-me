@@ -1,40 +1,29 @@
 use async_trait::async_trait;
 use serde_json::Value;
-use std::fmt;
 
 use super::tools::{LlmResponse, ToolDef};
 
 /// Errors that can occur during LLM interactions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum LlmError {
-    /// The API returned an error response.
+    #[error("API error: {0}")]
     ApiError(String),
-    /// The API rate limited the request.
+    #[error("Rate limited by API")]
     RateLimited,
-    /// Failed to parse a response from the API.
+    #[error("Parse error: {0}")]
     ParseError(String),
-    /// Network-level error (connection, DNS, timeout, etc).
+    #[error("Network error: {0}")]
     NetworkError(String),
 }
-
-impl fmt::Display for LlmError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LlmError::ApiError(msg) => write!(f, "API error: {msg}"),
-            LlmError::RateLimited => write!(f, "Rate limited by API"),
-            LlmError::ParseError(msg) => write!(f, "Parse error: {msg}"),
-            LlmError::NetworkError(msg) => write!(f, "Network error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for LlmError {}
 
 /// Trait for interacting with LLM providers.
 ///
 /// Object-safe: no generic methods, can be used as `Box<dyn LlmClient>`.
 #[async_trait]
 pub trait LlmClient: Send + Sync {
+    /// The model identifier used by this client (e.g. "gemini-2.0-flash").
+    fn model_name(&self) -> &str;
+
     /// Generate a plain text completion from the given prompt.
     async fn complete(&self, prompt: &str) -> Result<String, LlmError>;
 

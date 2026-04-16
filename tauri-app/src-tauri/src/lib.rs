@@ -13,6 +13,7 @@ const DB_NAME: &str = "local.db";
 const DEVICE_ID_FILE: &str = "device_id";
 const SERVER_URL_FILE: &str = "server_url";
 const DEFAULT_SERVER_URL: &str = "http://localhost:3000";
+const TIMEZONE_FILE: &str = "timezone";
 
 /// Load a string value from a file, or use a default and persist it.
 fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> String) -> String {
@@ -34,7 +35,9 @@ pub struct AppState {
     pub projections: ProjectionRunner,
     pub device_id: String,
     pub server_url: tokio::sync::RwLock<String>,
+    pub timezone: tokio::sync::RwLock<String>,
     pub app_data_dir: std::path::PathBuf,
+    pub http: reqwest::Client,
 }
 
 /// Remove stale SurrealKV LOCK file if the owning process is no longer alive.
@@ -100,8 +103,11 @@ pub fn run() {
                 let server_url = load_or_create(&app_data, SERVER_URL_FILE, || {
                     std::env::var("OMNI_SERVER_URL").unwrap_or(DEFAULT_SERVER_URL.to_string())
                 });
+                let timezone = load_or_create(&app_data, TIMEZONE_FILE, || {
+                    iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string())
+                });
 
-                tracing::info!(device_id = %device_id, server_url = %server_url, "App initialized");
+                tracing::info!(device_id = %device_id, server_url = %server_url, timezone = %timezone, "App initialized");
 
                 handle.manage(AppState {
                     db,
@@ -109,7 +115,9 @@ pub fn run() {
                     projections,
                     device_id,
                     server_url: tokio::sync::RwLock::new(server_url),
+                    timezone: tokio::sync::RwLock::new(timezone),
                     app_data_dir: app_data,
+                    http: reqwest::Client::new(),
                 });
             });
 
@@ -137,6 +145,9 @@ pub fn run() {
             commands::sync::trigger_sync,
             commands::sync::get_sync_info,
             commands::sync::update_server_url,
+            // Timezone
+            commands::timezone::get_timezone,
+            commands::timezone::update_timezone,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

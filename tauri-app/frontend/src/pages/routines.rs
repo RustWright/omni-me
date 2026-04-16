@@ -1,7 +1,9 @@
+use chrono_tz::Tz;
 use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::types::{CompletionEntry, RoutineGroup, RoutineItem};
+use crate::user_date::UserDate;
 
 #[derive(Clone, PartialEq)]
 enum RoutineView {
@@ -38,12 +40,10 @@ pub fn RoutinesPage() -> Element {
     };
 
     rsx! {
-        div {
-            style: "max-width: 720px; margin: 0 auto;",
+        div { class: "max-w-3xl mx-auto w-full",
 
             if let Some(err) = &*error_msg.read() {
-                div {
-                    style: "background: #fee; color: #c33; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 14px;",
+                div { class: "bg-red-900/20 text-red-400 px-3 py-2 rounded border border-red-900/50 mb-4 text-sm",
                     "{err}"
                 }
             }
@@ -96,38 +96,36 @@ pub fn RoutinesPage() -> Element {
     }
 }
 
-// --- Daily Checklist View (Task 6.3) ---
+// --- Daily Checklist View ---
 
 #[component]
 fn DailyChecklistView(
     groups: Vec<RoutineGroup>,
     on_manage: EventHandler<()>,
 ) -> Element {
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let tz_signal: Signal<Tz> = use_context();
+    let today = UserDate::today(&*tz_signal.read()).to_date_string();
 
     rsx! {
-        div {
-            div {
-                style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
-                h1 {
-                    style: "font-size: 24px; font-weight: 600; margin: 0; color: #1a1a2e;",
-                    "Today's Routines"
-                }
+        div { class: "animate-in fade-in duration-300",
+            div { class: "flex justify-between items-center mb-6",
+                h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Daily Flow" }
                 button {
-                    style: "padding: 8px 12px; background: none; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
                     onclick: move |_| on_manage.call(()),
                     "Manage"
                 }
             }
 
             if groups.is_empty() {
-                div {
-                    style: "text-align: center; padding: 48px 16px; color: #888;",
-                    p { style: "font-size: 18px; margin-bottom: 8px;", "No routines yet" }
-                    p { style: "font-size: 14px;", "Tap \"Manage\" to create routine groups" }
+                div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
+                    svg { class: "w-16 h-16 mb-4 opacity-20", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" }
+                    }
+                    p { class: "text-lg font-medium", "No routines defined" }
+                    p { class: "text-sm", "Tap \"Manage\" to build your flow" }
                 }
             } else {
-                // Group by time_of_day
                 for tod in &["morning", "afternoon", "evening"] {
                     {
                         let tod_groups: Vec<_> = groups.iter()
@@ -135,21 +133,24 @@ fn DailyChecklistView(
                             .cloned()
                             .collect();
                         if !tod_groups.is_empty() {
-                            let label = match *tod {
-                                "morning" => "Morning",
-                                "afternoon" => "Afternoon",
-                                _ => "Evening",
+                            let (label, icon_path) = match *tod {
+                                "morning" => ("Morning", "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"),
+                                "afternoon" => ("Afternoon", "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"),
+                                _ => ("Evening", "M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"),
                             };
                             let today = today.clone();
                             rsx! {
-                                div {
-                                    style: "margin-bottom: 20px;",
-                                    h3 {
-                                        style: "font-size: 13px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px 0;",
+                                div { class: "mb-8",
+                                    h3 { class: "flex items-center gap-2 text-[11px] font-bold text-obsidian-text-muted uppercase tracking-[0.2em] mb-4 ml-1",
+                                        svg { class: "w-4 h-4 text-obsidian-accent opacity-70", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: icon_path }
+                                        }
                                         "{label}"
                                     }
-                                    for group in tod_groups {
-                                        ChecklistGroup { group, date: today.clone() }
+                                    div { class: "space-y-3",
+                                        for group in tod_groups {
+                                            ChecklistGroup { group, date: today.clone() }
+                                        }
                                     }
                                 }
                             }
@@ -194,97 +195,110 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
         })
         .count();
     let total = items_read.len();
+    let is_fully_done = total > 0 && done_count == total;
+    
+    let base_class = "bg-obsidian-sidebar/40 border border-white/5 rounded-xl overflow-hidden shadow-sm transition-all";
+    let status_class = if is_fully_done { "opacity-60 grayscale-[0.5]" } else { "" };
+    let container_class = format!("{} {}", base_class, status_class);
+    
+    let progress_width = if total > 0 {
+        (done_count as f32 / total as f32) * 100.0
+    } else {
+        0.0
+    };
+    let progress_style = format!("width: {}%", progress_width);
 
     rsx! {
-        div {
-            style: "background: white; border-radius: 8px; border: 1px solid #eee; margin-bottom: 8px; overflow: hidden;",
-
-            // Group header with progress
-            div {
-                style: "padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f0f0f0;",
-                span { style: "font-weight: 600; font-size: 15px;", "{group.name}" }
-                span {
-                    style: "font-size: 13px; color: #888;",
-                    "{done_count}/{total}"
+        div { class: "{container_class}",
+            div { class: "px-4 py-3 bg-white/5 flex justify-between items-center border-bottom border-white/5",
+                span { class: "font-bold text-[15px] tracking-tight text-white", "{group.name}" }
+                div { class: "flex items-center gap-2",
+                    div { class: "w-16 h-1.5 bg-obsidian-bg rounded-full overflow-hidden",
+                        div { 
+                            class: "h-full bg-obsidian-accent transition-all duration-500",
+                            style: "{progress_style}"
+                        }
+                    }
+                    span { class: "text-[11px] font-mono text-obsidian-text-muted", "{done_count}/{total}" }
                 }
             }
 
-            // Items
-            for item in items_read.iter() {
-                {
-                    let completion = completions_read.iter().find(|c| c.item_id == item.id);
-                    let is_done = completion.is_some();
-                    let is_skipped = completion.map(|c| c.skipped).unwrap_or(false);
-                    let item_id = item.id.clone();
-                    let gid = group.id.clone();
-                    let d = date.clone();
+            div { class: "divide-y divide-white/5",
+                for item in items_read.iter() {
+                    {
+                        let completion = completions_read.iter().find(|c| c.item_id == item.id);
+                        let is_done = completion.is_some();
+                        let is_skipped = completion.map(|c| c.skipped).unwrap_or(false);
+                        let item_id = item.id.clone();
+                        let gid = group.id.clone();
+                        let d = date.clone();
 
-                    rsx! {
-                        div {
-                            style: "padding: 8px 12px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #f8f8f8;",
+                        rsx! {
+                            div { class: "px-4 py-3 flex items-center gap-3 group transition-colors hover:bg-white/[0.02]",
 
-                            if is_done && !is_skipped {
-                                // Completed
-                                div {
-                                    style: "width: 24px; height: 24px; border-radius: 4px; background: #4caf50; display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;",
-                                    "✓"
-                                }
-                                span { style: "flex: 1; font-size: 14px; color: #888; text-decoration: line-through;", "{item.name}" }
-                            } else if is_skipped {
-                                // Skipped
-                                div {
-                                    style: "width: 24px; height: 24px; border-radius: 4px; background: #ccc; display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;",
-                                    "—"
-                                }
-                                span { style: "flex: 1; font-size: 14px; color: #aaa;", "{item.name}" }
-                            } else {
-                                // Not done — interactive
-                                button {
-                                    style: "width: 24px; height: 24px; border-radius: 4px; border: 2px solid #ddd; background: white; cursor: pointer;",
-                                    onclick: {
-                                        let iid = item_id.clone();
-                                        let gid = gid.clone();
-                                        let d = d.clone();
-                                        move |_| {
-                                            let iid = iid.clone();
+                                if is_done && !is_skipped {
+                                    button {
+                                        class: "w-6 h-6 rounded-md bg-obsidian-accent flex items-center justify-center text-white transition-all scale-110",
+                                        onclick: move |_| {},
+                                        svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "3", d: "M5 13l4 4L19 7" }
+                                        }
+                                    }
+                                    span { class: "flex-1 text-sm text-obsidian-text-muted line-through opacity-50", "{item.name}" }
+                                } else if is_skipped {
+                                    div { class: "w-6 h-6 rounded-md bg-obsidian-text-muted/20 flex items-center justify-center text-obsidian-text-muted/40",
+                                        svg { class: "w-3 h-3", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "3", d: "M20 12H4" }
+                                        }
+                                    }
+                                    span { class: "flex-1 text-sm text-obsidian-text-muted/40 italic", "{item.name} (skipped)" }
+                                } else {
+                                    button {
+                                        class: "w-6 h-6 rounded-md border-2 border-obsidian-text-muted/30 bg-transparent hover:border-obsidian-accent transition-colors",
+                                        onclick: {
+                                            let iid = item_id.clone();
                                             let gid = gid.clone();
                                             let d = d.clone();
-                                            spawn(async move {
-                                                let _ = bridge::invoke_complete_routine_item(&iid, &gid, &d).await;
-                                                if let Ok(list) = bridge::invoke_get_completions_for_date(&gid, &d).await {
-                                                    completions.set(list);
-                                                }
-                                            });
-                                        }
-                                    },
-                                }
-                                span { style: "flex: 1; font-size: 14px;", "{item.name}" }
-                                button {
-                                    style: "padding: 4px 8px; background: none; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; color: #888; cursor: pointer;",
-                                    onclick: {
-                                        let iid = item_id.clone();
-                                        let gid = gid.clone();
-                                        let d = d.clone();
-                                        move |_| {
-                                            let iid = iid.clone();
+                                            move |_| {
+                                                let iid = iid.clone();
+                                                let gid = gid.clone();
+                                                let d = d.clone();
+                                                spawn(async move {
+                                                    let _ = bridge::invoke_complete_routine_item(&iid, &gid, &d).await;
+                                                    if let Ok(list) = bridge::invoke_get_completions_for_date(&gid, &d).await {
+                                                        completions.set(list);
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    }
+                                    span { class: "flex-1 text-sm font-medium text-obsidian-text group-hover:text-white transition-colors", "{item.name}" }
+                                    button {
+                                        class: "px-2 py-1 bg-white/5 border border-white/5 rounded text-[10px] font-bold text-obsidian-text-muted hover:text-white transition-colors opacity-0 group-hover:opacity-100",
+                                        onclick: {
+                                            let iid = item_id.clone();
                                             let gid = gid.clone();
                                             let d = d.clone();
-                                            spawn(async move {
-                                                let _ = bridge::invoke_skip_routine_item(&iid, &gid, &d, None).await;
-                                                if let Ok(list) = bridge::invoke_get_completions_for_date(&gid, &d).await {
-                                                    completions.set(list);
-                                                }
-                                            });
-                                        }
-                                    },
-                                    "Skip"
+                                            move |_| {
+                                                let iid = iid.clone();
+                                                let gid = gid.clone();
+                                                let d = d.clone();
+                                                spawn(async move {
+                                                    let _ = bridge::invoke_skip_routine_item(&iid, &gid, &d, None).await;
+                                                    if let Ok(list) = bridge::invoke_get_completions_for_date(&gid, &d).await {
+                                                        completions.set(list);
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "SKIP"
+                                    }
                                 }
-                            }
 
-                            if item.estimated_duration_min > 0 {
-                                span {
-                                    style: "font-size: 11px; color: #aaa;",
-                                    "{item.estimated_duration_min}m"
+                                if item.estimated_duration_min > 0 {
+                                    span { class: "text-[10px] font-mono text-obsidian-text-muted/40",
+                                        "{item.estimated_duration_min}m"
+                                    }
                                 }
                             }
                         }
@@ -295,7 +309,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
     }
 }
 
-// --- Group List View (Task 6.1) ---
+// --- Group List View ---
 
 #[component]
 fn GroupListView(
@@ -305,53 +319,51 @@ fn GroupListView(
     on_back: EventHandler<()>,
 ) -> Element {
     rsx! {
-        div {
-            div {
-                style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
-                div {
-                    style: "display: flex; align-items: center; gap: 8px;",
+        div { class: "animate-in slide-in-from-right-4 duration-300",
+            div { class: "flex justify-between items-center mb-6",
+                div { class: "flex items-center gap-3",
                     button {
-                        style: "padding: 8px 12px; background: none; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                        class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
                         onclick: move |_| on_back.call(()),
-                        "Back"
+                        svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M10 19l-7-7m0 0l7-7m-7 7h18" }
+                        }
                     }
-                    h1 {
-                        style: "font-size: 24px; font-weight: 600; margin: 0; color: #1a1a2e;",
-                        "Routine Groups"
-                    }
+                    h1 { class: "text-2xl font-bold tracking-tight text-obsidian-text", "Routine Library" }
                 }
                 button {
-                    style: "padding: 8px 16px; background: #4a6fa5; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "flex items-center gap-2 px-4 py-2 bg-obsidian-accent text-white font-semibold rounded-md hover:opacity-90 transition-opacity shadow-lg shadow-obsidian-accent/20",
                     onclick: move |_| on_add.call(()),
-                    "+ Add Group"
+                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M12 4v16m8-8H4" }
+                    }
+                    span { "New Group" }
                 }
             }
 
             if groups.is_empty() {
-                div {
-                    style: "text-align: center; padding: 48px 16px; color: #888;",
-                    p { "No routine groups. Create one to get started." }
+                div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
+                    p { "Your library is empty. Start by creating a group." }
                 }
             } else {
-                for group in &groups {
-                    {
-                        let id = group.id.clone();
-                        rsx! {
-                            div {
-                                style: "padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; align-items: center;",
-                                onclick: move |_| on_select.call(id.clone()),
+                div { class: "grid gap-3",
+                    for group in &groups {
+                        {
+                            let id = group.id.clone();
+                            rsx! {
                                 div {
-                                    span { style: "font-size: 15px; font-weight: 500;", "{group.name}" }
-                                }
-                                div {
-                                    style: "display: flex; gap: 6px;",
-                                    span {
-                                        style: "background: #e8eef4; color: #4a6fa5; padding: 2px 8px; border-radius: 4px; font-size: 12px;",
-                                        "{group.frequency}"
+                                    class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg cursor-pointer transition-all hover:bg-white/5 hover:border-white/10 active:scale-[0.98] flex justify-between items-center",
+                                    onclick: move |_| on_select.call(id.clone()),
+                                    div {
+                                        span { class: "font-bold text-obsidian-text", "{group.name}" }
                                     }
-                                    span {
-                                        style: "background: #f0f0e8; padding: 2px 8px; border-radius: 4px; font-size: 12px;",
-                                        "{group.time_of_day}"
+                                    div { class: "flex items-center gap-2",
+                                        span { class: "px-2 py-0.5 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-[10px] font-bold uppercase tracking-wider",
+                                            "{group.frequency}"
+                                        }
+                                        span { class: "px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded text-[10px] font-bold uppercase tracking-wider",
+                                            "{group.time_of_day}"
+                                        }
                                     }
                                 }
                             }
@@ -363,7 +375,7 @@ fn GroupListView(
     }
 }
 
-// --- Add Group View (Task 6.1) ---
+// --- Add Group View ---
 
 #[component]
 fn AddGroupView(
@@ -377,17 +389,18 @@ fn AddGroupView(
     let mut save_error = use_signal(|| None::<String>);
 
     rsx! {
-        div {
-            div {
-                style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
+        div { class: "animate-in fade-in slide-in-from-bottom-4 duration-300",
+            div { class: "flex justify-between items-center mb-6",
                 button {
-                    style: "padding: 8px 12px; background: none; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
                     onclick: move |_| on_cancel.call(()),
-                    "Cancel"
+                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M6 18L18 6M6 6l12 12" }
+                    }
                 }
-                h2 { style: "font-size: 18px; font-weight: 600; margin: 0;", "New Group" }
+                h2 { class: "text-lg font-bold text-obsidian-text", "New Group" }
                 button {
-                    style: "padding: 8px 16px; background: #4a6fa5; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50",
                     disabled: *saving.read() || name.read().trim().is_empty(),
                     onclick: move |_| {
                         saving.set(true);
@@ -406,51 +419,40 @@ fn AddGroupView(
                 }
             }
 
-            if let Some(err) = &*save_error.read() {
+            div { class: "space-y-6",
                 div {
-                    style: "background: #fee; color: #c33; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 14px;",
-                    "Save failed: {err}"
-                }
-            }
-
-            div {
-                style: "display: flex; flex-direction: column; gap: 16px;",
-
-                // Name
-                div {
-                    label { style: "font-size: 13px; font-weight: 600; color: #888; display: block; margin-bottom: 4px;", "Name" }
+                    label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Group Name" }
                     input {
-                        style: "width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; box-sizing: border-box;",
+                        class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
                         r#type: "text",
-                        placeholder: "e.g. Morning Routine",
+                        placeholder: "e.g. Morning Ritual",
                         value: "{name}",
                         oninput: move |e| name.set(e.value()),
                     }
                 }
 
-                // Frequency
-                div {
-                    label { style: "font-size: 13px; font-weight: 600; color: #888; display: block; margin-bottom: 4px;", "Frequency" }
-                    select {
-                        style: "width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; background: white;",
-                        value: "{frequency}",
-                        onchange: move |e| frequency.set(e.value()),
-                        option { value: "daily", "Daily" }
-                        option { value: "weekly", "Weekly" }
-                        option { value: "custom", "Custom" }
+                div { class: "grid grid-cols-2 gap-4",
+                    div {
+                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Frequency" }
+                        select {
+                            class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                            value: "{frequency}",
+                            onchange: move |e| frequency.set(e.value()),
+                            option { value: "daily", "Daily" }
+                            option { value: "weekly", "Weekly" }
+                            option { value: "custom", "Custom" }
+                        }
                     }
-                }
-
-                // Time of day
-                div {
-                    label { style: "font-size: 13px; font-weight: 600; color: #888; display: block; margin-bottom: 4px;", "Time of Day" }
-                    select {
-                        style: "width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; background: white;",
-                        value: "{time_of_day}",
-                        onchange: move |e| time_of_day.set(e.value()),
-                        option { value: "morning", "Morning" }
-                        option { value: "afternoon", "Afternoon" }
-                        option { value: "evening", "Evening" }
+                    div {
+                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Focus Window" }
+                        select {
+                            class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                            value: "{time_of_day}",
+                            onchange: move |e| time_of_day.set(e.value()),
+                            option { value: "morning", "Morning" }
+                            option { value: "afternoon", "Afternoon" }
+                            option { value: "evening", "Evening" }
+                        }
                     }
                 }
             }
@@ -458,7 +460,7 @@ fn AddGroupView(
     }
 }
 
-// --- Edit Group View (Task 6.4) ---
+// --- Edit Group View ---
 
 #[component]
 fn EditGroupView(
@@ -478,18 +480,19 @@ fn EditGroupView(
     let mut saving = use_signal(|| false);
 
     rsx! {
-        div {
-            div {
-                style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
+        div { class: "animate-in fade-in slide-in-from-bottom-4 duration-300",
+            div { class: "flex justify-between items-center mb-6",
                 button {
-                    style: "padding: 8px 12px; background: none; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
                     onclick: move |_| on_cancel.call(()),
-                    "Cancel"
+                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M6 18L18 6M6 6l12 12" }
+                    }
                 }
-                h2 { style: "font-size: 18px; font-weight: 600; margin: 0;", "Edit Group" }
+                h2 { class: "text-lg font-bold text-obsidian-text", "Edit Group" }
                 button {
-                    style: "padding: 8px 16px; background: #4a6fa5; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;",
-                    disabled: *saving.read(),
+                    class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50",
+                    disabled: *saving.read() || name.read().trim().is_empty(),
                     onclick: {
                         let gid = group_id.clone();
                         move |_| {
@@ -512,37 +515,38 @@ fn EditGroupView(
                 }
             }
 
-            div {
-                style: "display: flex; flex-direction: column; gap: 16px;",
+            div { class: "space-y-6",
                 div {
-                    label { style: "font-size: 13px; font-weight: 600; color: #888; display: block; margin-bottom: 4px;", "Name" }
+                    label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Group Name" }
                     input {
-                        style: "width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; box-sizing: border-box;",
+                        class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
                         r#type: "text",
                         value: "{name}",
                         oninput: move |e| name.set(e.value()),
                     }
                 }
-                div {
-                    label { style: "font-size: 13px; font-weight: 600; color: #888; display: block; margin-bottom: 4px;", "Frequency" }
-                    select {
-                        style: "width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; background: white;",
-                        value: "{frequency}",
-                        onchange: move |e| frequency.set(e.value()),
-                        option { value: "daily", "Daily" }
-                        option { value: "weekly", "Weekly" }
-                        option { value: "custom", "Custom" }
+                div { class: "grid grid-cols-2 gap-4",
+                    div {
+                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Frequency" }
+                        select {
+                            class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                            value: "{frequency}",
+                            onchange: move |e| frequency.set(e.value()),
+                            option { value: "daily", "Daily" }
+                            option { value: "weekly", "Weekly" }
+                            option { value: "custom", "Custom" }
+                        }
                     }
-                }
-                div {
-                    label { style: "font-size: 13px; font-weight: 600; color: #888; display: block; margin-bottom: 4px;", "Time of Day" }
-                    select {
-                        style: "width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; background: white;",
-                        value: "{time_of_day}",
-                        onchange: move |e| time_of_day.set(e.value()),
-                        option { value: "morning", "Morning" }
-                        option { value: "afternoon", "Afternoon" }
-                        option { value: "evening", "Evening" }
+                    div {
+                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Focus Window" }
+                        select {
+                            class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                            value: "{time_of_day}",
+                            onchange: move |e| time_of_day.set(e.value()),
+                            option { value: "morning", "Morning" }
+                            option { value: "afternoon", "Afternoon" }
+                            option { value: "evening", "Evening" }
+                        }
                     }
                 }
             }
@@ -550,7 +554,7 @@ fn EditGroupView(
     }
 }
 
-// --- Group Detail View (Task 6.2 + 6.5) ---
+// --- Group Detail View ---
 
 #[component]
 fn GroupDetailView(
@@ -584,91 +588,83 @@ fn GroupDetailView(
     let gid_for_edit = group_id.clone();
 
     rsx! {
-        div {
-            // Header
-            div {
-                style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
-                div {
-                    style: "display: flex; align-items: center; gap: 8px;",
+        div { class: "animate-in fade-in duration-300",
+            div { class: "flex justify-between items-center mb-6",
+                div { class: "flex items-center gap-3",
                     button {
-                        style: "padding: 8px 12px; background: none; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                        class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
                         onclick: move |_| on_back.call(()),
-                        "Back"
+                        svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M10 19l-7-7m0 0l7-7m-7 7h18" }
+                        }
                     }
-                    h1 {
-                        style: "font-size: 20px; font-weight: 600; margin: 0; color: #1a1a2e;",
-                        "{group_name}"
-                    }
+                    h1 { class: "text-xl font-bold text-obsidian-text", "{group_name}" }
                 }
                 button {
-                    style: "padding: 8px 12px; background: none; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 14px;",
+                    class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
                     onclick: move |_| on_edit.call(gid_for_edit.clone()),
                     "Edit"
                 }
             }
 
-            // Items list
-            h3 {
-                style: "font-size: 13px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px 0;",
-                "Items"
-            }
+            h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-4 ml-1", "Step Configuration" }
 
-            if items.read().is_empty() {
-                p { style: "color: #888; font-size: 14px; margin-bottom: 12px;", "No items yet" }
-            } else {
-                for item in items.read().iter() {
-                    div {
-                        style: "padding: 8px 12px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center;",
-                        span { style: "font-size: 14px;", "{item.name}" }
-                        span { style: "font-size: 12px; color: #888;", "{item.estimated_duration_min}m" }
+            div { class: "space-y-1 mb-8",
+                if items.read().is_empty() {
+                    p { class: "text-sm text-obsidian-text-muted italic px-2", "No steps added yet." }
+                } else {
+                    for item in items.read().iter() {
+                        div { class: "px-4 py-3 bg-obsidian-sidebar/20 border border-white/5 rounded-lg flex justify-between items-center",
+                            span { class: "text-sm font-medium text-obsidian-text", "{item.name}" }
+                            span { class: "text-[10px] font-mono text-obsidian-text-muted", "{item.estimated_duration_min}m" }
+                        }
                     }
                 }
             }
 
-            // Add item form
-            div {
-                style: "margin-top: 12px; display: flex; gap: 8px; align-items: center;",
-                input {
-                    style: "flex: 1; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;",
-                    r#type: "text",
-                    placeholder: "New item name",
-                    value: "{new_item_name}",
-                    oninput: move |e| new_item_name.set(e.value()),
-                }
-                input {
-                    style: "width: 50px; padding: 8px 6px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; text-align: center;",
-                    r#type: "number",
-                    placeholder: "min",
-                    value: "{new_item_duration}",
-                    oninput: move |e| new_item_duration.set(e.value()),
-                }
-                button {
-                    style: "padding: 8px 12px; background: #4a6fa5; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;",
-                    disabled: *adding.read() || new_item_name.read().trim().is_empty(),
-                    onclick: {
-                        let gid = group_id.clone();
-                        move |_| {
-                            let gid = gid.clone();
-                            adding.set(true);
-                            spawn(async move {
-                                let name = new_item_name.read().clone();
-                                let dur: u32 = new_item_duration.read().parse().unwrap_or(5);
-                                let order = items.read().len() as u32;
-                                if bridge::invoke_add_routine_item(&gid, &name, dur, order).await.is_ok() {
-                                    new_item_name.set(String::new());
-                                    if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
-                                        items.set(list);
+            div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-xl space-y-4",
+                h4 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest", "Add New Step" }
+                div { class: "flex gap-2",
+                    input {
+                        class: "flex-1 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                        r#type: "text",
+                        placeholder: "Step name...",
+                        value: "{new_item_name}",
+                        oninput: move |e| new_item_name.set(e.value()),
+                    }
+                    input {
+                        class: "w-16 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
+                        r#type: "number",
+                        value: "{new_item_duration}",
+                        oninput: move |e| new_item_duration.set(e.value()),
+                    }
+                    button {
+                        class: "px-4 py-2 bg-obsidian-accent text-white font-bold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50",
+                        disabled: *adding.read() || new_item_name.read().trim().is_empty(),
+                        onclick: {
+                            let gid = group_id.clone();
+                            move |_| {
+                                let gid = gid.clone();
+                                adding.set(true);
+                                spawn(async move {
+                                    let name = new_item_name.read().clone();
+                                    let dur: u32 = new_item_duration.read().parse().unwrap_or(5);
+                                    let order = items.read().len() as u32;
+                                    if bridge::invoke_add_routine_item(&gid, &name, dur, order).await.is_ok() {
+                                        new_item_name.set(String::new());
+                                        if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
+                                            items.set(list);
+                                        }
                                     }
-                                }
-                                adding.set(false);
-                            });
-                        }
-                    },
-                    "Add"
+                                    adding.set(false);
+                                });
+                            }
+                        },
+                        "Add"
+                    }
                 }
             }
 
-            // 7-day history grid (Task 6.5)
             if !items.read().is_empty() {
                 HistoryGrid { items: items.read().clone(), history: history.read().clone() }
             }
@@ -676,66 +672,55 @@ fn GroupDetailView(
     }
 }
 
-// --- History Grid (Task 6.5) ---
+// --- History Grid ---
 
 #[component]
 fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Element {
-    let today = chrono::Utc::now().date_naive();
+    let tz_signal: Signal<Tz> = use_context();
+    let tz = *tz_signal.read();
     let days: Vec<String> = (0..7)
         .rev()
-        .map(|i| {
-            (today - chrono::Duration::days(i))
-                .format("%Y-%m-%d")
-                .to_string()
-        })
+        .map(|i| UserDate::days_ago(&tz, i).to_date_string())
         .collect();
 
     let day_labels: Vec<String> = (0..7)
         .rev()
-        .map(|i| {
-            (today - chrono::Duration::days(i))
-                .format("%a")
-                .to_string()
-        })
+        .map(|i| UserDate::days_ago(&tz, i).format("%a"))
         .collect();
 
     rsx! {
-        div {
-            style: "margin-top: 24px;",
-            h3 {
-                style: "font-size: 13px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px 0;",
-                "7-Day History"
-            }
+        div { class: "mt-12 animate-in fade-in duration-500",
+            h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-6 ml-1", "7-Day Performance" }
 
-            // Header row: day labels
-            div {
-                style: "display: grid; grid-template-columns: 120px repeat(7, 1fr); gap: 2px; font-size: 11px; color: #888; margin-bottom: 4px;",
+            div { class: "grid grid-cols-[1fr_repeat(7,32px)] gap-2 mb-4 px-2",
                 div {}
                 for label in &day_labels {
-                    div { style: "text-align: center;", "{label}" }
+                    div { class: "text-[10px] font-bold text-obsidian-text-muted text-center", "{label}" }
                 }
             }
 
-            // Item rows
-            for item in &items {
-                div {
-                    style: "display: grid; grid-template-columns: 120px repeat(7, 1fr); gap: 2px; margin-bottom: 2px;",
-                    div {
-                        style: "font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 0;",
-                        "{item.name}"
-                    }
-                    for day in &days {
-                        {
-                            let completion = history.iter().find(|c| c.item_id == item.id && c.date == *day);
-                            let (bg, label) = match completion {
-                                Some(c) if c.skipped => ("#e0e0e0", "—"),
-                                Some(_) => ("#4caf50", "✓"),
-                                None => ("#f5f5f5", ""),
-                            };
-                            rsx! {
-                                div {
-                                    style: "background: {bg}; border-radius: 3px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: white;",
-                                    "{label}"
+            div { class: "space-y-2",
+                for item in &items {
+                    div { class: "grid grid-cols-[1fr_repeat(7,32px)] gap-2 items-center px-2",
+                        div { class: "text-[12px] text-obsidian-text truncate pr-2", "{item.name}" }
+                        for day in &days {
+                            {
+                                let completion = history.iter().find(|c| c.item_id == item.id && c.date == *day);
+                                let is_skipped = completion.as_ref().map(|c| c.skipped).unwrap_or(false);
+                                let is_done = completion.is_some();
+                                
+                                let bg_class = if is_skipped {
+                                    "bg-white/5 border-white/5 text-obsidian-text-muted/40"
+                                } else if is_done {
+                                    "bg-green-500/20 border-green-500/30 text-green-500"
+                                } else {
+                                    "bg-obsidian-sidebar border-white/5 text-transparent"
+                                };
+
+                                rsx! {
+                                    div { class: "w-8 h-8 rounded-md border flex items-center justify-center text-[10px] font-bold {bg_class}",
+                                        if is_skipped { "—" } else if is_done { "✓" } else { "" }
+                                    }
                                 }
                             }
                         }

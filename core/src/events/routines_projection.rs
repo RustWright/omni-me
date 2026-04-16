@@ -42,8 +42,19 @@ impl Projection for RoutinesProjection {
              DEFINE FIELD IF NOT EXISTS reason ON routine_completions TYPE option<string>;",
         )
         .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
+        Ok(())
+    }
+
+    async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
+        db.query(
+            "DELETE FROM routine_groups;
+             DELETE FROM routine_items;
+             DELETE FROM routine_completions;",
+        )
+        .await
+?;
         Ok(())
     }
 
@@ -82,7 +93,7 @@ impl RoutinesProjection {
         .bind(("time_of_day", time_of_day))
         .bind(("ts", ts))
         .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
         Ok(())
     }
@@ -110,7 +121,7 @@ impl RoutinesProjection {
         .bind(("duration", duration))
         .bind(("order_num", order))
         .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
         Ok(())
     }
@@ -123,7 +134,7 @@ impl RoutinesProjection {
             .as_str()
             .map(String::from)
             .unwrap_or_else(|| event.timestamp.to_rfc3339());
-        let completion_id = ulid::Ulid::new().to_string();
+        let completion_id = format!("comp-{}", event.id);
 
         db.query(
             "CREATE type::record('routine_completions', $completion_id) CONTENT {
@@ -141,7 +152,7 @@ impl RoutinesProjection {
         .bind(("date", date))
         .bind(("completed_at", completed_at))
         .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
         Ok(())
     }
@@ -151,7 +162,7 @@ impl RoutinesProjection {
         let group_id = event.payload["group_id"].as_str().unwrap_or_default().to_string();
         let date = event.payload["date"].as_str().unwrap_or_default().to_string();
         let reason = event.payload["reason"].as_str().map(String::from);
-        let completion_id = ulid::Ulid::new().to_string();
+        let completion_id = format!("comp-{}", event.id);
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
@@ -171,7 +182,7 @@ impl RoutinesProjection {
         .bind(("ts", ts))
         .bind(("reason", reason))
         .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+?;
 
         Ok(())
     }
@@ -183,47 +194,35 @@ impl RoutinesProjection {
             .to_string();
         let ts = event.timestamp.to_rfc3339();
 
-        // Apply each field from changes to the group
         let changes = &event.payload["changes"];
+        let mut set_clauses = vec!["updated_at = type::datetime($ts)".to_string()];
+        let mut bindings: Vec<(String, String)> = vec![
+            ("group_id".into(), group_id),
+            ("ts".into(), ts),
+        ];
+
         if let Some(name) = changes.get("name").and_then(|v| v.as_str()) {
-            let name = name.to_string();
-            db.query(
-                "UPDATE type::record('routine_groups', $group_id) SET name = $name",
-            )
-            .bind(("group_id", group_id.clone()))
-            .bind(("name", name))
-            .await
-            .map_err(|e| EventError::Projection(e.to_string()))?;
+            set_clauses.push("name = $name".into());
+            bindings.push(("name".into(), name.to_string()));
         }
         if let Some(frequency) = changes.get("frequency").and_then(|v| v.as_str()) {
-            let frequency = frequency.to_string();
-            db.query(
-                "UPDATE type::record('routine_groups', $group_id) SET frequency = $frequency",
-            )
-            .bind(("group_id", group_id.clone()))
-            .bind(("frequency", frequency))
-            .await
-            .map_err(|e| EventError::Projection(e.to_string()))?;
+            set_clauses.push("frequency = $frequency".into());
+            bindings.push(("frequency".into(), frequency.to_string()));
         }
         if let Some(time_of_day) = changes.get("time_of_day").and_then(|v| v.as_str()) {
-            let time_of_day = time_of_day.to_string();
-            db.query(
-                "UPDATE type::record('routine_groups', $group_id) SET time_of_day = $time_of_day",
-            )
-            .bind(("group_id", group_id.clone()))
-            .bind(("time_of_day", time_of_day))
-            .await
-            .map_err(|e| EventError::Projection(e.to_string()))?;
+            set_clauses.push("time_of_day = $time_of_day".into());
+            bindings.push(("time_of_day".into(), time_of_day.to_string()));
         }
 
-        // Always update the updated_at timestamp
-        db.query(
-            "UPDATE type::record('routine_groups', $group_id) SET updated_at = type::datetime($ts)",
-        )
-        .bind(("group_id", group_id))
-        .bind(("ts", ts))
-        .await
-        .map_err(|e| EventError::Projection(e.to_string()))?;
+        let query_str = format!(
+            "UPDATE type::record('routine_groups', $group_id) SET {}",
+            set_clauses.join(", ")
+        );
+        let mut query = db.query(query_str.as_str());
+        for (key, val) in bindings {
+            query = query.bind((key, val));
+        }
+        query.await?;
 
         Ok(())
     }
