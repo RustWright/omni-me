@@ -1,0 +1,18 @@
+[application]
+name = "omni-me-frontend"
+asset_dir = "assets"
+tailwind_input = "input.css"
+tailwind_output = "assets/tailwind.css"
+
+[web.app]
+title = "Omni-Me"
+
+[web.watcher]
+watch_path = ["src", "assets"]
+reload_html = true
+
+[web.resource.dev]
+style = ["tailwind.css"]
+
+[web.resource.build]
+style = ["tailwind.css"]
