@@ -48,3 +48,17 @@ impl std::fmt::Display for UserDate {
         write!(f, "{}", self.to_date_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Locks in the YYYY-MM-DD convention used for note.date and routine dates.
+    /// Stored date strings across events, projections, and LLM payloads all
+    /// assume this format — changing it silently would corrupt historical data.
+    #[test]
+    fn to_date_string_uses_zero_padded_yyyy_mm_dd() {
+        let date = UserDate(NaiveDate::from_ymd_opt(2026, 3, 7).unwrap());
+        assert_eq!(date.to_date_string(), "2026-03-07");
+    }
+}

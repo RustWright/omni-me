@@ -450,4 +450,47 @@ mod tests {
         assert_eq!(events[0].device_id, "device-a");
         assert_eq!(events[0].aggregate_id, "n1");
     }
+
+    #[tokio::test]
+    async fn append_is_idempotent_on_duplicate_id() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+
+        let fixed_id = "01JKABCDEFGHJKLMNPQRSTVWXZ".to_string();
+        let ts = Utc::now();
+
+        store
+            .append(NewEvent {
+                id: Some(fixed_id.clone()),
+                event_type: "note_created".into(),
+                aggregate_id: "note-dup".into(),
+                timestamp: ts,
+                device_id: "device-a".into(),
+                payload: serde_json::json!({"raw_text": "original", "date": "2026-04-18"}),
+            })
+            .await
+            .unwrap();
+
+        // Same id, different payload. ON DUPLICATE KEY UPDATE must no-op this.
+        // This is what makes sync pulls safe to re-apply across devices.
+        store
+            .append(NewEvent {
+                id: Some(fixed_id.clone()),
+                event_type: "note_created".into(),
+                aggregate_id: "note-dup".into(),
+                timestamp: ts,
+                device_id: "device-a".into(),
+                payload: serde_json::json!({"raw_text": "tampered", "date": "2026-04-18"}),
+            })
+            .await
+            .unwrap();
+
+        let events = store.get_by_aggregate("note-dup").await.unwrap();
+        assert_eq!(events.len(), 1, "duplicate ID must not create a second row");
+        assert_eq!(events[0].id, fixed_id);
+        assert_eq!(
+            events[0].payload["raw_text"], "original",
+            "original payload must be preserved — duplicate must NOT overwrite"
+        );
+    }
 }

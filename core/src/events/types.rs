@@ -205,4 +205,100 @@ mod tests {
         });
         assert!(validate_payload(&EventType::RoutineItemCompleted, &payload).is_ok());
     }
+
+    /// Locks in the payload schema for every event type the existing tests
+    /// didn't cover. A failure here means someone changed a payload struct
+    /// (added a required field, renamed a field) without updating callers.
+    #[test]
+    fn validate_ok_for_remaining_event_types() {
+        let cases: Vec<(EventType, serde_json::Value)> = vec![
+            (
+                EventType::NoteUpdated,
+                serde_json::json!({
+                    "note_id": "note-1",
+                    "raw_text": "updated text"
+                }),
+            ),
+            (
+                EventType::NoteLlmProcessed,
+                serde_json::json!({
+                    "note_id": "note-1",
+                    "prompt_version": "v1",
+                    "model": "gemini-flash",
+                    "derived": { "tags": ["focus"] }
+                }),
+            ),
+            (
+                EventType::RoutineGroupCreated,
+                serde_json::json!({
+                    "name": "Morning",
+                    "frequency": "daily",
+                    "time_of_day": "morning"
+                }),
+            ),
+            (
+                EventType::RoutineItemAdded,
+                serde_json::json!({
+                    "group_id": "group-1",
+                    "name": "Stretch",
+                    "estimated_duration_min": 5,
+                    "order": 0
+                }),
+            ),
+        ];
+
+        for (event_type, payload) in &cases {
+            validate_payload(event_type, payload).unwrap_or_else(|e| {
+                panic!("expected valid payload for {event_type}, got: {e:?}")
+            });
+        }
+    }
+
+    /// `RoutineItemSkipped.reason` is typed as `Option<String>` — the sync
+    /// gate must accept skip events both with and without a reason. Locks in
+    /// the "reason is optional" schema choice.
+    #[test]
+    fn validate_routine_item_skipped_reason_is_optional() {
+        let with_reason = serde_json::json!({
+            "item_id": "item-1",
+            "group_id": "group-1",
+            "date": "2026-03-27",
+            "reason": "traveling"
+        });
+        assert!(validate_payload(&EventType::RoutineItemSkipped, &with_reason).is_ok());
+
+        let without_reason = serde_json::json!({
+            "item_id": "item-1",
+            "group_id": "group-1",
+            "date": "2026-03-27"
+        });
+        assert!(
+            validate_payload(&EventType::RoutineItemSkipped, &without_reason).is_ok(),
+            "reason must stay optional — Option<String> defaults to None when missing"
+        );
+    }
+
+    /// `RoutineGroupModified.justification` is `Option<String>` — modify events
+    /// must accept both user-supplied justifications and silent modifications
+    /// (e.g., migrations). Locks in the "justification is optional" schema.
+    #[test]
+    fn validate_routine_group_modified_justification_is_optional() {
+        let with_justification = serde_json::json!({
+            "group_id": "group-1",
+            "changes": { "name": "Evening" },
+            "justification": "renamed for clarity"
+        });
+        assert!(
+            validate_payload(&EventType::RoutineGroupModified, &with_justification).is_ok()
+        );
+
+        let without_justification = serde_json::json!({
+            "group_id": "group-1",
+            "changes": { "name": "Evening" }
+        });
+        assert!(
+            validate_payload(&EventType::RoutineGroupModified, &without_justification).is_ok(),
+            "justification must stay optional — Option<String> defaults to None when missing"
+        );
+    }
 }

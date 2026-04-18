@@ -154,38 +154,46 @@ The idea has existed for a while but now the pain is acute and the excuses are g
 
 ---
 
-### Session 5: Testing & User Catchup
+### Session 6: Code Review
 
-**Date:** [Date]
+**Date:** 2026-04-11 onwards
+**Status:** Complete (see `reviews/` for per-perspective findings)
 
-#### Phase A: User Test Writing
-**Areas Tested:**
-- [Area/module 1]
-- [Area/module 2]
-- [Area/module 3]
+**Phase A — Multi-Perspective Review:**
+Four parallel review documents produced in `reviews/2026-04-11-*.md`:
+- Security, logical consistency, performance, bloat/complexity
+- Findings bucketed Critical / High / Medium with file:line references
 
-#### Phase B: Test Review
-**Test Coverage Review:**
-- Gaps identified: [Any coverage gaps found during review]
-- Additional tests added: [Tests added to address gaps]
+**Phase B — Test Coverage Audit:**
+- Identified untested branches (sync client orchestration, idempotency, event payload schemas, UserDate format)
+- Added 9 locked-in tests across core + server integration + frontend
+- Extracted shared test fixtures into `server/tests/common/mod.rs`
+
+**Phase C — Fix Cycle:**
+- Review fixes landed in commit `5c8af12` (bloat + logical inconsistency fixes, timezone system)
+- Build pipeline + UI dev workflow fixes in commit `37172b6`
 
 **Feedback for Next Cycle:**
-- [Improvement or feature to consider]
-- [Issue discovered that needs addressing]
-- [Architectural concern to revisit]
+- SurrealKV commit queue overflow after ~24h — watch bug, not blocking
+- wasm-opt DWARF crash — only affects `--release` builds
+- Sync endpoints unauthenticated — acceptable behind Tailscale for now
+- UI_WORKFLOW.md process is tentative; validate during Cycle 2 first UI work
 
-**Milestone Commit:** `[commit hash]`
+**Milestone Commit:** `80581ca` (session end 2026-04-18)
 
 ---
 
 ## Cycle 2: [Cycle Name/Goal]
 
-### Session 3: Planning
+### Session 4: Planning
 
 **Date:** [Date]
 
 **Feedback Incorporated from Previous Cycle:**
 - [Feedback item from Cycle 1 and how it's being addressed]
+
+**Embedded Research (if any):**
+- [Research performed during planning when scope touched unfamiliar ground]
 
 **Objective:** [What this cycle aims to accomplish]
 
@@ -200,7 +208,7 @@ The idea has existed for a while but now the pain is acute and the excuses are g
 
 ---
 
-### Session 4: Implementation
+### Session 5: Implementation
 
 **Date Started:** [Date]
 **Date Completed:** [Date]
@@ -216,19 +224,23 @@ The idea has existed for a while but now the pain is acute and the excuses are g
 
 ---
 
-### Session 5: Testing & User Catchup
+### Session 6: Code Review
 
 **Date:** [Date]
 
-#### Phase A: User Test Writing
-**Areas Tested:**
-- [Area 1]
-- [Area 2]
+**Phase A — Multi-Perspective Review:**
+Review documents in `reviews/YYYY-MM-DD-*.md`:
+- Security: [findings summary]
+- Logical consistency: [findings summary]
+- Performance: [findings summary]
+- Bloat / complexity: [findings summary]
 
-#### Phase B: Test Review
-**Test Coverage Review:**
+**Phase B — Test Coverage Audit:**
 - Gaps identified: [Gaps]
-- Additional tests added: [Tests]
+- Tests added: [Tests]
+
+**Phase C — Fix Cycle:**
+- [Fix commits and what they addressed]
 
 **Feedback for Next Cycle:**
 - [Feedback items]
