@@ -34,4 +34,6 @@ Subsequent:      3 → 4 → 5 (repeat)
 - `project.md` — Persistent tracker, decision summaries, session log
 - `architecture.md` — Technical decisions with rationale (created Session 2)
 - `tasks.md` — Current cycle's task list (created Session 3, reset each cycle)
+- `UI_WORKFLOW.md` — How to develop the UI (dx serve + Playwright MCP). Read before any UI work.
+- `ui-checklist.md` — UI interaction checklist with test results
 - `.log/` — Raw conversation exports

@@ -34,7 +34,7 @@ pub fn Editor(
             let editor_container_id = EDITOR_CONTAINER_ID;
 
             // Helper function to use `?` for early returns in Option context
-            let mut setup_script_and_poll_editor = async || -> Option<()> {
+            let setup_script_and_poll_editor = async || -> Option<()> {
                 // 1. Check for existing script to prevent duplicates on hot-reload
                 let existing_script = document.query_selector(&format!("script[src='{}']", script_src))
                     .ok()

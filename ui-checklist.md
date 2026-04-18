@@ -1,20 +1,20 @@
 # UI Interaction Checklist
 
-Manual verification checklist for omni-me UI functionality.
-Will serve as the basis for automated Playwright tests later.
-
-Reference screenshots: `.reference/` directory
+Verification checklist for omni-me UI functionality.
+Last tested: 2026-04-17 via Playwright MCP (dx serve --features mock)
 
 ---
 
 ## Navigation
 
-- [ ] Bottom nav shows three tabs: Journal, Routines, Settings
-- [ ] Active tab is visually distinguished from inactive tabs
-- [ ] Clicking each tab switches to the correct page
-- [ ] Clicking the already-active tab does nothing (no reload/flicker)
+- [x] Bottom nav shows three tabs: Journal, Routines, Settings
+- [x] Active tab is visually distinguished from inactive tabs (blue vs grey)
+- [x] Clicking each tab switches to the correct page
+- [x] Clicking the already-active tab does nothing (no reload/flicker)
 
 ## Journal — List View (empty state)
+
+> Skipped: mock data always returns notes. Test with real backend.
 
 - [ ] Shows "Journal" title, "Search" button, "+ New Note" button
 - [ ] Empty state shows "No notes yet" with helper text
@@ -23,43 +23,46 @@ Reference screenshots: `.reference/` directory
 
 ## Journal — List View (with notes)
 
-- [ ] Notes are grouped by date (Today / Yesterday / Older)
-- [ ] Each note card shows preview text, date, tag count
-- [ ] Clicking a note opens it in the editor for editing
-- [ ] List refreshes after saving a new or edited note
+- [x] Notes are grouped by date (Today / Yesterday / Older)
+- [x] Each note card shows preview text, date, tag count
+- [x] Clicking a note opens it in the editor for editing
+- [ ] List refreshes after saving a new or edited note (mock limitation)
 
 ## Journal — Search View
 
-- [ ] Shows Back button and search input field
-- [ ] Empty query shows "Type to search notes" (no results, not all notes)
-- [ ] Typing a query shows results or "No results found"
-- [ ] Search fires automatically as you type (debounced)
-- [ ] Search state persists when navigating Back and returning
-- [ ] Clear/X button in search field to reset query
-- [ ] Back button returns to Journal list view
-- [ ] Clicking a search result opens the note for editing
+- [x] Shows Back button and search input field
+- [x] Empty query shows "Type to explore your thoughts" (no results, not all notes)
+- [x] Typing a query shows results or "No results found"
+- [x] Search fires automatically as you type
+- [ ] Search state persists when navigating Back and returning (not tested)
+- [ ] **MISSING: Clear/X button in search field to reset query**
+- [x] Back button returns to Journal list view
+- [ ] Clicking a search result opens the note for editing (not tested)
 
 ## Journal — New Note Editor
 
-- [ ] Shows Back button, "New Note" title, Save button
-- [ ] CodeMirror editor loads (no "Loading editor..." stuck state)
-- [ ] Text wraps naturally (no horizontal scrolling)
-- [ ] No line numbers displayed
-- [ ] Can type freely in the editor
-- [ ] Save button saves the note and returns to list view
-- [ ] New note appears in the list after saving
-- [ ] Back with unsaved changes prompts confirmation or autosaves
-- [ ] Re-entering New Note after Back starts with empty editor
+- [x] Shows Back button, "New Note" title, Save button
+- [x] CodeMirror editor loads (no "Loading editor..." stuck state)
+- [ ] Text wraps naturally (no horizontal scrolling) (not tested)
+- [x] No line numbers displayed
+- [ ] Can type freely in the editor (not tested)
+- [ ] Save button saves the note and returns to list view (mock limitation)
+- [ ] New note appears in the list after saving (mock limitation)
+- [ ] Back with unsaved changes prompts confirmation or autosaves (not tested)
+- [x] Re-entering New Note after Back starts with empty editor
 
 ## Journal — Edit Note
 
-- [ ] Editor pre-populated with existing note content
-- [ ] Shows "Process with AI" button (only for saved notes)
-- [ ] Save button persists changes
-- [ ] Process with AI triggers server-side LLM processing
-- [ ] LLM results display: tags, tasks, dates, expenses, summary
+- [x] Editor pre-populated with existing note content
+- [x] Shows "AI Analyze" button (only for saved notes)
+- [x] Save button present
+- [ ] Save persists changes (mock limitation)
+- [ ] AI Analyze triggers server-side LLM processing (requires real backend)
+- [ ] LLM results display: tags, tasks, dates, expenses, summary (requires real backend)
 
 ## Routines — Daily Checklist (empty state)
+
+> Skipped: mock data always returns routines. Test with real backend.
 
 - [ ] Shows "Today's Routines" title and "Manage" button
 - [ ] Empty state shows "No routines yet" with helper text
@@ -67,61 +70,82 @@ Reference screenshots: `.reference/` directory
 
 ## Routines — Daily Checklist (with routines)
 
-- [ ] Groups displayed by time of day (morning/afternoon/evening)
-- [ ] Each group shows items with checkboxes
-- [ ] Tapping checkbox marks item complete (visually distinct)
-- [ ] Skip button marks item skipped (visually distinct from completed)
-- [ ] Progress indicator per group (e.g. 3/5 done)
+- [x] Groups displayed by time of day (Morning with sun icon)
+- [x] Each group shows items with checkboxes
+- [ ] Tapping checkbox marks item complete (visually distinct) — **mock doesn't update state**
+- [x] Skip button visible for incomplete items
+- [x] Progress indicator per group (1/2)
 
 ## Routines — Group List (Manage view)
 
-- [ ] Shows Back button, "Routine Groups" title, "+ Add Group" button
-- [ ] Empty state shows "No routine groups" message
-- [ ] Back button returns to daily checklist
-- [ ] + Add Group navigates to new group form
-- [ ] Existing groups shown as cards with name, frequency, time of day
-- [ ] Clicking a group opens group detail view
+- [x] Shows Back button, "Routine Library" title, "+ New Group" button
+- [ ] Empty state shows "No routine groups" message (mock always has data)
+- [x] Back button returns to daily checklist
+- [x] + New Group navigates to new group form
+- [x] Existing groups shown as cards with name, frequency, time of day
+- [x] Clicking a group opens group detail view
 
 ## Routines — New Group Form
 
-- [ ] Shows Cancel button, "New Group" title, Save button
-- [ ] Name field: free text input with placeholder
-- [ ] Frequency dropdown: Daily, Weekly, Custom
-- [ ] Time of Day dropdown: Morning, Afternoon, Evening
-- [ ] Cancel with unsaved changes prompts confirmation or discards
-- [ ] Save creates the group and returns to group list
-- [ ] Re-entering form after Cancel starts with empty/default values
+- [x] Shows Cancel (X) button, "New Group" title, Save button
+- [x] Name field: free text input with placeholder ("e.g. Morning Ritual")
+- [x] Frequency dropdown: Daily, Weekly, Custom
+- [x] Focus Window dropdown: Morning, Afternoon, Evening
+- [ ] Cancel with unsaved changes prompts confirmation or discards (not tested)
+- [ ] Save creates the group and returns to group list (mock limitation)
+- [x] Re-entering form after Cancel starts with empty/default values
 
 ## Routines — Edit Group
 
-- [ ] Form pre-populated with existing group values
-- [ ] Save persists changes
-- [ ] Cancel with unsaved changes prompts confirmation or discards
+- [x] Form pre-populated with existing group values
+- [x] Save button present
+- [ ] Save persists changes (mock limitation)
+- [ ] Cancel with unsaved changes prompts confirmation or discards (not tested)
 
 ## Routines — Group Detail
 
-- [ ] Shows group name, items list, add item form
-- [ ] Can add items with name and estimated duration
-- [ ] 7-day history grid at bottom
-- [ ] Grid cells visually distinguish completed, skipped, and not done states
+- [x] Shows group name, items list, add item form
+- [x] Can add items with name and estimated duration (form present, Add button disabled when empty)
+- [x] 7-day history grid at bottom ("7-Day Performance")
+- [ ] Grid cells visually distinguish completed, skipped, and not done states (all grey — mock returns no history)
 
 ## Settings
 
-- [ ] Shows "Settings" title
-- [ ] Placeholder text displayed (not yet implemented)
+- [x] Shows "Settings" title
+- [x] Cloud Sync section: device ID, server URL, Sync Now button
+- [x] Timezone section: auto-detected timezone display
 
 ---
 
-## Known Issues
+## Naming Differences (checklist vs actual UI)
 
-Issues found during testing are tracked in `tasks.md` (current cycle) or as Cycle 2 backlog items.
-See `tasks.md` and the Cycle 2 Backlog section for details.
+| Checklist | Actual UI |
+|-----------|-----------|
+| "Today's Routines" | "Daily Flow" |
+| "Routine Groups" | "Routine Library" |
+| "Time of Day" | "Focus Window" |
+| "Process with AI" | "AI Analyze" |
+
+## Missing Features
+
+- **Search clear button**: No X/clear button in search input field
+
+## Mock Limitations
+
+Mock mode (`--features mock`) provides static data that doesn't persist state changes.
+These items can only be fully tested with the real Tauri backend (`cargo tauri dev`):
+- Saving notes (create/update)
+- Completing/skipping routine items (state doesn't update)
+- Creating new groups/items
+- LLM processing
+- Sync operations
 
 ---
 
 ## Test Environment
 
-- **Dev command:** `cargo tauri dev` from `tauri-app/`
-- **Build pipeline:** `npm run build` (installs deps, bundles editor JS, builds WASM, copies assets)
+- **UI-only dev:** `cd tauri-app/frontend && dx serve --platform web --features mock --open false --port 8080`
+- **Full app dev:** `cd tauri-app/src-tauri && cargo tauri dev`
+- **Build pipeline:** `npm run dev` (editor bundle + debug WASM + copy assets)
+- **Automated testing:** Playwright MCP tools (navigate, click, snapshot, screenshot)
 - **Database:** SurrealDB embedded, stored in OS app data dir (`~/.local/share/com.omni-me.app/`)
-- **Screenshots:** `.reference/` directory (numbered by flow)

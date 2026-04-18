@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.omni-me.app",
   "build": {
-    "beforeDevCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "frontendDist": "../frontend/target/dx/frontend/release/web/public"
+    "frontendDist": "../frontend/target/dx/frontend/debug/web/public"
   },
   "app": {
     "windows": [

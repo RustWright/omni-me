@@ -6,8 +6,11 @@
   "scripts": {
     "build:editor": "npx esbuild assets/js/editor.js --bundle --outfile=assets/js/editor.bundle.js",
     "build:frontend": "cd frontend && dx build --platform web --release",
-    "copy:editor": "mkdir -p frontend/target/dx/frontend/release/web/public/assets/js && cp assets/js/editor.bundle.js frontend/target/dx/frontend/release/web/public/assets/js/",
-    "build": "npm ci && npm run build:editor && npm run build:frontend && npm run copy:editor"
+    "build:frontend:dev": "cd frontend && dx build --platform web",
+    "copy:editor:release": "mkdir -p frontend/target/dx/frontend/release/web/public/assets/js && cp assets/js/editor.bundle.js frontend/target/dx/frontend/release/web/public/assets/js/",
+    "copy:editor:dev": "mkdir -p frontend/target/dx/frontend/debug/web/public/assets/js && cp assets/js/editor.bundle.js frontend/target/dx/frontend/debug/web/public/assets/js/",
+    "build": "npm run build:editor && npm run build:frontend && npm run copy:editor:release",
+    "dev": "npm run build:editor && npm run build:frontend:dev && npm run copy:editor:dev"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

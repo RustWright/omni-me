@@ -1,8 +1,10 @@
 use wasm_bindgen::prelude::*;
 use crate::types::{
     CompletionEntry, LlmResult, NoteListItem, RoutineGroup, RoutineItem, SyncInfo, SyncStatus,
-    TaskResult, TimezoneInfo,
+    TimezoneInfo,
 };
+#[cfg(feature = "mock")]
+use crate::types::TaskResult;
 
 // Tauri IPC
 #[wasm_bindgen]
@@ -296,11 +298,6 @@ pub async fn invoke_update_timezone(timezone: &str) -> Result<(), String> {
         struct Args<'a> { timezone: &'a str }
         invoke_unit("update_timezone", &Args { timezone }).await
     }
-}
-
-pub async fn invoke_get_note(id: &str) -> Result<NoteListItem, String> {
-    let notes = invoke_list_notes().await?;
-    notes.into_iter().find(|n| n.id == id).ok_or_else(|| "Not found".to_string())
 }
 
 pub async fn invoke_create_routine_group(name: &str, frequency: &str, time_of_day: &str) -> Result<RoutineGroup, String> {

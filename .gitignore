@@ -10,3 +10,6 @@ surreal_data/
 .tmp/
 .claude/worktrees/
 reviews/
+ui_dev/
+UI_design.md
+tauri-app/frontend/assets/tailwind.css
