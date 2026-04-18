@@ -1,0 +1,21 @@
+- generic [ref=e1]:
+  - generic [ref=e5] [cursor=pointer]:
+    - generic [ref=e6]:
+      - img [ref=e7]
+      - heading [level=3] [ref=e11]: Your app is being rebuilt.
+    - paragraph [ref=e12]: A non-hot-reloadable change occurred and we must rebuild.
+  - generic [ref=e14]:
+    - generic [ref=e252]:
+      - generic [ref=e253]:
+        - button [ref=e254] [cursor=pointer]:
+          - img [ref=e255]
+        - generic [ref=e257]:
+          - img [ref=e258]
+          - textbox "Search your journal..." [active] [ref=e260]
+      - generic [ref=e261]:
+        - img [ref=e262]
+        - paragraph [ref=e264]: Type to explore your thoughts
+    - navigation [ref=e44]:
+      - button "Journal" [ref=e45] [cursor=pointer]
+      - button "Routines" [ref=e46] [cursor=pointer]
+      - button "Settings" [ref=e47] [cursor=pointer]

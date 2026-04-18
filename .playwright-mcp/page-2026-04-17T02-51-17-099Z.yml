@@ -1,0 +1,37 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5] [cursor=pointer]:
+    - generic [ref=e6]:
+      - img [ref=e7]
+      - heading [level=3] [ref=e11]: Your app is being rebuilt.
+    - paragraph [ref=e12]: A non-hot-reloadable change occurred and we must rebuild.
+  - generic [ref=e14]:
+    - generic [ref=e180]:
+      - generic [ref=e286]:
+        - heading "Journal" [level=1] [ref=e287]
+        - generic [ref=e288]:
+          - button [ref=e289] [cursor=pointer]:
+            - img [ref=e290]
+          - button "New Note" [ref=e292] [cursor=pointer]:
+            - img [ref=e293]
+            - generic [ref=e295]: New Note
+      - generic [ref=e296]:
+        - heading "Today" [level=3] [ref=e297]
+        - generic [ref=e298]:
+          - generic [ref=e299] [cursor=pointer]:
+            - generic [ref=e300]: "# Morning Journal Feeling productive today. Goal: Refactor the UI to match Blue ..."
+            - generic [ref=e301]:
+              - generic [ref=e302]:
+                - img [ref=e303]
+                - text: 2026-04-17
+              - generic [ref=e305]: 2 tags
+          - generic [ref=e306] [cursor=pointer]:
+            - generic [ref=e307]: "## Workout Log - Bench press: 3x10 - Squats: 3x10 Remember to drink more water."
+            - generic [ref=e308]:
+              - generic [ref=e309]:
+                - img [ref=e310]
+                - text: 2026-04-17
+              - generic [ref=e312]: 1 tags
+    - navigation [ref=e44]:
+      - button "Journal" [ref=e45] [cursor=pointer]
+      - button "Routines" [ref=e46] [cursor=pointer]
+      - button "Settings" [ref=e47] [cursor=pointer]

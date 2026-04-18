@@ -1,0 +1,34 @@
+- generic [ref=e1]:
+  - generic [ref=e5] [cursor=pointer]:
+    - generic [ref=e6]:
+      - img [ref=e7]
+      - heading [level=3] [ref=e11]: Your app is being rebuilt.
+    - paragraph [ref=e12]: A non-hot-reloadable change occurred and we must rebuild.
+  - generic [ref=e14]:
+    - generic [ref=e329]:
+      - generic [ref=e330]:
+        - heading "Daily Flow" [level=1] [ref=e331]
+        - button "Manage" [ref=e332] [cursor=pointer]
+      - generic [ref=e333]:
+        - heading "Morning" [level=3] [ref=e334]:
+          - img [ref=e335]
+          - text: Morning
+        - generic [ref=e338]:
+          - generic [ref=e339]:
+            - generic [ref=e340]: Morning Ritual
+            - generic [ref=e344]: 1/2
+          - generic [ref=e345]:
+            - generic [ref=e346]:
+              - button [ref=e347] [cursor=pointer]:
+                - img [ref=e348]
+              - generic [ref=e350]: Glass of water
+              - generic [ref=e351]: 1m
+            - generic [ref=e352]:
+              - button [ref=e353] [cursor=pointer]
+              - generic [ref=e354]: Meditation
+              - button "SKIP" [ref=e355] [cursor=pointer]
+              - generic [ref=e356]: 10m
+    - navigation [ref=e44]:
+      - button "Journal" [ref=e45] [cursor=pointer]
+      - button "Routines" [active] [ref=e46] [cursor=pointer]
+      - button "Settings" [ref=e47] [cursor=pointer]

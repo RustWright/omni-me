@@ -1,0 +1,34 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5] [cursor=pointer]:
+    - generic [ref=e6]:
+      - img [ref=e7]
+      - heading [level=3] [ref=e11]: Your app is being rebuilt.
+    - paragraph [ref=e12]: A non-hot-reloadable change occurred and we must rebuild.
+  - generic [ref=e14]:
+    - generic [ref=e461]:
+      - generic [ref=e462]:
+        - button [ref=e463] [cursor=pointer]:
+          - img [ref=e464]
+        - heading "New Group" [level=2] [ref=e466]
+        - button "Save" [disabled] [ref=e467]
+      - generic [ref=e468]:
+        - generic [ref=e469]:
+          - generic [ref=e470]: Group Name
+          - textbox "e.g. Morning Ritual" [ref=e471]
+        - generic [ref=e472]:
+          - generic [ref=e473]:
+            - generic [ref=e474]: Frequency
+            - combobox [ref=e475]:
+              - option "Daily" [selected]
+              - option "Weekly"
+              - option "Custom"
+          - generic [ref=e476]:
+            - generic [ref=e477]: Focus Window
+            - combobox [ref=e478]:
+              - option "Morning" [selected]
+              - option "Afternoon"
+              - option "Evening"
+    - navigation [ref=e44]:
+      - button "Journal" [ref=e45] [cursor=pointer]
+      - button "Routines" [ref=e46] [cursor=pointer]
+      - button "Settings" [ref=e47] [cursor=pointer]

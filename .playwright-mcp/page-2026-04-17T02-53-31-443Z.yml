@@ -1,0 +1,25 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5] [cursor=pointer]:
+    - generic [ref=e6]:
+      - img [ref=e7]
+      - heading [level=3] [ref=e11]: Your app is being rebuilt.
+    - paragraph [ref=e12]: A non-hot-reloadable change occurred and we must rebuild.
+  - generic [ref=e14]:
+    - generic [ref=e444]:
+      - generic [ref=e445]:
+        - generic [ref=e446]:
+          - button [ref=e447] [cursor=pointer]:
+            - img [ref=e448]
+          - heading "Routine Library" [level=1] [ref=e450]
+        - button "New Group" [ref=e451] [cursor=pointer]:
+          - img [ref=e452]
+          - generic [ref=e454]: New Group
+      - generic [ref=e456] [cursor=pointer]:
+        - generic [ref=e457]: Morning Ritual
+        - generic [ref=e458]:
+          - generic [ref=e459]: daily
+          - generic [ref=e460]: morning
+    - navigation [ref=e44]:
+      - button "Journal" [ref=e45] [cursor=pointer]
+      - button "Routines" [ref=e46] [cursor=pointer]
+      - button "Settings" [ref=e47] [cursor=pointer]

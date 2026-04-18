@@ -1,0 +1,29 @@
+- generic [ref=e1]:
+  - generic [ref=e5] [cursor=pointer]:
+    - generic [ref=e6]:
+      - img [ref=e7]
+      - heading [level=3] [ref=e11]: Your app is being rebuilt.
+    - paragraph [ref=e12]: A non-hot-reloadable change occurred and we must rebuild.
+  - generic [ref=e14]:
+    - generic [ref=e157]:
+      - heading "Settings" [level=1] [ref=e158]
+      - generic [ref=e159]:
+        - heading "Cloud Synchronization" [level=2] [ref=e161]
+        - generic [ref=e162]:
+          - generic [ref=e163]: Local Device ID
+          - generic [ref=e164]: SAMSUNG-GALAXY-S21-MOCK
+        - generic [ref=e165]:
+          - generic [ref=e166]: Sync Server Address
+          - textbox [ref=e168]: https://mock-vps.omni-me.com
+        - button "Sync Now" [ref=e170] [cursor=pointer]:
+          - img [ref=e171]
+          - text: Sync Now
+      - generic [ref=e173]:
+        - heading "Timezone" [level=2] [ref=e175]
+        - generic [ref=e176]:
+          - generic [ref=e177]: Timezone (Auto-detected)
+          - textbox "e.g. America/New_York" [ref=e179]: UTC
+    - navigation [ref=e44]:
+      - button "Journal" [ref=e45] [cursor=pointer]
+      - button "Routines" [ref=e46] [cursor=pointer]
+      - button "Settings" [active] [ref=e47] [cursor=pointer]

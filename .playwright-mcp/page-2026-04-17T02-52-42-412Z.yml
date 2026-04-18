@@ -1,0 +1,45 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5] [cursor=pointer]:
+    - generic [ref=e6]:
+      - img [ref=e7]
+      - heading [level=3] [ref=e11]: Your app is being rebuilt.
+    - paragraph [ref=e12]: A non-hot-reloadable change occurred and we must rebuild.
+  - generic [ref=e14]:
+    - generic [ref=e374]:
+      - generic [ref=e375]:
+        - generic [ref=e376]:
+          - button [ref=e377] [cursor=pointer]:
+            - img [ref=e378]
+          - heading "Morning Ritual" [level=1] [ref=e380]
+        - button "Edit" [ref=e381] [cursor=pointer]
+      - heading "Step Configuration" [level=3] [ref=e382]
+      - generic [ref=e383]:
+        - generic [ref=e384]:
+          - generic [ref=e385]: Glass of water
+          - generic [ref=e386]: 1m
+        - generic [ref=e387]:
+          - generic [ref=e388]: Meditation
+          - generic [ref=e389]: 10m
+      - generic [ref=e390]:
+        - heading "Add New Step" [level=4] [ref=e391]
+        - generic [ref=e392]:
+          - textbox "Step name..." [ref=e393]
+          - spinbutton [ref=e394]: "5"
+          - button "Add" [disabled] [ref=e395]
+      - generic [ref=e396]:
+        - heading "7-Day Performance" [level=3] [ref=e397]
+        - generic [ref=e398]:
+          - generic [ref=e400]: Sat
+          - generic [ref=e401]: Sun
+          - generic [ref=e402]: Mon
+          - generic [ref=e403]: Tue
+          - generic [ref=e404]: Wed
+          - generic [ref=e405]: Thu
+          - generic [ref=e406]: Fri
+        - generic [ref=e407]:
+          - generic [ref=e409]: Glass of water
+          - generic [ref=e418]: Meditation
+    - navigation [ref=e44]:
+      - button "Journal" [ref=e45] [cursor=pointer]
+      - button "Routines" [ref=e46] [cursor=pointer]
+      - button "Settings" [ref=e47] [cursor=pointer]
