@@ -10,6 +10,10 @@ use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
     NotesProjection, ProjectionRunner, RoutinesProjection, SurrealEventStore,
 };
+use omni_me_core::sync::{
+    NetworkMonitor, PushDebouncer, RetryEngine, StatusReporter, SyncBuffer, SyncClient,
+    wire_accelerator,
+};
 
 const DB_NAME: &str = "local.db";
 const DEVICE_ID_FILE: &str = "device_id";
@@ -40,6 +44,33 @@ pub struct AppState {
     pub timezone: Arc<tokio::sync::RwLock<String>>,
     pub app_data_dir: std::path::PathBuf,
     pub http: reqwest::Client,
+    /// Debounced event buffer — 1s idle flush (see `SyncBuffer`).
+    pub sync_buffer: SyncBuffer,
+    /// Debounced push orchestrator — 2s idle after buffer flush.
+    pub push_debouncer: PushDebouncer,
+    /// Retry engine — exponential backoff 1s → 60s.
+    pub retry_engine: RetryEngine,
+    /// OS network event monitor — edge-triggered Online/Offline hints.
+    pub network_monitor: NetworkMonitor,
+    /// Aggregated sync status reporter.
+    pub status_reporter: StatusReporter,
+}
+
+/// Derive a TCP probe target (`host:port`) from the sync server URL. Used by
+/// the Phase 2 `NetworkMonitor` to hint the retry engine when the server
+/// becomes reachable again. Falls back to the URL's bare host on parse
+/// failures; callers may still wire the monitor to this even if the target
+/// is slightly stale — it only drives retry hints, not correctness.
+fn probe_target_from_url(url: &str) -> String {
+    if let Ok(parsed) = tauri::Url::parse(url) {
+        let host = parsed.host_str().unwrap_or("127.0.0.1");
+        let port = parsed
+            .port_or_known_default()
+            .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+        return format!("{host}:{port}");
+    }
+    // Last resort — match the default server URL shape.
+    "127.0.0.1:3000".to_string()
 }
 
 /// Remove stale SurrealKV LOCK file if the owning process is no longer alive.
@@ -121,6 +152,20 @@ pub fn run() {
                     timezone_shared.clone(),
                 );
 
+                // Phase 2 sync pipeline: buffer -> pusher -> retry engine
+                // wired together, plus a network monitor feeding hints in.
+                let sync_client = SyncClient::new(server_url.clone(), device_id.clone());
+                let (sync_buffer, _buffer_task) = SyncBuffer::new(event_store.clone());
+                let (push_debouncer, _pusher_task) =
+                    PushDebouncer::spawn(sync_client.clone(), db.clone(), &sync_buffer);
+                let (retry_engine, _retry_task) =
+                    RetryEngine::spawn(sync_client.clone(), db.clone(), &push_debouncer);
+                let probe_target = probe_target_from_url(&server_url);
+                let (network_monitor, _net_task) = NetworkMonitor::spawn(probe_target);
+                let _accel_task = wire_accelerator(&network_monitor, retry_engine.clone());
+                let (status_reporter, _sr_push_task, _sr_retry_task) =
+                    StatusReporter::spawn(&push_debouncer, &retry_engine);
+
                 handle.manage(AppState {
                     db,
                     event_store,
@@ -130,6 +175,11 @@ pub fn run() {
                     timezone: timezone_shared,
                     app_data_dir: app_data,
                     http: reqwest::Client::new(),
+                    sync_buffer,
+                    push_debouncer,
+                    retry_engine,
+                    network_monitor,
+                    status_reporter,
                 });
             });
 
@@ -176,6 +226,7 @@ pub fn run() {
             commands::sync::trigger_sync,
             commands::sync::get_sync_info,
             commands::sync::update_server_url,
+            commands::sync::get_sync_status,
             // Timezone
             commands::timezone::get_timezone,
             commands::timezone::update_timezone,

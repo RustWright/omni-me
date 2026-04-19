@@ -1,11 +1,11 @@
 use tauri::State;
 
-use omni_me_core::sync::SyncClient;
+use omni_me_core::sync::{SyncClient, SyncStatusSnapshot};
 
 use crate::AppState;
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn trigger_sync(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+pub async fn trigger_sync(state: State<'_, AppState>) -> Result<SyncCommandResult, String> {
     let server_url = state.server_url.read().await.clone();
     tracing::info!(
         server_url = %server_url,
@@ -31,7 +31,7 @@ pub async fn trigger_sync(state: State<'_, AppState>) -> Result<SyncStatus, Stri
 
     tracing::info!(pulled = result.pulled, pushed = result.pushed, "sync complete");
 
-    Ok(SyncStatus {
+    Ok(SyncCommandResult {
         pulled: result.pulled,
         pushed: result.pushed,
     })
@@ -62,8 +62,15 @@ pub async fn update_server_url(
     Ok(())
 }
 
+/// Return the current aggregated sync status — one of `idle | syncing |
+/// retrying | error` (kebab-case) plus retry attempt + last error.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_sync_status(state: State<'_, AppState>) -> Result<SyncStatusSnapshot, String> {
+    Ok(state.status_reporter.snapshot().await)
+}
+
 #[derive(serde::Serialize)]
-pub struct SyncStatus {
+pub struct SyncCommandResult {
     pub pulled: usize,
     pub pushed: usize,
 }

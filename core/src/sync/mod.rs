@@ -4,6 +4,7 @@ mod client;
 mod network;
 mod pusher;
 mod retry;
+mod status;
 
 pub use accelerator::wire as wire_accelerator;
 pub use buffer::{BufferError, FlushResult, SyncBuffer, DEFAULT_FLUSH_DELAY};
@@ -18,3 +19,4 @@ pub use pusher::{DEFAULT_PUSH_DELAY, PushDebouncer, PushEvent};
 pub use retry::{
     DEFAULT_RETRY_BASE, DEFAULT_RETRY_CAP, RetryEngine, RetryEvent, backoff_delay,
 };
+pub use status::{StatusReporter, SyncStatus, SyncStatusSnapshot};
