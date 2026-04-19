@@ -4,6 +4,55 @@ import { EditorState, RangeSetBuilder } from "@codemirror/state";
 import { Decoration, ViewPlugin, WidgetType, keymap } from "@codemirror/view";
 
 let editorView = null;
+let isDirty = false;
+let suppressDirty = false;
+const dirtyListeners = [];
+const cleanListeners = [];
+
+// ---------------------------------------------------------------------------
+// 1.4 - Dirty / Clean signalling
+// ---------------------------------------------------------------------------
+
+function emitDirty() {
+  if (isDirty) return;
+  isDirty = true;
+  for (const cb of dirtyListeners) {
+    try {
+      cb();
+    } catch (e) {
+      console.error("editorEvents.onDirty listener threw:", e);
+    }
+  }
+}
+
+function emitClean() {
+  if (!isDirty) return;
+  isDirty = false;
+  for (const cb of cleanListeners) {
+    try {
+      cb();
+    } catch (e) {
+      console.error("editorEvents.onClean listener threw:", e);
+    }
+  }
+}
+
+window.editorEvents = {
+  onDirty(cb) {
+    if (typeof cb === "function") dirtyListeners.push(cb);
+  },
+  onClean(cb) {
+    if (typeof cb === "function") cleanListeners.push(cb);
+  },
+  isDirty() {
+    return isDirty;
+  },
+};
+
+// Entry point so the Rust side can flip state back to clean after a save.
+window.markClean = function () {
+  emitClean();
+};
 
 // ---------------------------------------------------------------------------
 // 1.1 - Auto-wrap pairs
@@ -265,6 +314,9 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
     editorView = null;
   }
 
+  // Reset dirty state on fresh editor creation.
+  isDirty = false;
+
   const parent = document.getElementById(elementId);
   if (!parent) {
     console.error("Editor container not found:", elementId);
@@ -286,17 +338,17 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
     extensions.unshift(journalTimestampKeymap);
   }
 
-  // Add change listener if callback provided
-  if (typeof onChange === "function") {
-    extensions.push(
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          const content = update.state.doc.toString();
-          onChange(content);
-        }
-      }),
-    );
-  }
+  // Change listener: update onChange callback + dirty/clean signalling.
+  extensions.push(
+    EditorView.updateListener.of((update) => {
+      if (!update.docChanged) return;
+      if (!suppressDirty) emitDirty();
+      if (typeof onChange === "function") {
+        const content = update.state.doc.toString();
+        onChange(content);
+      }
+    }),
+  );
 
   editorView = new EditorView({
     state: EditorState.create({
@@ -317,18 +369,25 @@ window.getEditorContent = function () {
 };
 
 /**
- * Replace the entire editor content.
+ * Replace the entire editor content. This is treated as a programmatic update
+ * and does NOT flip the dirty flag - callers (e.g. after a load) can follow up
+ * with window.markClean() if they need an explicit clean signal.
  * @param {string} content - New content to set
  */
 window.setEditorContent = function (content) {
   if (!editorView) return;
-  editorView.dispatch({
-    changes: {
-      from: 0,
-      to: editorView.state.doc.length,
-      insert: content,
-    },
-  });
+  suppressDirty = true;
+  try {
+    editorView.dispatch({
+      changes: {
+        from: 0,
+        to: editorView.state.doc.length,
+        insert: content,
+      },
+    });
+  } finally {
+    suppressDirty = false;
+  }
 };
 
 /**
@@ -339,4 +398,5 @@ window.destroyEditor = function () {
     editorView.destroy();
     editorView = null;
   }
+  emitClean();
 };
