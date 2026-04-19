@@ -1,9 +1,11 @@
+mod accelerator;
 mod buffer;
 mod client;
 mod network;
 mod pusher;
 mod retry;
 
+pub use accelerator::wire as wire_accelerator;
 pub use buffer::{BufferError, FlushResult, SyncBuffer, DEFAULT_FLUSH_DELAY};
 pub use client::{
     PullOutcome, PullRequest, PullResponse, PushOutcome, PushRequest, PushResponse, SyncClient,
