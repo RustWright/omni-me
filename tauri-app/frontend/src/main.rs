@@ -9,6 +9,7 @@ use dioxus::prelude::*;
 
 use components::nav::{BottomNav, SideNav};
 use pages::journal::JournalPage;
+use pages::notes::NotesPage;
 use pages::routines::RoutinesPage;
 use pages::settings::SettingsPage;
 
@@ -16,6 +17,7 @@ use pages::settings::SettingsPage;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Journal,
+    Notes,
     Routines,
     Settings,
 }
@@ -59,6 +61,7 @@ fn App() -> Element {
                 div { class: "flex-1 overflow-y-auto p-4 md:p-6 pb-16 md:pb-6",
                     match *active_tab.read() {
                         Tab::Journal => rsx! { JournalPage {} },
+                        Tab::Notes => rsx! { NotesPage {} },
                         Tab::Routines => rsx! { RoutinesPage {} },
                         Tab::Settings => rsx! { SettingsPage {} },
                     }
