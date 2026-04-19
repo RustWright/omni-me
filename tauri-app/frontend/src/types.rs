@@ -1,29 +1,51 @@
 use serde::{Deserialize, Serialize};
 
-/// A note as returned from the backend.
+/// A journal entry (one per day). Mirrors `JournalEntryRow` from the backend.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NoteListItem {
+pub struct JournalEntryItem {
+    /// The date this journal is keyed by (YYYY-MM-DD). Also the SurrealDB record id.
     pub id: String,
-    pub raw_text: String,
+    pub journal_id: String,
     pub date: String,
+    pub raw_text: String,
+    pub tags: Vec<String>,
+    pub summary: Option<String>,
+    pub closed: bool,
+    pub complete: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A free-form (generic) note. Mirrors `GenericNoteRow` from the backend.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GenericNoteItem {
+    pub id: String,
+    pub title: String,
+    pub raw_text: String,
     pub tags: Vec<String>,
     pub summary: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
-/// A routine group as returned from the backend.
+/// A routine group. Mirrors `RoutineGroupRow` from the backend.
+///
+/// Phase 0 dropped `time_of_day` and introduced `order` + a `removed` flag
+/// (soft-delete). The frontend filters removed groups out of the default list view.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutineGroup {
     pub id: String,
     pub name: String,
     pub frequency: String,
-    pub time_of_day: String,
+    #[serde(default)]
+    pub order_num: i64,
+    #[serde(default)]
+    pub removed: bool,
     pub created_at: String,
     pub updated_at: String,
 }
 
-/// A routine item as returned from the backend.
+/// A routine item. Mirrors `RoutineItemRow` from the backend.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutineItem {
     pub id: String,
@@ -31,6 +53,8 @@ pub struct RoutineItem {
     pub name: String,
     pub estimated_duration_min: i64,
     pub order_num: i64,
+    #[serde(default)]
+    pub removed: bool,
 }
 
 /// A routine completion entry.
@@ -44,7 +68,7 @@ pub struct CompletionEntry {
     pub reason: Option<String>,
 }
 
-/// Result of a sync operation.
+/// Result of a manual sync operation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SyncStatus {
     pub pulled: usize,
@@ -93,4 +117,22 @@ pub struct ExpenseResult {
     pub amount: f64,
     pub currency: String,
     pub description: String,
+}
+
+/// 4-state sync status reported by the background debouncer/retry loop.
+/// Matches the enum exposed by the Phase 2 `get_sync_status` Tauri command.
+/// See Track D (tasks.md 2.6) for the backend implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncState {
+    Idle,
+    Syncing,
+    Retrying,
+    Error,
+}
+
+impl Default for SyncState {
+    fn default() -> Self {
+        Self::Idle
+    }
 }
