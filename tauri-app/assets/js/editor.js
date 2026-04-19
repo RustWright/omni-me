@@ -1,6 +1,7 @@
 import { EditorView, minimalSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
-import { EditorState } from "@codemirror/state";
+import { EditorState, RangeSetBuilder } from "@codemirror/state";
+import { Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
 
 let editorView = null;
 
@@ -115,6 +116,103 @@ const autoWrapFilter = EditorState.transactionFilter.of((tr) => {
 });
 
 // ---------------------------------------------------------------------------
+// 1.2 - `- [ ] ` checkbox rendering
+// ---------------------------------------------------------------------------
+
+// Match a checkbox prefix at the start of a line: `- [ ] ` or `- [x] `.
+// Captures the inner mark ([ ] or [x]) so we can toggle it on click.
+const CHECKBOX_RE = /^(\s*)-\s\[([ xX])\]\s/;
+
+class CheckboxWidget extends WidgetType {
+  constructor(checked, markFrom) {
+    super();
+    this.checked = checked;
+    this.markFrom = markFrom;
+  }
+  eq(other) {
+    return other.checked === this.checked && other.markFrom === this.markFrom;
+  }
+  toDOM() {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = this.checked;
+    input.className = "cm-checkbox-widget";
+    input.style.marginRight = "6px";
+    input.style.cursor = "pointer";
+    input.style.verticalAlign = "middle";
+    input.dataset.markFrom = String(this.markFrom);
+    input.dataset.checked = this.checked ? "1" : "0";
+    return input;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+function buildCheckboxDecorations(view) {
+  const builder = new RangeSetBuilder();
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from;
+    while (pos <= to) {
+      const line = view.state.doc.lineAt(pos);
+      const m = line.text.match(CHECKBOX_RE);
+      if (m) {
+        const indent = m[1].length;
+        const markCharPos = line.from + indent + 3; // position of ' ' or 'x'
+        const replaceFrom = line.from + indent; // start of "- ["
+        const replaceTo = line.from + indent + 6; // end of "] "
+        const checked = m[2] === "x" || m[2] === "X";
+        builder.add(
+          replaceFrom,
+          replaceTo,
+          Decoration.replace({
+            widget: new CheckboxWidget(checked, markCharPos),
+          }),
+        );
+      }
+      if (line.to >= to) break;
+      pos = line.to + 1;
+    }
+  }
+  return builder.finish();
+}
+
+const checkboxPlugin = ViewPlugin.fromClass(
+  class {
+    constructor(view) {
+      this.decorations = buildCheckboxDecorations(view);
+    }
+    update(update) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = buildCheckboxDecorations(update.view);
+      }
+    }
+  },
+  {
+    decorations: (v) => v.decorations,
+    eventHandlers: {
+      mousedown(event, view) {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement)) return false;
+        if (!target.classList.contains("cm-checkbox-widget")) return false;
+        const markFromStr = target.dataset.markFrom;
+        if (!markFromStr) return false;
+        const markFrom = Number(markFromStr);
+        if (Number.isNaN(markFrom)) return false;
+        const currentMark = view.state.sliceDoc(markFrom, markFrom + 1);
+        const nextMark =
+          currentMark === "x" || currentMark === "X" ? " " : "x";
+        view.dispatch({
+          changes: { from: markFrom, to: markFrom + 1, insert: nextMark },
+        });
+        event.preventDefault();
+        return true;
+      },
+    },
+  },
+);
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -142,6 +240,7 @@ window.createEditor = function (elementId, initialContent, onChange) {
     markdown(),
     EditorView.lineWrapping,
     autoWrapFilter,
+    checkboxPlugin,
   ];
 
   // Add change listener if callback provided
