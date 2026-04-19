@@ -1,6 +1,6 @@
 # Project: omni-me
 
-**Status:** Cycle 2 Planned — Implementation pending
+**Status:** Cycle 2 Implementation — Phases 0-3 complete, Phases 4-6 pending
 **Last Updated:** 2026-04-19
 
 ## Session Log
@@ -16,6 +16,8 @@
 | Session 4: Phases 2-6 | 2026-03-29 | Complete | Event store + sync, LLM pipeline, UI shell + CodeMirror, Journal/Notes, Routine Manager — all features functional on desktop. Code review done (6 fixes applied). |
 | Session 4: Phase 7 | 2026-03-30 | Complete | Tracing, editor fixes, sync wiring, settings page, Android APK, Tailscale sync. Fixed projection apply after sync pull. Found SurrealKV stability issue (commit queue overflow after ~24h). Cycle 1 complete — all features working, sync verified phone→server→desktop. |
 | Session 4: Planning (Cycle 2) | 2026-04-19 | Complete | 48 tasks across 7 phases + 3 stretch. Tier 1 (editor revamp + auto-save/sync + journal/generic split + Obsidian import/export) + full Tier 2 (routine UX). Breaking event schema changes accepted. Time-of-day labels removed. Day-close: manual + auto (when 3 properties filled). Tier 3 (budget) deferred to Cycle 3. Output: `tasks.md`. |
+| Session 5: Phase 0 (Cycle 2) | 2026-04-19 | Complete | Core foundation rewrite — event schema split (journal/generic), routine event expansion (reorder/remove/undo/modify), DataWiped event, frequency parser (Learn-by-Doing), notes+routines projections rewritten, auto-close background tick (chrono-tz, local midnight+30s grace), 15 new Tauri commands. 99 workspace tests. Commit `1031e23`. |
+| Session 5: Phases 1-3 (Cycle 2) | 2026-04-19 | Complete | Three parallel worktree subagents merged: Track B editor (auto-wrap, checkbox widget, journal-mode timestamp, dirty/clean IPC), Track D sync (debounced buffer 1s, push debouncer 2s, exponential backoff 1→60s ±10% jitter, probe-based network monitor, retry accelerator, 4-state status reporter, kill-server integration test), Track C nav shell (responsive sidebar/bottom at 768px, Notes tab added, Journal Today/Calendar sub-tabs, Notes Recent/Search sub-tabs, sync status chip). Integration glue: frontend `SyncStatusSnapshot` mirrors backend, editor `journal_mode` prop wired through. Commits `48578ff..a0e407b`. 113+ tests passing across workspace. |
 
 ---
 
