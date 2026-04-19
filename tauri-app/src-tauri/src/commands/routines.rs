@@ -6,40 +6,38 @@ use omni_me_core::events::{EventStore, EventType, NewEvent};
 
 use crate::AppState;
 
+// -----------------------------------------------------------------------------
+// Group CRUD
+// -----------------------------------------------------------------------------
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn create_routine_group(
     state: State<'_, AppState>,
     name: String,
     frequency: String,
-    time_of_day: String,
+    order: u32,
 ) -> Result<RoutineGroupRow, String> {
-    tracing::info!(name = %name, frequency = %frequency, time_of_day = %time_of_day, "create_routine_group");
+    tracing::info!(name = %name, frequency = %frequency, order, "create_routine_group");
+
+    // Validate frequency up-front — sync accepts it regardless, but we want
+    // the UI to get a fast, structured error for bad input.
+    frequency
+        .parse::<omni_me_core::routines::Frequency>()
+        .map_err(|e| format!("invalid frequency '{frequency}': {e}"))?;
+
     let group_id = ulid::Ulid::new().to_string();
-
-    let event = NewEvent {
-        id: None,
-        event_type: EventType::RoutineGroupCreated.to_string(),
-        aggregate_id: group_id.clone(),
-        timestamp: Utc::now(),
-        device_id: state.device_id.clone(),
-        payload: serde_json::json!({
-            "name": name,
-            "frequency": frequency,
-            "time_of_day": time_of_day,
-        }),
-    };
-
-    let event = state
-        .event_store
-        .append(event)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    state
-        .projections
-        .apply_events(&[event])
-        .await
-        .map_err(|e| e.to_string())?;
+    let payload = serde_json::json!({
+        "name": name,
+        "frequency": frequency,
+        "order": order,
+    });
+    append_and_apply(
+        &state,
+        EventType::RoutineGroupCreated,
+        group_id.clone(),
+        payload,
+    )
+    .await?;
 
     queries::get_routine_group(&state.db, &group_id)
         .await
@@ -57,6 +55,45 @@ pub async fn list_routine_groups(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn reorder_routine_groups(
+    state: State<'_, AppState>,
+    orderings: Vec<serde_json::Value>,
+) -> Result<(), String> {
+    tracing::info!(count = orderings.len(), "reorder_routine_groups");
+    let payload = serde_json::json!({ "orderings": orderings });
+    // Aggregate id here is synthetic — reorder touches many groups; use a ULID
+    // so the event has its own identity and sync idempotency holds.
+    let aggregate_id = ulid::Ulid::new().to_string();
+    append_and_apply(
+        &state,
+        EventType::RoutineGroupReordered,
+        aggregate_id,
+        payload,
+    )
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn remove_routine_group(
+    state: State<'_, AppState>,
+    group_id: String,
+) -> Result<(), String> {
+    tracing::info!(group_id = %group_id, "remove_routine_group");
+    let payload = serde_json::json!({ "group_id": group_id });
+    append_and_apply(
+        &state,
+        EventType::RoutineGroupRemoved,
+        group_id,
+        payload,
+    )
+    .await
+}
+
+// -----------------------------------------------------------------------------
+// Item CRUD
+// -----------------------------------------------------------------------------
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn add_routine_item(
     state: State<'_, AppState>,
     group_id: String,
@@ -66,39 +103,23 @@ pub async fn add_routine_item(
 ) -> Result<RoutineItemRow, String> {
     tracing::info!(group_id = %group_id, name = %name, "add_routine_item");
     let item_id = ulid::Ulid::new().to_string();
+    let payload = serde_json::json!({
+        "group_id": group_id,
+        "name": name,
+        "estimated_duration_min": duration_min,
+        "order": order,
+    });
+    append_and_apply(
+        &state,
+        EventType::RoutineItemAdded,
+        item_id.clone(),
+        payload,
+    )
+    .await?;
 
-    let event = NewEvent {
-        id: None,
-        event_type: EventType::RoutineItemAdded.to_string(),
-        aggregate_id: item_id.clone(),
-        timestamp: Utc::now(),
-        device_id: state.device_id.clone(),
-        payload: serde_json::json!({
-            "group_id": group_id,
-            "name": name,
-            "estimated_duration_min": duration_min,
-            "order": order,
-        }),
-    };
-
-    let event = state
-        .event_store
-        .append(event)
+    queries::list_routine_items(&state.db, &group_id)
         .await
-        .map_err(|e| e.to_string())?;
-
-    state
-        .projections
-        .apply_events(&[event])
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Query the item back from projection
-    let items = queries::list_routine_items(&state.db, &group_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    items
+        .map_err(|e| e.to_string())?
         .into_iter()
         .find(|i| i.id == item_id)
         .ok_or_else(|| "Item created but not found in projection".to_string())
@@ -115,40 +136,70 @@ pub async fn list_routine_items(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn modify_routine_item(
+    state: State<'_, AppState>,
+    item_id: String,
+    changes: serde_json::Value,
+) -> Result<(), String> {
+    tracing::info!(item_id = %item_id, "modify_routine_item");
+    let payload = serde_json::json!({ "item_id": item_id, "changes": changes });
+    append_and_apply(&state, EventType::RoutineItemModified, item_id, payload).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn remove_routine_item(
+    state: State<'_, AppState>,
+    item_id: String,
+) -> Result<(), String> {
+    tracing::info!(item_id = %item_id, "remove_routine_item");
+    let payload = serde_json::json!({ "item_id": item_id });
+    append_and_apply(&state, EventType::RoutineItemRemoved, item_id, payload).await
+}
+
+// -----------------------------------------------------------------------------
+// Completion events (and their undos)
+// -----------------------------------------------------------------------------
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn complete_routine_item(
     state: State<'_, AppState>,
     item_id: String,
     group_id: String,
     date: String,
 ) -> Result<(), String> {
-    tracing::info!(item_id = %item_id, group_id = %group_id, date = %date, "complete_routine_item");
-    let event = NewEvent {
-        id: None,
-        event_type: EventType::RoutineItemCompleted.to_string(),
-        aggregate_id: ulid::Ulid::new().to_string(),
-        timestamp: Utc::now(),
-        device_id: state.device_id.clone(),
-        payload: serde_json::json!({
-            "item_id": item_id,
-            "group_id": group_id,
-            "date": date,
-            "completed_at": Utc::now().to_rfc3339(),
-        }),
-    };
+    tracing::info!(item_id = %item_id, date = %date, "complete_routine_item");
+    let payload = serde_json::json!({
+        "item_id": item_id,
+        "group_id": group_id,
+        "date": date,
+        "completed_at": Utc::now().to_rfc3339(),
+    });
+    let aggregate_id = ulid::Ulid::new().to_string();
+    append_and_apply(
+        &state,
+        EventType::RoutineItemCompleted,
+        aggregate_id,
+        payload,
+    )
+    .await
+}
 
-    let event = state
-        .event_store
-        .append(event)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    state
-        .projections
-        .apply_events(&[event])
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
+#[tauri::command(rename_all = "snake_case")]
+pub async fn undo_completion(
+    state: State<'_, AppState>,
+    item_id: String,
+    date: String,
+) -> Result<(), String> {
+    tracing::info!(item_id = %item_id, date = %date, "undo_completion");
+    let payload = serde_json::json!({ "item_id": item_id, "date": date });
+    let aggregate_id = ulid::Ulid::new().to_string();
+    append_and_apply(
+        &state,
+        EventType::RoutineItemCompletionUndone,
+        aggregate_id,
+        payload,
+    )
+    .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -159,71 +210,44 @@ pub async fn skip_routine_item(
     date: String,
     reason: Option<String>,
 ) -> Result<(), String> {
-    tracing::info!(item_id = %item_id, group_id = %group_id, date = %date, "skip_routine_item");
-    let event = NewEvent {
-        id: None,
-        event_type: EventType::RoutineItemSkipped.to_string(),
-        aggregate_id: ulid::Ulid::new().to_string(),
-        timestamp: Utc::now(),
-        device_id: state.device_id.clone(),
-        payload: serde_json::json!({
-            "item_id": item_id,
-            "group_id": group_id,
-            "date": date,
-            "reason": reason,
-        }),
-    };
-
-    let event = state
-        .event_store
-        .append(event)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    state
-        .projections
-        .apply_events(&[event])
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
+    tracing::info!(item_id = %item_id, date = %date, "skip_routine_item");
+    let payload = serde_json::json!({
+        "item_id": item_id,
+        "group_id": group_id,
+        "date": date,
+        "reason": reason,
+    });
+    let aggregate_id = ulid::Ulid::new().to_string();
+    append_and_apply(
+        &state,
+        EventType::RoutineItemSkipped,
+        aggregate_id,
+        payload,
+    )
+    .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn modify_routine_group(
+pub async fn undo_skip(
     state: State<'_, AppState>,
-    group_id: String,
-    changes: serde_json::Value,
-    justification: Option<String>,
+    item_id: String,
+    date: String,
 ) -> Result<(), String> {
-    tracing::info!(group_id = %group_id, "modify_routine_group");
-    let event = NewEvent {
-        id: None,
-        event_type: EventType::RoutineGroupModified.to_string(),
-        aggregate_id: group_id.clone(),
-        timestamp: Utc::now(),
-        device_id: state.device_id.clone(),
-        payload: serde_json::json!({
-            "group_id": group_id,
-            "changes": changes,
-            "justification": justification,
-        }),
-    };
-
-    let event = state
-        .event_store
-        .append(event)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    state
-        .projections
-        .apply_events(&[event])
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
+    tracing::info!(item_id = %item_id, date = %date, "undo_skip");
+    let payload = serde_json::json!({ "item_id": item_id, "date": date });
+    let aggregate_id = ulid::Ulid::new().to_string();
+    append_and_apply(
+        &state,
+        EventType::RoutineItemSkipUndone,
+        aggregate_id,
+        payload,
+    )
+    .await
 }
+
+// -----------------------------------------------------------------------------
+// Queries
+// -----------------------------------------------------------------------------
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_completions_for_date(
@@ -245,4 +269,79 @@ pub async fn get_routine_history(
     queries::get_completion_history(&state.db, &group_id, days)
         .await
         .map_err(|e| e.to_string())
+}
+
+// -----------------------------------------------------------------------------
+// Destructive: emit DataWiped + clear events + rebuild projections.
+// -----------------------------------------------------------------------------
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn wipe_all_data(state: State<'_, AppState>) -> Result<(), String> {
+    tracing::warn!("wipe_all_data invoked");
+
+    // 1. Emit the audit marker first so peers can observe the intent on next sync.
+    let payload = serde_json::json!({
+        "initiated_at": Utc::now().to_rfc3339(),
+        "device_id": state.device_id,
+    });
+    let aggregate_id = ulid::Ulid::new().to_string();
+    state
+        .event_store
+        .append(NewEvent {
+            id: None,
+            event_type: EventType::DataWiped.to_string(),
+            aggregate_id,
+            timestamp: Utc::now(),
+            device_id: state.device_id.clone(),
+            payload,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 2. Rebuild clears projection tables and replays events.
+    //    Events are still present, so this is a true "rebuild" not a "wipe".
+    //    True data wipe currently lives at the filesystem layer (Phase 6.7 UI
+    //    will do the two-step confirmation and call this command).
+    //    NOTE: this is intentionally lightweight for Phase 0 — full wipe
+    //    semantics (delete events too, sync the DataWiped event, wipe peers)
+    //    are beyond the scope of the core foundation.
+    state
+        .projections
+        .rebuild()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// Shared helper: append + apply through projections.
+// -----------------------------------------------------------------------------
+
+async fn append_and_apply(
+    state: &AppState,
+    event_type: EventType,
+    aggregate_id: String,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    let event = state
+        .event_store
+        .append(NewEvent {
+            id: None,
+            event_type: event_type.to_string(),
+            aggregate_id,
+            timestamp: Utc::now(),
+            device_id: state.device_id.clone(),
+            payload,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    state
+        .projections
+        .apply_events(&[event])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }

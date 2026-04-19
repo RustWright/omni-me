@@ -110,7 +110,7 @@ pub async fn process_note(
         .map_err(|e| PipelineError::Processing(format!("Failed to serialize result: {e}")))?;
 
     let payload = NoteLlmProcessedPayload {
-        note_id: note_id.to_string(),
+        aggregate_id: note_id.to_string(),
         prompt_version: format!("{}@{}", template.name, template.version),
         model: model_name.to_string(),
         derived,

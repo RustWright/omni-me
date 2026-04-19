@@ -13,13 +13,14 @@ use common::{device_db, start_server};
 fn sample_event(device_id: &str, aggregate_id: &str) -> NewEvent {
     NewEvent {
         id: None,
-        event_type: "note_created".into(),
+        event_type: "journal_entry_created".into(),
         aggregate_id: aggregate_id.into(),
         timestamp: Utc::now(),
         device_id: device_id.into(),
         payload: serde_json::json!({
-            "raw_text": "sync client test",
-            "date": "2026-04-18"
+            "journal_id": aggregate_id,
+            "date": "2026-04-18",
+            "raw_text": "sync client test"
         }),
     }
 }
@@ -104,7 +105,7 @@ async fn sync_pulls_remote_events_into_local_store() {
     let local_events = store.get_by_aggregate("note-remote").await.unwrap();
     assert_eq!(local_events.len(), 1);
     assert_eq!(local_events[0].device_id, "device-b");
-    assert_eq!(local_events[0].event_type, "note_created");
+    assert_eq!(local_events[0].event_type, "journal_entry_created");
 }
 
 /// Device filter on push: events pulled from other devices must NOT be

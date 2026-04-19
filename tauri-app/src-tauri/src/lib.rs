@@ -1,6 +1,8 @@
+mod auto_close_scheduler;
 mod commands;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use tauri::Manager;
 
@@ -35,7 +37,7 @@ pub struct AppState {
     pub projections: ProjectionRunner,
     pub device_id: String,
     pub server_url: tokio::sync::RwLock<String>,
-    pub timezone: tokio::sync::RwLock<String>,
+    pub timezone: Arc<tokio::sync::RwLock<String>>,
     pub app_data_dir: std::path::PathBuf,
     pub http: reqwest::Client,
 }
@@ -109,13 +111,23 @@ pub fn run() {
 
                 tracing::info!(device_id = %device_id, server_url = %server_url, timezone = %timezone, "App initialized");
 
+                let timezone_shared = Arc::new(tokio::sync::RwLock::new(timezone));
+
+                auto_close_scheduler::spawn(
+                    db.clone(),
+                    event_store.clone(),
+                    projections.clone(),
+                    device_id.clone(),
+                    timezone_shared.clone(),
+                );
+
                 handle.manage(AppState {
                     db,
                     event_store,
                     projections,
                     device_id,
                     server_url: tokio::sync::RwLock::new(server_url),
-                    timezone: tokio::sync::RwLock::new(timezone),
+                    timezone: timezone_shared,
                     app_data_dir: app_data,
                     http: reqwest::Client::new(),
                 });
@@ -124,23 +136,42 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Notes
-            commands::notes::create_note,
-            commands::notes::list_notes,
-            commands::notes::get_note,
-            commands::notes::update_note,
-            commands::notes::search_notes,
+            // Journal entries (date-keyed)
+            commands::notes::create_journal_entry,
+            commands::notes::update_journal_entry,
+            commands::notes::close_journal_entry,
+            commands::notes::reopen_journal_entry,
+            commands::notes::get_journal_by_date,
+            commands::notes::list_journal_entries,
+            commands::notes::list_journal_dates,
+            // Generic notes (id-keyed)
+            commands::notes::create_generic_note,
+            commands::notes::update_generic_note,
+            commands::notes::rename_generic_note,
+            commands::notes::get_generic_note,
+            commands::notes::list_generic_notes,
+            commands::notes::search_generic_notes,
+            // LLM
             commands::notes::process_note_llm,
-            // Routines
+            // Routine groups
             commands::routines::create_routine_group,
             commands::routines::list_routine_groups,
+            commands::routines::reorder_routine_groups,
+            commands::routines::remove_routine_group,
+            // Routine items
             commands::routines::add_routine_item,
             commands::routines::list_routine_items,
+            commands::routines::modify_routine_item,
+            commands::routines::remove_routine_item,
+            // Routine completions
             commands::routines::complete_routine_item,
+            commands::routines::undo_completion,
             commands::routines::skip_routine_item,
-            commands::routines::modify_routine_group,
+            commands::routines::undo_skip,
             commands::routines::get_completions_for_date,
             commands::routines::get_routine_history,
+            // Meta
+            commands::routines::wipe_all_data,
             // Sync
             commands::sync::trigger_sync,
             commands::sync::get_sync_info,

@@ -24,14 +24,21 @@ pub trait Projection: Send + Sync {
 }
 
 /// Runs projections over events, tracking which events have been processed.
+///
+/// Cheaply cloneable — the projection list is shared via `Arc`, and the
+/// `Database` handle is its own `Clone`-able connection pool wrapper.
+#[derive(Clone)]
 pub struct ProjectionRunner {
     db: Database,
-    projections: Vec<Box<dyn Projection>>,
+    projections: std::sync::Arc<Vec<Box<dyn Projection>>>,
 }
 
 impl ProjectionRunner {
     pub fn new(db: Database, projections: Vec<Box<dyn Projection>>) -> Self {
-        Self { db, projections }
+        Self {
+            db,
+            projections: std::sync::Arc::new(projections),
+        }
     }
 
     /// Initialize all projection schemas and the projection_versions tracking table.
@@ -47,7 +54,7 @@ impl ProjectionRunner {
             .await
 ?;
 
-        for proj in &self.projections {
+        for proj in self.projections.iter() {
             proj.init_schema(&self.db).await?;
 
             let name = proj.name().to_string();
@@ -74,7 +81,7 @@ impl ProjectionRunner {
     /// Apply a batch of events through all matching projections.
     pub async fn apply_events(&self, events: &[Event]) -> Result<(), EventError> {
         for event in events {
-            for proj in &self.projections {
+            for proj in self.projections.iter() {
                 proj.apply(event, &self.db).await?;
             }
         }
@@ -82,7 +89,7 @@ impl ProjectionRunner {
         // Update last_event_id once after all events are applied
         if let Some(last) = events.last() {
             let event_id = last.id.clone();
-            for proj in &self.projections {
+            for proj in self.projections.iter() {
                 let name = proj.name().to_string();
                 self.db
                     .query(
@@ -111,7 +118,7 @@ impl ProjectionRunner {
         let events = store.get_since(epoch, None).await?;
 
         // Clear all projection tables, then re-initialize schemas
-        for proj in &self.projections {
+        for proj in self.projections.iter() {
             proj.clear_tables(&self.db).await?;
             proj.init_schema(&self.db).await?;
         }

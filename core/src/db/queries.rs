@@ -1,32 +1,54 @@
 use serde::Serialize;
-use surrealdb::types::SurrealValue;
+use surrealdb::types::{SurrealValue, Value as DbValue};
 
 use super::{Database, DbError};
 
-/// A note from the `notes` projection table.
+/// A journal entry (one per day) from the `journal_entries` projection table.
 #[derive(Debug, Clone, Serialize, SurrealValue)]
-pub struct NoteRow {
+pub struct JournalEntryRow {
+    /// SurrealDB record id — equal to `date`, e.g. "2026-04-19".
     pub id: String,
-    pub raw_text: String,
+    pub journal_id: String,
     pub date: String,
+    pub raw_text: String,
     pub tags: Vec<String>,
     pub summary: Option<String>,
+    pub closed: bool,
+    pub complete: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_properties: Option<DbValue>,
     pub created_at: String,
     pub updated_at: String,
 }
 
-/// A routine group from the `routine_groups` projection table.
+/// A free-form note from the `generic_notes` projection table.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct GenericNoteRow {
+    pub id: String,
+    pub title: String,
+    pub raw_text: String,
+    pub tags: Vec<String>,
+    pub summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_properties: Option<DbValue>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A routine group. `removed` rows are included in sync history but filtered
+/// out of the default list view.
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct RoutineGroupRow {
     pub id: String,
     pub name: String,
     pub frequency: String,
-    pub time_of_day: String,
+    pub order_num: i64,
+    pub removed: bool,
     pub created_at: String,
     pub updated_at: String,
 }
 
-/// A routine item from the `routine_items` projection table.
+/// A routine item.
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct RoutineItemRow {
     pub id: String,
@@ -34,9 +56,10 @@ pub struct RoutineItemRow {
     pub name: String,
     pub estimated_duration_min: i64,
     pub order_num: i64,
+    pub removed: bool,
 }
 
-/// A routine completion record.
+/// A routine completion (complete or skip).
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct CompletionRow {
     pub id: String,
@@ -48,66 +71,162 @@ pub struct CompletionRow {
     pub reason: Option<String>,
 }
 
-/// List notes ordered by date DESC.
-pub async fn list_notes(db: &Database, limit: u32, offset: u32) -> Result<Vec<NoteRow>, DbError> {
+// --- Journal entries ---
+
+pub async fn get_journal_by_date(
+    db: &Database,
+    date: &str,
+) -> Result<Option<JournalEntryRow>, DbError> {
     let mut resp = db
         .query(
-            "SELECT meta::id(id) AS id, raw_text, date, tags, summary,
+            "SELECT meta::id(id) AS id, journal_id, date, raw_text, tags, summary,
+                    closed, complete, legacy_properties,
                     <string> created_at AS created_at, <string> updated_at AS updated_at
-             FROM notes
-             ORDER BY date DESC, created_at DESC
+             FROM type::record('journal_entries', $date)",
+        )
+        .bind(("date", date.to_string()))
+        .await?;
+
+    let rows: Vec<JournalEntryRow> = resp.take(0)?;
+    Ok(rows.into_iter().next())
+}
+
+pub async fn get_journal_by_id(
+    db: &Database,
+    journal_id: &str,
+) -> Result<Option<JournalEntryRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT meta::id(id) AS id, journal_id, date, raw_text, tags, summary,
+                    closed, complete, legacy_properties,
+                    <string> created_at AS created_at, <string> updated_at AS updated_at
+             FROM journal_entries WHERE journal_id = $journal_id LIMIT 1",
+        )
+        .bind(("journal_id", journal_id.to_string()))
+        .await?;
+
+    let rows: Vec<JournalEntryRow> = resp.take(0)?;
+    Ok(rows.into_iter().next())
+}
+
+pub async fn list_journal_entries(
+    db: &Database,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<JournalEntryRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT meta::id(id) AS id, journal_id, date, raw_text, tags, summary,
+                    closed, complete, legacy_properties,
+                    <string> created_at AS created_at, <string> updated_at AS updated_at
+             FROM journal_entries
+             ORDER BY date DESC
              LIMIT $limit START $offset",
         )
         .bind(("limit", limit))
         .bind(("offset", offset))
         .await?;
 
-    let rows: Vec<NoteRow> = resp.take(0)?;
+    let rows: Vec<JournalEntryRow> = resp.take(0)?;
     Ok(rows)
 }
 
-/// Get a single note by ID.
-pub async fn get_note(db: &Database, id: &str) -> Result<Option<NoteRow>, DbError> {
+pub async fn list_journal_dates(
+    db: &Database,
+    from_date: &str,
+    to_date: &str,
+) -> Result<Vec<String>, DbError> {
     let mut resp = db
         .query(
-            "SELECT meta::id(id) AS id, raw_text, date, tags, summary,
+            "SELECT date FROM journal_entries
+             WHERE date >= $from_date AND date <= $to_date
+             ORDER BY date ASC",
+        )
+        .bind(("from_date", from_date.to_string()))
+        .bind(("to_date", to_date.to_string()))
+        .await?;
+
+    #[derive(SurrealValue)]
+    struct DateOnly {
+        date: String,
+    }
+    let rows: Vec<DateOnly> = resp.take(0)?;
+    Ok(rows.into_iter().map(|r| r.date).collect())
+}
+
+// --- Generic notes ---
+
+pub async fn get_generic_note(
+    db: &Database,
+    id: &str,
+) -> Result<Option<GenericNoteRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT meta::id(id) AS id, title, raw_text, tags, summary, legacy_properties,
                     <string> created_at AS created_at, <string> updated_at AS updated_at
-             FROM type::record('notes', $id)",
+             FROM type::record('generic_notes', $id)",
         )
         .bind(("id", id.to_string()))
         .await?;
 
-    let rows: Vec<NoteRow> = resp.take(0)?;
+    let rows: Vec<GenericNoteRow> = resp.take(0)?;
     Ok(rows.into_iter().next())
 }
 
-/// Search notes by raw_text or tags containing the query string.
-pub async fn search_notes(db: &Database, query: &str) -> Result<Vec<NoteRow>, DbError> {
+pub async fn list_generic_notes(
+    db: &Database,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<GenericNoteRow>, DbError> {
     let mut resp = db
         .query(
-            "SELECT meta::id(id) AS id, raw_text, date, tags, summary,
+            "SELECT meta::id(id) AS id, title, raw_text, tags, summary, legacy_properties,
                     <string> created_at AS created_at, <string> updated_at AS updated_at
-             FROM notes
+             FROM generic_notes
+             ORDER BY updated_at DESC
+             LIMIT $limit START $offset",
+        )
+        .bind(("limit", limit))
+        .bind(("offset", offset))
+        .await?;
+
+    let rows: Vec<GenericNoteRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+pub async fn search_generic_notes(
+    db: &Database,
+    query: &str,
+) -> Result<Vec<GenericNoteRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT meta::id(id) AS id, title, raw_text, tags, summary, legacy_properties,
+                    <string> created_at AS created_at, <string> updated_at AS updated_at
+             FROM generic_notes
              WHERE string::lowercase(raw_text) CONTAINS string::lowercase($query)
+                OR string::lowercase(title) CONTAINS string::lowercase($query)
                 OR tags CONTAINS $query
-             ORDER BY date DESC, created_at DESC
+             ORDER BY updated_at DESC
              LIMIT 50",
         )
         .bind(("query", query.to_string()))
         .await?;
 
-    let rows: Vec<NoteRow> = resp.take(0)?;
+    let rows: Vec<GenericNoteRow> = resp.take(0)?;
     Ok(rows)
 }
 
-/// List all routine groups.
+// --- Routines ---
+
+/// List active (non-removed) routine groups, ordered by user-defined order.
 pub async fn list_routine_groups(db: &Database) -> Result<Vec<RoutineGroupRow>, DbError> {
     let mut resp = db
         .query(
-            "SELECT meta::id(id) AS id, name, frequency, time_of_day,
+            "SELECT meta::id(id) AS id, name, frequency, order_num, removed,
                     <string> created_at AS created_at, <string> updated_at AS updated_at
              FROM routine_groups
-             ORDER BY created_at ASC",
+             WHERE removed = false
+             ORDER BY order_num ASC, created_at ASC",
         )
         .await?;
 
@@ -115,14 +234,13 @@ pub async fn list_routine_groups(db: &Database) -> Result<Vec<RoutineGroupRow>, 
     Ok(rows)
 }
 
-/// Get a single routine group by ID.
 pub async fn get_routine_group(
     db: &Database,
     id: &str,
 ) -> Result<Option<RoutineGroupRow>, DbError> {
     let mut resp = db
         .query(
-            "SELECT meta::id(id) AS id, name, frequency, time_of_day,
+            "SELECT meta::id(id) AS id, name, frequency, order_num, removed,
                     <string> created_at AS created_at, <string> updated_at AS updated_at
              FROM type::record('routine_groups', $id)",
         )
@@ -133,16 +251,15 @@ pub async fn get_routine_group(
     Ok(rows.into_iter().next())
 }
 
-/// List routine items for a group, ordered by order_num.
 pub async fn list_routine_items(
     db: &Database,
     group_id: &str,
 ) -> Result<Vec<RoutineItemRow>, DbError> {
     let mut resp = db
         .query(
-            "SELECT meta::id(id) AS id, group_id, name, estimated_duration_min, order_num
+            "SELECT meta::id(id) AS id, group_id, name, estimated_duration_min, order_num, removed
              FROM routine_items
-             WHERE group_id = $group_id
+             WHERE group_id = $group_id AND removed = false
              ORDER BY order_num ASC",
         )
         .bind(("group_id", group_id.to_string()))
@@ -152,7 +269,6 @@ pub async fn list_routine_items(
     Ok(rows)
 }
 
-/// Get completions for a specific group on a specific date.
 pub async fn get_completions_for_date(
     db: &Database,
     group_id: &str,
@@ -174,7 +290,6 @@ pub async fn get_completions_for_date(
     Ok(rows)
 }
 
-/// Get completion history for a group over the last N days.
 pub async fn get_completion_history(
     db: &Database,
     group_id: &str,
@@ -200,5 +315,26 @@ pub async fn get_completion_history(
         .await?;
 
     let rows: Vec<CompletionRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+/// Find journal entries that are complete but not yet closed — used by the
+/// auto-close tick to identify candidates.
+pub async fn list_completable_unclosed_journals(
+    db: &Database,
+    up_to_date: &str,
+) -> Result<Vec<JournalEntryRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT meta::id(id) AS id, journal_id, date, raw_text, tags, summary,
+                    closed, complete, legacy_properties,
+                    <string> created_at AS created_at, <string> updated_at AS updated_at
+             FROM journal_entries
+             WHERE complete = true AND closed = false AND date <= $up_to_date",
+        )
+        .bind(("up_to_date", up_to_date.to_string()))
+        .await?;
+
+    let rows: Vec<JournalEntryRow> = resp.take(0)?;
     Ok(rows)
 }

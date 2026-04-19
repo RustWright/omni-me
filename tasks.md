@@ -19,21 +19,21 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h
 Breaking schema changes. No backwards-compat shims — old Cycle 1 events are test data.
 
 - [x] **0.0** Decide: wipe vs. migrate Cycle 1 events. **Decision: WIPE** (2026-04-19) — user plans to regenerate test data while dogfooding the new MVP. Skip Task 0.12 (migration script). [XS]
-- [ ] **0.1** Replace `NoteCreated`/`NoteUpdated` with split event types: `JournalEntryCreated/Updated/Closed/Reopened` + `GenericNoteCreated/Updated/Renamed`. Rewrite enum in `core/src/events/types.rs` [M]
-- [ ] **0.2** `NoteLlmProcessed` updated to take `aggregate_id` (works for both journal_id and note_id) [XS] `depends:0.1`
-- [ ] **0.3** Replace `RoutineGroupCreated` payload: drop `time_of_day`, add `order` [S] `depends:0.1`
-- [ ] **0.4** Add `RoutineGroupReordered`, `RoutineGroupRemoved`, `RoutineItemModified`, `RoutineItemRemoved` events [S] `depends:0.3`
-- [ ] **0.5** Add `RoutineItemCompletionUndone`, `RoutineItemSkipUndone` events [XS]
-- [ ] **0.6** Add `DataWiped` event [XS]
-- [ ] **0.7** Frequency canonical parser (`"daily"` | `"weekly"` | `"biweekly"` | `"monthly"` | `"custom:N"`) — shared helper in `core/src/routines.rs` [S]
-- [ ] **0.8** Rewrite `NotesProjection`: two read tables (`journal_entries` keyed by date with `journal_id`, `generic_notes` keyed by `note_id`). Apply new event types; compute `complete: bool` from 3-property parse; apply close/reopen. [L] `depends:0.1,0.2`
-- [ ] **0.9** Update `RoutinesProjection`: drop `time_of_day`, add group `order`, support modify/remove/undo/reorder + frequency parser [M] `depends:0.3,0.4,0.5,0.7`
-- [ ] **0.10** Auto-close background tick: scheduler runs at local midnight, scans `journal_entries` for `complete: true AND NOT closed`, emits `JournalEntryClosed { trigger: Auto }` for each [M] `depends:0.8`
-- [ ] **0.11** Tauri commands: `create_journal_entry`, `update_journal_entry`, `close_journal_entry`, `reopen_journal_entry`, `create_generic_note`, `update_generic_note`, `rename_generic_note`, `reorder_routine_group`, `modify_routine_item`, `remove_routine_item`, `remove_routine_group`, `undo_completion`, `undo_skip`, `wipe_all_data` [L] `depends:0.1-0.9`
+- [x] **0.1** Replace `NoteCreated`/`NoteUpdated` with split event types: `JournalEntryCreated/Updated/Closed/Reopened` + `GenericNoteCreated/Updated/Renamed`. Rewrite enum in `core/src/events/types.rs` [M]
+- [x] **0.2** `NoteLlmProcessed` updated to take `aggregate_id` (works for both journal_id and note_id) [XS]
+- [x] **0.3** Replace `RoutineGroupCreated` payload: drop `time_of_day`, add `order` [S]
+- [x] **0.4** Add `RoutineGroupReordered`, `RoutineGroupRemoved`, `RoutineItemModified`, `RoutineItemRemoved` events [S]
+- [x] **0.5** Add `RoutineItemCompletionUndone`, `RoutineItemSkipUndone` events [XS]
+- [x] **0.6** Add `DataWiped` event [XS]
+- [x] **0.7** Frequency canonical parser (`"daily"` | `"weekly"` | `"biweekly"` | `"monthly"` | `"custom:N"`) — shared helper in `core/src/routines.rs` [S] — **user-contributed via Learn by Doing**; monthly typo + `contains`→`starts_with` tightening applied in review.
+- [x] **0.8** Rewrite `NotesProjection`: two read tables (`journal_entries` keyed by date with `journal_id`, `generic_notes` keyed by `note_id`). Apply new event types; compute `complete: bool` from 3-property parse; apply close/reopen. [L]
+- [x] **0.9** Update `RoutinesProjection`: drop `time_of_day`, add group `order`, support modify/remove/undo/reorder + frequency parser [M]
+- [x] **0.10** Auto-close background tick: scheduler runs at local midnight, scans `journal_entries` for `complete: true AND NOT closed`, emits `JournalEntryClosed { trigger: Auto }` for each [M] — core logic in `core/src/auto_close.rs`, Tauri scheduler in `tauri-app/src-tauri/src/auto_close_scheduler.rs` (chrono-tz for zone-aware sleep).
+- [x] **0.11** Tauri commands: `create_journal_entry`, `update_journal_entry`, `close_journal_entry`, `reopen_journal_entry`, `create_generic_note`, `update_generic_note`, `rename_generic_note`, `reorder_routine_groups`, `modify_routine_item`, `remove_routine_item`, `remove_routine_group`, `undo_completion`, `undo_skip`, `wipe_all_data` [L]
 - [x] **0.12** ~~If migration chosen at 0.0: one-time migration script~~ — SKIPPED per 0.0 decision to wipe
-- [ ] **0.13** Unit tests for new events + projection idempotency + completeness detection + auto-close tick [L] `depends:0.11,0.12`
+- [x] **0.13** Unit tests for new events + projection idempotency + completeness detection + auto-close tick [L] — 99 workspace tests passing (84 core unit + 3 scheduler + 4 sync-client + 5 sync + 3 app).
 
-**Phase 0 complete → unblocks Phases 1, 2, 3.**
+**Phase 0 complete → unblocks Phases 1, 2, 3.** ✓ 2026-04-19
 
 ---
 

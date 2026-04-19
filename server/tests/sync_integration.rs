@@ -19,13 +19,14 @@ async fn device_a_pushes_device_b_pulls() {
     let event = store_a
         .append(NewEvent {
             id: None,
-            event_type: "note_created".into(),
+            event_type: "journal_entry_created".into(),
             aggregate_id: "note-sync-1".into(),
             timestamp: Utc::now(),
             device_id: "device-a".into(),
             payload: serde_json::json!({
-                "raw_text": "Synced note from device A",
-                "date": "2026-03-27"
+                "journal_id": "note-sync-1",
+                "date": "2026-03-27",
+                "raw_text": "Synced note from device A"
             }),
         })
         .await
@@ -74,7 +75,7 @@ async fn device_a_pushes_device_b_pulls() {
 
     // Device B should see device A's event
     assert_eq!(pull_resp.events.len(), 1);
-    assert_eq!(pull_resp.events[0].event_type, "note_created");
+    assert_eq!(pull_resp.events[0].event_type, "journal_entry_created");
     assert_eq!(pull_resp.events[0].aggregate_id, "note-sync-1");
     assert_eq!(pull_resp.events[0].device_id, "device-a");
 
@@ -97,7 +98,7 @@ async fn device_a_pushes_device_b_pulls() {
     // Verify device B has the event
     let b_events = store_b.get_by_aggregate("note-sync-1").await.unwrap();
     assert_eq!(b_events.len(), 1);
-    assert_eq!(b_events[0].event_type, "note_created");
+    assert_eq!(b_events[0].event_type, "journal_entry_created");
 }
 
 #[tokio::test]
@@ -114,11 +115,15 @@ async fn concurrent_events_sync_both_devices() {
     let event_a = store_a
         .append(NewEvent {
             id: None,
-            event_type: "note_created".into(),
+            event_type: "journal_entry_created".into(),
             aggregate_id: "note-a".into(),
             timestamp: Utc::now(),
             device_id: "device-a".into(),
-            payload: serde_json::json!({"raw_text": "From A", "date": "2026-03-27"}),
+            payload: serde_json::json!({
+                "journal_id": "note-a",
+                "date": "2026-03-27",
+                "raw_text": "From A"
+            }),
         })
         .await
         .unwrap();
@@ -134,7 +139,7 @@ async fn concurrent_events_sync_both_devices() {
             payload: serde_json::json!({
                 "name": "Morning",
                 "frequency": "daily",
-                "time_of_day": "morning"
+                "order": 0
             }),
         })
         .await
@@ -270,11 +275,15 @@ async fn push_rejects_unknown_event_type() {
             device_id: "device-a".into(),
             events: vec![NewEvent {
                 id: None,
-                event_type: "note_crated".into(), // typo
+                event_type: "journal_entry_crated".into(), // typo
                 aggregate_id: "note-1".into(),
                 timestamp: Utc::now(),
                 device_id: "device-a".into(),
-                payload: serde_json::json!({"raw_text": "hello", "date": "2026-04-12"}),
+                payload: serde_json::json!({
+                    "journal_id": "note-1",
+                    "date": "2026-04-12",
+                    "raw_text": "hello"
+                }),
             }],
         })
         .send()
@@ -294,11 +303,15 @@ async fn push_rejects_too_many_events() {
     let events: Vec<NewEvent> = (0..101)
         .map(|i| NewEvent {
             id: None,
-            event_type: "note_created".into(),
+            event_type: "journal_entry_created".into(),
             aggregate_id: format!("note-{i}"),
             timestamp: Utc::now(),
             device_id: "device-a".into(),
-            payload: serde_json::json!({"raw_text": "hello", "date": "2026-04-12"}),
+            payload: serde_json::json!({
+                "journal_id": format!("note-{i}"),
+                "date": "2026-04-12",
+                "raw_text": "hello"
+            }),
         })
         .collect();
 
@@ -328,11 +341,12 @@ async fn push_rejects_malformed_payload() {
             device_id: "device-a".into(),
             events: vec![NewEvent {
                 id: None,
-                event_type: "note_created".into(),
+                event_type: "journal_entry_created".into(),
                 aggregate_id: "note-1".into(),
                 timestamp: Utc::now(),
                 device_id: "device-a".into(),
-                payload: serde_json::json!({"raw_text": "hello"}), // missing "date"
+                // missing "date" and "journal_id"
+                payload: serde_json::json!({"raw_text": "hello"}),
             }],
         })
         .send()
