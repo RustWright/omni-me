@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::types::{
     CompletionEntry, GenericNoteItem, JournalEntryItem, LlmResult, RoutineGroup, RoutineItem,
-    SyncInfo, SyncState, SyncStatus, TimezoneInfo,
+    SyncInfo, SyncState, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
 };
 #[cfg(feature = "mock")]
 use crate::types::TaskResult;
@@ -22,6 +22,7 @@ extern "C" {
         element_id: &str,
         initial_content: &str,
         on_change: Option<&js_sys::Function>,
+        options: JsValue,
     );
     #[wasm_bindgen(js_name = getEditorContent)]
     pub fn js_get_editor_content() -> String;
@@ -29,6 +30,8 @@ extern "C" {
     pub fn js_set_editor_content(content: &str);
     #[wasm_bindgen(js_name = destroyEditor)]
     pub fn js_destroy_editor();
+    #[wasm_bindgen(js_name = markClean)]
+    pub fn js_mark_editor_clean();
 }
 
 // --- Internal Invoke Helpers ---
@@ -911,16 +914,13 @@ pub async fn invoke_update_server_url(server_url: &str) -> Result<(), String> {
     }
 }
 
-/// Track D (Phase 2.6) background sync status.
-///
-/// Returns one of the 4 states in `SyncState`. If Track D hasn't landed yet
-/// and the command is unregistered, the real path surfaces an error string;
-/// callers should treat that as `Idle` and not propagate it as a failure.
-/// The mock path always returns `Idle`.
-pub async fn invoke_get_sync_status() -> Result<SyncState, String> {
+/// Track D (Phase 2.6) background sync status — returns the full
+/// `SyncStatusSnapshot` as surfaced by `core::sync::StatusReporter`.
+/// Mock path returns the default (Idle, 0 retries, no error).
+pub async fn invoke_get_sync_status() -> Result<SyncStatusSnapshot, String> {
     #[cfg(feature = "mock")]
     {
-        Ok(SyncState::Idle)
+        Ok(SyncStatusSnapshot::default())
     }
     #[cfg(not(feature = "mock"))]
     {

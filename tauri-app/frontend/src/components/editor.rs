@@ -4,6 +4,18 @@ use wasm_bindgen::JsCast;
 
 use crate::bridge::{js_create_editor, js_destroy_editor};
 
+/// Build a `{ journalMode }` options object for `createEditor`. Returned as a
+/// `JsValue` so the wasm_bindgen extern can forward it directly.
+fn editor_options(journal_mode: bool) -> JsValue {
+    let obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("journalMode"),
+        &JsValue::from_bool(journal_mode),
+    );
+    obj.into()
+}
+
 const EDITOR_CONTAINER_ID: &str = "editor-container";
 
 #[component]
@@ -11,6 +23,7 @@ pub fn Editor(
     initial_content: String,
     on_change: EventHandler<String>,
     #[props(default = false)] read_only: bool,
+    #[props(default = false)] journal_mode: bool,
 ) -> Element {
     let mut editor_ready = use_signal(|| false);
 
@@ -87,8 +100,13 @@ pub fn Editor(
                 on_change_closure.forget(); // Leak memory intentionally
 
                 // 4. Initialize the editor
-                js_create_editor(editor_container_id, &initial, Some(&on_change_fn));
-                
+                js_create_editor(
+                    editor_container_id,
+                    &initial,
+                    Some(&on_change_fn),
+                    editor_options(journal_mode),
+                );
+
                 Some(()) // Indicates success
             };
 
@@ -151,7 +169,12 @@ pub fn Editor(
             on_change_closure.forget();
 
             // Initialize the editor (original logic)
-            js_create_editor(EDITOR_CONTAINER_ID, &initial, Some(&on_change_fn));
+            js_create_editor(
+                EDITOR_CONTAINER_ID,
+                &initial,
+                Some(&on_change_fn),
+                editor_options(journal_mode),
+            );
 
             editor_ready.set(true);
         });

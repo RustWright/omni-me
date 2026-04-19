@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::bridge;
-use crate::types::SyncState;
+use crate::types::{SyncState, SyncStatusSnapshot};
 
 /// Small header chip that reflects the Track D (Phase 2.6) background sync
 /// status. Polls every 5s — the command is cheap (reads a single in-memory
@@ -14,21 +14,20 @@ use crate::types::SyncState;
 /// actual sync still works through the manual Settings -> Sync Now button.
 #[component]
 pub fn SyncStatusIndicator() -> Element {
-    let mut state = use_signal(|| SyncState::Idle);
+    let mut snapshot = use_signal(SyncStatusSnapshot::default);
 
     use_future(move || async move {
         loop {
             match bridge::invoke_get_sync_status().await {
-                Ok(s) => state.set(s),
-                Err(_) => state.set(SyncState::Idle),
+                Ok(s) => snapshot.set(s),
+                Err(_) => snapshot.set(SyncStatusSnapshot::default()),
             }
-            // 5s poll — see module docstring. `gloo-timers` is overkill for
-            // one call, so we lean on web_sys directly via a Promise sleep.
             sleep_ms(5_000).await;
         }
     });
 
-    let current = *state.read();
+    let snap = snapshot.read();
+    let current = snap.status;
     let (label, dot_class, text_class, animated) = match current {
         SyncState::Idle => (
             "Synced",

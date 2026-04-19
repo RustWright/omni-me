@@ -296,6 +296,7 @@ fn TodayView() -> Element {
                                 initial_content: initial,
                                 on_change: move |new_content: String| content.set(new_content),
                                 read_only: is_closed,
+                                journal_mode: true,
                             }
                         }
                     }

@@ -120,10 +120,9 @@ pub struct ExpenseResult {
 }
 
 /// 4-state sync status reported by the background debouncer/retry loop.
-/// Matches the enum exposed by the Phase 2 `get_sync_status` Tauri command.
-/// See Track D (tasks.md 2.6) for the backend implementation.
+/// Matches `SyncStatus` exposed by the Phase 2 `get_sync_status` Tauri command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum SyncState {
     Idle,
     Syncing,
@@ -134,5 +133,24 @@ pub enum SyncState {
 impl Default for SyncState {
     fn default() -> Self {
         Self::Idle
+    }
+}
+
+/// Mirrors `core::sync::SyncStatusSnapshot` — the full payload returned by
+/// the `get_sync_status` Tauri command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncStatusSnapshot {
+    pub status: SyncState,
+    pub retry_attempt: u32,
+    pub last_error: Option<String>,
+}
+
+impl Default for SyncStatusSnapshot {
+    fn default() -> Self {
+        Self {
+            status: SyncState::Idle,
+            retry_attempt: 0,
+            last_error: None,
+        }
     }
 }

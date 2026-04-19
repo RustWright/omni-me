@@ -9,6 +9,8 @@ surreal_data/
 .reference/
 .tmp/
 .claude/worktrees/
+.claude/scheduled_tasks.lock
+.playwright-mcp/
 reviews/
 ui_dev/
 UI_design.md
