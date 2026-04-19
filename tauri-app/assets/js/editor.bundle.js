@@ -25028,27 +25028,266 @@
 
   // assets/js/editor.js
   var editorView = null;
-  window.createEditor = function(elementId, initialContent, onChange) {
+  var isDirty = false;
+  var suppressDirty = false;
+  var dirtyListeners = [];
+  var cleanListeners = [];
+  function emitDirty() {
+    if (isDirty) return;
+    isDirty = true;
+    for (const cb of dirtyListeners) {
+      try {
+        cb();
+      } catch (e) {
+        console.error("editorEvents.onDirty listener threw:", e);
+      }
+    }
+  }
+  function emitClean() {
+    if (!isDirty) return;
+    isDirty = false;
+    for (const cb of cleanListeners) {
+      try {
+        cb();
+      } catch (e) {
+        console.error("editorEvents.onClean listener threw:", e);
+      }
+    }
+  }
+  window.editorEvents = {
+    onDirty(cb) {
+      if (typeof cb === "function") dirtyListeners.push(cb);
+    },
+    onClean(cb) {
+      if (typeof cb === "function") cleanListeners.push(cb);
+    },
+    isDirty() {
+      return isDirty;
+    }
+  };
+  window.markClean = function() {
+    emitClean();
+  };
+  var PAIRS = {
+    '"': '"',
+    "'": "'",
+    "(": ")",
+    "[": "]",
+    "{": "}",
+    "*": "*",
+    _: "_",
+    "`": "`"
+  };
+  var WORD_CHAR_RE = /[A-Za-z0-9]/;
+  function shouldSkipSingleQuote(state, from) {
+    if (from <= 0) return false;
+    const before = state.doc.sliceString(from - 1, from);
+    return WORD_CHAR_RE.test(before);
+  }
+  var autoWrapFilter = EditorState.transactionFilter.of((tr) => {
+    if (!tr.isUserEvent("input.type") && !tr.isUserEvent("input")) {
+      return tr;
+    }
+    if (!tr.docChanged) return tr;
+    let inserted = null;
+    let insertFrom = null;
+    let insertTo = null;
+    let multipleChanges = false;
+    tr.changes.iterChanges((fromA, toA, _fromB, _toB, insert2) => {
+      if (multipleChanges) return;
+      if (inserted !== null) {
+        multipleChanges = true;
+        return;
+      }
+      inserted = insert2.toString();
+      insertFrom = fromA;
+      insertTo = toA;
+    });
+    if (multipleChanges || inserted === null) return tr;
+    if (inserted.length !== 1) return tr;
+    const closer = PAIRS[inserted];
+    if (closer === void 0) return tr;
+    const state = tr.startState;
+    const selection = state.selection.main;
+    const selectedText = state.sliceDoc(selection.from, selection.to);
+    if (selectedText.length > 0) {
+      if (insertFrom !== selection.from || insertTo !== selection.to) {
+        return tr;
+      }
+      return [
+        {
+          changes: {
+            from: selection.from,
+            to: selection.to,
+            insert: inserted + selectedText + closer
+          },
+          // Keep the original text selected (between the newly inserted pair).
+          selection: {
+            anchor: selection.from + 1,
+            head: selection.from + 1 + selectedText.length
+          }
+        }
+      ];
+    }
+    if (inserted === "'" && shouldSkipSingleQuote(state, insertFrom)) {
+      return tr;
+    }
+    if (insertFrom !== insertTo) return tr;
+    if (insertFrom !== selection.from) return tr;
+    return [
+      {
+        changes: {
+          from: insertFrom,
+          to: insertFrom,
+          insert: inserted + closer
+        },
+        selection: { anchor: insertFrom + 1 }
+      }
+    ];
+  });
+  var CHECKBOX_RE = /^(\s*)-\s\[([ xX])\]\s/;
+  var CheckboxWidget = class extends WidgetType {
+    constructor(checked, markFrom) {
+      super();
+      this.checked = checked;
+      this.markFrom = markFrom;
+    }
+    eq(other) {
+      return other.checked === this.checked && other.markFrom === this.markFrom;
+    }
+    toDOM() {
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = this.checked;
+      input.className = "cm-checkbox-widget";
+      input.style.marginRight = "6px";
+      input.style.cursor = "pointer";
+      input.style.verticalAlign = "middle";
+      input.dataset.markFrom = String(this.markFrom);
+      input.dataset.checked = this.checked ? "1" : "0";
+      return input;
+    }
+    ignoreEvent() {
+      return false;
+    }
+  };
+  function buildCheckboxDecorations(view) {
+    const builder = new RangeSetBuilder();
+    for (const { from, to } of view.visibleRanges) {
+      let pos = from;
+      while (pos <= to) {
+        const line = view.state.doc.lineAt(pos);
+        const m = line.text.match(CHECKBOX_RE);
+        if (m) {
+          const indent = m[1].length;
+          const markCharPos = line.from + indent + 3;
+          const replaceFrom = line.from + indent;
+          const replaceTo = line.from + indent + 6;
+          const checked = m[2] === "x" || m[2] === "X";
+          builder.add(
+            replaceFrom,
+            replaceTo,
+            Decoration.replace({
+              widget: new CheckboxWidget(checked, markCharPos)
+            })
+          );
+        }
+        if (line.to >= to) break;
+        pos = line.to + 1;
+      }
+    }
+    return builder.finish();
+  }
+  var checkboxPlugin = ViewPlugin.fromClass(
+    class {
+      constructor(view) {
+        this.decorations = buildCheckboxDecorations(view);
+      }
+      update(update) {
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = buildCheckboxDecorations(update.view);
+        }
+      }
+    },
+    {
+      decorations: (v) => v.decorations,
+      eventHandlers: {
+        mousedown(event, view) {
+          const target = event.target;
+          if (!(target instanceof HTMLInputElement)) return false;
+          if (!target.classList.contains("cm-checkbox-widget")) return false;
+          const markFromStr = target.dataset.markFrom;
+          if (!markFromStr) return false;
+          const markFrom = Number(markFromStr);
+          if (Number.isNaN(markFrom)) return false;
+          const currentMark = view.state.sliceDoc(markFrom, markFrom + 1);
+          const nextMark = currentMark === "x" || currentMark === "X" ? " " : "x";
+          view.dispatch({
+            changes: { from: markFrom, to: markFrom + 1, insert: nextMark }
+          });
+          event.preventDefault();
+          return true;
+        }
+      }
+    }
+  );
+  function pad2(n) {
+    return n < 10 ? "0" + n : "" + n;
+  }
+  function currentTimestamp() {
+    const d = /* @__PURE__ */ new Date();
+    return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + " ";
+  }
+  function timestampEnterHandler(view) {
+    const { state } = view;
+    const sel = state.selection.main;
+    if (!sel.empty) return false;
+    const line = state.doc.lineAt(sel.from);
+    if (sel.from !== line.to) return false;
+    const ts = currentTimestamp();
+    view.dispatch({
+      changes: { from: sel.from, to: sel.from, insert: "\n" + ts },
+      selection: { anchor: sel.from + 1 + ts.length },
+      userEvent: "input",
+      scrollIntoView: true
+    });
+    return true;
+  }
+  var journalTimestampKeymap = keymap.of([
+    { key: "Enter", run: timestampEnterHandler }
+  ]);
+  window.createEditor = function(elementId, initialContent, onChange, options) {
     if (editorView) {
       editorView.destroy();
       editorView = null;
     }
+    isDirty = false;
     const parent = document.getElementById(elementId);
     if (!parent) {
       console.error("Editor container not found:", elementId);
       return;
     }
-    const extensions = [minimalSetup, markdown(), EditorView.lineWrapping];
-    if (typeof onChange === "function") {
-      extensions.push(
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
-            const content2 = update.state.doc.toString();
-            onChange(content2);
-          }
-        })
-      );
+    const journalMode = !!(options && options.journalMode);
+    const extensions = [
+      minimalSetup,
+      markdown(),
+      EditorView.lineWrapping,
+      autoWrapFilter,
+      checkboxPlugin
+    ];
+    if (journalMode) {
+      extensions.unshift(journalTimestampKeymap);
     }
+    extensions.push(
+      EditorView.updateListener.of((update) => {
+        if (!update.docChanged) return;
+        if (!suppressDirty) emitDirty();
+        if (typeof onChange === "function") {
+          const content2 = update.state.doc.toString();
+          onChange(content2);
+        }
+      })
+    );
     editorView = new EditorView({
       state: EditorState.create({
         doc: initialContent || "",
@@ -25063,18 +25302,24 @@
   };
   window.setEditorContent = function(content2) {
     if (!editorView) return;
-    editorView.dispatch({
-      changes: {
-        from: 0,
-        to: editorView.state.doc.length,
-        insert: content2
-      }
-    });
+    suppressDirty = true;
+    try {
+      editorView.dispatch({
+        changes: {
+          from: 0,
+          to: editorView.state.doc.length,
+          insert: content2
+        }
+      });
+    } finally {
+      suppressDirty = false;
+    }
   };
   window.destroyEditor = function() {
     if (editorView) {
       editorView.destroy();
       editorView = null;
     }
+    emitClean();
   };
 })();
