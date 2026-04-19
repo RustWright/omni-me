@@ -1,7 +1,7 @@
 import { EditorView, minimalSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorState, RangeSetBuilder } from "@codemirror/state";
-import { Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
+import { Decoration, ViewPlugin, WidgetType, keymap } from "@codemirror/view";
 
 let editorView = null;
 
@@ -213,6 +213,41 @@ const checkboxPlugin = ViewPlugin.fromClass(
 );
 
 // ---------------------------------------------------------------------------
+// 1.3 - Journal-mode line timestamp on Enter
+// ---------------------------------------------------------------------------
+
+function pad2(n) {
+  return n < 10 ? "0" + n : "" + n;
+}
+
+function currentTimestamp() {
+  const d = new Date();
+  return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + " ";
+}
+
+// Keymap entry: on Enter at end of line, insert newline + HH:MM + space.
+// If the user pressed Enter mid-line, behave normally (don't inject timestamp).
+function timestampEnterHandler(view) {
+  const { state } = view;
+  const sel = state.selection.main;
+  if (!sel.empty) return false;
+  const line = state.doc.lineAt(sel.from);
+  if (sel.from !== line.to) return false; // not at end of line
+  const ts = currentTimestamp();
+  view.dispatch({
+    changes: { from: sel.from, to: sel.from, insert: "\n" + ts },
+    selection: { anchor: sel.from + 1 + ts.length },
+    userEvent: "input",
+    scrollIntoView: true,
+  });
+  return true;
+}
+
+const journalTimestampKeymap = keymap.of([
+  { key: "Enter", run: timestampEnterHandler },
+]);
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -221,8 +256,9 @@ const checkboxPlugin = ViewPlugin.fromClass(
  * @param {string} elementId - DOM element ID to mount the editor in
  * @param {string} initialContent - Initial document content
  * @param {Function|null} onChange - Optional callback invoked with new content string on every change
+ * @param {{journalMode?: boolean}} [options] - Extension flags
  */
-window.createEditor = function (elementId, initialContent, onChange) {
+window.createEditor = function (elementId, initialContent, onChange, options) {
   // Destroy any existing editor first
   if (editorView) {
     editorView.destroy();
@@ -235,6 +271,8 @@ window.createEditor = function (elementId, initialContent, onChange) {
     return;
   }
 
+  const journalMode = !!(options && options.journalMode);
+
   const extensions = [
     minimalSetup,
     markdown(),
@@ -242,6 +280,11 @@ window.createEditor = function (elementId, initialContent, onChange) {
     autoWrapFilter,
     checkboxPlugin,
   ];
+
+  if (journalMode) {
+    // Prepend timestamp keymap so it runs before minimalSetup's Enter handler.
+    extensions.unshift(journalTimestampKeymap);
+  }
 
   // Add change listener if callback provided
   if (typeof onChange === "function") {
