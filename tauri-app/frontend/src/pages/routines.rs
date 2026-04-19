@@ -11,7 +11,6 @@ enum RoutineView {
     GroupList,
     GroupDetail(String),
     AddGroup,
-    EditGroup(String),
 }
 
 #[component]
@@ -48,63 +47,76 @@ pub fn RoutinesPage() -> Element {
                 }
             }
 
-            match &*view.read() {
-                RoutineView::DailyChecklist => rsx! {
-                    DailyChecklistView {
-                        groups: groups.read().clone(),
-                        on_manage: move |_| view.set(RoutineView::GroupList),
-                    }
-                },
-                RoutineView::GroupList => rsx! {
-                    GroupListView {
-                        groups: groups.read().clone(),
-                        on_add: move |_| view.set(RoutineView::AddGroup),
-                        on_select: move |id: String| view.set(RoutineView::GroupDetail(id)),
-                        on_back: move |_| view.set(RoutineView::DailyChecklist),
-                    }
-                },
-                RoutineView::GroupDetail(id) => rsx! {
-                    GroupDetailView {
-                        group_id: id.clone(),
-                        groups: groups.read().clone(),
-                        on_edit: move |id: String| view.set(RoutineView::EditGroup(id)),
-                        on_back: move |_| view.set(RoutineView::GroupList),
-                    }
-                },
-                RoutineView::AddGroup => rsx! {
-                    AddGroupView {
-                        on_save: move |_| {
-                            view.set(RoutineView::GroupList);
-                            refresh_groups();
-                        },
-                        on_cancel: move |_| view.set(RoutineView::GroupList),
-                    }
-                },
-                RoutineView::EditGroup(id) => rsx! {
-                    EditGroupView {
-                        group_id: id.clone(),
-                        groups: groups.read().clone(),
-                        on_save: move |_| {
-                            view.set(RoutineView::GroupList);
-                            refresh_groups();
-                        },
-                        on_cancel: move |_| view.set(RoutineView::GroupList),
-                    }
-                },
+            {
+                let visible: Vec<RoutineGroup> = groups
+                    .read()
+                    .iter()
+                    .filter(|g| !g.removed)
+                    .cloned()
+                    .collect();
+
+                match &*view.read() {
+                    RoutineView::DailyChecklist => rsx! {
+                        DailyChecklistView {
+                            groups: visible,
+                            on_manage: move |_| view.set(RoutineView::GroupList),
+                        }
+                    },
+                    RoutineView::GroupList => rsx! {
+                        GroupListView {
+                            groups: visible,
+                            on_add: move |_| view.set(RoutineView::AddGroup),
+                            on_select: move |id: String| view.set(RoutineView::GroupDetail(id)),
+                            on_back: move |_| view.set(RoutineView::DailyChecklist),
+                            on_remove: {
+                                let refresh = refresh_groups.clone();
+                                move |id: String| {
+                                    let refresh = refresh.clone();
+                                    spawn(async move {
+                                        let _ = bridge::invoke_remove_routine_group(&id).await;
+                                        refresh();
+                                    });
+                                }
+                            },
+                        }
+                    },
+                    RoutineView::GroupDetail(id) => rsx! {
+                        GroupDetailView {
+                            group_id: id.clone(),
+                            groups: visible,
+                            on_back: move |_| view.set(RoutineView::GroupList),
+                        }
+                    },
+                    RoutineView::AddGroup => rsx! {
+                        AddGroupView {
+                            next_order: visible.len() as u32,
+                            on_save: {
+                                let refresh = refresh_groups.clone();
+                                move |_| {
+                                    view.set(RoutineView::GroupList);
+                                    refresh();
+                                }
+                            },
+                            on_cancel: move |_| view.set(RoutineView::GroupList),
+                        }
+                    },
+                }
             }
         }
     }
 }
 
 // --- Daily Checklist View ---
+// Phase 0 dropped time-of-day buckets; this now renders groups as a flat
+// user-ordered list. Phase 6.8/6.9 will add drag-to-reorder on top.
 
 #[component]
-fn DailyChecklistView(
-    groups: Vec<RoutineGroup>,
-    on_manage: EventHandler<()>,
-) -> Element {
+fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) -> Element {
     let tz_signal: Signal<Tz> = use_context();
     let today = UserDate::today(&*tz_signal.read()).to_date_string();
+
+    let mut ordered = groups;
+    ordered.sort_by_key(|g| (g.order_num, g.name.clone()));
 
     rsx! {
         div { class: "animate-in fade-in duration-300",
@@ -117,7 +129,7 @@ fn DailyChecklistView(
                 }
             }
 
-            if groups.is_empty() {
+            if ordered.is_empty() {
                 div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
                     svg { class: "w-16 h-16 mb-4 opacity-20", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
                         path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" }
@@ -126,37 +138,9 @@ fn DailyChecklistView(
                     p { class: "text-sm", "Tap \"Manage\" to build your flow" }
                 }
             } else {
-                for tod in &["morning", "afternoon", "evening"] {
-                    {
-                        let tod_groups: Vec<_> = groups.iter()
-                            .filter(|g| g.time_of_day == *tod)
-                            .cloned()
-                            .collect();
-                        if !tod_groups.is_empty() {
-                            let (label, icon_path) = match *tod {
-                                "morning" => ("Morning", "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"),
-                                "afternoon" => ("Afternoon", "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"),
-                                _ => ("Evening", "M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"),
-                            };
-                            let today = today.clone();
-                            rsx! {
-                                div { class: "mb-8",
-                                    h3 { class: "flex items-center gap-2 text-[11px] font-bold text-obsidian-text-muted uppercase tracking-[0.2em] mb-4 ml-1",
-                                        svg { class: "w-4 h-4 text-obsidian-accent opacity-70", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: icon_path }
-                                        }
-                                        "{label}"
-                                    }
-                                    div { class: "space-y-3",
-                                        for group in tod_groups {
-                                            ChecklistGroup { group, date: today.clone() }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            rsx! {}
-                        }
+                div { class: "space-y-3",
+                    for group in ordered {
+                        ChecklistGroup { group, date: today.clone() }
                     }
                 }
             }
@@ -176,7 +160,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
         let d = date_for_load.clone();
         async move {
             if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
-                items.set(list);
+                items.set(list.into_iter().filter(|i| !i.removed).collect());
             }
             if let Ok(list) = bridge::invoke_get_completions_for_date(&gid, &d).await {
                 completions.set(list);
@@ -188,19 +172,15 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
     let completions_read = completions.read();
     let done_count = items_read
         .iter()
-        .filter(|item| {
-            completions_read
-                .iter()
-                .any(|c| c.item_id == item.id)
-        })
+        .filter(|item| completions_read.iter().any(|c| c.item_id == item.id))
         .count();
     let total = items_read.len();
     let is_fully_done = total > 0 && done_count == total;
-    
+
     let base_class = "bg-obsidian-sidebar/40 border border-white/5 rounded-xl overflow-hidden shadow-sm transition-all";
     let status_class = if is_fully_done { "opacity-60 grayscale-[0.5]" } else { "" };
     let container_class = format!("{} {}", base_class, status_class);
-    
+
     let progress_width = if total > 0 {
         (done_count as f32 / total as f32) * 100.0
     } else {
@@ -211,10 +191,15 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
     rsx! {
         div { class: "{container_class}",
             div { class: "px-4 py-3 bg-white/5 flex justify-between items-center border-bottom border-white/5",
-                span { class: "font-bold text-[15px] tracking-tight text-white", "{group.name}" }
+                div { class: "flex items-center gap-2",
+                    span { class: "font-bold text-[15px] tracking-tight text-white", "{group.name}" }
+                    span { class: "px-2 py-0.5 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-[10px] font-bold uppercase tracking-wider",
+                        "{group.frequency}"
+                    }
+                }
                 div { class: "flex items-center gap-2",
                     div { class: "w-16 h-1.5 bg-obsidian-bg rounded-full overflow-hidden",
-                        div { 
+                        div {
                             class: "h-full bg-obsidian-accent transition-all duration-500",
                             style: "{progress_style}"
                         }
@@ -239,14 +224,46 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                 if is_done && !is_skipped {
                                     button {
                                         class: "w-6 h-6 rounded-md bg-obsidian-accent flex items-center justify-center text-white transition-all scale-110",
-                                        onclick: move |_| {},
+                                        onclick: {
+                                            let iid = item_id.clone();
+                                            let gid_inner = gid.clone();
+                                            let d_inner = d.clone();
+                                            move |_| {
+                                                let iid = iid.clone();
+                                                let gid_inner = gid_inner.clone();
+                                                let d_inner = d_inner.clone();
+                                                spawn(async move {
+                                                    let _ = bridge::invoke_undo_completion(&iid, &d_inner).await;
+                                                    if let Ok(list) = bridge::invoke_get_completions_for_date(&gid_inner, &d_inner).await {
+                                                        completions.set(list);
+                                                    }
+                                                });
+                                            }
+                                        },
                                         svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
                                             path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "3", d: "M5 13l4 4L19 7" }
                                         }
                                     }
                                     span { class: "flex-1 text-sm text-obsidian-text-muted line-through opacity-50", "{item.name}" }
                                 } else if is_skipped {
-                                    div { class: "w-6 h-6 rounded-md bg-obsidian-text-muted/20 flex items-center justify-center text-obsidian-text-muted/40",
+                                    button {
+                                        class: "w-6 h-6 rounded-md bg-obsidian-text-muted/20 flex items-center justify-center text-obsidian-text-muted/40",
+                                        onclick: {
+                                            let iid = item_id.clone();
+                                            let gid_inner = gid.clone();
+                                            let d_inner = d.clone();
+                                            move |_| {
+                                                let iid = iid.clone();
+                                                let gid_inner = gid_inner.clone();
+                                                let d_inner = d_inner.clone();
+                                                spawn(async move {
+                                                    let _ = bridge::invoke_undo_skip(&iid, &d_inner).await;
+                                                    if let Ok(list) = bridge::invoke_get_completions_for_date(&gid_inner, &d_inner).await {
+                                                        completions.set(list);
+                                                    }
+                                                });
+                                            }
+                                        },
                                         svg { class: "w-3 h-3", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
                                             path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "3", d: "M20 12H4" }
                                         }
@@ -317,7 +334,11 @@ fn GroupListView(
     on_add: EventHandler<()>,
     on_select: EventHandler<String>,
     on_back: EventHandler<()>,
+    on_remove: EventHandler<String>,
 ) -> Element {
+    let mut ordered = groups;
+    ordered.sort_by_key(|g| (g.order_num, g.name.clone()));
+
     rsx! {
         div { class: "animate-in slide-in-from-right-4 duration-300",
             div { class: "flex justify-between items-center mb-6",
@@ -341,28 +362,30 @@ fn GroupListView(
                 }
             }
 
-            if groups.is_empty() {
+            if ordered.is_empty() {
                 div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
                     p { "Your library is empty. Start by creating a group." }
                 }
             } else {
                 div { class: "grid gap-3",
-                    for group in &groups {
+                    for group in &ordered {
                         {
-                            let id = group.id.clone();
+                            let id_select = group.id.clone();
+                            let id_remove = group.id.clone();
                             rsx! {
-                                div {
-                                    class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg cursor-pointer transition-all hover:bg-white/5 hover:border-white/10 active:scale-[0.98] flex justify-between items-center",
-                                    onclick: move |_| on_select.call(id.clone()),
-                                    div {
+                                div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg transition-all hover:bg-white/5 hover:border-white/10 flex justify-between items-center",
+                                    div { class: "flex-1 cursor-pointer",
+                                        onclick: move |_| on_select.call(id_select.clone()),
                                         span { class: "font-bold text-obsidian-text", "{group.name}" }
                                     }
                                     div { class: "flex items-center gap-2",
                                         span { class: "px-2 py-0.5 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-[10px] font-bold uppercase tracking-wider",
                                             "{group.frequency}"
                                         }
-                                        span { class: "px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded text-[10px] font-bold uppercase tracking-wider",
-                                            "{group.time_of_day}"
+                                        button {
+                                            class: "px-2 py-1 bg-red-900/20 text-red-400 border border-red-900/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-900/30 transition-colors",
+                                            onclick: move |_| on_remove.call(id_remove.clone()),
+                                            "Remove"
                                         }
                                     }
                                 }
@@ -378,13 +401,9 @@ fn GroupListView(
 // --- Add Group View ---
 
 #[component]
-fn AddGroupView(
-    on_save: EventHandler<()>,
-    on_cancel: EventHandler<()>,
-) -> Element {
+fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHandler<()>) -> Element {
     let mut name = use_signal(String::new);
     let mut frequency = use_signal(|| "daily".to_string());
-    let mut time_of_day = use_signal(|| "morning".to_string());
     let mut saving = use_signal(|| false);
     let mut save_error = use_signal(|| None::<String>);
 
@@ -404,11 +423,11 @@ fn AddGroupView(
                     disabled: *saving.read() || name.read().trim().is_empty(),
                     onclick: move |_| {
                         saving.set(true);
+                        save_error.set(None);
                         spawn(async move {
                             let n = name.read().clone();
                             let f = frequency.read().clone();
-                            let t = time_of_day.read().clone();
-                            match bridge::invoke_create_routine_group(&n, &f, &t).await {
+                            match bridge::invoke_create_routine_group(&n, &f, next_order).await {
                                 Ok(_) => on_save.call(()),
                                 Err(e) => save_error.set(Some(e)),
                             }
@@ -416,6 +435,12 @@ fn AddGroupView(
                         });
                     },
                     if *saving.read() { "Saving..." } else { "Save" }
+                }
+            }
+
+            if let Some(err) = &*save_error.read() {
+                div { class: "mb-4 p-3 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-sm",
+                    "{err}"
                 }
             }
 
@@ -431,122 +456,16 @@ fn AddGroupView(
                     }
                 }
 
-                div { class: "grid grid-cols-2 gap-4",
-                    div {
-                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Frequency" }
-                        select {
-                            class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
-                            value: "{frequency}",
-                            onchange: move |e| frequency.set(e.value()),
-                            option { value: "daily", "Daily" }
-                            option { value: "weekly", "Weekly" }
-                            option { value: "custom", "Custom" }
-                        }
-                    }
-                    div {
-                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Focus Window" }
-                        select {
-                            class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
-                            value: "{time_of_day}",
-                            onchange: move |e| time_of_day.set(e.value()),
-                            option { value: "morning", "Morning" }
-                            option { value: "afternoon", "Afternoon" }
-                            option { value: "evening", "Evening" }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// --- Edit Group View ---
-
-#[component]
-fn EditGroupView(
-    group_id: String,
-    groups: Vec<RoutineGroup>,
-    on_save: EventHandler<()>,
-    on_cancel: EventHandler<()>,
-) -> Element {
-    let group = groups.iter().find(|g| g.id == group_id);
-    let (init_name, init_freq, init_tod) = group
-        .map(|g| (g.name.clone(), g.frequency.clone(), g.time_of_day.clone()))
-        .unwrap_or_default();
-
-    let mut name = use_signal(|| init_name);
-    let mut frequency = use_signal(|| init_freq);
-    let mut time_of_day = use_signal(|| init_tod);
-    let mut saving = use_signal(|| false);
-
-    rsx! {
-        div { class: "animate-in fade-in slide-in-from-bottom-4 duration-300",
-            div { class: "flex justify-between items-center mb-6",
-                button {
-                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
-                    onclick: move |_| on_cancel.call(()),
-                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M6 18L18 6M6 6l12 12" }
-                    }
-                }
-                h2 { class: "text-lg font-bold text-obsidian-text", "Edit Group" }
-                button {
-                    class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50",
-                    disabled: *saving.read() || name.read().trim().is_empty(),
-                    onclick: {
-                        let gid = group_id.clone();
-                        move |_| {
-                            let gid = gid.clone();
-                            saving.set(true);
-                            spawn(async move {
-                                let changes = serde_json::json!({
-                                    "name": *name.read(),
-                                    "frequency": *frequency.read(),
-                                    "time_of_day": *time_of_day.read(),
-                                });
-                                if bridge::invoke_modify_routine_group(&gid, &changes, None).await.is_ok() {
-                                    on_save.call(());
-                                }
-                                saving.set(false);
-                            });
-                        }
-                    },
-                    if *saving.read() { "Saving..." } else { "Save" }
-                }
-            }
-
-            div { class: "space-y-6",
                 div {
-                    label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Group Name" }
-                    input {
-                        class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
-                        r#type: "text",
-                        value: "{name}",
-                        oninput: move |e| name.set(e.value()),
-                    }
-                }
-                div { class: "grid grid-cols-2 gap-4",
-                    div {
-                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Frequency" }
-                        select {
-                            class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
-                            value: "{frequency}",
-                            onchange: move |e| frequency.set(e.value()),
-                            option { value: "daily", "Daily" }
-                            option { value: "weekly", "Weekly" }
-                            option { value: "custom", "Custom" }
-                        }
-                    }
-                    div {
-                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Focus Window" }
-                        select {
-                            class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
-                            value: "{time_of_day}",
-                            onchange: move |e| time_of_day.set(e.value()),
-                            option { value: "morning", "Morning" }
-                            option { value: "afternoon", "Afternoon" }
-                            option { value: "evening", "Evening" }
-                        }
+                    label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Frequency" }
+                    select {
+                        class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                        value: "{frequency}",
+                        onchange: move |e| frequency.set(e.value()),
+                        option { value: "daily", "Daily" }
+                        option { value: "weekly", "Weekly" }
+                        option { value: "biweekly", "Biweekly" }
+                        option { value: "monthly", "Monthly" }
                     }
                 }
             }
@@ -560,7 +479,6 @@ fn EditGroupView(
 fn GroupDetailView(
     group_id: String,
     groups: Vec<RoutineGroup>,
-    on_edit: EventHandler<String>,
     on_back: EventHandler<()>,
 ) -> Element {
     let group = groups.iter().find(|g| g.id == group_id).cloned();
@@ -577,15 +495,13 @@ fn GroupDetailView(
         let gid = gid.clone();
         async move {
             if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
-                items.set(list);
+                items.set(list.into_iter().filter(|i| !i.removed).collect());
             }
             if let Ok(list) = bridge::invoke_get_routine_history(&gid, 7).await {
                 history.set(list);
             }
         }
     });
-
-    let gid_for_edit = group_id.clone();
 
     rsx! {
         div { class: "animate-in fade-in duration-300",
@@ -600,11 +516,6 @@ fn GroupDetailView(
                     }
                     h1 { class: "text-xl font-bold text-obsidian-text", "{group_name}" }
                 }
-                button {
-                    class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
-                    onclick: move |_| on_edit.call(gid_for_edit.clone()),
-                    "Edit"
-                }
             }
 
             h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-4 ml-1", "Step Configuration" }
@@ -614,9 +525,31 @@ fn GroupDetailView(
                     p { class: "text-sm text-obsidian-text-muted italic px-2", "No steps added yet." }
                 } else {
                     for item in items.read().iter() {
-                        div { class: "px-4 py-3 bg-obsidian-sidebar/20 border border-white/5 rounded-lg flex justify-between items-center",
-                            span { class: "text-sm font-medium text-obsidian-text", "{item.name}" }
-                            span { class: "text-[10px] font-mono text-obsidian-text-muted", "{item.estimated_duration_min}m" }
+                        {
+                            let remove_id = item.id.clone();
+                            let group_for_reload = group_id.clone();
+                            rsx! {
+                                div { class: "px-4 py-3 bg-obsidian-sidebar/20 border border-white/5 rounded-lg flex justify-between items-center",
+                                    span { class: "text-sm font-medium text-obsidian-text", "{item.name}" }
+                                    div { class: "flex items-center gap-2",
+                                        span { class: "text-[10px] font-mono text-obsidian-text-muted", "{item.estimated_duration_min}m" }
+                                        button {
+                                            class: "px-2 py-1 bg-red-900/20 text-red-400 border border-red-900/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-900/30 transition-colors",
+                                            onclick: move |_| {
+                                                let iid = remove_id.clone();
+                                                let gid = group_for_reload.clone();
+                                                spawn(async move {
+                                                    let _ = bridge::invoke_remove_routine_item(&iid).await;
+                                                    if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
+                                                        items.set(list.into_iter().filter(|i| !i.removed).collect());
+                                                    }
+                                                });
+                                            },
+                                            "Remove"
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -653,7 +586,7 @@ fn GroupDetailView(
                                     if bridge::invoke_add_routine_item(&gid, &name, dur, order).await.is_ok() {
                                         new_item_name.set(String::new());
                                         if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
-                                            items.set(list);
+                                            items.set(list.into_iter().filter(|i| !i.removed).collect());
                                         }
                                     }
                                     adding.set(false);
@@ -678,15 +611,9 @@ fn GroupDetailView(
 fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Element {
     let tz_signal: Signal<Tz> = use_context();
     let tz = *tz_signal.read();
-    let days: Vec<String> = (0..7)
-        .rev()
-        .map(|i| UserDate::days_ago(&tz, i).to_date_string())
-        .collect();
+    let days: Vec<String> = (0..7).rev().map(|i| UserDate::days_ago(&tz, i).to_date_string()).collect();
 
-    let day_labels: Vec<String> = (0..7)
-        .rev()
-        .map(|i| UserDate::days_ago(&tz, i).format("%a"))
-        .collect();
+    let day_labels: Vec<String> = (0..7).rev().map(|i| UserDate::days_ago(&tz, i).format("%a")).collect();
 
     rsx! {
         div { class: "mt-12 animate-in fade-in duration-500",
@@ -708,7 +635,7 @@ fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Elemen
                                 let completion = history.iter().find(|c| c.item_id == item.id && c.date == *day);
                                 let is_skipped = completion.as_ref().map(|c| c.skipped).unwrap_or(false);
                                 let is_done = completion.is_some();
-                                
+
                                 let bg_class = if is_skipped {
                                     "bg-white/5 border-white/5 text-obsidian-text-muted/40"
                                 } else if is_done {
