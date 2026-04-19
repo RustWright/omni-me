@@ -39,35 +39,39 @@ Breaking schema changes. No backwards-compat shims — old Cycle 1 events are te
 
 ## Phase 1: Editor Revamp — Track B [PARALLEL with 2, 3]
 
-- [ ] **1.1** Auto-wrap extension for `"` `'` `(` `[` `{` `*` `_` `` ` `` [M] — CodeMirror 6 `EditorState.transactionFilter`
-- [ ] **1.2** Checkbox shortcut: `- [ ]` at line start → formatted checkbox [S] `depends:1.1`
-- [ ] **1.3** Line timestamp extension (journal-mode only, toggleable) [M] `depends:1.1`
-- [ ] **1.4** Editor emits `dirty` / `clean` signals to Dioxus via IPC for debouncer wiring [S]
-- [ ] **1.5** Bundle rebuild + integration test (Playwright MCP) [S] `depends:1.1-1.4`
+- [x] **1.1** Auto-wrap extension for `"` `'` `(` `[` `{` `*` `_` `` ` `` [M] — `EditorState.transactionFilter`. Single-quote contraction rule: skip auto-pair when preceded by a word character (so `don't` types naturally).
+- [x] **1.2** Checkbox shortcut: `- [ ]` at line start → formatted checkbox [S] — `Decoration.replace` widget, click toggles.
+- [x] **1.3** Line timestamp extension (journal-mode only, toggleable) [M] — `options.journalMode` flag + Enter-at-EOL keymap inserts `HH:MM ` prefix.
+- [x] **1.4** Editor emits `dirty` / `clean` signals to Dioxus via IPC for debouncer wiring [S] — `window.editorEvents.{onDirty, onClean, isDirty}` + `window.markClean()`.
+- [x] **1.5** Bundle rebuild + integration test (Playwright MCP) [S] — bundle regenerated (~1MB unminified). Auto-wrap + checkbox + timestamp + dirty/clean verified in-browser.
 
 ---
 
 ## Phase 2: Sync Debounce + Retry — Track D [PARALLEL with 1, 3]
 
-- [ ] **2.1** Debounced local append: buffer events in `core/src/sync/buffer.rs`, flush after 1s idle [M]
-- [ ] **2.2** Debounced sync push: 2s after local flush [S] `depends:2.1`
-- [ ] **2.3** Exponential backoff retry (1s → 60s cap, jitter ±10%) [M] `depends:2.2`
-- [ ] **2.4** OS network event listener — Tauri plugin `tauri-plugin-network` (desktop) + Android `ConnectivityManager.NetworkCallback` [M]
-- [ ] **2.5** Wire OS events to retry accelerator (hints only — still retries on its own schedule) [S] `depends:2.3,2.4`
-- [ ] **2.6** Sync status reporter: 4-state enum exposed via `get_sync_status` Tauri command [S] `depends:2.3`
-- [ ] **2.7** Integration test: kill server, edit → verify queue + retry + recovery [M] `depends:2.1-2.6`
+- [x] **2.1** Debounced local append: `core/src/sync/buffer.rs` — 1s idle window, coalesces bursts via `tokio::sync::Notify` [M]
+- [x] **2.2** Debounced sync push: `core/src/sync/pusher.rs` — 2s after buffer flush triggers `SyncClient::push_only` [S]. Client decomposed into `pull_only`/`push_only`/`last_sync_timestamp` primitives.
+- [x] **2.3** Exponential backoff retry: `core/src/sync/retry.rs` — curve 1→2→4→8→16→32→60s cap, ±10% jitter via `rand` [M]
+- [x] **2.4** OS network event listener: `core/src/sync/network.rs` — probe-based, edge-triggered. Android native `ConnectivityManager.NetworkCallback` deferred (TODO in-file); probe works cross-platform. [M]
+- [x] **2.5** Wire OS events to retry accelerator: `core/src/sync/accelerator.rs` — `Online` event → `RetryEngine::hint()` cuts long sleep, does NOT reset attempt counter [S]
+- [x] **2.6** Sync status reporter: `core/src/sync/status.rs` — 4-state `SyncStatus::{Idle, Syncing, Retrying, Error}` (kebab-case) + `SyncStatusSnapshot { status, retry_attempt, last_error }`. Tauri command `get_sync_status` in `tauri-app/src-tauri/src/commands/sync.rs`. [S]
+- [x] **2.7** Integration test `server/tests/sync_phase2_integration.rs::kill_server_edit_queue_retry_recover` — full scenario passes [M]
 
 ---
 
 ## Phase 3: Navigation Shell Revamp — Track C [PARALLEL with 1, 2]
 
-- [ ] **3.1** Bottom tab bar (mobile) + sidebar (desktop) layout [M] — responsive via Dioxus CSS media queries
-- [ ] **3.2** Feature-level tabs: Journal / Notes / Routines / Settings [S] `depends:3.1`
-- [ ] **3.3** Second-level tabs within Journal: `Today` / `Calendar` (Calendar stub for Phase 4) [S] `depends:3.2`
-- [ ] **3.4** Second-level tabs within Notes (generic): `Recent` / `Search` [S] `depends:3.2`
-- [ ] **3.5** Sync status indicator component (4-state, in header) [S] `depends:2.6,3.1`
+- [x] **3.1** Bottom tab bar (mobile) + sidebar (desktop) layout [M] — responsive at 768px via Tailwind `md:` prefix. Single rsx tree — `hidden md:flex` / `md:hidden` split.
+- [x] **3.2** Feature-level tabs: Journal / Notes / Routines / Settings [S] — `Tab::Notes` added; `pages/notes.rs` created (374 lines).
+- [x] **3.3** Second-level tabs within Journal: `Today` / `Calendar` (Calendar stub for Phase 4) [S]
+- [x] **3.4** Second-level tabs within Notes (generic): `Recent` / `Search` [S] — Search respects empty-query=empty-result preference.
+- [x] **3.5** Sync status indicator component (4-state, in header) [S] — polls `invoke_get_sync_status` every 5s, graceful fallback on error.
 
-**Phases 1-3 complete → unblocks Phases 4, 5, 6.**
+**Cross-track integration (commit `48b3981`):**
+- `SyncStatusSnapshot` mirrored in frontend `types.rs`; fixed Track C's `SyncState`-only deserializer which silently fell through to Idle on real backend.
+- Editor `js_create_editor` binding extended with `options: JsValue` 4th arg; `Editor` component gained `journal_mode: bool` prop; journal.rs passes `journal_mode: true`. `window.markClean` exposed via `js_mark_editor_clean` for future auto-save wiring.
+
+**Phases 1-3 complete → unblocks Phases 4, 5, 6.** ✓ 2026-04-19
 
 ---
 
