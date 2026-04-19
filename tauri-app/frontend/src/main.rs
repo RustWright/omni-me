@@ -55,9 +55,13 @@ fn App() -> Element {
                 on_switch: move |tab: Tab| active_tab.set(tab),
             }
 
-            // Main column. Scrollable content; bottom padding only applies on
-            // mobile so the bottom nav doesn't overlap the last item.
+            // Main column: sticky header (sync chip) + scrollable content.
+            // Bottom padding only applies on mobile so the bottom nav doesn't
+            // overlap the last item.
             main { class: "flex-1 flex flex-col overflow-hidden",
+                header { class: "flex items-center justify-end gap-3 px-4 md:px-6 py-3 border-b border-white/5 bg-obsidian-bg/80 backdrop-blur-sm",
+                    components::sync_status::SyncStatusIndicator {}
+                }
                 div { class: "flex-1 overflow-y-auto p-4 md:p-6 pb-16 md:pb-6",
                     match *active_tab.read() {
                         Tab::Journal => rsx! { JournalPage {} },
