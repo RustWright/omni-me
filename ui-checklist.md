@@ -149,3 +149,105 @@ These items can only be fully tested with the real Tauri backend (`cargo tauri d
 - **Build pipeline:** `npm run dev` (editor bundle + debug WASM + copy assets)
 - **Automated testing:** Playwright MCP tools (navigate, click, snapshot, screenshot)
 - **Database:** SurrealDB embedded, stored in OS app data dir (`~/.local/share/com.omni-me.app/`)
+
+---
+
+## Cycle 2 Features
+
+New UI verification scenarios for Cycle 2 features. To be validated during Session 5 as each phase lands.
+
+### Editor — Input Behaviors (Cycle 2)
+
+- [ ] Auto-wrap on `"` with text selection wraps selection in quotes
+- [ ] Auto-wrap on `'` `(` `[` `{` same behavior
+- [ ] Markdown emphasis auto-wrap: `*` `_` with selection
+- [ ] Inline code auto-wrap: `` ` `` with selection
+- [ ] Typing `- [ ]` at line start formats as checkbox
+- [ ] Line timestamps appear on newline in journal mode
+- [ ] Line timestamps do NOT appear in generic note mode
+- [ ] Editor emits dirty signal on edit, clean signal after save
+
+### Sync Status Indicator (Cycle 2)
+
+- [ ] Synced state: green indicator
+- [ ] Pending state: grey indicator (events buffered locally, not yet pushed)
+- [ ] Retrying state: yellow indicator with backoff timer visible
+- [ ] Offline state: red indicator when network unreachable
+- [ ] Indicator transitions correctly on network loss (simulated)
+- [ ] Indicator transitions correctly on network restore (simulated)
+- [ ] Editing still works in offline state (no blocking)
+
+### Journal — Daily Template (Cycle 2)
+
+- [ ] New journal entry autofills date header
+- [ ] `daily_note` tag auto-applied
+- [ ] Three sections pre-rendered: `homework_for_life`, `grateful_for`, `learnt_today`
+- [ ] Template only applies to journal kind, not generic notes
+
+### Journal — Calendar View (Cycle 2)
+
+- [ ] Month grid displays
+- [ ] Days with journal entries show a dot
+- [ ] Tap on day opens that day's journal
+- [ ] Tap on day with no entry opens empty template
+- [ ] Month navigation (prev/next) works
+
+### Journal — Day-Closed (Cycle 2)
+
+- [ ] "Close day" button on today's journal (manual trigger)
+- [ ] Manual close works regardless of whether 3 properties are filled
+- [ ] Auto-close does NOT fire if any of the 3 properties is empty after midnight
+- [ ] Auto-close DOES fire after midnight once all 3 properties are filled (simulate by filling next morning)
+- [ ] Closed day shows muted styling + "closed" badge
+- [ ] Reopen button on closed journal view
+- [ ] Reopening restores edit access
+
+### Generic Notes (Cycle 2)
+
+- [ ] "+ New Note" prompts for title
+- [ ] Note list shows title, not raw text preview
+- [ ] Tap title on list → rename inline (emits `GenericNoteRenamed`)
+- [ ] Recency-sorted list
+- [ ] Search tab filters by title + content
+
+### Obsidian Import (Cycle 2)
+
+- [ ] Settings → Import screen with file/folder picker
+- [ ] Nested paths (e.g. `daily/2024-01-15.md`) classified as journal
+- [ ] Non-date filenames classified as generic
+- [ ] Diff preview shows each note: title/date/tags/body
+- [ ] Accept/skip/edit actions per row
+- [ ] Unknown YAML keys preserved (visible in edit view as `legacy_properties`)
+- [ ] Commit creates events, visible in journal/notes lists after
+
+### Obsidian Export (Cycle 2)
+
+- [ ] Settings → Export button generates `.md` files
+- [ ] Journal notes exported to `journal/YYYY-MM-DD.md`
+- [ ] Generic notes exported to `notes/<title>.md`
+- [ ] Frontmatter reconstructed (tags, dates, `legacy_properties` merged back)
+
+### Routines — Tier 2 (Cycle 2)
+
+- [ ] Daily Flow shows flat list of groups (no morning/afternoon/evening section headers)
+- [ ] Drag-to-reorder groups on Daily Flow persists order (emits `RoutineGroupReordered`)
+- [ ] New Group form has no Focus Window / time-of-day field
+- [ ] Tap completed item → undo (reverts to incomplete)
+- [ ] Tap skipped item → undo
+- [ ] Routine item edit form: name, duration, unit, order
+- [ ] Duration unit picker: min / hour
+- [ ] Delete routine item (swipe or button, with confirmation)
+- [ ] Delete routine group (button on group detail, with confirmation)
+- [ ] Frequency picker: Daily, Weekly, Biweekly, Monthly, Custom-N-days
+- [ ] Custom-N-days shows inline integer input
+- [ ] Settings → "Wipe all data" button with two-step confirmation
+- [ ] Data wipe clears local DB + emits `DataWiped` event
+
+### Navigation Shell (Cycle 2)
+
+- [ ] Mobile: bottom tab bar visible
+- [ ] Desktop: sidebar visible (width > breakpoint)
+- [ ] Feature tabs: Journal / Notes / Routines / Settings
+- [ ] Within Journal: `Today` / `Calendar` second-level tabs
+- [ ] Within Notes: `Recent` / `Search` second-level tabs
+- [ ] Active tab + active sub-tab both visually distinguished

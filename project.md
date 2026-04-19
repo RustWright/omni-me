@@ -1,7 +1,7 @@
 # Project: omni-me
 
-**Status:** Cycle 1 Complete
-**Last Updated:** 2026-03-30
+**Status:** Cycle 2 Planned — Implementation pending
+**Last Updated:** 2026-04-19
 
 ## Session Log
 
@@ -15,6 +15,7 @@
 | Session 4: Phase 1 | 2026-03-25 | Complete | Workspace scaffold (1.1), SurrealDB connection layer (1.4), Axum server (1.5), CI/CD workflow (1.3). VPS deferred — DO rejected payment, going to Hetzner when stable. |
 | Session 4: Phases 2-6 | 2026-03-29 | Complete | Event store + sync, LLM pipeline, UI shell + CodeMirror, Journal/Notes, Routine Manager — all features functional on desktop. Code review done (6 fixes applied). |
 | Session 4: Phase 7 | 2026-03-30 | Complete | Tracing, editor fixes, sync wiring, settings page, Android APK, Tailscale sync. Fixed projection apply after sync pull. Found SurrealKV stability issue (commit queue overflow after ~24h). Cycle 1 complete — all features working, sync verified phone→server→desktop. |
+| Session 4: Planning (Cycle 2) | 2026-04-19 | Complete | 48 tasks across 7 phases + 3 stretch. Tier 1 (editor revamp + auto-save/sync + journal/generic split + Obsidian import/export) + full Tier 2 (routine UX). Breaking event schema changes accepted. Time-of-day labels removed. Day-close: manual + auto (when 3 properties filled). Tier 3 (budget) deferred to Cycle 3. Output: `tasks.md`. |
 
 ---
 
@@ -183,28 +184,58 @@ Four parallel review documents produced in `reviews/2026-04-11-*.md`:
 
 ---
 
-## Cycle 2: [Cycle Name/Goal]
+## Cycle 2: Daily-Usable (Obsidian-Replacement MVP)
 
 ### Session 4: Planning
 
-**Date:** [Date]
+**Date:** 2026-04-19
 
-**Feedback Incorporated from Previous Cycle:**
-- [Feedback item from Cycle 1 and how it's being addressed]
+**Feedback Incorporated from Cycle 1:**
+- Editor fixes (line wrapping, no line numbers) landed in Cycle 1 polish — good base for Cycle 2 auto-wrap work
+- `UI_WORKFLOW.md` tentative process gets first real test in Phase 1 (editor revamp) and Phase 3 (nav shell)
+- Cycle 1 backlog rolled into Cycle 2 scope: undo complete/skip, duration unit, edit routine items, remove routine items/groups → Tier 2
+- Cycle 1 backlog rolled to stretch: search clear button → Phase 7
+- Sync endpoints still unauthed, acceptable while behind Tailscale — no auth work this cycle
 
-**Embedded Research (if any):**
-- [Research performed during planning when scope touched unfamiliar ground]
+**Embedded Research:**
+- Obsidian Sync settings researched via WebSearch — Obsidian defaults: ~1s debounce, passive retry, ~60s backoff cap. Cycle 2 adopts similar defaults (1s local / 2s push / 60s cap).
+- Obsidian screenshots walkthrough (14 images across laptop + mobile) — enumerated actual daily-use features: auto-wrap, checkboxes, YAML frontmatter, calendar, daily notes template. Wikilinks / graph view / dataview / canvas explicitly excluded from scope.
 
-**Objective:** [What this cycle aims to accomplish]
+**Objective:** Get omni-me to the point where the user would reach for it before Obsidian for daily journaling. Specifically: editor ergonomics match, auto-save/auto-sync is invisible, journal-per-day + free generic notes both work, existing Obsidian vault imports cleanly.
 
-**Scope:** [What's included and excluded]
+**Scope:**
+- **Tier 1 (MVP to switch):** Editor revamp (auto-wrap, checkbox, timestamps), debounced auto-save + auto-sync with exponential backoff, note naming domain (journal vs. generic), Obsidian import/export with `legacy_properties` capture
+- **Tier 2 (full):** Routine UX — undo, edit, remove, frequency expansion, duration unit, data wipe; drop time-of-day labels, replace with user-ordered flat list
+- **Excluded:** Budget feature (Tier 3) deferred to Cycle 3. Sync auth deferred (still behind Tailscale). PWA fallback still deferred.
+
+**Key Decisions:**
+- **Event schema — breaking changes allowed:** pre-daily-use means old local events are test data, not production history. No `Option<>` fallback shims or kind-inference tricks. Clean event vocabulary wins over preserving ~50 throwaway records.
+- **Note domain split:** Separate event types — `JournalEntryCreated/Updated/Closed/Reopened` (date-keyed, one-per-day, templated) vs. `GenericNoteCreated/Updated/Renamed` (id-keyed, user-titled, free-form). Journal entries get a `journal_id` ULID for LLM/sync aggregate references in addition to the date key.
+- **Day-close triggers:** Soft-lock via `JournalEntryClosed` / `JournalEntryReopened`. Auto-trigger fires only when BOTH end-of-day has passed AND all 3 manual properties (`homework_for_life`, `grateful_for`, `learnt_today`) are filled — handles the "fill next morning" case. Manual close button always available.
+- **Generic note nav:** Flat recency list + search. Tags rejected as primary nav — LLM-derived tags are too unreliable.
+- **Nav shell:** Bottom tab bar (mobile) + sidebar (desktop), feature-level. Second-level tabs within feature for content (Today/Calendar for Journal, Recent/Search for Notes).
+- **Import strategy — Option D "Pragmatic capture":** Known frontmatter → typed fields; unknown → `legacy_properties` JSON blob on created-note events. Handles 2022-2023 schema drift without blocking import.
+- **Sync defaults (user deferred to recommendation):** 1s local debounce, 2s push debounce, 1s→60s exponential backoff with jitter, OS network events as hints (not authority). 4-state status indicator: synced/pending/retrying/offline. Editing never blocks on sync.
+- **Frequency canonical format:** `"daily"` | `"weekly"` | `"biweekly"` | `"monthly"` | `"custom:N"` with shared parser.
+- **Time-of-day labels removed:** morning/afternoon/evening dropped entirely. `time_of_day` field removed from `RoutineGroupCreated`; `order` field added; new `RoutineGroupReordered` event. Daily Flow shows a user-ordered flat list with drag-to-reorder.
+- **Cycle 1 event data:** wiped by default at Session 5 start. Migration script available as fallback if retention wanted.
 
 **High-Level Phases:**
-1. [Phase 1]
-2. [Phase 2]
-3. [Phase 3]
+0. Core foundation (Track A serial) — events + projections + commands
+1. Editor revamp (Track B)
+2. Sync debounce + retry (Track D)
+3. Nav shell revamp (Track C)
+4. Calendar + day-close UI (Track C)
+5. Templates + Obsidian import/export (Tracks A+C)
+6. Tier 2 routines (Tracks A+C)
+7. Stretch (optional)
 
-**Reference:** See `tasks.md` for detailed atomic task breakdown
+**Parallelization:**
+Phase 0 serial (Track A foundation) → Phases 1/2/3 parallel (3 worktree agents: Track B editor, Track C nav shell, Track D sync) → Phases 4/5/6 parallel (3 agents across Tracks A+C) → Phase 7 stretch.
+
+**Task Count:** 48 tasks across 7 phases + 3 stretch items.
+
+**Reference:** See `tasks.md` for detailed atomic task breakdown with dependencies and parallel execution map.
 
 ---
 

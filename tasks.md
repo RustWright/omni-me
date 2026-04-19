@@ -1,159 +1,160 @@
-# Tasks — Cycle 1: MVP
+# Tasks — Cycle 2: Daily-Usable (Obsidian-Replacement MVP)
 
-**Target:** End of March 2026
-**Scope:** Infrastructure + Journal/Notes + Routine Manager
-**Strategy:** Parallel worktree subagents, all Claude Code
+**Target:** Editor + save/sync + note domain reach the point where the user switches from Obsidian for daily journaling.
+**Scope:** Tier 1 (editor revamp, auto-save + auto-sync, journal/generic split, Obsidian import/export) + Full Tier 2 (routine UX — undo, edit, remove, frequency, duration, data wipe). Tier 3 (budget) deferred to Cycle 3.
+**Strategy:** Phase 0 serial (Track A foundation) → Phases 1/2/3 parallel (4 worktree agents: A wraps, B editor, C nav shell, D sync) → Phases 4/5/6 parallel → Phase 7 stretch.
 
----
+Tracks:
+- **Track A** — Core/events (Rust): `core/src/events/`, `core/src/projections/`, Tauri commands
+- **Track B** — Editor (JS): `tauri-app/assets/js/editor.js`, `editor.bundle.js`
+- **Track C** — UI shell (Dioxus): `tauri-app/frontend/src/`
+- **Track D** — Sync (Rust): `core/src/sync/client.rs`, `core/src/sync/buffer.rs`, Tauri network plugin wiring
 
-## Phase 0: Risk Validation POCs (Days 1-2)
-
-Go/no-go gates. Fallbacks in `architecture.md`.
-
-- [x] **P1** Tauri v2 Android APK sideload [M] — PASSED desktop + Android
-- [x] **P2** SurrealDB embedded [M] — PASSED, CRUD + file persistence with kv-surrealkv
-- [x] **P3** Dioxus 0.7 WASM in Tauri [M] — PASSED, component renders + IPC round-trip
-- [x] **P4** CodeMirror 6 in Tauri [M] — PASSED, editor loads + bidirectional text round-trip
-
-**Parallel:** P1+P2 (Group A), then P3+P4 (Group B) after P1.
+Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h
 
 ---
 
-## Phase 1: Project Skeleton + Infrastructure (Days 3-5)
+## Phase 0: Core Foundation — Track A [SERIAL, blocks everything]
 
-- [x] **1.1** Rust workspace (`tauri-app`, `core`, `server`) [M] `depends:P1,P3` — Tauri v2 + Dioxus wired, `.gitignore`, `cargo build` passes
-- [ ] **1.2** VPS provisioning [DEFERRED] — Hetzner CX22, SSH key-only, UFW, Tailscale, Rust, SurrealDB. Deferred: develop locally, provision when features are stable.
-- [x] **1.3** CI/CD: GitHub Actions [M] `depends:1.1` — build + test + APK artifact. Deploy step added when VPS is provisioned.
-- [x] **1.4** SurrealDB connection layer [M] `depends:P2,1.1` — `core` crate, embedded mode, `events` + `sync_state` tables
-- [x] **1.5** Axum server skeleton [S] `depends:1.1,1.4` — `/health`, SurrealDB, CORS, tracing, graceful shutdown
+Breaking schema changes. No backwards-compat shims — old Cycle 1 events are test data.
 
-**Parallel:** 1.1+1.4 (Group A). 1.3 no longer depends on 1.2.
+- [x] **0.0** Decide: wipe vs. migrate Cycle 1 events. **Decision: WIPE** (2026-04-19) — user plans to regenerate test data while dogfooding the new MVP. Skip Task 0.12 (migration script). [XS]
+- [ ] **0.1** Replace `NoteCreated`/`NoteUpdated` with split event types: `JournalEntryCreated/Updated/Closed/Reopened` + `GenericNoteCreated/Updated/Renamed`. Rewrite enum in `core/src/events/types.rs` [M]
+- [ ] **0.2** `NoteLlmProcessed` updated to take `aggregate_id` (works for both journal_id and note_id) [XS] `depends:0.1`
+- [ ] **0.3** Replace `RoutineGroupCreated` payload: drop `time_of_day`, add `order` [S] `depends:0.1`
+- [ ] **0.4** Add `RoutineGroupReordered`, `RoutineGroupRemoved`, `RoutineItemModified`, `RoutineItemRemoved` events [S] `depends:0.3`
+- [ ] **0.5** Add `RoutineItemCompletionUndone`, `RoutineItemSkipUndone` events [XS]
+- [ ] **0.6** Add `DataWiped` event [XS]
+- [ ] **0.7** Frequency canonical parser (`"daily"` | `"weekly"` | `"biweekly"` | `"monthly"` | `"custom:N"`) — shared helper in `core/src/routines.rs` [S]
+- [ ] **0.8** Rewrite `NotesProjection`: two read tables (`journal_entries` keyed by date with `journal_id`, `generic_notes` keyed by `note_id`). Apply new event types; compute `complete: bool` from 3-property parse; apply close/reopen. [L] `depends:0.1,0.2`
+- [ ] **0.9** Update `RoutinesProjection`: drop `time_of_day`, add group `order`, support modify/remove/undo/reorder + frequency parser [M] `depends:0.3,0.4,0.5,0.7`
+- [ ] **0.10** Auto-close background tick: scheduler runs at local midnight, scans `journal_entries` for `complete: true AND NOT closed`, emits `JournalEntryClosed { trigger: Auto }` for each [M] `depends:0.8`
+- [ ] **0.11** Tauri commands: `create_journal_entry`, `update_journal_entry`, `close_journal_entry`, `reopen_journal_entry`, `create_generic_note`, `update_generic_note`, `rename_generic_note`, `reorder_routine_group`, `modify_routine_item`, `remove_routine_item`, `remove_routine_group`, `undo_completion`, `undo_skip`, `wipe_all_data` [L] `depends:0.1-0.9`
+- [x] **0.12** ~~If migration chosen at 0.0: one-time migration script~~ — SKIPPED per 0.0 decision to wipe
+- [ ] **0.13** Unit tests for new events + projection idempotency + completeness detection + auto-close tick [L] `depends:0.11,0.12`
 
----
-
-## Phase 2: Event Store + Sync (Days 5-7)
-
-Module: `core/src/events/`, `core/src/sync/`, `server/src/routes/sync.rs`
-
-- [x] **2.1** Event store data model + append [M] `depends:1.4` — `Event` struct (ULID, event_type, aggregate_id, timestamp, device_id, payload), `EventStore` trait, SurrealDB impl
-- [x] **2.2** Event type registry + validation [S] `depends:2.1` — enum of valid types, typed payload structs, validate on append
-- [x] **2.3** Projection framework [M] `depends:2.1` — `Projection` trait (apply, rebuild), `ProjectionRunner`, version tracking
-- [x] **2.4** Notes projection [S] `depends:2.3` — note_created/updated/llm_processed → `notes` read table
-- [x] **2.5** Routines projection [S] `depends:2.3` — routine_* events → `routine_groups`, `routine_items`, `routine_completions` tables
-- [x] **2.6** Sync server endpoints [M] `depends:2.1,1.5` — POST `/sync/push` + `/sync/pull`, device_id filtering, timestamp validation
-- [x] **2.7** Sync client (Tauri) [M] `depends:2.6,1.4` — pull → append → push → rebuild → update last_sync_timestamp, offline-safe
-- [x] **2.8** Sync integration test [S] `depends:2.7` — 2 devices, create on A, sync, verify on B, concurrent creates
+**Phase 0 complete → unblocks Phases 1, 2, 3.**
 
 ---
 
-## Phase 3: LLM Pipeline (Days 5-8, parallel with Phase 2)
+## Phase 1: Editor Revamp — Track B [PARALLEL with 2, 3]
 
-Module: `core/src/llm/`
-
-- [x] **3.5** Deterministic pre-processor [S] `depends:1.1` — extract_urls, extract_dates, extract_monetary_amounts, regex + tests
-- [x] **3.1** `LlmClient` trait + GeminiClient [M] `depends:1.1` — complete(), complete_structured<T>(), reqwest, structured output, API key, rate limiting
-- [x] **3.2** Tool calling framework [M] `depends:3.1` — Tool definition, calling loop with Gemini, placeholder tools (create_tag, extract_task, assess_mood)
-- [x] **3.3** Prompt versioning [S] `depends:3.1` — versioned templates as constants, PromptRegistry, record prompt_version + model per call
-- [x] **3.4** Note processing pipeline [L] `depends:3.2,3.3,3.5,2.1` — pre-process → structured output → tool calling → emit note_llm_processed, manual trigger
-
-**Parallel:** 3.5+3.1 start together. 3.2+3.3 after 3.1. 3.4 waits for all.
+- [ ] **1.1** Auto-wrap extension for `"` `'` `(` `[` `{` `*` `_` `` ` `` [M] — CodeMirror 6 `EditorState.transactionFilter`
+- [ ] **1.2** Checkbox shortcut: `- [ ]` at line start → formatted checkbox [S] `depends:1.1`
+- [ ] **1.3** Line timestamp extension (journal-mode only, toggleable) [M] `depends:1.1`
+- [ ] **1.4** Editor emits `dirty` / `clean` signals to Dioxus via IPC for debouncer wiring [S]
+- [ ] **1.5** Bundle rebuild + integration test (Playwright MCP) [S] `depends:1.1-1.4`
 
 ---
 
-## Phase 4: UI Shell + CodeMirror (Days 6-9, parallel with Phases 2-3)
+## Phase 2: Sync Debounce + Retry — Track D [PARALLEL with 1, 3]
 
-Module: `tauri-app/src/`, `tauri-app/assets/js/`
-
-- [x] **4.1** Dioxus app shell [M] `depends:P3,1.1` — bottom nav (Journal, Routines, Settings), tab switching, responsive layout
-- [x] **4.2** CodeMirror 6 bundle + IPC bridge [L] `depends:P4,4.1` — JS bundle (esbuild), createEditor/getContent/setContent/onContentChange, bidirectional IPC
-- [x] **4.3** Editor Dioxus wrapper [S] `depends:4.2` — `<Editor>` component (initial_content, on_change, read_only), lifecycle, 300ms debounce
-
----
-
-## Phase 5: Journal/Notes Feature (Days 8-12)
-
-- [x] **5.1** Note creation flow [M] `depends:4.3,2.1,2.4` — "New Note" → editor → save → note_created event → rebuild → list
-- [x] **5.2** Note editing [S] `depends:5.1` — tap note → editor → note_updated event
-- [x] **5.3** Note list view [S] `depends:5.1` — date grouping (Today/Yesterday/Older), preview, tag count, mood badge
-- [x] **5.4** LLM trigger [S] `depends:5.1,3.4` — "Process with AI" button → server-side pipeline → show derived data (tags, summary, mood, tasks, dates, expenses)
-- [x] **5.5** Note search [S] `depends:5.1` — search bar, substring on raw_text + tags, empty query shows nothing
-
-**Parallel:** 5.2, 5.3, 5.4, 5.5 all independent after 5.1.
+- [ ] **2.1** Debounced local append: buffer events in `core/src/sync/buffer.rs`, flush after 1s idle [M]
+- [ ] **2.2** Debounced sync push: 2s after local flush [S] `depends:2.1`
+- [ ] **2.3** Exponential backoff retry (1s → 60s cap, jitter ±10%) [M] `depends:2.2`
+- [ ] **2.4** OS network event listener — Tauri plugin `tauri-plugin-network` (desktop) + Android `ConnectivityManager.NetworkCallback` [M]
+- [ ] **2.5** Wire OS events to retry accelerator (hints only — still retries on its own schedule) [S] `depends:2.3,2.4`
+- [ ] **2.6** Sync status reporter: 4-state enum exposed via `get_sync_status` Tauri command [S] `depends:2.3`
+- [ ] **2.7** Integration test: kill server, edit → verify queue + retry + recovery [M] `depends:2.1-2.6`
 
 ---
 
-## Phase 6: Routine Manager Feature (Days 10-15)
+## Phase 3: Navigation Shell Revamp — Track C [PARALLEL with 1, 2]
 
-- [x] **6.1** Routine group CRUD [M] `depends:4.1,2.1,2.5` — list groups, "Add Group" form (name, frequency, time_of_day), routine_group_created event
-- [x] **6.2** Routine item management [M] `depends:6.1` — group detail, "Add Item" (name, duration_min), routine_item_added event
-- [x] **6.3** Daily checklist [L] `depends:6.1,6.2` — today's groups by time_of_day, checkboxes, tap → routine_item_completed, skip option, progress indicator
-- [x] **6.4** Routine editing [S] `depends:6.1` — modify name/frequency/time, routine_group_modified event
-- [x] **6.5** Routine history [S] `depends:6.3` — 7-day grid (items × days, green/gray)
+- [ ] **3.1** Bottom tab bar (mobile) + sidebar (desktop) layout [M] — responsive via Dioxus CSS media queries
+- [ ] **3.2** Feature-level tabs: Journal / Notes / Routines / Settings [S] `depends:3.1`
+- [ ] **3.3** Second-level tabs within Journal: `Today` / `Calendar` (Calendar stub for Phase 4) [S] `depends:3.2`
+- [ ] **3.4** Second-level tabs within Notes (generic): `Recent` / `Search` [S] `depends:3.2`
+- [ ] **3.5** Sync status indicator component (4-state, in header) [S] `depends:2.6,3.1`
 
----
-
-## Phase 7: Integration + Polish (Days 14-17)
-
-- [x] **7.5** Tracing [S] — add tracing + tracing-subscriber to Tauri app, instrument commands with info/warn logging
-- [x] **7.6** Editor config fixes [S] — add line wrapping, remove line numbers (CodeMirror config)
-- [x] **7.1a** Sync wiring [M] `depends:2.7` — persist device_id, expose trigger_sync Tauri command, bridge helper
-- [x] **7.4** Settings screen [S] `depends:7.1a` — server URL field, device ID display, "Sync Now" button
-- [x] **7.1b** Local network sync test [S] `depends:7.1a,7.4` — verify sync desktop-to-desktop via localhost
-- [x] **7.3** Android APK debug build [M] `depends:7.1a` — tauri android init, fix asset copying, debug-signed APK, sideload + test
-- [x] **7.1c** Tailscale setup + mobile sync test [S] `depends:7.3` — install Tailscale, test phone↔desktop sync
+**Phases 1-3 complete → unblocks Phases 4, 5, 6.**
 
 ---
 
-## Parallel Execution Map (Session 4)
+## Phase 4: Calendar + Day-Close UI — Track C [PARALLEL with 5, 6]
+
+- [ ] **4.1** Month calendar grid component with dots for days with journal entries [M] `depends:3.3,0.8`
+- [ ] **4.2** Tap calendar day → open that day's journal (existing or empty with template) [S] `depends:4.1`
+- [ ] **4.3** Day-closed visual state (muted styling, "closed" badge) [S] `depends:0.8`
+- [ ] **4.4** Reopen button on closed journal view [S] `depends:4.3`
+- [ ] **4.5** "Close day" button on today's journal (manual trigger) [S] `depends:4.3`
+
+---
+
+## Phase 5: Templates + Obsidian Import/Export — Tracks A+C [PARALLEL with 4, 6]
+
+- [ ] **5.1** Journal template engine: autofill date, `daily_note` tag, 3 fields — rendered into editor on new journal [M] `depends:0.11,1.4`
+- [ ] **5.2** Obsidian import parser: walk directory, parse YAML frontmatter + markdown body [M] `depends:0.1`
+- [ ] **5.3** Frontmatter mapper: known fields → typed, unknown → `legacy_properties` blob [S] `depends:5.2`
+- [ ] **5.4** Path classifier: nested path → `Journal` if date-like filename, else `Generic` [S] `depends:5.2`
+- [ ] **5.5** Import diff preview UI: per-row accept/skip/edit [L] `depends:5.3,5.4,3.2`
+- [ ] **5.6** Import commit: batch emit `JournalEntryCreated` / `GenericNoteCreated` events via Tauri command [M] `depends:5.5,0.11`
+- [ ] **5.7** Obsidian export: projection → markdown + frontmatter files, nested paths preserved [M] `depends:0.8`
+- [ ] **5.8** Import/Export settings screen entries [S] `depends:5.6,5.7,3.2`
+
+---
+
+## Phase 6: Tier 2 Routines — Tracks A+C [PARALLEL with 4, 5]
+
+- [ ] **6.1** Routine item edit form (name, duration + unit, order) [M] `depends:0.11,3.2`
+- [ ] **6.2** Duration unit picker (min / hour), store as normalized minutes [S] `depends:6.1`
+- [ ] **6.3** Routine item remove (button with confirmation) [S] `depends:0.11,3.2`
+- [ ] **6.4** Routine group remove (button with confirmation on group detail view) [S] `depends:0.11`
+- [ ] **6.5** Frequency picker expansion: Biweekly, Monthly, Custom-N-days with inline int input [M] `depends:0.7,3.2`
+- [ ] **6.6** Undo complete/skip UI (tap completed item reverts) [S] `depends:0.11`
+- [ ] **6.7** Settings → Data Wipe (two-step confirmation, emits `DataWiped`, clears local DB) [M] `depends:0.11,3.2`
+- [ ] **6.8** Daily Flow screen rewrite: remove time-of-day section headers, render flat user-ordered list of groups (respect `order` field from projection) [M] `depends:0.9,3.2`
+- [ ] **6.9** Drag-to-reorder groups on Daily Flow (emits `RoutineGroupReordered`) [M] `depends:6.8`
+
+---
+
+## Phase 7: Stretch [IF TIME]
+
+- [ ] **7.1** Round-trip test (import → export → re-import, verify byte-stable for supported frontmatter)
+- [ ] **7.2** Duration unit: seconds option
+- [ ] **7.3** Search clear button (X in search input) — Cycle 1 backlog item
+
+---
+
+## Parallel Execution Map (Session 5)
 
 ```
-Days 1-2: POCs
-  [Agent A] P1 + P2 in parallel
-  [Agent B] P3 + P4 in parallel (after P1)
+Phase 0 (Track A, serial): 0.0 → 0.1 → 0.2+0.3 → 0.4+0.5+0.6+0.7 → 0.8+0.9 → 0.10 → 0.11 → 0.12 → 0.13
 
-Days 3-5: Foundation
-  [Agent A] 1.1 → 1.4 → 1.5  (workspace + DB + server)
-  [Agent B] 1.2               (VPS provisioning)
-  [Main]    1.3               (CI/CD, after both)
+Phases 1/2/3 (parallel, 3 agents):
+  [Agent B] 1.1 → 1.2+1.3+1.4 → 1.5
+  [Agent D] 2.1 → 2.2 → 2.3+2.4 → 2.5+2.6 → 2.7
+  [Agent C] 3.1 → 3.2 → 3.3+3.4+3.5
 
-Days 5-9: Core (3 parallel tracks)
-  [Agent A] 2.1 → 2.2 → 2.3 → 2.4+2.5 → 2.6 → 2.7 → 2.8  (events/sync)
-  [Agent B] 3.5+3.1 → 3.2+3.3 → 3.4                         (LLM)
-  [Agent C] 4.1 → 4.2 → 4.3                                  (UI)
+Phases 4/5/6 (parallel, 3 agents):
+  [Agent C1] 4.1+4.3 → 4.2+4.4+4.5
+  [Agent C2/A1] 5.2 → 5.3+5.4 → 5.5 → 5.6, plus 5.1 and 5.7 in parallel, then 5.8
+  [Agent C3/A2] 6.1→6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8→6.9
 
-Days 8-15: Features (2 parallel tracks)
-  [Agent A] 5.1 → 5.2+5.3+5.4+5.5  (Journal)
-  [Agent B] 6.1 → 6.2 → 6.3 → 6.4+6.5  (Routines)
-
-Days 14-17: Integration
-  [Main] 7.1 → 7.3, with 7.4+7.5 in parallel
+Phase 7 (main): 7.1, 7.2, 7.3 as time permits
 ```
 
 **File separation (conflict-free):**
-- Events/sync agent: `core/src/events/`, `core/src/sync/`, `server/src/routes/`
-- LLM agent: `core/src/llm/`, `core/src/preprocess/`
-- UI agent: `tauri-app/src/`, `tauri-app/assets/`
+- Track A: `core/src/events/`, `core/src/projections/`, `tauri-app/src-tauri/src/commands*.rs`
+- Track B: `tauri-app/assets/js/editor.js`, `tauri-app/assets/js/editor.bundle.js`
+- Track C: `tauri-app/frontend/src/`
+- Track D: `core/src/sync/`, Tauri network plugin wiring
 
 ---
 
-## Cycle 2 Backlog
+## Cycle 3 Backlog
 
-Items identified during cycle 1 review that are deferred but must be addressed:
-
-- [ ] **Auth on sync endpoints** — `/sync/push` and `/sync/pull` accept `device_id` from request body with no verification. Any client on the network can impersonate a device or read others' events. Acceptable for MVP behind Tailscale, but needs at minimum a shared-secret API key header before deploying to Hetzner.
-- [ ] **UI testing workflow** — Replace manual screenshot-based testing with a streamlined workflow (Playwright, visual regression, or similar). Research and implement early in Cycle 2 before major UI work.
-- [ ] **Delete routine groups/items** — No delete functionality exists yet
-- [ ] **Edit routine items** — Can edit groups but not individual items
-- [ ] **Undo complete/skip** — No way to reverse a routine completion or skip
-- [ ] **Search clear button** — Add X/clear button in journal search field
-- [ ] **Duration unit label** — Show "min" or similar next to duration input in routine items
-- [ ] **Note titles** — Display note title (first line or derived) in list view instead of raw text preview
-- [ ] **Sync push error handling** — Server push handler returns 200 even when all appends fail (silently swallows errors). Should return error status code so client knows push failed.
-- [ ] **SurrealKV stability** — Server's SurrealKV panicked with "commit queue overflow" after running ~24h, corrupting the DB connection. Investigate cause, consider restart/reconnect strategy.
+- [ ] **Tier 3: Budget feature** — hledger + Paisa + OCR (Mindee) — deferred from Cycle 2
+- [ ] **Auth on sync endpoints** — still deferred while Tailscale-only
+- [ ] **UI testing workflow** — validate `UI_WORKFLOW.md` (Playwright MCP) as real process vs. tentative
+- [ ] **SurrealKV stability** — commit queue overflow after ~24h, decide restart/reconnect strategy
+- [ ] **Sync push error handling** — server returns 200 even when appends fail; fix to propagate errors
+- [ ] **PWA fallback** — deferred from Cycle 1 + 2
 
 ---
 
 ## Meta: Validation Goals
 
-- [ ] Track Claude Code subscription usage across sessions — validate whether it handles full implementation without aipack
-- [ ] If limits hit, document where and plan aipack integration for Cycle 2
+- [ ] Track Claude Code subscription usage across Cycle 2 sessions
+- [ ] Validate `UI_WORKFLOW.md` process on first Cycle 2 UI work (Phase 1 editor + Phase 3 nav)
+- [ ] If subscription hits limits, document where and plan aipack integration for Cycle 3
