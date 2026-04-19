@@ -3,357 +3,317 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::editor::Editor;
-use crate::types::NoteListItem;
+use crate::types::JournalEntryItem;
 use crate::user_date::UserDate;
 
-#[derive(Clone, PartialEq)]
-enum JournalView {
-    List,
-    NewNote,
-    EditNote(String),
-    Search,
+/// Second-level tabs inside the Journal feature.
+///
+/// `Today` is the default landing view and shows today's entry (creating one
+/// via the editor when missing). `Calendar` is a stub that Phase 4 will turn
+/// into a month grid with per-day dots.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum JournalSubTab {
+    Today,
+    Calendar,
 }
 
 #[component]
 pub fn JournalPage() -> Element {
-    let mut view = use_signal(|| JournalView::List);
-    let mut notes = use_signal(Vec::<NoteListItem>::new);
-    let mut search_query = use_signal(String::new);
-    let mut search_results = use_signal(Vec::<NoteListItem>::new);
-    let mut error_msg = use_signal(|| None::<String>);
+    let sub_tab = use_signal(|| JournalSubTab::Today);
 
-    // Load notes on mount
-    let _load = use_future(move || async move {
-        match bridge::invoke_list_notes().await {
-            Ok(list) => notes.set(list),
-            Err(e) => error_msg.set(Some(e)),
+    rsx! {
+        div { class: "max-w-3xl mx-auto w-full",
+            JournalSubNav { active: *sub_tab.read(), on_switch: {
+                let mut sub_tab = sub_tab;
+                move |tab: JournalSubTab| sub_tab.set(tab)
+            } }
+
+            match *sub_tab.read() {
+                JournalSubTab::Today => rsx! { TodayView {} },
+                JournalSubTab::Calendar => rsx! { CalendarStubView {} },
+            }
         }
-    });
+    }
+}
 
-    let refresh_notes = move || {
-        spawn(async move {
-            match bridge::invoke_list_notes().await {
-                Ok(list) => {
-                    notes.set(list);
+#[component]
+fn JournalSubNav(active: JournalSubTab, on_switch: EventHandler<JournalSubTab>) -> Element {
+    let tab_class = move |tab: JournalSubTab| -> &'static str {
+        if tab == active {
+            "px-4 py-1.5 text-sm font-semibold rounded-md bg-obsidian-sidebar text-obsidian-accent transition-colors"
+        } else {
+            "px-4 py-1.5 text-sm font-medium rounded-md bg-transparent text-obsidian-text-muted hover:text-obsidian-text transition-colors"
+        }
+    };
+
+    rsx! {
+        div { class: "flex gap-1 mb-6 p-1 bg-obsidian-sidebar/40 border border-white/5 rounded-lg w-fit",
+            button {
+                class: "{tab_class(JournalSubTab::Today)}",
+                onclick: move |_| on_switch.call(JournalSubTab::Today),
+                "Today"
+            }
+            button {
+                class: "{tab_class(JournalSubTab::Calendar)}",
+                onclick: move |_| on_switch.call(JournalSubTab::Calendar),
+                "Calendar"
+            }
+        }
+    }
+}
+
+#[component]
+fn CalendarStubView() -> Element {
+    rsx! {
+        div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
+            svg { class: "w-16 h-16 mb-4 opacity-20", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" }
+            }
+            p { class: "text-lg font-medium", "Calendar" }
+            p { class: "text-sm", "Coming in Phase 4" }
+        }
+    }
+}
+
+/// "Today" view: one-per-day entry. If no entry exists yet, the editor starts
+/// blank and creates an entry on first save. If today's entry is already closed,
+/// render a closed-state banner with a reopen action.
+#[component]
+fn TodayView() -> Element {
+    let tz_signal: Signal<Tz> = use_context();
+    let today = UserDate::today(&*tz_signal.read()).to_date_string();
+
+    let mut entry = use_signal(|| None::<JournalEntryItem>);
+    let mut loading = use_signal(|| true);
+    let mut saving = use_signal(|| false);
+    let mut processing = use_signal(|| false);
+    let mut error_msg = use_signal(|| None::<String>);
+    let mut save_status = use_signal(|| None::<String>);
+    let mut llm_result = use_signal(|| None::<crate::types::LlmResult>);
+    let mut llm_error = use_signal(|| None::<String>);
+    let mut content = use_signal(String::new);
+
+    let today_for_load = today.clone();
+    let _load = use_future(move || {
+        let d = today_for_load.clone();
+        async move {
+            match bridge::invoke_get_journal_by_date(&d).await {
+                Ok(Some(e)) => {
+                    content.set(e.raw_text.clone());
+                    entry.set(Some(e));
+                    error_msg.set(None);
+                }
+                Ok(None) => {
+                    content.set(String::new());
+                    entry.set(None);
                     error_msg.set(None);
                 }
                 Err(e) => error_msg.set(Some(e)),
             }
-        });
-    };
+            loading.set(false);
+        }
+    });
 
     rsx! {
-        div { class: "max-w-3xl mx-auto w-full",
-
-            // Error banner
+        div { class: "animate-in fade-in duration-200",
             if let Some(err) = &*error_msg.read() {
                 div { class: "bg-red-900/20 text-red-400 px-3 py-2 rounded border border-red-900/50 mb-4 text-sm",
                     "{err}"
                 }
             }
 
-            match &*view.read() {
-                JournalView::List => rsx! {
-                    NoteListView {
-                        notes: notes.read().clone(),
-                        on_new: move |_| view.set(JournalView::NewNote),
-                        on_edit: move |id: String| view.set(JournalView::EditNote(id)),
-                        on_search: move |_| view.set(JournalView::Search),
-                    }
-                },
-                JournalView::NewNote => rsx! {
-                    NoteEditorView {
-                        note_id: None,
-                        initial_content: String::new(),
-                        on_save: move |_| {
-                            view.set(JournalView::List);
-                            refresh_notes();
-                        },
-                        on_cancel: move |_| view.set(JournalView::List),
-                    }
-                },
-                JournalView::EditNote(id) => rsx! {
-                    NoteEditorView {
-                        note_id: Some(id.clone()),
-                        initial_content: notes.read().iter()
-                            .find(|n| n.id == *id)
-                            .map(|n| n.raw_text.clone())
-                            .unwrap_or_default(),
-                        on_save: move |_| {
-                            view.set(JournalView::List);
-                            refresh_notes();
-                        },
-                        on_cancel: move |_| view.set(JournalView::List),
-                    }
-                },
-                JournalView::Search => rsx! {
-                    NoteSearchView {
-                        query: search_query.read().clone(),
-                        results: search_results.read().clone(),
-                        on_query_change: move |q: String| {
-                            search_query.set(q.clone());
-                            if q.trim().is_empty() {
-                                search_results.set(vec![]);
-                            } else {
-                                spawn(async move {
-                                    if let Ok(results) = bridge::invoke_search_notes(&q).await {
-                                        search_results.set(results);
+            // Header: date + status pills + action buttons
+            div { class: "flex flex-wrap justify-between items-center gap-3 mb-6",
+                div { class: "flex items-center gap-3",
+                    h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Today" }
+                    span { class: "text-sm font-mono text-obsidian-text-muted", "{today}" }
+                    {
+                        if let Some(e) = entry.read().as_ref() {
+                            let closed = e.closed;
+                            let complete = e.complete;
+                            rsx! {
+                                if closed {
+                                    span { class: "px-2 py-0.5 bg-obsidian-text-muted/10 text-obsidian-text-muted border border-white/10 rounded text-[10px] font-bold uppercase tracking-wider",
+                                        "Closed"
                                     }
-                                });
-                            }
-                        },
-                        on_select: move |id: String| view.set(JournalView::EditNote(id)),
-                        on_back: move |_| view.set(JournalView::List),
-                    }
-                },
-            }
-        }
-    }
-}
-
-// --- Note List View ---
-
-#[component]
-fn NoteListView(
-    notes: Vec<NoteListItem>,
-    on_new: EventHandler<()>,
-    on_edit: EventHandler<String>,
-    on_search: EventHandler<()>,
-) -> Element {
-    let tz_signal: Signal<Tz> = use_context();
-    rsx! {
-        // Header
-        div { class: "flex justify-between items-center mb-6",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Journal" }
-            div { class: "flex gap-2",
-                button {
-                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text-muted transition-colors",
-                    onclick: move |_| on_search.call(()),
-                    // Search Icon placeholder or text
-                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" }
-                    }
-                }
-                button {
-                    class: "flex items-center gap-2 px-4 py-2 bg-obsidian-accent text-white font-semibold rounded-md hover:opacity-90 transition-opacity shadow-lg shadow-obsidian-accent/20",
-                    onclick: move |_| on_new.call(()),
-                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M12 4v16m8-8H4" }
-                    }
-                    span { "New Note" }
-                }
-            }
-        }
-
-        if notes.is_empty() {
-            div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
-                svg { class: "w-16 h-16 mb-4 opacity-20", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" }
-                }
-                p { class: "text-lg font-medium", "No notes yet" }
-                p { class: "text-sm", "Tap \"New Note\" to get started" }
-            }
-        } else {
-            // Group notes by date
-            {render_grouped_notes(&notes, on_edit, &*tz_signal.read())}
-        }
-    }
-}
-
-fn render_grouped_notes(notes: &[NoteListItem], on_edit: EventHandler<String>, tz: &Tz) -> Element {
-    let today = UserDate::today(tz).to_date_string();
-    let yesterday = UserDate::yesterday(tz).to_date_string();
-
-    let mut today_notes = vec![];
-    let mut yesterday_notes = vec![];
-    let mut older_notes = vec![];
-
-    for note in notes {
-        if note.date == today {
-            today_notes.push(note.clone());
-        } else if note.date == yesterday {
-            yesterday_notes.push(note.clone());
-        } else {
-            older_notes.push(note.clone());
-        }
-    }
-
-    rsx! {
-        if !today_notes.is_empty() {
-            NoteGroup { label: "Today".to_string(), notes: today_notes, on_edit }
-        }
-        if !yesterday_notes.is_empty() {
-            NoteGroup { label: "Yesterday".to_string(), notes: yesterday_notes, on_edit }
-        }
-        if !older_notes.is_empty() {
-            NoteGroup { label: "Older".to_string(), notes: older_notes, on_edit }
-        }
-    }
-}
-
-#[component]
-fn NoteGroup(label: String, notes: Vec<NoteListItem>, on_edit: EventHandler<String>) -> Element {
-    rsx! {
-        div { class: "mb-8",
-            h3 { class: "text-[11px] font-bold text-obsidian-text-muted uppercase tracking-[0.1em] mb-3 ml-1",
-                "{label}"
-            }
-            div { class: "space-y-1",
-                for note in &notes {
-                    NoteCard { note: note.clone(), on_click: on_edit }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn NoteCard(note: NoteListItem, on_click: EventHandler<String>) -> Element {
-    let preview: String = note.raw_text.chars().take(80).collect::<String>()
-        + if note.raw_text.len() > 80 { "..." } else { "" };
-
-    let id = note.id.clone();
-
-    rsx! {
-        div {
-            class: "group p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg cursor-pointer transition-all hover:bg-white/5 hover:border-white/10 active:scale-[0.98]",
-            onclick: move |_| on_click.call(id.clone()),
-
-            div { class: "text-[15px] leading-relaxed text-obsidian-text group-hover:text-white transition-colors mb-2",
-                "{preview}"
-            }
-            div { class: "flex items-center gap-3 text-[11px] text-obsidian-text-muted",
-                span { class: "flex items-center gap-1",
-                    svg { class: "w-3 h-3", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" }
-                    }
-                    "{note.date}"
-                }
-                if !note.tags.is_empty() {
-                    span { class: "px-1.5 py-0.5 bg-obsidian-accent/10 text-obsidian-accent rounded border border-obsidian-accent/20",
-                        "{note.tags.len()} tags"
-                    }
-                }
-            }
-        }
-    }
-}
-
-// --- Note Editor View ---
-
-#[component]
-fn NoteEditorView(
-    note_id: Option<String>,
-    initial_content: String,
-    on_save: EventHandler<()>,
-    on_cancel: EventHandler<()>,
-) -> Element {
-    let mut saving = use_signal(|| false);
-    let mut processing = use_signal(|| false);
-    let mut content = use_signal(|| initial_content.clone());
-    let mut save_error = use_signal(|| None::<String>);
-    let mut llm_result = use_signal(|| None::<crate::types::LlmResult>);
-    let mut llm_error = use_signal(|| None::<String>);
-    let tz_signal: Signal<Tz> = use_context();
-    let is_new = note_id.is_none();
-    let note_id_for_save = note_id.clone();
-    let note_id_for_llm = note_id.clone();
-
-    rsx! {
-        div { class: "animate-in fade-in slide-in-from-bottom-4 duration-300",
-            // Header
-            div { class: "flex justify-between items-center mb-6",
-                button {
-                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
-                    onclick: move |_| on_cancel.call(()),
-                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M10 19l-7-7m0 0l7-7m-7 7h18" }
-                    }
-                }
-                h2 { class: "text-lg font-bold text-obsidian-text",
-                    if is_new { "New Note" } else { "Edit Note" }
-                }
-                div { class: "flex gap-2",
-                    // Process with AI button (only for saved notes)
-                    if !is_new {
-                        button {
-                            class: "flex items-center gap-2 px-3 py-1.5 bg-purple-600/20 text-purple-400 border border-purple-600/30 font-medium rounded-md hover:bg-purple-600/30 transition-colors disabled:opacity-50",
-                            disabled: *processing.read(),
-                            onclick: {
-                                let nid = note_id_for_llm.clone();
-                                move |_| {
-                                    let nid = nid.clone();
-                                    processing.set(true);
-                                    llm_error.set(None);
-                                    spawn(async move {
-                                        if let Some(id) = nid {
-                                            match bridge::invoke_process_note_llm(&id).await {
-                                                Ok(result) => llm_result.set(Some(result)),
-                                                Err(e) => llm_error.set(Some(e)),
-                                            }
-                                        }
-                                        processing.set(false);
-                                    });
+                                } else if complete {
+                                    span { class: "px-2 py-0.5 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-[10px] font-bold uppercase tracking-wider",
+                                        "Complete"
+                                    }
                                 }
-                            },
-                            if *processing.read() { "..." } else { "AI Analyze" }
+                            }
+                        } else {
+                            rsx! {}
                         }
                     }
-                    button {
-                        class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50",
-                        disabled: *saving.read(),
-                        onclick: {
-                            let note_id = note_id_for_save.clone();
-                            move |_| {
-                                let note_id = note_id.clone();
-                                saving.set(true);
-                                spawn(async move {
-                                    let text = content.read().clone();
-                                    let result = if let Some(id) = note_id {
-                                        bridge::invoke_update_note(&id, &text).await
-                                    } else {
-                                        let tz = *tz_signal.read();
-                                        let today = UserDate::today(&tz).to_date_string();
-                                        bridge::invoke_create_note(&text, &today).await.map(|_| ())
-                                    };
-                                    saving.set(false);
-                                    match result {
-                                        Ok(_) => on_save.call(()),
-                                        Err(e) => save_error.set(Some(e)),
-                                    }
-                                });
+                }
+
+                div { class: "flex items-center gap-2",
+                    {
+                        let is_closed = entry.read().as_ref().map(|e| e.closed).unwrap_or(false);
+                        let journal_id = entry.read().as_ref().map(|e| e.journal_id.clone());
+                        let have_entry = entry.read().is_some();
+
+                        rsx! {
+                            if have_entry && !is_closed {
+                                button {
+                                    class: "flex items-center gap-2 px-3 py-1.5 bg-purple-600/20 text-purple-400 border border-purple-600/30 font-medium rounded-md hover:bg-purple-600/30 transition-colors disabled:opacity-50",
+                                    disabled: *processing.read(),
+                                    onclick: {
+                                        let jid = journal_id.clone();
+                                        move |_| {
+                                            let jid = jid.clone();
+                                            processing.set(true);
+                                            llm_error.set(None);
+                                            spawn(async move {
+                                                if let Some(id) = jid {
+                                                    match bridge::invoke_process_note_llm(&id).await {
+                                                        Ok(r) => llm_result.set(Some(r)),
+                                                        Err(e) => llm_error.set(Some(e)),
+                                                    }
+                                                }
+                                                processing.set(false);
+                                            });
+                                        }
+                                    },
+                                    if *processing.read() { "..." } else { "AI Analyze" }
+                                }
                             }
-                        },
-                        if *saving.read() { "Saving..." } else { "Save" }
+
+                            if is_closed {
+                                button {
+                                    class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
+                                    onclick: {
+                                        let jid = journal_id.clone();
+                                        let today = today.clone();
+                                        move |_| {
+                                            let jid = jid.clone();
+                                            let today = today.clone();
+                                            spawn(async move {
+                                                if let Some(id) = jid {
+                                                    if bridge::invoke_reopen_journal_entry(&id).await.is_ok() {
+                                                        if let Ok(Some(refreshed)) =
+                                                            bridge::invoke_get_journal_by_date(&today).await
+                                                        {
+                                                            content.set(refreshed.raw_text.clone());
+                                                            entry.set(Some(refreshed));
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    },
+                                    "Reopen"
+                                }
+                            } else if have_entry {
+                                button {
+                                    class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
+                                    onclick: {
+                                        let jid = journal_id.clone();
+                                        let today = today.clone();
+                                        move |_| {
+                                            let jid = jid.clone();
+                                            let today = today.clone();
+                                            spawn(async move {
+                                                if let Some(id) = jid {
+                                                    if bridge::invoke_close_journal_entry(&id, "manual").await.is_ok() {
+                                                        if let Ok(Some(refreshed)) =
+                                                            bridge::invoke_get_journal_by_date(&today).await
+                                                        {
+                                                            content.set(refreshed.raw_text.clone());
+                                                            entry.set(Some(refreshed));
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    },
+                                    "Close Day"
+                                }
+                            }
+
+                            button {
+                                class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50",
+                                disabled: *saving.read() || is_closed,
+                                onclick: {
+                                    let today = today.clone();
+                                    let jid = journal_id.clone();
+                                    move |_| {
+                                        let today = today.clone();
+                                        let jid = jid.clone();
+                                        saving.set(true);
+                                        save_status.set(None);
+                                        spawn(async move {
+                                            let text = content.read().clone();
+                                            let result = if let Some(id) = jid {
+                                                bridge::invoke_update_journal_entry(&id, &text)
+                                                    .await
+                                                    .map(|_| ())
+                                            } else {
+                                                match bridge::invoke_create_journal_entry(&today, &text).await {
+                                                    Ok(created) => {
+                                                        entry.set(Some(created));
+                                                        Ok(())
+                                                    }
+                                                    Err(e) => Err(e),
+                                                }
+                                            };
+                                            saving.set(false);
+                                            match result {
+                                                Ok(()) => save_status.set(Some("Saved".into())),
+                                                Err(e) => save_status.set(Some(format!("Save failed: {e}"))),
+                                            }
+                                        });
+                                    }
+                                },
+                                if *saving.read() { "Saving..." } else { "Save" }
+                            }
+                        }
                     }
                 }
             }
 
-            // Editor
-            div { class: "rounded-lg border border-white/10 overflow-hidden shadow-2xl",
-                Editor {
-                    initial_content: initial_content.clone(),
-                    on_change: move |new_content: String| {
-                        content.set(new_content);
-                    },
+            if *loading.read() {
+                div { class: "py-20 text-center text-obsidian-text-muted", "Loading..." }
+            } else {
+                {
+                    let is_closed = entry.read().as_ref().map(|e| e.closed).unwrap_or(false);
+                    let is_new = entry.read().is_none();
+                    let initial = if is_new {
+                        String::new()
+                    } else {
+                        entry.read().as_ref().map(|e| e.raw_text.clone()).unwrap_or_default()
+                    };
+                    let editor_class = if is_closed {
+                        "rounded-lg border border-white/10 overflow-hidden shadow-2xl opacity-60"
+                    } else {
+                        "rounded-lg border border-white/10 overflow-hidden shadow-2xl"
+                    };
+
+                    rsx! {
+                        div { class: "{editor_class}",
+                            Editor {
+                                initial_content: initial,
+                                on_change: move |new_content: String| content.set(new_content),
+                                read_only: is_closed,
+                            }
+                        }
+                    }
                 }
             }
 
-            // Save error
-            if let Some(err) = &*save_error.read() {
-                div { class: "mt-4 p-3 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-sm",
-                    "Save failed: {err}"
+            if let Some(status) = &*save_status.read() {
+                div { class: "mt-4 p-3 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
+                    "{status}"
                 }
             }
 
-            // LLM error
             if let Some(err) = &*llm_error.read() {
                 div { class: "mt-4 p-3 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-sm",
                     "{err}"
                 }
             }
 
-            // LLM results
             if let Some(result) = &*llm_result.read() {
                 LlmResultsDisplay { result: result.clone() }
             }
@@ -370,7 +330,6 @@ fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
                 "AI Analysis"
             }
 
-            // Warnings (e.g., sync failed after LLM processing)
             if !result.warnings.is_empty() {
                 div { class: "mb-4 p-3 bg-yellow-900/20 text-yellow-400 rounded border border-yellow-900/50 text-sm",
                     for warning in &result.warnings {
@@ -379,7 +338,6 @@ fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
                 }
             }
 
-            // Tags
             if !result.tags.is_empty() {
                 div { class: "mb-4",
                     span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase mb-1 block", "Tags" }
@@ -393,7 +351,6 @@ fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
                 }
             }
 
-            // Tasks
             if !result.tasks.is_empty() {
                 div { class: "mb-4",
                     span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase mb-2 block", "Derived Tasks" }
@@ -414,70 +371,9 @@ fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
                 }
             }
 
-            // Dates & Expenses would go here with similar styling...
-
-            // Summary
             if let Some(summary) = &result.summary {
                 div { class: "mt-4 pt-4 border-t border-white/5 text-sm text-obsidian-text-muted italic leading-relaxed",
                     "{summary}"
-                }
-            }
-        }
-    }
-}
-
-// --- Search View ---
-
-#[component]
-fn NoteSearchView(
-    query: String,
-    results: Vec<NoteListItem>,
-    on_query_change: EventHandler<String>,
-    on_select: EventHandler<String>,
-    on_back: EventHandler<()>,
-) -> Element {
-    rsx! {
-        div { class: "animate-in fade-in duration-200",
-            // Header
-            div { class: "flex items-center gap-3 mb-6",
-                button {
-                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
-                    onclick: move |_| on_back.call(()),
-                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M10 19l-7-7m0 0l7-7m-7 7h18" }
-                    }
-                }
-                div { class: "flex-1 relative",
-                    svg { class: "absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-obsidian-text-muted", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" }
-                    }
-                    input {
-                        class: "w-full pl-10 pr-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
-                        r#type: "text",
-                        placeholder: "Search your journal...",
-                        value: "{query}",
-                        autofocus: true,
-                        oninput: move |e| on_query_change.call(e.value()),
-                    }
-                }
-            }
-
-            if query.trim().is_empty() {
-                div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted opacity-40",
-                    svg { class: "w-16 h-16 mb-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" }
-                    }
-                    p { "Type to explore your thoughts" }
-                }
-            } else if results.is_empty() {
-                div { class: "text-center py-20 text-obsidian-text-muted",
-                    "No matching notes found."
-                }
-            } else {
-                div { class: "space-y-1",
-                    for note in &results {
-                        NoteCard { note: note.clone(), on_click: on_select }
-                    }
                 }
             }
         }
