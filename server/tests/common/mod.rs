@@ -3,6 +3,11 @@
 // Located at tests/common/mod.rs (not tests/common.rs) so Cargo treats it as a
 // submodule of each test binary rather than compiling it as its own test crate.
 
+// Each test binary only uses a subset of these helpers; the unused ones
+// trigger dead_code warnings per-binary. Allow them since the module is
+// shared.
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use axum::{Json, Router, routing::get};
