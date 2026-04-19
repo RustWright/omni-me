@@ -50,7 +50,29 @@ pub struct PullResponse {
     pub sync_timestamp: DateTime<Utc>,
 }
 
+/// Outcome of a pull-only call. Exposes the raw pulled events so callers can
+/// feed them into projections.
+#[derive(Debug)]
+pub struct PullOutcome {
+    pub pulled: usize,
+    pub pulled_events: Vec<Event>,
+    pub new_timestamp: DateTime<Utc>,
+}
+
+/// Outcome of a push-only call.
+#[derive(Debug)]
+pub struct PushOutcome {
+    pub pushed: usize,
+}
+
 /// Client that syncs local events with a remote server.
+///
+/// The client is decomposed into independent primitives — `pull_only`,
+/// `push_only`, and `sync_state` accessors — so higher-level drivers (e.g.
+/// the debounced push loop in `pusher.rs`) can orchestrate phases
+/// independently. The legacy `sync()` method remains as a convenience wrapper
+/// that runs pull→push atomically.
+#[derive(Clone)]
 pub struct SyncClient {
     server_url: String,
     device_id: String,
@@ -66,16 +88,48 @@ impl SyncClient {
         }
     }
 
+    /// The device ID this client is bound to.
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    /// The server URL this client talks to.
+    pub fn server_url(&self) -> &str {
+        &self.server_url
+    }
+
     /// Perform a full sync: pull remote events, then push local events.
+    /// Preserved for backward compatibility with integration tests and the
+    /// `trigger_sync` Tauri command.
     pub async fn sync(&self, db: &Database) -> Result<SyncResult, SyncError> {
+        let last_sync = self.get_last_sync_timestamp(db).await?;
+
+        // 1. Pull + apply + update sync_state timestamp.
+        let pull = self.pull_only(db).await?;
+
+        // 2. Push any local events since the *pre-pull* timestamp (so we don't
+        //    miss work created while the pull was in flight).
+        let push = self.push_only(db, &last_sync).await?;
+
+        Ok(SyncResult {
+            pulled: pull.pulled,
+            pushed: push.pushed,
+            pulled_events: pull.pulled_events,
+        })
+    }
+
+    /// Pull remote events since our last sync, append them locally (preserving
+    /// server-assigned IDs), and advance `sync_state.last_sync_timestamp`.
+    ///
+    /// Does NOT push. Callers wanting a full sync should follow with
+    /// `push_only`, or use `sync()`.
+    pub async fn pull_only(&self, db: &Database) -> Result<PullOutcome, SyncError> {
         let store = SurrealEventStore::new(db.clone());
         let last_sync = self.get_last_sync_timestamp(db).await?;
 
-        // 1. Pull remote events
         let pull_resp = self.pull_events(&last_sync).await?;
         let pulled = pull_resp.events.len();
 
-        // 2. Append pulled events locally, preserving their server-assigned IDs
         for event in &pull_resp.events {
             let new_event = NewEvent {
                 id: Some(event.id.clone()),
@@ -91,25 +145,42 @@ impl SyncClient {
                 .map_err(|e| SyncError::Local(e.to_string()))?;
         }
 
-        // 3. Update sync timestamp after successful pull (before push).
-        //    If push fails later, we won't re-pull the same events next sync.
+        // Advance sync_state timestamp AFTER successful pull so a push-only
+        // failure later doesn't cause us to re-pull the same events.
         let new_timestamp = pull_resp.sync_timestamp;
         self.update_last_sync_timestamp(db, &new_timestamp).await?;
 
-        // 4. Gather local events since last sync (by this device only)
-        let local_events = self.get_local_events_since(&store, &last_sync).await?;
+        Ok(PullOutcome {
+            pulled,
+            pulled_events: pull_resp.events,
+            new_timestamp,
+        })
+    }
+
+    /// Push all local events from this device created after `since` to the
+    /// server. Chunks at 100 events per HTTP request.
+    pub async fn push_only(
+        &self,
+        db: &Database,
+        since: &DateTime<Utc>,
+    ) -> Result<PushOutcome, SyncError> {
+        let store = SurrealEventStore::new(db.clone());
+        let local_events = self.get_local_events_since(&store, since).await?;
         let pushed = local_events.len();
 
-        // 5. Push local events to server
         if !local_events.is_empty() {
             self.push_events(&local_events).await?;
         }
 
-        Ok(SyncResult {
-            pulled,
-            pushed,
-            pulled_events: pull_resp.events,
-        })
+        Ok(PushOutcome { pushed })
+    }
+
+    /// Get the last-sync timestamp recorded for this device (epoch if none).
+    pub async fn last_sync_timestamp(
+        &self,
+        db: &Database,
+    ) -> Result<DateTime<Utc>, SyncError> {
+        self.get_last_sync_timestamp(db).await
     }
 
     async fn get_last_sync_timestamp(
