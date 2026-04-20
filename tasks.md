@@ -77,11 +77,13 @@ Breaking schema changes. No backwards-compat shims — old Cycle 1 events are te
 
 ## Phase 4: Calendar + Day-Close UI — Track C [PARALLEL with 5, 6]
 
-- [ ] **4.1** Month calendar grid component with dots for days with journal entries [M] `depends:3.3,0.8`
-- [ ] **4.2** Tap calendar day → open that day's journal (existing or empty with template) [S] `depends:4.1`
-- [ ] **4.3** Day-closed visual state (muted styling, "closed" badge) [S] `depends:0.8`
-- [ ] **4.4** Reopen button on closed journal view [S] `depends:4.3`
-- [ ] **4.5** "Close day" button on today's journal (manual trigger) [S] `depends:4.3`
+- [x] **4.1** Month calendar grid component with dots for days with journal entries [M] — `CalendarView` in `journal.rs` with Mon-first 6×7 spillover grid. `build_month_cells` built via Learn-by-Doing (`std::iter::successors` pattern). Host-runnable test locked in.
+- [x] **4.2** Tap calendar day → open that day's journal [S] — `TodayView` → `DayView(date)` refactor. Shared `selected_date` signal + keyed remount; calendar click switches sub-tab and jumps. "← Back to today" link when viewing non-today.
+- [x] **4.3** Day-closed visual state (muted styling, "closed" badge) [S] — landed in Phase 3 merge.
+- [x] **4.4** Reopen button on closed journal view [S] — landed in Phase 3 merge.
+- [x] **4.5** "Close day" button on journal view (manual trigger) [S] — landed in Phase 3 merge; works for any open entry, not just today.
+
+**Phase 4 complete.** ✓ 2026-04-20
 
 ---
 

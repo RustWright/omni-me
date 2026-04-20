@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+
+use chrono::{Datelike, NaiveDate};
 use chrono_tz::Tz;
 use dioxus::prelude::*;
 
@@ -8,9 +11,9 @@ use crate::user_date::UserDate;
 
 /// Second-level tabs inside the Journal feature.
 ///
-/// `Today` is the default landing view and shows today's entry (creating one
-/// via the editor when missing). `Calendar` is a stub that Phase 4 will turn
-/// into a month grid with per-day dots.
+/// `Today` shows the entry for whichever date is currently `selected_date`
+/// (defaults to today; calendar clicks can redirect it). `Calendar` renders
+/// the month grid with per-day entry dots.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum JournalSubTab {
     Today,
@@ -19,18 +22,38 @@ pub enum JournalSubTab {
 
 #[component]
 pub fn JournalPage() -> Element {
-    let sub_tab = use_signal(|| JournalSubTab::Today);
+    let mut sub_tab = use_signal(|| JournalSubTab::Today);
+    let tz_signal: Signal<Tz> = use_context();
+    let today = UserDate::today(&*tz_signal.read()).to_date_string();
+
+    let mut selected_date = use_signal(|| today.clone());
 
     rsx! {
         div { class: "max-w-3xl mx-auto w-full",
-            JournalSubNav { active: *sub_tab.read(), on_switch: {
-                let mut sub_tab = sub_tab;
-                move |tab: JournalSubTab| sub_tab.set(tab)
-            } }
+            JournalSubNav { active: *sub_tab.read(), on_switch: move |t| sub_tab.set(t) }
 
             match *sub_tab.read() {
-                JournalSubTab::Today => rsx! { TodayView {} },
-                JournalSubTab::Calendar => rsx! { CalendarStubView {} },
+                JournalSubTab::Today => rsx! {
+                    DayView {
+                        key: "{selected_date.read()}",
+                        date: selected_date.read().clone(),
+                        today: today.clone(),
+                        on_back_to_today: {
+                            let today = today.clone();
+                            move |_| selected_date.set(today.clone())
+                        },
+                    }
+                },
+                JournalSubTab::Calendar => rsx! {
+                    CalendarView {
+                        today: today.clone(),
+                        selected: selected_date.read().clone(),
+                        on_select: move |d: String| {
+                            selected_date.set(d);
+                            sub_tab.set(JournalSubTab::Today);
+                        },
+                    }
+                },
             }
         }
     }
@@ -62,27 +85,14 @@ fn JournalSubNav(active: JournalSubTab, on_switch: EventHandler<JournalSubTab>) 
     }
 }
 
-#[component]
-fn CalendarStubView() -> Element {
-    rsx! {
-        div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
-            svg { class: "w-16 h-16 mb-4 opacity-20", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" }
-            }
-            p { class: "text-lg font-medium", "Calendar" }
-            p { class: "text-sm", "Coming in Phase 4" }
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// DayView — shows the entry for a specific date. Used for today + past days.
+// ---------------------------------------------------------------------------
 
-/// "Today" view: one-per-day entry. If no entry exists yet, the editor starts
-/// blank and creates an entry on first save. If today's entry is already closed,
-/// render a closed-state banner with a reopen action.
+/// Day entry view, parameterized on date. Parent keys by `date`, so navigating
+/// between days remounts this component and resets its load state cleanly.
 #[component]
-fn TodayView() -> Element {
-    let tz_signal: Signal<Tz> = use_context();
-    let today = UserDate::today(&*tz_signal.read()).to_date_string();
-
+fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> Element {
     let mut entry = use_signal(|| None::<JournalEntryItem>);
     let mut loading = use_signal(|| true);
     let mut saving = use_signal(|| false);
@@ -93,9 +103,11 @@ fn TodayView() -> Element {
     let mut llm_error = use_signal(|| None::<String>);
     let mut content = use_signal(String::new);
 
-    let today_for_load = today.clone();
+    let is_today_view = date == today;
+
+    let date_for_load = date.clone();
     let _load = use_future(move || {
-        let d = today_for_load.clone();
+        let d = date_for_load.clone();
         async move {
             match bridge::invoke_get_journal_by_date(&d).await {
                 Ok(Some(e)) => {
@@ -116,17 +128,29 @@ fn TodayView() -> Element {
 
     rsx! {
         div { class: "animate-in fade-in duration-200",
+            if !is_today_view {
+                div { class: "mb-3",
+                    button {
+                        class: "text-sm text-obsidian-text-muted hover:text-obsidian-accent transition-colors",
+                        onclick: move |_| on_back_to_today.call(()),
+                        "← Back to today"
+                    }
+                }
+            }
+
             if let Some(err) = &*error_msg.read() {
                 div { class: "bg-red-900/20 text-red-400 px-3 py-2 rounded border border-red-900/50 mb-4 text-sm",
                     "{err}"
                 }
             }
 
-            // Header: date + status pills + action buttons
+            // Header: heading + date + status pills + action buttons
             div { class: "flex flex-wrap justify-between items-center gap-3 mb-6",
                 div { class: "flex items-center gap-3",
-                    h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Today" }
-                    span { class: "text-sm font-mono text-obsidian-text-muted", "{today}" }
+                    h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                        if is_today_view { "Today" } else { "Entry" }
+                    }
+                    span { class: "text-sm font-mono text-obsidian-text-muted", "{date}" }
                     {
                         if let Some(e) = entry.read().as_ref() {
                             let closed = e.closed;
@@ -185,15 +209,15 @@ fn TodayView() -> Element {
                                     class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
                                     onclick: {
                                         let jid = journal_id.clone();
-                                        let today = today.clone();
+                                        let date = date.clone();
                                         move |_| {
                                             let jid = jid.clone();
-                                            let today = today.clone();
+                                            let date = date.clone();
                                             spawn(async move {
                                                 if let Some(id) = jid {
                                                     if bridge::invoke_reopen_journal_entry(&id).await.is_ok() {
                                                         if let Ok(Some(refreshed)) =
-                                                            bridge::invoke_get_journal_by_date(&today).await
+                                                            bridge::invoke_get_journal_by_date(&date).await
                                                         {
                                                             content.set(refreshed.raw_text.clone());
                                                             entry.set(Some(refreshed));
@@ -210,15 +234,15 @@ fn TodayView() -> Element {
                                     class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
                                     onclick: {
                                         let jid = journal_id.clone();
-                                        let today = today.clone();
+                                        let date = date.clone();
                                         move |_| {
                                             let jid = jid.clone();
-                                            let today = today.clone();
+                                            let date = date.clone();
                                             spawn(async move {
                                                 if let Some(id) = jid {
                                                     if bridge::invoke_close_journal_entry(&id, "manual").await.is_ok() {
                                                         if let Ok(Some(refreshed)) =
-                                                            bridge::invoke_get_journal_by_date(&today).await
+                                                            bridge::invoke_get_journal_by_date(&date).await
                                                         {
                                                             content.set(refreshed.raw_text.clone());
                                                             entry.set(Some(refreshed));
@@ -236,10 +260,10 @@ fn TodayView() -> Element {
                                 class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50",
                                 disabled: *saving.read() || is_closed,
                                 onclick: {
-                                    let today = today.clone();
+                                    let date = date.clone();
                                     let jid = journal_id.clone();
                                     move |_| {
-                                        let today = today.clone();
+                                        let date = date.clone();
                                         let jid = jid.clone();
                                         saving.set(true);
                                         save_status.set(None);
@@ -250,7 +274,7 @@ fn TodayView() -> Element {
                                                     .await
                                                     .map(|_| ())
                                             } else {
-                                                match bridge::invoke_create_journal_entry(&today, &text).await {
+                                                match bridge::invoke_create_journal_entry(&date, &text).await {
                                                     Ok(created) => {
                                                         entry.set(Some(created));
                                                         Ok(())
@@ -378,5 +402,216 @@ fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CalendarView — month grid with per-day dots for dates that have entries.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+struct MonthCell {
+    date: NaiveDate,
+    in_current_month: bool,
+}
+
+/// Build the list of calendar cells for a month view.
+///
+/// The grid is always 6 rows × 7 cols (42 cells) so its height stays constant
+/// as the user navigates months. Week starts on Monday (matches Obsidian's
+/// daily-note plugin default).
+///
+/// Cells outside the anchor's month carry `in_current_month: false` so the
+/// renderer can grey them out (spillover style) instead of showing blanks.
+///
+/// `anchor` is expected to be the first day of the target month.
+fn build_month_cells(anchor: NaiveDate) -> Vec<MonthCell> {
+    let anchor_month = anchor.month();
+    let start_date = anchor - chrono::Days::new(anchor.weekday().num_days_from_monday() as u64);
+    std::iter::successors(Some(start_date), |d| d.succ_opt())
+        .take(42)
+        .map(|date| MonthCell {
+            date,
+            in_current_month: date.month() == anchor_month,
+        })
+        .collect()
+}
+
+#[component]
+fn CalendarView(today: String, selected: String, on_select: EventHandler<String>) -> Element {
+    let today_date = NaiveDate::parse_from_str(&today, "%Y-%m-%d")
+        .unwrap_or_else(|_| NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+    let today_month_first =
+        NaiveDate::from_ymd_opt(today_date.year(), today_date.month(), 1).unwrap();
+
+    let mut anchor = use_signal(|| today_month_first);
+    let mut dates_with_entries = use_signal(HashSet::<String>::new);
+    let mut loading_dates = use_signal(|| true);
+    let mut fetch_error = use_signal(|| None::<String>);
+
+    use_effect(move || {
+        let a = *anchor.read();
+        let first = NaiveDate::from_ymd_opt(a.year(), a.month(), 1).unwrap();
+        let last_day = days_in_month(a.year(), a.month());
+        let last = NaiveDate::from_ymd_opt(a.year(), a.month(), last_day).unwrap();
+        let from_s = first.format("%Y-%m-%d").to_string();
+        let to_s = last.format("%Y-%m-%d").to_string();
+
+        loading_dates.set(true);
+        fetch_error.set(None);
+        spawn(async move {
+            match bridge::invoke_list_journal_dates(&from_s, &to_s).await {
+                Ok(dates) => dates_with_entries.set(dates.into_iter().collect()),
+                Err(e) => fetch_error.set(Some(e)),
+            }
+            loading_dates.set(false);
+        });
+    });
+
+    let month_label = anchor.read().format("%B %Y").to_string();
+    let cells = build_month_cells(*anchor.read());
+
+    rsx! {
+        div { class: "py-2 animate-in fade-in duration-200",
+            // Month navigation header
+            div { class: "flex items-center justify-between mb-4",
+                button {
+                    class: "p-2 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
+                    onclick: move |_| {
+                        let a = *anchor.read();
+                        let (y, m) = if a.month() == 1 {
+                            (a.year() - 1, 12)
+                        } else {
+                            (a.year(), a.month() - 1)
+                        };
+                        anchor.set(NaiveDate::from_ymd_opt(y, m, 1).unwrap());
+                    },
+                    "◀"
+                }
+                h2 { class: "text-lg font-semibold text-obsidian-text", "{month_label}" }
+                button {
+                    class: "p-2 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
+                    onclick: move |_| {
+                        let a = *anchor.read();
+                        let (y, m) = if a.month() == 12 {
+                            (a.year() + 1, 1)
+                        } else {
+                            (a.year(), a.month() + 1)
+                        };
+                        anchor.set(NaiveDate::from_ymd_opt(y, m, 1).unwrap());
+                    },
+                    "▶"
+                }
+            }
+
+            // Weekday header (Mon-first)
+            div { class: "grid grid-cols-7 gap-1 mb-2",
+                for label in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+                    div { class: "text-center text-[10px] font-semibold uppercase tracking-wider text-obsidian-text-muted py-1",
+                        "{label}"
+                    }
+                }
+            }
+
+            // Day grid
+            div { class: "grid grid-cols-7 gap-1",
+                for cell in cells {
+                    {
+                        let date_str = cell.date.format("%Y-%m-%d").to_string();
+                        let has_entry = dates_with_entries.read().contains(&date_str);
+                        let is_today = date_str == today;
+                        let is_selected = date_str == selected;
+                        let classes =
+                            day_cell_class(is_today, is_selected, has_entry, cell.in_current_month);
+                        let day_num = cell.date.day();
+                        rsx! {
+                            button {
+                                class: "{classes}",
+                                onclick: {
+                                    let d = date_str.clone();
+                                    move |_| on_select.call(d.clone())
+                                },
+                                div { class: "text-sm leading-none", "{day_num}" }
+                                div {
+                                    class: if has_entry {
+                                        "w-1 h-1 rounded-full bg-obsidian-accent mt-1"
+                                    } else {
+                                        "w-1 h-1 mt-1"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(err) = &*fetch_error.read() {
+                div { class: "mt-4 p-3 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-sm",
+                    "{err}"
+                }
+            }
+        }
+    }
+}
+
+/// Number of days in a given calendar month.
+fn days_in_month(year: i32, month: u32) -> u32 {
+    let (ny, nm) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    NaiveDate::from_ymd_opt(ny, nm, 1)
+        .and_then(|d| d.pred_opt())
+        .map(|d| d.day())
+        .unwrap_or(28)
+}
+
+/// Tailwind class composition for a single calendar-day cell.
+fn day_cell_class(
+    is_today: bool,
+    is_selected: bool,
+    has_entry: bool,
+    in_current_month: bool,
+) -> String {
+    let base = "aspect-square flex flex-col items-center justify-center rounded-md text-center transition-colors cursor-pointer";
+    let text_class = if !in_current_month {
+        "text-obsidian-text-muted/40"
+    } else if is_today {
+        "text-obsidian-accent font-bold"
+    } else if has_entry {
+        "text-obsidian-text font-medium"
+    } else {
+        "text-obsidian-text-muted"
+    };
+    let bg_class = if is_selected {
+        "bg-obsidian-accent/20 border border-obsidian-accent/40"
+    } else if is_today {
+        "bg-obsidian-sidebar border border-obsidian-accent/30"
+    } else {
+        "hover:bg-white/5 border border-transparent"
+    };
+    format!("{base} {text_class} {bg_class}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Locks in the grid contract: 42 cells (6 rows × 7 cols), Monday-first.
+    #[test]
+    fn build_month_cells_returns_42_monday_first_cells() {
+        // February 2026: Feb 1 falls on a Sunday.
+        let anchor = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap();
+        let cells = build_month_cells(anchor);
+        assert_eq!(cells.len(), 42, "always 6 full weeks");
+
+        // First row should start on a Monday (Jan 26, 2026 is a Monday).
+        assert_eq!(cells[0].date, NaiveDate::from_ymd_opt(2026, 1, 26).unwrap());
+        assert!(!cells[0].in_current_month);
+
+        // Feb 1 (Sunday) should be cell index 6.
+        assert_eq!(cells[6].date, anchor);
+        assert!(cells[6].in_current_month);
     }
 }
