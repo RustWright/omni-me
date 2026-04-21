@@ -1,11 +1,11 @@
 use wasm_bindgen::prelude::*;
 
-use crate::types::{
-    CompletionEntry, GenericNoteItem, JournalEntryItem, LlmResult, RoutineGroup, RoutineItem,
-    SyncInfo, SyncState, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
-};
 #[cfg(feature = "mock")]
 use crate::types::TaskResult;
+use crate::types::{
+    CompletionEntry, GenericNoteItem, JournalEntryItem, LlmResult, RoutineGroup, RoutineItem,
+    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
+};
 
 // Tauri IPC
 #[wasm_bindgen]
@@ -103,10 +103,7 @@ pub async fn invoke_create_journal_entry(
     }
 }
 
-pub async fn invoke_update_journal_entry(
-    journal_id: &str,
-    raw_text: &str,
-) -> Result<(), String> {
+pub async fn invoke_update_journal_entry(journal_id: &str, raw_text: &str) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
         let _ = (journal_id, raw_text);
@@ -130,10 +127,7 @@ pub async fn invoke_update_journal_entry(
     }
 }
 
-pub async fn invoke_close_journal_entry(
-    journal_id: &str,
-    trigger: &str,
-) -> Result<(), String> {
+pub async fn invoke_close_journal_entry(journal_id: &str, trigger: &str) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
         let _ = (journal_id, trigger);
@@ -173,9 +167,7 @@ pub async fn invoke_reopen_journal_entry(journal_id: &str) -> Result<(), String>
     }
 }
 
-pub async fn invoke_get_journal_by_date(
-    date: &str,
-) -> Result<Option<JournalEntryItem>, String> {
+pub async fn invoke_get_journal_by_date(date: &str) -> Result<Option<JournalEntryItem>, String> {
     #[cfg(feature = "mock")]
     {
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -315,10 +307,7 @@ pub async fn invoke_create_generic_note(
     }
 }
 
-pub async fn invoke_update_generic_note(
-    note_id: &str,
-    raw_text: &str,
-) -> Result<(), String> {
+pub async fn invoke_update_generic_note(note_id: &str, raw_text: &str) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
         let _ = (note_id, raw_text);
@@ -335,10 +324,7 @@ pub async fn invoke_update_generic_note(
     }
 }
 
-pub async fn invoke_rename_generic_note(
-    note_id: &str,
-    title: &str,
-) -> Result<(), String> {
+pub async fn invoke_rename_generic_note(note_id: &str, title: &str) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
         let _ = (note_id, title);
@@ -414,9 +400,7 @@ pub async fn invoke_list_generic_notes() -> Result<Vec<GenericNoteItem>, String>
     }
 }
 
-pub async fn invoke_search_generic_notes(
-    query: &str,
-) -> Result<Vec<GenericNoteItem>, String> {
+pub async fn invoke_search_generic_notes(query: &str) -> Result<Vec<GenericNoteItem>, String> {
     #[cfg(feature = "mock")]
     {
         if query.trim().is_empty() {
@@ -427,8 +411,7 @@ pub async fn invoke_search_generic_notes(
         Ok(notes
             .into_iter()
             .filter(|n| {
-                n.title.to_lowercase().contains(&q)
-                    || n.raw_text.to_lowercase().contains(&q)
+                n.title.to_lowercase().contains(&q) || n.raw_text.to_lowercase().contains(&q)
             })
             .collect())
     }
@@ -446,9 +429,7 @@ pub async fn invoke_search_generic_notes(
 // LLM processing (routes via aggregate_id — works for either journal or generic)
 // -----------------------------------------------------------------------------
 
-pub async fn invoke_process_note_llm(
-    aggregate_id: &str,
-) -> Result<LlmResult, String> {
+pub async fn invoke_process_note_llm(aggregate_id: &str) -> Result<LlmResult, String> {
     #[cfg(feature = "mock")]
     {
         let _ = aggregate_id;
@@ -549,9 +530,7 @@ pub async fn invoke_create_routine_group(
     }
 }
 
-pub async fn invoke_reorder_routine_groups(
-    orderings: &serde_json::Value,
-) -> Result<(), String> {
+pub async fn invoke_reorder_routine_groups(orderings: &serde_json::Value) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
         let _ = orderings;
@@ -587,9 +566,7 @@ pub async fn invoke_remove_routine_group(group_id: &str) -> Result<(), String> {
 // Routine items
 // -----------------------------------------------------------------------------
 
-pub async fn invoke_list_routine_items(
-    group_id: &str,
-) -> Result<Vec<RoutineItem>, String> {
+pub async fn invoke_list_routine_items(group_id: &str) -> Result<Vec<RoutineItem>, String> {
     #[cfg(feature = "mock")]
     {
         let gid = group_id.to_string();
