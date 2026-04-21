@@ -121,19 +121,14 @@ pub struct ExpenseResult {
 
 /// 4-state sync status reported by the background debouncer/retry loop.
 /// Matches `SyncStatus` exposed by the Phase 2 `get_sync_status` Tauri command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum SyncState {
+    #[default]
     Idle,
     Syncing,
     Retrying,
     Error,
-}
-
-impl Default for SyncState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 /// Mirrors `core::sync::SyncStatusSnapshot` — the full payload returned by

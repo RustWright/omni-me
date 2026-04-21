@@ -279,18 +279,25 @@ pub async fn get_routine_history(
 pub async fn wipe_all_data(state: State<'_, AppState>) -> Result<(), String> {
     tracing::warn!("wipe_all_data invoked");
 
-    // 1. Emit the audit marker first so peers can observe the intent on next sync.
+    // Local-only wipe (Option A): purge this device's event log + projections.
+    // Peers are unaffected. `DataWiped` remains an audit-only event with no
+    // projection handler — it records that the wipe happened on this device.
+    state
+        .event_store
+        .purge_all()
+        .await
+        .map_err(|e| e.to_string())?;
+
     let payload = serde_json::json!({
         "initiated_at": Utc::now().to_rfc3339(),
         "device_id": state.device_id,
     });
-    let aggregate_id = ulid::Ulid::new().to_string();
     state
         .event_store
         .append(NewEvent {
             id: None,
             event_type: EventType::DataWiped.to_string(),
-            aggregate_id,
+            aggregate_id: ulid::Ulid::new().to_string(),
             timestamp: Utc::now(),
             device_id: state.device_id.clone(),
             payload,
@@ -298,13 +305,6 @@ pub async fn wipe_all_data(state: State<'_, AppState>) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    // 2. Rebuild clears projection tables and replays events.
-    //    Events are still present, so this is a true "rebuild" not a "wipe".
-    //    True data wipe currently lives at the filesystem layer (Phase 6.7 UI
-    //    will do the two-step confirmation and call this command).
-    //    NOTE: this is intentionally lightweight for Phase 0 — full wipe
-    //    semantics (delete events too, sync the DataWiped event, wipe peers)
-    //    are beyond the scope of the core foundation.
     state
         .projections
         .rebuild()

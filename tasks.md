@@ -102,15 +102,15 @@ Breaking schema changes. No backwards-compat shims — old Cycle 1 events are te
 
 ## Phase 6: Tier 2 Routines — Tracks A+C [PARALLEL with 4, 5]
 
-- [ ] **6.1** Routine item edit form (name, duration + unit, order) [M] `depends:0.11,3.2`
-- [ ] **6.2** Duration unit picker (min / hour), store as normalized minutes [S] `depends:6.1`
-- [ ] **6.3** Routine item remove (button with confirmation) [S] `depends:0.11,3.2`
-- [ ] **6.4** Routine group remove (button with confirmation on group detail view) [S] `depends:0.11`
-- [ ] **6.5** Frequency picker expansion: Biweekly, Monthly, Custom-N-days with inline int input [M] `depends:0.7,3.2`
+- [x] **6.1** Routine item edit form (name, duration + unit, order) [M] `depends:0.11,3.2` — inline Edit/Save/Cancel per step; pre-fills via `split_minutes_for_display`.
+- [x] **6.2** Duration unit picker (min / hour), store as normalized minutes [S] `depends:6.1` — `duration.rs` helper (`to_minutes` + `split_minutes_for_display`, exact-divisor policy user-picked via Learn-by-Doing).
+- [x] **6.3** Routine item remove (button with confirmation) [S] `depends:0.11,3.2`
+- [x] **6.4** Routine group remove (button with confirmation on group detail view) [S] `depends:0.11`
+- [x] **6.5** Frequency picker expansion: Biweekly, Monthly, Custom-N-days with inline int input [M] `depends:0.7,3.2` — N clamped `[2, 365]`, serialized as `custom:{N}`.
 - [ ] **6.6** Undo complete/skip UI (tap completed item reverts) [S] `depends:0.11`
-- [ ] **6.7** Settings → Data Wipe (two-step confirmation, emits `DataWiped`, clears local DB) [M] `depends:0.11,3.2`
-- [ ] **6.8** Daily Flow screen rewrite: remove time-of-day section headers, render flat user-ordered list of groups (respect `order` field from projection) [M] `depends:0.9,3.2`
-- [ ] **6.9** Drag-to-reorder groups on Daily Flow (emits `RoutineGroupReordered`) [M] `depends:6.8`
+- [x] **6.7** Settings → Data Wipe (two-step confirmation, emits `DataWiped`, clears local DB) [M] `depends:0.11,3.2` — Danger Zone with arming + typed-phrase `wipe everything zkqp`, paste/cut/drop disabled.
+- [x] **6.8** Daily Flow screen rewrite: remove time-of-day section headers, render flat user-ordered list of groups (respect `order` field from projection) [M] `depends:0.9,3.2` — landed alongside 6.9 drag-reorder work.
+- [x] **6.9** Drag-to-reorder groups on Daily Flow (emits `RoutineGroupReordered`) [M] `depends:6.8` — `reorder.rs` pure logic (asymmetric up-before/down-after, user-picked via Learn-by-Doing); optimistic `pending_order` override signal.
 
 ---
 

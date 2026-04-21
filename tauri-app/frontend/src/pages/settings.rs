@@ -5,14 +5,14 @@ use crate::{bridge, types::SyncStatus};
 
 #[component]
 pub fn SettingsPage() -> Element {
-    let mut server_url = use_signal(|| String::new());
-    let mut device_id = use_signal(|| String::new());
+    let mut server_url = use_signal(String::new);
+    let mut device_id = use_signal(String::new);
     let mut sync_status = use_signal(|| None::<String>);
     let mut url_dirty = use_signal(|| false);
 
     // Timezone state
     let mut tz_signal: Signal<Tz> = use_context();
-    let mut tz_input = use_signal(|| String::new());
+    let mut tz_input = use_signal(String::new);
     let mut tz_dirty = use_signal(|| false);
     let mut tz_status = use_signal(|| None::<String>);
     let mut tz_is_override = use_signal(|| false);
@@ -191,6 +191,117 @@ pub fn SettingsPage() -> Element {
                     div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
                         "{status}"
                     }
+                }
+            }
+
+            // --- Danger Zone ---
+            DangerZone {}
+        }
+    }
+}
+
+/// The phrase the user must type to authorize a full data wipe.
+/// Shown verbatim in the instructions so the user knows what to enter.
+const WIPE_CONFIRM_PHRASE: &str = "wipe everything zkqp";
+
+/// Decides whether the final "Confirm Wipe" button should be enabled.
+///
+/// Called on every keystroke with the current `armed` flag and typed input.
+/// Returning `true` arms the destructive click; `false` keeps it disabled.
+fn is_wipe_confirmed(armed: bool, typed: &str) -> bool {
+    armed && typed == WIPE_CONFIRM_PHRASE
+}
+
+#[component]
+fn DangerZone() -> Element {
+    let mut armed = use_signal(|| false);
+    let mut confirm_input = use_signal(String::new);
+    let mut wiping = use_signal(|| false);
+    let mut wipe_status = use_signal(|| None::<String>);
+
+    let can_commit = is_wipe_confirmed(*armed.read(), &confirm_input.read());
+
+    rsx! {
+        div { class: "mb-10 space-y-4",
+            div { class: "border-b border-red-900/40 pb-2 mb-4",
+                h2 { class: "text-lg font-bold text-red-400", "Danger Zone" }
+            }
+
+            p { class: "text-sm text-obsidian-text-muted",
+                "Deletes every event and projection row on this device. "
+                "Other devices are unaffected — they keep their data. "
+                "If this device has previously synced, running Sync Now afterward "
+                "will repopulate data from the server; turn off the server URL "
+                "first if you want a permanent local-only reset. Cannot be undone."
+            }
+
+            if !*armed.read() {
+                button {
+                    class: "px-4 py-2 bg-red-900/20 text-red-400 border border-red-900/40 rounded-lg font-bold hover:bg-red-900/30 transition-colors",
+                    onclick: move |_| {
+                        armed.set(true);
+                        wipe_status.set(None);
+                    },
+                    "Wipe all data…"
+                }
+            } else {
+                div { class: "space-y-3 p-4 bg-red-900/10 border border-red-900/40 rounded-lg animate-in fade-in duration-200",
+                    p { class: "text-sm text-red-300",
+                        "Type "
+                        span { class: "font-mono px-1.5 py-0.5 bg-red-900/30 rounded", "{WIPE_CONFIRM_PHRASE}" }
+                        " to confirm."
+                    }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-red-900/40 rounded-lg text-obsidian-text outline-none focus:border-red-500 transition-colors font-mono text-sm",
+                        r#type: "text",
+                        value: "{confirm_input}",
+                        autocomplete: "off",
+                        autocorrect: "off",
+                        autocapitalize: "off",
+                        spellcheck: "false",
+                        "data-1p-ignore": "true",
+                        onpaste: move |e| { e.prevent_default(); },
+                        oncut: move |e| { e.prevent_default(); },
+                        ondrop: move |e| { e.prevent_default(); },
+                        oninput: move |e| confirm_input.set(e.value()),
+                    }
+                    div { class: "flex gap-2",
+                        button {
+                            class: "px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-500 transition-colors disabled:opacity-40 disabled:hover:bg-red-600 disabled:cursor-not-allowed",
+                            disabled: !can_commit || *wiping.read(),
+                            onclick: move |_| {
+                                wiping.set(true);
+                                wipe_status.set(None);
+                                spawn(async move {
+                                    match bridge::invoke_wipe_all_data().await {
+                                        Ok(_) => {
+                                            wipe_status.set(Some("All local data wiped.".into()));
+                                            armed.set(false);
+                                            confirm_input.set(String::new());
+                                        }
+                                        Err(e) => wipe_status.set(Some(format!("Wipe failed: {e}"))),
+                                    }
+                                    wiping.set(false);
+                                });
+                            },
+                            if *wiping.read() { "Wiping…" } else { "Confirm Wipe" }
+                        }
+                        button {
+                            class: "px-4 py-2 bg-white/5 border border-white/10 text-obsidian-text font-semibold rounded-lg hover:bg-white/10 transition-colors",
+                            onclick: move |_| {
+                                armed.set(false);
+                                confirm_input.set(String::new());
+                                wipe_status.set(None);
+                            },
+                            "Cancel"
+                        }
+                    }
+                }
+            }
+
+            if let Some(status) = &*wipe_status.read() {
+                div { class: "p-4 bg-red-900/10 border border-red-900/30 rounded-lg text-sm text-red-300",
+                    "{status}"
                 }
             }
         }

@@ -62,6 +62,10 @@ pub trait EventStore: Send + Sync {
 
     /// Get all events for a given aggregate, ordered by timestamp.
     async fn get_by_aggregate(&self, aggregate_id: &str) -> Result<Vec<Event>, EventError>;
+
+    /// Delete every event from the store. Used by the local data-wipe flow.
+    /// Peers are unaffected; this only clears the current device's event log.
+    async fn purge_all(&self) -> Result<(), EventError>;
 }
 
 /// SurrealDB-backed event store implementation.
@@ -258,6 +262,11 @@ impl EventStore for SurrealEventStore {
 
         rows.into_iter().map(Event::try_from).collect()
     }
+
+    async fn purge_all(&self) -> Result<(), EventError> {
+        self.db.query("DELETE events").await?;
+        Ok(())
+    }
 }
 
 /// Internal row struct for SurrealQL query deserialization.
@@ -449,6 +458,34 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].device_id, "device-a");
         assert_eq!(events[0].aggregate_id, "n1");
+    }
+
+    #[tokio::test]
+    async fn purge_all_removes_every_event() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+        let ts = Utc::now();
+
+        for i in 0..3 {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("n{i}"),
+                    timestamp: ts,
+                    device_id: "d1".into(),
+                    payload: serde_json::json!({"raw_text": i.to_string(), "date": "2026-04-20"}),
+                })
+                .await
+                .unwrap();
+        }
+
+        let before = ts - chrono::Duration::seconds(10);
+        assert_eq!(store.get_since(before, None).await.unwrap().len(), 3);
+
+        store.purge_all().await.unwrap();
+
+        assert_eq!(store.get_since(before, None).await.unwrap().len(), 0);
     }
 
     #[tokio::test]

@@ -2,6 +2,8 @@ use chrono_tz::Tz;
 use dioxus::prelude::*;
 
 use crate::bridge;
+use crate::duration;
+use crate::reorder;
 use crate::types::{CompletionEntry, RoutineGroup, RoutineItem};
 use crate::user_date::UserDate;
 
@@ -115,8 +117,23 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
     let tz_signal: Signal<Tz> = use_context();
     let today = UserDate::today(&*tz_signal.read()).to_date_string();
 
-    let mut ordered = groups;
-    ordered.sort_by_key(|g| (g.order_num, g.name.clone()));
+    // The prop is the source of truth for "what the server knows". `pending_order`
+    // is an optimistic override that the drop handler sets so the UI updates
+    // without waiting for a DB roundtrip. When None, we sort the prop fresh.
+    // Seeding the signal directly from the prop would lose the parent's later
+    // load (prop is empty on first render while `use_future` is in flight).
+    let mut pending_order: Signal<Option<Vec<RoutineGroup>>> = use_signal(|| None);
+    let mut dragging_id = use_signal(|| None::<String>);
+    let mut drag_over_id = use_signal(|| None::<String>);
+
+    let ordered: Vec<RoutineGroup> = match pending_order.read().as_ref() {
+        Some(o) => o.clone(),
+        None => {
+            let mut g = groups.clone();
+            g.sort_by_key(|x| (x.order_num, x.name.clone()));
+            g
+        }
+    };
 
     rsx! {
         div { class: "animate-in fade-in duration-300",
@@ -139,8 +156,72 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
                 }
             } else {
                 div { class: "space-y-3",
-                    for group in ordered {
-                        ChecklistGroup { group, date: today.clone() }
+                    for group in ordered.iter().cloned().collect::<Vec<_>>() {
+                        {
+                            let id_start = group.id.clone();
+                            let id_over = group.id.clone();
+                            let id_leave = group.id.clone();
+                            let id_drop = group.id.clone();
+                            // Snapshot at render time — the next drop re-renders
+                            // with fresh order, so there's no staleness risk.
+                            let ordered_snapshot = ordered.clone();
+                            let is_dragged = dragging_id.read().as_deref() == Some(group.id.as_str());
+                            let is_hovered = {
+                                let d = drag_over_id.read();
+                                let g = dragging_id.read();
+                                d.as_deref() == Some(group.id.as_str())
+                                    && g.as_deref() != Some(group.id.as_str())
+                                    && g.is_some()
+                            };
+                            let wrapper_class = format!(
+                                "transition-all {} {}",
+                                if is_dragged { "opacity-40 scale-[0.98]" } else { "" },
+                                if is_hovered { "ring-2 ring-obsidian-accent ring-offset-2 ring-offset-obsidian-bg rounded-xl" } else { "" },
+                            );
+                            rsx! {
+                                div {
+                                    class: "{wrapper_class}",
+                                    draggable: true,
+                                    style: "cursor: grab",
+                                    ondragstart: move |_| dragging_id.set(Some(id_start.clone())),
+                                    ondragover: move |e| {
+                                        // Calling prevent_default on dragover is what
+                                        // tells the browser "this element accepts drops".
+                                        // Without it, ondrop never fires.
+                                        e.prevent_default();
+                                        drag_over_id.set(Some(id_over.clone()));
+                                    },
+                                    ondragleave: move |_| {
+                                        if drag_over_id.read().as_deref() == Some(id_leave.as_str()) {
+                                            drag_over_id.set(None);
+                                        }
+                                    },
+                                    ondrop: move |e| {
+                                        e.prevent_default();
+                                        let dragged = dragging_id.read().clone();
+                                        dragging_id.set(None);
+                                        drag_over_id.set(None);
+                                        if let Some(dragged) = dragged {
+                                            let new_order = reorder::reorder_groups_after_drop(
+                                                ordered_snapshot.clone(),
+                                                &dragged,
+                                                &id_drop,
+                                            );
+                                            let payload = reorder::to_orderings_payload(&new_order);
+                                            pending_order.set(Some(new_order));
+                                            spawn(async move {
+                                                let _ = bridge::invoke_reorder_routine_groups(&payload).await;
+                                            });
+                                        }
+                                    },
+                                    ondragend: move |_| {
+                                        dragging_id.set(None);
+                                        drag_over_id.set(None);
+                                    },
+                                    ChecklistGroup { group: group.clone(), date: today.clone() }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -336,6 +417,7 @@ fn GroupListView(
     on_back: EventHandler<()>,
     on_remove: EventHandler<String>,
 ) -> Element {
+    let mut pending_remove = use_signal(|| None::<String>);
     let mut ordered = groups;
     ordered.sort_by_key(|g| (g.order_num, g.name.clone()));
 
@@ -371,7 +453,9 @@ fn GroupListView(
                     for group in &ordered {
                         {
                             let id_select = group.id.clone();
-                            let id_remove = group.id.clone();
+                            let id_arm = group.id.clone();
+                            let id_confirm = group.id.clone();
+                            let is_pending = pending_remove.read().as_deref() == Some(group.id.as_str());
                             rsx! {
                                 div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg transition-all hover:bg-white/5 hover:border-white/10 flex justify-between items-center",
                                     div { class: "flex-1 cursor-pointer",
@@ -382,10 +466,26 @@ fn GroupListView(
                                         span { class: "px-2 py-0.5 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-[10px] font-bold uppercase tracking-wider",
                                             "{group.frequency}"
                                         }
-                                        button {
-                                            class: "px-2 py-1 bg-red-900/20 text-red-400 border border-red-900/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-900/30 transition-colors",
-                                            onclick: move |_| on_remove.call(id_remove.clone()),
-                                            "Remove"
+                                        if is_pending {
+                                            button {
+                                                class: "px-2 py-1 bg-red-600 text-white border border-red-700 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-500 transition-colors",
+                                                onclick: move |_| {
+                                                    on_remove.call(id_confirm.clone());
+                                                    pending_remove.set(None);
+                                                },
+                                                "Confirm?"
+                                            }
+                                            button {
+                                                class: "px-2 py-1 bg-white/5 text-obsidian-text border border-white/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-white/10 transition-colors",
+                                                onclick: move |_| pending_remove.set(None),
+                                                "Cancel"
+                                            }
+                                        } else {
+                                            button {
+                                                class: "px-2 py-1 bg-red-900/20 text-red-400 border border-red-900/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-900/30 transition-colors",
+                                                onclick: move |_| pending_remove.set(Some(id_arm.clone())),
+                                                "Remove"
+                                            }
                                         }
                                     }
                                 }
@@ -403,7 +503,9 @@ fn GroupListView(
 #[component]
 fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHandler<()>) -> Element {
     let mut name = use_signal(String::new);
+    // "daily" | "weekly" | "biweekly" | "monthly" | "custom"
     let mut frequency = use_signal(|| "daily".to_string());
+    let mut custom_n = use_signal(|| 3u32);
     let mut saving = use_signal(|| false);
     let mut save_error = use_signal(|| None::<String>);
 
@@ -426,8 +528,13 @@ fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHand
                         save_error.set(None);
                         spawn(async move {
                             let n = name.read().clone();
-                            let f = frequency.read().clone();
-                            match bridge::invoke_create_routine_group(&n, &f, next_order).await {
+                            let f_raw = frequency.read().clone();
+                            let f_wire = if f_raw == "custom" {
+                                format!("custom:{}", *custom_n.read())
+                            } else {
+                                f_raw
+                            };
+                            match bridge::invoke_create_routine_group(&n, &f_wire, next_order).await {
                                 Ok(_) => on_save.call(()),
                                 Err(e) => save_error.set(Some(e)),
                             }
@@ -466,6 +573,28 @@ fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHand
                         option { value: "weekly", "Weekly" }
                         option { value: "biweekly", "Biweekly" }
                         option { value: "monthly", "Monthly" }
+                        option { value: "custom", "Custom (every N days)" }
+                    }
+
+                    if *frequency.read() == "custom" {
+                        div { class: "flex items-center gap-3 mt-3 animate-in fade-in duration-200",
+                            span { class: "text-sm text-obsidian-text-muted", "every" }
+                            input {
+                                class: "w-20 px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
+                                r#type: "number",
+                                min: "2",
+                                max: "365",
+                                value: "{custom_n}",
+                                oninput: move |e| {
+                                    // Parse + clamp to [2, 365]. Custom:1 would be identical
+                                    // to Daily; upper bound is a sanity cap.
+                                    if let Ok(n) = e.value().parse::<u32>() {
+                                        custom_n.set(n.clamp(2, 365));
+                                    }
+                                },
+                            }
+                            span { class: "text-sm text-obsidian-text-muted", "days" }
+                        }
                     }
                 }
             }
@@ -488,7 +617,17 @@ fn GroupDetailView(
     let mut history = use_signal(Vec::<CompletionEntry>::new);
     let mut new_item_name = use_signal(String::new);
     let mut new_item_duration = use_signal(|| "5".to_string());
+    let mut new_item_unit = use_signal(|| duration::UNIT_MIN.to_string());
     let mut adding = use_signal(|| false);
+    let mut pending_remove = use_signal(|| None::<String>);
+
+    // Inline-edit state. Only one item can be in edit mode at a time; entering
+    // edit mode auto-clears any pending-remove arming on other rows.
+    let mut editing_id = use_signal(|| None::<String>);
+    let mut edit_name = use_signal(String::new);
+    let mut edit_duration_value = use_signal(|| "0".to_string());
+    let mut edit_duration_unit = use_signal(|| duration::UNIT_MIN.to_string());
+    let mut saving_edit = use_signal(|| false);
 
     let gid = group_id.clone();
     let _load = use_future(move || {
@@ -526,26 +665,125 @@ fn GroupDetailView(
                 } else {
                     for item in items.read().iter() {
                         {
-                            let remove_id = item.id.clone();
+                            let id_arm = item.id.clone();
+                            let id_confirm = item.id.clone();
+                            let id_edit_arm = item.id.clone();
+                            let id_edit_save = item.id.clone();
+                            let item_dur = item.estimated_duration_min.max(0) as u32;
+                            let item_name_for_edit = item.name.clone();
                             let group_for_reload = group_id.clone();
+                            let group_for_edit = group_id.clone();
+                            let is_pending = pending_remove.read().as_deref() == Some(item.id.as_str());
+                            let is_editing = editing_id.read().as_deref() == Some(item.id.as_str());
                             rsx! {
-                                div { class: "px-4 py-3 bg-obsidian-sidebar/20 border border-white/5 rounded-lg flex justify-between items-center",
-                                    span { class: "text-sm font-medium text-obsidian-text", "{item.name}" }
-                                    div { class: "flex items-center gap-2",
-                                        span { class: "text-[10px] font-mono text-obsidian-text-muted", "{item.estimated_duration_min}m" }
-                                        button {
-                                            class: "px-2 py-1 bg-red-900/20 text-red-400 border border-red-900/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-900/30 transition-colors",
-                                            onclick: move |_| {
-                                                let iid = remove_id.clone();
-                                                let gid = group_for_reload.clone();
-                                                spawn(async move {
-                                                    let _ = bridge::invoke_remove_routine_item(&iid).await;
-                                                    if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
-                                                        items.set(list.into_iter().filter(|i| !i.removed).collect());
+                                if is_editing {
+                                    div { class: "px-4 py-3 bg-obsidian-sidebar/40 border border-obsidian-accent/40 rounded-lg space-y-3 animate-in fade-in duration-150",
+                                        div { class: "flex gap-2",
+                                            input {
+                                                class: "flex-1 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                                                r#type: "text",
+                                                value: "{edit_name}",
+                                                oninput: move |e| edit_name.set(e.value()),
+                                            }
+                                            input {
+                                                class: "w-16 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
+                                                r#type: "number",
+                                                min: "0",
+                                                value: "{edit_duration_value}",
+                                                oninput: move |e| edit_duration_value.set(e.value()),
+                                            }
+                                            select {
+                                                class: "w-20 px-2 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                                                value: "{edit_duration_unit}",
+                                                onchange: move |e| edit_duration_unit.set(e.value()),
+                                                option { value: "{duration::UNIT_MIN}", "min" }
+                                                option { value: "{duration::UNIT_HOUR}", "hour" }
+                                            }
+                                        }
+                                        div { class: "flex gap-2 justify-end",
+                                            button {
+                                                class: "px-3 py-1.5 bg-obsidian-accent text-white text-[11px] font-bold uppercase tracking-wider rounded hover:opacity-90 transition-opacity disabled:opacity-50",
+                                                disabled: *saving_edit.read() || edit_name.read().trim().is_empty(),
+                                                onclick: {
+                                                    let gid = group_for_edit.clone();
+                                                    move |_| {
+                                                        let gid = gid.clone();
+                                                        let iid = id_edit_save.clone();
+                                                        let new_name = edit_name.read().trim().to_string();
+                                                        let val: u32 = edit_duration_value.read().parse().unwrap_or(0);
+                                                        let minutes = duration::to_minutes(val, &edit_duration_unit.read());
+                                                        saving_edit.set(true);
+                                                        spawn(async move {
+                                                            let changes = serde_json::json!({
+                                                                "name": new_name,
+                                                                "estimated_duration_min": minutes,
+                                                            });
+                                                            let _ = bridge::invoke_modify_routine_item(&iid, &changes).await;
+                                                            if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
+                                                                items.set(list.into_iter().filter(|i| !i.removed).collect());
+                                                            }
+                                                            editing_id.set(None);
+                                                            saving_edit.set(false);
+                                                        });
                                                     }
-                                                });
-                                            },
-                                            "Remove"
+                                                },
+                                                if *saving_edit.read() { "Saving…" } else { "Save" }
+                                            }
+                                            button {
+                                                class: "px-3 py-1.5 bg-white/5 text-obsidian-text border border-white/10 text-[11px] font-bold uppercase tracking-wider rounded hover:bg-white/10 transition-colors",
+                                                onclick: move |_| editing_id.set(None),
+                                                "Cancel"
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    div { class: "px-4 py-3 bg-obsidian-sidebar/20 border border-white/5 rounded-lg flex justify-between items-center",
+                                        span { class: "text-sm font-medium text-obsidian-text", "{item.name}" }
+                                        div { class: "flex items-center gap-2",
+                                            span { class: "text-[10px] font-mono text-obsidian-text-muted", "{item.estimated_duration_min}m" }
+                                            if is_pending {
+                                                button {
+                                                    class: "px-2 py-1 bg-red-600 text-white border border-red-700 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-500 transition-colors",
+                                                    onclick: move |_| {
+                                                        let iid = id_confirm.clone();
+                                                        let gid = group_for_reload.clone();
+                                                        pending_remove.set(None);
+                                                        spawn(async move {
+                                                            let _ = bridge::invoke_remove_routine_item(&iid).await;
+                                                            if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
+                                                                items.set(list.into_iter().filter(|i| !i.removed).collect());
+                                                            }
+                                                        });
+                                                    },
+                                                    "Confirm?"
+                                                }
+                                                button {
+                                                    class: "px-2 py-1 bg-white/5 text-obsidian-text border border-white/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-white/10 transition-colors",
+                                                    onclick: move |_| pending_remove.set(None),
+                                                    "Cancel"
+                                                }
+                                            } else {
+                                                button {
+                                                    class: "px-2 py-1 bg-white/5 text-obsidian-text-muted border border-white/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-white/10 hover:text-white transition-colors",
+                                                    onclick: move |_| {
+                                                        let (val, unit) = duration::split_minutes_for_display(item_dur);
+                                                        edit_name.set(item_name_for_edit.clone());
+                                                        edit_duration_value.set(val.to_string());
+                                                        edit_duration_unit.set(unit.to_string());
+                                                        pending_remove.set(None);
+                                                        editing_id.set(Some(id_edit_arm.clone()));
+                                                    },
+                                                    "Edit"
+                                                }
+                                                button {
+                                                    class: "px-2 py-1 bg-red-900/20 text-red-400 border border-red-900/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-900/30 transition-colors",
+                                                    onclick: move |_| {
+                                                        editing_id.set(None);
+                                                        pending_remove.set(Some(id_arm.clone()));
+                                                    },
+                                                    "Remove"
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -568,8 +806,16 @@ fn GroupDetailView(
                     input {
                         class: "w-16 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
                         r#type: "number",
+                        min: "0",
                         value: "{new_item_duration}",
                         oninput: move |e| new_item_duration.set(e.value()),
+                    }
+                    select {
+                        class: "w-20 px-2 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                        value: "{new_item_unit}",
+                        onchange: move |e| new_item_unit.set(e.value()),
+                        option { value: "{duration::UNIT_MIN}", "min" }
+                        option { value: "{duration::UNIT_HOUR}", "hour" }
                     }
                     button {
                         class: "px-4 py-2 bg-obsidian-accent text-white font-bold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50",
@@ -581,10 +827,13 @@ fn GroupDetailView(
                                 adding.set(true);
                                 spawn(async move {
                                     let name = new_item_name.read().clone();
-                                    let dur: u32 = new_item_duration.read().parse().unwrap_or(5);
+                                    let val: u32 = new_item_duration.read().parse().unwrap_or(5);
+                                    let minutes = duration::to_minutes(val, &new_item_unit.read());
                                     let order = items.read().len() as u32;
-                                    if bridge::invoke_add_routine_item(&gid, &name, dur, order).await.is_ok() {
+                                    if bridge::invoke_add_routine_item(&gid, &name, minutes, order).await.is_ok() {
                                         new_item_name.set(String::new());
+                                        new_item_duration.set("5".to_string());
+                                        new_item_unit.set(duration::UNIT_MIN.to_string());
                                         if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
                                             items.set(list.into_iter().filter(|i| !i.removed).collect());
                                         }
