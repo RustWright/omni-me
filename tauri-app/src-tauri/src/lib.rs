@@ -78,13 +78,13 @@ fn probe_target_from_url(url: &str) -> String {
 /// shutdown (SIGKILL, crash, etc.), which blocks subsequent opens.
 fn clear_stale_lock(db_path: &Path) {
     let lock_path = db_path.join("LOCK");
-    if let Ok(contents) = std::fs::read_to_string(&lock_path) {
-        if let Ok(pid) = contents.trim().parse::<u32>() {
-            let alive = Path::new(&format!("/proc/{}", pid)).exists();
-            if !alive {
-                tracing::warn!(pid, "Removing stale SurrealKV LOCK (pid not running)");
-                let _ = std::fs::remove_file(&lock_path);
-            }
+    if let Ok(contents) = std::fs::read_to_string(&lock_path)
+        && let Ok(pid) = contents.trim().parse::<u32>()
+    {
+        let alive = Path::new(&format!("/proc/{}", pid)).exists();
+        if !alive {
+            tracing::warn!(pid, "Removing stale SurrealKV LOCK (pid not running)");
+            let _ = std::fs::remove_file(&lock_path);
         }
     }
 }
@@ -230,6 +230,10 @@ pub fn run() {
             // Timezone
             commands::timezone::get_timezone,
             commands::timezone::update_timezone,
+            // Obsidian import/export
+            commands::import::preview_import,
+            commands::import::commit_import,
+            commands::import::export_obsidian,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

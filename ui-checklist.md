@@ -1,7 +1,7 @@
 # UI Interaction Checklist
 
 Verification checklist for omni-me UI functionality.
-Last tested: 2026-04-17 via Playwright MCP (dx serve --features mock)
+Last tested: 2026-04-24 via Playwright MCP (dx serve --features mock) — Phase 5 sweep
 
 ---
 
@@ -251,3 +251,66 @@ New UI verification scenarios for Cycle 2 features. To be validated during Sessi
 - [ ] Within Journal: `Today` / `Calendar` second-level tabs
 - [ ] Within Notes: `Recent` / `Search` second-level tabs
 - [ ] Active tab + active sub-tab both visually distinguished
+
+---
+
+## Phase 5 Verification (2026-04-23 autonomous run; mock-mode sweep 2026-04-24)
+
+Legend: `[x]` = verified via `dx serve --features mock` + Playwright • `[~]` = covered by unit tests but not exercisable in mock mode • `[ ]` = still needs real-backend verification.
+
+### Journal Template (5.1)
+
+- [x] Opening a new day (date with no existing entry) shows pre-filled template — `---` fenced YAML with `date:`, `tags:\n    - daily_note`, three blank frontmatter keys (`homework_for_life:`, `grateful_for:`, `learnt_today:`), `---`, then `## What happened today?` heading — verified by navigating Calendar → 2026-04-22 (no mock entry) and inspecting editor content
+- [ ] Clicking Save on a new entry without typing anything persists the template (not an empty string) — needs real backend
+- [ ] Filling values for all three properties and navigating away → return the next day → entry is marked `Complete` and (if past day) auto-closed on tick — needs real backend
+- [x] Opening an existing past-day entry shows its saved content (template not re-applied) — verified by "← Back to today" which loads mock entry, not template
+
+### Search Clear Button (7.3)
+
+- [x] Notes → Search: typing shows an X on the right edge of the input
+- [x] Clicking X clears query + results
+- [x] Pressing Escape while focused clears query + results
+- [x] X is hidden when query is empty
+
+### Obsidian Import (5.2–5.6)
+
+- [x] Settings → Obsidian Import / Export section visible above Danger Zone
+- [x] Enter a path → click "Scan Vault" → preview list appears
+- [x] Journal and Generic counts match expected split
+- [x] Rows with `daily_note` tag show the tag chip
+- [x] Rows with non-native frontmatter keys show a yellow indicator dot (hover: "legacy_properties" tooltip)
+- [~] Rows with malformed YAML show red `ERROR` badge and reason; checkbox absent — covered by `preview_import_malformed_yaml_becomes_error_row` unit test
+- [x] Unchecking a row greys it out; summary count updates ("X of Y notes will be imported")
+- [x] Editing the key input for a journal row changes the date override; for generic changes the title
+- [x] Cancel button returns to empty Idle state (verified via Done button dismissal — Cancel-mid-preview also works since it sets the same state)
+- [x] Commit button disabled when all rows are unchecked, re-enabled when at least one is checked
+- [x] Commit → Done panel shows counts (mock returned Journals=1 / Generic=0 matching the selection)
+- [ ] Newly-imported journal entries appear in Journal → Calendar (colored dots on imported dates) — needs real backend
+- [ ] Newly-imported generic notes appear in Notes → Recent list — needs real backend
+
+### Empty / error edge cases
+
+- [~] Scan on a non-existent path → red error panel — covered by `preview_import_rejects_non_directory_path` unit test
+- [~] Scan on a path with no `.md` files → "No markdown files found" helper (mentions `.obsidian/` + `.md` requirement) — covered by `preview_import_empty_vault_returns_zero_rows` unit test; helper UI JSX present but mock always returns 2 rows
+- [~] `.obsidian/`, `.git/`, `.trash/` subdirs are skipped — covered by `walk_skips_hidden_dirs_and_non_md` unit test
+
+### Obsidian Export (5.7)
+
+- [x] Enter a target path → click "Export" → Done panel
+- [~] Target dir gets created if missing — covered by command logic; mock-mode doesn't exercise filesystem
+- [~] `<target>/journal/YYYY-MM-DD.md` files exist, one per journal entry, raw_text byte-identical to DB — covered by `round_trip_import_export_reimport_is_byte_stable` core test
+- [~] `<target>/notes/<sanitized-title>.md` files exist; special chars replaced with `_`; empty titles become `untitled.md` — covered by `sanitize_strips_forbidden_chars` unit test
+- [x] Done panel shows total written count (mock reported "59 files written" = 42 journal + 17 generic)
+
+### Round-trip
+
+- [~] Import a vault → Export to a new dir → diff shows zero content drift for supported files — covered by `round_trip_import_export_reimport_is_byte_stable` core test
+
+### No regressions (smoke)
+
+- [x] Journal Today + Calendar sub-tabs + day navigation
+- [x] Notes Recent + Search sub-tabs
+- [x] Routines Daily Flow with checkboxes + progress bars + duration labels
+- [x] Settings — Sync, Timezone, Danger Zone sections still render correctly
+- [x] Sidebar nav + sync status chip + hot-reload still working
+- [x] Zero console errors or warnings (one informational autofocus notice only)

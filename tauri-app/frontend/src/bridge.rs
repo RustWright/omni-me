@@ -200,51 +200,6 @@ pub async fn invoke_get_journal_by_date(date: &str) -> Result<Option<JournalEntr
     }
 }
 
-pub async fn invoke_list_journal_entries() -> Result<Vec<JournalEntryItem>, String> {
-    #[cfg(feature = "mock")]
-    {
-        let now = chrono::Utc::now();
-        let today = now.format("%Y-%m-%d").to_string();
-        let yesterday = (now - chrono::Duration::days(1))
-            .format("%Y-%m-%d")
-            .to_string();
-        let ts = now.to_rfc3339();
-        Ok(vec![
-            JournalEntryItem {
-                id: today.clone(),
-                journal_id: "j1".into(),
-                date: today,
-                raw_text: "# Today\n\nFeeling productive. Working on the Blue Topaz UI shell."
-                    .into(),
-                tags: vec!["journal".into(), "ui-dev".into()],
-                summary: Some("UI shell refactor progress.".into()),
-                closed: false,
-                complete: false,
-                created_at: ts.clone(),
-                updated_at: ts.clone(),
-            },
-            JournalEntryItem {
-                id: yesterday.clone(),
-                journal_id: "j2".into(),
-                date: yesterday,
-                raw_text: "# Yesterday\n\nWrapped Cycle 1 review. Landed two bug fixes.".into(),
-                tags: vec!["journal".into()],
-                summary: None,
-                closed: true,
-                complete: true,
-                created_at: ts.clone(),
-                updated_at: ts,
-            },
-        ])
-    }
-    #[cfg(not(feature = "mock"))]
-    {
-        #[derive(serde::Serialize)]
-        struct Args {}
-        invoke("list_journal_entries", &Args {}).await
-    }
-}
-
 pub async fn invoke_list_journal_dates(
     from_date: &str,
     to_date: &str,
@@ -940,5 +895,102 @@ pub async fn invoke_update_timezone(timezone: &str) -> Result<(), String> {
             timezone: &'a str,
         }
         invoke_unit("update_timezone", &Args { timezone }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Obsidian import / export
+// -----------------------------------------------------------------------------
+
+use crate::types::{
+    AcceptedImportRow, ExportSummary, ImportCommitSummary, ImportPreviewSummary,
+};
+
+pub async fn invoke_preview_import(root: &str) -> Result<ImportPreviewSummary, String> {
+    #[cfg(feature = "mock")]
+    {
+        use crate::types::ImportPreviewRow;
+        let _ = root;
+        Ok(ImportPreviewSummary {
+            root: root.to_string(),
+            rows: vec![
+                ImportPreviewRow {
+                    path: "/mock/vault/Daily/2026-04-21.md".into(),
+                    relative_path: "Daily/2026-04-21.md".into(),
+                    kind: "journal".into(),
+                    key: "2026-04-21".into(),
+                    tags: vec!["daily_note".into()],
+                    body_preview: "yesterday was a great day".into(),
+                    body_len: 128,
+                    has_legacy_properties: false,
+                    error: None,
+                },
+                ImportPreviewRow {
+                    path: "/mock/vault/Notes/Ideas.md".into(),
+                    relative_path: "Notes/Ideas.md".into(),
+                    kind: "generic".into(),
+                    key: "Ideas".into(),
+                    tags: vec!["brainstorm".into()],
+                    body_preview: "ideas worth trying".into(),
+                    body_len: 200,
+                    has_legacy_properties: true,
+                    error: None,
+                },
+            ],
+            journal_count: 1,
+            generic_count: 1,
+            error_count: 0,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            root: &'a str,
+        }
+        invoke("preview_import", &Args { root }).await
+    }
+}
+
+pub async fn invoke_commit_import(
+    rows: Vec<AcceptedImportRow>,
+) -> Result<ImportCommitSummary, String> {
+    #[cfg(feature = "mock")]
+    {
+        let journal_created = rows.iter().filter(|r| r.kind == "journal").count();
+        let generic_created = rows.iter().filter(|r| r.kind == "generic").count();
+        Ok(ImportCommitSummary {
+            journal_created,
+            generic_created,
+            errors: vec![],
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            rows: Vec<AcceptedImportRow>,
+        }
+        invoke("commit_import", &Args { rows }).await
+    }
+}
+
+pub async fn invoke_export_obsidian(target: &str) -> Result<ExportSummary, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(ExportSummary {
+            target: target.to_string(),
+            journal_written: 42,
+            generic_written: 17,
+            errors: vec![],
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            target: &'a str,
+        }
+        invoke("export_obsidian", &Args { target }).await
     }
 }

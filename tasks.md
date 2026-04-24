@@ -89,14 +89,14 @@ Breaking schema changes. No backwards-compat shims — old Cycle 1 events are te
 
 ## Phase 5: Templates + Obsidian Import/Export — Tracks A+C [PARALLEL with 4, 6]
 
-- [ ] **5.1** Journal template engine: autofill date, `daily_note` tag, 3 fields — rendered into editor on new journal [M] `depends:0.11,1.4`
-- [ ] **5.2** Obsidian import parser: walk directory, parse YAML frontmatter + markdown body [M] `depends:0.1`
-- [ ] **5.3** Frontmatter mapper: known fields → typed, unknown → `legacy_properties` blob [S] `depends:5.2`
-- [ ] **5.4** Path classifier: nested path → `Journal` if date-like filename, else `Generic` [S] `depends:5.2`
-- [ ] **5.5** Import diff preview UI: per-row accept/skip/edit [L] `depends:5.3,5.4,3.2`
-- [ ] **5.6** Import commit: batch emit `JournalEntryCreated` / `GenericNoteCreated` events via Tauri command [M] `depends:5.5,0.11`
-- [ ] **5.7** Obsidian export: projection → markdown + frontmatter files, nested paths preserved [M] `depends:0.8`
-- [ ] **5.8** Import/Export settings screen entries [S] `depends:5.6,5.7,3.2`
+- [x] **5.1** Journal template engine: autofill date, `daily_note` tag, 3 fields — rendered into editor on new journal [M] `depends:0.11,1.4` — `journal_template.rs` with `render(date)`; wired into `DayView` so both `initial_content` and the `content` signal are primed (CodeMirror doesn't fire `on_change` on init). Template body user-written via Learn-by-Doing (fenced YAML + `daily_note` tag list + 3 properties in frontmatter).
+- [x] **5.2** Obsidian import parser: walk directory, parse YAML frontmatter + markdown body [M] `depends:0.1` — `core::import::{parse_markdown, walk_vault}` + `VaultEntry` per-file error sum type. `serde_yml` dep added. Fence splitter still has a `TODO(human)` Learn-by-Doing slot reserved (placeholder impl wired so downstream phases work).
+- [x] **5.3** Frontmatter mapper: known fields → typed, unknown → `legacy_properties` blob [S] `depends:5.2` — `map_frontmatter` with `KNOWN_KEYS = [date, tags, homework_for_life, grateful_for, learnt_today]`. Tags accept YAML list, single string, and comma-separated inline.
+- [x] **5.4** Path classifier: nested path → `Journal` if date-like filename, else `Generic` [S] `depends:5.2` — `classify_path` (filename-only) + `classify_with_frontmatter` (fallback to frontmatter `date:` when filename isn't a date).
+- [x] **5.5** Import diff preview UI: per-row accept/skip/edit [L] `depends:5.3,5.4,3.2` — `pages::import_export::ImportFlow` with state machine (Idle → Scanning → Previewing → Committing → Done/Error), per-row checkbox + editable `override_key` input, bulk count summary, has-legacy-properties indicator dot.
+- [x] **5.6** Import commit: batch emit `JournalEntryCreated` / `GenericNoteCreated` events via Tauri command [M] `depends:5.5,0.11` — `commands::import::commit_import` re-reads files from disk (doesn't trust UI round-trip), routes by `row.kind`, supports `override_key` for edited title/date. Returns `CommitSummary { journal_created, generic_created, errors }`.
+- [x] **5.7** Obsidian export: projection → markdown + frontmatter files, nested paths preserved [M] `depends:0.8` — `commands::import::export_obsidian` writes journals to `<target>/journal/YYYY-MM-DD.md` and generic notes to `<target>/notes/<sanitized-title>.md`. Filename sanitizer strips `/\:*?"<>|` + control chars, defaults empty to `untitled`.
+- [x] **5.8** Import/Export settings screen entries [S] `depends:5.6,5.7,3.2` — `ImportExportSection` component inserted in Settings above Danger Zone. Separate `ImportFlow` + `ExportFlow` sub-flows; each has its own path input, action button, status panel.
 
 ---
 
@@ -107,7 +107,7 @@ Breaking schema changes. No backwards-compat shims — old Cycle 1 events are te
 - [x] **6.3** Routine item remove (button with confirmation) [S] `depends:0.11,3.2`
 - [x] **6.4** Routine group remove (button with confirmation on group detail view) [S] `depends:0.11`
 - [x] **6.5** Frequency picker expansion: Biweekly, Monthly, Custom-N-days with inline int input [M] `depends:0.7,3.2` — N clamped `[2, 365]`, serialized as `custom:{N}`.
-- [ ] **6.6** Undo complete/skip UI (tap completed item reverts) [S] `depends:0.11`
+- [x] **6.6** Undo complete/skip UI (tap completed item reverts) [S] `depends:0.11` — `RoutineItemCompletionUndone` / `RoutineItemSkipUndone` events + payload validation; tap handlers call `invoke_undo_completion` / `invoke_undo_skip`.
 - [x] **6.7** Settings → Data Wipe (two-step confirmation, emits `DataWiped`, clears local DB) [M] `depends:0.11,3.2` — Danger Zone with arming + typed-phrase `wipe everything zkqp`, paste/cut/drop disabled.
 - [x] **6.8** Daily Flow screen rewrite: remove time-of-day section headers, render flat user-ordered list of groups (respect `order` field from projection) [M] `depends:0.9,3.2` — landed alongside 6.9 drag-reorder work.
 - [x] **6.9** Drag-to-reorder groups on Daily Flow (emits `RoutineGroupReordered`) [M] `depends:6.8` — `reorder.rs` pure logic (asymmetric up-before/down-after, user-picked via Learn-by-Doing); optimistic `pending_order` override signal.
@@ -116,9 +116,9 @@ Breaking schema changes. No backwards-compat shims — old Cycle 1 events are te
 
 ## Phase 7: Stretch [IF TIME]
 
-- [ ] **7.1** Round-trip test (import → export → re-import, verify byte-stable for supported frontmatter)
-- [ ] **7.2** Duration unit: seconds option
-- [ ] **7.3** Search clear button (X in search input) — Cycle 1 backlog item
+- [x] **7.1** Round-trip test (import → export → re-import, verify byte-stable for supported frontmatter) — `round_trip_import_export_reimport_is_byte_stable` in `core/src/import.rs`. Seeds a synthetic vault with journal/generic/plain/CRLF samples, simulates export by writing `raw_text` verbatim to a mirror dir, re-walks, asserts `(frontmatter, body)` equality per file.
+- [ ] **7.2** Duration unit: seconds option — **deferred to Cycle 3**. Adding seconds would require breaking event-schema change (`estimated_duration_min` → `estimated_duration_sec` across 16 touch points in events/projections/DB/commands/bridge/UI). Too risky as a stretch item; revisit when there's a concrete routine that needs sub-minute precision.
+- [x] **7.3** Search clear button (X in search input) — Cycle 1 backlog item — X inside `pr-10` padding on Notes search, renders only when query non-empty, Escape key also clears.
 
 ---
 

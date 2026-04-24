@@ -194,6 +194,9 @@ pub fn SettingsPage() -> Element {
                 }
             }
 
+            // --- Obsidian Import / Export ---
+            super::import_export::ImportExportSection {}
+
             // --- Danger Zone ---
             DangerZone {}
         }

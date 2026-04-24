@@ -149,3 +149,53 @@ impl Default for SyncStatusSnapshot {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Obsidian import / export
+// ---------------------------------------------------------------------------
+
+/// Mirrors backend `commands::import::PreviewRow`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportPreviewRow {
+    pub path: String,
+    pub relative_path: String,
+    /// One of `"journal"`, `"generic"`, `"error"`.
+    pub kind: String,
+    pub key: String,
+    pub tags: Vec<String>,
+    pub body_preview: String,
+    pub body_len: usize,
+    pub has_legacy_properties: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportPreviewSummary {
+    pub root: String,
+    pub rows: Vec<ImportPreviewRow>,
+    pub journal_count: usize,
+    pub generic_count: usize,
+    pub error_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportCommitSummary {
+    pub journal_created: usize,
+    pub generic_created: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcceptedImportRow {
+    pub path: String,
+    pub kind: String,
+    pub override_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportSummary {
+    pub target: String,
+    pub journal_written: usize,
+    pub generic_written: usize,
+    pub errors: Vec<String>,
+}
