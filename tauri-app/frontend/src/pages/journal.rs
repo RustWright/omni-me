@@ -6,6 +6,7 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::editor::Editor;
+use crate::journal_template;
 use crate::types::JournalEntryItem;
 use crate::user_date::UserDate;
 
@@ -24,6 +25,9 @@ pub enum JournalSubTab {
 pub fn JournalPage() -> Element {
     let mut sub_tab = use_signal(|| JournalSubTab::Today);
     let tz_signal: Signal<Tz> = use_context();
+    // `&*signal.read()` is explicit on purpose: makes it clear we're
+    // borrowing through a signal guard, not coercing the guard itself.
+    #[allow(clippy::explicit_auto_deref)]
     let today = UserDate::today(&*tz_signal.read()).to_date_string();
 
     let mut selected_date = use_signal(|| today.clone());
@@ -116,7 +120,9 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                     error_msg.set(None);
                 }
                 Ok(None) => {
-                    content.set(String::new());
+                    // New entry: prime both signals with the default template so
+                    // an immediate Save without keystrokes still persists it.
+                    content.set(journal_template::render(&d));
                     entry.set(None);
                     error_msg.set(None);
                 }
@@ -214,15 +220,13 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                             let jid = jid.clone();
                                             let date = date.clone();
                                             spawn(async move {
-                                                if let Some(id) = jid {
-                                                    if bridge::invoke_reopen_journal_entry(&id).await.is_ok() {
-                                                        if let Ok(Some(refreshed)) =
-                                                            bridge::invoke_get_journal_by_date(&date).await
-                                                        {
-                                                            content.set(refreshed.raw_text.clone());
-                                                            entry.set(Some(refreshed));
-                                                        }
-                                                    }
+                                                if let Some(id) = jid
+                                                    && bridge::invoke_reopen_journal_entry(&id).await.is_ok()
+                                                    && let Ok(Some(refreshed)) =
+                                                        bridge::invoke_get_journal_by_date(&date).await
+                                                {
+                                                    content.set(refreshed.raw_text.clone());
+                                                    entry.set(Some(refreshed));
                                                 }
                                             });
                                         }
@@ -239,15 +243,13 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                             let jid = jid.clone();
                                             let date = date.clone();
                                             spawn(async move {
-                                                if let Some(id) = jid {
-                                                    if bridge::invoke_close_journal_entry(&id, "manual").await.is_ok() {
-                                                        if let Ok(Some(refreshed)) =
-                                                            bridge::invoke_get_journal_by_date(&date).await
-                                                        {
-                                                            content.set(refreshed.raw_text.clone());
-                                                            entry.set(Some(refreshed));
-                                                        }
-                                                    }
+                                                if let Some(id) = jid
+                                                    && bridge::invoke_close_journal_entry(&id, "manual").await.is_ok()
+                                                    && let Ok(Some(refreshed)) =
+                                                        bridge::invoke_get_journal_by_date(&date).await
+                                                {
+                                                    content.set(refreshed.raw_text.clone());
+                                                    entry.set(Some(refreshed));
                                                 }
                                             });
                                         }
@@ -304,7 +306,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                     let is_closed = entry.read().as_ref().map(|e| e.closed).unwrap_or(false);
                     let is_new = entry.read().is_none();
                     let initial = if is_new {
-                        String::new()
+                        journal_template::render(&date)
                     } else {
                         entry.read().as_ref().map(|e| e.raw_text.clone()).unwrap_or_default()
                     };
@@ -417,7 +419,7 @@ struct MonthCell {
 
 /// Build the list of calendar cells for a month view.
 ///
-/// The grid is always 6 rows × 7 cols (42 cells) so its height stays constant
+/// The grid is always 5 rows × 7 cols (35 cells) so its height stays constant
 /// as the user navigates months. Week starts on Monday (matches Obsidian's
 /// daily-note plugin default).
 ///
@@ -429,7 +431,7 @@ fn build_month_cells(anchor: NaiveDate) -> Vec<MonthCell> {
     let anchor_month = anchor.month();
     let start_date = anchor - chrono::Days::new(anchor.weekday().num_days_from_monday() as u64);
     std::iter::successors(Some(start_date), |d| d.succ_opt())
-        .take(42)
+        .take(35)
         .map(|date| MonthCell {
             date,
             in_current_month: date.month() == anchor_month,
@@ -604,7 +606,7 @@ mod tests {
         // February 2026: Feb 1 falls on a Sunday.
         let anchor = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap();
         let cells = build_month_cells(anchor);
-        assert_eq!(cells.len(), 42, "always 6 full weeks");
+        assert_eq!(cells.len(), 35, "always 5 full weeks");
 
         // First row should start on a Monday (Jan 26, 2026 is a Monday).
         assert_eq!(cells[0].date, NaiveDate::from_ymd_opt(2026, 1, 26).unwrap());

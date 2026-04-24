@@ -1,6 +1,7 @@
 mod bridge;
 mod components;
 mod duration;
+mod journal_template;
 mod pages;
 mod reorder;
 mod types;
@@ -36,10 +37,10 @@ fn App() -> Element {
     let mut tz_signal = use_signal(|| Tz::UTC);
     use_context_provider(|| tz_signal);
     use_future(move || async move {
-        if let Ok(info) = bridge::invoke_get_timezone().await {
-            if let Ok(tz) = info.timezone.parse::<Tz>() {
-                tz_signal.set(tz);
-            }
+        if let Ok(info) = bridge::invoke_get_timezone().await
+            && let Ok(tz) = info.timezone.parse::<Tz>()
+        {
+            tz_signal.set(tz);
         }
     });
 
