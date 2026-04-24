@@ -22,6 +22,7 @@
 | Session 5: Phase 6 (Cycle 2) | 2026-04-20 | Complete | Tier 2 routines landed sequentially on main across two sittings. Sitting A: Data Wipe (Danger Zone in Settings, arming + typed-phrase confirmation, paste/cut/drop disabled, emits `DataWiped`) + remove buttons for items and groups (6.3, 6.4, 6.7). Sitting B: routine-item edit form (inline Edit/Save/Cancel per step, name + duration + unit) with `duration.rs` helper for min↔hour conversions — `split_minutes_for_display` implemented via Learn-by-Doing (user chose exact-divisor policy); duration unit picker added to both Add and Edit forms; frequency picker expanded with Biweekly / Monthly / Custom-N-days + clamped inline int input serialized as `custom:{N}` (6.1, 6.2, 6.5). Sitting C: drag-to-reorder routine groups on Daily Flow — `reorder.rs` pure logic module (`reorder_groups_after_drop` + `to_orderings_payload`) implemented via Learn-by-Doing (user chose asymmetric drag-up-before / drag-down-after policy after iterating on symmetric filter-trick), wired through HTML5 DnD with optimistic `pending_order` override signal and `invoke_reorder_routine_groups` (6.9). Visual testing via `dx serve --features mock` + Playwright MCP verified drag-reorder, custom-N picker, edit form, add form. |
 | Session 5: Phase 7.3 + Phase 5.1 | 2026-04-22 | Complete | Notes search clear button (X inside input, Escape key also clears) — 7.3. Journal template engine: `journal_template::render(date)` primes both `initial_content` and the `content` signal on new journal open; template body user-written via Learn-by-Doing (fenced YAML, `daily_note` tag list, 3 frontmatter properties, H2 prompt heading) — 5.1. Feedback saved: reflection fields stay in YAML frontmatter (user writes single run-on sentences, uses Obsidian property panel). Also corrected stale memory that flagged 6.6 (undo complete/skip) as deferred — verified already implemented in Phase 6. Commit pending. |
 | Session 5: Phase 5.2-5.8 + Phase 7.1 | 2026-04-23 | Complete | Obsidian import/export end-to-end in one autonomous run (user near weekly token cap, skipping Learn-by-Doing + Playwright verification, to revisit after reset). Added `core::import` module with parser + walker + mapper + classifier (`serde_yml` dep). `TODO(human)` slot reserved in `split_frontmatter_and_body` — placeholder impl lets downstream work. Tauri commands: `preview_import`, `commit_import` (re-reads files from disk, not UI data), `export_obsidian` (filename sanitizer strips forbidden chars). Frontend: `pages::import_export::{ImportFlow, ExportFlow}` with Idle→Scanning→Previewing→Committing→Done state machines; per-row accept/skip checkbox + editable override for title/date + has-legacy-properties indicator. Settings page wires `ImportExportSection` above Danger Zone. 18 core import tests pass including the 7.1 round-trip test. 7.2 (seconds duration) deferred to Cycle 3 — would require breaking event schema across 16 touch points. Commit pending. |
+| Session 6: Phase A + test-gap audit | 2026-04-24 | Complete | 4-perspective reviews generated (Security + Logical Consistency on Opus 4.7, Performance + Bloat/Complexity on Sonnet 4.6) at `reviews/2026-04-24-*.md`. **3 Critical findings**: (1) `core/src/routines.rs:99` `Frequency::Monthly` silently skips months without the anchor day (day-31 anchor never runs in Feb/Apr/Jun/Sep/Nov); (2) `tauri-app/frontend/src/journal_template.rs:22-37` ↔ `core/src/events/notes_projection.rs:280-305` parity break — template emits `tags:` followed by `- daily_note` YAML list item, parser terminates on first non-kv line, the three reflection keys never get scanned, `is_complete` stays `false`, auto-close never fires; (3) `core/src/sync/buffer.rs:159-163` `do_flush` drains queue before `append_batch`, silently drops events on DB error (`flush_loop` swallows Result via `let _`). Regression: Cycle 1 Session 6 marked `on_item_modified` DB-query consolidation as fixed, but only `on_group_modified` was updated — `on_item_modified` still runs 3 queries per edit. Test-gap proposal at `reviews/2026-04-24-test-gaps.md` (12 proposed tests: 8 regression guards, 2 tripwires, 2 edge-case fill-ins; 2 deliberately skipped with rationale). `reviews/` is git-ignored — no commits for Phase A; `project.md` is the only tracked record of the findings. **Next:** user triages findings per-review one-by-one in fresh context → Phase B test implementation → Phase C fix cycle. |
 
 ---
 
@@ -263,26 +264,36 @@ Phase 0 serial (Track A foundation) → Phases 1/2/3 parallel (3 worktree agents
 
 ### Session 6: Code Review
 
-**Date:** [Date]
+**Date Started:** 2026-04-24
+**Status:** Phase A + test-gap proposal complete; Phase B (tests) and Phase C (fixes) pending per-finding triage.
 
 **Phase A — Multi-Perspective Review:**
-Review documents in `reviews/YYYY-MM-DD-*.md`:
-- Security: [findings summary]
-- Logical consistency: [findings summary]
-- Performance: [findings summary]
-- Bloat / complexity: [findings summary]
+Review documents in `reviews/2026-04-24-*.md` (directory is git-ignored; files live locally only). Scope: Cycle 2 git range `1031e23..22395f8`, ~35 commits.
+
+Model split: Opus 4.7 for Security + Logical Consistency (cross-file invariant reasoning); Sonnet 4.6 for Performance + Bloat/Complexity (pattern-match passes).
+
+- **Security:** 2 High (path traversal via frontend-controlled `AcceptedRow.path` in `commit_import`; unbounded `serde_yml` parse exposed to billion-laughs / deep-nesting attacks), 3 Medium (Windows reserved-name sanitizer gap, unbounded `SyncBuffer::append` queue with silent error drop, hardcoded Danger Zone phrase), 5 Positive findings, 3 Cycle-1 deferrals still deferred (CSP, CORS, Gemini query-string logging).
+- **Logical consistency:** **3 Critical** — see Session Log row for details. Plus 4 Warnings (parser-ceiling desync, reorder no-dedup non-transactional, auto-close scan→emit race, DST spring-forward fallback wrong), 3 Info, 4 Cycle-1 re-checks (one partial-fix flag on `read_only` prop wiring).
+- **Performance:** 5 Runtime findings (biggest: `on_item_modified` regression — Cycle 1 fix only covered `on_group_modified`; `commit_import` sequential 2N DB queries; `on_group_reordered` N queries per reorder), 1 WASM (missing `panic=abort`/`codegen-units=1` in frontend profile), 4 Verified-no-issues (retry jitter/cap, retry u32 saturating counter, `build_month_cells` O(35), calendar cache). Top-5 bang-for-buck table included.
+- **Bloat/complexity:** 3 High (triplicated `append_and_apply` helper across `notes.rs`/`routines.rs`/`import.rs`; `preview_import` backend counts duplicated client-side; `body_preview` double char-iteration), 4 Medium (shadow `last_sync_timestamp` pair, `ImportPhase`/`ExportPhase` minor duplication, `split_frontmatter_and_body` asymmetric return, `COMPLETE_PROPERTIES` ↔ `KNOWN_KEYS` sync hazard), 2 Low, 5 Cycle-1 re-checks (bridge macro approaching 19 functions; `append_and_apply` escalated from deferred to High).
 
 **Phase B — Test Coverage Audit:**
-- Gaps identified: [Gaps]
-- Tests added: [Tests]
+- Output: `reviews/2026-04-24-test-gaps.md` (12 proposed tests, not yet implemented).
+  - Priority 1 — 8 regression guards (pass today, lock current correct behavior): Frequency parser rejects negative/overflow, parser is case-sensitive, auto-close date-underflow returns Err, auto-close skips already-closed entries, retry backoff never exceeds cap, `split_frontmatter_and_body` edge cases, `split_minutes_for_display` exact-divisor policy.
+  - Priority 2 — 2 tripwires for Critical bugs: `Frequency::Monthly` day-31 current-behavior test, `extract_frontmatter_properties` YAML-list-terminates current-behavior test. Both assert today's buggy behavior and will fail automatically once fixed in Phase C.
+  - Priority 3 — 2 edge-case fill-ins: `reorder_groups_after_drop` empty/single-element, `sanitize_filename` Windows forbidden chars.
+  - Skipped with rationale: cross-crate parity test (needs plumbing first), sync-buffer mid-flush interleaving (belongs with Phase C fix).
+- Implementation deferred: per feedback `test-gap audit proposals first`, user triages proposals before any test code lands.
 
 **Phase C — Fix Cycle:**
-- [Fix commits and what they addressed]
+- Pending. User will go through each review doc one-by-one with an LLM in a fresh context to triage each finding and decide disposition (fix / defer / keep).
 
 **Feedback for Next Cycle:**
-- [Feedback items]
+- `reviews/` being git-ignored means `project.md` is the durable record — keep finding summaries in the session log row, not just the review file.
+- Sonnet-on-Perf+Bloat vs Opus-on-Security+Logic split worked well: Opus caught the cross-file parity bug (Critical #2), Sonnet caught the missed `on_item_modified` regression from Cycle 1. Use same split pattern next cycle.
+- "Deferred" status markers from Cycle 1 are not reliable once code grows — `append_and_apply` went from 2 to 3 copies. Deferrals should carry a trip-wire condition for revisit.
 
-**Milestone Commit:** `[commit hash]`
+**Milestone Commit:** [TBD at end of Session 6 Phase C]
 
 ---
 
