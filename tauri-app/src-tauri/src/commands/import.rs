@@ -15,7 +15,8 @@ use tauri::State;
 use omni_me_core::db::queries;
 use omni_me_core::events::{EventStore, EventType, NewEvent};
 use omni_me_core::import::{
-    classify_with_frontmatter, map_frontmatter, parse_markdown, walk_vault, NoteKind, VaultEntry,
+    classify_with_frontmatter, map_frontmatter, parse_date_prefix, parse_markdown, walk_vault,
+    NoteKind, VaultEntry,
 };
 
 use crate::AppState;
@@ -225,9 +226,12 @@ async fn commit_one(
                 .clone()
                 .or_else(|| mapped.date.map(|d| d.to_string()))
                 .or_else(|| {
+                    // Tolerates `YYYY-MM-DD-note.md` / `YYYY-MM-DD_daily.md` /
+                    // `YYYY-MM-DD daily.md` — anything the classifier would
+                    // have routed to Journal must also resolve here.
                     path.file_stem()
                         .and_then(|s| s.to_str())
-                        .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                        .and_then(parse_date_prefix)
                         .map(|d| d.to_string())
                 })
                 .ok_or_else(|| format!("{}: no date available", row.path))?;

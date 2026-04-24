@@ -366,18 +366,47 @@ pub enum NoteKind {
     Generic { title: String },
 }
 
+/// Try to extract a `YYYY-MM-DD` date from the start of a filename stem,
+/// tolerating an optional separator-prefixed suffix.
+///
+/// Matches:
+///   - `"2026-04-22"` → `Some(2026-04-22)` (exact date, canonical)
+///   - `"2026-04-22-note"` → `Some(2026-04-22)` (Obsidian daily-note suffix)
+///   - `"2026-04-22_reflection"` / `"2026-04-22 daily"` / `"2026-04-22.draft"`
+///     → all `Some(2026-04-22)` (common separator conventions)
+///
+/// Rejects:
+///   - `"Random"` → `None` (no date)
+///   - `"2026-04-22abc"` → `None` (no valid separator between date and suffix)
+///   - `"My Note 2026-04-22"` → `None` (date must be at the start)
+///   - `"2026-13-99"` → `None` (invalid date)
+pub fn parse_date_prefix(stem: &str) -> Option<NaiveDate> {
+    // `YYYY-MM-DD` is 10 ASCII bytes. Guard against non-UTF8 boundary slices.
+    if stem.len() < 10 || !stem.is_char_boundary(10) {
+        return None;
+    }
+    let prefix = &stem[..10];
+    let date = NaiveDate::parse_from_str(prefix, "%Y-%m-%d").ok()?;
+    match stem[10..].chars().next() {
+        None => Some(date),
+        Some('-' | '_' | ' ' | '.') => Some(date),
+        _ => None,
+    }
+}
+
 /// Classify a path as either Journal or Generic.
 ///
-/// Strategy: if the filename stem is a valid `YYYY-MM-DD` date, it's a
-/// journal entry. Frontmatter `date:` is a fallback when filename is
-/// non-date (via `classify_with_frontmatter`).
+/// Strategy: if the filename stem starts with a `YYYY-MM-DD` date (exact
+/// match or followed by a separator + suffix like `-note`), it's a journal
+/// entry. Frontmatter `date:` is a fallback for non-date filenames via
+/// `classify_with_frontmatter`.
 pub fn classify_path(path: &Path) -> NoteKind {
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("untitled");
 
-    if let Ok(date) = NaiveDate::parse_from_str(stem, "%Y-%m-%d") {
+    if let Some(date) = parse_date_prefix(stem) {
         NoteKind::Journal { date }
     } else {
         NoteKind::Generic {
@@ -571,6 +600,88 @@ mod tests {
             k,
             NoteKind::Generic {
                 title: "My Idea".into()
+            }
+        );
+    }
+
+    // ------ parse_date_prefix (handles Obsidian daily-note naming variants) ------
+
+    #[test]
+    fn parse_prefix_exact_date_succeeds() {
+        assert_eq!(
+            parse_date_prefix("2026-04-22"),
+            Some(NaiveDate::from_ymd_opt(2026, 4, 22).unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_prefix_with_dash_note_suffix_succeeds() {
+        // User's current Obsidian naming: `YYYY-MM-DD-note.md`.
+        assert_eq!(
+            parse_date_prefix("2026-04-22-note"),
+            Some(NaiveDate::from_ymd_opt(2026, 4, 22).unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_prefix_accepts_common_separators() {
+        let want = NaiveDate::from_ymd_opt(2026, 4, 22).unwrap();
+        assert_eq!(parse_date_prefix("2026-04-22-daily"), Some(want));
+        assert_eq!(parse_date_prefix("2026-04-22_reflection"), Some(want));
+        assert_eq!(parse_date_prefix("2026-04-22 Daily Note"), Some(want));
+        assert_eq!(parse_date_prefix("2026-04-22.bak"), Some(want));
+    }
+
+    #[test]
+    fn parse_prefix_rejects_unseparated_suffix() {
+        // `2026-04-22abc` must NOT match — no valid separator between date
+        // and continuation, so the whole stem is ambiguous / likely not a date.
+        assert_eq!(parse_date_prefix("2026-04-22abc"), None);
+        assert_eq!(parse_date_prefix("2026-04-22x"), None);
+    }
+
+    #[test]
+    fn parse_prefix_rejects_invalid_date() {
+        assert_eq!(parse_date_prefix("2026-13-99"), None);
+        assert_eq!(parse_date_prefix("2026-02-30"), None);
+        assert_eq!(parse_date_prefix("notadate!"), None);
+    }
+
+    #[test]
+    fn parse_prefix_rejects_date_not_at_start() {
+        assert_eq!(parse_date_prefix("My Note 2026-04-22"), None);
+        assert_eq!(parse_date_prefix("Daily 2026-04-22"), None);
+    }
+
+    #[test]
+    fn parse_prefix_handles_short_and_unicode_stems() {
+        assert_eq!(parse_date_prefix(""), None);
+        assert_eq!(parse_date_prefix("short"), None);
+        // Stem shorter than 10 bytes after unicode accounting: safe return None.
+        assert_eq!(parse_date_prefix("café-note"), None);
+    }
+
+    #[test]
+    fn classify_dash_note_suffix_is_journal() {
+        // User's real vault: `2026-04-22-note.md` → Journal (date=2026-04-22).
+        let k = classify_path(Path::new("/vault/Daily/2026-04-22-note.md"));
+        assert_eq!(
+            k,
+            NoteKind::Journal {
+                date: NaiveDate::from_ymd_opt(2026, 4, 22).unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn classify_ambiguous_suffix_falls_back_to_generic() {
+        // `2026-04-22XYZ.md` has no valid separator → Generic (not a false-
+        // positive Journal).
+        let k = classify_path(Path::new("/vault/2026-04-22XYZ.md"));
+        assert_eq!(
+            k,
+            NoteKind::Generic {
+                title: "2026-04-22XYZ".into()
             }
         );
     }
