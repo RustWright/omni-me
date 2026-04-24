@@ -156,10 +156,10 @@ async fn probe_and_transition(inner: &Arc<Inner>) -> NetworkState {
 }
 
 async fn reachable(target: &str, timeout_dur: Duration) -> bool {
-    match tokio::time::timeout(timeout_dur, TcpStream::connect(target)).await {
-        Ok(Ok(_)) => true,
-        _ => false,
-    }
+    matches!(
+        tokio::time::timeout(timeout_dur, TcpStream::connect(target)).await,
+        Ok(Ok(_))
+    )
 }
 
 #[cfg(test)]

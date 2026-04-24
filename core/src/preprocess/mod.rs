@@ -27,7 +27,7 @@ fn extract_urls(text: &str) -> Vec<String> {
         .map(|m| {
             let url = m.as_str();
             // Strip trailing punctuation that's likely not part of the URL
-            url.trim_end_matches(|c: char| matches!(c, '.' | '!' | '?' | ','))
+            url.trim_end_matches(['.', '!', '?', ','])
                 .to_string()
         })
         .collect()

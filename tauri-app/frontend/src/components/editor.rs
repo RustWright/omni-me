@@ -31,7 +31,6 @@ pub fn Editor(
     #[cfg(debug_assertions)]
     use_effect(move || {
         let initial = initial_content.clone();
-        let on_change = on_change.clone();
 
         spawn(async move {
             let window = match web_sys::window() {
@@ -120,7 +119,6 @@ pub fn Editor(
     #[cfg(not(debug_assertions))]
     use_effect(move || {
         let initial = initial_content.clone();
-        let on_change = on_change.clone();
 
         spawn(async move {
             let window = web_sys::window().expect("no window");

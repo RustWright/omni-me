@@ -260,10 +260,10 @@ pub async fn process_note_llm(
     let sync_client =
         omni_me_core::sync::SyncClient::new(server_url, state.device_id.clone());
 
-    if let Err(warning) = sync_back_after_llm(&sync_client, &state).await {
-        if let serde_json::Value::Object(ref mut map) = result {
-            map.insert("warnings".to_string(), serde_json::json!([warning]));
-        }
+    if let Err(warning) = sync_back_after_llm(&sync_client, &state).await
+        && let serde_json::Value::Object(ref mut map) = result
+    {
+        map.insert("warnings".to_string(), serde_json::json!([warning]));
     }
 
     Ok(result)

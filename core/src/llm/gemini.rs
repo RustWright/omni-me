@@ -68,7 +68,7 @@ impl GeminiClient {
 
         let response = self
             .http
-            .post(&self.endpoint())
+            .post(self.endpoint())
             .json(&body)
             .send()
             .await
@@ -302,7 +302,7 @@ mod tests {
         let client = test_client(&server);
         let body = json!({
             "contents": [{ "parts": [{ "text": "Process this note" }] }],
-            "tools": GeminiClient::tool_defs_to_gemini(&super::super::tools::default_note_tools())
+            "tools": GeminiClient::tool_defs_to_gemini(super::super::tools::default_note_tools())
         });
         let response = client.send_request(body).await.unwrap();
         let calls = GeminiClient::parse_tool_calls(&response).unwrap();
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn test_tool_defs_to_gemini_format() {
         let tools = super::super::tools::default_note_tools();
-        let gemini_tools = GeminiClient::tool_defs_to_gemini(&tools);
+        let gemini_tools = GeminiClient::tool_defs_to_gemini(tools);
         let declarations = &gemini_tools[0]["functionDeclarations"];
         assert!(declarations.is_array());
         assert_eq!(declarations.as_array().unwrap().len(), 4);

@@ -70,15 +70,11 @@ pub fn RoutinesPage() -> Element {
                             on_add: move |_| view.set(RoutineView::AddGroup),
                             on_select: move |id: String| view.set(RoutineView::GroupDetail(id)),
                             on_back: move |_| view.set(RoutineView::DailyChecklist),
-                            on_remove: {
-                                let refresh = refresh_groups.clone();
-                                move |id: String| {
-                                    let refresh = refresh.clone();
-                                    spawn(async move {
-                                        let _ = bridge::invoke_remove_routine_group(&id).await;
-                                        refresh();
-                                    });
-                                }
+                            on_remove: move |id: String| {
+                                spawn(async move {
+                                    let _ = bridge::invoke_remove_routine_group(&id).await;
+                                    refresh_groups();
+                                });
                             },
                         }
                     },
@@ -92,12 +88,9 @@ pub fn RoutinesPage() -> Element {
                     RoutineView::AddGroup => rsx! {
                         AddGroupView {
                             next_order: visible.len() as u32,
-                            on_save: {
-                                let refresh = refresh_groups.clone();
-                                move |_| {
-                                    view.set(RoutineView::GroupList);
-                                    refresh();
-                                }
+                            on_save: move |_| {
+                                view.set(RoutineView::GroupList);
+                                refresh_groups();
                             },
                             on_cancel: move |_| view.set(RoutineView::GroupList),
                         }
@@ -115,6 +108,9 @@ pub fn RoutinesPage() -> Element {
 #[component]
 fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) -> Element {
     let tz_signal: Signal<Tz> = use_context();
+    // `&*signal.read()` is explicit on purpose: makes it clear we're
+    // borrowing through a signal guard, not coercing the guard itself.
+    #[allow(clippy::explicit_auto_deref)]
     let today = UserDate::today(&*tz_signal.read()).to_date_string();
 
     // The prop is the source of truth for "what the server knows". `pending_order`

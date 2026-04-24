@@ -83,7 +83,7 @@ pub async fn process_note(
     // Step 3: Call LLM with tools
     let tools = default_note_tools();
     let model_name = llm.model_name();
-    let response = llm.complete_with_tools(&prompt, &tools).await?;
+    let response = llm.complete_with_tools(&prompt, tools).await?;
 
     // Step 4: Parse tool calls into structured result
     let result_data = interpret_tool_calls(response)?;
