@@ -13,7 +13,7 @@
 //!   - All I/O errors surface per-file so the UI (phase 5.5 preview)
 //!     can show partial successes instead of failing the whole import.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use chrono::NaiveDate;
 use serde_json::Value as JsonValue;
@@ -36,10 +36,7 @@ pub struct ParsedNote {
 #[derive(Debug)]
 pub enum VaultEntry {
     Ok(ParsedNote),
-    Err {
-        path: PathBuf,
-        error: ImportError,
-    },
+    Err { path: PathBuf, error: ImportError },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -153,7 +150,9 @@ fn yaml_to_json(v: serde_yml::Value) -> JsonValue {
             if let Some(i) = n.as_i64() {
                 JsonValue::from(i)
             } else if let Some(f) = n.as_f64() {
-                serde_json::Number::from_f64(f).map(JsonValue::Number).unwrap_or(JsonValue::Null)
+                serde_json::Number::from_f64(f)
+                    .map(JsonValue::Number)
+                    .unwrap_or(JsonValue::Null)
             } else {
                 JsonValue::Null
             }
@@ -238,10 +237,7 @@ fn walk_into(dir: &Path, out: &mut Vec<VaultEntry>) {
                         frontmatter,
                         body,
                     })),
-                    Err(e) => out.push(VaultEntry::Err {
-                        path,
-                        error: e,
-                    }),
+                    Err(e) => out.push(VaultEntry::Err { path, error: e }),
                 },
                 Err(e) => {
                     let err = if e.kind() == std::io::ErrorKind::InvalidData {
@@ -394,17 +390,41 @@ pub fn parse_date_prefix(stem: &str) -> Option<NaiveDate> {
     }
 }
 
+/// Path components that force a file to classify as Generic regardless of
+/// its filename or frontmatter date. Carve-outs for legacy parallel journals
+/// (e.g. an old `Work/` directory whose dated files would otherwise collide
+/// with the user's primary daily notes).
+pub const FORCE_GENERIC_DIRS: &[&str] = &["Work"];
+
+/// Returns true if any segment of `path` matches an entry in
+/// `FORCE_GENERIC_DIRS`. The matching strategy (case sensitivity, anchoring,
+/// exact-vs-substring) is decided by the implementer.
+fn path_forces_generic(path: &Path) -> bool {
+    path.components().any(|component| {
+        FORCE_GENERIC_DIRS
+            .iter()
+            .any(|&dir| component == Component::Normal(std::ffi::OsStr::new(dir)))
+    })
+}
+
 /// Classify a path as either Journal or Generic.
 ///
-/// Strategy: if the filename stem starts with a `YYYY-MM-DD` date (exact
-/// match or followed by a separator + suffix like `-note`), it's a journal
-/// entry. Frontmatter `date:` is a fallback for non-date filenames via
-/// `classify_with_frontmatter`.
+/// Strategy: if any path segment is a force-Generic directory (see
+/// `FORCE_GENERIC_DIRS`), Generic. Otherwise, if the filename stem starts
+/// with a `YYYY-MM-DD` date (exact match or followed by a separator +
+/// suffix like `-note`), it's a journal entry. Frontmatter `date:` is a
+/// fallback for non-date filenames via `classify_with_frontmatter`.
 pub fn classify_path(path: &Path) -> NoteKind {
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("untitled");
+
+    if path_forces_generic(path) {
+        return NoteKind::Generic {
+            title: stem.to_string(),
+        };
+    }
 
     if let Some(date) = parse_date_prefix(stem) {
         NoteKind::Journal { date }
@@ -418,13 +438,19 @@ pub fn classify_path(path: &Path) -> NoteKind {
 /// Like `classify_path` but consults the frontmatter as a fallback when
 /// the filename isn't a date. Lets users who store daily notes as
 /// `Daily/April 22.md` with a `date:` property still classify as Journal.
+/// The force-generic rule wins over the frontmatter fallback.
 pub fn classify_with_frontmatter(path: &Path, fm: &MappedFrontmatter) -> NoteKind {
     match classify_path(path) {
         journal @ NoteKind::Journal { .. } => journal,
-        NoteKind::Generic { title } => match fm.date {
-            Some(date) => NoteKind::Journal { date },
-            None => NoteKind::Generic { title },
-        },
+        NoteKind::Generic { title } => {
+            if path_forces_generic(path) {
+                return NoteKind::Generic { title };
+            }
+            match fm.date {
+                Some(date) => NoteKind::Journal { date },
+                None => NoteKind::Generic { title },
+            }
+        }
     }
 }
 
@@ -543,7 +569,10 @@ mod tests {
             "mood": 7
         });
         let out = map_frontmatter(&fm);
-        assert_eq!(out.date, Some(NaiveDate::from_ymd_opt(2026, 4, 22).unwrap()));
+        assert_eq!(
+            out.date,
+            Some(NaiveDate::from_ymd_opt(2026, 4, 22).unwrap())
+        );
         assert_eq!(out.tags, vec!["daily_note", "reflections"]);
         let legacy = out.legacy_properties.unwrap();
         assert_eq!(legacy["aliases"][0].as_str(), Some("Apr 22"));
@@ -703,6 +732,62 @@ mod tests {
     }
 
     #[test]
+    fn classify_force_generic_dir_overrides_date_filename() {
+        // `Work/2022-03-15.md` would normally classify as Journal because of
+        // the date prefix; the FORCE_GENERIC_DIRS rule wins.
+        let k = classify_path(Path::new("Work/2022-03-15.md"));
+        assert_eq!(
+            k,
+            NoteKind::Generic {
+                title: "2022-03-15".into()
+            }
+        );
+    }
+
+    #[test]
+    fn classify_force_generic_dir_overrides_frontmatter_date() {
+        // Even when the frontmatter has a `date:` (which classify_with_frontmatter
+        // would normally honor as a fallback), the force-generic rule wins.
+        let fm = MappedFrontmatter {
+            date: Some(NaiveDate::from_ymd_opt(2022, 3, 15).unwrap()),
+            tags: vec![],
+            legacy_properties: None,
+        };
+        let k = classify_with_frontmatter(Path::new("Work/Some Title.md"), &fm);
+        assert_eq!(
+            k,
+            NoteKind::Generic {
+                title: "Some Title".into()
+            }
+        );
+    }
+
+    #[test]
+    fn classify_force_generic_is_case_sensitive() {
+        // Matching is byte-wise on segments — `work` (lowercase) is NOT in
+        // FORCE_GENERIC_DIRS, so a date filename inside it stays Journal.
+        let k = classify_path(Path::new("work/2022-03-15.md"));
+        assert_eq!(
+            k,
+            NoteKind::Journal {
+                date: NaiveDate::from_ymd_opt(2022, 3, 15).unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn classify_force_generic_segment_must_match_exactly() {
+        // `Workshop` should NOT match `Work` — segment comparison is whole-string.
+        let k = classify_path(Path::new("Workshop/2022-03-15.md"));
+        assert_eq!(
+            k,
+            NoteKind::Journal {
+                date: NaiveDate::from_ymd_opt(2022, 3, 15).unwrap()
+            }
+        );
+    }
+
+    #[test]
     fn classify_with_frontmatter_no_date_stays_generic() {
         let fm = MappedFrontmatter::default();
         let k = classify_with_frontmatter(Path::new("/vault/random.md"), &fm);
@@ -808,10 +893,7 @@ mod tests {
                 "Notes/Ideas.md",
                 "---\ntags:\n  - brainstorm\ncustom_field: value\n---\n\n# Idea\n\nbody with unicode: café ☕\n",
             ),
-            (
-                "plain.md",
-                "no frontmatter at all\nsecond line\n",
-            ),
+            ("plain.md", "no frontmatter at all\nsecond line\n"),
             (
                 "Daily/2026-04-21.md",
                 "---\r\ndate: 2026-04-21\r\ntags: daily_note\r\n---\r\n\r\nbody with CRLF\r\n",
@@ -852,16 +934,17 @@ mod tests {
         }
 
         // Re-import from `dst` and compare.
-        let second_pass: std::collections::HashMap<PathBuf, (JsonValue, String)> = walk_vault(dst.path())
-            .into_iter()
-            .filter_map(|e| match e {
-                VaultEntry::Ok(n) => {
-                    let rel = n.path.strip_prefix(dst.path()).unwrap().to_path_buf();
-                    Some((rel, (n.frontmatter, n.body)))
-                }
-                _ => None,
-            })
-            .collect();
+        let second_pass: std::collections::HashMap<PathBuf, (JsonValue, String)> =
+            walk_vault(dst.path())
+                .into_iter()
+                .filter_map(|e| match e {
+                    VaultEntry::Ok(n) => {
+                        let rel = n.path.strip_prefix(dst.path()).unwrap().to_path_buf();
+                        Some((rel, (n.frontmatter, n.body)))
+                    }
+                    _ => None,
+                })
+                .collect();
 
         assert_eq!(
             second_pass.len(),

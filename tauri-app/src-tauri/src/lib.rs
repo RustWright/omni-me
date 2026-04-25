@@ -1,7 +1,7 @@
 mod auto_close_scheduler;
 mod commands;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tauri::Manager;
@@ -54,6 +54,10 @@ pub struct AppState {
     pub network_monitor: NetworkMonitor,
     /// Aggregated sync status reporter.
     pub status_reporter: StatusReporter,
+    /// Canonical root of the most recently scanned vault. `commit_import`
+    /// refuses to ingest any path that doesn't sit under this root, so the
+    /// frontend can't redirect commit reads to arbitrary files on disk.
+    pub last_import_root: tokio::sync::Mutex<Option<PathBuf>>,
 }
 
 /// Derive a TCP probe target (`host:port`) from the sync server URL. Used by
@@ -180,6 +184,7 @@ pub fn run() {
                     retry_engine,
                     network_monitor,
                     status_reporter,
+                    last_import_root: tokio::sync::Mutex::new(None),
                 });
             });
 

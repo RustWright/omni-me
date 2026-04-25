@@ -62,7 +62,22 @@ pub struct PreviewSummary {
 const BODY_PREVIEW_CHARS: usize = 120;
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn preview_import(root: String) -> Result<PreviewSummary, String> {
+pub async fn preview_import(
+    state: State<'_, AppState>,
+    root: String,
+) -> Result<PreviewSummary, String> {
+    let summary = scan_for_preview(root).await?;
+    // Canonicalize the scanned root and remember it. `commit_import` later
+    // refuses any path that doesn't resolve under this root.
+    let canonical_root = std::fs::canonicalize(&summary.root)
+        .map_err(|e| format!("canonicalize root: {e}"))?;
+    *state.last_import_root.lock().await = Some(canonical_root);
+    Ok(summary)
+}
+
+/// Pure scan: walk the vault root and build the preview summary. Separated
+/// from the Tauri command so tests don't need a full `AppState`.
+async fn scan_for_preview(root: String) -> Result<PreviewSummary, String> {
     let root_path = PathBuf::from(&root);
     if !root_path.is_dir() {
         return Err(format!("Not a directory: {root}"));
@@ -104,7 +119,11 @@ fn build_preview_row(root: &Path, entry: VaultEntry) -> PreviewRow {
     match entry {
         VaultEntry::Ok(note) => {
             let mapped = map_frontmatter(&note.frontmatter);
-            let kind = classify_with_frontmatter(&note.path, &mapped);
+            // Classify against the path *relative to the vault root* so the
+            // force-generic rule (FORCE_GENERIC_DIRS) only inspects segments
+            // inside the vault, not the user's chosen vault location on disk.
+            let relative_for_classify = note.path.strip_prefix(root).unwrap_or(&note.path);
+            let kind = classify_with_frontmatter(relative_for_classify, &mapped);
 
             let (kind_str, key) = match &kind {
                 NoteKind::Journal { date } => ("journal".to_string(), date.to_string()),
@@ -184,12 +203,21 @@ pub async fn commit_import(
 ) -> Result<CommitSummary, String> {
     tracing::info!(count = rows.len(), "commit_import");
 
+    // Snapshot the scanned root once. Refuse to commit anything if the user
+    // hasn't run a preview in this session — there's nothing to validate against.
+    let scanned_root = state
+        .last_import_root
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "no vault has been previewed in this session".to_string())?;
+
     let mut journal_created = 0usize;
     let mut generic_created = 0usize;
     let mut errors: Vec<String> = Vec::new();
 
     for row in rows {
-        match commit_one(&state, row).await {
+        match commit_one(&state, &scanned_root, row).await {
             Ok(CommittedKind::Journal) => journal_created += 1,
             Ok(CommittedKind::Generic) => generic_created += 1,
             Err(e) => errors.push(e),
@@ -208,11 +236,31 @@ enum CommittedKind {
     Generic,
 }
 
+/// Resolve `candidate` to its real, fully-expanded path and confirm it sits
+/// under `scanned_root`. Both inputs are canonicalized so `..` traversals and
+/// symlinks pointing outside the vault are caught.
+fn validate_committable_path(
+    scanned_root: &Path,
+    candidate: &Path,
+) -> Result<PathBuf, String> {
+    let canonical = std::fs::canonicalize(candidate)
+        .map_err(|e| format!("{}: {e}", candidate.display()))?;
+    if !canonical.starts_with(scanned_root) {
+        return Err(format!(
+            "{}: outside scanned vault root",
+            candidate.display()
+        ));
+    }
+    Ok(canonical)
+}
+
 async fn commit_one(
     state: &AppState,
+    scanned_root: &Path,
     row: AcceptedRow,
 ) -> Result<CommittedKind, String> {
-    let path = PathBuf::from(&row.path);
+    let candidate = PathBuf::from(&row.path);
+    let path = validate_committable_path(scanned_root, &candidate)?;
     let raw = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", row.path))?;
 
     let (frontmatter, _body) =
@@ -450,7 +498,7 @@ mod tests {
         std::fs::write(root.join(".obsidian/workspace"), "{}").unwrap();
         std::fs::write(root.join("image.png"), b"binary").unwrap();
 
-        let summary = preview_import(root.to_string_lossy().into_owned())
+        let summary = scan_for_preview(root.to_string_lossy().into_owned())
             .await
             .unwrap();
 
@@ -479,7 +527,7 @@ mod tests {
         let file_path = tmp.path().join("not_a_dir.md");
         std::fs::write(&file_path, "content").unwrap();
 
-        let err = preview_import(file_path.to_string_lossy().into_owned())
+        let err = scan_for_preview(file_path.to_string_lossy().into_owned())
             .await
             .unwrap_err();
         assert!(err.contains("Not a directory"), "got: {err}");
@@ -488,7 +536,7 @@ mod tests {
     #[tokio::test]
     async fn preview_import_empty_vault_returns_zero_rows() {
         let tmp = tempfile::tempdir().unwrap();
-        let summary = preview_import(tmp.path().to_string_lossy().into_owned())
+        let summary = scan_for_preview(tmp.path().to_string_lossy().into_owned())
             .await
             .unwrap();
         assert_eq!(summary.rows.len(), 0);
@@ -505,11 +553,114 @@ mod tests {
         )
         .unwrap();
 
-        let summary = preview_import(tmp.path().to_string_lossy().into_owned())
+        let summary = scan_for_preview(tmp.path().to_string_lossy().into_owned())
             .await
             .unwrap();
         assert_eq!(summary.error_count, 1);
         assert_eq!(summary.rows[0].kind, "error");
         assert!(summary.rows[0].error.is_some());
+    }
+
+    #[test]
+    fn validate_path_inside_root_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let inside = root.join("note.md");
+        std::fs::write(&inside, "x").unwrap();
+
+        let resolved = validate_committable_path(&root, &inside).unwrap();
+        assert!(resolved.starts_with(&root));
+    }
+
+    #[test]
+    fn validate_path_outside_root_fails() {
+        let outer = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(outer.path()).unwrap();
+        let escapee = other.path().join("secret.md");
+        std::fs::write(&escapee, "x").unwrap();
+
+        let err = validate_committable_path(&root, &escapee).unwrap_err();
+        assert!(err.contains("outside scanned vault root"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_path_traversal_fails() {
+        // Build a `<vault>/sub/../../<other>/secret.md` style candidate; after
+        // canonicalize it lands outside the vault and must be rejected.
+        let outer = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(outer.path()).unwrap();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        let escapee_real = other.path().join("secret.md");
+        std::fs::write(&escapee_real, "x").unwrap();
+        let traversal = root
+            .join("sub")
+            .join("..")
+            .join("..")
+            .join(other.path().file_name().unwrap())
+            .join("secret.md");
+
+        let err = validate_committable_path(&root, &traversal).unwrap_err();
+        assert!(err.contains("outside scanned vault root"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn scan_strips_vault_root_before_force_generic_check() {
+        // If the vault root *itself* contains a force-generic segment (e.g.
+        // user keeps their vault at ~/Work/MyVault), the classifier must not
+        // false-positive everything inside as Generic. The strip in
+        // build_preview_row is what guards this.
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().join("Work").join("MyVault");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(
+            vault.join("2026-04-22.md"),
+            "---\ndate: 2026-04-22\n---\n\nbody\n",
+        )
+        .unwrap();
+
+        let summary = scan_for_preview(vault.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+
+        assert_eq!(summary.journal_count, 1, "vault root containing 'Work' must not force-classify children as generic");
+        assert_eq!(summary.generic_count, 0);
+    }
+
+    #[tokio::test]
+    async fn scan_force_generic_dir_inside_vault_classifies_as_generic() {
+        // The actual user-facing case: legacy `Work/` dir inside the vault
+        // with a dated note — should classify as Generic, not collide on date.
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path();
+        std::fs::create_dir_all(vault.join("Work")).unwrap();
+        std::fs::write(
+            vault.join("Work/2022-03-15.md"),
+            "---\ndate: 2022-03-15\n---\n\nold work note\n",
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join("2022-03-15.md"),
+            "---\ndate: 2022-03-15\n---\n\nreal journal\n",
+        )
+        .unwrap();
+
+        let summary = scan_for_preview(vault.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+
+        assert_eq!(summary.journal_count, 1, "real journal stays Journal");
+        assert_eq!(summary.generic_count, 1, "Work/-prefixed dated file becomes Generic");
+    }
+
+    #[test]
+    fn validate_path_nonexistent_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let missing = root.join("does_not_exist.md");
+        let err = validate_committable_path(&root, &missing).unwrap_err();
+        // canonicalize errors on nonexistent paths; we just need a clear failure.
+        assert!(!err.is_empty());
     }
 }
