@@ -47,7 +47,14 @@ pub enum ImportError {
     InvalidUtf8,
     #[error("yaml parse error: {0}")]
     Yaml(String),
+    #[error("frontmatter too large ({actual_bytes} bytes; limit {limit})")]
+    FrontmatterTooLarge { actual_bytes: usize, limit: usize },
 }
+
+/// Hard cap on frontmatter byte length. Rejected before the YAML parser
+/// runs at all — fast first-line defense against pathological inputs. Real
+/// Obsidian frontmatter is typically <1 KiB; 64 KiB leaves enormous headroom.
+pub const MAX_FRONTMATTER_BYTES: usize = 65_536;
 
 // ---------------------------------------------------------------------------
 // parse_markdown
@@ -65,12 +72,35 @@ pub fn parse_markdown(content: &str) -> Result<(JsonValue, String), ImportError>
     let frontmatter = if raw_frontmatter.is_empty() {
         JsonValue::Null
     } else {
-        let yaml: serde_yml::Value =
-            serde_yml::from_str(raw_frontmatter).map_err(|e| ImportError::Yaml(e.to_string()))?;
-        yaml_to_json(yaml)
+        if raw_frontmatter.len() > MAX_FRONTMATTER_BYTES {
+            return Err(ImportError::FrontmatterTooLarge {
+                actual_bytes: raw_frontmatter.len(),
+                limit: MAX_FRONTMATTER_BYTES,
+            });
+        }
+        parse_frontmatter_yaml(raw_frontmatter)?
     };
 
     Ok((frontmatter, body))
+}
+
+/// Parse a frontmatter YAML block into a `serde_json::Value` with strict
+/// resource budgets. The budget caps anchor count (billion-laughs defense),
+/// nesting depth (stack-overflow defense), total scalar bytes, and parser
+/// event count. Returns `ImportError::Yaml` for any parse or budget failure.
+fn parse_frontmatter_yaml(raw: &str) -> Result<JsonValue, ImportError> {
+    // Use the `options!` / `budget!` macros so we don't touch private fields
+    // directly — direct construction is being phased out in saphyr 1.0.
+    let options = serde_saphyr::options! {
+        budget: serde_saphyr::budget! {
+            max_anchors: 200,
+            max_depth: 100,
+            max_total_scalar_bytes: MAX_FRONTMATTER_BYTES,
+            max_events: 50_000,
+        },
+    };
+    serde_saphyr::from_str_with_options::<JsonValue>(raw, options)
+        .map_err(|e| ImportError::Yaml(e.to_string()))
 }
 
 /// Split a markdown document into `(frontmatter_yaml, body)`.
@@ -133,51 +163,11 @@ fn split_frontmatter_and_body(content: &str) -> (&str, String) {
         let _ = rest;
     }
 
-    // 4. Strip trailing newlines from the frontmatter slice so serde_yml
-    //    doesn't see stray blank lines.
+    // 4. Strip trailing newlines from the frontmatter slice so the YAML
+    //    parser doesn't see stray blank lines.
     let fm_slice = content[opening_len..fm_end].trim_end_matches(['\n', '\r']);
 
     (fm_slice, content[body_start..].to_string())
-}
-
-/// Convert a `serde_yml::Value` into a `serde_json::Value` for storage.
-/// YAML scalars like timestamps get stringified to keep the output JSON-clean.
-fn yaml_to_json(v: serde_yml::Value) -> JsonValue {
-    match v {
-        serde_yml::Value::Null => JsonValue::Null,
-        serde_yml::Value::Bool(b) => JsonValue::Bool(b),
-        serde_yml::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                JsonValue::from(i)
-            } else if let Some(f) = n.as_f64() {
-                serde_json::Number::from_f64(f)
-                    .map(JsonValue::Number)
-                    .unwrap_or(JsonValue::Null)
-            } else {
-                JsonValue::Null
-            }
-        }
-        serde_yml::Value::String(s) => JsonValue::String(s),
-        serde_yml::Value::Sequence(seq) => {
-            JsonValue::Array(seq.into_iter().map(yaml_to_json).collect())
-        }
-        serde_yml::Value::Mapping(map) => {
-            let mut out = serde_json::Map::new();
-            for (k, v) in map {
-                // YAML allows non-string keys; stringify them for JSON.
-                let key = match k {
-                    serde_yml::Value::String(s) => s,
-                    other => serde_yml::to_string(&other)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string(),
-                };
-                out.insert(key, yaml_to_json(v));
-            }
-            JsonValue::Object(out)
-        }
-        serde_yml::Value::Tagged(t) => yaml_to_json(t.value),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -522,6 +512,58 @@ mod tests {
     fn parse_markdown_malformed_yaml_errors() {
         let input = "---\ndate: 2026-04-22\n  bad:  indent: here\n---\nbody\n";
         assert!(parse_markdown(input).is_err());
+    }
+
+    // ------ DoS hardening (Security H2) ------
+
+    #[test]
+    fn parse_markdown_rejects_oversized_frontmatter() {
+        // Frontmatter scalar value exceeds the 64 KiB pre-parse cap.
+        let big_value = "x".repeat(70_000);
+        let input = format!("---\nbig: {}\n---\nbody\n", big_value);
+
+        let err = parse_markdown(&input).unwrap_err();
+        assert!(
+            matches!(err, ImportError::FrontmatterTooLarge { .. }),
+            "expected FrontmatterTooLarge, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_markdown_rejects_billion_laughs() {
+        // 5 levels of 10x alias expansion would materialize ~100,000 events
+        // — saphyr's max_events budget (50_000) must trip before any of
+        // that gets allocated.
+        let bomb = "---\n\
+            a: &a [x, x, x, x, x, x, x, x, x, x]\n\
+            b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]\n\
+            c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]\n\
+            d: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]\n\
+            e: [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]\n\
+            ---\nbody\n";
+
+        let err = parse_markdown(bomb).unwrap_err();
+        assert!(
+            matches!(err, ImportError::Yaml(_)),
+            "expected Yaml budget rejection, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_markdown_rejects_deeply_nested() {
+        // 200 levels of nested flow-sequences — exceeds the max_depth: 100
+        // cap. The pre-parse byte cap doesn't catch this (only 400 bytes).
+        let nested = format!(
+            "---\nx: {}y{}\n---\nbody\n",
+            "[".repeat(200),
+            "]".repeat(200)
+        );
+
+        let err = parse_markdown(&nested).unwrap_err();
+        assert!(
+            matches!(err, ImportError::Yaml(_)),
+            "expected Yaml depth rejection, got: {err:?}"
+        );
     }
 
     #[test]
