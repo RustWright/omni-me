@@ -344,6 +344,32 @@ mod tests {
         assert!(is_complete(text));
     }
 
+    #[test]
+    fn is_complete_recognizes_journal_template_when_filled() {
+        // Regression for Cycle 2 Critical #2 (2026-04-24 logical-inconsistencies review):
+        // the journal template (frontend/src/journal_template.rs) renders the
+        // frontmatter that *this* parser must accept once the user fills in the
+        // three reflection properties. If the template adds a YAML block-list
+        // line (e.g. `tags:\n  - daily_note`), this parser silently terminates
+        // before the properties are scanned, breaking auto-close.
+        // Lock the contract: the parser must accept a filled-in template render.
+        // If you change journal_template::render, update this fixture too.
+        let filled = "---\n\
+            date: 2026-04-25\n\
+            tags: [daily_note]\n\
+            homework_for_life: notice when assumptions diverge across crates\n\
+            grateful_for: regression tests that lock invisible contracts\n\
+            learnt_today: chrono encodes the entire calendar ruleset\n\
+            ---\n\
+            \n\
+            ## What happened today? (Add as much detail as you want)\n\
+            \n";
+        assert!(
+            is_complete(filled),
+            "filled-in journal template must register as complete"
+        );
+    }
+
     #[tokio::test]
     async fn journal_created_projects_by_date() {
         let db = test_db().await;
