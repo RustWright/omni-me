@@ -278,20 +278,18 @@ impl NotesProjection {
 /// rule favors "user typed it once, accidentally added a blank line later"
 /// which is the realistic mistake mode.
 fn is_complete(raw_text: &str) -> bool {
-    let properties = extract_frontmatter_properties(raw_text);
-    COMPLETE_PROPERTIES.iter().all(|key| {
-        properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case(key) && !v.trim().is_empty())
-    })
-}
-
-fn extract_frontmatter_properties(raw_text: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    // Accept `key: value` lines until we hit a blank line or a non-kv line
-    // *after* we've seen at least one kv. This lets `---` fences work but
-    // doesn't require them.
+    // Single-pass scan over `&str` slices — no allocation. We track which of
+    // the required properties have been seen with a non-empty value, and
+    // short-circuit as soon as all three are satisfied. Stays cheap when this
+    // runs on every keystroke-triggered auto-save.
+    //
+    // Termination is the same as the previous parser: `---` fences are
+    // skipped; a blank line ends the scan only after at least one kv has
+    // been consumed; a line without a colon ends the scan only after at
+    // least one kv has been consumed.
+    let mut found = [false; COMPLETE_PROPERTIES.len()];
     let mut seen_kv = false;
+
     for line in raw_text.lines() {
         let trimmed = line.trim();
         if trimmed == "---" {
@@ -303,14 +301,33 @@ fn extract_frontmatter_properties(raw_text: &str) -> Vec<(String, String)> {
             }
             continue;
         }
-        if let Some((key, value)) = trimmed.split_once(':') {
-            out.push((key.trim().to_string(), value.trim().to_string()));
-            seen_kv = true;
-        } else if seen_kv {
-            break;
+        let Some((key, value)) = trimmed.split_once(':') else {
+            if seen_kv {
+                break;
+            }
+            continue;
+        };
+        seen_kv = true;
+
+        let value = value.trim();
+        if value.is_empty() {
+            // Empty value can never satisfy a required property, but the line
+            // still counts as kv for the termination heuristic above.
+            continue;
+        }
+        let key = key.trim();
+        for (i, required) in COMPLETE_PROPERTIES.iter().enumerate() {
+            if !found[i] && key.eq_ignore_ascii_case(required) {
+                found[i] = true;
+                break; // a single key matches at most one required entry
+            }
+        }
+        if found.iter().all(|&b| b) {
+            return true;
         }
     }
-    out
+
+    found.iter().all(|&b| b)
 }
 
 #[cfg(test)]

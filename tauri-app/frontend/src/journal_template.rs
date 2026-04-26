@@ -21,7 +21,7 @@
 ///     user to fill in).
 pub fn render(date: &str) -> String {
     // `tags` uses inline-list form (`[daily_note]`) rather than a YAML
-    // block list. Reason: `core/.../notes_projection.rs::extract_frontmatter_properties`
+    // block list. Reason: `core/.../notes_projection.rs::is_complete`
     // terminates on the first non-`key: value` line after seeing any kv pair,
     // so a `tags:\n    - daily_note` block would stop the scan before the
     // three reflection-property keys, leaving `is_complete` permanently false
