@@ -30,6 +30,8 @@ chrono-tz = "0.10"
 opt-level = "s"
 lto = true
 strip = true
+panic = "abort"
+codegen-units = 1
 
 # Declare as standalone workspace so cargo doesn't try to join
 # the parent workspace (frontend is built separately by `dx build`)
