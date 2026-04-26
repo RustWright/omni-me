@@ -4,14 +4,19 @@ use wasm_bindgen::JsCast;
 
 use crate::bridge::{js_create_editor, js_destroy_editor};
 
-/// Build a `{ journalMode }` options object for `createEditor`. Returned as a
-/// `JsValue` so the wasm_bindgen extern can forward it directly.
-fn editor_options(journal_mode: bool) -> JsValue {
+/// Build a `{ journalMode, readOnly }` options object for `createEditor`.
+/// Returned as a `JsValue` so the wasm_bindgen extern can forward it directly.
+fn editor_options(journal_mode: bool, read_only: bool) -> JsValue {
     let obj = js_sys::Object::new();
     let _ = js_sys::Reflect::set(
         &obj,
         &JsValue::from_str("journalMode"),
         &JsValue::from_bool(journal_mode),
+    );
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("readOnly"),
+        &JsValue::from_bool(read_only),
     );
     obj.into()
 }
@@ -103,7 +108,7 @@ pub fn Editor(
                     editor_container_id,
                     &initial,
                     Some(&on_change_fn),
-                    editor_options(journal_mode),
+                    editor_options(journal_mode, read_only),
                 );
 
                 Some(()) // Indicates success

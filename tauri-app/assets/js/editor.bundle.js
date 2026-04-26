@@ -25268,6 +25268,7 @@
       return;
     }
     const journalMode = !!(options && options.journalMode);
+    const readOnly2 = !!(options && options.readOnly);
     const extensions = [
       minimalSetup,
       markdown(),
@@ -25277,6 +25278,9 @@
     ];
     if (journalMode) {
       extensions.unshift(journalTimestampKeymap);
+    }
+    if (readOnly2) {
+      extensions.push(EditorView.editable.of(false));
     }
     extensions.push(
       EditorView.updateListener.of((update) => {

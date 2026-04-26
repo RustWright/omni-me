@@ -305,7 +305,7 @@ const journalTimestampKeymap = keymap.of([
  * @param {string} elementId - DOM element ID to mount the editor in
  * @param {string} initialContent - Initial document content
  * @param {Function|null} onChange - Optional callback invoked with new content string on every change
- * @param {{journalMode?: boolean}} [options] - Extension flags
+ * @param {{journalMode?: boolean, readOnly?: boolean}} [options] - Extension flags
  */
 window.createEditor = function (elementId, initialContent, onChange, options) {
   // Destroy any existing editor first
@@ -324,6 +324,7 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
   }
 
   const journalMode = !!(options && options.journalMode);
+  const readOnly = !!(options && options.readOnly);
 
   const extensions = [
     minimalSetup,
@@ -336,6 +337,14 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
   if (journalMode) {
     // Prepend timestamp keymap so it runs before minimalSetup's Enter handler.
     extensions.unshift(journalTimestampKeymap);
+  }
+
+  if (readOnly) {
+    // `editable.of(false)` is stronger than `EditorState.readOnly.of(true)` —
+    // it disables the input cursor entirely (no caret, no focus, no selection-
+    // driven edits), so the user gets a clear visual signal that typing won't
+    // do anything. Used for closed journals.
+    extensions.push(EditorView.editable.of(false));
   }
 
   // Change listener: update onChange callback + dirty/clean signalling.
