@@ -579,13 +579,15 @@ fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHand
                                 class: "w-20 px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
                                 r#type: "number",
                                 min: "2",
-                                max: "365",
+                                max: "31",
                                 value: "{custom_n}",
                                 oninput: move |e| {
-                                    // Parse + clamp to [2, 365]. Custom:1 would be identical
-                                    // to Daily; upper bound is a sanity cap.
+                                    // Routines are for habit formation; anything
+                                    // longer than monthly is a calendar task, not
+                                    // a habit. Custom:1 would shadow Daily.
+                                    // Bounds match `core::routines::CUSTOM_FREQUENCY_*`.
                                     if let Ok(n) = e.value().parse::<u32>() {
-                                        custom_n.set(n.clamp(2, 365));
+                                        custom_n.set(n.clamp(2, 31));
                                     }
                                 },
                             }

@@ -20,8 +20,19 @@ pub enum Frequency {
     Biweekly,
     Monthly,
     /// Every N days, measured from the group's `created_at` anchor.
+    /// Canonical bounds for N enforced by `FromStr` are
+    /// `[CUSTOM_FREQUENCY_MIN, CUSTOM_FREQUENCY_MAX]`. Constructing
+    /// out-of-bounds values directly compiles but cannot roundtrip.
     Custom(u32),
 }
+
+/// Inclusive bounds for `Frequency::Custom(N)`. Lower bound is 2 because
+/// `Custom(1)` would shadow `Daily` (two encodings for the same semantic).
+/// Upper bound is 31 because routines are for habit formation — anything
+/// firing less often than monthly is a calendar task, not a habit. See
+/// `project_routine_definition.md` in user memory for the product rationale.
+pub const CUSTOM_FREQUENCY_MIN: u32 = 2;
+pub const CUSTOM_FREQUENCY_MAX: u32 = 31;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrequencyParseError {
@@ -38,7 +49,7 @@ impl fmt::Display for FrequencyParseError {
             Self::InvalidCustomInterval(s) => {
                 write!(
                     f,
-                    "invalid custom interval: {s} (expected positive integer)"
+                    "invalid custom interval: {s} (expected integer in [{CUSTOM_FREQUENCY_MIN}, {CUSTOM_FREQUENCY_MAX}])"
                 )
             }
         }
@@ -75,7 +86,8 @@ impl FromStr for Frequency {
                     .parse::<u32>()
                     .map_err(|_| FrequencyParseError::InvalidCustomInterval(custom.into()))?;
 
-                n.gt(&0u32)
+                (CUSTOM_FREQUENCY_MIN..=CUSTOM_FREQUENCY_MAX)
+                    .contains(&n)
                     .then_some(Frequency::Custom(n))
                     .ok_or(FrequencyParseError::InvalidCustomInterval(custom.into()))
             }
@@ -124,13 +136,17 @@ mod tests {
     #[test]
     fn display_roundtrip_through_parse() {
         // Once FromStr is implemented, these must all roundtrip.
+        // Custom values must lie within [CUSTOM_FREQUENCY_MIN, CUSTOM_FREQUENCY_MAX]
+        // — anything outside is rejected by `FromStr` and cannot roundtrip.
         for freq in [
             Frequency::Daily,
             Frequency::Weekly,
             Frequency::Biweekly,
             Frequency::Monthly,
+            Frequency::Custom(CUSTOM_FREQUENCY_MIN),
             Frequency::Custom(3),
-            Frequency::Custom(100),
+            Frequency::Custom(21),
+            Frequency::Custom(CUSTOM_FREQUENCY_MAX),
         ] {
             let s = freq.to_string();
             let parsed: Frequency = s.parse().expect("roundtrip parse must succeed");
@@ -168,6 +184,43 @@ mod tests {
         assert!(
             matches!(err, FrequencyParseError::InvalidCustomInterval(_)),
             "custom:xyz must be an invalid interval, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_custom_below_min_is_invalid() {
+        // Custom:1 would be redundant with Daily — reject it.
+        for s in ["custom:1"] {
+            let err = s.parse::<Frequency>().unwrap_err();
+            assert!(
+                matches!(err, FrequencyParseError::InvalidCustomInterval(_)),
+                "{s} must be invalid, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_custom_above_max_is_invalid() {
+        // Routines are for habit formation; > 31 days isn't habit-shaped.
+        for s in ["custom:32", "custom:60", "custom:365", "custom:4000000000"] {
+            let err = s.parse::<Frequency>().unwrap_err();
+            assert!(
+                matches!(err, FrequencyParseError::InvalidCustomInterval(_)),
+                "{s} must be invalid, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_custom_at_bounds_is_valid() {
+        // Inclusive bounds: both 2 and 31 must parse.
+        assert_eq!(
+            "custom:2".parse::<Frequency>().unwrap(),
+            Frequency::Custom(2)
+        );
+        assert_eq!(
+            "custom:31".parse::<Frequency>().unwrap(),
+            Frequency::Custom(31)
         );
     }
 
