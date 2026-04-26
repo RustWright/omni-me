@@ -6,32 +6,42 @@ This document describes the structured process for developing projects in this l
 
 Projects follow a phased approach that balances velocity, learning, and quality. The process emphasizes:
 - **Early validation** through MVP development
-- **Iterative refinement** based on testing feedback
+- **Iterative refinement** based on code review feedback
 - **Decision transparency** with documented rationales
-- **Learning integration** through hands-on test writing
+- **Stabilization after velocity** through dedicated code review cycles
+
+## Session Semantics
+
+"Session N" denotes **a phase of work with a defined purpose**, not a single uninterrupted sitting. A single session may span multiple Claude Code invocations — context limits, token limits, or user fatigue can all force a break mid-session. The numbers exist only to indicate **ordering**, not single-sitting execution.
 
 ## Process Flow
 
 ```
-Session 1: Project Initiation
+First Cycle (full process):
+Session 1: Initiation
     ↓
-Session 2: Project Architecture
+Session 2: Research
     ↓
-Session 3: Project Planning ←─┐
-    ↓                         │
-Session 4: Implementation     │
-    ↓                         │
-Session 5: Testing/Catchup ───┘
+Session 3: Architecture
+    ↓
+Session 4: Planning ←─────┐
+    ↓                     │
+Session 5: Implementation │
+    ↓                     │
+Session 6: Code Review ───┘
+
+Subsequent Cycles:
+Session 4 → Session 5 → Session 6  (repeat)
 ```
 
-**First iteration:** Complete Sessions 1→2→3→4→5 to build and validate MVP
-**Subsequent iterations:** Cycle through 3→4→5 to add features and refinements
+**First iteration:** Complete Sessions 1→2→3→4→5→6 to build and validate MVP.
+**Subsequent iterations:** Cycle through 4→5→6 to add features and refinements. Planning may include lightweight embedded research when the scope demands it.
 
 ## AI's Role
 
 AI (Claude Code) serves as collaborative partner throughout all sessions:
 
-### Sessions 1-3 (Initiation, Architecture, Planning)
+### Sessions 1-4 (Initiation, Research, Architecture, Planning)
 - **Interviewing/Facilitating:** Ask structured questions to capture requirements and organize thinking. Ask questions **one at a time** to allow for clear, detailed answers.
 - **Collaborating/Proposing:** Suggest architectural patterns, identify risks, propose solutions
 - **Decision Support:**
@@ -39,19 +49,18 @@ AI (Claude Code) serves as collaborative partner throughout all sessions:
   - Explain alternatives in depth as needed
   - User asks clarifying questions until understanding is sufficient
   - User makes final decision (AI documents it)
-  - End-of-session risk review in Session 2 (architecture) for structural concerns that could doom implementation
+  - End-of-session risk review in Session 3 (architecture) for structural concerns that could doom implementation
 
-### Session 4 (Implementation)
-- **Claude Code:** Orchestration, process adherence, tracking progress against plan
-- **aipack agents:** Code generation across files (minimizes context load on Claude)
-- Focus on velocity with quality
-- No stopping to explain patterns (covered in Session 5)
+### Session 5 (Implementation)
+- **Claude Code:** Orchestration, progress tracking, velocity with quality
+- Parallelize work via worktree subagents where file boundaries allow
+- Make frequent commits with clear messages
+- No pausing for explanations — those belong in Code Review
 
-### Session 5 (Testing/User Catchup)
-- Provide minimal scaffolding to start test writing
-- Hands-off while user writes tests independently
-- Assist only when user is truly blocked
-- Collaborate on test review and gap identification
+### Session 6 (Code Review)
+- Run multi-perspective parallel review (security, logical consistency, performance, bloat/complexity)
+- Explore test-coverage gaps — what could silently break if an LLM edit regressed it?
+- Drive the fix cycle: agent-assisted corrections batched into coherent commits
 
 ## Session Details
 
@@ -72,7 +81,25 @@ AI (Claude Code) serves as collaborative partner throughout all sessions:
 
 ---
 
-### Session 2: Project Architecture
+### Session 2: Research *(first cycle only)*
+
+**Purpose:** Deep foundational research before architectural commitments
+
+**Activities:**
+- Survey all candidate features and their service options
+- Compare tech stack choices with real trade-offs (performance, maintainability, ecosystem, cost)
+- Identify proof-of-concept needs (assumptions that must be validated before architecture is final)
+- Document findings so architecture decisions are grounded in evidence, not defaults
+
+**Output:**
+- `research.md` with findings, service comparisons, and tentative technical direction
+- Summary in `project.md` linking to `research.md`
+
+**Note:** Research is formalized as its own session in the first cycle only. In later cycles, lightweight research can be embedded in Planning (Session 4) when a complex feature's scope demands it — skip entirely for routine cycles.
+
+---
+
+### Session 3: Project Architecture *(first cycle only)*
 
 **Purpose:** Design the technical foundation and MVP scope
 
@@ -82,14 +109,13 @@ AI (Claude Code) serves as collaborative partner throughout all sessions:
   - Documentation approach
   - Testing strategy
   - Tools, APIs, libraries, technologies
-- Identify proof-of-concept needs (critical assumptions to validate)
 - Define MVP scope (minimum to validate core idea)
 - Plan transition from MVP to full version
 - Make architectural decisions with trade-off discussions
 - End-of-session risk review
 
 **Decision-Making Process:**
-- AI presents architectural options
+- AI presents architectural options (grounded in `research.md`)
 - Discuss trade-offs, alternatives, implications
 - User asks clarifying questions as needed
 - User makes final decisions
@@ -101,74 +127,78 @@ AI (Claude Code) serves as collaborative partner throughout all sessions:
 
 ---
 
-### Session 3: Project Planning
+### Session 4: Project Planning *(every cycle)*
 
-**Purpose:** Break down implementation into actionable tasks
+**Purpose:** Break down the next iteration into actionable tasks
 
 **Activities:**
-- Review feedback from previous cycle (if applicable)
+- Review Code Review feedback from previous cycle (if applicable)
 - Decide: address immediate improvements OR continue roadmap
+- **Optional embedded research:** when the cycle touches unfamiliar features/libraries/services, run a scoped research pass before committing to tasks
 - Define high-level phases for current scope
 - Break work into atomic chunks (≤10 lines of code where possible)
-- Identify opportunities for parallel development
-- Identify which tasks are suited for aipack agents (repetitive, file-by-file generation) vs Claude Code (complex logic, debugging, architectural decisions)
+- Identify opportunities for parallel development (worktree-friendly file boundaries)
 - Create `tasks.md` with detailed task list
 
 **Output:**
 - `tasks.md` created with tasks organized by status (pending/in-progress/completed)
-- Planning summary in `project.md` (objective, scope, phases)
+- Planning summary in `project.md` (objective, scope, phases, any embedded research findings)
 
 **Note:** Task list defines "done" for this iteration cycle
 
 ---
 
-### Session 4: Implementation
+### Session 5: Implementation *(every cycle)*
 
 **Purpose:** Build the planned functionality with velocity
 
-**Tool Division:**
-- **Claude Code:** Orchestration, process adherence, tracking progress against plan
-- **aipack agents:** Code generation across files (minimizes context load on Claude)
-
 **Approach:**
 - Default to moving quickly while maintaining code quality
-- Work on parallel chunks concurrently where possible
+- Parallelize across worktree subagents where file boundaries allow
 - Make frequent commits with clear, concise messages
 - Learning pace adjustable based on project priority and user request
-- No pausing for explanations (saved for Session 5)
+- No pausing for explanations — those belong in Code Review
 
 **Output:**
 - Implemented code committed to repository
 - `tasks.md` updated as work progresses
-- Brief summary in `project.md` (dates, actual vs planned work)
+- Brief summary in `project.md` (dates, actual vs planned work, key commits)
 
 ---
 
-### Session 5: Testing & User Catchup
+### Session 6: Code Review *(every cycle)*
 
-**Purpose:** Understand implementation through test writing, ensure quality
+**Purpose:** Stabilize the foundation after a velocity-focused implementation. A multi-session effort spanning as many sittings as the cycle demands.
 
-**Phase A - User Test Writing (Learning Focus):**
-- AI provides minimal scaffolding (test file structure, areas to focus)
-- User writes tests independently
-- Struggle is part of learning process
-- Ask for help only when truly blocked
-- AI gives targeted assistance when requested
+The session is structured as **produce-all-reviews-first, then triage**. Phase A and Phase B both *generate documents*; Phase C is the only place that writes code, and it is interleaved with triage (one document at a time, one finding at a time, decide and resolve inline). There is **no separate batched "fix cycle" after triage** — fixes land as each finding is decided.
 
-**Phase B - Test Review (Quality Focus):**
-- Review test coverage together
-- Identify gaps in validation/regression prevention
-- Discuss what additional tests are needed
-- Write additional tests as needed (with AI assistance if desired)
+**Phase A — Multi-Perspective Review (produce all docs first):**
+Four parallel review passes generate findings documents in `reviews/YYYY-MM-DD-<perspective>.md`:
+- **Security** — data handling, secrets, auth gaps, input validation, injection surfaces
+- **Logical consistency** — invariants, edge cases, off-by-one, error paths, contract drift between layers
+- **Performance** — hot paths, unnecessary allocations, database query patterns, async misuse
+- **Bloat / complexity** — dead code, over-abstraction, duplicated helpers, needless dependencies
 
-**Phase C - Cycle Closure:**
-- Create milestone commit
-- Document tested areas and feedback for next cycle in `project.md`
-- Determine next iteration's focus
+Findings use Critical / Warning / Info priority buckets with `file:line` references. All four documents are produced up-front so the triage phase can see the full picture and spot cross-cutting issues.
+
+**Phase B — Test Coverage Audit (proposal doc, no code yet):**
+- Identify what could silently break if an LLM edit introduced a regression
+- Flag untested branches in business logic, unvalidated schema assumptions, missing idempotency proofs
+- Output a proposal document `reviews/YYYY-MM-DD-test-gaps.md` listing candidate tests for triage — **no test code is written in this phase**
+
+**Phase C — Triage and Resolve (one document at a time, one item at a time):**
+- Work through each review document in turn (user picks the order)
+- Within a document, take each finding individually and decide: **fix now**, **defer to a later cycle**, or **accept** (with rationale)
+- Annotate the disposition in the review document so it becomes the audit trail
+- Fixes land inline as each finding is resolved — small, coherent commits per finding (or per small group), not one batched fix commit at the end
+- Test-gap proposals are triaged item-by-item the same way: a test that locks current correct behavior may land standalone; a tripwire/regression test for a buggy finding lands together with the fix commit
+- Items decided as "defer" roll forward as feedback for the next cycle's Planning session
 
 **Output:**
-- Tests written and committed
-- Session 5 summary in `project.md` (areas tested, feedback for next planning cycle)
+- `reviews/YYYY-MM-DD-*.md` per-perspective review documents (created Phase A, annotated with disposition during Phase C)
+- `reviews/YYYY-MM-DD-test-gaps.md` test-gap proposal (created Phase B, annotated during Phase C)
+- Fix commits landed on the cycle's branch/main as triage progresses
+- Deferred items recorded in `project.md` for the next cycle's Planning
 
 ---
 
@@ -180,30 +210,34 @@ Each project follows this structure:
 projects/project_name/
 ├── .log/                    # Raw exported conversation logs
 │   ├── session-01-initiation.txt
-│   ├── session-02-architecture.txt
-│   ├── session-03-planning-cycle-1.txt
-│   ├── session-04-implementation-cycle-1.txt
-│   ├── session-05-testing-cycle-1.txt
+│   ├── session-02-research.txt
+│   ├── session-03-architecture.txt
+│   ├── session-04-planning-cycle-1.txt
+│   ├── session-05-implementation-cycle-1.txt
+│   ├── session-06-code-review-cycle-1.txt
 │   └── ...
 ├── project.md               # Persistent checklist/tracker (from template)
+├── research.md              # Research findings (first cycle)
 ├── architecture.md          # Architecture decisions and rationale
 ├── tasks.md                 # Current cycle's task list (reset each cycle)
+├── reviews/                 # Per-cycle code review findings
 └── [project files]
 ```
 
 **Information Density Hierarchy:**
 1. `.log/` files = Full discussion and reasoning
 2. `project.md` = Decision summaries with alternatives and trade-offs
-3. `architecture.md` = Final architectural decisions with brief rationale
+3. `research.md` / `architecture.md` = Canonical technical decisions with brief rationale
+4. `reviews/` = Code review findings per perspective per cycle
 
 ---
 
 ## Special Cases
 
 ### Architecture Revision
-If testing reveals fundamental architectural issues (not just features, but structure):
+If a Code Review reveals fundamental architectural issues (not just features, but structure):
 - Only consider if there's a very clear and obvious problem
-- Trigger emergency Session 2 to revise architecture
+- Trigger an emergency Session 3 to revise architecture
 - Update `architecture.md` with revised decisions
 - Document what changed and why in `project.md`
 
@@ -224,19 +258,22 @@ After every session:
 2. **Name consistently:** `session-0X-[type]-cycle-Y.txt` format
 3. **Save to `.log/`:** Place in project's `.log/` directory
 4. **Update `project.md`:** Add session summary to checklist
-5. **Update `tasks.md`:** If in Session 4, ensure task statuses current
-6. **Commit changes:** Frequent commits throughout, milestone commit after Session 5
+5. **Update `tasks.md`:** If in Session 5 (Implementation), ensure task statuses are current
+6. **Commit changes:** Frequent commits throughout, milestone commit after Session 6
+
+Because a single session may span multiple Claude Code sittings, the end-of-session protocol applies when the *phase* wraps — not every individual sitting. Intermediate sittings still commit and push work, but the summary update and log export happen at phase boundaries.
 
 ---
 
 ## Iteration Strategy
 
-**After First Cycle (MVP Validation):**
-- Review Session 5 feedback
+**After Each Cycle:**
+- Review Session 6 (Code Review) feedback
 - Decide next focus (improvements vs new features)
-- Return to Session 3 for next cycle planning
-- Default: Continue roadmap from Session 2
+- Return to Session 4 for the next cycle's Planning
+- Default: Continue roadmap
 - Flexibility: Incorporate immediate improvements as needed
+- Embed lightweight research into Planning if the next cycle touches unfamiliar ground
 
 **Task File Management:**
 - `tasks.md` is working state, reset each cycle
