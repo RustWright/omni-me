@@ -164,8 +164,9 @@ fn relative_display(root: &Path, path: &Path) -> String {
 }
 
 fn body_preview(body: &str) -> String {
-    let mut out: String = body.chars().take(BODY_PREVIEW_CHARS).collect();
-    if body.chars().count() > BODY_PREVIEW_CHARS {
+    let mut chars = body.chars();
+    let mut out: String = chars.by_ref().take(BODY_PREVIEW_CHARS).collect();
+    if chars.next().is_some() {
         out.push('…');
     }
     out
