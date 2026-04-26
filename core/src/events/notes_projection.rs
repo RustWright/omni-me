@@ -268,6 +268,15 @@ impl NotesProjection {
 /// The parse is deliberately forgiving — any `key: value` line is accepted
 /// regardless of whether it sits inside `---` fences, matching how users
 /// actually type notes on a phone.
+///
+/// **Duplicate-key semantics:** YAML 1.2 says duplicate keys are undefined.
+/// We use "any-non-empty wins" via `.any()` — if a property key appears more
+/// than once and *any* occurrence has a non-empty value, the property counts
+/// as filled. This differs from Python yaml / Obsidian (which are last-wins)
+/// but is safe in practice because (1) duplicate keys essentially never
+/// occur via normal user edits or property-panel UIs, and (2) the forgiving
+/// rule favors "user typed it once, accidentally added a blank line later"
+/// which is the realistic mistake mode.
 fn is_complete(raw_text: &str) -> bool {
     let properties = extract_frontmatter_properties(raw_text);
     COMPLETE_PROPERTIES.iter().all(|key| {

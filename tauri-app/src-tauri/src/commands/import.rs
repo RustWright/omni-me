@@ -262,6 +262,16 @@ async fn commit_one(
 ) -> Result<CommittedKind, String> {
     let candidate = PathBuf::from(&row.path);
     let path = validate_committable_path(scanned_root, &candidate)?;
+    // Re-read fresh from disk rather than reusing the preview's parsed data.
+    // Trade-off: the security review's H1 fix (commit 40faf00) made
+    // commit_import backend-authoritative — never trust content that
+    // round-tripped through the UI, so a malicious renderer cannot inject
+    // text into a journal entry. Cost: a file edited between Preview and
+    // Commit lands with its current disk content, not what the user saw in
+    // the preview. Acceptable because (1) the preview→commit window is
+    // seconds, (2) concurrent vault editing during import is near-zero,
+    // (3) recovery is just "re-import", and (4) committing arbitrary
+    // frontend-supplied content would be the worse failure mode.
     let raw = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", row.path))?;
 
     let (frontmatter, _body) =
