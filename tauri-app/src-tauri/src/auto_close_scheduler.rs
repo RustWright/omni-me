@@ -80,15 +80,17 @@ fn duration_until_next_tick(
     let midnight = tomorrow
         .and_hms_opt(0, 0, 0)
         .expect("00:00:00 is always valid");
-    let midnight_local = tz
-        .from_local_datetime(&midnight)
-        .single()
-        .unwrap_or_else(|| {
-            // DST spring-forward → 00:00 doesn't exist. Take the latest
-            // candidate (usually +1h) — the earliest offset is fine too;
-            // we just want "roughly midnight".
-            tz.from_utc_datetime(&midnight)
-        });
+    // `.earliest()` handles both `Single` (the normal case) and `Ambiguous`
+    // (DST fall-back overlap, where 00:00 happens twice — pick the earlier).
+    // `None` is the gap case (DST spring-forward at midnight) and is
+    // essentially impossible in modern zones, since transitions are at 02:00
+    // not 00:00. If it ever fires, we skip today entirely and try again in
+    // 24h — auto-close just runs a day late, which is benign because
+    // closing a journal is a fully reversible single-button action.
+    let midnight_local = match tz.from_local_datetime(&midnight).earliest() {
+        Some(dt) => dt,
+        None => return Duration::from_secs(24 * 60 * 60),
+    };
     let target_utc = midnight_local.with_timezone(&Utc) + chrono::Duration::seconds(grace_seconds);
     let delta = target_utc.signed_duration_since(now_utc);
     delta
