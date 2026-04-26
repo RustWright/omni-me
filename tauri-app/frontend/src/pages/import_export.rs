@@ -115,6 +115,8 @@ fn ImportFlow() -> Element {
                 let current = phase.read().clone();
                 if let ImportPhase::Previewing(summary) = current {
                     let summary_for_commit = summary.clone();
+                    let total = summary.rows.iter().filter(|r| r.kind != "error").count();
+                    let accepted = total.saturating_sub(skipped.read().len());
                     rsx! {
                         ImportPreview {
                             summary: summary.clone(),
@@ -124,11 +126,7 @@ fn ImportFlow() -> Element {
 
                         div { class: "flex justify-between items-center pt-3 border-t border-white/5",
                             div { class: "text-xs text-obsidian-text-muted",
-                                {
-                                    let total = summary.rows.iter().filter(|r| r.kind != "error").count();
-                                    let accepted = total.saturating_sub(skipped.read().len());
-                                    rsx! { "{accepted} of {total} notes will be imported." }
-                                }
+                                "{accepted} of {total} notes will be imported."
                             }
                             div { class: "flex gap-2",
                                 button {
@@ -138,10 +136,7 @@ fn ImportFlow() -> Element {
                                 }
                                 button {
                                     class: "px-4 py-1.5 text-sm font-bold rounded-md bg-obsidian-accent text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed",
-                                    disabled: {
-                                        let total = summary.rows.iter().filter(|r| r.kind != "error").count();
-                                        total.saturating_sub(skipped.read().len()) == 0
-                                    },
+                                    disabled: accepted == 0,
                                     onclick: move |_| {
                                         let summary = summary_for_commit.clone();
                                         let skipped_snapshot = skipped.read().clone();
