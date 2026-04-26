@@ -276,7 +276,7 @@ fn DangerZone() -> Element {
                                 wiping.set(true);
                                 wipe_status.set(None);
                                 spawn(async move {
-                                    match bridge::invoke_wipe_all_data().await {
+                                    match bridge::invoke_wipe_all_data(WIPE_CONFIRM_PHRASE).await {
                                         Ok(_) => {
                                             wipe_status.set(Some("All local data wiped.".into()));
                                             armed.set(false);

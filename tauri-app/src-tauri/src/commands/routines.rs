@@ -275,8 +275,31 @@ pub async fn get_routine_history(
 // Destructive: emit DataWiped + clear events + rebuild projections.
 // -----------------------------------------------------------------------------
 
+/// Confirmation phrase the caller must pass to authorize a wipe. Mirrored
+/// in `frontend/src/pages/settings.rs::WIPE_CONFIRM_PHRASE`. Re-validated on
+/// the backend so a DevTools-driven `invoke('wipe_all_data', ...)` call
+/// can't bypass the UI's typed-phrase gate.
+const WIPE_CONFIRM_PHRASE: &str = "wipe everything zkqp";
+
+/// Pure helper so the validation is testable without spinning up an
+/// `AppState`. Returns `Ok(())` only if the caller's phrase matches.
+fn check_wipe_confirmation(confirmation: &str) -> Result<(), String> {
+    if confirmation == WIPE_CONFIRM_PHRASE {
+        Ok(())
+    } else {
+        Err("confirmation phrase mismatch".to_string())
+    }
+}
+
 #[tauri::command(rename_all = "snake_case")]
-pub async fn wipe_all_data(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn wipe_all_data(
+    state: State<'_, AppState>,
+    confirmation: String,
+) -> Result<(), String> {
+    if let Err(e) = check_wipe_confirmation(&confirmation) {
+        tracing::warn!("wipe_all_data rejected: {e}");
+        return Err(e);
+    }
     tracing::warn!("wipe_all_data invoked");
 
     // Local-only wipe (Option A): purge this device's event log + projections.
@@ -344,4 +367,34 @@ async fn append_and_apply(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod wipe_tests {
+    use super::{check_wipe_confirmation, WIPE_CONFIRM_PHRASE};
+
+    #[test]
+    fn correct_phrase_passes() {
+        assert!(check_wipe_confirmation(WIPE_CONFIRM_PHRASE).is_ok());
+    }
+
+    #[test]
+    fn wrong_phrase_rejected() {
+        let err = check_wipe_confirmation("not the phrase").unwrap_err();
+        assert!(err.contains("mismatch"), "got: {err}");
+    }
+
+    #[test]
+    fn empty_phrase_rejected() {
+        assert!(check_wipe_confirmation("").is_err());
+    }
+
+    #[test]
+    fn close_but_not_exact_phrase_rejected() {
+        // Trailing whitespace, casing, or punctuation differences must NOT
+        // pass — exact match only.
+        assert!(check_wipe_confirmation("wipe everything zkqp ").is_err());
+        assert!(check_wipe_confirmation("Wipe Everything Zkqp").is_err());
+        assert!(check_wipe_confirmation("wipe everything zkqp.").is_err());
+    }
 }

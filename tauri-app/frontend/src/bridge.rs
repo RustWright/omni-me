@@ -781,16 +781,19 @@ pub async fn invoke_get_routine_history(
 // Destructive wipe
 // -----------------------------------------------------------------------------
 
-pub async fn invoke_wipe_all_data() -> Result<(), String> {
+pub async fn invoke_wipe_all_data(confirmation: &str) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
+        let _ = confirmation;
         Ok(())
     }
     #[cfg(not(feature = "mock"))]
     {
         #[derive(serde::Serialize)]
-        struct Args {}
-        invoke_unit("wipe_all_data", &Args {}).await
+        struct Args<'a> {
+            confirmation: &'a str,
+        }
+        invoke_unit("wipe_all_data", &Args { confirmation }).await
     }
 }
 
