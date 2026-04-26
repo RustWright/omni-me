@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 
 use crate::db::Database;
@@ -119,20 +121,42 @@ impl RoutinesProjection {
         let empty = Vec::new();
         let orderings = event.payload["orderings"].as_array().unwrap_or(&empty);
 
+        // Dedup on group_id (last-wins). Today's frontend reorder code can't
+        // emit duplicates, but a future sync-merge strategy or external API
+        // surface might — and silent overwrite would be a data-corruption bug.
+        let mut deduped: HashMap<String, i64> = HashMap::new();
         for entry in orderings {
             let group_id = entry["group_id"].as_str().unwrap_or_default().to_string();
+            if group_id.is_empty() {
+                continue;
+            }
             let order = entry["order"].as_u64().unwrap_or(0) as i64;
-
-            db.query(
-                "UPDATE type::record('routine_groups', $group_id) SET
-                    order_num = $order_num,
-                    updated_at = type::datetime($ts)",
-            )
-            .bind(("group_id", group_id))
-            .bind(("order_num", order))
-            .bind(("ts", ts.clone()))
-            .await?;
+            deduped.insert(group_id, order);
         }
+        if deduped.is_empty() {
+            return Ok(());
+        }
+
+        // Wrap N updates in a single transaction so a mid-batch write failure
+        // can never leave the projection partially applied.
+        let mut parts = vec!["BEGIN TRANSACTION;".to_string()];
+        for i in 0..deduped.len() {
+            parts.push(format!(
+                "UPDATE type::record('routine_groups', $group_id_{i}) SET
+                    order_num = $order_num_{i},
+                    updated_at = type::datetime($ts);"
+            ));
+        }
+        parts.push("COMMIT TRANSACTION;".to_string());
+        let query_str = parts.join("\n");
+
+        let mut q = db.query(query_str.as_str()).bind(("ts", ts));
+        for (i, (group_id, order)) in deduped.iter().enumerate() {
+            q = q
+                .bind((format!("group_id_{i}"), group_id.clone()))
+                .bind((format!("order_num_{i}"), *order));
+        }
+        q.await?;
 
         Ok(())
     }
@@ -191,29 +215,47 @@ impl RoutinesProjection {
             .to_string();
         let changes = &event.payload["changes"];
 
-        if let Some(name) = changes.get("name").and_then(|v| v.as_str()) {
-            db.query("UPDATE type::record('routine_items', $item_id) SET name = $name")
-                .bind(("item_id", item_id.clone()))
-                .bind(("name", name.to_string()))
-                .await?;
-        }
-        if let Some(duration) = changes
+        let name = changes.get("name").and_then(|v| v.as_str()).map(String::from);
+        let duration = changes
             .get("estimated_duration_min")
             .and_then(|v| v.as_u64())
-        {
-            db.query(
-                "UPDATE type::record('routine_items', $item_id) SET estimated_duration_min = $duration",
-            )
-            .bind(("item_id", item_id.clone()))
-            .bind(("duration", duration as i64))
-            .await?;
+            .map(|n| n as i64);
+        let order = changes.get("order").and_then(|v| v.as_u64()).map(|n| n as i64);
+
+        // Collapse the conditional UPDATEs into one statement so the projection
+        // state can never be partially applied (single statements are atomic;
+        // multi-statement coupled updates would need BEGIN/COMMIT — see
+        // on_group_reordered for the multi-statement pattern).
+        let mut sets: Vec<&str> = Vec::new();
+        if name.is_some() {
+            sets.push("name = $name");
         }
-        if let Some(order) = changes.get("order").and_then(|v| v.as_u64()) {
-            db.query("UPDATE type::record('routine_items', $item_id) SET order_num = $order_num")
-                .bind(("item_id", item_id.clone()))
-                .bind(("order_num", order as i64))
-                .await?;
+        if duration.is_some() {
+            sets.push("estimated_duration_min = $duration");
         }
+        if order.is_some() {
+            sets.push("order_num = $order_num");
+        }
+        if sets.is_empty() {
+            return Ok(());
+        }
+
+        let query_str = format!(
+            "UPDATE type::record('routine_items', $item_id) SET {}",
+            sets.join(", ")
+        );
+
+        let mut q = db.query(query_str.as_str()).bind(("item_id", item_id));
+        if let Some(n) = name {
+            q = q.bind(("name", n));
+        }
+        if let Some(d) = duration {
+            q = q.bind(("duration", d));
+        }
+        if let Some(o) = order {
+            q = q.bind(("order_num", o));
+        }
+        q.await?;
 
         Ok(())
     }
@@ -567,5 +609,156 @@ mod tests {
             .unwrap();
         let total: Option<u32> = resp.take("total").unwrap();
         assert_eq!(total, Some(2), "complete + skip rows live under separate keys");
+    }
+
+    #[tokio::test]
+    async fn group_reordered_dedupes_duplicate_group_ids_last_wins() {
+        // Defense against future callers / sync-merge strategies emitting a
+        // duplicate group_id in one orderings list. Last entry wins.
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(RoutinesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let g = store
+            .append(NewEvent {
+                id: None,
+                event_type: "routine_group_created".into(),
+                aggregate_id: "g1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "name": "g1", "frequency": "daily", "order": 5
+                }),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[g]).await.unwrap();
+
+        let e = store
+            .append(NewEvent {
+                id: None,
+                event_type: "routine_group_reordered".into(),
+                aggregate_id: "reorder".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "orderings": [
+                        { "group_id": "g1", "order": 1 },
+                        { "group_id": "g1", "order": 7 }
+                    ]
+                }),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[e]).await.unwrap();
+
+        let mut resp = db
+            .query("SELECT order_num FROM type::record('routine_groups', 'g1')")
+            .await
+            .unwrap();
+        let order: Option<i64> = resp.take("order_num").unwrap();
+        assert_eq!(order, Some(7), "last-wins on duplicate group_id");
+    }
+
+    #[tokio::test]
+    async fn item_modified_combines_all_three_fields_in_one_update() {
+        // Regression for the on_item_modified pattern: all fields applied
+        // atomically via one statement (a previous version issued 3 separate
+        // queries, leaving a window where partial-failure could land 1 of 3).
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(RoutinesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let e1 = store
+            .append(NewEvent {
+                id: None,
+                event_type: "routine_item_added".into(),
+                aggregate_id: "i1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "group_id": "g1", "name": "Squat", "estimated_duration_min": 5, "order": 0
+                }),
+            })
+            .await
+            .unwrap();
+
+        let e2 = store
+            .append(NewEvent {
+                id: None,
+                event_type: "routine_item_modified".into(),
+                aggregate_id: "i1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "item_id": "i1",
+                    "changes": { "name": "Squat 5x5", "estimated_duration_min": 12, "order": 3 }
+                }),
+            })
+            .await
+            .unwrap();
+
+        runner.apply_events(&[e1, e2]).await.unwrap();
+
+        let mut resp = db
+            .query("SELECT name, estimated_duration_min, order_num FROM type::record('routine_items', 'i1')")
+            .await
+            .unwrap();
+        let name: Option<String> = resp.take("name").unwrap();
+        let dur: Option<i64> = resp.take("estimated_duration_min").unwrap();
+        let order: Option<i64> = resp.take("order_num").unwrap();
+        assert_eq!(name.as_deref(), Some("Squat 5x5"));
+        assert_eq!(dur, Some(12));
+        assert_eq!(order, Some(3));
+    }
+
+    #[tokio::test]
+    async fn item_modified_with_no_recognized_changes_is_a_noop() {
+        // The handler must not crash or write garbage when `changes` has no
+        // recognized keys (defensive against payload schema drift).
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(RoutinesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let e1 = store
+            .append(NewEvent {
+                id: None,
+                event_type: "routine_item_added".into(),
+                aggregate_id: "i1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "group_id": "g1", "name": "Original", "estimated_duration_min": 5, "order": 0
+                }),
+            })
+            .await
+            .unwrap();
+
+        let e2 = store
+            .append(NewEvent {
+                id: None,
+                event_type: "routine_item_modified".into(),
+                aggregate_id: "i1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "item_id": "i1",
+                    "changes": { "unknown_field": "ignored" }
+                }),
+            })
+            .await
+            .unwrap();
+
+        runner.apply_events(&[e1, e2]).await.unwrap();
+
+        let mut resp = db
+            .query("SELECT name FROM type::record('routine_items', 'i1')")
+            .await
+            .unwrap();
+        let name: Option<String> = resp.take("name").unwrap();
+        assert_eq!(name.as_deref(), Some("Original"));
     }
 }
