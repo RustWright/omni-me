@@ -96,7 +96,9 @@ impl Frequency {
             Frequency::Daily => true,
             Frequency::Weekly => days_since % 7 == 0,
             Frequency::Biweekly => days_since % 14 == 0,
-            Frequency::Monthly => today.day() == anchor.day(),
+            // Clamp the anchor day to the month's last day so a Jan-31 anchor
+            // still fires on Feb-28/29, Apr-30, etc. (end-of-month semantics).
+            Frequency::Monthly => today.day() == anchor.day().min(last_day_of_month(today)),
             Frequency::Custom(n) => {
                 if n == 0 {
                     return false;
@@ -105,6 +107,14 @@ impl Frequency {
             }
         }
     }
+}
+
+/// Last calendar day of the month containing `date` (28-31).
+fn last_day_of_month(date: NaiveDate) -> u32 {
+    [31, 30, 29, 28]
+        .into_iter()
+        .find(|&day| NaiveDate::from_ymd_opt(date.year(), date.month(), day).is_some())
+        .unwrap() // unwrap safe since there is no month with less than 28 days
 }
 
 #[cfg(test)]
@@ -221,5 +231,99 @@ mod tests {
         let anchor = NaiveDate::from_ymd_opt(2026, 4, 10).unwrap();
         let past = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
         assert!(!Frequency::Daily.should_run_on(anchor, past));
+    }
+
+    #[test]
+    fn monthly_day_31_anchor_clamps_to_last_day_of_short_months() {
+        let anchor = NaiveDate::from_ymd_opt(2026, 1, 31).unwrap();
+        // Months without a 31st must fire on their last day.
+        for (year, month, expected_last) in [
+            (2026, 2, 28),  // non-leap Feb
+            (2026, 4, 30),  // April
+            (2026, 6, 30),  // June
+            (2026, 9, 30),  // September
+            (2026, 11, 30), // November
+        ] {
+            let last = NaiveDate::from_ymd_opt(year, month, expected_last).unwrap();
+            assert!(
+                Frequency::Monthly.should_run_on(anchor, last),
+                "Jan-31 anchor must fire on {year}-{month:02}-{expected_last}"
+            );
+            // And must NOT fire on the day before the clamped last day.
+            let day_before = NaiveDate::from_ymd_opt(year, month, expected_last - 1).unwrap();
+            assert!(
+                !Frequency::Monthly.should_run_on(anchor, day_before),
+                "Jan-31 anchor must not fire on {year}-{month:02}-{:02}",
+                expected_last - 1
+            );
+        }
+        // Months that DO have a 31st still fire on the 31st, not earlier.
+        assert!(
+            Frequency::Monthly
+                .should_run_on(anchor, NaiveDate::from_ymd_opt(2026, 3, 31).unwrap())
+        );
+        assert!(
+            !Frequency::Monthly
+                .should_run_on(anchor, NaiveDate::from_ymd_opt(2026, 3, 30).unwrap())
+        );
+    }
+
+    #[test]
+    fn monthly_day_29_anchor_handles_leap_year_feb() {
+        // 2024 is a leap year — Feb 29 exists, so the day-29 anchor fires on Feb 29.
+        let anchor = NaiveDate::from_ymd_opt(2024, 1, 29).unwrap();
+        assert!(
+            Frequency::Monthly
+                .should_run_on(anchor, NaiveDate::from_ymd_opt(2024, 2, 29).unwrap())
+        );
+        // 2026 is not a leap year — day-29 anchor clamps to Feb 28.
+        let anchor_nonleap = NaiveDate::from_ymd_opt(2026, 1, 29).unwrap();
+        assert!(
+            Frequency::Monthly
+                .should_run_on(anchor_nonleap, NaiveDate::from_ymd_opt(2026, 2, 28).unwrap())
+        );
+        // Day-30 anchor in non-leap Feb also clamps to Feb 28.
+        let anchor_30 = NaiveDate::from_ymd_opt(2026, 1, 30).unwrap();
+        assert!(
+            Frequency::Monthly
+                .should_run_on(anchor_30, NaiveDate::from_ymd_opt(2026, 2, 28).unwrap())
+        );
+    }
+
+    #[test]
+    fn last_day_of_month_covers_all_month_lengths() {
+        // 31-day months
+        for month in [1u32, 3, 5, 7, 8, 10, 12] {
+            let date = NaiveDate::from_ymd_opt(2026, month, 1).unwrap();
+            assert_eq!(last_day_of_month(date), 31, "month {month}");
+        }
+        // 30-day months
+        for month in [4u32, 6, 9, 11] {
+            let date = NaiveDate::from_ymd_opt(2026, month, 1).unwrap();
+            assert_eq!(last_day_of_month(date), 30, "month {month}");
+        }
+        // February — leap and non-leap, plus century-rule edge cases.
+        assert_eq!(
+            last_day_of_month(NaiveDate::from_ymd_opt(2024, 2, 1).unwrap()),
+            29,
+            "leap year"
+        );
+        assert_eq!(
+            last_day_of_month(NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()),
+            28,
+            "non-leap year"
+        );
+        // 2100 is divisible by 100 but not 400 → not a leap year.
+        assert_eq!(
+            last_day_of_month(NaiveDate::from_ymd_opt(2100, 2, 1).unwrap()),
+            28,
+            "century non-leap"
+        );
+        // 2000 is divisible by 400 → leap year.
+        assert_eq!(
+            last_day_of_month(NaiveDate::from_ymd_opt(2000, 2, 1).unwrap()),
+            29,
+            "century leap"
+        );
     }
 }
