@@ -102,7 +102,7 @@ impl SyncClient {
     /// Preserved for backward compatibility with integration tests and the
     /// `trigger_sync` Tauri command.
     pub async fn sync(&self, db: &Database) -> Result<SyncResult, SyncError> {
-        let last_sync = self.get_last_sync_timestamp(db).await?;
+        let last_sync = self.last_sync_timestamp(db).await?;
 
         // 1. Pull + apply + update sync_state timestamp.
         let pull = self.pull_only(db).await?;
@@ -125,7 +125,7 @@ impl SyncClient {
     /// `push_only`, or use `sync()`.
     pub async fn pull_only(&self, db: &Database) -> Result<PullOutcome, SyncError> {
         let store = SurrealEventStore::new(db.clone());
-        let last_sync = self.get_last_sync_timestamp(db).await?;
+        let last_sync = self.last_sync_timestamp(db).await?;
 
         let pull_resp = self.pull_events(&last_sync).await?;
         let pulled = pull_resp.events.len();
@@ -175,15 +175,8 @@ impl SyncClient {
         Ok(PushOutcome { pushed })
     }
 
-    /// Get the last-sync timestamp recorded for this device (epoch if none).
+    /// The last-sync timestamp recorded for this device (epoch if none).
     pub async fn last_sync_timestamp(
-        &self,
-        db: &Database,
-    ) -> Result<DateTime<Utc>, SyncError> {
-        self.get_last_sync_timestamp(db).await
-    }
-
-    async fn get_last_sync_timestamp(
         &self,
         db: &Database,
     ) -> Result<DateTime<Utc>, SyncError> {
