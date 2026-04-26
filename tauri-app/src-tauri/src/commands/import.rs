@@ -6,6 +6,7 @@
 //! `GenericNoteCreated` events (phase 5.6). `export_obsidian` walks the
 //! current projections and writes markdown files (phase 5.7).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
@@ -396,10 +397,13 @@ pub async fn export_obsidian(
     let notes = queries::list_generic_notes(&state.db, 100_000, 0)
         .await
         .map_err(|e| e.to_string())?;
+    // Pre-resolve all output names so we can detect collisions across the
+    // full export set rather than discovering them write-by-write.
+    let titles: Vec<String> = notes.iter().map(|n| n.title.clone()).collect();
+    let names = assign_unique_filenames(&titles);
     let mut generic_written = 0usize;
-    for n in notes {
-        let filename = format!("{}.md", sanitize_filename(&n.title));
-        let path = notes_dir.join(filename);
+    for (n, name) in notes.iter().zip(names.iter()) {
+        let path = notes_dir.join(format!("{name}.md"));
         match std::fs::write(&path, &n.raw_text) {
             Ok(_) => generic_written += 1,
             Err(e) => errors.push(format!("{}: {e}", path.display())),
@@ -414,9 +418,38 @@ pub async fn export_obsidian(
     })
 }
 
+/// Windows reserved device names (case-insensitive). Opening any of these
+/// for write — even with an extension like `.md` — talks to the kernel
+/// device on Windows rather than creating a file. No effect on Linux/macOS,
+/// but we guard against them so exports remain portable.
+const WINDOWS_RESERVED: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+fn is_windows_reserved_stem(stem: &str) -> bool {
+    WINDOWS_RESERVED.iter().any(|r| stem.eq_ignore_ascii_case(r))
+}
+
+/// Stable short hash used to disambiguate colliding sanitized filenames.
+/// FNV-1a over the bytes, formatted as 8 hex chars (32 bits). Stable
+/// across runs and Rust versions — the hash function is rolled inline
+/// so it doesn't depend on `std::hash::DefaultHasher` (which is allowed
+/// to change between releases). Birthday-collision odds are vanishingly
+/// small for typical vault sizes (<10K notes).
+fn stable_short_hash(s: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{:08x}", h as u32)
+}
+
 /// Replace filesystem-unsafe characters in a note title. Conservative: strips
 /// `/` `\` `:` `*` `?` `"` `<` `>` `|` — the union of Windows + POSIX forbidden
-/// sets — so exports work across any target filesystem.
+/// sets — so exports work across any target filesystem. Also prepends `_` if
+/// the result matches a Windows reserved device name (CON, PRN, etc).
 fn sanitize_filename(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     for c in title.chars() {
@@ -431,11 +464,40 @@ fn sanitize_filename(title: &str) -> String {
     // user's original title was entirely forbidden chars — fall back to a
     // generic stable name rather than emit `_.md` / `___.md`.
     let has_meaningful_char = trimmed.chars().any(|c| c != '_' && !c.is_whitespace());
-    if trimmed.is_empty() || !has_meaningful_char {
+    let candidate = if trimmed.is_empty() || !has_meaningful_char {
         "untitled".to_string()
     } else {
         trimmed
+    };
+    if is_windows_reserved_stem(&candidate) {
+        format!("_{candidate}")
+    } else {
+        candidate
     }
+}
+
+/// Sanitize each title and disambiguate sanitized names that collide. Any
+/// base filename that appears more than once gets a stable hash suffix
+/// derived from its original (pre-sanitization) title, so re-exports
+/// produce the same filenames given the same input set. Returns one
+/// filename per input title, in input order.
+fn assign_unique_filenames(titles: &[String]) -> Vec<String> {
+    let bases: Vec<String> = titles.iter().map(|t| sanitize_filename(t)).collect();
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for b in &bases {
+        *counts.entry(b.as_str()).or_insert(0) += 1;
+    }
+    titles
+        .iter()
+        .zip(bases.iter())
+        .map(|(t, b)| {
+            if counts[b.as_str()] > 1 {
+                format!("{b}_{}", stable_short_hash(t))
+            } else {
+                b.clone()
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -449,6 +511,70 @@ mod tests {
         assert_eq!(sanitize_filename("  .hidden."), "hidden");
         assert_eq!(sanitize_filename(""), "untitled");
         assert_eq!(sanitize_filename("///"), "untitled");
+    }
+
+    #[test]
+    fn sanitize_reserved_name_prepends_underscore() {
+        assert_eq!(sanitize_filename("CON"), "_CON");
+        assert_eq!(sanitize_filename("nul"), "_nul");
+        assert_eq!(sanitize_filename("LPT3"), "_LPT3");
+        assert_eq!(sanitize_filename("Aux"), "_Aux");
+    }
+
+    #[test]
+    fn sanitize_reserved_name_after_trim_still_caught() {
+        // Whitespace and trailing dots get stripped first; the reserved-name
+        // check runs against the trimmed result.
+        assert_eq!(sanitize_filename("  CON  "), "_CON");
+        assert_eq!(sanitize_filename("AUX."), "_AUX");
+    }
+
+    #[test]
+    fn sanitize_reserved_name_match_is_exact_segment() {
+        // Substring matches must NOT trip — only exact stem matches.
+        assert_eq!(sanitize_filename("CONFIG"), "CONFIG");
+        assert_eq!(sanitize_filename("recon"), "recon");
+        assert_eq!(sanitize_filename("LPT10"), "LPT10");
+        assert_eq!(sanitize_filename("COM"), "COM");
+    }
+
+    #[test]
+    fn assign_filenames_no_collision_keeps_base() {
+        let titles = vec!["Alpha".to_string(), "Beta".to_string()];
+        let names = assign_unique_filenames(&titles);
+        assert_eq!(names, vec!["Alpha", "Beta"]);
+    }
+
+    #[test]
+    fn assign_filenames_collision_gets_hash_suffix() {
+        // "a/b" and "a:b" both sanitize to "a_b" — both must get suffixes
+        // so neither silently overwrites the other on disk.
+        let titles = vec!["a/b".to_string(), "a:b".to_string()];
+        let names = assign_unique_filenames(&titles);
+        assert_ne!(names[0], names[1], "colliding bases must produce different filenames");
+        assert!(names[0].starts_with("a_b_"), "got: {}", names[0]);
+        assert!(names[1].starts_with("a_b_"), "got: {}", names[1]);
+        assert_eq!(names[0].len(), "a_b_".len() + 8, "8-hex-char suffix expected");
+    }
+
+    #[test]
+    fn assign_filenames_stable_across_runs() {
+        // Same input must produce the same output filenames — guards
+        // against the hash itself drifting and against accidental use
+        // of nondeterministic state (e.g. RandomState).
+        let titles = vec!["a/b".to_string(), "a:b".to_string(), "c".to_string()];
+        let n1 = assign_unique_filenames(&titles);
+        let n2 = assign_unique_filenames(&titles);
+        assert_eq!(n1, n2);
+    }
+
+    #[test]
+    fn assign_filenames_three_way_collision() {
+        let titles = vec!["a/b".to_string(), "a:b".to_string(), "a*b".to_string()];
+        let names = assign_unique_filenames(&titles);
+        assert_ne!(names[0], names[1]);
+        assert_ne!(names[1], names[2]);
+        assert_ne!(names[0], names[2]);
     }
 
     #[test]
