@@ -109,7 +109,8 @@ async fn kill_server_edit_queue_retry_recover() {
     let store = SurrealEventStore::new(local_db.clone());
 
     let client = SyncClient::new(server_url.clone(), "device-test".into());
-    let (buffer, _buffer_h) = SyncBuffer::with_delay(store.clone(), Duration::from_millis(100));
+    let (buffer, _buffer_h) =
+        SyncBuffer::with_delay(Arc::new(store.clone()), Duration::from_millis(100));
     let (pusher, _pusher_h) = PushDebouncer::spawn_with_delay(
         client.clone(),
         local_db.clone(),

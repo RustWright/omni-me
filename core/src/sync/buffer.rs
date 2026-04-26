@@ -614,7 +614,7 @@ mod tests {
 
         // Spin until the store has received the in-flight batch (gate blocked).
         for _ in 0..200 {
-            if store_raw.received.lock().await.len() >= 1 {
+            if !store_raw.received.lock().await.is_empty() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;

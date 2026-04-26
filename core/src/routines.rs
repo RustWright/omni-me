@@ -190,13 +190,8 @@ mod tests {
     #[test]
     fn parse_custom_below_min_is_invalid() {
         // Custom:1 would be redundant with Daily — reject it.
-        for s in ["custom:1"] {
-            let err = s.parse::<Frequency>().unwrap_err();
-            assert!(
-                matches!(err, FrequencyParseError::InvalidCustomInterval(_)),
-                "{s} must be invalid, got {err:?}"
-            );
-        }
+        let err = "custom:1".parse::<Frequency>().unwrap_err();
+        assert!(matches!(err, FrequencyParseError::InvalidCustomInterval(_)));
     }
 
     #[test]
