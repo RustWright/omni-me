@@ -34,6 +34,14 @@ pub async fn auto_close_stale_journals<S: EventStore + ?Sized>(
         .await
         .map_err(AutoCloseError::Db)?;
 
+    // TOCTOU note: between this snapshot and each append below, a user could
+    // manually close a candidate journal — the audit log would then contain
+    // both `trigger: "manual"` and `trigger: "auto"` events for the same
+    // journal. Accepted as-is: realistic likelihood is near zero (midnight
+    // scheduler + active user clicking close in the same millisecond), the
+    // projection's observable state (`closed = true`) is idempotent either
+    // way, and journals can already be closed→reopened→closed legitimately
+    // so the projection cannot reject duplicate close events outright.
     let mut closed = 0usize;
     for entry in candidates {
         let event = event_store
