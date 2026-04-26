@@ -195,6 +195,7 @@ mod tests {
     use super::*;
     use crate::events::{EventStore, NewEvent, SurrealEventStore};
     use chrono::Utc;
+    use std::sync::Arc;
 
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
@@ -234,7 +235,7 @@ mod tests {
             "http://127.0.0.1:1".into(), // unreachable
             "device-x".into(),
         );
-        let (buffer, _bh) = SyncBuffer::with_delay(store.clone(), Duration::from_millis(20));
+        let (buffer, _bh) = SyncBuffer::with_delay(Arc::new(store.clone()), Duration::from_millis(20));
         let (pusher, _ph) = PushDebouncer::spawn_with_delay(
             client,
             db.clone(),
@@ -282,7 +283,7 @@ mod tests {
             .unwrap();
 
         let client = SyncClient::new("http://127.0.0.1:1".into(), "device-x".into());
-        let (buffer, _bh) = SyncBuffer::with_delay(store, Duration::from_secs(60));
+        let (buffer, _bh) = SyncBuffer::with_delay(Arc::new(store), Duration::from_secs(60));
         let (pusher, _ph) = PushDebouncer::spawn_with_delay(
             client,
             db,

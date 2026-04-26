@@ -20,7 +20,7 @@ use std::time::Duration;
 use tokio::sync::{Mutex, Notify, broadcast};
 use tokio::task::JoinHandle;
 
-use crate::events::{Event, EventStore, NewEvent, SurrealEventStore};
+use crate::events::{Event, EventStore, NewEvent};
 
 /// Default idle delay before buffered events are flushed.
 pub const DEFAULT_FLUSH_DELAY: Duration = Duration::from_secs(1);
@@ -72,7 +72,7 @@ struct Inner {
     idle: Notify,
     shutdown: Notify,
     events_tx: broadcast::Sender<BufferEvent>,
-    store: SurrealEventStore,
+    store: Arc<dyn EventStore + Send + Sync>,
     delay: Duration,
     cap: usize,
 }
@@ -85,19 +85,19 @@ pub struct SyncBuffer {
 
 impl SyncBuffer {
     /// Create a new buffer with the default 1s idle delay and 10K queue cap.
-    pub fn new(store: SurrealEventStore) -> (Self, JoinHandle<()>) {
+    pub fn new(store: Arc<dyn EventStore + Send + Sync>) -> (Self, JoinHandle<()>) {
         Self::with_delay_and_cap(store, DEFAULT_FLUSH_DELAY, DEFAULT_MAX_QUEUE_LEN)
     }
 
     /// Create a buffer with a custom idle delay (default cap). Useful for tests.
-    pub fn with_delay(store: SurrealEventStore, delay: Duration) -> (Self, JoinHandle<()>) {
+    pub fn with_delay(store: Arc<dyn EventStore + Send + Sync>, delay: Duration) -> (Self, JoinHandle<()>) {
         Self::with_delay_and_cap(store, delay, DEFAULT_MAX_QUEUE_LEN)
     }
 
     /// Create a buffer with custom delay AND cap. Used by tests that exercise
     /// the cap behavior without needing to enqueue 10K events.
     pub fn with_delay_and_cap(
-        store: SurrealEventStore,
+        store: Arc<dyn EventStore + Send + Sync>,
         delay: Duration,
         cap: usize,
     ) -> (Self, JoinHandle<()>) {
@@ -253,14 +253,99 @@ async fn do_flush(inner: &Inner) -> Result<Vec<Event>, BufferError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::{EventError, SurrealEventStore};
     use chrono::Utc;
+    use std::collections::VecDeque;
 
-    async fn test_store() -> SurrealEventStore {
+    async fn test_store() -> Arc<dyn EventStore + Send + Sync> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("buf.db");
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         std::mem::forget(dir);
-        SurrealEventStore::new(db)
+        Arc::new(SurrealEventStore::new(db))
+    }
+
+    /// Test-only mock that returns pre-canned responses to `append_batch` calls.
+    /// Captures every batch passed in so tests can assert exact call sequences.
+    struct ScriptedStore {
+        /// Pre-canned responses popped from the front in order. Panics if exhausted
+        /// (test setup bug — always queue enough responses).
+        responses: tokio::sync::Mutex<VecDeque<Result<(), EventError>>>,
+        /// Captured `append_batch` arguments, in call order.
+        received: tokio::sync::Mutex<Vec<Vec<NewEvent>>>,
+        /// Optional gate: if set, `append_batch` blocks on this Notify before
+        /// returning. Lets tests interleave a concurrent `append` with an
+        /// in-flight flush.
+        gate: Option<std::sync::Arc<tokio::sync::Notify>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EventStore for ScriptedStore {
+        async fn append_batch(&self, events: Vec<NewEvent>) -> Result<Vec<Event>, EventError> {
+            if let Some(gate) = &self.gate {
+                gate.notified().await;
+            }
+            self.received.lock().await.push(events.clone());
+            match self.responses.lock().await.pop_front() {
+                Some(Ok(())) => Ok(events.into_iter().map(synthesize_event).collect()),
+                Some(Err(e)) => Err(e),
+                None => panic!("ScriptedStore: no more pre-canned responses"),
+            }
+        }
+        // SyncBuffer never calls these — fail loudly if that ever changes:
+        async fn append(&self, _: NewEvent) -> Result<Event, EventError> {
+            unimplemented!("ScriptedStore: append never called by SyncBuffer")
+        }
+        async fn get_since(
+            &self,
+            _: chrono::DateTime<chrono::Utc>,
+            _: Option<&str>,
+        ) -> Result<Vec<Event>, EventError> {
+            unimplemented!()
+        }
+        async fn get_since_by_device(
+            &self,
+            _: chrono::DateTime<chrono::Utc>,
+            _: &str,
+        ) -> Result<Vec<Event>, EventError> {
+            unimplemented!()
+        }
+        async fn get_by_aggregate(&self, _: &str) -> Result<Vec<Event>, EventError> {
+            unimplemented!()
+        }
+        async fn purge_all(&self) -> Result<(), EventError> {
+            unimplemented!()
+        }
+    }
+
+    fn synthesize_event(ne: NewEvent) -> Event {
+        Event {
+            id: ne.id.unwrap_or_else(|| ulid::Ulid::new().to_string()),
+            event_type: ne.event_type,
+            aggregate_id: ne.aggregate_id,
+            timestamp: ne.timestamp,
+            device_id: ne.device_id,
+            payload: ne.payload,
+        }
+    }
+
+    fn scripted(responses: Vec<Result<(), EventError>>) -> Arc<dyn EventStore + Send + Sync> {
+        Arc::new(ScriptedStore {
+            responses: tokio::sync::Mutex::new(responses.into_iter().collect()),
+            received: tokio::sync::Mutex::new(Vec::new()),
+            gate: None,
+        })
+    }
+
+    fn scripted_with_gate(
+        responses: Vec<Result<(), EventError>>,
+        gate: std::sync::Arc<tokio::sync::Notify>,
+    ) -> Arc<ScriptedStore> {
+        Arc::new(ScriptedStore {
+            responses: tokio::sync::Mutex::new(responses.into_iter().collect()),
+            received: tokio::sync::Mutex::new(Vec::new()),
+            gate: Some(gate),
+        })
     }
 
     fn sample_event(aggregate_id: &str) -> NewEvent {
@@ -397,5 +482,210 @@ mod tests {
 
         let events = store.get_by_aggregate("n-shutdown").await.unwrap();
         assert_eq!(events.len(), 1, "shutdown should drain pending events");
+    }
+
+    #[tokio::test]
+    async fn flush_failure_keeps_events_in_queue_in_order() {
+        let store_raw = Arc::new(ScriptedStore {
+            responses: tokio::sync::Mutex::new(
+                vec![
+                    Err(EventError::Validation("scripted failure".into())),
+                    Ok(()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            received: tokio::sync::Mutex::new(Vec::new()),
+            gate: None,
+        });
+        let store: Arc<dyn EventStore + Send + Sync> = store_raw.clone();
+        let (buf, _h) = SyncBuffer::with_delay(store, Duration::from_secs(60));
+
+        buf.append(sample_event("e1")).await.unwrap();
+        buf.append(sample_event("e2")).await.unwrap();
+        buf.append(sample_event("e3")).await.unwrap();
+
+        // First flush fails — events should be re-queued.
+        let _ = buf.flush_now().await;
+        assert_eq!(buf.pending().await, 3, "events must stay queued after failure");
+
+        // Second flush succeeds — the same 3 events arrive in original order.
+        let flushed = buf.flush_now().await.unwrap();
+        assert_eq!(flushed.len(), 3);
+
+        let received = store_raw.received.lock().await;
+        assert_eq!(received.len(), 2);
+        let second_batch_ids: Vec<_> = received[1].iter().map(|e| e.aggregate_id.as_str()).collect();
+        assert_eq!(second_batch_ids, ["e1", "e2", "e3"]);
+    }
+
+    #[tokio::test]
+    async fn flush_failure_then_success_persists_in_order() {
+        let store_raw = Arc::new(ScriptedStore {
+            responses: tokio::sync::Mutex::new(
+                vec![
+                    Err(EventError::Validation("scripted failure".into())),
+                    Ok(()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            received: tokio::sync::Mutex::new(Vec::new()),
+            gate: None,
+        });
+        let store: Arc<dyn EventStore + Send + Sync> = store_raw.clone();
+        let (buf, _h) = SyncBuffer::with_delay(store, Duration::from_secs(60));
+
+        buf.append(sample_event("a1")).await.unwrap();
+        buf.append(sample_event("a2")).await.unwrap();
+
+        let _ = buf.flush_now().await;
+
+        // Subscribe AFTER the failed flush so `sub.recv()` only sees the
+        // success-path Flushed event below — broadcast::Receiver delivers
+        // events oldest-first, so subscribing earlier would surface the
+        // FlushFailed first and the assertion would never reach Flushed.
+        let mut sub = buf.subscribe();
+
+        let flushed = buf.flush_now().await.unwrap();
+        assert_eq!(flushed.len(), 2);
+
+        let received = store_raw.received.lock().await;
+        // Both attempts carried the same two events in the same order.
+        assert_eq!(received[0].len(), 2);
+        assert_eq!(received[1].len(), 2);
+        let first_ids: Vec<_> = received[0].iter().map(|e| e.aggregate_id.as_str()).collect();
+        let second_ids: Vec<_> = received[1].iter().map(|e| e.aggregate_id.as_str()).collect();
+        assert_eq!(first_ids, second_ids);
+        drop(received);
+
+        // A Flushed broadcast fired after the successful second flush.
+        let evt = tokio::time::timeout(Duration::from_millis(200), sub.recv())
+            .await
+            .expect("Flushed event should be buffered")
+            .unwrap();
+        assert_eq!(unwrap_flushed(evt), 2);
+    }
+
+    #[tokio::test]
+    async fn flush_failure_broadcasts_flush_failed_with_correct_count() {
+        let store = scripted(vec![Err(EventError::Validation("scripted failure".into()))]);
+        let (buf, _h) = SyncBuffer::with_delay(store, Duration::from_secs(60));
+        let mut sub = buf.subscribe();
+
+        buf.append(sample_event("f1")).await.unwrap();
+        buf.append(sample_event("f2")).await.unwrap();
+
+        let _ = buf.flush_now().await;
+
+        let evt = tokio::time::timeout(Duration::from_millis(200), sub.recv())
+            .await
+            .expect("FlushFailed event should be buffered")
+            .unwrap();
+        match evt {
+            BufferEvent::FlushFailed { requeued, error } => {
+                assert_eq!(requeued, 2);
+                assert!(!error.is_empty());
+            }
+            other => panic!("expected FlushFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_append_during_failed_flush_preserves_order() {
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let store_raw = scripted_with_gate(
+            vec![
+                Err(EventError::Validation("scripted failure".into())),
+                Ok(()),
+            ],
+            gate.clone(),
+        );
+        let store: Arc<dyn EventStore + Send + Sync> = store_raw.clone();
+        let (buf, _h) = SyncBuffer::with_delay(store, Duration::from_secs(60));
+
+        // Push 3 events and start a flush — it will block on the gate.
+        buf.append(sample_event("c1")).await.unwrap();
+        buf.append(sample_event("c2")).await.unwrap();
+        buf.append(sample_event("c3")).await.unwrap();
+
+        let buf2 = buf.clone();
+        let flush_task = tokio::spawn(async move { buf2.flush_now().await });
+
+        // Spin until the store has received the in-flight batch (gate blocked).
+        for _ in 0..200 {
+            if store_raw.received.lock().await.len() >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        // Append a 4th event while the flush is blocked inside append_batch.
+        buf.append(sample_event("c4")).await.unwrap();
+
+        // Release the gate — store returns Err, events re-queued at front.
+        gate.notify_one();
+        let _ = flush_task.await.unwrap();
+
+        // The gate guards EVERY append_batch call, not just the first. Notify
+        // it again so the success-path flush below isn't blocked. (Notify
+        // stores one permit; the next `notified().await` consumes it.)
+        gate.notify_one();
+
+        // Second flush (success): should see [c1, c2, c3, c4] in that order.
+        let flushed = buf.flush_now().await.unwrap();
+        assert_eq!(flushed.len(), 4);
+
+        let received = store_raw.received.lock().await;
+        assert_eq!(received.len(), 2);
+        let second_ids: Vec<_> = received[1].iter().map(|e| e.aggregate_id.as_str()).collect();
+        assert_eq!(second_ids, ["c1", "c2", "c3", "c4"]);
+    }
+
+    #[tokio::test]
+    async fn repeated_failures_recover_on_eventual_success() {
+        let store_raw = Arc::new(ScriptedStore {
+            responses: tokio::sync::Mutex::new(
+                vec![
+                    Err(EventError::Validation("fail 1".into())),
+                    Err(EventError::Validation("fail 2".into())),
+                    Ok(()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            received: tokio::sync::Mutex::new(Vec::new()),
+            gate: None,
+        });
+        let store: Arc<dyn EventStore + Send + Sync> = store_raw.clone();
+        let (buf, _h) = SyncBuffer::with_delay(store, Duration::from_secs(60));
+
+        buf.append(sample_event("r1")).await.unwrap();
+        buf.append(sample_event("r2")).await.unwrap();
+
+        // Three flush cycles: fail, fail, succeed.
+        let _ = buf.flush_now().await;
+        let _ = buf.flush_now().await;
+        // Subscribe just before the success flush — see the comment in
+        // `flush_failure_then_success_persists_in_order` for why we don't
+        // subscribe at construction time.
+        let mut sub = buf.subscribe();
+        let flushed = buf.flush_now().await.unwrap();
+        assert_eq!(flushed.len(), 2);
+        assert_eq!(buf.pending().await, 0);
+
+        let received = store_raw.received.lock().await;
+        assert_eq!(received.len(), 3);
+        // All three attempts carried the same two events.
+        assert_eq!(received[0], received[1]);
+        assert_eq!(received[1], received[2]);
+        drop(received);
+
+        // Final Flushed broadcast reflects the successful third flush.
+        let evt = tokio::time::timeout(Duration::from_millis(200), sub.recv())
+            .await
+            .expect("Flushed event should be buffered after eventual success")
+            .unwrap();
+        assert_eq!(unwrap_flushed(evt), 2);
     }
 }

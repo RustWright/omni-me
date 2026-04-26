@@ -159,7 +159,7 @@ pub fn run() {
                 // Phase 2 sync pipeline: buffer -> pusher -> retry engine
                 // wired together, plus a network monitor feeding hints in.
                 let sync_client = SyncClient::new(server_url.clone(), device_id.clone());
-                let (sync_buffer, _buffer_task) = SyncBuffer::new(event_store.clone());
+                let (sync_buffer, _buffer_task) = SyncBuffer::new(Arc::new(event_store.clone()));
                 let (push_debouncer, _pusher_task) =
                     PushDebouncer::spawn(sync_client.clone(), db.clone(), &sync_buffer);
                 let (retry_engine, _retry_task) =

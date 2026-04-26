@@ -26,7 +26,7 @@ pub struct Event {
 }
 
 /// An event to be appended — supply an ID to preserve it, or leave as None to auto-generate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewEvent {
     #[serde(default)]
     pub id: Option<String>,

@@ -42,6 +42,7 @@ mod tests {
     use super::super::retry::{RetryEngine, RetryEvent};
     use crate::events::{EventStore, NewEvent, SurrealEventStore};
     use chrono::Utc;
+    use std::sync::Arc;
     use std::time::Duration;
 
     async fn test_db() -> crate::db::Database {
@@ -80,7 +81,7 @@ mod tests {
             .unwrap();
 
         let client = SyncClient::new("http://127.0.0.1:1".into(), "device-x".into());
-        let (buffer, _bh) = SyncBuffer::with_delay(store, Duration::from_secs(60));
+        let (buffer, _bh) = SyncBuffer::with_delay(Arc::new(store), Duration::from_secs(60));
         let (pusher, _ph) = PushDebouncer::spawn_with_delay(
             client.clone(),
             db.clone(),
