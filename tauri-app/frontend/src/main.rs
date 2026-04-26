@@ -4,6 +4,7 @@ mod duration;
 mod journal_template;
 mod pages;
 mod reorder;
+mod timer;
 mod types;
 pub mod user_date;
 

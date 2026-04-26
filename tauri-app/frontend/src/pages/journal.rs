@@ -7,8 +7,13 @@ use dioxus::prelude::*;
 use crate::bridge;
 use crate::components::editor::Editor;
 use crate::journal_template;
+use crate::timer::sleep_ms;
 use crate::types::JournalEntryItem;
 use crate::user_date::UserDate;
+
+/// How long the editor must be quiet before an auto-save fires. Matches
+/// Cycle 2's "1s local debounce" decision (project.md: Obsidian-equivalent).
+const AUTOSAVE_DEBOUNCE_MS: i32 = 1000;
 
 /// Second-level tabs inside the Journal feature.
 ///
@@ -106,6 +111,15 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
     let mut llm_result = use_signal(|| None::<crate::types::LlmResult>);
     let mut llm_error = use_signal(|| None::<String>);
     let mut content = use_signal(String::new);
+    // Mirrors what's currently persisted to the backend. Auto-save compares
+    // `content` against this to decide whether a save is needed; it's also
+    // updated by the load future / manual save / reopen / close handlers so
+    // those programmatic content changes don't trigger phantom saves.
+    let mut last_saved_content = use_signal(String::new);
+    // Generation counter so a newer keystroke can cancel an earlier pending
+    // debounced save: each scheduled save captures its gen at schedule time
+    // and bails out post-sleep if the counter has moved on.
+    let mut save_generation = use_signal(|| 0u64);
 
     let is_today_view = date == today;
 
@@ -115,14 +129,20 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
         async move {
             match bridge::invoke_get_journal_by_date(&d).await {
                 Ok(Some(e)) => {
-                    content.set(e.raw_text.clone());
+                    let raw = e.raw_text.clone();
+                    last_saved_content.set(raw.clone());
+                    content.set(raw);
                     entry.set(Some(e));
                     error_msg.set(None);
                 }
                 Ok(None) => {
                     // New entry: prime both signals with the default template so
-                    // an immediate Save without keystrokes still persists it.
-                    content.set(journal_template::render(&d));
+                    // an immediate Save without keystrokes still persists it,
+                    // and so auto-save doesn't treat the template-vs-empty
+                    // diff as user input.
+                    let template = journal_template::render(&d);
+                    last_saved_content.set(template.clone());
+                    content.set(template);
                     entry.set(None);
                     error_msg.set(None);
                 }
@@ -131,6 +151,84 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
             loading.set(false);
         }
     });
+
+    // Auto-save: any divergence between `content` and `last_saved_content`
+    // schedules a debounced save. The generation counter cancels older
+    // pending saves when the user types again before the debounce expires.
+    {
+        let date_for_autosave = date.clone();
+        use_effect(move || {
+            let current = content.read().clone();
+            // peek() avoids subscribing to last_saved_content — we only re-run
+            // on user input (content changes), not on our own write-back when
+            // a save resolves. That self-trigger would schedule a redundant
+            // pass that gen-cancels itself one tick later.
+            if current == *last_saved_content.peek() {
+                return;
+            }
+            // Closed journals must not auto-save (the manual Save button is
+            // also disabled in this state).
+            if entry.read().as_ref().map(|e| e.closed).unwrap_or(false) {
+                return;
+            }
+
+            let scheduled_gen = {
+                let mut g = save_generation.write();
+                *g += 1;
+                *g
+            };
+
+            let date = date_for_autosave.clone();
+            spawn(async move {
+                sleep_ms(AUTOSAVE_DEBOUNCE_MS).await;
+
+                // Stale check: a newer keystroke scheduled a fresher save
+                // while we were waiting. Bail out and let it run instead.
+                if *save_generation.peek() != scheduled_gen {
+                    return;
+                }
+                // Re-confirm not-closed: a Close Day click could have landed
+                // during the 1s wait.
+                if entry.peek().as_ref().map(|e| e.closed).unwrap_or(false) {
+                    return;
+                }
+
+                let snapshot = content.peek().clone();
+                let jid = entry.peek().as_ref().map(|e| e.journal_id.clone());
+
+                saving.set(true);
+                let result = if let Some(id) = jid {
+                    bridge::invoke_update_journal_entry(&id, &snapshot)
+                        .await
+                        .map(|_| None)
+                } else {
+                    bridge::invoke_create_journal_entry(&date, &snapshot)
+                        .await
+                        .map(Some)
+                };
+                saving.set(false);
+
+                match result {
+                    Ok(maybe_created) => {
+                        if let Some(created) = maybe_created {
+                            entry.set(Some(created));
+                        }
+                        last_saved_content.set(snapshot.clone());
+                        // Skip-if-stale: only flip the editor's dirty state to
+                        // clean when the persisted snapshot still matches the
+                        // live content. If the user typed during the save, a
+                        // newer auto-save is already scheduled — let it clean.
+                        if *content.peek() == snapshot {
+                            bridge::js_mark_editor_clean();
+                        }
+                    }
+                    Err(e) => {
+                        save_status.set(Some(format!("Auto-save failed: {e}")));
+                    }
+                }
+            });
+        });
+    }
 
     rsx! {
         div { class: "animate-in fade-in duration-200",
@@ -225,7 +323,9 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                                     && let Ok(Some(refreshed)) =
                                                         bridge::invoke_get_journal_by_date(&date).await
                                                 {
-                                                    content.set(refreshed.raw_text.clone());
+                                                    let raw = refreshed.raw_text.clone();
+                                                    last_saved_content.set(raw.clone());
+                                                    content.set(raw);
                                                     entry.set(Some(refreshed));
                                                 }
                                             });
@@ -248,7 +348,9 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                                     && let Ok(Some(refreshed)) =
                                                         bridge::invoke_get_journal_by_date(&date).await
                                                 {
-                                                    content.set(refreshed.raw_text.clone());
+                                                    let raw = refreshed.raw_text.clone();
+                                                    last_saved_content.set(raw.clone());
+                                                    content.set(raw);
                                                     entry.set(Some(refreshed));
                                                 }
                                             });
@@ -286,7 +388,13 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                             };
                                             saving.set(false);
                                             match result {
-                                                Ok(()) => save_status.set(Some("Saved".into())),
+                                                Ok(()) => {
+                                                    last_saved_content.set(text.clone());
+                                                    save_status.set(Some("Saved".into()));
+                                                    if *content.read() == text {
+                                                        bridge::js_mark_editor_clean();
+                                                    }
+                                                }
                                                 Err(e) => save_status.set(Some(format!("Save failed: {e}"))),
                                             }
                                         });

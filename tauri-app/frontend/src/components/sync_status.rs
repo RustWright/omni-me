@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::bridge;
+use crate::timer::sleep_ms;
 use crate::types::{SyncState, SyncStatusSnapshot};
 
 /// Small header chip that reflects the Track D (Phase 2.6) background sync
@@ -72,21 +73,3 @@ pub fn SyncStatusIndicator() -> Element {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-async fn sleep_ms(ms: i32) {
-    if let Some(window) = web_sys::window() {
-        let promise = js_sys::Promise::new(&mut |resolve, _| {
-            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms);
-        });
-        let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
-    }
-    // If window is None we're not in a browser context; drop silently so the
-    // caller's loop still advances on a future poll.
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-async fn sleep_ms(ms: i32) {
-    // Native fallback — exists so non-wasm check builds don't fail even
-    // though the frontend is only ever built as wasm.
-    let _ = ms;
-}
