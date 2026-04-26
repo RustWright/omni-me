@@ -249,17 +249,10 @@ fn walk_into(dir: &Path, out: &mut Vec<VaultEntry>) {
 /// The set of frontmatter keys omni-me understands natively. Anything else
 /// ends up in `legacy_properties`.
 ///
-/// The three complete-day keys (`homework_for_life` / `grateful_for` /
-/// `learnt_today`) are already parsed from `raw_text` by the projection's
-/// `is_complete()` scan, so they don't need to be lifted out — we keep them
-/// in the body/frontmatter for round-trip preservation.
-const KNOWN_KEYS: &[&str] = &[
-    "date",
-    "tags",
-    "homework_for_life",
-    "grateful_for",
-    "learnt_today",
-];
+/// Reflection keys (`homework_for_life` / `grateful_for` / `learnt_today`) are
+/// also "known" but live in `events::COMPLETE_PROPERTIES` because the projection
+/// owns them; the classifier at the use site checks both lists.
+const NATIVE_FRONTMATTER_KEYS: [&str; 2] = ["date", "tags"];
 
 /// Mapped view of a note's frontmatter: known schema fields lifted out,
 /// everything else preserved as a legacy JSON blob for round-trip fidelity.
@@ -270,8 +263,9 @@ pub struct MappedFrontmatter {
     /// Parsed `tags` property. Accepts a YAML list *or* a single string
     /// (Obsidian allows both forms). Empty when absent.
     pub tags: Vec<String>,
-    /// Everything in the frontmatter that isn't in `KNOWN_KEYS`, as a JSON
-    /// object. `None` when the frontmatter had no unknown keys (or was
+    /// Everything in the frontmatter that isn't a native key (`date`, `tags`)
+    /// or a reflection key (see `events::COMPLETE_PROPERTIES`), preserved as
+    /// a JSON object. `None` when the frontmatter had no unknown keys (or was
     /// entirely absent).
     pub legacy_properties: Option<JsonValue>,
 }
@@ -297,7 +291,10 @@ pub fn map_frontmatter(fm: &JsonValue) -> MappedFrontmatter {
 
     let mut legacy = serde_json::Map::new();
     for (k, v) in map {
-        if !KNOWN_KEYS.contains(&k.as_str()) {
+        let key = k.as_str();
+        if !NATIVE_FRONTMATTER_KEYS.contains(&key)
+            && !crate::events::COMPLETE_PROPERTIES.contains(&key)
+        {
             legacy.insert(k.clone(), v.clone());
         }
     }

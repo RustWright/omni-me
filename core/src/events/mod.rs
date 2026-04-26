@@ -7,5 +7,5 @@ mod routines_projection;
 pub use store::{Event, NewEvent, EventStore, SurrealEventStore, EventError};
 pub use types::*;
 pub use projection::{Projection, ProjectionRunner};
-pub use notes_projection::NotesProjection;
+pub use notes_projection::{COMPLETE_PROPERTIES, NotesProjection};
 pub use routines_projection::RoutinesProjection;

@@ -11,7 +11,9 @@ use super::store::{Event, EventError};
 pub struct NotesProjection;
 
 /// The three manual journal properties whose presence signals "day complete".
-const COMPLETE_PROPERTIES: [&str; 3] = ["homework_for_life", "grateful_for", "learnt_today"];
+/// Public so `import` can use the same list when classifying frontmatter keys
+/// — adding a 4th reflection property updates both call sites from one edit.
+pub const COMPLETE_PROPERTIES: [&str; 3] = ["homework_for_life", "grateful_for", "learnt_today"];
 
 #[async_trait]
 impl Projection for NotesProjection {
