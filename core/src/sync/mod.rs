@@ -7,7 +7,9 @@ mod retry;
 mod status;
 
 pub use accelerator::wire as wire_accelerator;
-pub use buffer::{BufferError, FlushResult, SyncBuffer, DEFAULT_FLUSH_DELAY};
+pub use buffer::{
+    BufferError, BufferEvent, SyncBuffer, DEFAULT_FLUSH_DELAY, DEFAULT_MAX_QUEUE_LEN,
+};
 pub use client::{
     PullOutcome, PullRequest, PullResponse, PushOutcome, PushRequest, PushResponse, SyncClient,
     SyncError, SyncResult,

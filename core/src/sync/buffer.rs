@@ -25,23 +25,44 @@ use crate::events::{Event, EventStore, NewEvent, SurrealEventStore};
 /// Default idle delay before buffered events are flushed.
 pub const DEFAULT_FLUSH_DELAY: Duration = Duration::from_secs(1);
 
-/// Channel capacity for flush notifications. Sized for the likely max number
-/// of consumers (push debouncer + status reporter + integration tests).
-const FLUSH_CHANNEL_CAPACITY: usize = 16;
+/// Default maximum queued events. `append` returns `BufferError::Overflow`
+/// when the queue is at capacity, preventing unbounded memory growth from a
+/// caller pushing faster than the flush task can drain.
+pub const DEFAULT_MAX_QUEUE_LEN: usize = 10_000;
 
-/// Result of a flush operation.
+/// Channel capacity for buffer event notifications. Sized for the likely max
+/// number of consumers (push debouncer + status reporter + integration tests).
+const EVENT_CHANNEL_CAPACITY: usize = 16;
+
+/// State changes the buffer broadcasts on its event channel. Subscribers
+/// match on the variant to decide how to react: `Flushed` triggers a push,
+/// `FlushFailed` and `Overflow` are signals that something needs operator
+/// attention without papering over the failure.
 #[derive(Debug, Clone)]
-pub struct FlushResult {
-    /// Number of events that were successfully appended to the store.
-    pub appended: usize,
-    /// Timestamp the flush completed.
-    pub completed_at: chrono::DateTime<chrono::Utc>,
+pub enum BufferEvent {
+    /// A flush completed successfully and `appended` events were persisted.
+    Flushed {
+        appended: usize,
+        completed_at: chrono::DateTime<chrono::Utc>,
+    },
+    /// A flush attempt failed; the events were re-queued at the front so the
+    /// next flush retries them. `requeued` is the number of events put back.
+    FlushFailed { error: String, requeued: usize },
+    /// An `append` call was rejected because the queue was at capacity. The
+    /// rejected event's `aggregate_id` is included so consumers can
+    /// correlate; `queue_len` is the queue size at rejection time.
+    Overflow {
+        rejected_aggregate_id: String,
+        queue_len: usize,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum BufferError {
     #[error("buffer flush failed: {0}")]
     Flush(String),
+    #[error("buffer at capacity ({queue_len} events queued)")]
+    Overflow { queue_len: usize },
     #[error("buffer already shut down")]
     Shutdown,
 }
@@ -50,9 +71,10 @@ struct Inner {
     queue: Mutex<VecDeque<NewEvent>>,
     idle: Notify,
     shutdown: Notify,
-    flushed_tx: broadcast::Sender<FlushResult>,
+    events_tx: broadcast::Sender<BufferEvent>,
     store: SurrealEventStore,
     delay: Duration,
+    cap: usize,
 }
 
 /// Debounced append buffer. Cheap to clone — shares underlying state.
@@ -62,21 +84,32 @@ pub struct SyncBuffer {
 }
 
 impl SyncBuffer {
-    /// Create a new buffer with the default 1s idle delay and spawn its flush task.
+    /// Create a new buffer with the default 1s idle delay and 10K queue cap.
     pub fn new(store: SurrealEventStore) -> (Self, JoinHandle<()>) {
-        Self::with_delay(store, DEFAULT_FLUSH_DELAY)
+        Self::with_delay_and_cap(store, DEFAULT_FLUSH_DELAY, DEFAULT_MAX_QUEUE_LEN)
     }
 
-    /// Create a buffer with a custom idle delay. Useful for tests.
+    /// Create a buffer with a custom idle delay (default cap). Useful for tests.
     pub fn with_delay(store: SurrealEventStore, delay: Duration) -> (Self, JoinHandle<()>) {
-        let (flushed_tx, _rx) = broadcast::channel(FLUSH_CHANNEL_CAPACITY);
+        Self::with_delay_and_cap(store, delay, DEFAULT_MAX_QUEUE_LEN)
+    }
+
+    /// Create a buffer with custom delay AND cap. Used by tests that exercise
+    /// the cap behavior without needing to enqueue 10K events.
+    pub fn with_delay_and_cap(
+        store: SurrealEventStore,
+        delay: Duration,
+        cap: usize,
+    ) -> (Self, JoinHandle<()>) {
+        let (events_tx, _rx) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         let inner = Arc::new(Inner {
             queue: Mutex::new(VecDeque::new()),
             idle: Notify::new(),
             shutdown: Notify::new(),
-            flushed_tx,
+            events_tx,
             store,
             delay,
+            cap,
         });
         let buffer = Self { inner: inner.clone() };
         let handle = tokio::spawn(flush_loop(inner));
@@ -84,10 +117,22 @@ impl SyncBuffer {
     }
 
     /// Enqueue an event. Resets the idle timer — the buffer will flush after
-    /// `delay` elapses without further enqueues.
+    /// `delay` elapses without further enqueues. Returns
+    /// `BufferError::Overflow` (and broadcasts a corresponding `Overflow`
+    /// event) if the queue is at capacity, rather than growing without bound.
     pub async fn append(&self, event: NewEvent) -> Result<(), BufferError> {
         {
             let mut q = self.inner.queue.lock().await;
+            if q.len() >= self.inner.cap {
+                let queue_len = q.len();
+                let aggregate_id = event.aggregate_id.clone();
+                drop(q);
+                let _ = self.inner.events_tx.send(BufferEvent::Overflow {
+                    rejected_aggregate_id: aggregate_id,
+                    queue_len,
+                });
+                return Err(BufferError::Overflow { queue_len });
+            }
             q.push_back(event);
         }
         self.inner.idle.notify_one();
@@ -100,11 +145,11 @@ impl SyncBuffer {
         do_flush(&self.inner).await
     }
 
-    /// Subscribe to flush completion events. Each subscriber gets its own
-    /// receiver; lagging subscribers miss old events silently (sufficient for
-    /// edge-triggered debouncers).
-    pub fn subscribe(&self) -> broadcast::Receiver<FlushResult> {
-        self.inner.flushed_tx.subscribe()
+    /// Subscribe to buffer events (`Flushed`, `FlushFailed`, `Overflow`).
+    /// Each subscriber gets its own receiver; lagging subscribers miss old
+    /// events silently (sufficient for edge-triggered debouncers).
+    pub fn subscribe(&self) -> broadcast::Receiver<BufferEvent> {
+        self.inner.events_tx.subscribe()
     }
 
     /// Number of events currently awaiting flush. Useful for status reporting.
@@ -122,12 +167,16 @@ impl SyncBuffer {
 }
 
 /// Background task: wait for an idle-quiet window, then flush.
+///
+/// Failures from `do_flush` are intentionally not handled here — the failing
+/// events are re-queued for retry inside `do_flush`, and a `FlushFailed`
+/// event is broadcast on the buffer's event channel for any consumer that
+/// wants to surface the error (e.g. a status reporter). Discarding the
+/// `Result` here just means "nothing further to do at the loop level."
 async fn flush_loop(inner: Arc<Inner>) {
     loop {
         tokio::select! {
             _ = inner.shutdown.notified() => {
-                // Final drain in case anything snuck in between shutdown's
-                // flush and the notify.
                 let _ = do_flush(&inner).await;
                 return;
             }
@@ -166,19 +215,39 @@ async fn do_flush(inner: &Inner) -> Result<Vec<Event>, BufferError> {
         return Ok(vec![]);
     }
 
-    let appended = inner
-        .store
-        .append_batch(events)
-        .await
-        .map_err(|e| BufferError::Flush(e.to_string()))?;
+    // Clone before passing to `append_batch` — the store consumes the Vec by
+    // value, so without a copy a failure would lose the events. The clone is
+    // O(N) on the failure path but never happens on the success path because
+    // we use the cloned copy only inside the error branch.
+    let count = events.len();
+    let events_for_retry = events.clone();
 
-    // Notify subscribers (don't care if nobody is listening).
-    let _ = inner.flushed_tx.send(FlushResult {
-        appended: appended.len(),
-        completed_at: chrono::Utc::now(),
-    });
-
-    Ok(appended)
+    match inner.store.append_batch(events).await {
+        Ok(appended) => {
+            let _ = inner.events_tx.send(BufferEvent::Flushed {
+                appended: appended.len(),
+                completed_at: chrono::Utc::now(),
+            });
+            Ok(appended)
+        }
+        Err(e) => {
+            // Re-queue at the front so the next flush retries them in order.
+            // Iterating in reverse + push_front preserves the original order
+            // at the head of the queue.
+            {
+                let mut q = inner.queue.lock().await;
+                for ev in events_for_retry.into_iter().rev() {
+                    q.push_front(ev);
+                }
+            }
+            let err_msg = e.to_string();
+            let _ = inner.events_tx.send(BufferEvent::FlushFailed {
+                error: err_msg.clone(),
+                requeued: count,
+            });
+            Err(BufferError::Flush(err_msg))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -209,6 +278,14 @@ mod tests {
         }
     }
 
+    /// Helper to extract `appended` from a `BufferEvent::Flushed` or panic.
+    fn unwrap_flushed(evt: BufferEvent) -> usize {
+        match evt {
+            BufferEvent::Flushed { appended, .. } => appended,
+            other => panic!("expected Flushed, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn flushes_after_idle_window() {
         let store = test_store().await;
@@ -218,11 +295,11 @@ mod tests {
         buf.append(sample_event("n1")).await.unwrap();
         assert_eq!(buf.pending().await, 1);
 
-        let flushed = tokio::time::timeout(Duration::from_millis(500), sub.recv())
+        let evt = tokio::time::timeout(Duration::from_millis(500), sub.recv())
             .await
             .expect("flush notification should fire")
             .unwrap();
-        assert_eq!(flushed.appended, 1);
+        assert_eq!(unwrap_flushed(evt), 1);
         assert_eq!(buf.pending().await, 0);
 
         // Verify durability.
@@ -241,15 +318,59 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
 
-        let flushed = tokio::time::timeout(Duration::from_millis(500), sub.recv())
+        let evt = tokio::time::timeout(Duration::from_millis(500), sub.recv())
             .await
             .expect("flush notification should fire")
             .unwrap();
-        assert_eq!(flushed.appended, 5, "all 5 events should coalesce into one flush");
+        assert_eq!(unwrap_flushed(evt), 5, "all 5 events should coalesce into one flush");
 
         // Make sure a second flush doesn't fire spuriously.
         let second = tokio::time::timeout(Duration::from_millis(100), sub.recv()).await;
         assert!(second.is_err(), "no second flush when buffer is empty");
+    }
+
+    #[tokio::test]
+    async fn cap_rejects_appends_at_capacity() {
+        // Use a tiny cap so we don't have to enqueue 10K events to test.
+        let store = test_store().await;
+        let (buf, _h) =
+            SyncBuffer::with_delay_and_cap(store, Duration::from_secs(60), 3);
+        let mut sub = buf.subscribe();
+
+        // Fill to cap.
+        for i in 0..3 {
+            buf.append(sample_event(&format!("n{i}"))).await.unwrap();
+        }
+        assert_eq!(buf.pending().await, 3);
+
+        // Next append must be rejected.
+        let err = buf
+            .append(sample_event("overflow"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, BufferError::Overflow { queue_len: 3 }),
+            "expected Overflow with queue_len=3, got: {err:?}"
+        );
+
+        // And an Overflow event is broadcast.
+        let evt = tokio::time::timeout(Duration::from_millis(200), sub.recv())
+            .await
+            .expect("Overflow event should fire")
+            .unwrap();
+        assert!(
+            matches!(
+                &evt,
+                BufferEvent::Overflow {
+                    rejected_aggregate_id,
+                    queue_len: 3,
+                } if rejected_aggregate_id == "overflow"
+            ),
+            "expected Overflow, got {evt:?}"
+        );
+
+        // Queue contents are unchanged after rejection.
+        assert_eq!(buf.pending().await, 3);
     }
 
     #[tokio::test]

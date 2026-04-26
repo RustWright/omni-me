@@ -117,13 +117,19 @@ impl PushDebouncer {
 }
 
 async fn forward_flush(
-    mut rx: broadcast::Receiver<super::buffer::FlushResult>,
+    mut rx: broadcast::Receiver<super::buffer::BufferEvent>,
     inner: Arc<Inner>,
 ) {
+    use super::buffer::BufferEvent;
     loop {
         match rx.recv().await {
-            Ok(_) => {
+            Ok(BufferEvent::Flushed { .. }) => {
                 inner.trigger.notify_one();
+            }
+            Ok(BufferEvent::FlushFailed { .. }) | Ok(BufferEvent::Overflow { .. }) => {
+                // Local persist failed or backpressure — nothing to push, so
+                // don't trigger. The error is broadcast separately for any
+                // upstream surface that wants to react.
             }
             Err(broadcast::error::RecvError::Closed) => return,
             Err(broadcast::error::RecvError::Lagged(_)) => {
