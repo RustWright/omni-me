@@ -4,6 +4,7 @@ use tauri::State;
 use omni_me_core::db::queries::{self, CompletionRow, RoutineGroupRow, RoutineItemRow};
 use omni_me_core::events::{EventStore, EventType, NewEvent};
 
+use super::shared::append_and_apply;
 use crate::AppState;
 
 // -----------------------------------------------------------------------------
@@ -331,38 +332,6 @@ pub async fn wipe_all_data(
     state
         .projections
         .rebuild()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-// -----------------------------------------------------------------------------
-// Shared helper: append + apply through projections.
-// -----------------------------------------------------------------------------
-
-async fn append_and_apply(
-    state: &AppState,
-    event_type: EventType,
-    aggregate_id: String,
-    payload: serde_json::Value,
-) -> Result<(), String> {
-    let event = state
-        .event_store
-        .append(NewEvent {
-            id: None,
-            event_type: event_type.to_string(),
-            aggregate_id,
-            timestamp: Utc::now(),
-            device_id: state.device_id.clone(),
-            payload,
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-
-    state
-        .projections
-        .apply_events(&[event])
         .await
         .map_err(|e| e.to_string())?;
 
