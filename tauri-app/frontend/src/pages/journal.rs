@@ -7,13 +7,9 @@ use dioxus::prelude::*;
 use crate::bridge;
 use crate::components::editor::Editor;
 use crate::journal_template;
-use crate::timer::sleep_ms;
+use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
 use crate::types::JournalEntryItem;
 use crate::user_date::UserDate;
-
-/// How long the editor must be quiet before an auto-save fires. Matches
-/// Cycle 2's "1s local debounce" decision (project.md: Obsidian-equivalent).
-const AUTOSAVE_DEBOUNCE_MS: i32 = 1000;
 
 /// Second-level tabs inside the Journal feature.
 ///

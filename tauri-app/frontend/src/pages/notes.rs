@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::editor::Editor;
+use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
 use crate::types::GenericNoteItem;
 
 /// Second-level tabs inside the Notes feature.
@@ -299,6 +300,18 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
     let mut saving = use_signal(|| false);
     let mut save_status = use_signal(|| None::<String>);
     let mut fetch_error = use_signal(|| None::<String>);
+    // Runtime-tracked id. Starts as the prop value, gets populated after the
+    // first manual Save creates a new note. This is what auto-save and
+    // subsequent manual Saves consult — without it, a second click on a
+    // never-created note would create a duplicate.
+    let mut local_note_id = use_signal(|| note_id.clone());
+    // Mirrors the body that was last persisted to the backend. Auto-save
+    // diffs `content` against this; load and successful save both update it
+    // so programmatic content changes don't trigger phantom saves.
+    let mut last_saved_content = use_signal(String::new);
+    // Generation counter so a newer keystroke can cancel an older pending
+    // save (each scheduled save bails if `save_generation` has moved on).
+    let mut save_generation = use_signal(|| 0u64);
 
     let note_id_for_load = note_id.clone();
     let _load = use_future(move || {
@@ -308,14 +321,61 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                 match bridge::invoke_get_generic_note(&id).await {
                     Ok(n) => {
                         title.set(n.title);
-                        content.set(n.raw_text.clone());
-                        initial_content.set(n.raw_text);
+                        let raw = n.raw_text.clone();
+                        last_saved_content.set(raw.clone());
+                        content.set(raw.clone());
+                        initial_content.set(raw);
                     }
                     Err(e) => fetch_error.set(Some(e)),
                 }
                 loading.set(false);
             }
         }
+    });
+
+    // Auto-save (option ii): only runs once the note has an id. New-note
+    // creation still requires a manual Save click; after that, local_note_id
+    // is populated and this effect takes over for body updates.
+    use_effect(move || {
+        let current = content.read().clone();
+        if current == *last_saved_content.peek() {
+            return;
+        }
+        // Bail if we don't have an id yet — manual Save handles creation.
+        let nid = match local_note_id.peek().clone() {
+            Some(id) => id,
+            None => return,
+        };
+
+        let scheduled_gen = {
+            let mut g = save_generation.write();
+            *g += 1;
+            *g
+        };
+
+        spawn(async move {
+            sleep_ms(AUTOSAVE_DEBOUNCE_MS).await;
+            if *save_generation.peek() != scheduled_gen {
+                return;
+            }
+            let snapshot = content.peek().clone();
+
+            saving.set(true);
+            let result = bridge::invoke_update_generic_note(&nid, &snapshot).await;
+            saving.set(false);
+
+            match result {
+                Ok(()) => {
+                    last_saved_content.set(snapshot.clone());
+                    if *content.peek() == snapshot {
+                        bridge::js_mark_editor_clean();
+                    }
+                }
+                Err(e) => {
+                    save_status.set(Some(format!("Auto-save failed: {e}")));
+                }
+            }
+        });
     });
 
     rsx! {
@@ -331,39 +391,50 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                 input {
                     class: "flex-1 px-3 py-2 bg-transparent border-b border-white/10 text-lg font-bold text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
                     r#type: "text",
-                    placeholder: if is_new { "Untitled note" } else { "Title" },
+                    placeholder: if local_note_id.read().is_none() { "Untitled note" } else { "Title" },
                     value: "{title}",
                     oninput: move |e| title.set(e.value()),
                 }
                 button {
                     class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50 shrink-0",
                     disabled: *saving.read() || title.read().trim().is_empty(),
-                    onclick: {
-                        let id = note_id.clone();
-                        move |_| {
-                            let id = id.clone();
-                            saving.set(true);
-                            save_status.set(None);
-                            spawn(async move {
-                                let t = title.read().clone();
-                                let body = content.read().clone();
-                                let result = if let Some(nid) = id {
-                                    let update = bridge::invoke_update_generic_note(&nid, &body).await;
-                                    if update.is_ok() {
-                                        bridge::invoke_rename_generic_note(&nid, &t).await
-                                    } else {
-                                        update
-                                    }
+                    onclick: move |_| {
+                        let existing_id = local_note_id.peek().clone();
+                        saving.set(true);
+                        save_status.set(None);
+                        spawn(async move {
+                            let t = title.read().clone();
+                            let body = content.read().clone();
+                            let outcome = if let Some(nid) = existing_id {
+                                let update = bridge::invoke_update_generic_note(&nid, &body).await;
+                                if update.is_ok() {
+                                    bridge::invoke_rename_generic_note(&nid, &t).await
                                 } else {
-                                    bridge::invoke_create_generic_note(&t, &body).await.map(|_| ())
-                                };
-                                saving.set(false);
-                                match result {
-                                    Ok(()) => save_status.set(Some("Saved".into())),
-                                    Err(e) => save_status.set(Some(format!("Save failed: {e}"))),
+                                    update
                                 }
-                            });
-                        }
+                            } else {
+                                // First save creates the note. Capture the
+                                // returned id so subsequent edits run through
+                                // the update path (and auto-save) instead of
+                                // creating duplicates.
+                                bridge::invoke_create_generic_note(&t, &body)
+                                    .await
+                                    .map(|created| {
+                                        local_note_id.set(Some(created.id));
+                                    })
+                            };
+                            saving.set(false);
+                            match outcome {
+                                Ok(()) => {
+                                    last_saved_content.set(body.clone());
+                                    save_status.set(Some("Saved".into()));
+                                    if *content.peek() == body {
+                                        bridge::js_mark_editor_clean();
+                                    }
+                                }
+                                Err(e) => save_status.set(Some(format!("Save failed: {e}"))),
+                            }
+                        });
                     },
                     if *saving.read() { "Saving..." } else { "Save" }
                 }
