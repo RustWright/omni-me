@@ -14,10 +14,10 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use omni_me_core::db::queries;
-use omni_me_core::events::{EventStore, EventType, NewEvent};
+use omni_me_core::events::{EventStore, EventType, NewEvent, ProjectionRunner};
 use omni_me_core::import::{
-    classify_with_frontmatter, map_frontmatter, parse_date_prefix, parse_markdown, walk_vault,
-    NoteKind, VaultEntry,
+    NoteKind, VaultEntry, classify_with_frontmatter, map_frontmatter, parse_date_prefix,
+    parse_markdown, walk_vault,
 };
 
 use crate::AppState;
@@ -70,8 +70,8 @@ pub async fn preview_import(
     let summary = scan_for_preview(root).await?;
     // Canonicalize the scanned root and remember it. `commit_import` later
     // refuses any path that doesn't resolve under this root.
-    let canonical_root = std::fs::canonicalize(&summary.root)
-        .map_err(|e| format!("canonicalize root: {e}"))?;
+    let canonical_root =
+        std::fs::canonicalize(&summary.root).map_err(|e| format!("canonicalize root: {e}"))?;
     *state.last_import_root.lock().await = Some(canonical_root);
     Ok(summary)
 }
@@ -213,18 +213,61 @@ pub async fn commit_import(
         .clone()
         .ok_or_else(|| "no vault has been previewed in this session".to_string())?;
 
-    let mut journal_created = 0usize;
-    let mut generic_created = 0usize;
+    commit_import_inner(
+        &state.event_store,
+        &state.projections,
+        &state.device_id,
+        &scanned_root,
+        rows,
+    )
+    .await
+}
+
+/// Pure orchestration: build events from rows, write the batch, tally counts.
+/// Separated from the Tauri command so tests don't need a full `AppState`.
+async fn commit_import_inner(
+    event_store: &dyn EventStore,
+    projections: &ProjectionRunner,
+    device_id: &str,
+    scanned_root: &Path,
+    rows: Vec<AcceptedRow>,
+) -> Result<CommitSummary, String> {
+    // Phase 1: parse every row, collecting events to write + per-row errors.
+    // build_event_for_row never touches the DB, so a parse failure on row N
+    // leaves rows 1..N-1's events queued for the batched write at the end.
+    let mut new_events: Vec<NewEvent> = Vec::with_capacity(rows.len());
+    let mut event_kinds: Vec<CommittedKind> = Vec::with_capacity(rows.len());
     let mut errors: Vec<String> = Vec::new();
 
     for row in rows {
-        match commit_one(&state, &scanned_root, row).await {
-            Ok(CommittedKind::Journal) => journal_created += 1,
-            Ok(CommittedKind::Generic) => generic_created += 1,
+        match build_event_for_row(device_id, scanned_root, row) {
+            Ok((event, kind)) => {
+                new_events.push(event);
+                event_kinds.push(kind);
+            }
             Err(e) => errors.push(e),
         }
     }
 
+    // Both append_batch and apply_events are no-ops on empty input
+    // (store.rs `if events.is_empty() { return ... }` / projection.rs's
+    // `if let Some(last) = events.last()` guard), so no caller-side guard is
+    // needed. The empty-input test below locks that contract in.
+    let batched = event_store
+        .append_batch(new_events)
+        .await
+        .map_err(|e| e.to_string())?;
+    projections
+        .apply_events(&batched)
+        .await
+        .map_err(|e| e.to_string())?;
+    let (journal_created, generic_created) =
+        event_kinds
+            .into_iter()
+            .fold((0, 0), |(jc, gc), ek| match ek {
+                CommittedKind::Journal => (jc + 1, gc),
+                CommittedKind::Generic => (jc, gc + 1),
+            });
     Ok(CommitSummary {
         journal_created,
         generic_created,
@@ -240,12 +283,9 @@ enum CommittedKind {
 /// Resolve `candidate` to its real, fully-expanded path and confirm it sits
 /// under `scanned_root`. Both inputs are canonicalized so `..` traversals and
 /// symlinks pointing outside the vault are caught.
-fn validate_committable_path(
-    scanned_root: &Path,
-    candidate: &Path,
-) -> Result<PathBuf, String> {
-    let canonical = std::fs::canonicalize(candidate)
-        .map_err(|e| format!("{}: {e}", candidate.display()))?;
+fn validate_committable_path(scanned_root: &Path, candidate: &Path) -> Result<PathBuf, String> {
+    let canonical =
+        std::fs::canonicalize(candidate).map_err(|e| format!("{}: {e}", candidate.display()))?;
     if !canonical.starts_with(scanned_root) {
         return Err(format!(
             "{}: outside scanned vault root",
@@ -255,11 +295,11 @@ fn validate_committable_path(
     Ok(canonical)
 }
 
-async fn commit_one(
-    state: &AppState,
+fn build_event_for_row(
+    device_id: &str,
     scanned_root: &Path,
     row: AcceptedRow,
-) -> Result<CommittedKind, String> {
+) -> Result<(NewEvent, CommittedKind), String> {
     let candidate = PathBuf::from(&row.path);
     let path = validate_committable_path(scanned_root, &candidate)?;
     // Re-read fresh from disk rather than reusing the preview's parsed data.
@@ -274,8 +314,7 @@ async fn commit_one(
     // frontend-supplied content would be the worse failure mode.
     let raw = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", row.path))?;
 
-    let (frontmatter, _body) =
-        parse_markdown(&raw).map_err(|e| format!("{}: {e}", row.path))?;
+    let (frontmatter, _body) = parse_markdown(&raw).map_err(|e| format!("{}: {e}", row.path))?;
     let mapped = map_frontmatter(&frontmatter);
 
     match row.kind.as_str() {
@@ -303,8 +342,17 @@ async fn commit_one(
             if let Some(legacy) = mapped.legacy_properties {
                 payload["legacy_properties"] = legacy;
             }
-            append_and_apply(state, EventType::JournalEntryCreated, journal_id, payload).await?;
-            Ok(CommittedKind::Journal)
+            Ok((
+                NewEvent {
+                    id: None,
+                    event_type: EventType::JournalEntryCreated.to_string(),
+                    aggregate_id: journal_id,
+                    timestamp: Utc::now(),
+                    device_id: device_id.to_string(),
+                    payload,
+                },
+                CommittedKind::Journal,
+            ))
         }
         "generic" => {
             let title = row
@@ -325,39 +373,20 @@ async fn commit_one(
             if let Some(legacy) = mapped.legacy_properties {
                 payload["legacy_properties"] = legacy;
             }
-            append_and_apply(state, EventType::GenericNoteCreated, note_id, payload).await?;
-            Ok(CommittedKind::Generic)
+            Ok((
+                NewEvent {
+                    id: None,
+                    event_type: EventType::GenericNoteCreated.to_string(),
+                    aggregate_id: note_id,
+                    timestamp: Utc::now(),
+                    device_id: device_id.to_string(),
+                    payload,
+                },
+                CommittedKind::Generic,
+            ))
         }
         other => Err(format!("{}: unknown kind '{other}'", row.path)),
     }
-}
-
-async fn append_and_apply(
-    state: &AppState,
-    event_type: EventType,
-    aggregate_id: String,
-    payload: serde_json::Value,
-) -> Result<(), String> {
-    let event = state
-        .event_store
-        .append(NewEvent {
-            id: None,
-            event_type: event_type.to_string(),
-            aggregate_id,
-            timestamp: Utc::now(),
-            device_id: state.device_id.clone(),
-            payload,
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-
-    state
-        .projections
-        .apply_events(&[event])
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +467,9 @@ const WINDOWS_RESERVED: &[&str] = &[
 ];
 
 fn is_windows_reserved_stem(stem: &str) -> bool {
-    WINDOWS_RESERVED.iter().any(|r| stem.eq_ignore_ascii_case(r))
+    WINDOWS_RESERVED
+        .iter()
+        .any(|r| stem.eq_ignore_ascii_case(r))
 }
 
 /// Stable short hash used to disambiguate colliding sanitized filenames.
@@ -561,10 +592,17 @@ mod tests {
         // so neither silently overwrites the other on disk.
         let titles = vec!["a/b".to_string(), "a:b".to_string()];
         let names = assign_unique_filenames(&titles);
-        assert_ne!(names[0], names[1], "colliding bases must produce different filenames");
+        assert_ne!(
+            names[0], names[1],
+            "colliding bases must produce different filenames"
+        );
         assert!(names[0].starts_with("a_b_"), "got: {}", names[0]);
         assert!(names[1].starts_with("a_b_"), "got: {}", names[1]);
-        assert_eq!(names[0].len(), "a_b_".len() + 8, "8-hex-char suffix expected");
+        assert_eq!(
+            names[0].len(),
+            "a_b_".len() + 8,
+            "8-hex-char suffix expected"
+        );
     }
 
     #[test]
@@ -760,7 +798,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(summary.journal_count, 1, "vault root containing 'Work' must not force-classify children as generic");
+        assert_eq!(
+            summary.journal_count, 1,
+            "vault root containing 'Work' must not force-classify children as generic"
+        );
         assert_eq!(summary.generic_count, 0);
     }
 
@@ -787,7 +828,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(summary.journal_count, 1, "real journal stays Journal");
-        assert_eq!(summary.generic_count, 1, "Work/-prefixed dated file becomes Generic");
+        assert_eq!(
+            summary.generic_count, 1,
+            "Work/-prefixed dated file becomes Generic"
+        );
     }
 
     #[test]
@@ -798,5 +842,42 @@ mod tests {
         let err = validate_committable_path(&root, &missing).unwrap_err();
         // canonicalize errors on nonexistent paths; we just need a clear failure.
         assert!(!err.is_empty());
+    }
+
+    async fn test_db() -> omni_me_core::db::Database {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let db = omni_me_core::db::connect(path.to_str().unwrap()).await.unwrap();
+        std::mem::forget(dir);
+        db
+    }
+
+    /// Locks in the contract that lets `commit_import_inner` skip its caller-side
+    /// empty-input guard: both `EventStore::append_batch` and
+    /// `ProjectionRunner::apply_events` must be no-ops on empty input. If either
+    /// dependency ever changes that contract, this test fails before the silent
+    /// regression reaches production.
+    #[tokio::test]
+    async fn commit_import_empty_rows_returns_zero_counts() {
+        use omni_me_core::events::SurrealEventStore;
+
+        let db = test_db().await;
+        let event_store = SurrealEventStore::new(db.clone());
+        let projections = ProjectionRunner::new(db.clone(), vec![]);
+        let scanned_root = std::path::PathBuf::from("/");
+
+        let summary = commit_import_inner(
+            &event_store,
+            &projections,
+            "test-device",
+            &scanned_root,
+            vec![],
+        )
+        .await
+        .expect("empty input must not error");
+
+        assert_eq!(summary.journal_created, 0);
+        assert_eq!(summary.generic_created, 0);
+        assert!(summary.errors.is_empty());
     }
 }
