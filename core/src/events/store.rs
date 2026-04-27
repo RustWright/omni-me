@@ -37,6 +37,22 @@ pub struct NewEvent {
     pub payload: serde_json::Value,
 }
 
+/// Reconstruct a `NewEvent` from an existing `Event`. Used by sync paths that
+/// re-append received events into a local store (preserving the server-assigned
+/// id) and by the push path that re-wraps locally-stored events for transit.
+impl From<&Event> for NewEvent {
+    fn from(event: &Event) -> Self {
+        NewEvent {
+            id: Some(event.id.clone()),
+            event_type: event.event_type.clone(),
+            aggregate_id: event.aggregate_id.clone(),
+            timestamp: event.timestamp,
+            device_id: event.device_id.clone(),
+            payload: event.payload.clone(),
+        }
+    }
+}
+
 /// Event store trait — append-only event log.
 #[async_trait]
 pub trait EventStore: Send + Sync {

@@ -131,16 +131,8 @@ impl SyncClient {
         let pulled = pull_resp.events.len();
 
         for event in &pull_resp.events {
-            let new_event = NewEvent {
-                id: Some(event.id.clone()),
-                event_type: event.event_type.clone(),
-                aggregate_id: event.aggregate_id.clone(),
-                timestamp: event.timestamp,
-                device_id: event.device_id.clone(),
-                payload: event.payload.clone(),
-            };
             store
-                .append(new_event)
+                .append(NewEvent::from(event))
                 .await
                 .map_err(|e| SyncError::Local(e.to_string()))?;
         }
@@ -266,17 +258,7 @@ impl SyncClient {
         let mut total = 0;
 
         for chunk in events.chunks(100) {
-            let new_events: Vec<NewEvent> = chunk
-                .iter()
-                .map(|e| NewEvent {
-                    id: Some(e.id.clone()),
-                    event_type: e.event_type.clone(),
-                    aggregate_id: e.aggregate_id.clone(),
-                    timestamp: e.timestamp,
-                    device_id: e.device_id.clone(),
-                    payload: e.payload.clone(),
-                })
-                .collect();
+            let new_events: Vec<NewEvent> = chunk.iter().map(NewEvent::from).collect();
 
             let body = PushRequest {
                 device_id: self.device_id.clone(),
