@@ -220,6 +220,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_is_case_sensitive_and_whitespace_strict() {
+        // The wire form is exact: no `.trim()`, no `.to_lowercase()`. Locks the
+        // contract against a future "be helpful" refactor that would silently
+        // accept variants the event payload writer never produces.
+        for s in ["DAILY", "Daily", "Weekly", "MONTHLY", "Custom:3", " daily ", "daily\n"] {
+            let err = s.parse::<Frequency>().unwrap_err();
+            assert!(
+                matches!(err, FrequencyParseError::UnknownVariant(_)),
+                "{s:?} must be UnknownVariant, got {err:?}"
+            );
+        }
+        // Leading whitespace defeats the `starts_with("custom:")` guard, so
+        // these also fall through to UnknownVariant rather than reaching the
+        // numeric parse step.
+        for s in [" custom:3", "\tcustom:3"] {
+            let err = s.parse::<Frequency>().unwrap_err();
+            assert!(
+                matches!(err, FrequencyParseError::UnknownVariant(_)),
+                "{s:?} must be UnknownVariant, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
     fn should_run_on_daily_is_always_true() {
         let anchor = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
         let today = NaiveDate::from_ymd_opt(2026, 4, 19).unwrap();
