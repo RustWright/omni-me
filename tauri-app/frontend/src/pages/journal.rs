@@ -523,9 +523,11 @@ struct MonthCell {
 
 /// Build the list of calendar cells for a month view.
 ///
-/// The grid is always 5 rows × 7 cols (35 cells) so its height stays constant
-/// as the user navigates months. Week starts on Monday (matches Obsidian's
-/// daily-note plugin default).
+/// The grid is always 6 rows × 7 cols (42 cells) so its height stays constant
+/// as the user navigates months. Six rows are needed to cover every layout —
+/// a 5-row grid truncates the last 1-2 days of long months that start late in
+/// the week (e.g., a 31-day month starting Sunday). Week starts on Monday
+/// (matches Obsidian's daily-note plugin default).
 ///
 /// Cells outside the anchor's month carry `in_current_month: false` so the
 /// renderer can grey them out (spillover style) instead of showing blanks.
@@ -535,7 +537,7 @@ fn build_month_cells(anchor: NaiveDate) -> Vec<MonthCell> {
     let anchor_month = anchor.month();
     let start_date = anchor - chrono::Days::new(anchor.weekday().num_days_from_monday() as u64);
     std::iter::successors(Some(start_date), |d| d.succ_opt())
-        .take(35)
+        .take(42)
         .map(|date| MonthCell {
             date,
             in_current_month: date.month() == anchor_month,
@@ -710,7 +712,7 @@ mod tests {
         // February 2026: Feb 1 falls on a Sunday.
         let anchor = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap();
         let cells = build_month_cells(anchor);
-        assert_eq!(cells.len(), 35, "always 5 full weeks");
+        assert_eq!(cells.len(), 42, "always 6 full weeks");
 
         // First row should start on a Monday (Jan 26, 2026 is a Monday).
         assert_eq!(cells[0].date, NaiveDate::from_ymd_opt(2026, 1, 26).unwrap());
