@@ -1,5 +1,7 @@
 # Project Development Process
 
+> **MIRROR FILE — KEEP IN SYNC.** This is the project-local copy of `PROJECT_PROCESS.md`. The canonical version lives at `setup_files/PROJECT_PROCESS.md` in the parent repo. **Any edit made here must be propagated to the root version (and vice versa).** If you only update one copy, the two will drift — Cycle 2 Session 6 hit this when the project copy was stale at process-revision time. Treat this banner as a tripwire: if you touched the doc, also update the other one before you finish the session.
+
 This document describes the structured process for developing projects in this learning repository, with heavy AI collaboration throughout.
 
 ## Overview
