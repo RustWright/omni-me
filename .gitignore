@@ -6,6 +6,7 @@ tauri-app/src-tauri/gen/android/
 *.db
 *.db-*
 surreal_data/
+blobs/
 .reference/
 .tmp/
 .claude/worktrees/
