@@ -1,4 +1,5 @@
 use axum::{Router, Json, routing::get, extract::DefaultBodyLimit};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -8,6 +9,7 @@ use omni_me_server::{AppState, routes};
 
 const DB_PATH: &str = "surreal_data/server.db";
 const LISTEN_ADDR: &str = "0.0.0.0:3000";
+const DEFAULT_BLOB_DIR: &str = "blobs";
 
 #[tokio::main]
 async fn main() {
@@ -26,13 +28,26 @@ async fn main() {
         .expect("GEMINI_API_KEY must be set");
     let llm_client = Arc::new(omni_me_core::llm::GeminiClient::new(api_key));
 
-    let state = AppState { db: Arc::new(db), llm_client };
+    let blob_dir: PathBuf = std::env::var("BLOB_DIR")
+        .unwrap_or_else(|_| DEFAULT_BLOB_DIR.into())
+        .into();
+    tokio::fs::create_dir_all(&blob_dir)
+        .await
+        .expect("failed to create blob dir");
+    tracing::info!("blob dir: {}", blob_dir.display());
+
+    let state = AppState {
+        db: Arc::new(db),
+        llm_client,
+        blob_dir: Arc::new(blob_dir),
+    };
 
     let app = Router::new()
         .route("/health", get(health))
         .merge(routes::sync_routes())
         .merge(routes::notes_routes())
         .layer(DefaultBodyLimit::max(256 * 1024))
+        .merge(routes::blob_routes())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

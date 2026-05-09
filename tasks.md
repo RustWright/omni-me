@@ -40,7 +40,7 @@ Each POC has an explicit go/no-go bar. Failure pivots affected phases.
 
 - [ ] **0.1** POC-A: hledger on Android. Try: pre-built ARM binary search, GHC cross-compile via stack/cabal, Termux package, server-side fallback as last resort. Pass = `hledger balance` runs against a sample journal from inside Tauri Android shell. Fail → Phase 1 hledger projection becomes server-side; mobile reads via API. [M]
 - [ ] **0.2** POC-B: blob round-trip on Android. Tauri-side write to app data dir, HTTP POST to local server `/blobs/<sha256>`, HTTP GET retrieve, render in webview. Pass = full round-trip works. Fail → reconsider attachment design (eager sync? OSS tool?). [S]
-- [ ] **0.3** POC-C: Mindee API call from mobile-captured image. Photo on Android Tauri → upload to server → server calls Mindee Receipts API → response parsed → returned to client. Pass = end-to-end. Fail → Gemini multimodal becomes primary for photos. [S]
+- [ ] **0.3** POC-C (REFRAMED 2026-05-09): curl-validate Veryfi + Gemini + Nanonets against a real receipt once API keys are in hand. Each provider should return parseable JSON with date/total/vendor/currency. PaddleOCR remains deferred (sovereignty floor). Original device-Tauri-scaffolding scope dropped because POC 0.2 already validated the device → server → external-API plumbing; POC 0.3's remaining value is provider-specific quality/reliability, better tested with real receipts in Phase 2.4-2.6. [XS]
 - [ ] **0.4** Document POC outcomes; commit go/no-go decisions; replan affected phases if any failed. [XS]
 
 **Phase 0 must complete before Phase 1.**
@@ -69,16 +69,15 @@ Event schema, projections, Tauri commands. Mirrors Cycle 2 Phase 0 structurally.
 
 LLM extraction + verification + FX rate fetch + blob storage. All server-side.
 
-- [ ] **2.1** Axum endpoint `POST /blobs/<sha256>` — accepts file upload, validates SHA-256 matches body, stores at configured blob path. Auth via existing sync-token (deferred from Cycle 1 still applies). [S]
-- [ ] **2.2** Axum endpoint `GET /blobs/<sha256>` — streams stored file with correct MIME type [XS]
-- [ ] **2.3** Server-side blob storage: configurable path (default `./blobs/`), atomic write (temp file + rename), no extra DB tracking — filesystem is the index [S]
-- [ ] **2.4** Mindee Receipts API integration: receipt-photo input → structured `ReceiptExtraction` (date, total, line items, tax, vendor, currency) [M]
-- [ ] **2.5** Mindee Invoices API integration: PDF input → structured `InvoiceExtraction` (same shape as receipts plus invoice metadata) [M]
-- [ ] **2.6** Gemini Flash structured-output extraction: prompt + JSON schema for `TransactionDraft`; handles plain text (email body, paystub paste); fallback for any input Mindee can't process [L]
+- [x] **2.1** Axum endpoint `PUT /blobs/<sha256>` (PUT not POST — content-addressable URL) — accepts file upload, validates SHA-256 matches body, stores at configured blob path. Auth still deferred per Cycle 1 (revisit when shipping financial workloads). Done 2026-05-09 during POC 0.2.
+- [x] **2.2** Axum endpoint `GET /blobs/<sha256>` — streams stored file with `infer`-detected MIME type. Done 2026-05-09 during POC 0.2.
+- [x] **2.3** Server-side blob storage: `BLOB_DIR` env var (default `./blobs/`), atomic ULID-named-temp + rename, idempotent (try_exists → 200 if cached, 201 if newly written), `BlobError` typed-error enum with `IntoResponse` impl. Done 2026-05-09 during POC 0.2.
+- [ ] **2.4** Veryfi `DocumentExtractor` trait impl — uses per-document-type endpoints (`/documents/` for receipts/invoices, `/bank_statements/`, `/checks/`, `/w2s/` etc.); auth via CLIENT-ID + USERNAME + API-KEY trio; `auto_delete=true` flag for sovereignty; structured fields per endpoint type [M]
+- [ ] **2.5** Gemini Flash multimodal `DocumentExtractor` trait impl — handles all input modalities; primary for bank/brokerage statements (Veryfi's general endpoint mis-classifies them) + cross-cutting fallback [L]
+- [ ] **2.6** `DocumentExtractor` trait + dispatch — `core::extraction::DocumentExtractor`; route by `(document_type, provider)` pair: receipts → Veryfi `/documents/`, statements → Gemini, paystubs → Veryfi `/w2s/` or `/documents/`, text → Gemini; fall through on error; user-overridable in Settings [S]
 - [ ] **2.7** Verification pass: line-item-sum == total (receipts), gross - deductions == net (paystubs), confidence threshold gate; flag below-threshold drafts for manual review [M]
 - [ ] **2.8** Frankfurter FX daily-rate fetcher (free, ECB-sourced, no API key); emits `P` directive into hledger journal projection [M]
-- [ ] **2.9** Routing logic: input type → extractor selection (Mindee primary for photos/PDFs, Gemini for text + fallback) [S]
-- [ ] **2.10** Integration tests: end-to-end capture for each of the 4 input modalities against real samples [M]
+- [ ] **2.9** Integration tests: end-to-end capture for each of the 4 input modalities against real samples; per-implementation [M]
 
 ---
 
@@ -149,10 +148,11 @@ Last phase; first 4 are core, rest are stretch.
 
 - [ ] **7.5** Daily Flow consistency visualizer redesign — frequency-aware (was 7-day hard-coded, broken for Weekly/Biweekly/Monthly/Custom routines) [M]
 - [ ] **7.6** `BufferEvent::FlushFailed` consumer wiring into `StatusReporter` for user-visible "stuck buffer" indicator [S]
-- [ ] **7.7** `editor.rs:179` release-build compile error fix (`editor_options(journal_mode)` arg-count mismatch — Cycle 1 read_only fix only landed on debug branch) [XS]
+- [x] **7.7** `editor.rs:179` release-build compile error fix (`editor_options(journal_mode)` arg-count mismatch — Cycle 1 read_only fix only landed on debug branch) [XS] — done 2026-05-09 during POC 0.2 build
 - [ ] **7.8** Configurable `FORCE_GENERIC_DIRS` (currently hardcoded to `Work/`) [S]
 - [ ] **7.9** `auto_close_scheduler::AppState.event_store` move to `Arc<dyn EventStore>` for parity with main store [XS]
 - [ ] **7.10** Seconds duration unit on routine items (Phase 7.2 deferred from Cycle 2; needs breaking event-schema change across 16 touch points) [M]
+- [ ] **7.11** PaddleOCR sidecar — Python service (PP-StructureV3 + PaddleOCR-VL-1.5) behind Axum reverse-proxy; CPU-only inference; OSS sovereignty floor in case Veryfi or Gemini free tiers vanish. Spike before committing — not required for Cycle 3 if Veryfi+Gemini meet quality bar. [L]
 
 ---
 
@@ -161,7 +161,7 @@ Last phase; first 4 are core, rest are stretch.
 ```
 Phase 0 (POCs, gating):  0.1 → 0.2 → 0.3 → 0.4
 Phase 1 (foundation):    1.1 → 1.2+1.3+1.4+1.5 → 1.6 → 1.7 → 1.8+1.9 → 1.10 → 1.11
-Phase 2 (server):        2.1+2.2 → 2.3 → 2.4+2.5 → 2.6 → 2.7 → 2.8 → 2.9 → 2.10
+Phase 2 (server):        [2.1+2.2+2.3 done in POC 0.2] → 2.4 → 2.5 → 2.6 → 2.7 → 2.8 → 2.9
 Phase 3 (capture UI):    3.1, 3.2 → 3.3 → 3.4 → 3.5 → 3.6 → 3.7 → 3.8
 Phase 4 (read):          4.1 → 4.2 → 4.3 → 4.4 → 4.5+4.6
 Phase 5 (workflows):     5.1 → 5.2 → 5.3 → 5.4 → 5.5 → 5.6 → 5.7

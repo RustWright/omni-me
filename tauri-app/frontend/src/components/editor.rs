@@ -176,7 +176,7 @@ pub fn Editor(
                 EDITOR_CONTAINER_ID,
                 &initial,
                 Some(&on_change_fn),
-                editor_options(journal_mode),
+                editor_options(journal_mode, read_only),
             );
 
             editor_ready.set(true);

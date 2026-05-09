@@ -1,0 +1,11 @@
+[package]
+name = "ledger-parse-poc"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+ledger-parser = "6"
+ledger-utils = "0.6"
+glob = "0.3"
