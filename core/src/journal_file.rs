@@ -18,8 +18,8 @@ use tokio::sync::Mutex;
 
 use crate::db::Database;
 use crate::events::{
-    AccountAddedPayload, Event, EventError, FxRate, Posting, Projection, Tag,
-    TransactionRecordedPayload,
+    AccountAddedPayload, Event, EventError, ExchangeRateRecordedPayload, FxRate, Posting,
+    Projection, Tag, TransactionRecordedPayload,
 };
 
 pub struct JournalFile {
@@ -100,6 +100,13 @@ impl Projection for JournalFile {
                     })?;
                 self.append(&render_account(&payload)).await
             }
+            "exchange_rate_recorded" => {
+                let payload: ExchangeRateRecordedPayload =
+                    serde_json::from_value(event.payload.clone()).map_err(|e| {
+                        EventError::Validation(format!("bad exchange_rate_recorded payload: {e}"))
+                    })?;
+                self.append(&render_exchange_rate(&payload)).await
+            }
             _ => Ok(()),
         }
     }
@@ -155,6 +162,16 @@ fn render_tag_comment(tags: &[Tag]) -> Option<String> {
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!("  ; {body}"))
+}
+
+/// Render an `ExchangeRateRecorded` as an hledger `P` (price) directive.
+/// Format: `P {date} {base} {rate} {quote}` — ledger-utils consumes this to
+/// value foreign-commodity postings in the user's base currency.
+pub fn render_exchange_rate(p: &ExchangeRateRecordedPayload) -> String {
+    format!(
+        "P {} {} {} {}  ; source:{}\n\n",
+        p.date, p.base, p.rate, p.quote, p.source
+    )
 }
 
 /// Render an `AccountAdded` as an hledger `account` directive. `display_name`
@@ -380,6 +397,41 @@ account Assets:WealthSimple:Cash  ; commodity:CAD
         let first = contents.find("First").unwrap();
         let second = contents.find("Second").unwrap();
         assert!(first < second, "transactions must append in event order");
+    }
+
+    #[test]
+    fn renders_exchange_rate_p_directive() {
+        use crate::events::ExchangeRateRecordedPayload;
+        use rust_decimal::Decimal;
+        use std::str::FromStr;
+        let payload = ExchangeRateRecordedPayload {
+            date: chrono::NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
+            base: "USD".into(),
+            quote: "CAD".into(),
+            rate: Decimal::from_str("1.37").unwrap(),
+            source: "frankfurter".into(),
+        };
+        let rendered = render_exchange_rate(&payload);
+        assert_eq!(rendered, "P 2026-05-16 USD 1.37 CAD  ; source:frankfurter\n\n");
+    }
+
+    #[tokio::test]
+    async fn apply_exchange_rate_recorded_writes_p_directive() {
+        let (proj, _dir) = make_projection().await;
+        let db = fake_db().await;
+        let event = make_event(
+            EventType::ExchangeRateRecorded,
+            serde_json::json!({
+                "date": "2026-05-16",
+                "base": "USD",
+                "quote": "CAD",
+                "rate": "1.37",
+                "source": "frankfurter"
+            }),
+        );
+        proj.apply(&event, &db).await.unwrap();
+        let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
+        assert!(contents.contains("P 2026-05-16 USD 1.37 CAD"));
     }
 
     #[tokio::test]

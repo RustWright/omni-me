@@ -48,6 +48,8 @@ pub enum EventType {
     RecurringTransactionDetected,
     RecurringTransactionConfirmed,
     RecurringTransactionDismissed,
+    // Budget — FX
+    ExchangeRateRecorded,
     // Meta
     DataWiped,
 }
@@ -88,6 +90,7 @@ impl fmt::Display for EventType {
             EventType::RecurringTransactionDetected => "recurring_transaction_detected",
             EventType::RecurringTransactionConfirmed => "recurring_transaction_confirmed",
             EventType::RecurringTransactionDismissed => "recurring_transaction_dismissed",
+            EventType::ExchangeRateRecorded => "exchange_rate_recorded",
             EventType::DataWiped => "data_wiped",
         };
         write!(f, "{s}")
@@ -132,6 +135,7 @@ impl FromStr for EventType {
             "recurring_transaction_detected" => Ok(EventType::RecurringTransactionDetected),
             "recurring_transaction_confirmed" => Ok(EventType::RecurringTransactionConfirmed),
             "recurring_transaction_dismissed" => Ok(EventType::RecurringTransactionDismissed),
+            "exchange_rate_recorded" => Ok(EventType::ExchangeRateRecorded),
             "data_wiped" => Ok(EventType::DataWiped),
             other => Err(format!("unknown event type: {other}")),
         }
@@ -492,6 +496,23 @@ pub struct RecurringTransactionDismissedPayload {
     pub pattern_id: String,
 }
 
+/// Daily FX rate, sourced from Frankfurter (or, post-Cycle-4, ExchangeRate-API
+/// for non-Frankfurter currencies like NGN). The journal-file projection
+/// emits this as an hledger `P` directive so ledger-utils balance computation
+/// can value foreign-commodity postings in the base currency.
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExchangeRateRecordedPayload {
+    pub date: chrono::NaiveDate,
+    pub base: String,
+    pub quote: String,
+    #[serde_as(as = "DisplayFromStr")]
+    pub rate: Decimal,
+    /// Where the rate came from — for audit when a user spots a wrong rate.
+    /// Examples: "frankfurter", "manual:standard-chartered-may-2026".
+    pub source: String,
+}
+
 // Meta
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -609,6 +630,9 @@ pub fn validate_payload(
             serde_json::from_value::<RecurringTransactionDismissedPayload>(payload.clone())
                 .map(|_| ())
         }
+        EventType::ExchangeRateRecorded => {
+            serde_json::from_value::<ExchangeRateRecordedPayload>(payload.clone()).map(|_| ())
+        }
         EventType::DataWiped => {
             serde_json::from_value::<DataWipedPayload>(payload.clone()).map(|_| ())
         }
@@ -659,6 +683,7 @@ mod tests {
             EventType::RecurringTransactionDetected,
             EventType::RecurringTransactionConfirmed,
             EventType::RecurringTransactionDismissed,
+            EventType::ExchangeRateRecorded,
             EventType::DataWiped,
         ];
 
