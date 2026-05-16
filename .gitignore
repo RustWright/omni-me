@@ -17,3 +17,6 @@ reviews/
 ui_dev/
 UI_design.md
 tauri-app/frontend/assets/tailwind.css
+.env
+.env.*
+!.env.example
