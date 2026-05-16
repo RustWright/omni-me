@@ -239,6 +239,20 @@ pub fn run() {
             commands::import::preview_import,
             commands::import::commit_import,
             commands::import::export_obsidian,
+            // Budget — transactions
+            commands::budget::record_transaction,
+            commands::budget::update_transaction,
+            commands::budget::categorize_transaction,
+            commands::budget::tag_transaction,
+            commands::budget::delete_transaction,
+            commands::budget::list_transactions,
+            // Budget — accounts, budgets, recurring
+            commands::budget::add_account,
+            commands::budget::list_accounts,
+            commands::budget::set_budget,
+            commands::budget::list_budgets,
+            commands::budget::confirm_recurring,
+            commands::budget::list_recurring,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

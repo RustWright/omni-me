@@ -1,3 +1,4 @@
+pub mod budget;
 pub mod import;
 pub mod notes;
 pub mod routines;

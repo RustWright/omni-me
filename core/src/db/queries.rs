@@ -59,6 +59,58 @@ pub struct RoutineItemRow {
     pub removed: bool,
 }
 
+/// A transaction row from the `transactions` projection table. Nested
+/// complex fields (postings, attachment, balancing_posting) come back as
+/// `DbValue` since they're stored as FLEXIBLE objects.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct TransactionRow {
+    pub id: String,
+    pub date: String,
+    pub description: String,
+    pub postings: DbValue,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<DbValue>,
+    pub category: Option<String>,
+    pub tags_top: Vec<String>,
+    pub removed: bool,
+    pub superseded_by: Option<String>,
+    pub merged_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balancing_posting: Option<DbValue>,
+    pub cleared: bool,
+    pub statement_source: Option<String>,
+    pub cleared_date: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A declared account row.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct AccountRow {
+    pub id: String,
+    pub commodity: String,
+    pub display_name: Option<String>,
+    pub last_reconciled_through: Option<String>,
+    pub last_statement_balance: Option<String>,
+}
+
+/// A budget row.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct BudgetRow {
+    pub id: String,
+    pub amount: String,
+    pub period: String,
+    pub removed: bool,
+}
+
+/// A detected/confirmed/dismissed recurring pattern.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct RecurringPatternRow {
+    pub id: String,
+    pub pattern: DbValue,
+    pub status: String,
+}
+
 /// A routine completion (complete or skip).
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct CompletionRow {
@@ -336,5 +388,101 @@ pub async fn list_completable_unclosed_journals(
         .await?;
 
     let rows: Vec<JournalEntryRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+// --- Budget projection (transactions, accounts, budgets, recurring) ---
+
+const TXN_FIELDS: &str = "meta::id(id) AS id, date, description, postings, attachment,
+        category, tags_top, removed, superseded_by, merged_ids, balancing_posting,
+        cleared, statement_source, cleared_date,
+        <string> created_at AS created_at, <string> updated_at AS updated_at";
+
+pub async fn list_transactions(
+    db: &Database,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<TransactionRow>, DbError> {
+    let q = format!(
+        "SELECT {TXN_FIELDS} FROM transactions
+         WHERE removed = false AND superseded_by IS NONE
+         ORDER BY date DESC, created_at DESC
+         LIMIT $limit START $offset"
+    );
+    let mut resp = db
+        .query(q.as_str())
+        .bind(("limit", limit as i64))
+        .bind(("offset", offset as i64))
+        .await?;
+    let rows: Vec<TransactionRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+pub async fn get_transaction(
+    db: &Database,
+    txn_id: &str,
+) -> Result<Option<TransactionRow>, DbError> {
+    let q = format!(
+        "SELECT {TXN_FIELDS} FROM type::record('transactions', $txn_id)"
+    );
+    let mut resp = db
+        .query(q.as_str())
+        .bind(("txn_id", txn_id.to_string()))
+        .await?;
+    let rows: Vec<TransactionRow> = resp.take(0)?;
+    Ok(rows.into_iter().next())
+}
+
+pub async fn list_accounts(db: &Database) -> Result<Vec<AccountRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT meta::id(id) AS id, commodity, display_name,
+                    last_reconciled_through, last_statement_balance
+             FROM accounts
+             ORDER BY id ASC",
+        )
+        .await?;
+    let rows: Vec<AccountRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+pub async fn list_budgets(db: &Database) -> Result<Vec<BudgetRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT meta::id(id) AS id, amount, period, removed
+             FROM budgets
+             WHERE removed = false
+             ORDER BY id ASC",
+        )
+        .await?;
+    let rows: Vec<BudgetRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+pub async fn list_recurring_patterns(
+    db: &Database,
+    status_filter: Option<&str>,
+) -> Result<Vec<RecurringPatternRow>, DbError> {
+    let (sql, has_filter) = match status_filter {
+        Some(_) => (
+            "SELECT meta::id(id) AS id, pattern, status
+             FROM recurring_patterns
+             WHERE status = $status
+             ORDER BY id ASC",
+            true,
+        ),
+        None => (
+            "SELECT meta::id(id) AS id, pattern, status
+             FROM recurring_patterns
+             ORDER BY id ASC",
+            false,
+        ),
+    };
+    let mut q = db.query(sql);
+    if has_filter {
+        q = q.bind(("status", status_filter.unwrap().to_string()));
+    }
+    let mut resp = q.await?;
+    let rows: Vec<RecurringPatternRow> = resp.take(0)?;
     Ok(rows)
 }
