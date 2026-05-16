@@ -25,9 +25,14 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
     let server_db = db::connect(path.to_str().unwrap()).await.unwrap();
     std::mem::forget(dir);
 
+    let blob_dir = tempfile::tempdir().unwrap();
+    let blob_path = blob_dir.path().to_path_buf();
+    std::mem::forget(blob_dir);
+
     let state = AppState {
         db: Arc::new(server_db),
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
+        blob_dir: Arc::new(blob_path),
     };
 
     let app = Router::new()

@@ -44,9 +44,13 @@ async fn start_server_on_port(
     port: u16,
     server_db: omni_me_core::db::Database,
 ) -> tokio::task::JoinHandle<()> {
+    let blob_dir = tempfile::tempdir().unwrap();
+    let blob_path = blob_dir.path().to_path_buf();
+    std::mem::forget(blob_dir);
     let state = AppState {
         db: Arc::new(server_db),
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
+        blob_dir: Arc::new(blob_path),
     };
 
     let app = make_router(state);
@@ -77,9 +81,13 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
         .expect("failed to bind");
     let port = listener.local_addr().unwrap().port();
 
+    let blob_dir2 = tempfile::tempdir().unwrap();
+    let blob_path2 = blob_dir2.path().to_path_buf();
+    std::mem::forget(blob_dir2);
     let state = AppState {
         db: Arc::new(server_db.clone()),
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
+        blob_dir: Arc::new(blob_path2),
     };
     let app = make_router(state);
 
