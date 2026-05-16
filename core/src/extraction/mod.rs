@@ -16,6 +16,9 @@ use serde::{Deserialize, Serialize};
 
 pub mod gemini;
 pub mod null;
+pub mod verify;
+
+pub use verify::{verify, VerificationReport, DEFAULT_CONFIDENCE_THRESHOLD};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,6 +61,16 @@ pub struct ExtractionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub postings: Vec<ExtractedPosting>,
+    /// Hint-dependent reference total: receipt grand total, paystub net pay,
+    /// statement closing balance. When present, the verification pass cross-
+    /// checks `sum(posting amounts).abs()` against this value; mismatch
+    /// downgrades the effective confidence.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "rust_decimal::serde::str_option"
+    )]
+    pub total: Option<Decimal>,
     pub confidence: f64,
     /// Populated by the extractor impl after the LLM responds — the model
     /// doesn't echo this back. `serde(default)` so wire deserialization works.

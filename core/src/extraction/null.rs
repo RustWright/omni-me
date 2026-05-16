@@ -30,6 +30,7 @@ impl DocumentExtractor for NullExtractor {
             date: None,
             description: None,
             postings: vec![],
+            total: None,
             confidence: 0.0,
             model: "null".to_string(),
             raw_response: serde_json::Value::Null,
