@@ -38,10 +38,10 @@ This work happens **in parallel with omni-me Phases 0-5**. Phase 6 unblocks once
 
 Each POC has an explicit go/no-go bar. Failure pivots affected phases.
 
-- [ ] **0.1** POC-A: hledger on Android. Try: pre-built ARM binary search, GHC cross-compile via stack/cabal, Termux package, server-side fallback as last resort. Pass = `hledger balance` runs against a sample journal from inside Tauri Android shell. Fail → Phase 1 hledger projection becomes server-side; mobile reads via API. [M]
-- [ ] **0.2** POC-B: blob round-trip on Android. Tauri-side write to app data dir, HTTP POST to local server `/blobs/<sha256>`, HTTP GET retrieve, render in webview. Pass = full round-trip works. Fail → reconsider attachment design (eager sync? OSS tool?). [S]
-- [ ] **0.3** POC-C (REFRAMED 2026-05-09): curl-validate Veryfi + Gemini + Nanonets against a real receipt once API keys are in hand. Each provider should return parseable JSON with date/total/vendor/currency. PaddleOCR remains deferred (sovereignty floor). Original device-Tauri-scaffolding scope dropped because POC 0.2 already validated the device → server → external-API plumbing; POC 0.3's remaining value is provider-specific quality/reliability, better tested with real receipts in Phase 2.4-2.6. [XS]
-- [ ] **0.4** Document POC outcomes; commit go/no-go decisions; replan affected phases if any failed. [XS]
+- [x] **0.1** POC-A: hledger on Android. **PIVOTED — Path B chosen instead.** Mini-research POC 0.1.0 found `ledger-parser` v6 + `ledger-utils` v0.6 pure-Rust path; POC 0.1b parsed user's 5,826-txn production journal cleanly; POC 0.1c cross-compiled to `aarch64-linux-android` and produced byte-identical results on Galaxy S9. hledger CLI no longer required. Done 2026-05-09. [M]
+- [x] **0.2** POC-B: blob round-trip on Android. Tauri-side SHA-256 + `PUT/GET /blobs/{hash}` over Tailscale on Galaxy S9 → 201 PUT + 200 GET, bytes match. Tasks 2.1/2.2/2.3 landed as part of this POC. Done 2026-05-09. [S]
+- [x] **0.3** POC-C (REFRAMED 2026-05-09): curl-validate against real receipt. Veryfi general endpoint mis-classified brokerage statement (must route to specialty endpoints in Phase 2.6); Gemini 2.5 Flash multimodal PASS on FHSA statement (clean JSON, all fields correct); Nanonets DROPPED (workflow-API field schema friction). Final: 2 active (Veryfi specialty + Gemini) + 1 OSS backlog (PaddleOCR 7.11). Done 2026-05-09. [XS]
+- [x] **0.4** Document POC outcomes; commit go/no-go decisions; replan affected phases. All decisions recorded in `project.md` session log + `MEMORY.md` (`project_path_b_pta_engine.md`, `project_document_extractor_strategy.md`, `project_a2_business_hierarchy_finding.md`). Phase 2 task list trimmed (Mindee dropped, Nanonets dropped, PaddleOCR demoted to 7.11). Done 2026-05-09. [XS]
 
 **Phase 0 must complete before Phase 1.**
 

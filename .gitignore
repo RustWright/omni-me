@@ -13,6 +13,7 @@ blobs/
 .claude/scheduled_tasks.lock
 .playwright-mcp/
 reviews/
+.curiosities/
 ui_dev/
 UI_design.md
 tauri-app/frontend/assets/tailwind.css
