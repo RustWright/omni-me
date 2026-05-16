@@ -18,6 +18,8 @@ async-trait = { workspace = true }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 rust_decimal = { version = "1", default-features = false, features = ["serde-with-str"] }
 serde_with = { version = "3", default-features = false, features = ["macros", "std"] }
+ledger-parser = "6"
+ledger-utils = "0.6"
 
 
 [dev-dependencies]

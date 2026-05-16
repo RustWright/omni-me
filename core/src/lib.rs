@@ -4,6 +4,7 @@ pub mod db;
 pub mod events;
 pub mod import;
 pub mod journal_file;
+pub mod ledger;
 pub mod llm;
 pub mod preprocess;
 pub mod routines;
