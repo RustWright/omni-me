@@ -32,8 +32,22 @@ pub enum EventType {
     // Budget — transactions
     TransactionRecorded,
     TransactionCategorized,
+    TransactionTagged,
+    TransactionUpdated,
     TransactionDeleted,
     TransactionCleared,
+    TransactionsMerged,
+    // Budget — budgets
+    BudgetSet,
+    BudgetUpdated,
+    BudgetRemoved,
+    // Budget — accounts
+    AccountAdded,
+    AccountReconciled,
+    // Budget — recurring
+    RecurringTransactionDetected,
+    RecurringTransactionConfirmed,
+    RecurringTransactionDismissed,
     // Meta
     DataWiped,
 }
@@ -61,8 +75,19 @@ impl fmt::Display for EventType {
             EventType::RoutineItemSkipUndone => "routine_item_skip_undone",
             EventType::TransactionRecorded => "transaction_recorded",
             EventType::TransactionCategorized => "transaction_categorized",
+            EventType::TransactionTagged => "transaction_tagged",
+            EventType::TransactionUpdated => "transaction_updated",
             EventType::TransactionDeleted => "transaction_deleted",
             EventType::TransactionCleared => "transaction_cleared",
+            EventType::TransactionsMerged => "transactions_merged",
+            EventType::BudgetSet => "budget_set",
+            EventType::BudgetUpdated => "budget_updated",
+            EventType::BudgetRemoved => "budget_removed",
+            EventType::AccountAdded => "account_added",
+            EventType::AccountReconciled => "account_reconciled",
+            EventType::RecurringTransactionDetected => "recurring_transaction_detected",
+            EventType::RecurringTransactionConfirmed => "recurring_transaction_confirmed",
+            EventType::RecurringTransactionDismissed => "recurring_transaction_dismissed",
             EventType::DataWiped => "data_wiped",
         };
         write!(f, "{s}")
@@ -94,8 +119,19 @@ impl FromStr for EventType {
             "routine_item_skip_undone" => Ok(EventType::RoutineItemSkipUndone),
             "transaction_recorded" => Ok(EventType::TransactionRecorded),
             "transaction_categorized" => Ok(EventType::TransactionCategorized),
+            "transaction_tagged" => Ok(EventType::TransactionTagged),
+            "transaction_updated" => Ok(EventType::TransactionUpdated),
             "transaction_deleted" => Ok(EventType::TransactionDeleted),
             "transaction_cleared" => Ok(EventType::TransactionCleared),
+            "transactions_merged" => Ok(EventType::TransactionsMerged),
+            "budget_set" => Ok(EventType::BudgetSet),
+            "budget_updated" => Ok(EventType::BudgetUpdated),
+            "budget_removed" => Ok(EventType::BudgetRemoved),
+            "account_added" => Ok(EventType::AccountAdded),
+            "account_reconciled" => Ok(EventType::AccountReconciled),
+            "recurring_transaction_detected" => Ok(EventType::RecurringTransactionDetected),
+            "recurring_transaction_confirmed" => Ok(EventType::RecurringTransactionConfirmed),
+            "recurring_transaction_dismissed" => Ok(EventType::RecurringTransactionDismissed),
             "data_wiped" => Ok(EventType::DataWiped),
             other => Err(format!("unknown event type: {other}")),
         }
@@ -350,6 +386,112 @@ pub struct TransactionClearedPayload {
     pub cleared_date: chrono::NaiveDate,
 }
 
+/// Replace the tag set on an existing transaction. Projection overwrites
+/// `tags`; partial-add / partial-remove semantics live at the command layer.
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionTaggedPayload {
+    pub txn_id: String,
+    #[serde_as(as = "Vec<DisplayFromStr>")]
+    pub tags: Vec<Tag>,
+}
+
+/// Partial update to a transaction. `changes` is a JSON object of field-name
+/// to new-value; projection inspects and applies what it knows. Mirrors the
+/// schema-flexible pattern used by `RoutineItemModifiedPayload`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionUpdatedPayload {
+    pub txn_id: String,
+    pub changes: serde_json::Value,
+}
+
+/// Unified-reconciliation merge: collapse `merged_ids` into `primary_id` with
+/// `combined_postings` as the visible projection row. Originals are preserved
+/// in the event log for audit. `balancing_posting` carries hidden-fee
+/// resolution (e.g. wire fee, FX spread); zero means the `Unmatched` invariant
+/// holds without correction. See [[project-unmatched-account-pattern]].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionsMergedPayload {
+    pub primary_id: String,
+    pub merged_ids: Vec<String>,
+    pub combined_postings: Vec<Posting>,
+    pub combined_description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combined_attachment: Option<AttachmentRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balancing_posting: Option<Posting>,
+}
+
+// Budget — budgets
+
+/// Set a budget target for a category over a period. `period` is stored as a
+/// string (`"monthly"`, `"weekly"`, `"biweekly"`, `"custom:N"`) — same pattern
+/// as `RoutineGroupCreatedPayload.frequency`. Projection parses on read.
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetSetPayload {
+    pub category: String,
+    #[serde_as(as = "DisplayFromStr")]
+    pub amount: Decimal,
+    pub period: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetUpdatedPayload {
+    pub category: String,
+    pub changes: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetRemovedPayload {
+    pub category: String,
+}
+
+// Budget — accounts
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountAddedPayload {
+    pub account: String,
+    pub commodity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+/// Mark an account reconciled against a real statement. `statement_balance`
+/// is in `commodity`; `cleared_through` is the statement's closing date.
+/// Used by Phase 5.8 balance check.
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountReconciledPayload {
+    pub account: String,
+    pub commodity: String,
+    #[serde_as(as = "DisplayFromStr")]
+    pub statement_balance: Decimal,
+    pub cleared_through: chrono::NaiveDate,
+}
+
+// Budget — recurring
+
+/// Pattern detected by the W3 scanner. `pattern` is left as schema-flexible
+/// JSON because the matcher shape is decided in Phase 5.3 — emitting events
+/// against a stable id now lets the pattern definition evolve without an
+/// event-store migration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringTransactionDetectedPayload {
+    pub pattern_id: String,
+    pub pattern: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringTransactionConfirmedPayload {
+    pub pattern_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringTransactionDismissedPayload {
+    pub pattern_id: String,
+}
+
 // Meta
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -431,6 +573,42 @@ pub fn validate_payload(
         EventType::TransactionCleared => {
             serde_json::from_value::<TransactionClearedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::TransactionTagged => {
+            serde_json::from_value::<TransactionTaggedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TransactionUpdated => {
+            serde_json::from_value::<TransactionUpdatedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TransactionsMerged => {
+            serde_json::from_value::<TransactionsMergedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::BudgetSet => {
+            serde_json::from_value::<BudgetSetPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::BudgetUpdated => {
+            serde_json::from_value::<BudgetUpdatedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::BudgetRemoved => {
+            serde_json::from_value::<BudgetRemovedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AccountAdded => {
+            serde_json::from_value::<AccountAddedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AccountReconciled => {
+            serde_json::from_value::<AccountReconciledPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::RecurringTransactionDetected => {
+            serde_json::from_value::<RecurringTransactionDetectedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::RecurringTransactionConfirmed => {
+            serde_json::from_value::<RecurringTransactionConfirmedPayload>(payload.clone())
+                .map(|_| ())
+        }
+        EventType::RecurringTransactionDismissed => {
+            serde_json::from_value::<RecurringTransactionDismissedPayload>(payload.clone())
+                .map(|_| ())
+        }
         EventType::DataWiped => {
             serde_json::from_value::<DataWipedPayload>(payload.clone()).map(|_| ())
         }
@@ -468,8 +646,19 @@ mod tests {
             EventType::RoutineItemSkipUndone,
             EventType::TransactionRecorded,
             EventType::TransactionCategorized,
+            EventType::TransactionTagged,
+            EventType::TransactionUpdated,
             EventType::TransactionDeleted,
             EventType::TransactionCleared,
+            EventType::TransactionsMerged,
+            EventType::BudgetSet,
+            EventType::BudgetUpdated,
+            EventType::BudgetRemoved,
+            EventType::AccountAdded,
+            EventType::AccountReconciled,
+            EventType::RecurringTransactionDetected,
+            EventType::RecurringTransactionConfirmed,
+            EventType::RecurringTransactionDismissed,
             EventType::DataWiped,
         ];
 
@@ -746,6 +935,145 @@ mod tests {
             "cleared_date": "2026-05-15"
         });
         assert!(validate_payload(&EventType::TransactionCleared, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_transaction_tagged() {
+        let payload = serde_json::json!({
+            "txn_id": "01JKTXN0000000000000000000",
+            "tags": ["type:business", "project:omni-me"]
+        });
+        assert!(validate_payload(&EventType::TransactionTagged, &payload).is_ok());
+
+        let empty_tags_allowed = serde_json::json!({
+            "txn_id": "01JKTXN0000000000000000000",
+            "tags": []
+        });
+        assert!(validate_payload(&EventType::TransactionTagged, &empty_tags_allowed).is_ok());
+    }
+
+    #[test]
+    fn validate_transaction_updated() {
+        let payload = serde_json::json!({
+            "txn_id": "01JKTXN0000000000000000000",
+            "changes": { "description": "Loblaws — corrected" }
+        });
+        assert!(validate_payload(&EventType::TransactionUpdated, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_transactions_merged_minimal() {
+        let payload = serde_json::json!({
+            "primary_id": "01JKTXN0000000000000000000",
+            "merged_ids": ["01JKTXN0000000000000000001"],
+            "combined_postings": [
+                { "account": "Assets:WS:Cash", "commodity": "CAD", "amount": "-100.00" },
+                { "account": "Assets:Wise:CAD", "commodity": "CAD", "amount": "100.00" }
+            ],
+            "combined_description": "WS → Wise transfer"
+        });
+        assert!(validate_payload(&EventType::TransactionsMerged, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_transactions_merged_with_balancing_posting() {
+        // Hidden-fee resolution: the merged pair sums to non-zero on Unmatched
+        // because Wise took a $1.50 wire fee; user adds a balancing posting to
+        // close the gap. All optional fields populated.
+        let payload = serde_json::json!({
+            "primary_id": "01JKTXN0000000000000000000",
+            "merged_ids": ["01JKTXN0000000000000000001"],
+            "combined_postings": [
+                { "account": "Assets:WS:Cash", "commodity": "CAD", "amount": "-100.00" },
+                { "account": "Assets:Wise:CAD", "commodity": "CAD", "amount": "98.50" }
+            ],
+            "combined_description": "WS → Wise transfer (with fee)",
+            "combined_attachment": {
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "filename": "wise-confirmation.pdf",
+                "mime_type": "application/pdf",
+                "size": 2048
+            },
+            "balancing_posting": {
+                "account": "Expenses:Bank-Fees",
+                "commodity": "CAD",
+                "amount": "1.50"
+            }
+        });
+        assert!(validate_payload(&EventType::TransactionsMerged, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_budget_set() {
+        let payload = serde_json::json!({
+            "category": "Groceries",
+            "amount": "600.00",
+            "period": "monthly"
+        });
+        assert!(validate_payload(&EventType::BudgetSet, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_budget_updated() {
+        let payload = serde_json::json!({
+            "category": "Groceries",
+            "changes": { "amount": "650.00" }
+        });
+        assert!(validate_payload(&EventType::BudgetUpdated, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_budget_removed() {
+        let payload = serde_json::json!({ "category": "Groceries" });
+        assert!(validate_payload(&EventType::BudgetRemoved, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_account_added() {
+        let with_display = serde_json::json!({
+            "account": "Assets:WealthSimple:Cash",
+            "commodity": "CAD",
+            "display_name": "WS Chequing"
+        });
+        assert!(validate_payload(&EventType::AccountAdded, &with_display).is_ok());
+
+        let minimal = serde_json::json!({
+            "account": "Assets:WealthSimple:Cash",
+            "commodity": "CAD"
+        });
+        assert!(validate_payload(&EventType::AccountAdded, &minimal).is_ok());
+    }
+
+    #[test]
+    fn validate_account_reconciled() {
+        let payload = serde_json::json!({
+            "account": "Assets:CIBC:Chequing",
+            "commodity": "CAD",
+            "statement_balance": "5076.10",
+            "cleared_through": "2026-04-30"
+        });
+        assert!(validate_payload(&EventType::AccountReconciled, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_recurring_transaction_lifecycle() {
+        let detected = serde_json::json!({
+            "pattern_id": "rec_netflix",
+            "pattern": { "vendor": "Netflix", "amount": "16.99", "cadence_days": 30 }
+        });
+        assert!(
+            validate_payload(&EventType::RecurringTransactionDetected, &detected).is_ok()
+        );
+
+        let confirmed = serde_json::json!({ "pattern_id": "rec_netflix" });
+        assert!(
+            validate_payload(&EventType::RecurringTransactionConfirmed, &confirmed).is_ok()
+        );
+
+        let dismissed = serde_json::json!({ "pattern_id": "rec_netflix" });
+        assert!(
+            validate_payload(&EventType::RecurringTransactionDismissed, &dismissed).is_ok()
+        );
     }
 
     #[test]
