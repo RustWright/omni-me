@@ -1,4 +1,6 @@
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, serde_as};
 use std::fmt;
 use std::str::FromStr;
 
@@ -27,6 +29,11 @@ pub enum EventType {
     RoutineItemCompletionUndone,
     RoutineItemSkipped,
     RoutineItemSkipUndone,
+    // Budget — transactions
+    TransactionRecorded,
+    TransactionCategorized,
+    TransactionDeleted,
+    TransactionCleared,
     // Meta
     DataWiped,
 }
@@ -52,6 +59,10 @@ impl fmt::Display for EventType {
             EventType::RoutineItemCompletionUndone => "routine_item_completion_undone",
             EventType::RoutineItemSkipped => "routine_item_skipped",
             EventType::RoutineItemSkipUndone => "routine_item_skip_undone",
+            EventType::TransactionRecorded => "transaction_recorded",
+            EventType::TransactionCategorized => "transaction_categorized",
+            EventType::TransactionDeleted => "transaction_deleted",
+            EventType::TransactionCleared => "transaction_cleared",
             EventType::DataWiped => "data_wiped",
         };
         write!(f, "{s}")
@@ -81,6 +92,10 @@ impl FromStr for EventType {
             "routine_item_completion_undone" => Ok(EventType::RoutineItemCompletionUndone),
             "routine_item_skipped" => Ok(EventType::RoutineItemSkipped),
             "routine_item_skip_undone" => Ok(EventType::RoutineItemSkipUndone),
+            "transaction_recorded" => Ok(EventType::TransactionRecorded),
+            "transaction_categorized" => Ok(EventType::TransactionCategorized),
+            "transaction_deleted" => Ok(EventType::TransactionDeleted),
+            "transaction_cleared" => Ok(EventType::TransactionCleared),
             "data_wiped" => Ok(EventType::DataWiped),
             other => Err(format!("unknown event type: {other}")),
         }
@@ -234,6 +249,107 @@ pub struct RoutineItemSkipUndonePayload {
     pub date: chrono::NaiveDate,
 }
 
+// Budget — transactions
+
+/// Content-addressable blob reference for a file attached to a transaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentRef {
+    pub sha256: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size: u64,
+}
+
+/// FX rate captured at posting time — sourced from a receipt's `@` rate or
+/// auto-import metadata. `quote_commodity` is the unit `rate` is denominated in,
+/// matching hledger `100 USD @ 1.37 CAD` semantics (posting amount in USD,
+/// `quote_commodity = "CAD"`).
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FxRate {
+    pub quote_commodity: String,
+    #[serde_as(as = "DisplayFromStr")]
+    pub rate: Decimal,
+}
+
+#[derive(Debug, Clone)]
+pub enum Tag {
+    Bare(String),
+    KeyValue { key: String, value: String },
+}
+
+impl std::fmt::Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bare(s) => write!(f, "{s}"),
+            Self::KeyValue { key, value } => write!(f, "{key}:{value}"),
+        }
+    }
+}
+
+impl FromStr for Tag {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Err("empty tag".into());
+        }
+        match s.split_once(':') {
+            Some((k, v)) => Ok(Tag::KeyValue {
+                key: k.into(),
+                value: v.into(),
+            }),
+            None => Ok(Tag::Bare(s.into())),
+        }
+    }
+}
+
+/// Single posting line within a `TransactionRecorded` event. Mirrors hledger's
+/// posting model: an account + an amount in a commodity, with optional FX rate
+/// and tags. Amount is `rust_decimal::Decimal` (exact base-10 arithmetic) and
+/// serializes as a string so JSON consumers don't downgrade it to f64.
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Posting {
+    pub account: String,
+    pub commodity: String,
+    #[serde_as(as = "DisplayFromStr")]
+    pub amount: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fx_rate: Option<FxRate>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde_as(as = "Vec<DisplayFromStr>")]
+    pub tags: Vec<Tag>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionRecordedPayload {
+    pub txn_id: String,
+    pub date: chrono::NaiveDate,
+    pub description: String,
+    pub postings: Vec<Posting>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<AttachmentRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionCategorizedPayload {
+    pub txn_id: String,
+    pub category: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionDeletedPayload {
+    pub txn_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionClearedPayload {
+    pub txn_id: String,
+    pub statement_source: String,
+    pub cleared_date: chrono::NaiveDate,
+}
+
 // Meta
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,6 +419,18 @@ pub fn validate_payload(
         EventType::RoutineItemSkipUndone => {
             serde_json::from_value::<RoutineItemSkipUndonePayload>(payload.clone()).map(|_| ())
         }
+        EventType::TransactionRecorded => {
+            serde_json::from_value::<TransactionRecordedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TransactionCategorized => {
+            serde_json::from_value::<TransactionCategorizedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TransactionDeleted => {
+            serde_json::from_value::<TransactionDeletedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::TransactionCleared => {
+            serde_json::from_value::<TransactionClearedPayload>(payload.clone()).map(|_| ())
+        }
         EventType::DataWiped => {
             serde_json::from_value::<DataWipedPayload>(payload.clone()).map(|_| ())
         }
@@ -338,6 +466,10 @@ mod tests {
             EventType::RoutineItemCompletionUndone,
             EventType::RoutineItemSkipped,
             EventType::RoutineItemSkipUndone,
+            EventType::TransactionRecorded,
+            EventType::TransactionCategorized,
+            EventType::TransactionDeleted,
+            EventType::TransactionCleared,
             EventType::DataWiped,
         ];
 
@@ -345,6 +477,14 @@ mod tests {
             let s = t.to_string();
             let parsed: EventType = s.parse().unwrap();
             assert_eq!(&parsed, t);
+        }
+    }
+
+    #[test]
+    fn tag_display_from_str_roundtrip() {
+        for raw in ["work", "type:business", "due:2026-04-15T10:00"] {
+            let parsed: Tag = raw.parse().unwrap();
+            assert_eq!(parsed.to_string(), raw);
         }
     }
 
@@ -499,6 +639,113 @@ mod tests {
             "date": "2026-04-19"
         });
         assert!(validate_payload(&EventType::RoutineItemSkipUndone, &skip_undo).is_ok());
+    }
+
+    #[test]
+    fn validate_transaction_recorded_full() {
+        let payload = serde_json::json!({
+            "txn_id": "01JKTXN0000000000000000000",
+            "date": "2026-05-16",
+            "description": "Loblaws grocery run",
+            "postings": [
+                {
+                    "account": "Assets:Checking:WealthSimple",
+                    "commodity": "CAD",
+                    "amount": "-87.42",
+                    "tags": []
+                },
+                {
+                    "account": "Expenses:Groceries",
+                    "commodity": "CAD",
+                    "amount": "87.42",
+                    "tags": ["type:business"]
+                }
+            ],
+            "attachment": {
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "filename": "loblaws-2026-05-16.jpg",
+                "mime_type": "image/jpeg",
+                "size": 184320
+            }
+        });
+        assert!(validate_payload(&EventType::TransactionRecorded, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_transaction_recorded_minimal() {
+        // No attachment, no fx_rate, empty tags allowed via defaults.
+        let payload = serde_json::json!({
+            "txn_id": "01JKTXN0000000000000000001",
+            "date": "2026-05-16",
+            "description": "Coffee",
+            "postings": [
+                { "account": "Assets:Cash", "commodity": "CAD", "amount": "-5.25" },
+                { "account": "Expenses:Coffee", "commodity": "CAD", "amount": "5.25" }
+            ]
+        });
+        assert!(validate_payload(&EventType::TransactionRecorded, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_transaction_recorded_with_fx_rate() {
+        let payload = serde_json::json!({
+            "txn_id": "01JKTXN0000000000000000002",
+            "date": "2026-05-16",
+            "description": "USD subscription",
+            "postings": [
+                {
+                    "account": "Assets:Wise:USD",
+                    "commodity": "USD",
+                    "amount": "-10.00",
+                    "fx_rate": { "quote_commodity": "CAD", "rate": "1.37" }
+                },
+                { "account": "Expenses:Software", "commodity": "CAD", "amount": "13.70" }
+            ]
+        });
+        assert!(validate_payload(&EventType::TransactionRecorded, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_transaction_recorded_amount_must_be_string() {
+        // serde_with::DisplayFromStr requires the wire form to be a JSON string,
+        // not a JSON number — guards against silent f64-via-Decimal corruption.
+        let payload = serde_json::json!({
+            "txn_id": "01JKTXN0000000000000000003",
+            "date": "2026-05-16",
+            "description": "Bad client",
+            "postings": [
+                { "account": "Assets:Cash", "commodity": "CAD", "amount": 5.25 }
+            ]
+        });
+        assert!(
+            validate_payload(&EventType::TransactionRecorded, &payload).is_err(),
+            "Decimal must come over the wire as a string, not a JSON number"
+        );
+    }
+
+    #[test]
+    fn validate_transaction_categorized() {
+        let payload = serde_json::json!({
+            "txn_id": "01JKTXN0000000000000000000",
+            "category": "Groceries"
+        });
+        assert!(validate_payload(&EventType::TransactionCategorized, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_transaction_deleted() {
+        let payload = serde_json::json!({ "txn_id": "01JKTXN0000000000000000000" });
+        assert!(validate_payload(&EventType::TransactionDeleted, &payload).is_ok());
+    }
+
+    #[test]
+    fn validate_transaction_cleared() {
+        let payload = serde_json::json!({
+            "txn_id": "01JKTXN0000000000000000000",
+            "statement_source": "cibc-chequing-2026-05",
+            "cleared_date": "2026-05-15"
+        });
+        assert!(validate_payload(&EventType::TransactionCleared, &payload).is_ok());
     }
 
     #[test]

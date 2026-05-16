@@ -1,3 +1,4 @@
+pub mod accounts;
 pub mod auto_close;
 pub mod db;
 pub mod events;
