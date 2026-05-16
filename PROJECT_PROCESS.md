@@ -1,6 +1,6 @@
 # Project Development Process
 
-> **MIRROR FILE — KEEP IN SYNC.** This is the project-local copy of `PROJECT_PROCESS.md`. The canonical version lives at `setup_files/PROJECT_PROCESS.md` in the parent repo. **Any edit made here must be propagated to the root version (and vice versa).** If you only update one copy, the two will drift — Cycle 2 Session 6 hit this when the project copy was stale at process-revision time. Treat this banner as a tripwire: if you touched the doc, also update the other one before you finish the session.
+> **MIRROR FILE — KEEP IN SYNC.** The canonical version of this document lives at `setup_files/PROJECT_PROCESS.md`. **Any edit made here must be propagated to the canonical (and vice versa).** If you only update one copy, the two will drift — Cycle 2 Session 6 hit this when the project copy was stale at process-revision time. Treat this banner as a tripwire: if you touched the doc, also update the other one before you finish the session.
 
 This document describes the structured process for developing projects in this learning repository, with heavy AI collaboration throughout.
 
@@ -140,6 +140,7 @@ AI (Claude Code) serves as collaborative partner throughout all sessions:
 - Define high-level phases for current scope
 - Break work into atomic chunks (≤10 lines of code where possible)
 - Identify opportunities for parallel development (worktree-friendly file boundaries)
+- **Identify post-system triggers within the cycle** (see [Post System](#post-system) below): flag tasks likely to land a public-facing **logbook entry** — explicit "this is logbook-worthy" annotation in the task list so the question is settled at planning time, not at write-up time. Also flag features that may warrant a **portfolio demo** (`{{ demo() }}` shortcode in §6 of the logbook entry).
 - Create `tasks.md` with detailed task list
 
 **Output:**
@@ -158,6 +159,7 @@ AI (Claude Code) serves as collaborative partner throughout all sessions:
 - Default to moving quickly while maintaining code quality
 - Parallelize across worktree subagents where file boundaries allow
 - Make frequent commits with clear, concise messages
+- **Capture cadence for post-system triggers:** at feature-landing commits, pause to draft logbook capture sections (§1-5 via `logbook init/what/why/scope/note`) while context is freshest. Batch §6 evidence (`logbook exec`, `logbook screenshot`, screenshots requiring UI captures) for end-of-day or end-of-cycle when they would otherwise slow other development. Editorial guidance: `mylearnbase/editorial/logbook.md`.
 - Learning pace adjustable based on project priority and user request
 - No pausing for explanations — those belong in Code Review
 
@@ -196,11 +198,21 @@ Findings use Critical / Warning / Info priority buckets with `file:line` referen
 - Test-gap proposals are triaged item-by-item the same way: a test that locks current correct behavior may land standalone; a tripwire/regression test for a buggy finding lands together with the fix commit
 - Items decided as "defer" roll forward as feedback for the next cycle's Planning session
 
+**Phase D — Post-system pulls (discovery, no fix code):**
+
+A separate phase from the review-and-resolve loop. Two pulls:
+
+1. **Cycle-close curiosity review.** Walk `<project-repo>/.curiosities/<cycle-id>.md` end-to-end (see `~/.claude/CLAUDE.md` § Curiosity Capture for how the file gets populated). For each entry, ask: still hold attention? still feel unfinished? lend itself to interactive demo? Survivors become candidates for **concepts posts** on mylearnbase. Most won't survive — resolved during work, interest faded — and that's expected. A cycle with zero survivors is normal.
+2. **Portfolio-demo identification.** Review which features from the cycle warrant a `{{ demo() }}` shortcode demo as logbook §6 evidence. Pick on coolness + implementability (static-site + WASM-islands constraints from `architecture.md`).
+
+Both pulls feed into post drafting **outside** the cycle process — they're surfacing work, not write work. Post drafting happens via `/create-post` when the author has time, not as part of Code Review.
+
 **Output:**
 - `reviews/YYYY-MM-DD-*.md` per-perspective review documents (created Phase A, annotated with disposition during Phase C)
 - `reviews/YYYY-MM-DD-test-gaps.md` test-gap proposal (created Phase B, annotated during Phase C)
 - Fix commits landed on the cycle's branch/main as triage progresses
 - Deferred items recorded in `project.md` for the next cycle's Planning
+- `<project-repo>/.curiosities/<cycle-id>.md` annotated with survivor markers (Phase D); demo-candidate list noted in `project.md` for the next cycle's Planning to pick up
 
 ---
 
@@ -210,13 +222,17 @@ Each project follows this structure:
 
 ```
 projects/project_name/
-├── .log/                    # Raw exported conversation logs
+├── .log/                    # Raw exported conversation logs (gitignored here, parent-synced)
 │   ├── session-01-initiation.txt
 │   ├── session-02-research.txt
 │   ├── session-03-architecture.txt
 │   ├── session-04-planning-cycle-1.txt
 │   ├── session-05-implementation-cycle-1.txt
 │   ├── session-06-code-review-cycle-1.txt
+│   └── ...
+├── .curiosities/            # Cycle-scoped curiosity captures (gitignored here, parent-synced)
+│   ├── cycle-1.md
+│   ├── cycle-2.md
 │   └── ...
 ├── project.md               # Persistent checklist/tracker (from template)
 ├── research.md              # Research findings (first cycle)
@@ -226,11 +242,14 @@ projects/project_name/
 └── [project files]
 ```
 
+Both `.log/` and `.curiosities/` are **gitignored in the project repo** so raw conversation logs and in-progress curiosity captures never enter the project's public history. They sync to the parent `productive_learning` repo at session end (see `~/.claude/CLAUDE.md` § Session Sync Protocol Step 2) where they're tracked privately. The rest of the structure is tracked in the project's own git history.
+
 **Information Density Hierarchy:**
 1. `.log/` files = Full discussion and reasoning
 2. `project.md` = Decision summaries with alternatives and trade-offs
 3. `research.md` / `architecture.md` = Canonical technical decisions with brief rationale
 4. `reviews/` = Code review findings per perspective per cycle
+5. `.curiosities/` = Cycle-scoped accumulator for concepts-post triggers (LLM-appended during cycle work; reviewed in Session 6 Phase D)
 
 ---
 
@@ -262,6 +281,7 @@ After every session:
 4. **Update `project.md`:** Add session summary to checklist
 5. **Update `tasks.md`:** If in Session 5 (Implementation), ensure task statuses are current
 6. **Commit changes:** Frequent commits throughout, milestone commit after Session 6
+7. **Sync to parent repo:** see `~/.claude/CLAUDE.md` § Session Sync Protocol Step 2 — copies `.log/` and `.curiosities/` into `<parent>/logs/<project-name>/` and `<parent>/curiosities/<project-name>/`. The curiosity log feeds the Session 6 Phase D cycle-close review pass.
 
 Because a single session may span multiple Claude Code sittings, the end-of-session protocol applies when the *phase* wraps — not every individual sitting. Intermediate sittings still commit and push work, but the summary update and log export happen at phase boundaries.
 
@@ -281,3 +301,32 @@ Because a single session may span multiple Claude Code sittings, the end-of-sess
 - `tasks.md` is working state, reset each cycle
 - Previous tasks captured in session export and git commits
 - No need to archive old task files
+
+---
+
+## Post System
+
+Some project work produces public-facing posts on [My Learn Base](https://mylearnbase.com). Five forms cover the post types, each with its own tools, editorial standard, and authoring rhythm:
+
+| Form | What it captures | Trigger point in the cycle |
+|---|---|---|
+| **logbook** | A feature you built; evidence-of-shipping | Capture during Session 5 (Implementation); publish when feature lands |
+| **concepts** | A concept you came to understand via an interactive demo | Survives cycle-close curiosity review in Session 6 Phase D |
+| **workflows** | A process/workflow doc (this very doc is one) | Republish whenever the source doc changes |
+| **opinions** | A take, and the take is the point | Spontaneous — outside the cycle process |
+| **resources** | Curated external references | Project-end or theme readiness — outside the cycle process |
+
+**Authoring entry point:** `/create-post` (global Claude Code slash command) prompts for form first and routes to the editorial doc.
+
+**Editorial source of truth** (in `mylearnbase/editorial/`):
+
+- `logbook.md` — features you built
+- `concepts.md` — interactive demos teaching concepts
+- `workflows.md` — process/workflow docs synced from source docs
+- `opinions.md` — takes with the take as the point
+- `resources.md` — curated external references
+- `tagging.md` — cross-form tagging strategy (style conventions, decision rules, anti-patterns; applies to every form)
+
+Each editorial doc covers when to use, tools, section structure with LLM-vs-author ownership, anti-patterns, and authoring rhythm. **Do not re-encode these rules elsewhere** — drift is the failure mode.
+
+**Curiosity capture** runs continuously across all projects. See `~/.claude/CLAUDE.md` § Curiosity Capture for the mechanism. The cycle-close review pass in Session 6 Phase D walks the resulting log.
