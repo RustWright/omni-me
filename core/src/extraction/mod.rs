@@ -14,6 +14,7 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+pub mod gemini;
 pub mod null;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +59,9 @@ pub struct ExtractionResult {
     pub description: Option<String>,
     pub postings: Vec<ExtractedPosting>,
     pub confidence: f64,
+    /// Populated by the extractor impl after the LLM responds — the model
+    /// doesn't echo this back. `serde(default)` so wire deserialization works.
+    #[serde(default)]
     pub model: String,
     #[serde(default)]
     pub raw_response: serde_json::Value,

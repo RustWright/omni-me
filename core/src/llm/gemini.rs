@@ -44,6 +44,49 @@ impl GeminiClient {
         self
     }
 
+    /// Builder: switch to a different Gemini model. Used by
+    /// `GeminiExtractor` to pin extraction to `gemini-2.5-flash` (validated in
+    /// POC 0.3 for multimodal accuracy) while text-side callers keep the
+    /// `2.0-flash` default.
+    pub fn with_model(mut self, model: String) -> Self {
+        self.model = model;
+        self
+    }
+
+    /// Multimodal structured-output request: text prompt + a single file
+    /// (PDF / image / text bytes) → JSON conforming to `schema`. Used by the
+    /// `DocumentExtractor` impl in `crate::extraction::gemini`. Not on the
+    /// `LlmClient` trait because trait stays text-only — adding multimodal
+    /// would drag bytes through every consumer.
+    pub async fn complete_multimodal_json(
+        &self,
+        prompt: &str,
+        file_bytes: &[u8],
+        mime: &str,
+        schema: &Value,
+    ) -> Result<Value, LlmError> {
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(file_bytes);
+        let body = json!({
+            "contents": [{
+                "parts": [
+                    { "text": prompt },
+                    { "inline_data": { "mime_type": mime, "data": encoded } }
+                ]
+            }],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": schema
+            }
+        });
+
+        let response = self.send_request(body).await?;
+        let text = Self::extract_text(&response)?;
+        serde_json::from_str(&text).map_err(|e| {
+            LlmError::ParseError(format!("Failed to parse multimodal JSON: {e}"))
+        })
+    }
+
     /// Build the API endpoint URL.
     fn endpoint(&self) -> String {
         format!(
