@@ -1,5 +1,7 @@
 pub mod accounts;
 pub mod auto_close;
+pub mod auto_import_scheduler;
+pub mod credentials;
 pub mod db;
 pub mod events;
 pub mod extraction;
