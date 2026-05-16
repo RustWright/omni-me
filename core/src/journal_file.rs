@@ -425,4 +425,57 @@ account Assets:WealthSimple:Cash  ; commodity:CAD
         // Never wrote anything; clearing should still be fine.
         proj.clear_tables(&db).await.unwrap();
     }
+
+    /// 1.13 idempotency: clear_tables + re-apply of the same event sequence
+    /// produces a byte-identical file. This is the rebuild() contract from the
+    /// projection runner — replaying after a corruption / version-bump must
+    /// land at the same end state.
+    #[tokio::test]
+    async fn replay_after_clear_produces_identical_file() {
+        let (proj, _dir) = make_projection().await;
+        let db = fake_db().await;
+
+        let events = vec![
+            make_event(
+                EventType::AccountAdded,
+                serde_json::json!({
+                    "account": "Assets:Cash", "commodity": "CAD",
+                    "display_name": "Cash on hand"
+                }),
+            ),
+            make_event(
+                EventType::TransactionRecorded,
+                serde_json::json!({
+                    "txn_id": "t1", "date": "2026-05-16", "description": "Coffee",
+                    "postings": [
+                        { "account": "Assets:Cash", "commodity": "CAD", "amount": "-5.25" },
+                        { "account": "Expenses:Coffee", "commodity": "CAD", "amount": "5.25" }
+                    ]
+                }),
+            ),
+            make_event(
+                EventType::TransactionRecorded,
+                serde_json::json!({
+                    "txn_id": "t2", "date": "2026-05-16", "description": "Bagel",
+                    "postings": [
+                        { "account": "Assets:Cash", "commodity": "CAD", "amount": "-3.00" },
+                        { "account": "Expenses:Bakery", "commodity": "CAD", "amount": "3.00" }
+                    ]
+                }),
+            ),
+        ];
+
+        for e in &events {
+            proj.apply(e, &db).await.unwrap();
+        }
+        let first = tokio::fs::read_to_string(&proj.path).await.unwrap();
+
+        proj.clear_tables(&db).await.unwrap();
+        for e in &events {
+            proj.apply(e, &db).await.unwrap();
+        }
+        let second = tokio::fs::read_to_string(&proj.path).await.unwrap();
+
+        assert_eq!(first, second, "replay must reproduce the file byte-for-byte");
+    }
 }

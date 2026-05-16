@@ -992,4 +992,125 @@ mod tests {
         assert_eq!(total, None.or(Some(0)).or(None));
         // GROUP ALL on empty returns None; both are valid "no rows" signals.
     }
+
+    // --- 1.13: projection idempotency via rebuild() ---
+
+    /// Snapshot the budget tables into a stable shape so live vs post-rebuild
+    /// state can be compared by value.
+    async fn snapshot(db: &Database) -> serde_json::Value {
+        let mut resp = db
+            .query(
+                "SELECT meta::id(id) AS id, description, category, removed, cleared,
+                        statement_source, cleared_date, tags_top, superseded_by, merged_ids
+                 FROM transactions ORDER BY id ASC;
+                 SELECT meta::id(id) AS id, amount, period, removed
+                 FROM budgets ORDER BY id ASC;
+                 SELECT meta::id(id) AS id, commodity, display_name, last_reconciled_through
+                 FROM accounts ORDER BY id ASC;
+                 SELECT meta::id(id) AS id, status FROM recurring_patterns ORDER BY id ASC;",
+            )
+            .await
+            .unwrap();
+        let txns: Vec<serde_json::Value> = resp.take(0).unwrap();
+        let budgets: Vec<serde_json::Value> = resp.take(1).unwrap();
+        let accounts: Vec<serde_json::Value> = resp.take(2).unwrap();
+        let recurring: Vec<serde_json::Value> = resp.take(3).unwrap();
+        serde_json::json!({
+            "transactions": txns,
+            "budgets": budgets,
+            "accounts": accounts,
+            "recurring": recurring,
+        })
+    }
+
+    #[tokio::test]
+    async fn rebuild_produces_same_state_as_live_apply() {
+        // Apply a representative event mix that exercises every handler family,
+        // capture the live state, rebuild (which clears + replays from the
+        // event log), then assert state parity. Idempotency for the projection.
+        let (db, store, runner) = fixture().await;
+
+        // Two raw transactions...
+        emit(&store, &runner, "transaction_recorded", "t1",
+             simple_txn_payload("t1", "Coffee", "5.25")).await;
+        emit(&store, &runner, "transaction_recorded", "t2",
+             simple_txn_payload("t2", "Bagel", "3.00")).await;
+
+        // ...one categorized, one tagged, one cleared
+        emit(&store, &runner, "transaction_categorized", "t1",
+             serde_json::json!({ "txn_id": "t1", "category": "Snacks" })).await;
+        emit(&store, &runner, "transaction_tagged", "t2",
+             serde_json::json!({ "txn_id": "t2", "tags": ["type:business"] })).await;
+        emit(&store, &runner, "transaction_cleared", "t1",
+             serde_json::json!({
+                 "txn_id": "t1",
+                 "statement_source": "cibc-2026-05",
+                 "cleared_date": "2026-05-15"
+             })).await;
+
+        // Account lifecycle
+        emit(&store, &runner, "account_added", "Assets:CIBC:Chequing",
+             serde_json::json!({
+                 "account": "Assets:CIBC:Chequing",
+                 "commodity": "CAD",
+                 "display_name": "CIBC Chequing"
+             })).await;
+        emit(&store, &runner, "account_reconciled", "Assets:CIBC:Chequing",
+             serde_json::json!({
+                 "account": "Assets:CIBC:Chequing",
+                 "commodity": "CAD",
+                 "statement_balance": "5076.10",
+                 "cleared_through": "2026-04-30"
+             })).await;
+
+        // Budget set + revised
+        emit(&store, &runner, "budget_set", "Groceries",
+             serde_json::json!({ "category": "Groceries", "amount": "600.00", "period": "monthly" })).await;
+        emit(&store, &runner, "budget_updated", "Groceries",
+             serde_json::json!({ "category": "Groceries", "changes": { "amount": "650.00" } })).await;
+
+        // Recurring detected + confirmed
+        emit(&store, &runner, "recurring_transaction_detected", "rec_netflix",
+             serde_json::json!({
+                 "pattern_id": "rec_netflix",
+                 "pattern": { "vendor": "Netflix", "amount": "16.99", "cadence_days": 30 }
+             })).await;
+        emit(&store, &runner, "recurring_transaction_confirmed", "rec_netflix",
+             serde_json::json!({ "pattern_id": "rec_netflix" })).await;
+
+        let _ = store; // keep alive
+        let before = snapshot(&db).await;
+        runner.rebuild().await.unwrap();
+        let after = snapshot(&db).await;
+
+        assert_eq!(before, after, "rebuild must reproduce live state exactly");
+    }
+
+    #[tokio::test]
+    async fn rebuild_preserves_merge_semantics() {
+        // Targeted test: the BEGIN/COMMIT merge path is the most stateful
+        // handler — make sure replay reconstructs the supersede chain.
+        let (db, store, runner) = fixture().await;
+
+        emit(&store, &runner, "transaction_recorded", "t1",
+             simple_txn_payload("t1", "WS leg", "100.00")).await;
+        emit(&store, &runner, "transaction_recorded", "t2",
+             simple_txn_payload("t2", "Wise leg", "100.00")).await;
+        emit(&store, &runner, "transactions_merged", "merge-1",
+             serde_json::json!({
+                 "primary_id": "t1",
+                 "merged_ids": ["t2"],
+                 "combined_postings": [
+                     { "account": "Assets:WS:Cash", "commodity": "CAD", "amount": "-100.00" },
+                     { "account": "Assets:Wise:CAD", "commodity": "CAD", "amount": "100.00" }
+                 ],
+                 "combined_description": "WS → Wise transfer"
+             })).await;
+
+        let _ = store;
+        let before = snapshot(&db).await;
+        runner.rebuild().await.unwrap();
+        let after = snapshot(&db).await;
+        assert_eq!(before, after);
+    }
 }
