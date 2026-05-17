@@ -11,5 +11,6 @@
 //! - Dedup happens via deterministic event ids derived from each upstream's
 //!   stable external id, so re-runs after partial failure are idempotent.
 
+pub mod imap;
 pub mod wealthsimple;
 pub mod wise;

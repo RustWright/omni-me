@@ -37,8 +37,12 @@ pub struct Credentials {
     pub snaptrade: Option<SnapTradeCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wise: Option<WiseCredentials>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub imap: Option<ImapCredentials>,
+    /// Name-keyed map so multiple email accounts can be configured (e.g.
+    /// `gmail_personal`, `gmail_work`, `yahoo`). Each key is a user-chosen
+    /// label that shows up in tracing + status displays. Empty/missing =
+    /// no IMAP accounts configured.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub imap: std::collections::HashMap<String, ImapCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wealthsimple_python: Option<WealthSimplePythonCredentials>,
 }
@@ -162,13 +166,35 @@ mod tests {
         let creds = load(&path).unwrap();
         assert!(creds.snaptrade.is_none());
         assert!(creds.wise.is_none());
-        assert!(creds.imap.is_none());
+        assert!(creds.imap.is_empty());
     }
 
     #[test]
     fn save_then_load_roundtrips_full_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("credentials.toml");
+
+        let mut imap_accounts = std::collections::HashMap::new();
+        imap_accounts.insert(
+            "gmail_personal".to_string(),
+            ImapCredentials {
+                host: "imap.gmail.com".into(),
+                port: 993,
+                account: "me@gmail.com".into(),
+                app_password: "abcd efgh ijkl mnop".into(),
+                watched_label: "omni-me".into(),
+            },
+        );
+        imap_accounts.insert(
+            "yahoo".to_string(),
+            ImapCredentials {
+                host: "imap.mail.yahoo.com".into(),
+                port: 993,
+                account: "me@yahoo.com".into(),
+                app_password: "qrst uvwx yzab cdef".into(),
+                watched_label: "omni-me".into(),
+            },
+        );
 
         let original = Credentials {
             snaptrade: Some(SnapTradeCredentials {
@@ -181,13 +207,7 @@ mod tests {
                 api_token: "wise-token".into(),
                 profile_id: Some("profile-42".into()),
             }),
-            imap: Some(ImapCredentials {
-                host: "imap.gmail.com".into(),
-                port: 993,
-                account: "me@example.com".into(),
-                app_password: "abcd efgh ijkl mnop".into(),
-                watched_label: "omni-me".into(),
-            }),
+            imap: imap_accounts,
             wealthsimple_python: None,
         };
 
@@ -199,11 +219,9 @@ mod tests {
             "client-abc"
         );
         assert_eq!(reloaded.wise.as_ref().unwrap().api_token, "wise-token");
-        assert_eq!(reloaded.imap.as_ref().unwrap().port, 993);
-        assert_eq!(
-            reloaded.imap.as_ref().unwrap().watched_label,
-            "omni-me"
-        );
+        assert_eq!(reloaded.imap.len(), 2);
+        assert_eq!(reloaded.imap["gmail_personal"].port, 993);
+        assert_eq!(reloaded.imap["yahoo"].host, "imap.mail.yahoo.com");
         assert!(reloaded.wealthsimple_python.is_none());
     }
 
@@ -223,7 +241,7 @@ mod tests {
         let reloaded = load(&path).unwrap();
         assert!(reloaded.wise.is_some());
         assert!(reloaded.snaptrade.is_none());
-        assert!(reloaded.imap.is_none());
+        assert!(reloaded.imap.is_empty());
     }
 
     #[cfg(unix)]
@@ -243,14 +261,40 @@ mod tests {
     #[test]
     fn imap_watched_label_defaults_to_omni_me() {
         let toml_str = r#"
-            [imap]
-            host = "imap.example.com"
+            [imap.gmail_personal]
+            host = "imap.gmail.com"
             port = 993
-            account = "me@example.com"
+            account = "me@gmail.com"
             app_password = "pw"
         "#;
         let creds: Credentials = toml::from_str(toml_str).unwrap();
-        assert_eq!(creds.imap.unwrap().watched_label, "omni-me");
+        assert_eq!(creds.imap["gmail_personal"].watched_label, "omni-me");
+    }
+
+    #[test]
+    fn imap_supports_multiple_named_accounts() {
+        let toml_str = r#"
+            [imap.gmail_personal]
+            host = "imap.gmail.com"
+            port = 993
+            account = "me@gmail.com"
+            app_password = "pw1"
+
+            [imap.gmail_work]
+            host = "imap.gmail.com"
+            port = 993
+            account = "me-work@gmail.com"
+            app_password = "pw2"
+
+            [imap.yahoo]
+            host = "imap.mail.yahoo.com"
+            port = 993
+            account = "me@yahoo.com"
+            app_password = "pw3"
+        "#;
+        let creds: Credentials = toml::from_str(toml_str).unwrap();
+        assert_eq!(creds.imap.len(), 3);
+        assert_eq!(creds.imap["yahoo"].host, "imap.mail.yahoo.com");
     }
 
     #[test]
