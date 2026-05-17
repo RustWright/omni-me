@@ -64,10 +64,36 @@ pub struct WiseTransaction {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WiseAmount {
-    /// Wise sometimes returns numbers and sometimes strings — DOC says number.
-    /// Decimal happily takes either via the default deserializer.
+    /// Wise returns numeric JSON values for amounts (verified 2026-05-16
+    /// against live API). `rust_decimal`'s default Deserialize requires
+    /// strings, so we use a lenient deserializer that accepts either form
+    /// without going through f64 (which would lose precision).
+    #[serde(deserialize_with = "deserialize_lenient_decimal")]
     pub value: Decimal,
     pub currency: String,
+}
+
+/// Accept either a JSON string `"-0.89"` or a JSON number `-0.89` and
+/// produce a `Decimal` without precision loss. JSON numbers are pulled
+/// via `serde_json::Number::to_string()` which uses Ryu's shortest-roundtrip
+/// representation — `-0.89` (the f64) prints as `"-0.89"`, not the full
+/// 17-digit f64 form — so `Decimal::from_str` gives the exact value.
+fn deserialize_lenient_decimal<'de, D>(d: D) -> Result<Decimal, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    use std::str::FromStr;
+    let v = serde_json::Value::deserialize(d)?;
+    match v {
+        serde_json::Value::String(s) => Decimal::from_str(&s).map_err(D::Error::custom),
+        serde_json::Value::Number(n) => {
+            Decimal::from_str(&n.to_string()).map_err(D::Error::custom)
+        }
+        other => Err(D::Error::custom(format!(
+            "expected JSON number or string for Decimal, got {other:?}"
+        ))),
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -239,9 +265,12 @@ impl WiseSource {
             return Ok(id);
         }
         let profiles = self.client.list_profiles().await?;
+        // Wise returns `"type": "PERSONAL"` (uppercase) — confirmed against
+        // the live API 2026-05-16. Compare case-insensitively so a future
+        // casing flip on their side doesn't silently break discovery.
         profiles
             .into_iter()
-            .find(|p| p.kind == "personal")
+            .find(|p| p.kind.eq_ignore_ascii_case("personal"))
             .or_else(|| self.client.list_profiles_first_blocking())
             .map(|p| p.id)
             .ok_or_else(|| ImportError::NotConfigured("no Wise profile available".into()))
@@ -552,6 +581,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn statement_parses_numeric_amount_from_real_api_shape() {
+        // Verified against live Wise API 2026-05-16: amount.value comes as a
+        // JSON number (e.g. -0.89), not a string. Decimal's default
+        // deserializer accepts both forms — this test locks that in.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"/v1/profiles/42/balance-statements/1001/statement\.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "transactions": [
+                    {
+                        "referenceNumber": "CARD-3742681368",
+                        "date": "2026-05-02T11:57:29.123959Z",
+                        "amount": { "value": -0.89, "currency": "CAD", "zero": false },
+                        "totalFees": { "value": 0.00, "currency": "CAD" },
+                        "details": { "type": "CARD", "description": "Card transaction of 0.89 CAD issued by Amazon Web Services" }
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let client = WiseClient::new("t".into()).with_base_url(server.uri());
+        let stmt = client
+            .get_statement(
+                42,
+                1001,
+                NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stmt.transactions[0].reference_number, "CARD-3742681368");
+        assert_eq!(
+            stmt.transactions[0].amount.value,
+            Decimal::from_str("-0.89").unwrap()
+        );
+    }
+
+    #[tokio::test]
     async fn auth_failure_surfaces_as_upstream_error() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -568,13 +635,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_profile_id_prefers_personal() {
+    async fn resolve_profile_id_prefers_personal_case_insensitive() {
+        // Wise returns uppercase "PERSONAL" / "BUSINESS" in production.
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v2/profiles"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                { "id": 100, "type": "business" },
-                { "id": 200, "type": "personal" }
+                { "id": 100, "type": "BUSINESS" },
+                { "id": 200, "type": "PERSONAL" }
             ])))
             .mount(&server)
             .await;
