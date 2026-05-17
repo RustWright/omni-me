@@ -23,7 +23,6 @@
 //! on duplicate id, which is the intended dedup mechanism.
 
 use chrono::{NaiveDate, Utc};
-use rust_decimal::Decimal;
 
 use crate::accounts::make_unmatched_mirror;
 use crate::events::{EventType, NewEvent, Posting, TransactionRecordedPayload};
@@ -157,6 +156,7 @@ fn build_receipt_posting(p: &ExtractedPosting) -> Posting {
 mod tests {
     use super::*;
     use crate::extraction::ExtractedPosting;
+    use rust_decimal::Decimal;
     use std::str::FromStr;
 
     fn posting(account_hint: Option<&str>, commodity: &str, amount: &str) -> ExtractedPosting {

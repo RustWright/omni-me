@@ -7,8 +7,12 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use omni_me_core::db::{self, Database};
+use omni_me_core::auto_import::imap_source::SurrealCursorStore;
+use omni_me_core::auto_import::setup::{setup_from_credentials, SourceConfig};
+use omni_me_core::credentials;
 use omni_me_core::events::{
-    BudgetProjection, NotesProjection, ProjectionRunner, RoutinesProjection, SurrealEventStore,
+    BudgetProjection, EventStore, NotesProjection, ProjectionRunner, RoutinesProjection,
+    SurrealEventStore,
 };
 use omni_me_core::journal_file::JournalFile;
 use omni_me_core::sync::{
@@ -165,6 +169,43 @@ pub fn run() {
                     device_id.clone(),
                     timezone_shared.clone(),
                 );
+
+                // Auto-import scheduler — Wise + WS spin up if credentials.toml
+                // configures them. IMAP requires per-app handler composition,
+                // which is currently a TODO — extend `SourceConfig.imap_sources`
+                // here when wiring real handlers (ScNgnHandler / ReceiptHandler).
+                let creds_path = credentials::default_path()
+                    .unwrap_or_else(|_| app_data.join("credentials.toml"));
+                match credentials::load(&creds_path) {
+                    Ok(creds) => {
+                        // Init the IMAP cursor table even if no IMAP sources spawn
+                        // this tick — keeps the schema migration in one place.
+                        let cursor_store = SurrealCursorStore::new(db.clone());
+                        if let Err(e) = cursor_store.init_schema().await {
+                            tracing::warn!(error = %e, "imap_cursors schema init failed");
+                        }
+                        let store_arc: Arc<dyn EventStore> = Arc::new(event_store.clone());
+                        let _handles = setup_from_credentials(
+                            &creds,
+                            &SourceConfig::default(),
+                            store_arc,
+                            projections.clone(),
+                            device_id.clone(),
+                        );
+                        // JoinHandles dropped — tokio tasks live until runtime end.
+                        tracing::info!(
+                            path = %creds_path.display(),
+                            "auto-import scheduler initialized from credentials.toml"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::info!(
+                            path = %creds_path.display(),
+                            error = %e,
+                            "no credentials.toml — auto-import skipped"
+                        );
+                    }
+                }
 
                 // Phase 2 sync pipeline: buffer -> pusher -> retry engine
                 // wired together, plus a network monitor feeding hints in.

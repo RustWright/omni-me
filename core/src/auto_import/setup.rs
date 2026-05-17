@@ -24,6 +24,7 @@ use crate::auto_import_scheduler::{spawn, AutoImportSource};
 use crate::credentials::Credentials;
 use crate::events::{EventStore, ProjectionRunner};
 
+use super::imap_source::ImapSource;
 use super::wealthsimple::WealthSimpleSource;
 use super::wise::WiseSource;
 
@@ -40,6 +41,12 @@ pub struct SourceConfig {
     pub ws_account_map: HashMap<String, String>,
     /// Filesystem path to the Python driver script (Phase 2.9 contract).
     pub ws_driver_script: Option<PathBuf>,
+    /// Pre-constructed IMAP sources — caller builds these because handler
+    /// composition (which ScNgnHandler / ReceiptHandler attaches to which
+    /// account, with what sender patterns + account mappings) is a per-app
+    /// policy decision rather than something derivable from credentials alone.
+    /// Pass an empty Vec to skip IMAP entirely.
+    pub imap_sources: Vec<Arc<ImapSource>>,
 }
 
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -88,13 +95,18 @@ pub fn setup_from_credentials(
         );
     }
 
-    // IMAP: per-account spawning needs the real AsyncImapFetcher impl + a
-    // per-account handler config. Skeleton intentional — left as `len = 0`
-    // until the fetcher lands.
-    if !creds.imap.is_empty() {
-        tracing::info!(
+    // IMAP: spawn each pre-built source the caller passed in. We deliberately
+    // don't auto-construct sources from `creds.imap` here because handler
+    // composition is a per-app policy decision.
+    for source in &config.imap_sources {
+        let s: Arc<dyn AutoImportSource> = source.clone();
+        tracing::info!(source = s.name(), interval_secs = interval.as_secs(), "spawning auto-import");
+        handles.push(spawn(s, interval));
+    }
+    if !creds.imap.is_empty() && config.imap_sources.is_empty() {
+        tracing::warn!(
             count = creds.imap.len(),
-            "IMAP accounts configured — fetcher impl pending; not spawned this iteration"
+            "IMAP accounts configured in credentials but no ImapSources passed to setup — none spawned"
         );
     }
 
