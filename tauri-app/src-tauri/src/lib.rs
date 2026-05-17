@@ -269,6 +269,8 @@ pub fn run() {
             commands::budget::list_budgets,
             commands::budget::confirm_recurring,
             commands::budget::list_recurring,
+            // Document extraction (forwards to server-side GeminiExtractor)
+            commands::extract::extract_document,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

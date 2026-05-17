@@ -50,10 +50,29 @@ async fn main() {
     tracing::info!("blob dir: {}", blob_dir.display());
 
     let db_arc = Arc::new(db);
+
+    // Build the document extractor up-front (NullExtractor fallback if no
+    // Gemini key). Lifted out of the credentials conditional so AppState
+    // always carries one — the /documents/extract route needs it whether or
+    // not auto-import is configured.
+    let creds_path = credentials::default_path()
+        .expect("XDG_CONFIG_HOME / HOME must be set for credentials path");
+    let creds_opt = credentials::load(&creds_path).ok();
+    let extractor: Arc<dyn DocumentExtractor> = match &creds_opt {
+        Some(c) => build_extractor(c),
+        None => {
+            tracing::warn!(
+                "no credentials.toml — documents/extract will use NullExtractor"
+            );
+            Arc::new(NullExtractor)
+        }
+    };
+
     let state = AppState {
         db: db_arc.clone(),
         llm_client,
         blob_dir: Arc::new(blob_dir),
+        extractor: extractor.clone(),
     };
 
     // Auto-import scheduler — Wise + WS + IMAP spin up from credentials.toml.
@@ -69,16 +88,13 @@ async fn main() {
     let event_store_arc: Arc<dyn EventStore> =
         Arc::new(SurrealEventStore::new((*db_arc).clone()));
 
-    let creds_path = credentials::default_path()
-        .expect("XDG_CONFIG_HOME / HOME must be set for credentials path");
-    match credentials::load(&creds_path) {
-        Ok(creds) => {
+    match creds_opt {
+        Some(creds) => {
             let cursor_store_arc: Arc<SurrealCursorStore> =
                 Arc::new(SurrealCursorStore::new((*db_arc).clone()));
             if let Err(e) = cursor_store_arc.init_schema().await {
                 tracing::warn!(error = %e, "imap_cursors schema init failed");
             }
-            let extractor = build_extractor(&creds);
             let imap_sources = build_imap_sources(
                 &creds,
                 extractor.clone(),
@@ -105,10 +121,9 @@ async fn main() {
             );
             tracing::info!(path = %creds_path.display(), "auto-import scheduler initialized");
         }
-        Err(e) => {
+        None => {
             tracing::info!(
                 path = %creds_path.display(),
-                error = %e,
                 "no credentials.toml — auto-import skipped"
             );
         }
@@ -120,6 +135,7 @@ async fn main() {
         .merge(routes::notes_routes())
         .layer(DefaultBodyLimit::max(256 * 1024))
         .merge(routes::blob_routes())
+        .merge(routes::documents_routes())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
