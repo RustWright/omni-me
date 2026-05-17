@@ -14,9 +14,18 @@
 //! `ScNgnHandler` impl — deferred until we add a MIME parser crate to pull
 //! the attachment out of the email body.
 
+use async_trait::async_trait;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::process::Command;
+
+use crate::auto_import_scheduler::ImportError;
+use crate::events::NewEvent;
+use crate::extraction::{DocumentExtractor, ExtractionHint};
+
+use super::imap::{ImapHandler, ImapMessage};
+use super::mime::parse_eml;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScError {
@@ -45,6 +54,23 @@ pub fn derive_pdf_password(account_number: &str) -> Result<String, ScError> {
     Ok(account_number[2..8].to_string())
 }
 
+/// Decrypt PDF bytes + extract text. Writes to a temp file under the hood
+/// because pdftotext seeks within the file to find the encryption dictionary;
+/// piping via stdin doesn't reliably work for encrypted PDFs.
+pub async fn decrypt_and_extract_bytes(
+    pdf_bytes: &[u8],
+    password: &str,
+) -> Result<String, ScError> {
+    let mut temp = tempfile::NamedTempFile::new()
+        .map_err(|e| ScError::Spawn(format!("create temp: {e}")))?;
+    use std::io::Write;
+    temp.write_all(pdf_bytes)
+        .map_err(|e| ScError::Spawn(format!("write temp: {e}")))?;
+    temp.flush()
+        .map_err(|e| ScError::Spawn(format!("flush temp: {e}")))?;
+    decrypt_and_extract(temp.path(), password).await
+}
+
 /// Decrypt the PDF at `path` using `password` and extract its text via
 /// `pdftotext -upw <pw> -layout - -`. `-layout` preserves table-like
 /// columnar structure (useful for statement tables); `-` for output sends
@@ -69,6 +95,83 @@ pub async fn decrypt_and_extract(path: &Path, password: &str) -> Result<String, 
         });
     }
     String::from_utf8(output.stdout).map_err(|e| ScError::NotUtf8(e.to_string()))
+}
+
+/// ImapHandler for Standard Chartered eStatements. Accepts any mail from
+/// `@sc.com` with `statement` in the subject. On match: parses the MIME
+/// tree, finds the application/pdf attachment, decrypts via
+/// `derive_pdf_password(account)`, and forwards the extracted text to a
+/// `DocumentExtractor` with `ExtractionHint::BankStatement`.
+///
+/// Mapping the resulting `ExtractionResult` → typed events lives one layer
+/// up (Phase 1.7 projection consumers + the W4 / Phase 5.5 statement-feed
+/// flow). For now the handler logs the extraction and returns no events —
+/// safe placeholder that proves the wire works without ghost-emitting
+/// duplicate transactions during testing.
+pub struct ScNgnHandler {
+    name: String,
+    /// NUBAN account number used to derive the per-statement PDF password.
+    /// Stored as a `String` because SC accounts have leading zeros that
+    /// must be preserved literally (integer storage would drop them).
+    account_number: String,
+    extractor: Arc<dyn DocumentExtractor>,
+}
+
+impl ScNgnHandler {
+    pub fn new(
+        name: impl Into<String>,
+        account_number: String,
+        extractor: Arc<dyn DocumentExtractor>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            account_number,
+            extractor,
+        }
+    }
+}
+
+#[async_trait]
+impl ImapHandler for ScNgnHandler {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn accepts(&self, message: &ImapMessage) -> bool {
+        message.from.to_lowercase().contains("@sc.com")
+            && message.subject.to_lowercase().contains("statement")
+    }
+
+    async fn handle(&self, message: &ImapMessage) -> Result<Vec<NewEvent>, ImportError> {
+        let parsed = parse_eml(&message.body)
+            .map_err(|e| ImportError::Parse(format!("sc_ngn mime: {e}")))?;
+        let pdf = parsed
+            .find_attachment("application/pdf")
+            .ok_or_else(|| ImportError::Parse("sc_ngn: no PDF attachment found".into()))?;
+
+        let password = derive_pdf_password(&self.account_number)
+            .map_err(|e| ImportError::NotConfigured(format!("sc_ngn password: {e}")))?;
+        let text = decrypt_and_extract_bytes(&pdf.bytes, &password)
+            .await
+            .map_err(|e| ImportError::Upstream(format!("sc_ngn decrypt: {e}")))?;
+
+        let result = self
+            .extractor
+            .extract(text.as_bytes(), "text/plain", ExtractionHint::BankStatement)
+            .await
+            .map_err(|e| ImportError::Upstream(format!("sc_ngn extract: {e}")))?;
+
+        tracing::info!(
+            handler = self.name(),
+            confidence = result.confidence,
+            postings = result.postings.len(),
+            "sc_ngn: extracted statement (event emission TODO — wired pending)"
+        );
+
+        // Event emission deferred — see doc comment. Returning empty Vec is
+        // intentional, not a missing-implementation bug.
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]
@@ -106,6 +209,80 @@ mod tests {
         // If SC ever issues 11+ digit accounts, the formula still grabs
         // the same range — won't randomly break.
         assert_eq!(derive_pdf_password("0123456789012345").unwrap(), "234567");
+    }
+
+    use chrono::TimeZone;
+
+    fn make_imap_message(from: &str, subject: &str, body: Vec<u8>) -> ImapMessage {
+        ImapMessage {
+            uid: 1,
+            from: from.into(),
+            subject: subject.into(),
+            date: chrono::Utc.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap(),
+            body,
+        }
+    }
+
+    #[test]
+    fn handler_accepts_sc_estatement_mail() {
+        let extractor = Arc::new(crate::extraction::null::NullExtractor);
+        let handler = ScNgnHandler::new("sc_ngn", "0123456789".into(), extractor);
+        let msg = make_imap_message(
+            "notifications@sc.com",
+            "Your Estatement on 30042026 now available",
+            Vec::new(),
+        );
+        assert!(handler.accepts(&msg));
+    }
+
+    #[test]
+    fn handler_rejects_non_sc_mail() {
+        let extractor = Arc::new(crate::extraction::null::NullExtractor);
+        let handler = ScNgnHandler::new("sc_ngn", "0123456789".into(), extractor);
+        let other = make_imap_message("random@example.com", "Statement attached", Vec::new());
+        assert!(!handler.accepts(&other));
+    }
+
+    #[test]
+    fn handler_rejects_sc_non_statement_mail() {
+        // Marketing/security/promo emails from @sc.com shouldn't try to
+        // decrypt — they don't have PDF attachments to decrypt anyway.
+        let extractor = Arc::new(crate::extraction::null::NullExtractor);
+        let handler = ScNgnHandler::new("sc_ngn", "0123456789".into(), extractor);
+        let promo = make_imap_message("offers@sc.com", "New rewards await", Vec::new());
+        assert!(!handler.accepts(&promo));
+    }
+
+    /// Full handler pass against the real SC eml — parse MIME → find PDF →
+    /// decrypt → extract → call NullExtractor → return. Skipped without
+    /// the account number, same as the decrypt-only test below.
+    #[tokio::test]
+    async fn handler_processes_real_sc_eml_end_to_end() {
+        let account = match std::env::var("SC_USD_ACCNT_NO") {
+            Ok(v) => v,
+            Err(_) => {
+                eprintln!("SC_USD_ACCNT_NO not set — skipping handler e2e test");
+                return;
+            }
+        };
+        let eml_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".reference/imap poller")
+            .join("Your Estatement on 30042026 now available.eml");
+        let body = std::fs::read(&eml_path).expect("read eml fixture");
+        let msg = make_imap_message(
+            "notifications@sc.com",
+            "Your Estatement on 30042026 now available",
+            body,
+        );
+
+        let extractor = Arc::new(crate::extraction::null::NullExtractor);
+        let handler = ScNgnHandler::new("sc_ngn", account, extractor);
+        let events = handler.handle(&msg).await.expect("e2e should succeed");
+        // NullExtractor returns no postings → handler emits no events. Wired
+        // pending real extractor swap-in.
+        assert!(events.is_empty());
     }
 
     /// Live decryption against the real reference statement (USD account).
