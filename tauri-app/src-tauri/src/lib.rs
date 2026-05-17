@@ -8,8 +8,9 @@ use tauri::Manager;
 
 use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
-    NotesProjection, ProjectionRunner, RoutinesProjection, SurrealEventStore,
+    BudgetProjection, NotesProjection, ProjectionRunner, RoutinesProjection, SurrealEventStore,
 };
+use omni_me_core::journal_file::JournalFile;
 use omni_me_core::sync::{
     NetworkMonitor, PushDebouncer, RetryEngine, StatusReporter, SyncBuffer, SyncClient,
     wire_accelerator,
@@ -124,9 +125,18 @@ pub fn run() {
 
                 let event_store = SurrealEventStore::new(db.clone());
 
+                // The hledger journal file lives in the app data dir alongside
+                // the SurrealDB file. It's a regenerable cache; if it's deleted
+                // the rebuild() path replays all events to reconstruct it.
+                let journal_path = app_data.join("budget.journal");
                 let projections = ProjectionRunner::new(
                     db.clone(),
-                    vec![Box::new(NotesProjection), Box::new(RoutinesProjection)],
+                    vec![
+                        Box::new(NotesProjection),
+                        Box::new(RoutinesProjection),
+                        Box::new(BudgetProjection),
+                        Box::new(JournalFile::new(journal_path)),
+                    ],
                 );
 
                 projections
