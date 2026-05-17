@@ -3,19 +3,24 @@ use dioxus::prelude::*;
 use crate::bridge;
 use crate::types::ExtractedDraft;
 
-/// Which sub-view is currently active inside Finances. Simple two-state
-/// today (tile grid vs. photo capture); will grow as 3.2-3.6 land and
-/// each capture method gets its own sub-view.
+/// Which kind of file-based capture the user opened. Drives the picker
+/// `accept` filter, the camera hint, the title, and whether the hint
+/// selector is offered (PDFs require a user pick; photos default to receipt).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DocumentKind {
+    Photo,
+    Pdf,
+}
+
+/// Which sub-view is currently active inside Finances.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FinancesView {
     Home,
-    PhotoCapture,
+    Capture(DocumentKind),
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
-/// surface (Phase 4), workflows (Phase 5), and import (Phase 6). Currently
-/// renders the entry-tile grid and routes into the Photo capture sub-view —
-/// PDF / Email / Manual tiles remain disabled placeholders until 3.2-3.5.
+/// surface (Phase 4), workflows (Phase 5), and import (Phase 6).
 #[component]
 pub fn FinancesPage() -> Element {
     let mut view = use_signal(|| FinancesView::Home);
@@ -24,15 +29,25 @@ pub fn FinancesPage() -> Element {
         div { class: "max-w-3xl mx-auto w-full animate-in fade-in duration-300",
 
             match *view.read() {
-                FinancesView::Home => rsx! { HomeView { on_open_photo: move |_| view.set(FinancesView::PhotoCapture) } },
-                FinancesView::PhotoCapture => rsx! { PhotoCapture { on_done: move |_| view.set(FinancesView::Home) } },
+                FinancesView::Home => rsx! {
+                    HomeView {
+                        on_open_photo: move |_| view.set(FinancesView::Capture(DocumentKind::Photo)),
+                        on_open_pdf: move |_| view.set(FinancesView::Capture(DocumentKind::Pdf)),
+                    }
+                },
+                FinancesView::Capture(kind) => rsx! {
+                    DocumentCapture {
+                        kind: kind,
+                        on_done: move |_| view.set(FinancesView::Home),
+                    }
+                },
             }
         }
     }
 }
 
 #[component]
-fn HomeView(on_open_photo: EventHandler<()>) -> Element {
+fn HomeView(on_open_photo: EventHandler<()>, on_open_pdf: EventHandler<()>) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
 
@@ -52,7 +67,12 @@ fn HomeView(on_open_photo: EventHandler<()>) -> Element {
                     enabled: true,
                     on_click: move |_| on_open_photo.call(()),
                 }
-                CaptureTile { label: "PDF",    icon_path: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z", enabled: false, on_click: move |_| {} }
+                CaptureTile {
+                    label: "PDF",
+                    icon_path: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
+                    enabled: true,
+                    on_click: move |_| on_open_pdf.call(()),
+                }
                 CaptureTile { label: "Email",  icon_path: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z", enabled: false, on_click: move |_| {} }
                 CaptureTile { label: "Manual", icon_path: "M12 4v16m8-8H4", enabled: false, on_click: move |_| {} }
             }
@@ -95,17 +115,24 @@ fn CaptureTile(
 }
 
 // =============================================================================
-// Photo capture sub-view (Phase 3.1)
+// Document capture sub-view (Phase 3.1 photos + 3.2 PDFs)
 //
-// Flow: tap "Photo" tile → file picker (mobile triggers rear camera) → user
-// picks a photo → bytes ship to the server's /documents/extract endpoint →
-// Gemini returns a structured ExtractedDraft → we show the postings preview.
-// The "Save → TransactionRecorded" path lands in 3.6 (confirm-draft screen);
-// for 3.1 we just render the draft read-only with a "Looks good?" affordance.
+// Flow: tile click → file picker → bytes ship to /documents/extract →
+// structured ExtractedDraft renders below. PDFs surface a hint selector
+// because `core::extraction::route_from_mime` deliberately returns None for
+// application/pdf — receipt vs bank-statement vs paystub vs brokerage is
+// not auto-derivable from the MIME alone.
 // =============================================================================
 
+const PDF_HINTS: &[(&str, &str)] = &[
+    ("bank_statement", "Bank statement"),
+    ("brokerage_statement", "Brokerage statement"),
+    ("paystub", "Paystub"),
+    ("receipt", "Receipt"),
+];
+
 #[component]
-fn PhotoCapture(on_done: EventHandler<()>) -> Element {
+fn DocumentCapture(kind: DocumentKind, on_done: EventHandler<()>) -> Element {
     #[derive(Debug, Clone)]
     enum CaptureState {
         Idle,
@@ -117,12 +144,14 @@ fn PhotoCapture(on_done: EventHandler<()>) -> Element {
         },
     }
 
-    // `mut` is the Dioxus convention even though Signal has interior
-    // mutability — the borrow-checker still wants it for `.set()` calls.
-    let mut state: Signal<CaptureState> = use_signal(|| CaptureState::Idle);
+    let (title, accept, prefer_camera, default_hint, show_hint_picker) = match kind {
+        DocumentKind::Photo => ("Photo capture", "image/*", true, "receipt", false),
+        DocumentKind::Pdf => ("PDF capture", "application/pdf", false, "bank_statement", true),
+    };
 
-    // File picker handler. Reads bytes via Dioxus 0.7's `FileData::read_bytes`
-    // and kicks off the extract round trip.
+    let mut state: Signal<CaptureState> = use_signal(|| CaptureState::Idle);
+    let mut hint = use_signal(|| default_hint.to_string());
+
     let on_file_picked = move |evt: Event<FormData>| {
         let files = evt.files();
         let Some(file) = files.into_iter().next() else {
@@ -130,15 +159,14 @@ fn PhotoCapture(on_done: EventHandler<()>) -> Element {
         };
         let mime = file
             .content_type()
-            .unwrap_or_else(|| "image/jpeg".to_string());
+            .unwrap_or_else(|| match kind {
+                DocumentKind::Photo => "image/jpeg".to_string(),
+                DocumentKind::Pdf => "application/pdf".to_string(),
+            });
+        let hint_value = hint.read().clone();
 
-        // Drive the signal — this updates the runtime AND triggers a re-render
-        // of every component (including ours) reading `state`.
         state.set(CaptureState::Working);
 
-        // `state` (the Signal handle) is `Copy`, so the `move` below copies the
-        // handle into the async block — both the outer closure and the async
-        // task can call `.set()` on the same underlying reactive slot.
         spawn(async move {
             let bytes = match file.read_bytes().await {
                 Ok(b) => b.to_vec(),
@@ -151,15 +179,10 @@ fn PhotoCapture(on_done: EventHandler<()>) -> Element {
                 }
             };
 
-            // `invoke_extract_document` takes `bytes` by value (moves it). If
-            // we want them for one-tap retry on failure, we have to clone the
-            // bytes BEFORE the call — once `bytes` is gone, it's gone. Same
-            // logic for `mime` (we still own it after the `&mime` borrow, but
-            // constructing the Error variant moves it).
             let retry_bytes = bytes.clone();
             let retry_mime = mime.clone();
 
-            match bridge::invoke_extract_document(bytes, &mime, "receipt").await {
+            match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
                 Ok(draft) => state.set(CaptureState::Draft(draft)),
                 Err(e) => state.set(CaptureState::Error {
                     msg: format!("Couldn't extract: {e}"),
@@ -182,36 +205,66 @@ fn PhotoCapture(on_done: EventHandler<()>) -> Element {
                     }
                     span { "Back" }
                 }
-                h1 { class: "text-xl font-bold text-obsidian-accent", "Photo capture" }
+                h1 { class: "text-xl font-bold text-obsidian-accent", "{title}" }
             }
 
-            // File picker. `capture="environment"` is a mobile hint that
-            // makes Android open the rear-facing camera by default.
+            // Hint selector — only renders for PDFs.
+            if show_hint_picker {
+                fieldset { class: "flex flex-col gap-2",
+                    legend { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2",
+                        "What kind of PDF?"
+                    }
+                    div { class: "flex flex-wrap gap-2",
+                        for (value, label) in PDF_HINTS.iter().copied() {
+                            HintRadio {
+                                value: value,
+                                label: label,
+                                checked: *hint.read() == value,
+                                on_select: move |_| hint.set(value.to_string()),
+                            }
+                        }
+                    }
+                }
+            }
+
+            // File picker. `capture="environment"` only applies to the photo
+            // flow — it tells mobile browsers to default to the rear camera.
             label { class: "block",
                 span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
-                    "Pick a photo or take one"
+                    match kind {
+                        DocumentKind::Photo => "Pick a photo or take one",
+                        DocumentKind::Pdf => "Pick a PDF",
+                    }
                 }
-                input {
-                    class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
-                    r#type: "file",
-                    accept: "image/*",
-                    "capture": "environment",
-                    onchange: on_file_picked,
+                if prefer_camera {
+                    input {
+                        class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
+                        r#type: "file",
+                        accept: accept,
+                        "capture": "environment",
+                        onchange: on_file_picked,
+                    }
+                } else {
+                    input {
+                        class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
+                        r#type: "file",
+                        accept: accept,
+                        onchange: on_file_picked,
+                    }
                 }
             }
 
-            // State-dependent body. Three of the four arms delegate to the
-            // pure-display `render_*` helpers; the Error arm composes the
-            // error display with a conditional Retry button (which needs the
-            // `state` signal in scope to mutate it on click).
+            // State-dependent body. The Error arm composes render_error with
+            // a conditional Retry button that needs `state` in scope.
             div {
                 {
                     match &*state.read() {
-                        CaptureState::Idle => render_idle(),
+                        CaptureState::Idle => render_idle(kind),
                         CaptureState::Working => render_working(),
                         CaptureState::Draft(d) => render_draft(d),
                         CaptureState::Error { msg, retry_bytes } => {
                             let retry = retry_bytes.clone();
+                            let hint_value = hint.read().clone();
                             rsx! {
                                 {render_error(msg)}
                                 if let Some((bytes, mime)) = retry {
@@ -219,16 +272,14 @@ fn PhotoCapture(on_done: EventHandler<()>) -> Element {
                                         button {
                                             class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90",
                                             onclick: move |_| {
-                                                // Double-clone idiom: outer captures by move (taking ownership
-                                                // of the originals from the match arm), inner clones for the
-                                                // async block. Keeps the onclick callable as FnMut.
                                                 let bytes = bytes.clone();
                                                 let mime = mime.clone();
+                                                let hint_value = hint_value.clone();
                                                 state.set(CaptureState::Working);
                                                 spawn(async move {
                                                     let retry_bytes = bytes.clone();
                                                     let retry_mime = mime.clone();
-                                                    match bridge::invoke_extract_document(bytes, &mime, "receipt").await {
+                                                    match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
                                                         Ok(draft) => state.set(CaptureState::Draft(draft)),
                                                         Err(e) => state.set(CaptureState::Error {
                                                             msg: format!("Couldn't extract: {e}"),
@@ -250,13 +301,39 @@ fn PhotoCapture(on_done: EventHandler<()>) -> Element {
     }
 }
 
+#[component]
+fn HintRadio(
+    value: &'static str,
+    label: &'static str,
+    checked: bool,
+    on_select: EventHandler<()>,
+) -> Element {
+    let base = "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer";
+    let style = if checked {
+        "bg-obsidian-accent text-white border-obsidian-accent"
+    } else {
+        "bg-transparent text-obsidian-text-muted border-white/10 hover:border-obsidian-accent hover:text-obsidian-text"
+    };
+    rsx! {
+        button {
+            class: "{base} {style}",
+            r#type: "button",
+            value: value,
+            onclick: move |_| on_select.call(()),
+            "{label}"
+        }
+    }
+}
+
 // --- Render helpers ----------------------------------------------------------
 
-fn render_idle() -> Element {
+fn render_idle(kind: DocumentKind) -> Element {
+    let msg = match kind {
+        DocumentKind::Photo => "Pick a photo above to start. Mobile devices open the camera; desktop opens a file picker.",
+        DocumentKind::Pdf => "Pick a PDF above. Choose the document kind first so the extractor uses the right prompt.",
+    };
     rsx! {
-        p { class: "text-sm text-obsidian-text-muted",
-            "Pick a photo above to start. Mobile devices open the camera; desktop opens a file picker."
-        }
+        p { class: "text-sm text-obsidian-text-muted", "{msg}" }
     }
 }
 
@@ -306,7 +383,7 @@ fn render_error(message: &str) -> Element {
     rsx! {
         div { class: "p-4 bg-red-950/30 border border-red-500/30 rounded-lg space-y-2",
             p { class: "text-sm text-red-300", "Couldn't extract: {message}" }
-            p { class: "text-xs text-obsidian-text-muted", "Pick another photo above to retry." }
+            p { class: "text-xs text-obsidian-text-muted", "Pick another file above to retry." }
         }
     }
 }
