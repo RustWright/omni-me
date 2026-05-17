@@ -109,9 +109,17 @@ impl WealthSimpleSource {
     /// stdout. Separated from `pull()` so tests can drive it with a shell
     /// script that emits canned JSON.
     async fn run_driver(&self) -> Result<WsImportEnvelope, ImportError> {
+        let session_path = self
+            .creds
+            .session_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/tmp/ws-omni-session.json".to_string());
         let creds_json = serde_json::json!({
             "email": self.creds.email,
             "password": self.creds.password,
+            "otp": serde_json::Value::Null,
+            "session_path": session_path,
         })
         .to_string();
 
@@ -257,6 +265,7 @@ mod tests {
             password: "fake-password".into(),
             python_path: python.into(),
             driver_script: None,
+            session_path: None,
         }
     }
 

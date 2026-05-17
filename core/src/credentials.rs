@@ -112,6 +112,13 @@ pub struct WealthSimplePythonCredentials {
     /// even when other WS credentials are configured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub driver_script: Option<std::path::PathBuf>,
+    /// Filesystem path where the driver persists the WS session (so OTP is
+    /// only required on first run + after session expiry). Defaults to
+    /// `/tmp/ws-omni-session.json` when absent — fine for dev, should be
+    /// set to a stable path like `~/.local/share/omni-me/ws-session.json`
+    /// in production so server restarts don't reset the auth state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_path: Option<std::path::PathBuf>,
 }
 
 fn default_python_executable() -> String {

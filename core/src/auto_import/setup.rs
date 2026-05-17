@@ -183,6 +183,7 @@ mod tests {
                 password: "p".into(),
                 python_path: "/usr/bin/python3".into(),
                 driver_script: None,
+                session_path: None,
             }),
             ..Credentials::default()
         };
@@ -212,6 +213,7 @@ mod tests {
                 password: "p".into(),
                 python_path: "/usr/bin/python3".into(),
                 driver_script: None,
+                session_path: None,
             }),
             ..Credentials::default()
         };
@@ -238,6 +240,7 @@ mod tests {
                 password: "p".into(),
                 python_path: "/usr/bin/python3".into(),
                 driver_script: None,
+                session_path: None,
             }),
             ..Credentials::default()
         };

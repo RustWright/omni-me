@@ -64,11 +64,15 @@ def main() -> int:
         # Driver script lives in the repo for now; user can copy to a stable
         # path (e.g. ~/.local/share/omni-me/drivers/) and update if desired.
         driver = str(here / "scripts" / "wealthsimple_driver_example.py")
+        # Session file under XDG_DATA_HOME so it survives server restarts.
+        xdg_data = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+        session_path = str(Path(xdg_data) / "omni-me" / "ws-session.json")
         sections.append("[wealthsimple_python]")
         sections.append(f"email = {toml_quote(ws_user)}")
         sections.append(f"password = {toml_quote(ws_pass)}")
         sections.append('python_path = "python3"')
         sections.append(f"driver_script = {toml_quote(driver)}")
+        sections.append(f"session_path = {toml_quote(session_path)}")
         sections.append("")
 
     # SC accounts — derive hledger account name from the env-var suffix.
