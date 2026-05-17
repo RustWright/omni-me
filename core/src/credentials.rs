@@ -45,6 +45,18 @@ pub struct Credentials {
     pub imap: std::collections::HashMap<String, ImapCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wealthsimple_python: Option<WealthSimplePythonCredentials>,
+    /// Gemini Flash multimodal API key — used by the document extractor for
+    /// receipts, bank statements, paystubs, etc. When absent, handlers fall
+    /// back to `NullExtractor` (no events emitted) — a useful signal that
+    /// the key needs configuring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini: Option<GeminiCredentials>,
+    /// Standard Chartered account configurations — `account_number` (the
+    /// NUBAN) drives PDF password derivation; `hledger_account` + `commodity`
+    /// are the bank-side posting target for emitted events. Multiple entries
+    /// supported (e.g. one USD account + one NGN account).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sc_accounts: Vec<ScAccountCredentials>,
 }
 
 /// SnapTrade free-tier connection — `client_id` + `consumer_key` from the
@@ -95,10 +107,30 @@ pub struct WealthSimplePythonCredentials {
     /// Defaults to `python3` if not set.
     #[serde(default = "default_python_executable")]
     pub python_path: String,
+    /// Filesystem path to the user-managed driver script (see
+    /// `scripts/wealthsimple_driver_example.py`). Required for WS spawn
+    /// even when other WS credentials are configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_script: Option<std::path::PathBuf>,
 }
 
 fn default_python_executable() -> String {
     "python3".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeminiCredentials {
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScAccountCredentials {
+    /// NUBAN account number — used as the input to `sc_ngn::derive_pdf_password`.
+    pub account_number: String,
+    /// hledger account this SC account maps to (e.g. `Assets:StandardChartered:USD`).
+    pub hledger_account: String,
+    /// Commodity the account holds (e.g. `USD`, `NGN`).
+    pub commodity: String,
 }
 
 /// Default location for the credentials file. Follows XDG Base Directory.
@@ -209,6 +241,8 @@ mod tests {
             }),
             imap: imap_accounts,
             wealthsimple_python: None,
+            gemini: None,
+            sc_accounts: Vec::new(),
         };
 
         save(&path, &original).unwrap();

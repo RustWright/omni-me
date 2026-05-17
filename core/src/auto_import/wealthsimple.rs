@@ -256,6 +256,7 @@ mod tests {
             email: "user@example.com".into(),
             password: "fake-password".into(),
             python_path: python.into(),
+            driver_script: None,
         }
     }
 

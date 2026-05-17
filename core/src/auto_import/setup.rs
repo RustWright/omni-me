@@ -182,6 +182,7 @@ mod tests {
                 email: "x@y".into(),
                 password: "p".into(),
                 python_path: "/usr/bin/python3".into(),
+                driver_script: None,
             }),
             ..Credentials::default()
         };
@@ -210,6 +211,7 @@ mod tests {
                 email: "x@y".into(),
                 password: "p".into(),
                 python_path: "/usr/bin/python3".into(),
+                driver_script: None,
             }),
             ..Credentials::default()
         };
@@ -235,6 +237,7 @@ mod tests {
                 email: "x".into(),
                 password: "p".into(),
                 python_path: "/usr/bin/python3".into(),
+                driver_script: None,
             }),
             ..Credentials::default()
         };
