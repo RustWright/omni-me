@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::bridge;
-use crate::types::{ExtractedDraft, PostingInput, TransactionFormDraft};
+use crate::types::{AttachmentRef, ExtractedDraft, PostingInput, TransactionFormDraft};
 
 /// Which kind of file-based capture the user opened. Drives the picker
 /// `accept` filter, the camera hint, the title, and whether the hint
@@ -543,7 +543,7 @@ const DEFAULT_COMMODITY: &str = "CAD";
 #[component]
 fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -> Element {
     // Pre-populate from extracted draft when provided.
-    let (init_date, init_desc, init_rows) = match initial {
+    let (init_date, init_desc, init_rows, init_attachment) = match initial {
         Some(d) => {
             let rows: Vec<PostingRow> = if d.postings.is_empty() {
                 vec![
@@ -560,7 +560,12 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                     })
                     .collect()
             };
-            (d.date.unwrap_or_default(), d.description.unwrap_or_default(), rows)
+            (
+                d.date.unwrap_or_default(),
+                d.description.unwrap_or_default(),
+                rows,
+                d.attachment,
+            )
         }
         None => (
             String::new(),
@@ -569,12 +574,14 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                 PostingRow::empty(DEFAULT_COMMODITY),
                 PostingRow::empty(DEFAULT_COMMODITY),
             ],
+            None,
         ),
     };
 
     let mut date = use_signal(|| init_date);
     let mut description = use_signal(|| init_desc);
     let mut postings = use_signal(|| init_rows);
+    let attachment: Signal<Option<AttachmentRef>> = use_signal(|| init_attachment);
     let mut saving = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
@@ -633,6 +640,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
             date: date_v,
             description: desc_v,
             postings: postings_out,
+            attachment: attachment.read().clone(),
         };
         spawn(async move {
             match bridge::invoke_record_transaction(submission).await {
@@ -769,6 +777,18 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                             }
                         }
                     }
+                }
+            }
+
+            // Attachment indicator — surfaces the fact that bytes were
+            // persisted server-side and mirrored to the on-device LRU cache.
+            // Thumbnail rendering is Phase 4 (transaction detail) territory.
+            if let Some(att) = attachment.read().clone() {
+                div { class: "p-3 bg-obsidian-sidebar/60 border border-white/10 rounded-md text-xs text-obsidian-text-muted flex items-center gap-2",
+                    svg { class: "w-4 h-4 text-obsidian-accent", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" }
+                    }
+                    span { "Attachment saved · " span { class: "font-mono", "{att.filename}" } " · {att.size} bytes" }
                 }
             }
 

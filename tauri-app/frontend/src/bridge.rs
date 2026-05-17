@@ -1,11 +1,10 @@
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "mock")]
-use crate::types::TaskResult;
+use crate::types::{AttachmentRef, ExtractedPostingView, TaskResult};
 use crate::types::{
-    CompletionEntry, ExtractedDraft, ExtractedPostingView, GenericNoteItem, JournalEntryItem,
-    LlmResult, RoutineGroup, RoutineItem, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
-    TransactionFormDraft,
+    CompletionEntry, ExtractedDraft, GenericNoteItem, JournalEntryItem, LlmResult, RoutineGroup,
+    RoutineItem, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft,
 };
 
 // Tauri IPC
@@ -1016,7 +1015,8 @@ pub async fn invoke_extract_document(
 ) -> Result<ExtractedDraft, String> {
     #[cfg(feature = "mock")]
     {
-        let _ = (bytes, mime, hint);
+        let size = bytes.len() as u64;
+        let _ = (bytes, hint);
         // Simulate network + LLM latency so the UI's wait state is visible.
         crate::timer::sleep_ms(1200).await;
         Ok(ExtractedDraft {
@@ -1039,6 +1039,12 @@ pub async fn invoke_extract_document(
             total: Some("42.18".into()),
             confidence: 0.91,
             model: "mock-extractor".into(),
+            attachment: Some(AttachmentRef {
+                sha256: "0".repeat(64),
+                filename: "mock-receipt".into(),
+                mime_type: mime.to_string(),
+                size,
+            }),
         })
     }
     #[cfg(not(feature = "mock"))]

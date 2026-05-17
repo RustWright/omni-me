@@ -216,9 +216,21 @@ pub struct ExtractedPostingView {
     pub line_label: Option<String>,
 }
 
+/// Content-addressable attachment metadata. Mirrors `core::events::AttachmentRef`.
+/// Populated server-side by `/documents/extract?attach=true`; the UI threads it
+/// through `TransactionForm` → `record_transaction` so it lives on the event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentRef {
+    pub sha256: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size: u64,
+}
+
 /// Frontend view of `core::extraction::ExtractionResult` — fields normalised
 /// to wire-friendly types (string amounts, ISO date strings) so the UI doesn't
-/// pull in `rust_decimal` or `chrono`.
+/// pull in `rust_decimal` or `chrono`. Carries the server-minted
+/// `AttachmentRef` when the request was made with `attach=true`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExtractedDraft {
     #[serde(default)]
@@ -231,6 +243,8 @@ pub struct ExtractedDraft {
     pub confidence: f64,
     #[serde(default)]
     pub model: String,
+    #[serde(default)]
+    pub attachment: Option<AttachmentRef>,
 }
 
 /// Single posting line in a TransactionDraft submission. Mirrors the wire
@@ -254,4 +268,6 @@ pub struct TransactionFormDraft {
     pub date: String,
     pub description: String,
     pub postings: Vec<PostingInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<AttachmentRef>,
 }

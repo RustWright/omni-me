@@ -14,6 +14,7 @@ use axum::{Router, Json, routing::get};
 use chrono::Utc;
 use omni_me_core::db;
 use omni_me_core::events::{EventStore, NewEvent, SurrealEventStore};
+use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::GeminiClient;
 use omni_me_core::sync::{
     NetworkMonitor, PushDebouncer, PushEvent, RetryEngine, RetryEvent, StatusReporter, SyncBuffer,
@@ -51,6 +52,7 @@ async fn start_server_on_port(
         db: Arc::new(server_db),
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
         blob_dir: Arc::new(blob_path),
+        extractor: Arc::new(NullExtractor),
     };
 
     let app = make_router(state);
@@ -88,6 +90,7 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
         db: Arc::new(server_db.clone()),
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
         blob_dir: Arc::new(blob_path2),
+        extractor: Arc::new(NullExtractor),
     };
     let app = make_router(state);
 

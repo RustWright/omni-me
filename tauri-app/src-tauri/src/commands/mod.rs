@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod budget;
 pub mod extract;
 pub mod import;

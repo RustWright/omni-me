@@ -109,7 +109,7 @@ Custom Dioxus screens for capture. Mobile-first for photos; desktop-first for PD
 - [x] **3.4** Email body paste screen (text area + extract button) → confirm-draft [S] — done 2026-05-17 (`EmailCapture` component, sends body as `text/plain` with hint `email_body`)
 - [x] **3.5** Manual entry form (account, date, amount, commodity, category, tags, description) [M] — done 2026-05-17 as the shared `TransactionForm` (initial=None for manual)
 - [x] **3.6** Confirm-draft screen — extracted fields editable inline, attachment thumbnail visible, Save commits `TransactionRecorded` [M] — done 2026-05-17 as the shared `TransactionForm` (initial=Some(draft) post-extraction); **attachment thumbnail skipped** — see Phase 3 Known Gaps. _(logbook bundle 3.1+3.2+3.3+3.4+3.5+3.6: "Capture a transaction via photo, PDF, share-target, email paste, or manual entry"; tags: dioxus, tauri, mobile-development, multimodal, ux)_
-- [ ] **3.7** Local attachment cache: app data dir + LRU eviction (200MB cap default); fetch-on-demand from `/blobs/<sha256>` [M]
+- [x] **3.7** Local attachment cache: app data dir + LRU eviction (200MB cap default); fetch-on-demand from `/blobs/<sha256>` [M] — done 2026-05-17. Server `/documents/extract` now accepts `?attach=true`; client mirrors bytes to `<app_data>/attachments/<sha256>` and threads `AttachmentRef` onto the `TransactionRecorded` event. Bundled the Phase 3 Known-Gaps "dropped attachment bytes" item. `commands::attachments` ships `fetch_attachment` / `attachment_cache_size` / `clear_attachment_cache` (the last two fuel 3.8). 5 unit tests covering roundtrip / miss / LRU eviction order / invalid-hash rejection / clear-keeps-dir. mtime LRU (atime unreliable on noatime mounts), touch-on-hit for residency.
 - [ ] **3.8** Settings → Cache section: "Clear Attachment Cache" button + cache size displayed [XS]
 - [ ] **3.9** Settings → Auto-Import Sources section: per-source connect/disconnect, last-fetch timestamp, status indicator, manual-fetch-now button. Pattern follows `ImportExportSection` + Danger Zone. [M]
 - [ ] **3.10** Auto-import review screen — batch preview with dedup info, per-row accept/skip/edit, manual FX rate prompt for NGN imports, commit triggers `TransactionRecorded` event batch [L] _(logbook bundle 2.9+2.10+2.11+2.12a+2.12b+2.13+2.14+3.9+3.10: "Auto-import transactions from WealthSimple, Wise, and email IMAP, with a unified review screen"; §4 cross-links to the capture-flow entry; tags: tauri, imap, email, auto-import, wealthsimple, wise)_
@@ -204,6 +204,10 @@ Cycle 4 is dedicated polish + stable-v1 release.
 - [ ] **ExchangeRate-API auto-rates for NGN** (and any non-Frankfurter currencies) — replaces Cycle 3's manual-per-statement entry
 - [ ] **LLM-translated NL queries for R2** — evaluation only; ship only if real usage demands it
 - [ ] **PaddleOCR sidecar** — moved from Cycle 3 backlog (7.11) since Gemini was sole Cycle 3 extractor
+
+**Cross-submodule state management (Cycle 3 Phase 3 gap surfaced 2026-05-17):**
+
+- [ ] **Tab-switch protection for in-flight captures.** Today's symptom: user kicks off a photo upload + Gemini extract round trip, then taps another top-level tab before it returns; `FinancesPage` unmounts and the captured bytes + draft progress vanish silently with no recovery path. Same shape applies to any other long-running per-tab work added later. **Fix scope:** lift in-flight captures (and any future "started here but takes a while" state) into a top-level shared store keyed by capture-id so navigating away doesn't kill the future; show a "you have an in-flight capture" affordance on Home if the user wanders back. This is the broader "sub-module state isolation hurts cross-tab continuity" rework — applies anywhere a page is the de-facto owner of work that outlives its own mount. [M]
 
 **Stretch items deferred from Cycle 3 Phase 7 (Session 5 decision 2026-05-16):**
 

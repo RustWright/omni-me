@@ -45,6 +45,8 @@ pub struct AppState {
     pub server_url: tokio::sync::RwLock<String>,
     pub timezone: Arc<tokio::sync::RwLock<String>>,
     pub app_data_dir: std::path::PathBuf,
+    /// Local LRU mirror of `/blobs/<sha256>` — see `commands::attachments`.
+    pub attachment_cache_dir: std::path::PathBuf,
     pub http: reqwest::Client,
     /// Debounced event buffer — 1s idle flush (see `SyncBuffer`).
     pub sync_buffer: SyncBuffer,
@@ -186,6 +188,9 @@ pub fn run() {
                 let (status_reporter, _sr_push_task, _sr_retry_task) =
                     StatusReporter::spawn(&push_debouncer, &retry_engine);
 
+                let attachment_cache_dir = app_data.join("attachments");
+                std::fs::create_dir_all(&attachment_cache_dir).ok();
+
                 handle.manage(AppState {
                     db,
                     event_store,
@@ -194,6 +199,7 @@ pub fn run() {
                     server_url: tokio::sync::RwLock::new(server_url),
                     timezone: timezone_shared,
                     app_data_dir: app_data,
+                    attachment_cache_dir,
                     http: reqwest::Client::new(),
                     sync_buffer,
                     push_debouncer,
@@ -271,6 +277,10 @@ pub fn run() {
             commands::budget::list_recurring,
             // Document extraction (forwards to server-side GeminiExtractor)
             commands::extract::extract_document,
+            // Local attachment cache (Phase 3.7)
+            commands::attachments::fetch_attachment,
+            commands::attachments::attachment_cache_size,
+            commands::attachments::clear_attachment_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

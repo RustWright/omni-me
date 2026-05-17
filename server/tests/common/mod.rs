@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use axum::{Json, Router, routing::get};
 use omni_me_core::db;
+use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::GeminiClient;
 use omni_me_server::{AppState, routes};
 use tower_http::cors::CorsLayer;
@@ -33,6 +34,7 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
         db: Arc::new(server_db),
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
         blob_dir: Arc::new(blob_path),
+        extractor: Arc::new(NullExtractor),
     };
 
     let app = Router::new()
