@@ -232,3 +232,26 @@ pub struct ExtractedDraft {
     #[serde(default)]
     pub model: String,
 }
+
+/// Single posting line in a TransactionDraft submission. Mirrors the wire
+/// shape of `core::events::Posting` after `DisplayFromStr` serialization:
+/// `amount` is the decimal-as-string the backend's `serde_with` adapter
+/// expects, and `tags` are flat strings (Tag::Bare / Tag::KeyValue both
+/// roundtrip through `Display`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PostingInput {
+    pub account: String,
+    pub commodity: String,
+    pub amount: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+}
+
+/// Frontend → backend submission for `record_transaction` command. Matches
+/// the JSON shape of `commands::budget::TransactionDraft`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransactionFormDraft {
+    pub date: String,
+    pub description: String,
+    pub postings: Vec<PostingInput>,
+}

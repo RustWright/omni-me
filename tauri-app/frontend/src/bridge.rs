@@ -5,6 +5,7 @@ use crate::types::TaskResult;
 use crate::types::{
     CompletionEntry, ExtractedDraft, ExtractedPostingView, GenericNoteItem, JournalEntryItem,
     LlmResult, RoutineGroup, RoutineItem, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
+    TransactionFormDraft,
 };
 
 // Tauri IPC
@@ -1049,5 +1050,27 @@ pub async fn invoke_extract_document(
             hint: &'a str,
         }
         invoke("extract_document", &Args { bytes, mime, hint }).await
+    }
+}
+
+/// Persist a manually-entered or confirmed-draft transaction by appending a
+/// `TransactionRecorded` event. The backend returns the projected
+/// `TransactionRow`; the frontend doesn't need it (Phase 4 list will reload
+/// independently), so we discard and only surface success/failure.
+pub async fn invoke_record_transaction(draft: TransactionFormDraft) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        // Fake a short round-trip so the UI's saving state is visible.
+        let _ = draft;
+        crate::timer::sleep_ms(400).await;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            draft: TransactionFormDraft,
+        }
+        invoke_unit("record_transaction", &Args { draft }).await
     }
 }
