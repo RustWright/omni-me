@@ -25,6 +25,8 @@ toml = "0.8"
 tracing = "0.1"
 mail-parser = "0.10"
 tempfile = "3"
+imap = "2"
+native-tls = "0.2"
 
 
 [dev-dependencies]

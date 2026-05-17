@@ -12,6 +12,7 @@
 //!   stable external id, so re-runs after partial failure are idempotent.
 
 pub mod imap;
+pub mod imap_real;
 pub mod mime;
 pub mod receipts;
 pub mod sc_ngn;
