@@ -13,6 +13,7 @@
 
 pub mod imap;
 pub mod imap_real;
+pub mod imap_source;
 pub mod mime;
 pub mod receipts;
 pub mod sc_ngn;
