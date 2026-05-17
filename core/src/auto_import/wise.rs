@@ -56,7 +56,20 @@ pub struct WiseTransaction {
     #[serde(rename = "referenceNumber")]
     pub reference_number: String,
     pub date: DateTime<Utc>,
+    /// Signed amount in the balance's currency — already includes fees in the
+    /// balance-change semantic Wise uses. `totalFees` is informational only
+    /// (not a separate deduction to apply).
     pub amount: WiseAmount,
+    /// Wise-reported fees embedded in `amount`. Preserved as a posting tag
+    /// so the data isn't silently lost.
+    #[serde(rename = "totalFees", default)]
+    pub total_fees: Option<WiseAmount>,
+    /// FX conversion rate for CONVERSION-type transactions. Direction varies
+    /// (target/source or source/target depending on Wise's whim). Preserved
+    /// as a posting tag for user verification; not propagated to `fx_rate`
+    /// because the convention isn't reliably one direction.
+    #[serde(rename = "fxRate", default, deserialize_with = "deserialize_optional_lenient_decimal")]
+    pub fx_rate: Option<Decimal>,
     /// Free-form description: merchant, transfer recipient, etc.
     #[serde(default)]
     pub details: WiseTransactionDetails,
@@ -92,6 +105,27 @@ where
         }
         other => Err(D::Error::custom(format!(
             "expected JSON number or string for Decimal, got {other:?}"
+        ))),
+    }
+}
+
+fn deserialize_optional_lenient_decimal<'de, D>(d: D) -> Result<Option<Decimal>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    use std::str::FromStr;
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    match v {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Decimal::from_str(&s)
+            .map(Some)
+            .map_err(D::Error::custom),
+        Some(serde_json::Value::Number(n)) => Decimal::from_str(&n.to_string())
+            .map(Some)
+            .map_err(D::Error::custom),
+        Some(other) => Err(D::Error::custom(format!(
+            "expected JSON number, string, or null for optional Decimal, got {other:?}"
         ))),
     }
 }
@@ -281,12 +315,28 @@ impl WiseSource {
     /// warning by the caller).
     fn build_event(&self, txn: &WiseTransaction, currency: &str) -> Option<NewEvent> {
         let account = self.account_map.get(currency)?.clone();
+        // Preserve Wise-reported informational fields as posting tags so they
+        // aren't silently lost. `fxRate` direction is ambiguous in Wise's API
+        // so we surface as a tag rather than typed Posting.fx_rate.
+        let mut tags: Vec<crate::events::Tag> = Vec::new();
+        if let Some(fee) = &txn.total_fees {
+            tags.push(crate::events::Tag::KeyValue {
+                key: "wise_fee".into(),
+                value: format!("{} {}", fee.value, fee.currency),
+            });
+        }
+        if let Some(rate) = txn.fx_rate {
+            tags.push(crate::events::Tag::KeyValue {
+                key: "wise_fx_rate".into(),
+                value: rate.to_string(),
+            });
+        }
         let real_posting = Posting {
             account,
             commodity: txn.amount.currency.clone(),
             amount: txn.amount.value,
             fx_rate: None,
-            tags: vec![],
+            tags,
         };
         let mirror = make_unmatched_mirror(&real_posting);
 

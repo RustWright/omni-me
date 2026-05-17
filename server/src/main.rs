@@ -24,8 +24,12 @@ const DEFAULT_BLOB_DIR: &str = "blobs";
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "omni_me_server=debug,tower_http=debug".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                // `omni_me_core=info` ensures auto-import scheduler ticks +
+                // warnings (e.g. WS re-auth needed) surface in default logs.
+                // Without this, `./omni-me-server` runs blind.
+                "omni_me_server=debug,omni_me_core=info,tower_http=debug".into()
+            }),
         )
         .init();
 

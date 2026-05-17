@@ -133,18 +133,27 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn read_fixture(name: &str) -> Vec<u8> {
+    /// Read a `.reference/` fixture, or `None` if absent. `.reference/` is
+    /// gitignored — fresh clones or CI without samples should skip these tests
+    /// gracefully, not panic.
+    fn read_fixture(name: &str) -> Option<Vec<u8>> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .join(".reference/imap poller")
             .join(name);
-        std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path:?}: {e}"))
+        std::fs::read(&path).ok()
     }
 
     #[test]
     fn parses_sc_estatement_eml_with_pdf_attachment() {
-        let bytes = read_fixture("Your Estatement on 30042026 now available.eml");
+        let bytes = match read_fixture("Your Estatement on 30042026 now available.eml") {
+            Some(b) => b,
+            None => {
+                eprintln!("fixture missing — skipping");
+                return;
+            }
+        };
         let parsed = parse_eml(&bytes).expect("SC eml parses");
         assert!(
             parsed.from.contains("@sc.com")
@@ -176,7 +185,13 @@ mod tests {
 
     #[test]
     fn parses_inline_body_audible_eml() {
-        let bytes = read_fixture("Thanks, your order is complete_audible.eml");
+        let bytes = match read_fixture("Thanks, your order is complete_audible.eml") {
+            Some(b) => b,
+            None => {
+                eprintln!("fixture missing — skipping");
+                return;
+            }
+        };
         let parsed = parse_eml(&bytes).expect("audible eml parses");
         assert!(
             parsed.from.to_lowercase().contains("audible"),
@@ -197,7 +212,13 @@ mod tests {
 
     #[test]
     fn parses_oxio_invoice_eml() {
-        let bytes = read_fixture("📫 oxio invoice available..eml");
+        let bytes = match read_fixture("📫 oxio invoice available..eml") {
+            Some(b) => b,
+            None => {
+                eprintln!("fixture missing — skipping");
+                return;
+            }
+        };
         let parsed = parse_eml(&bytes).expect("oxio eml parses");
         assert!(
             parsed.from.to_lowercase().contains("oxio"),
