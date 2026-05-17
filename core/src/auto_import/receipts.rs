@@ -21,7 +21,9 @@ use tokio::process::Command;
 
 use crate::auto_import_scheduler::ImportError;
 use crate::events::NewEvent;
-use crate::extraction::{DocumentExtractor, ExtractionHint};
+use crate::extraction::{
+    receipt_extraction_to_events, DocumentExtractor, ExtractionHint,
+};
 
 use super::imap::{ImapHandler, ImapMessage};
 use super::mime::parse_eml;
@@ -35,6 +37,7 @@ pub struct ReceiptHandler {
     /// claim these (e.g. ScNgnHandler claims `@sc.com`); this list lets
     /// a downstream "catch-all" receipt handler skip them defensively.
     excluded_patterns: Vec<String>,
+    device_id: String,
     extractor: Arc<dyn DocumentExtractor>,
 }
 
@@ -42,6 +45,7 @@ impl ReceiptHandler {
     pub fn new(
         name: impl Into<String>,
         sender_patterns: Vec<String>,
+        device_id: impl Into<String>,
         extractor: Arc<dyn DocumentExtractor>,
     ) -> Self {
         Self {
@@ -51,6 +55,7 @@ impl ReceiptHandler {
                 .map(|s| s.to_lowercase())
                 .collect(),
             excluded_patterns: Vec::new(),
+            device_id: device_id.into(),
             extractor,
         }
     }
@@ -162,11 +167,12 @@ impl ImapHandler for ReceiptHandler {
             subject = %parsed.subject,
             confidence = result.confidence,
             postings = result.postings.len(),
-            "receipt: extracted (event emission TODO)"
+            "receipt: emitting events"
         );
 
-        // See ScNgnHandler doc comment for the deferred-emission rationale.
-        Ok(Vec::new())
+        let source_prefix = format!("{}-uid-{}", self.name, message.uid);
+        let events = receipt_extraction_to_events(&result, &source_prefix, &self.device_id);
+        Ok(events)
     }
 }
 
@@ -201,6 +207,7 @@ mod tests {
         let handler = ReceiptHandler::new(
             "subs",
             vec!["@audible.ca".into(), "@oxio.com".into()],
+            "device-test",
             extractor,
         );
         assert!(handler.accepts(&imap_msg_from("donotreply@audible.ca", Vec::new())));
@@ -213,7 +220,7 @@ mod tests {
         // A catch-all `.com` handler that excludes `@sc.com` (since SC has
         // a dedicated handler upstream).
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ReceiptHandler::new("catchall", vec![".com".into()], extractor)
+        let handler = ReceiptHandler::new("catchall", vec![".com".into()], "device-test", extractor)
             .with_excluded(vec!["@sc.com".into()]);
         assert!(handler.accepts(&imap_msg_from("any@anywhere.com", Vec::new())));
         assert!(!handler.accepts(&imap_msg_from("notifications@sc.com", Vec::new())));
@@ -224,7 +231,7 @@ mod tests {
         let body = fixture_eml("Thanks, your order is complete_audible.eml");
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
         let handler =
-            ReceiptHandler::new("audible", vec!["@audible.ca".into()], extractor);
+            ReceiptHandler::new("audible", vec!["@audible.ca".into()], "device-test", extractor);
         let msg = imap_msg_from("donotreply@audible.ca", body);
         let events = handler
             .handle(&msg)
@@ -238,7 +245,7 @@ mod tests {
     async fn handles_oxio_inline_body_eml() {
         let body = fixture_eml("📫 oxio invoice available..eml");
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ReceiptHandler::new("oxio", vec!["oxio".into()], extractor);
+        let handler = ReceiptHandler::new("oxio", vec!["oxio".into()], "device-test", extractor);
         let msg = imap_msg_from("billing@oxio.com", body);
         let events = handler.handle(&msg).await.expect("oxio handler should succeed");
         assert!(events.is_empty());
@@ -249,7 +256,7 @@ mod tests {
         // An empty-body / no-text message should surface as a Parse error,
         // not be silently accepted (we'd waste an LLM call on nothing).
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ReceiptHandler::new("any", vec![".com".into()], extractor);
+        let handler = ReceiptHandler::new("any", vec![".com".into()], "device-test", extractor);
         // Minimal MIME message with only headers — no real body.
         let body = b"From: x@example.com\r\nSubject: empty\r\nDate: Sat, 16 May 2026 12:00:00 +0000\r\n\r\n".to_vec();
         let msg = imap_msg_from("x@example.com", body);

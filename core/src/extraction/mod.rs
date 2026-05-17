@@ -14,10 +14,12 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+pub mod event_mapper;
 pub mod gemini;
 pub mod null;
 pub mod verify;
 
+pub use event_mapper::{receipt_extraction_to_events, statement_extraction_to_events};
 pub use verify::{verify, VerificationReport, DEFAULT_CONFIDENCE_THRESHOLD};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

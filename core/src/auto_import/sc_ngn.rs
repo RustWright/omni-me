@@ -22,7 +22,9 @@ use tokio::process::Command;
 
 use crate::auto_import_scheduler::ImportError;
 use crate::events::NewEvent;
-use crate::extraction::{DocumentExtractor, ExtractionHint};
+use crate::extraction::{
+    statement_extraction_to_events, DocumentExtractor, ExtractionHint,
+};
 
 use super::imap::{ImapHandler, ImapMessage};
 use super::mime::parse_eml;
@@ -114,6 +116,12 @@ pub struct ScNgnHandler {
     /// Stored as a `String` because SC accounts have leading zeros that
     /// must be preserved literally (integer storage would drop them).
     account_number: String,
+    /// hledger account this SC account maps to (e.g. "Assets:StandardChartered:USD").
+    /// Used as the bank-side posting account in emitted events.
+    hledger_account: String,
+    /// Commodity the account holds — fallback if extraction doesn't include it.
+    commodity: String,
+    device_id: String,
     extractor: Arc<dyn DocumentExtractor>,
 }
 
@@ -121,11 +129,17 @@ impl ScNgnHandler {
     pub fn new(
         name: impl Into<String>,
         account_number: String,
+        hledger_account: impl Into<String>,
+        commodity: impl Into<String>,
+        device_id: impl Into<String>,
         extractor: Arc<dyn DocumentExtractor>,
     ) -> Self {
         Self {
             name: name.into(),
             account_number,
+            hledger_account: hledger_account.into(),
+            commodity: commodity.into(),
+            device_id: device_id.into(),
             extractor,
         }
     }
@@ -165,12 +179,18 @@ impl ImapHandler for ScNgnHandler {
             handler = self.name(),
             confidence = result.confidence,
             postings = result.postings.len(),
-            "sc_ngn: extracted statement (event emission TODO — wired pending)"
+            "sc_ngn: emitting events"
         );
 
-        // Event emission deferred — see doc comment. Returning empty Vec is
-        // intentional, not a missing-implementation bug.
-        Ok(Vec::new())
+        let source_prefix = format!("{}-uid-{}", self.name, message.uid);
+        let events = statement_extraction_to_events(
+            &result,
+            &source_prefix,
+            &self.hledger_account,
+            &self.commodity,
+            &self.device_id,
+        );
+        Ok(events)
     }
 }
 
@@ -226,7 +246,14 @@ mod tests {
     #[test]
     fn handler_accepts_sc_estatement_mail() {
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ScNgnHandler::new("sc_ngn", "0123456789".into(), extractor);
+        let handler = ScNgnHandler::new(
+            "sc_ngn",
+            "0123456789".into(),
+            "Assets:StandardChartered:USD",
+            "USD",
+            "device-test",
+            extractor,
+        );
         let msg = make_imap_message(
             "notifications@sc.com",
             "Your Estatement on 30042026 now available",
@@ -238,7 +265,14 @@ mod tests {
     #[test]
     fn handler_rejects_non_sc_mail() {
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ScNgnHandler::new("sc_ngn", "0123456789".into(), extractor);
+        let handler = ScNgnHandler::new(
+            "sc_ngn",
+            "0123456789".into(),
+            "Assets:StandardChartered:USD",
+            "USD",
+            "device-test",
+            extractor,
+        );
         let other = make_imap_message("random@example.com", "Statement attached", Vec::new());
         assert!(!handler.accepts(&other));
     }
@@ -248,7 +282,14 @@ mod tests {
         // Marketing/security/promo emails from @sc.com shouldn't try to
         // decrypt — they don't have PDF attachments to decrypt anyway.
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ScNgnHandler::new("sc_ngn", "0123456789".into(), extractor);
+        let handler = ScNgnHandler::new(
+            "sc_ngn",
+            "0123456789".into(),
+            "Assets:StandardChartered:USD",
+            "USD",
+            "device-test",
+            extractor,
+        );
         let promo = make_imap_message("offers@sc.com", "New rewards await", Vec::new());
         assert!(!handler.accepts(&promo));
     }
@@ -278,10 +319,17 @@ mod tests {
         );
 
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ScNgnHandler::new("sc_ngn", account, extractor);
+        let handler = ScNgnHandler::new(
+            "sc_ngn",
+            account,
+            "Assets:StandardChartered:USD",
+            "USD",
+            "device-test",
+            extractor,
+        );
         let events = handler.handle(&msg).await.expect("e2e should succeed");
-        // NullExtractor returns no postings → handler emits no events. Wired
-        // pending real extractor swap-in.
+        // NullExtractor returns no postings → mapper produces no events.
+        // Wiring is complete; events will populate once a real extractor lands.
         assert!(events.is_empty());
     }
 
