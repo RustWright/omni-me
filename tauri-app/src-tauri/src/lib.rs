@@ -7,18 +7,9 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use omni_me_core::db::{self, Database};
-use omni_me_core::auto_import::imap::ImapHandler;
-use omni_me_core::auto_import::imap_real::AsyncImapFetcher;
-use omni_me_core::auto_import::imap_source::{CursorStore, ImapSource, SurrealCursorStore};
-use omni_me_core::auto_import::receipts::ReceiptHandler;
-use omni_me_core::auto_import::sc_ngn::ScNgnHandler;
-use omni_me_core::auto_import::setup::{setup_from_credentials, SourceConfig};
-use omni_me_core::credentials::{self, Credentials};
 use omni_me_core::events::{
-    BudgetProjection, EventStore, NotesProjection, ProjectionRunner, RoutinesProjection,
-    SurrealEventStore,
+    BudgetProjection, NotesProjection, ProjectionRunner, RoutinesProjection, SurrealEventStore,
 };
-use omni_me_core::extraction::{gemini::GeminiExtractor, null::NullExtractor, DocumentExtractor};
 use omni_me_core::journal_file::JournalFile;
 use omni_me_core::sync::{
     NetworkMonitor, PushDebouncer, RetryEngine, StatusReporter, SyncBuffer, SyncClient,
@@ -45,111 +36,6 @@ fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> 
     val
 }
 
-/// Build the document extractor — real `GeminiExtractor` if a key is present
-/// in credentials, else `NullExtractor`. Returning `Arc<dyn DocumentExtractor>`
-/// keeps the type stable across both branches.
-fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
-    match &creds.gemini {
-        Some(g) if !g.api_key.is_empty() => {
-            tracing::info!("Gemini extractor wired");
-            Arc::new(GeminiExtractor::new(g.api_key.clone()))
-        }
-        _ => {
-            tracing::warn!(
-                "no Gemini API key in credentials — handlers will use NullExtractor (no events emitted)"
-            );
-            Arc::new(NullExtractor)
-        }
-    }
-}
-
-/// Default sender patterns + exclusions for the catch-all `ReceiptHandler`.
-/// These mirror what's surfaced in `.reference/imap poller/` samples + common
-/// utility/subscription/online-purchase domains. User extends by editing this
-/// list or splitting into multiple per-category handlers.
-const RECEIPT_SENDER_PATTERNS: &[&str] = &[
-    "audible",
-    "oxio",
-    "amazon",
-    "walmart",
-    "netflix",
-    "spotify",
-    "manitoba",
-    "remitly",
-    "greenhouse",
-    "peggo",
-    "@wise.com",
-];
-const RECEIPT_SENDER_EXCLUSIONS: &[&str] = &["@sc.com"]; // SC handled separately
-
-/// Construct one `ImapSource` per `[imap.X]` entry in credentials. Each
-/// source gets the same handler list: one `ScNgnHandler` per configured
-/// `[[sc_accounts]]` entry + a single catch-all `ReceiptHandler`.
-async fn build_imap_sources(
-    creds: &Credentials,
-    extractor: Arc<dyn DocumentExtractor>,
-    cursor_store: Arc<SurrealCursorStore>,
-    store: Arc<dyn EventStore>,
-    projections: ProjectionRunner,
-    device_id: String,
-) -> Vec<Arc<ImapSource>> {
-    let mut sources = Vec::new();
-    let cs_dyn: Arc<dyn CursorStore> = cursor_store.clone();
-
-    for (account_name, imap_creds) in &creds.imap {
-        let fetcher: Arc<AsyncImapFetcher> =
-            Arc::new(AsyncImapFetcher::new(account_name.clone(), imap_creds.clone()));
-
-        let mut handlers: Vec<Box<dyn ImapHandler>> = Vec::new();
-        for sc in &creds.sc_accounts {
-            handlers.push(Box::new(ScNgnHandler::new(
-                format!("sc_{}", sc.commodity.to_lowercase()),
-                sc.account_number.clone(),
-                sc.hledger_account.clone(),
-                sc.commodity.clone(),
-                device_id.clone(),
-                extractor.clone(),
-            )));
-        }
-        handlers.push(Box::new(
-            ReceiptHandler::new(
-                "receipts",
-                RECEIPT_SENDER_PATTERNS
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-                device_id.clone(),
-                extractor.clone(),
-            )
-            .with_excluded(
-                RECEIPT_SENDER_EXCLUSIONS
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-            ),
-        ));
-
-        match ImapSource::new(
-            account_name.clone(),
-            fetcher,
-            handlers,
-            Some(cs_dyn.clone()),
-            store.clone(),
-            projections.clone(),
-        )
-        .await
-        {
-            Ok(s) => {
-                tracing::info!(account = account_name, "ImapSource built");
-                sources.push(Arc::new(s));
-            }
-            Err(e) => {
-                tracing::warn!(account = account_name, error = %e, "ImapSource construction failed; skipping account");
-            }
-        }
-    }
-    sources
-}
 
 pub struct AppState {
     pub db: Database,
@@ -281,60 +167,10 @@ pub fn run() {
                     timezone_shared.clone(),
                 );
 
-                // Auto-import scheduler — Wise + WS + IMAP all spin up from
-                // credentials.toml. Construct the per-account IMAP sources +
-                // attached handlers here because composition is policy.
-                let creds_path = credentials::default_path()
-                    .unwrap_or_else(|_| app_data.join("credentials.toml"));
-                match credentials::load(&creds_path) {
-                    Ok(creds) => {
-                        let cursor_store_arc: Arc<SurrealCursorStore> =
-                            Arc::new(SurrealCursorStore::new(db.clone()));
-                        if let Err(e) = cursor_store_arc.init_schema().await {
-                            tracing::warn!(error = %e, "imap_cursors schema init failed");
-                        }
-
-                        let extractor = build_extractor(&creds);
-                        let store_arc: Arc<dyn EventStore> = Arc::new(event_store.clone());
-                        let imap_sources = build_imap_sources(
-                            &creds,
-                            extractor.clone(),
-                            cursor_store_arc.clone(),
-                            store_arc.clone(),
-                            projections.clone(),
-                            device_id.clone(),
-                        )
-                        .await;
-
-                        let config = SourceConfig {
-                            ws_driver_script: creds
-                                .wealthsimple_python
-                                .as_ref()
-                                .and_then(|w| w.driver_script.clone()),
-                            imap_sources,
-                            ..SourceConfig::default()
-                        };
-
-                        let _handles = setup_from_credentials(
-                            &creds,
-                            &config,
-                            store_arc,
-                            projections.clone(),
-                            device_id.clone(),
-                        );
-                        tracing::info!(
-                            path = %creds_path.display(),
-                            "auto-import scheduler initialized from credentials.toml"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::info!(
-                            path = %creds_path.display(),
-                            error = %e,
-                            "no credentials.toml — auto-import skipped"
-                        );
-                    }
-                }
+                // Auto-import runs server-side (per `feedback_llm_server_side.md`).
+                // Tauri client just projects synced events into its local DB +
+                // journal file via the BudgetProjection + JournalFile entries in
+                // the ProjectionRunner above.
 
                 // Phase 2 sync pipeline: buffer -> pusher -> retry engine
                 // wired together, plus a network monitor feeding hints in.
