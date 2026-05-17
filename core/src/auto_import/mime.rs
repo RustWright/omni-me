@@ -139,7 +139,7 @@ mod tests {
             .unwrap()
             .join(".reference/imap poller")
             .join(name);
-        std::fs::read(&path).expect(&format!("read fixture {path:?}"))
+        std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path:?}: {e}"))
     }
 
     #[test]

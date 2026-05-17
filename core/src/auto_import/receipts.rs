@@ -182,7 +182,7 @@ mod tests {
             .unwrap()
             .join(".reference/imap poller")
             .join(name);
-        std::fs::read(&path).expect(&format!("read fixture {name}"))
+        std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {name}: {e}"))
     }
 
     fn imap_msg_from(from: &str, body: Vec<u8>) -> ImapMessage {
