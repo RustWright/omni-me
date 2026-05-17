@@ -13,6 +13,7 @@
 
 pub mod imap;
 pub mod mime;
+pub mod receipts;
 pub mod sc_ngn;
 pub mod wealthsimple;
 pub mod wise;
