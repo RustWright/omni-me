@@ -99,16 +99,16 @@ Event schema, projections, Tauri commands. Mirrors Cycle 2 Phase 0 structurally.
 
 ---
 
-## Phase 3: Frontend Capture Flows (~10 tasks)
+## Phase 3: Frontend Capture Flows (~10 tasks, 5 done + 1 partial)
 
 Custom Dioxus screens for capture. Mobile-first for photos; desktop-first for PDFs. **UI invariant:** sort commodity displays explicitly (POC 0.1c finding — HashMap iteration order non-deterministic).
 
-- [ ] **3.1** Photo capture screen (mobile primary): camera/file picker → upload progress → wait state → confirm-draft screen [L]
-- [ ] **3.2** PDF upload (desktop file picker, mobile share-target) → confirm-draft screen [M]
-- [ ] **3.3** Android share-target intent for PDFs/images (Tauri Android manifest + handler) [M]
-- [ ] **3.4** Email body paste screen (text area + extract button) → confirm-draft [S]
-- [ ] **3.5** Manual entry form (account, date, amount, commodity, category, tags, description) [M]
-- [ ] **3.6** Confirm-draft screen — extracted fields editable inline, attachment thumbnail visible, Save commits `TransactionRecorded` [M] _(logbook bundle 3.1+3.2+3.3+3.4+3.5+3.6: "Capture a transaction via photo, PDF, share-target, email paste, or manual entry"; tags: dioxus, tauri, mobile-development, multimodal, ux)_
+- [x] **3.1** Photo capture screen (mobile primary): camera/file picker → upload progress → wait state → confirm-draft screen [L] — done 2026-05-17 (mock-verified end-to-end, real wiring in place, live Gemini round trip unobserved)
+- [x] **3.2** PDF upload (desktop file picker, mobile share-target) → confirm-draft screen [M] — done 2026-05-17 as a shared `DocumentCapture` component with PDF hint picker
+- [ ] **3.3** Android share-target intent for PDFs/images (Tauri Android manifest + handler) [M] **PARTIAL 2026-05-17** — manifest entry added in gitignored `gen/android/.../AndroidManifest.xml`; durable home + Rust intent-handler glue deferred to a dedicated Android build session
+- [x] **3.4** Email body paste screen (text area + extract button) → confirm-draft [S] — done 2026-05-17 (`EmailCapture` component, sends body as `text/plain` with hint `email_body`)
+- [x] **3.5** Manual entry form (account, date, amount, commodity, category, tags, description) [M] — done 2026-05-17 as the shared `TransactionForm` (initial=None for manual)
+- [x] **3.6** Confirm-draft screen — extracted fields editable inline, attachment thumbnail visible, Save commits `TransactionRecorded` [M] — done 2026-05-17 as the shared `TransactionForm` (initial=Some(draft) post-extraction); **attachment thumbnail skipped** — see Phase 3 Known Gaps. _(logbook bundle 3.1+3.2+3.3+3.4+3.5+3.6: "Capture a transaction via photo, PDF, share-target, email paste, or manual entry"; tags: dioxus, tauri, mobile-development, multimodal, ux)_
 - [ ] **3.7** Local attachment cache: app data dir + LRU eviction (200MB cap default); fetch-on-demand from `/blobs/<sha256>` [M]
 - [ ] **3.8** Settings → Cache section: "Clear Attachment Cache" button + cache size displayed [XS]
 - [ ] **3.9** Settings → Auto-Import Sources section: per-source connect/disconnect, last-fetch timestamp, status indicator, manual-fetch-now button. Pattern follows `ImportExportSection` + Danger Zone. [M]
