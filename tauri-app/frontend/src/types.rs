@@ -199,3 +199,36 @@ pub struct ExportSummary {
     pub generic_written: usize,
     pub errors: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Capture / extraction (Phase 3.1+)
+// ---------------------------------------------------------------------------
+
+/// Single extracted posting line. Amount is wire-side string (server uses
+/// `rust_decimal::serde::str`); frontend never does math on it — just display.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtractedPostingView {
+    #[serde(default)]
+    pub account_hint: Option<String>,
+    pub commodity: String,
+    pub amount: String,
+    #[serde(default)]
+    pub line_label: Option<String>,
+}
+
+/// Frontend view of `core::extraction::ExtractionResult` — fields normalised
+/// to wire-friendly types (string amounts, ISO date strings) so the UI doesn't
+/// pull in `rust_decimal` or `chrono`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtractedDraft {
+    #[serde(default)]
+    pub date: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub postings: Vec<ExtractedPostingView>,
+    #[serde(default)]
+    pub total: Option<String>,
+    pub confidence: f64,
+    #[serde(default)]
+    pub model: String,
+}

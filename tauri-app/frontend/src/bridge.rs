@@ -3,8 +3,8 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "mock")]
 use crate::types::TaskResult;
 use crate::types::{
-    CompletionEntry, GenericNoteItem, JournalEntryItem, LlmResult, RoutineGroup, RoutineItem,
-    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
+    CompletionEntry, ExtractedDraft, ExtractedPostingView, GenericNoteItem, JournalEntryItem,
+    LlmResult, RoutineGroup, RoutineItem, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
 };
 
 // Tauri IPC
@@ -995,5 +995,59 @@ pub async fn invoke_export_obsidian(target: &str) -> Result<ExportSummary, Strin
             target: &'a str,
         }
         invoke("export_obsidian", &Args { target }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Capture / document extraction (Phase 3.1+)
+// -----------------------------------------------------------------------------
+
+/// Send a captured document (photo / PDF / email body bytes) through to the
+/// server-side extractor. `hint` mirrors `core::extraction::ExtractionHint`
+/// serialised snake_case (`"receipt"`, `"bank_statement"`, ...).
+///
+/// The mock branch fakes a ~1.2s round trip + returns a canned receipt so
+/// `dx serve --features mock` flows end-to-end without a backend.
+pub async fn invoke_extract_document(
+    bytes: Vec<u8>,
+    mime: &str,
+    hint: &str,
+) -> Result<ExtractedDraft, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (bytes, mime, hint);
+        // Simulate network + LLM latency so the UI's wait state is visible.
+        crate::timer::sleep_ms(1200).await;
+        Ok(ExtractedDraft {
+            date: Some("2026-05-17".into()),
+            description: Some("Loblaws — Groceries".into()),
+            postings: vec![
+                ExtractedPostingView {
+                    account_hint: Some("Expenses:Groceries".into()),
+                    commodity: "CAD".into(),
+                    amount: "42.18".into(),
+                    line_label: Some("Subtotal".into()),
+                },
+                ExtractedPostingView {
+                    account_hint: Some("Assets:Wealthsimple:Cash".into()),
+                    commodity: "CAD".into(),
+                    amount: "-42.18".into(),
+                    line_label: None,
+                },
+            ],
+            total: Some("42.18".into()),
+            confidence: 0.91,
+            model: "mock-extractor".into(),
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            bytes: Vec<u8>,
+            mime: &'a str,
+            hint: &'a str,
+        }
+        invoke("extract_document", &Args { bytes, mime, hint }).await
     }
 }

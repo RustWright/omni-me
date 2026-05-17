@@ -12,6 +12,7 @@ use chrono_tz::Tz;
 use dioxus::prelude::*;
 
 use components::nav::{BottomNav, SideNav};
+use pages::finances::FinancesPage;
 use pages::journal::JournalPage;
 use pages::notes::NotesPage;
 use pages::routines::RoutinesPage;
@@ -23,6 +24,7 @@ pub enum Tab {
     Journal,
     Notes,
     Routines,
+    Finances,
     Settings,
 }
 
@@ -71,6 +73,7 @@ fn App() -> Element {
                         Tab::Journal => rsx! { JournalPage {} },
                         Tab::Notes => rsx! { NotesPage {} },
                         Tab::Routines => rsx! { RoutinesPage {} },
+                        Tab::Finances => rsx! { FinancesPage {} },
                         Tab::Settings => rsx! { SettingsPage {} },
                     }
                 }

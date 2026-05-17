@@ -1,3 +1,4 @@
+pub mod finances;
 pub mod import_export;
 pub mod journal;
 pub mod notes;
