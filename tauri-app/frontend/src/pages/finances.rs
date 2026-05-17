@@ -17,6 +17,7 @@ enum DocumentKind {
 enum FinancesView {
     Home,
     Capture(DocumentKind),
+    Email,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -33,6 +34,7 @@ pub fn FinancesPage() -> Element {
                     HomeView {
                         on_open_photo: move |_| view.set(FinancesView::Capture(DocumentKind::Photo)),
                         on_open_pdf: move |_| view.set(FinancesView::Capture(DocumentKind::Pdf)),
+                        on_open_email: move |_| view.set(FinancesView::Email),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -41,13 +43,20 @@ pub fn FinancesPage() -> Element {
                         on_done: move |_| view.set(FinancesView::Home),
                     }
                 },
+                FinancesView::Email => rsx! {
+                    EmailCapture { on_done: move |_| view.set(FinancesView::Home) }
+                },
             }
         }
     }
 }
 
 #[component]
-fn HomeView(on_open_photo: EventHandler<()>, on_open_pdf: EventHandler<()>) -> Element {
+fn HomeView(
+    on_open_photo: EventHandler<()>,
+    on_open_pdf: EventHandler<()>,
+    on_open_email: EventHandler<()>,
+) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
 
@@ -73,7 +82,12 @@ fn HomeView(on_open_photo: EventHandler<()>, on_open_pdf: EventHandler<()>) -> E
                     enabled: true,
                     on_click: move |_| on_open_pdf.call(()),
                 }
-                CaptureTile { label: "Email",  icon_path: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z", enabled: false, on_click: move |_| {} }
+                CaptureTile {
+                    label: "Email",
+                    icon_path: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z",
+                    enabled: true,
+                    on_click: move |_| on_open_email.call(()),
+                }
                 CaptureTile { label: "Manual", icon_path: "M12 4v16m8-8H4", enabled: false, on_click: move |_| {} }
             }
         }
@@ -321,6 +335,128 @@ fn HintRadio(
             value: value,
             onclick: move |_| on_select.call(()),
             "{label}"
+        }
+    }
+}
+
+// =============================================================================
+// Email body capture sub-view (Phase 3.4)
+//
+// A pasted email body — no file picker. User pastes the body text, clicks
+// Extract, and the same /documents/extract endpoint handles it (hint=email_body,
+// MIME=text/plain). Shares the state-machine pattern with DocumentCapture but
+// the input shape is different enough that DRY-ing further would tangle the
+// abstractions; the duplication is the bounded kind.
+// =============================================================================
+
+#[component]
+fn EmailCapture(on_done: EventHandler<()>) -> Element {
+    #[derive(Debug, Clone)]
+    enum CaptureState {
+        Idle,
+        Working,
+        Draft(ExtractedDraft),
+        Error { msg: String, retry_body: Option<String> },
+    }
+
+    let mut state: Signal<CaptureState> = use_signal(|| CaptureState::Idle);
+    let mut body = use_signal(String::new);
+
+    // FnMut because state.set requires &mut on the closure. Captured by move
+    // into two onclicks (Extract + Retry); the closure is Copy because all
+    // captures (Signal handles) are Copy, so each onclick gets its own copy.
+    let mut kick_off = move |body_text: String| {
+        if body_text.trim().is_empty() {
+            return;
+        }
+        state.set(CaptureState::Working);
+        spawn(async move {
+            let bytes = body_text.clone().into_bytes();
+            let retry_body = body_text;
+            match bridge::invoke_extract_document(bytes, "text/plain", "email_body").await {
+                Ok(draft) => state.set(CaptureState::Draft(draft)),
+                Err(e) => state.set(CaptureState::Error {
+                    msg: format!("Couldn't extract: {e}"),
+                    retry_body: Some(retry_body),
+                }),
+            }
+        });
+    };
+
+    rsx! {
+        div { class: "flex flex-col gap-6",
+
+            // Back button + title
+            div { class: "flex items-center gap-3 mb-2",
+                button {
+                    class: "text-obsidian-text-muted hover:text-obsidian-text text-sm flex items-center gap-1",
+                    onclick: move |_| on_done.call(()),
+                    svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M15 19l-7-7 7-7" }
+                    }
+                    span { "Back" }
+                }
+                h1 { class: "text-xl font-bold text-obsidian-accent", "Email capture" }
+            }
+
+            // Paste area
+            label { class: "block",
+                span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                    "Paste the email body"
+                }
+                textarea {
+                    class: "block w-full min-h-[200px] p-3 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted text-sm font-mono outline-none focus:border-obsidian-accent transition-colors resize-y",
+                    placeholder: "Paste a receipt confirmation email, a Wise notification, anything with a charge in it…",
+                    value: "{body.read()}",
+                    oninput: move |e| body.set(e.value().clone()),
+                }
+            }
+
+            // Extract button
+            div { class: "flex justify-end",
+                button {
+                    class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed",
+                    disabled: body.read().trim().is_empty() || matches!(*state.read(), CaptureState::Working),
+                    onclick: move |_| {
+                        let text = body.read().clone();
+                        kick_off(text);
+                    },
+                    "Extract"
+                }
+            }
+
+            // State-dependent body
+            div {
+                {
+                    match &*state.read() {
+                        CaptureState::Idle => rsx! {
+                            p { class: "text-sm text-obsidian-text-muted",
+                                "Paste a transaction-bearing email body above, then click Extract."
+                            }
+                        },
+                        CaptureState::Working => render_working(),
+                        CaptureState::Draft(d) => render_draft(d),
+                        CaptureState::Error { msg, retry_body } => {
+                            let retry = retry_body.clone();
+                            rsx! {
+                                {render_error(msg)}
+                                if let Some(text) = retry {
+                                    div { class: "mt-3",
+                                        button {
+                                            class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90",
+                                            onclick: move |_| {
+                                                let text = text.clone();
+                                                kick_off(text);
+                                            },
+                                            "Retry"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
