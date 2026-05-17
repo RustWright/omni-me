@@ -12,3 +12,4 @@
 //!   stable external id, so re-runs after partial failure are idempotent.
 
 pub mod wealthsimple;
+pub mod wise;
