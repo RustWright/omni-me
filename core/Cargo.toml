@@ -23,6 +23,7 @@ ledger-utils = "0.6"
 base64 = "0.22"
 toml = "0.8"
 tracing = "0.1"
+mail-parser = "0.10"
 
 
 [dev-dependencies]
