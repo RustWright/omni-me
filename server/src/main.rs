@@ -38,8 +38,22 @@ async fn main() {
         .await
         .expect("failed to connect to SurrealDB");
 
-    let api_key = std::env::var("GEMINI_API_KEY")
-        .expect("GEMINI_API_KEY must be set");
+    // Gemini key resolution order: GEMINI_API_KEY env var → credentials.toml
+    // [gemini].api_key. Env wins so CI/secret-manager flows still work; the
+    // credentials fallback lets local dev boot without exporting the key in
+    // every shell session (the extractor already reads from the same file).
+    let api_key = match std::env::var("GEMINI_API_KEY") {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+            let creds_path = credentials::default_path()
+                .expect("XDG_CONFIG_HOME / HOME must be set for credentials path");
+            credentials::load(&creds_path)
+                .ok()
+                .and_then(|c| c.gemini.map(|g| g.api_key))
+                .filter(|k| !k.is_empty())
+                .expect("GEMINI_API_KEY env var unset and no gemini.api_key in credentials.toml")
+        }
+    };
     let llm_client = Arc::new(omni_me_core::llm::GeminiClient::new(api_key));
 
     let blob_dir: PathBuf = std::env::var("BLOB_DIR")

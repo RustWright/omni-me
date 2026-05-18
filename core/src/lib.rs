@@ -1,6 +1,8 @@
 pub mod accounts;
 pub mod auto_close;
+#[cfg(feature = "auto-import")]
 pub mod auto_import;
+#[cfg(feature = "auto-import")]
 pub mod auto_import_scheduler;
 pub mod credentials;
 pub mod db;

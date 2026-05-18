@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-omni-me-core = { path = "../core" }
+omni-me-core = { path = "../core", features = ["auto-import"] }
 axum = "0.8"
 tokio = { workspace = true }
 serde = { workspace = true }
