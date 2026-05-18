@@ -8,10 +8,48 @@ use crate::types::{
 /// Which kind of file-based capture the user opened. Drives the picker
 /// `accept` filter, the camera hint, the title, and whether the hint
 /// selector is offered (PDFs require a user pick; photos default to receipt).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DocumentKind {
     Photo,
     Pdf,
+}
+
+/// Classify a `PendingShareCapture` MIME into a `DocumentKind`. Used when an
+/// Android share-target intent hands us bytes and we need to decide which
+/// capture view (Photo vs PDF) to route into.
+///
+/// Returns `None` when the MIME is something we don't support as a financial
+/// document (e.g., `text/plain` — that flow lives in EmailCapture, not here).
+/// `None` short-circuits the share-target routing: the bytes are dropped and
+/// the user lands on the regular Finances home so they can pick a flow
+/// manually.
+///
+/// `filename` is included so the implementation can fall back to the file
+/// extension when the MIME is generic (Android share apps sometimes hand us
+/// `application/octet-stream` for a PDF).
+///
+/// **Permissive by design.** Anything in `application/*` with a `.pdf` name
+/// (legacy `application/x-pdf`, misdeclared `application/zip`, the canonical
+/// `application/octet-stream` stripped-MIME case) routes to Pdf. The looseness
+/// is safe because Gemini is the actual validator downstream — a wrongly-
+/// classified share fails the extraction round-trip with a clean error that
+/// surfaces in `CaptureState::Error` one Retry away from recovery. Tightening
+/// this classifier costs lost legitimate shares; loosening it costs one
+/// recoverable round-trip. Asymmetry favors permissiveness.
+fn classify_share_mime(mime: &str, filename: &str) -> Option<DocumentKind> {
+    const IMAGE_SUBTYPES: &[&str] = &["jpeg", "jpg", "png", "heic", "heif", "webp"];
+    let mime = mime.to_ascii_lowercase();
+    if let Some(subtype) = mime.strip_prefix("image/")
+        && IMAGE_SUBTYPES.contains(&subtype)
+    {
+        return Some(DocumentKind::Photo);
+    }
+    if let Some(subtype) = mime.strip_prefix("application/")
+        && (subtype == "pdf" || filename.to_ascii_lowercase().ends_with(".pdf"))
+    {
+        return Some(DocumentKind::Pdf);
+    }
+    None
 }
 
 /// Which sub-view is currently active inside Finances. The variants stay
@@ -35,6 +73,28 @@ pub fn FinancesPage() -> Element {
     let mut view = use_signal(|| FinancesView::Home);
     let mut pending_draft: Signal<Option<ExtractedDraft>> = use_signal(|| None);
 
+    // Pending Android share-target intake (Phase 3.3). main.rs sets this
+    // signal when MainActivity.kt stashes shared bytes; we route to the
+    // matching capture view, hand the bytes to DocumentCapture as a
+    // `preloaded` prop, and clear the signal so a Back-then-forward navigation
+    // doesn't replay the same share.
+    let mut pending_share: Signal<Option<PendingShareCapture>> = use_context();
+    use_effect(move || {
+        // Snapshot + drop the read guard before any .set() — Dioxus signals
+        // hold the read borrow until end-of-expression, so set/read in the
+        // same statement deadlocks the borrow checker.
+        let snapshot = pending_share.read().clone();
+        let Some(capture) = snapshot else { return };
+        match classify_share_mime(&capture.mime, &capture.filename) {
+            Some(kind) => view.set(FinancesView::Capture(kind)),
+            None => {
+                // Unsupported MIME (e.g., text/html share) — drop the bytes;
+                // user lands on Home and can pick a flow manually.
+                pending_share.set(None);
+            }
+        }
+    });
+
     rsx! {
         div { class: "max-w-3xl mx-auto w-full animate-in fade-in duration-300",
 
@@ -53,8 +113,13 @@ pub fn FinancesPage() -> Element {
                 FinancesView::Capture(kind) => rsx! {
                     DocumentCapture {
                         kind: kind,
-                        on_done: move |_| view.set(FinancesView::Home),
+                        preloaded: pending_share.read().clone(),
+                        on_done: move |_| {
+                            pending_share.set(None);
+                            view.set(FinancesView::Home);
+                        },
                         on_extracted: move |draft: ExtractedDraft| {
+                            pending_share.set(None);
                             pending_draft.set(Some(draft));
                             view.set(FinancesView::TransactionForm);
                         },
@@ -186,6 +251,12 @@ const PDF_HINTS: &[(&str, &str)] = &[
 #[component]
 fn DocumentCapture(
     kind: DocumentKind,
+    /// Bytes + metadata pre-loaded from an Android share-target SEND intent.
+    /// When `Some`, the file picker is hidden in favor of a "Use shared file"
+    /// confirm step (Phase 3.3); when `None`, the regular file-picker flow
+    /// runs unchanged.
+    #[props(default = None)]
+    preloaded: Option<PendingShareCapture>,
     on_done: EventHandler<()>,
     on_extracted: EventHandler<ExtractedDraft>,
 ) -> Element {
@@ -201,7 +272,13 @@ fn DocumentCapture(
 
     let (title, accept, prefer_camera, default_hint, show_hint_picker) = match kind {
         DocumentKind::Photo => ("Photo capture", "image/*", true, "receipt", false),
-        DocumentKind::Pdf => ("PDF capture", "application/pdf", false, "bank_statement", true),
+        DocumentKind::Pdf => (
+            "PDF capture",
+            "application/pdf",
+            false,
+            "bank_statement",
+            true,
+        ),
     };
 
     let mut state: Signal<CaptureState> = use_signal(|| CaptureState::Idle);
@@ -212,12 +289,10 @@ fn DocumentCapture(
         let Some(file) = files.into_iter().next() else {
             return;
         };
-        let mime = file
-            .content_type()
-            .unwrap_or_else(|| match kind {
-                DocumentKind::Photo => "image/jpeg".to_string(),
-                DocumentKind::Pdf => "application/pdf".to_string(),
-            });
+        let mime = file.content_type().unwrap_or_else(|| match kind {
+            DocumentKind::Photo => "image/jpeg".to_string(),
+            DocumentKind::Pdf => "application/pdf".to_string(),
+        });
         let hint_value = hint.read().clone();
 
         state.set(CaptureState::Working);
@@ -287,29 +362,77 @@ fn DocumentCapture(
                 }
             }
 
-            // File picker. `capture="environment"` only applies to the photo
-            // flow — it tells mobile browsers to default to the rear camera.
-            label { class: "block",
-                span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
-                    match kind {
-                        DocumentKind::Photo => "Pick a photo or take one",
-                        DocumentKind::Pdf => "Pick a PDF",
+            // Share-target preloaded panel — only renders when the user
+            // arrived via an Android SEND intent (Phase 3.3). Surfaces the
+            // shared file's metadata so the user can confirm before bytes
+            // ship to Gemini; click fires the same extraction path the file
+            // picker uses.
+            if let Some(capture) = preloaded.clone() {
+                div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+                    div { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                        "Shared file"
+                    }
+                    div { class: "flex items-center gap-2 text-sm text-obsidian-text",
+                        svg { class: "w-4 h-4 text-obsidian-accent", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" }
+                        }
+                        span { class: "font-mono", "{capture.filename}" }
+                        span { class: "text-obsidian-text-muted", " · {capture.size} bytes · {capture.mime}" }
+                    }
+                    button {
+                        class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed",
+                        r#type: "button",
+                        disabled: matches!(*state.read(), CaptureState::Working),
+                        onclick: move |_| {
+                            // Mirror on_file_picked's tail: bytes already in
+                            // hand, skip the async read.
+                            let bytes = capture.bytes.clone();
+                            let mime = capture.mime.clone();
+                            let hint_value = hint.read().clone();
+                            let retry_bytes = bytes.clone();
+                            let retry_mime = mime.clone();
+                            state.set(CaptureState::Working);
+                            spawn(async move {
+                                match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
+                                    Ok(draft) => {
+                                        state.set(CaptureState::Idle);
+                                        on_extracted.call(draft);
+                                    }
+                                    Err(e) => state.set(CaptureState::Error {
+                                        msg: format!("Couldn't extract: {e}"),
+                                        retry_bytes: Some((retry_bytes, retry_mime)),
+                                    }),
+                                }
+                            });
+                        },
+                        "Use shared file"
                     }
                 }
-                if prefer_camera {
-                    input {
-                        class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
-                        r#type: "file",
-                        accept: accept,
-                        "capture": "environment",
-                        onchange: on_file_picked,
+            } else {
+                // File picker. `capture="environment"` only applies to the photo
+                // flow — it tells mobile browsers to default to the rear camera.
+                label { class: "block",
+                    span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                        match kind {
+                            DocumentKind::Photo => "Pick a photo or take one",
+                            DocumentKind::Pdf => "Pick a PDF",
+                        }
                     }
-                } else {
-                    input {
-                        class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
-                        r#type: "file",
-                        accept: accept,
-                        onchange: on_file_picked,
+                    if prefer_camera {
+                        input {
+                            class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
+                            r#type: "file",
+                            accept: accept,
+                            "capture": "environment",
+                            onchange: on_file_picked,
+                        }
+                    } else {
+                        input {
+                            class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
+                            r#type: "file",
+                            accept: accept,
+                            onchange: on_file_picked,
+                        }
                     }
                 }
             }
@@ -370,7 +493,8 @@ fn HintRadio(
     checked: bool,
     on_select: EventHandler<()>,
 ) -> Element {
-    let base = "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer";
+    let base =
+        "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer";
     let style = if checked {
         "bg-obsidian-accent text-white border-obsidian-accent"
     } else {
@@ -403,7 +527,10 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
     enum CaptureState {
         Idle,
         Working,
-        Error { msg: String, retry_body: Option<String> },
+        Error {
+            msg: String,
+            retry_body: Option<String>,
+        },
     }
 
     let mut state: Signal<CaptureState> = use_signal(|| CaptureState::Idle);
@@ -621,7 +748,11 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
             // `rust_decimal::serde::str` adapter parses it. We do a quick
             // sanity-check here so a typo doesn't reach the server.
             if r.amount.parse::<f64>().is_err() {
-                error.set(Some(format!("Row {}: '{}' is not a number.", i + 1, r.amount)));
+                error.set(Some(format!(
+                    "Row {}: '{}' is not a number.",
+                    i + 1,
+                    r.amount
+                )));
                 return;
             }
             postings_out.push(PostingInput {
@@ -632,7 +763,9 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
             });
         }
         if postings_out.len() < 2 {
-            error.set(Some("At least two postings required (debit + credit).".into()));
+            error.set(Some(
+                "At least two postings required (debit + credit).".into(),
+            ));
             return;
         }
 
@@ -819,8 +952,12 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
 
 fn render_idle(kind: DocumentKind) -> Element {
     let msg = match kind {
-        DocumentKind::Photo => "Pick a photo above to start. Mobile devices open the camera; desktop opens a file picker.",
-        DocumentKind::Pdf => "Pick a PDF above. Choose the document kind first so the extractor uses the right prompt.",
+        DocumentKind::Photo => {
+            "Pick a photo above to start. Mobile devices open the camera; desktop opens a file picker."
+        }
+        DocumentKind::Pdf => {
+            "Pick a PDF above. Choose the document kind first so the extractor uses the right prompt."
+        }
     };
     rsx! {
         p { class: "text-sm text-obsidian-text-muted", "{msg}" }
@@ -842,5 +979,70 @@ fn render_error(message: &str) -> Element {
             p { class: "text-sm text-red-300", "Couldn't extract: {message}" }
             p { class: "text-xs text-obsidian-text-muted", "Pick another file above to retry." }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_share_mime_routes_known_image_subtypes() {
+        assert_eq!(classify_share_mime("image/jpeg", "r.jpg"), Some(DocumentKind::Photo));
+        assert_eq!(classify_share_mime("image/png", "r.png"), Some(DocumentKind::Photo));
+        assert_eq!(classify_share_mime("image/heic", "r.heic"), Some(DocumentKind::Photo));
+        assert_eq!(classify_share_mime("image/heif", "r.heif"), Some(DocumentKind::Photo));
+        assert_eq!(classify_share_mime("image/webp", "r.webp"), Some(DocumentKind::Photo));
+    }
+
+    #[test]
+    fn classify_share_mime_is_case_insensitive() {
+        assert_eq!(classify_share_mime("Image/JPEG", "r.jpg"), Some(DocumentKind::Photo));
+        assert_eq!(classify_share_mime("APPLICATION/PDF", "s"), Some(DocumentKind::Pdf));
+    }
+
+    #[test]
+    fn classify_share_mime_accepts_well_declared_pdf_regardless_of_filename() {
+        // application/pdf wins even when filename has no .pdf extension —
+        // covers the renamed-PDF case.
+        assert_eq!(classify_share_mime("application/pdf", "statement"), Some(DocumentKind::Pdf));
+    }
+
+    #[test]
+    fn classify_share_mime_rescues_stripped_mime_via_filename() {
+        // The canonical Android share-target case: ContentProvider couldn't
+        // sniff the MIME, MainActivity.kt fell back to octet-stream, but the
+        // filename extension is still intact.
+        assert_eq!(
+            classify_share_mime("application/octet-stream", "chequing-march.pdf"),
+            Some(DocumentKind::Pdf),
+        );
+    }
+
+    #[test]
+    fn classify_share_mime_trusts_legacy_pdf_mime_with_filename() {
+        // application/x-pdf is a legacy non-standard PDF MIME; permissiveness
+        // here is intentional (see doc-comment on classify_share_mime).
+        assert_eq!(
+            classify_share_mime("application/x-pdf", "s.pdf"),
+            Some(DocumentKind::Pdf),
+        );
+    }
+
+    #[test]
+    fn classify_share_mime_rejects_text_family_even_with_pdf_filename() {
+        // text/* shares belong in EmailCapture — refusing here drops the
+        // share gracefully and lets the user pick the right flow manually.
+        assert_eq!(classify_share_mime("text/html", "r.pdf"), None);
+        assert_eq!(classify_share_mime("text/plain", "anything"), None);
+    }
+
+    #[test]
+    fn classify_share_mime_rejects_unknown_image_subtype() {
+        // Image allowlist is intentional — image/tiff or image/svg+xml
+        // aren't realistic receipt formats and Gemini's photo extraction
+        // is calibrated for the listed subtypes.
+        assert_eq!(classify_share_mime("image/tiff", "r.tiff"), None);
+        assert_eq!(classify_share_mime("image/svg+xml", "r.svg"), None);
     }
 }

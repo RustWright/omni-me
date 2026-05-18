@@ -486,7 +486,7 @@ fn outcome_summary(outcome: &serde_json::Value) -> String {
             let err = outcome.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
             format!("Last tick failed: {err}")
         }
-        Some("not_yet_run") | _ => "Not yet run".into(),
+        _ => "Not yet run".into(),
     }
 }
 
