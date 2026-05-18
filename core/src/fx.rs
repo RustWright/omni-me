@@ -17,6 +17,27 @@ use serde::Deserialize;
 
 const FRANKFURTER_BASE_URL: &str = "https://api.frankfurter.app";
 
+/// Currencies the user supplies FX rates for manually because Frankfurter
+/// (our daily-rate source) doesn't cover them. Append here when a new
+/// account in an unsupported currency lands; remove if Frankfurter expands
+/// coverage. Single source of truth — the auto-import batch-review flow
+/// and the journal projection consult this list rather than hard-coding
+/// per-currency knowledge in each handler.
+///
+/// When Frankfurter adds coverage for a currency listed here, removing it
+/// is non-breaking: existing `ExchangeRateRecorded` events stay valid
+/// (user-supplied historical rates remain truthful); future batches
+/// auto-fetch via Frankfurter as soon as the entry is gone.
+pub const MANUAL_FX_CURRENCIES: &[&str] = &["NGN"];
+
+/// Does this commodity need a user-supplied FX rate at import-review time?
+/// Case-insensitive against `MANUAL_FX_CURRENCIES`.
+pub fn needs_manual_fx(commodity: &str) -> bool {
+    MANUAL_FX_CURRENCIES
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case(commodity))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FxRateRecord {
     pub date: NaiveDate,
@@ -153,6 +174,36 @@ mod tests {
 
     fn make_client(server: &MockServer) -> FrankfurterClient {
         FrankfurterClient::new().with_base_url(server.uri())
+    }
+
+    #[test]
+    fn needs_manual_fx_returns_true_for_ngn() {
+        assert!(needs_manual_fx("NGN"));
+    }
+
+    #[test]
+    fn needs_manual_fx_is_case_insensitive() {
+        assert!(needs_manual_fx("ngn"));
+        assert!(needs_manual_fx("Ngn"));
+    }
+
+    #[test]
+    fn needs_manual_fx_returns_false_for_frankfurter_covered() {
+        assert!(!needs_manual_fx("CAD"));
+        assert!(!needs_manual_fx("USD"));
+        assert!(!needs_manual_fx("EUR"));
+    }
+
+    #[test]
+    fn needs_manual_fx_returns_false_for_unknown_commodity() {
+        // Empty + nonsense + a Frankfurter-uncovered-but-not-listed currency
+        // all return false. The list is the explicit allowlist of currencies
+        // we *know* need manual entry; unknowns are not silently routed
+        // through manual entry — they'd fail Frankfurter at fetch time, which
+        // is the right place to surface "we don't support this commodity".
+        assert!(!needs_manual_fx(""));
+        assert!(!needs_manual_fx("XYZ"));
+        assert!(!needs_manual_fx("PKR")); // not yet listed; would 404 on Frankfurter
     }
 
     fn frankfurter_payload(

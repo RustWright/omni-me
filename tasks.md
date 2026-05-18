@@ -70,32 +70,29 @@ Event schema, projections, Tauri commands. Mirrors Cycle 2 Phase 0 structurally.
 
 ---
 
-## Phase 2: Server-Side Capture + Auto-Import (~14 tasks, 3 done)
+## Phase 2: Server-Side Capture + Auto-Import (~14 tasks, all backend done; 2.12b UI half folded into 3.10)
 
 ### 2A. Document Extraction (Gemini-only for Cycle 3)
 
 - [x] **2.1** Axum endpoint `PUT /blobs/<sha256>` — accepts file upload, validates SHA-256 matches body, stores at configured blob path. Done 2026-05-09 during POC 0.2.
 - [x] **2.2** Axum endpoint `GET /blobs/<sha256>` — streams stored file with `infer`-detected MIME type. Done 2026-05-09 during POC 0.2.
 - [x] **2.3** Server-side blob storage: `BLOB_DIR` env var, atomic ULID-named-temp + rename, idempotent, `BlobError` typed-error enum. Done 2026-05-09 during POC 0.2.
-- [ ] **2.4** Gemini Flash multimodal `DocumentExtractor` trait impl — handles all input modalities (photos, PDFs, text, paystubs, bank/brokerage statements). Cycle 3's sole extractor. [L]
-- [ ] **2.5** `DocumentExtractor` trait + routing scaffold — `core::extraction::DocumentExtractor`; hybrid dispatch: IMAP sender pre-routing + photo→receipt-mode + PDF requires user pick + email body→text mode. Single Gemini impl for now; ready for Cycle 4 Veryfi drop-in. [S]
-- [ ] **2.6** Verification pass: line-item-sum == total (receipts), gross - deductions == net (paystubs), confidence threshold gate; flag below-threshold drafts for manual review [M]
-- [ ] **2.7** Frankfurter FX daily-rate fetcher (free, ECB-sourced, no API key) for CAD/USD/EUR; emits `P` directive into journal projection. NGN is manual entry per Phase 2.13 / import flow. [M]
-- [ ] **2.8** Integration tests: end-to-end Gemini capture for each modality against real samples (paper receipt, brokerage statement, paystub, email body) [M]
+- [x] **2.4** Gemini Flash multimodal `DocumentExtractor` trait impl — handles all input modalities (photos, PDFs, text, paystubs, bank/brokerage statements). Cycle 3's sole extractor. [L] — done 2026-05-17 (`core/src/extraction/gemini.rs`)
+- [x] **2.5** `DocumentExtractor` trait + routing scaffold — `core::extraction::DocumentExtractor`; hybrid dispatch: IMAP sender pre-routing + photo→receipt-mode + PDF requires user pick + email body→text mode. Single Gemini impl for now; ready for Cycle 4 Veryfi drop-in. [S] — done 2026-05-17 (`core/src/extraction/mod.rs`)
+- [x] **2.6** Verification pass: line-item-sum == total (receipts), gross - deductions == net (paystubs), confidence threshold gate; flag below-threshold drafts for manual review [M] — done 2026-05-17 (`core/src/extraction/verify.rs`)
+- [x] **2.7** Frankfurter FX daily-rate fetcher (free, ECB-sourced, no API key) for CAD/USD/EUR; emits `P` directive into journal projection. NGN is manual entry per Phase 2.13 / import flow. [M] — done 2026-05-17 (`core/src/fx.rs`)
+- [x] **2.8** Integration tests: end-to-end Gemini capture for each modality against real samples (paper receipt, brokerage statement, paystub, email body) [M] — done 2026-05-17 (`core/tests/extraction_integration.rs`)
 
 ### 2B. Auto-Import Sources (NEW post-replan)
 
-- [ ] **2.9-spike** SnapTrade coverage spike (≤30 min, user-run): sign up for SnapTrade free tier (1 connected user, 5 broker connections, $0), connect WS account, verify `GET /accounts` and `GET /transactions` return chequing + crypto data (not just registered investment accounts). Outcome decides 2.9 implementation path. [XS]
-- [ ] **2.9** WealthSimple data path — implementation chosen by 2.9-spike outcome:
-  - **If SnapTrade covers chequing + crypto:** thin SnapTrade client wrapper (REST, OAuth-style flow, no auth-regex maintenance). [M]
-  - **Otherwise (default):** subprocess `gboudreau/ws-api-python` (active community library, GraphQL-based, ~bi-monthly auth-regex hotfixes inherited via `pip install --upgrade`). Adds Python runtime as server-side dep. Port to native Rust slated for Cycle 4 if subprocess proves stable; immediate rewrite avoided per `feedback_prefer_integration_over_rewrite.md`. [L]
-  - Either path covers 6 WS accounts (chequing + 3 registered + crypto + 1 other); covers 95% of user volume.
-- [ ] **2.10** Wise official API client — token-based auth, `/transfers`/`/statements` endpoints, multi-currency transaction mapping (CAD/USD/EUR), dedup [M]
-- [ ] **2.11** IMAP poller infrastructure — connection (TLS, app-password creds in secure storage), label-watching loop, sender-pattern dispatch table for handler routing [L]
-- [ ] **2.12a** IMAP handler — Standard Chartered NGN (decrypt + extract): detect statement email → fetch attached PDF → decrypt with stored account-derived password → Gemini multimodal extraction → emit structured transaction list [M]
-- [ ] **2.12b** IMAP handler — Standard Chartered NGN (batch draft + manual FX prompt): wrap 2.12a output into a batch draft with manual NGN→CAD FX rate prompt at review time (UI lives in 3.10) [S]
-- [ ] **2.13** IMAP handler — online-purchase receipts: parse email body or attached PDF → Gemini extraction → single-transaction draft [M]
-- [ ] **2.14** Auto-import scheduling — background fetcher with configurable interval per source, exponential backoff on failure, status reporting hook into `StatusReporter`. Pattern mirrors `auto_close_scheduler.rs`. [M]
+- [x] **2.9-spike** SnapTrade coverage spike — done 2026-05-17. **SnapTrade rejected**: the connect-account flow errored out under maintenance AND the error explicitly named `WealthSimpleTrade` as the target broker (i.e., only the trading-account subset, not the chequing + crypto accounts that hold 95% of volume). Two strikes → fallback chosen. [XS]
+- [x] **2.9** WealthSimple data path — done 2026-05-17 via the **fallback** subprocess path: `gboudreau/ws-api-python` (active community library, GraphQL-based, ~bi-monthly auth-regex hotfixes inherited via `pip install --upgrade`). Python runtime added as server-side dep. Port to native Rust slated for Cycle 4 if subprocess proves stable; immediate rewrite avoided per `feedback_prefer_integration_over_rewrite.md`. Live-verified against real account (7 sub-accounts + 297 txns pulled). [L] (`core/src/auto_import/wealthsimple.rs`)
+- [x] **2.10** Wise official API client — done 2026-05-17. Token-based auth, `/transfers`/`/statements` endpoints, multi-currency transaction mapping (CAD/USD/EUR), dedup. Live-verified. [M] (`core/src/auto_import/wise.rs`)
+- [x] **2.11** IMAP poller infrastructure — done 2026-05-17. Connection (TLS, app-password creds), label-watching loop, sender-pattern dispatch. Live-verified against real Gmail INBOX. [L] (`core/src/auto_import/imap.rs` + `imap_real.rs` + `imap_source.rs`)
+- [x] **2.12a** IMAP handler — Standard Chartered NGN (decrypt + extract): detect statement email → fetch attached PDF → decrypt with stored account-derived password → Gemini multimodal extraction → emit structured transaction list. Done 2026-05-17, live-verified against real password-protected USD statement. [M] (`core/src/auto_import/sc_ngn.rs`)
+- [ ] **2.12b** IMAP handler — Standard Chartered NGN (batch draft + manual FX prompt): wrap 2.12a output into a batch draft with manual NGN→CAD FX rate prompt at review time. **NOT shipped** — `sc_ngn::handle` currently emits `TransactionRecorded` events directly via `statement_extraction_to_events`, bypassing the user-designed review gate. Fix shape: introduce a `AutoImportBatchProposed { source, draft_events }`-style event the scheduler emits instead of bare records; 3.10's review screen consumes the proposal and Save fans out actual `TransactionRecorded`s. Coupled to 3.10's implementation. [S]
+- [x] **2.13** IMAP handler — online-purchase receipts: parse email body or attached PDF → Gemini extraction → single-transaction draft. Done 2026-05-17. [M] (`core/src/auto_import/receipts.rs`)
+- [x] **2.14** Auto-import scheduling — background fetcher with configurable interval per source, exponential backoff on failure, status reporting hook into `StatusReporter`. Pattern mirrors `auto_close_scheduler.rs`. Done 2026-05-18 in auto-end commit `214a785` (333 lines). [M] (`core/src/auto_import_scheduler.rs`)
 
 ---
 

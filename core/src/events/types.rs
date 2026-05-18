@@ -50,6 +50,10 @@ pub enum EventType {
     RecurringTransactionDismissed,
     // Budget — FX
     ExchangeRateRecorded,
+    // Budget — auto-import batch review (Phase 3.10 / closes 2.12b)
+    AutoImportBatchProposed,
+    AutoImportBatchCommitted,
+    AutoImportBatchDismissed,
     // Meta
     DataWiped,
 }
@@ -91,6 +95,9 @@ impl fmt::Display for EventType {
             EventType::RecurringTransactionConfirmed => "recurring_transaction_confirmed",
             EventType::RecurringTransactionDismissed => "recurring_transaction_dismissed",
             EventType::ExchangeRateRecorded => "exchange_rate_recorded",
+            EventType::AutoImportBatchProposed => "auto_import_batch_proposed",
+            EventType::AutoImportBatchCommitted => "auto_import_batch_committed",
+            EventType::AutoImportBatchDismissed => "auto_import_batch_dismissed",
             EventType::DataWiped => "data_wiped",
         };
         write!(f, "{s}")
@@ -136,6 +143,9 @@ impl FromStr for EventType {
             "recurring_transaction_confirmed" => Ok(EventType::RecurringTransactionConfirmed),
             "recurring_transaction_dismissed" => Ok(EventType::RecurringTransactionDismissed),
             "exchange_rate_recorded" => Ok(EventType::ExchangeRateRecorded),
+            "auto_import_batch_proposed" => Ok(EventType::AutoImportBatchProposed),
+            "auto_import_batch_committed" => Ok(EventType::AutoImportBatchCommitted),
+            "auto_import_batch_dismissed" => Ok(EventType::AutoImportBatchDismissed),
             "data_wiped" => Ok(EventType::DataWiped),
             other => Err(format!("unknown event type: {other}")),
         }
@@ -513,6 +523,82 @@ pub struct ExchangeRateRecordedPayload {
     pub source: String,
 }
 
+// Budget — auto-import batch review (Phase 3.10 / closes 2.12b)
+
+/// One row in a proposed auto-import batch — a single draft transaction the
+/// user will review, edit, accept, or skip. Mirrors `TransactionRecordedPayload`
+/// in shape (it becomes one on commit) but keeps `external_id` so the projection
+/// can render the upstream's stable identifier alongside the row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DraftTransaction {
+    /// Upstream's stable id — used for dedup at the row level (Wise transfer
+    /// id, WS internal txn id, IMAP message-uid + line offset, etc.). Distinct
+    /// from `batch_id` (which scopes the whole batch).
+    pub external_id: String,
+    pub date: chrono::NaiveDate,
+    pub description: String,
+    pub postings: Vec<Posting>,
+}
+
+/// Scheduler emits this when an auto-import source produces a batch of
+/// candidate transactions. Bytes are kept in the event payload (verbose
+/// choice) so replay re-creates the pending state without re-fetching from
+/// the upstream — important for IMAP, where the source message may be deleted
+/// by the time the user replays.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoImportBatchProposedPayload {
+    /// ULID for the batch. Used as the cross-event correlation key — both
+    /// `Committed` and `Dismissed` reference this `batch_id`.
+    pub batch_id: String,
+    /// Source identifier (`"wise"`, `"sc_ngn"`, `"imap_receipts"`, etc.).
+    /// Matches the value `AutoImportSource::name()` returns.
+    pub source: String,
+    /// Per-source idempotency key — what the scheduler checks to avoid
+    /// re-proposing a batch it has already produced. Shape is source-defined
+    /// (e.g., SC NGN uses `format!("{source}-uid-{message_uid}")`).
+    pub dedup_key: String,
+    pub fetched_at: chrono::DateTime<chrono::Utc>,
+    pub draft_postings: Vec<DraftTransaction>,
+    /// Source-specific metadata kept opaque at the core layer — e.g., IMAP
+    /// senders use this to stash `from`/`subject`/`uid` so the review UI can
+    /// surface "from: statement@sc.com · subject: April statement".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_metadata: Option<serde_json::Value>,
+}
+
+/// User commits the batch. Fans out into `TransactionRecorded` events (one
+/// per accepted row) and optionally one `ExchangeRateRecorded` (when the
+/// batch had a commodity in `MANUAL_FX_CURRENCIES` and the user supplied a
+/// rate). `accepted_indices` are positions in the `Proposed.draft_postings`
+/// vec — rows not in the list are dropped on the floor (audit trail of "user
+/// saw it and decided not to record it" stays in the `Proposed` event).
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoImportBatchCommittedPayload {
+    pub batch_id: String,
+    pub accepted_indices: Vec<usize>,
+    /// FX rate the user typed in for the batch's manual-FX commodity, if any.
+    /// Paired with `fx_commodity`; both Some or both None.
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fx_rate: Option<Decimal>,
+    /// Commodity the `fx_rate` quotes (e.g., "NGN"). The base is implicit —
+    /// the user's configured base currency at commit time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fx_commodity: Option<String>,
+}
+
+/// User dismisses the batch — no transactions recorded. Reason is free-form
+/// (UI may surface a small set of canned reasons or a text field) and
+/// optional. The event existing at all is what dedup checks against; without
+/// it, re-fetched-then-rejected batches would re-propose on the next tick.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoImportBatchDismissedPayload {
+    pub batch_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 // Meta
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -633,6 +719,15 @@ pub fn validate_payload(
         EventType::ExchangeRateRecorded => {
             serde_json::from_value::<ExchangeRateRecordedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::AutoImportBatchProposed => {
+            serde_json::from_value::<AutoImportBatchProposedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AutoImportBatchCommitted => {
+            serde_json::from_value::<AutoImportBatchCommittedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AutoImportBatchDismissed => {
+            serde_json::from_value::<AutoImportBatchDismissedPayload>(payload.clone()).map(|_| ())
+        }
         EventType::DataWiped => {
             serde_json::from_value::<DataWipedPayload>(payload.clone()).map(|_| ())
         }
@@ -684,6 +779,9 @@ mod tests {
             EventType::RecurringTransactionConfirmed,
             EventType::RecurringTransactionDismissed,
             EventType::ExchangeRateRecorded,
+            EventType::AutoImportBatchProposed,
+            EventType::AutoImportBatchCommitted,
+            EventType::AutoImportBatchDismissed,
             EventType::DataWiped,
         ];
 
@@ -692,6 +790,75 @@ mod tests {
             let parsed: EventType = s.parse().unwrap();
             assert_eq!(&parsed, t);
         }
+    }
+
+    #[test]
+    fn auto_import_batch_proposed_payload_roundtrip() {
+        let payload = AutoImportBatchProposedPayload {
+            batch_id: "01HF2K3M4N5P6Q7R8S9TVWXYZA".into(),
+            source: "sc_ngn".into(),
+            dedup_key: "sc_ngn-uid-42".into(),
+            fetched_at: chrono::Utc::now(),
+            draft_postings: vec![DraftTransaction {
+                external_id: "sc_ngn-uid-42-row-0".into(),
+                date: chrono::NaiveDate::from_ymd_opt(2026, 4, 15).unwrap(),
+                description: "POS Lagos Mall".into(),
+                postings: vec![],
+            }],
+            source_metadata: Some(serde_json::json!({"from": "estatements@sc.com"})),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        validate_payload(&EventType::AutoImportBatchProposed, &json).unwrap();
+        let back: AutoImportBatchProposedPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back.batch_id, payload.batch_id);
+        assert_eq!(back.dedup_key, payload.dedup_key);
+        assert_eq!(back.draft_postings.len(), 1);
+    }
+
+    #[test]
+    fn auto_import_batch_committed_payload_roundtrip_with_fx() {
+        use rust_decimal::Decimal;
+        let payload = AutoImportBatchCommittedPayload {
+            batch_id: "01HF...".into(),
+            accepted_indices: vec![0, 2, 3],
+            fx_rate: Some(Decimal::new(84, 5)), // 0.00084
+            fx_commodity: Some("NGN".into()),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
+        let back: AutoImportBatchCommittedPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back.fx_rate, payload.fx_rate);
+        assert_eq!(back.fx_commodity.as_deref(), Some("NGN"));
+        assert_eq!(back.accepted_indices, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn auto_import_batch_committed_payload_roundtrip_without_fx() {
+        // Wise batch — all CAD/USD/EUR, no manual FX needed.
+        let payload = AutoImportBatchCommittedPayload {
+            batch_id: "01HG...".into(),
+            accepted_indices: vec![0, 1, 2, 3, 4],
+            fx_rate: None,
+            fx_commodity: None,
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
+        // fx_rate + fx_commodity should not serialize when None.
+        let json_str = serde_json::to_string(&payload).unwrap();
+        assert!(!json_str.contains("fx_rate"));
+        assert!(!json_str.contains("fx_commodity"));
+    }
+
+    #[test]
+    fn auto_import_batch_dismissed_payload_roundtrip() {
+        let payload = AutoImportBatchDismissedPayload {
+            batch_id: "01HH...".into(),
+            reason: Some("Gemini hallucinated rows".into()),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        validate_payload(&EventType::AutoImportBatchDismissed, &json).unwrap();
+        let back: AutoImportBatchDismissedPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back.reason.as_deref(), Some("Gemini hallucinated rows"));
     }
 
     #[test]
