@@ -286,6 +286,10 @@ pub fn run() {
             // Auto-import observability (Phase 3.9)
             commands::auto_import::list_auto_import_sources,
             commands::auto_import::trigger_auto_import_tick,
+            // Auto-import batch review (Phase 3.10.5)
+            commands::auto_import::list_pending_batches,
+            commands::auto_import::commit_batch,
+            commands::auto_import::dismiss_batch,
             // Android share-target intake (Phase 3.3)
             commands::share_intent::take_pending_share_intent,
         ])

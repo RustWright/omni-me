@@ -303,3 +303,37 @@ pub struct PendingShareCapture {
     pub size: u64,
     pub bytes: Vec<u8>,
 }
+
+// ---------------------------------------------------------------------------
+// Auto-import batch review (Phase 3.10.6)
+// ---------------------------------------------------------------------------
+
+/// Frontend view of one draft transaction inside a pending batch. Mirrors
+/// `core::events::DraftTransaction` after JSON serialisation — dates as
+/// `YYYY-MM-DD` strings, postings as the same `PostingInput` shape used by
+/// the manual capture form.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DraftTransactionView {
+    pub external_id: String,
+    pub date: String,
+    pub description: String,
+    pub postings: Vec<PostingInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingBatchView {
+    pub batch_id: String,
+    pub source: String,
+    pub dedup_key: String,
+    pub fetched_at: String,
+    pub draft_postings: Vec<DraftTransactionView>,
+    #[serde(default)]
+    pub source_metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommitBatchResult {
+    pub events_appended: usize,
+    pub txns_recorded: usize,
+    pub fx_recorded: bool,
+}

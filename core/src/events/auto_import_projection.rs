@@ -352,4 +352,70 @@ mod tests {
         assert_eq!(rows.len(), 1, "still one row");
         assert_eq!(rows[0].1, "dismissed", "stays dismissed across re-propose");
     }
+
+    // --- queries integration (Phase 3.10.5) ---
+
+    #[tokio::test]
+    async fn queries_list_pending_returns_only_pending_rows() {
+        use crate::db::queries::{count_pending_batches, get_pending_batch_by_id, list_pending_batches};
+
+        let (db, store, runner) = test_db_and_runner().await;
+
+        // Pending row.
+        let p1 = store
+            .append(NewEvent {
+                id: Some("P1".into()),
+                event_type: "auto_import_batch_proposed".into(),
+                aggregate_id: "P1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: proposed_payload("P1", "wise", "wise-001"),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[p1]).await.unwrap();
+
+        // Pending → committed; should drop out of list_pending_batches.
+        let p2 = store
+            .append(NewEvent {
+                id: Some("P2".into()),
+                event_type: "auto_import_batch_proposed".into(),
+                aggregate_id: "P2".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: proposed_payload("P2", "sc_ngn", "sc_ngn-uid-200"),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[p2]).await.unwrap();
+        let c2 = store
+            .append(NewEvent {
+                id: None,
+                event_type: "auto_import_batch_committed".into(),
+                aggregate_id: "P2".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({"batch_id": "P2", "accepted_indices": [0]}),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[c2]).await.unwrap();
+
+        let pending = list_pending_batches(&db).await.unwrap();
+        assert_eq!(pending.len(), 1, "only P1 is pending");
+        assert_eq!(pending[0].batch_id, "P1");
+        assert_eq!(pending[0].source, "wise");
+        assert_eq!(pending[0].status, "pending");
+
+        let count = count_pending_batches(&db).await.unwrap();
+        assert_eq!(count, 1);
+
+        // get_pending_batch_by_id resolves both pending and resolved rows
+        // (commit_batch/dismiss_batch use it to fetch the draft_postings even
+        // for already-resolved rows, so it must return them too — the
+        // status-gate is in the command, not the query).
+        let fetched = get_pending_batch_by_id(&db, "P2").await.unwrap();
+        assert!(fetched.is_some(), "committed row still queryable by batch_id");
+        assert_eq!(fetched.unwrap().status, "committed");
+    }
 }

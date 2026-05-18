@@ -123,6 +123,23 @@ pub struct CompletionRow {
     pub reason: Option<String>,
 }
 
+/// A pending auto-import batch awaiting user review. Mirrors the projection
+/// table `pending_auto_import_batches`. `draft_postings` round-trips the raw
+/// `DraftTransaction` array as `DbValue` since the schema declares it as a
+/// FLEXIBLE array — the Tauri command deserialises into `DraftTransaction`
+/// on its way out.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct PendingBatchRow {
+    pub batch_id: String,
+    pub source: String,
+    pub dedup_key: String,
+    pub fetched_at: String,
+    pub draft_postings: DbValue,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_metadata: Option<DbValue>,
+    pub status: String,
+}
+
 // --- Journal entries ---
 
 pub async fn get_journal_by_date(
@@ -485,4 +502,47 @@ pub async fn list_recurring_patterns(
     let mut resp = q.await?;
     let rows: Vec<RecurringPatternRow> = resp.take(0)?;
     Ok(rows)
+}
+
+// --- Auto-import pending batches (Phase 3.10.5) ---
+
+const PENDING_BATCH_FIELDS: &str =
+    "batch_id, source, dedup_key, fetched_at, draft_postings, source_metadata, status";
+
+pub async fn list_pending_batches(db: &Database) -> Result<Vec<PendingBatchRow>, DbError> {
+    let q = format!(
+        "SELECT {PENDING_BATCH_FIELDS} FROM pending_auto_import_batches
+         WHERE status = 'pending'
+         ORDER BY fetched_at DESC"
+    );
+    let mut resp = db.query(q.as_str()).await?;
+    let rows: Vec<PendingBatchRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+pub async fn count_pending_batches(db: &Database) -> Result<u64, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT count() AS c FROM pending_auto_import_batches
+             WHERE status = 'pending' GROUP ALL",
+        )
+        .await?;
+    let counts: Vec<i64> = resp.take("c").unwrap_or_default();
+    Ok(counts.first().copied().unwrap_or(0).max(0) as u64)
+}
+
+pub async fn get_pending_batch_by_id(
+    db: &Database,
+    batch_id: &str,
+) -> Result<Option<PendingBatchRow>, DbError> {
+    let q = format!(
+        "SELECT {PENDING_BATCH_FIELDS} FROM pending_auto_import_batches
+         WHERE batch_id = $batch_id LIMIT 1"
+    );
+    let mut resp = db
+        .query(q.as_str())
+        .bind(("batch_id", batch_id.to_string()))
+        .await?;
+    let rows: Vec<PendingBatchRow> = resp.take(0)?;
+    Ok(rows.into_iter().next())
 }

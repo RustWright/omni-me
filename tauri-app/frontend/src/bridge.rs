@@ -3,9 +3,9 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "mock")]
 use crate::types::{AttachmentRef, ExtractedPostingView, TaskResult};
 use crate::types::{
-    AutoImportSourceView, CompletionEntry, ExtractedDraft, GenericNoteItem, JournalEntryItem,
-    LlmResult, PendingShareCapture, RoutineGroup, RoutineItem, SyncInfo, SyncStatus,
-    SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft,
+    AutoImportSourceView, CommitBatchResult, CompletionEntry, ExtractedDraft, GenericNoteItem,
+    JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture, RoutineGroup, RoutineItem,
+    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft,
 };
 
 // Tauri IPC
@@ -1188,6 +1188,167 @@ pub async fn invoke_trigger_auto_import_tick(source: &str) -> Result<ManualTickR
             source: &'a str,
         }
         invoke("trigger_auto_import_tick", &Args { source }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Auto-import batch review (Phase 3.10.5/.6)
+// -----------------------------------------------------------------------------
+
+pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        use crate::types::{DraftTransactionView, PostingInput};
+        // One Wise batch (CAD/USD) + one Standard Chartered NGN batch — the
+        // latter has a manual-FX currency so the FX prompt path is exercisable.
+        let now = chrono::Utc::now();
+        Ok(vec![
+            PendingBatchView {
+                batch_id: "01HXMOCKWISE000000000001".into(),
+                source: "wise".into(),
+                dedup_key: "wise-01HXMOCKWISE000000000001".into(),
+                fetched_at: (now - chrono::Duration::minutes(4)).to_rfc3339(),
+                draft_postings: vec![
+                    DraftTransactionView {
+                        external_id: "wise-12345".into(),
+                        date: "2026-05-17".into(),
+                        description: "Wise transfer — landlord".into(),
+                        postings: vec![
+                            PostingInput {
+                                account: "Expenses:Rent".into(),
+                                commodity: "CAD".into(),
+                                amount: "1850.00".into(),
+                                tags: vec![],
+                            },
+                            PostingInput {
+                                account: "Assets:Wise:CAD".into(),
+                                commodity: "CAD".into(),
+                                amount: "-1850.00".into(),
+                                tags: vec![],
+                            },
+                        ],
+                    },
+                    DraftTransactionView {
+                        external_id: "wise-12346".into(),
+                        date: "2026-05-18".into(),
+                        description: "Wise FX — USD top-up".into(),
+                        postings: vec![
+                            PostingInput {
+                                account: "Assets:Wise:USD".into(),
+                                commodity: "USD".into(),
+                                amount: "500.00".into(),
+                                tags: vec![],
+                            },
+                            PostingInput {
+                                account: "Assets:Wise:CAD".into(),
+                                commodity: "CAD".into(),
+                                amount: "-686.42".into(),
+                                tags: vec![],
+                            },
+                        ],
+                    },
+                ],
+                source_metadata: None,
+            },
+            PendingBatchView {
+                batch_id: "01HXMOCKSCNG000000000001".into(),
+                source: "sc_ngn".into(),
+                dedup_key: "sc_ngn-uid-42".into(),
+                fetched_at: (now - chrono::Duration::minutes(11)).to_rfc3339(),
+                draft_postings: vec![DraftTransactionView {
+                    external_id: "sc-april-statement-row-1".into(),
+                    date: "2026-04-29".into(),
+                    description: "Standard Chartered Lagos — POS".into(),
+                    postings: vec![
+                        PostingInput {
+                            account: "Expenses:Groceries".into(),
+                            commodity: "NGN".into(),
+                            amount: "32500".into(),
+                            tags: vec![],
+                        },
+                        PostingInput {
+                            account: "Assets:StandardChartered:NGN".into(),
+                            commodity: "NGN".into(),
+                            amount: "-32500".into(),
+                            tags: vec![],
+                        },
+                    ],
+                }],
+                source_metadata: Some(serde_json::json!({
+                    "from": "statements@sc.com",
+                    "subject": "April statement",
+                    "uid": 42,
+                })),
+            },
+        ])
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_pending_batches", &Args {}).await
+    }
+}
+
+pub async fn invoke_commit_batch(
+    batch_id: &str,
+    accepted_indices: Vec<usize>,
+    fx_rate: Option<String>,
+    fx_commodity: Option<String>,
+) -> Result<CommitBatchResult, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (batch_id, fx_rate, fx_commodity);
+        crate::timer::sleep_ms(450).await;
+        Ok(CommitBatchResult {
+            events_appended: accepted_indices.len() + 1,
+            txns_recorded: accepted_indices.len(),
+            fx_recorded: false,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            batch_id: &'a str,
+            accepted_indices: Vec<usize>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            fx_rate: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            fx_commodity: Option<String>,
+        }
+        invoke(
+            "commit_batch",
+            &Args {
+                batch_id,
+                accepted_indices,
+                fx_rate,
+                fx_commodity,
+            },
+        )
+        .await
+    }
+}
+
+pub async fn invoke_dismiss_batch(
+    batch_id: &str,
+    reason: Option<String>,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (batch_id, reason);
+        crate::timer::sleep_ms(300).await;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            batch_id: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            reason: Option<String>,
+        }
+        invoke_unit("dismiss_batch", &Args { batch_id, reason }).await
     }
 }
 

@@ -2,7 +2,8 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::types::{
-    AttachmentRef, ExtractedDraft, PendingShareCapture, PostingInput, TransactionFormDraft,
+    AttachmentRef, DraftTransactionView, ExtractedDraft, PendingBatchView, PendingShareCapture,
+    PostingInput, TransactionFormDraft,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -64,6 +65,12 @@ enum FinancesView {
     /// from `pending_draft` — `None` is manual entry, `Some(_)` is the
     /// post-extraction confirm step.
     TransactionForm,
+    /// List of pending auto-import batches awaiting review (Phase 3.10.6).
+    BatchList,
+    /// Per-batch review screen. Selected `batch_id` is carried in the
+    /// `selected_batch_id` signal alongside the view enum (the enum stays
+    /// `Copy` so this variant can't carry the String inline).
+    BatchReview,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -72,6 +79,23 @@ enum FinancesView {
 pub fn FinancesPage() -> Element {
     let mut view = use_signal(|| FinancesView::Home);
     let mut pending_draft: Signal<Option<ExtractedDraft>> = use_signal(|| None);
+    let mut selected_batch_id: Signal<Option<String>> = use_signal(|| None);
+    // Pending-batch count, refreshed every time the user lands on Home. A
+    // separate signal (not derived from listing the batches inline) keeps the
+    // Home banner cheap — one COUNT query instead of a full SELECT every
+    // navigation.
+    let mut pending_batch_count: Signal<u64> = use_signal(|| 0);
+    let _refresh_count_resource = use_resource(move || {
+        let in_home = matches!(*view.read(), FinancesView::Home);
+        async move {
+            if !in_home {
+                return;
+            }
+            if let Ok(batches) = bridge::invoke_list_pending_batches().await {
+                pending_batch_count.set(batches.len() as u64);
+            }
+        }
+    });
 
     // Pending Android share-target intake (Phase 3.3). main.rs sets this
     // signal when MainActivity.kt stashes shared bytes; we route to the
@@ -101,6 +125,7 @@ pub fn FinancesPage() -> Element {
             match *view.read() {
                 FinancesView::Home => rsx! {
                     HomeView {
+                        pending_count: *pending_batch_count.read(),
                         on_open_photo: move |_| view.set(FinancesView::Capture(DocumentKind::Photo)),
                         on_open_pdf: move |_| view.set(FinancesView::Capture(DocumentKind::Pdf)),
                         on_open_email: move |_| view.set(FinancesView::Email),
@@ -108,6 +133,7 @@ pub fn FinancesPage() -> Element {
                             pending_draft.set(None);
                             view.set(FinancesView::TransactionForm);
                         },
+                        on_open_batches: move |_| view.set(FinancesView::BatchList),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -143,6 +169,43 @@ pub fn FinancesPage() -> Element {
                         },
                     }
                 },
+                FinancesView::BatchList => rsx! {
+                    BatchListView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                        on_open_batch: move |batch_id: String| {
+                            selected_batch_id.set(Some(batch_id));
+                            view.set(FinancesView::BatchReview);
+                        },
+                    }
+                },
+                FinancesView::BatchReview => {
+                    let bid = selected_batch_id.read().clone();
+                    match bid {
+                        Some(batch_id) => rsx! {
+                            BatchReviewView {
+                                batch_id: batch_id,
+                                on_done: move |_| {
+                                    selected_batch_id.set(None);
+                                    view.set(FinancesView::BatchList);
+                                },
+                            }
+                        },
+                        None => rsx! {
+                            // Shouldn't happen — BatchReview is only set
+                            // alongside selected_batch_id, but if it does the
+                            // user can navigate back to the list cleanly.
+                            div {
+                                class: "text-obsidian-text-muted text-sm",
+                                "No batch selected. "
+                                button {
+                                    class: "underline",
+                                    onclick: move |_| view.set(FinancesView::BatchList),
+                                    "Back to list"
+                                }
+                            }
+                        },
+                    }
+                }
             }
         }
     }
@@ -150,13 +213,45 @@ pub fn FinancesPage() -> Element {
 
 #[component]
 fn HomeView(
+    pending_count: u64,
     on_open_photo: EventHandler<()>,
     on_open_pdf: EventHandler<()>,
     on_open_email: EventHandler<()>,
     on_open_manual: EventHandler<()>,
+    on_open_batches: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
+
+        if pending_count > 0 {
+            button {
+                class: "w-full mb-6 px-4 py-3 bg-obsidian-accent/10 border border-obsidian-accent/40 rounded-lg flex items-center justify-between hover:bg-obsidian-accent/15 transition-colors",
+                onclick: move |_| on_open_batches.call(()),
+                div { class: "flex items-center gap-3",
+                    span { class: "inline-flex items-center justify-center w-8 h-8 bg-obsidian-accent text-black rounded-full text-sm font-bold",
+                        "{pending_count}"
+                    }
+                    div { class: "text-left",
+                        div { class: "text-sm font-semibold text-obsidian-text",
+                            if pending_count == 1 {
+                                "1 auto-imported batch awaiting review"
+                            } else {
+                                "{pending_count} auto-imported batches awaiting review"
+                            }
+                        }
+                        div { class: "text-xs text-obsidian-text-muted",
+                            "Tap to accept, skip, or dismiss."
+                        }
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
+        }
 
         // --- Capture Section ---
         div { class: "mb-10 space-y-4",
@@ -978,6 +1073,385 @@ fn render_error(message: &str) -> Element {
         div { class: "p-4 bg-red-950/30 border border-red-500/30 rounded-lg space-y-2",
             p { class: "text-sm text-red-300", "Couldn't extract: {message}" }
             p { class: "text-xs text-obsidian-text-muted", "Pick another file above to retry." }
+        }
+    }
+}
+
+// =============================================================================
+// Auto-import batch review (Phase 3.10.6)
+//
+// BatchListView: lists pending batches (one row per source/dedup) with quick
+// metadata. Click → BatchReviewView.
+//
+// BatchReviewView: per-row accept toggle; if any row carries a commodity in
+// MANUAL_FX_CURRENCIES (i.e., NGN today), prompts for the manual base→quote
+// rate before Commit. Commit fans out to TransactionRecorded × N + optional
+// ExchangeRateRecorded + AutoImportBatchCommitted via `commit_batch`.
+// =============================================================================
+
+/// Currencies that need a user-supplied FX rate because Frankfurter doesn't
+/// cover them. Mirror of `core::fx::MANUAL_FX_CURRENCIES`; kept in sync via
+/// the cross-crate type round-trip test in `core/src/fx.rs`. UI-side dup is
+/// pragmatic — making this WASM-shared would pull `core` into the frontend.
+const MANUAL_FX_CURRENCIES_UI: &[&str] = &["NGN"];
+
+fn batch_needs_manual_fx(batch: &PendingBatchView) -> Option<String> {
+    for draft in &batch.draft_postings {
+        for posting in &draft.postings {
+            for commodity in MANUAL_FX_CURRENCIES_UI {
+                if posting.commodity.eq_ignore_ascii_case(commodity) {
+                    return Some((*commodity).to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+#[component]
+fn BatchListView(
+    on_back: EventHandler<()>,
+    on_open_batch: EventHandler<String>,
+) -> Element {
+    let mut batches: Signal<Option<Result<Vec<PendingBatchView>, String>>> =
+        use_signal(|| None);
+
+    use_effect(move || {
+        spawn(async move {
+            batches.set(Some(bridge::invoke_list_pending_batches().await));
+        });
+    });
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-6",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Auto-import review"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        match batches.read().clone() {
+            None => rsx! {
+                div { class: "text-obsidian-text-muted text-sm", "Loading pending batches…" }
+            },
+            Some(Err(msg)) => rsx! {
+                div { class: "p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                    "Failed to load pending batches: {msg}"
+                }
+            },
+            Some(Ok(rows)) if rows.is_empty() => rsx! {
+                div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                    "No pending auto-import batches. Captured transactions and confirmed batches show up in Recent (Phase 4)."
+                }
+            },
+            Some(Ok(rows)) => rsx! {
+                div { class: "space-y-2",
+                    for batch in rows {
+                        BatchListRow {
+                            key: "{batch.batch_id}",
+                            batch: batch.clone(),
+                            on_open: {
+                                let id = batch.batch_id.clone();
+                                let handler = on_open_batch;
+                                move |_| handler.call(id.clone())
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
+    let row_count = batch.draft_postings.len();
+    let fx_hint = batch_needs_manual_fx(&batch);
+    let source_label = pretty_source(&batch.source);
+    let fetched_short = batch
+        .fetched_at
+        .split('T')
+        .next()
+        .unwrap_or(&batch.fetched_at)
+        .to_string();
+
+    rsx! {
+        button {
+            class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+            onclick: move |_| on_open.call(()),
+            div { class: "flex-1 min-w-0",
+                div { class: "flex items-baseline gap-2 mb-1",
+                    span { class: "text-sm font-semibold text-obsidian-text", "{source_label}" }
+                    span { class: "text-xs text-obsidian-text-muted", "· {fetched_short}" }
+                    if let Some(c) = fx_hint {
+                        span { class: "text-xs px-2 py-0.5 bg-amber-500/15 text-amber-300 rounded-full",
+                            "needs {c} rate"
+                        }
+                    }
+                }
+                div { class: "text-xs text-obsidian-text-muted truncate",
+                    if row_count == 1 { "1 transaction" } else { "{row_count} transactions" }
+                }
+            }
+            svg { class: "w-5 h-5 text-obsidian-text-muted shrink-0",
+                fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                    d: "M9 5l7 7-7 7"
+                }
+            }
+        }
+    }
+}
+
+fn pretty_source(source: &str) -> &str {
+    match source {
+        "wise" => "Wise",
+        "wealthsimple" | "wealthsimple-snaptrade" => "WealthSimple",
+        "sc_ngn" | "imap-standardchartered-ngn" => "Standard Chartered (NGN)",
+        "imap_receipts" | "imap-receipts" | "receipts" => "Email receipts",
+        other => other,
+    }
+}
+
+#[component]
+fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
+    let batch_id_for_resource = batch_id.clone();
+    let mut batch: Signal<Option<Result<PendingBatchView, String>>> = use_signal(|| None);
+    let mut accepted: Signal<Vec<bool>> = use_signal(Vec::new);
+    let mut fx_rate_input: Signal<String> = use_signal(String::new);
+    let mut busy: Signal<bool> = use_signal(|| false);
+    let mut feedback: Signal<Option<String>> = use_signal(|| None);
+
+    use_effect(move || {
+        let id = batch_id_for_resource.clone();
+        spawn(async move {
+            match bridge::invoke_list_pending_batches().await {
+                Ok(rows) => match rows.into_iter().find(|b| b.batch_id == id) {
+                    Some(found) => {
+                        accepted.set(vec![true; found.draft_postings.len()]);
+                        batch.set(Some(Ok(found)));
+                    }
+                    None => batch.set(Some(Err(format!(
+                        "Batch {id} no longer pending — it may have been resolved on another device."
+                    )))),
+                },
+                Err(e) => batch.set(Some(Err(e))),
+            }
+        });
+    });
+
+    let current = batch.read().clone();
+    match current {
+        None => rsx! {
+            div { class: "text-obsidian-text-muted text-sm", "Loading batch…" }
+        },
+        Some(Err(msg)) => rsx! {
+            div { class: "space-y-4",
+                div { class: "p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                    "{msg}"
+                }
+                button {
+                    class: "text-sm text-obsidian-text-muted hover:text-obsidian-text underline",
+                    onclick: move |_| on_done.call(()),
+                    "← Back to list"
+                }
+            }
+        },
+        Some(Ok(b)) => {
+            let manual_fx_commodity = batch_needs_manual_fx(&b);
+            let source_label = pretty_source(&b.source).to_string();
+            let row_count = b.draft_postings.len();
+            let accepted_count = accepted.read().iter().filter(|x| **x).count();
+            let metadata_pretty = b.source_metadata.as_ref().and_then(|v| {
+                serde_json::to_string_pretty(v).ok()
+            });
+
+            rsx! {
+                div { class: "flex items-center justify-between mb-4",
+                    div {
+                        h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                            "{source_label}"
+                        }
+                        p { class: "text-xs text-obsidian-text-muted mt-1",
+                            "Fetched {b.fetched_at} · {row_count} draft transactions"
+                        }
+                    }
+                    button {
+                        class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                        onclick: move |_| on_done.call(()),
+                        "← List"
+                    }
+                }
+
+                if let Some(meta_str) = metadata_pretty {
+                    details { class: "mb-4 text-xs text-obsidian-text-muted",
+                        summary { class: "cursor-pointer hover:text-obsidian-text", "Source metadata" }
+                        pre { class: "mt-2 p-3 bg-obsidian-sidebar/60 rounded border border-white/5 overflow-x-auto",
+                            "{meta_str}"
+                        }
+                    }
+                }
+
+                div { class: "space-y-2 mb-6",
+                    for (idx, draft) in b.draft_postings.iter().enumerate() {
+                        DraftRow {
+                            key: "{draft.external_id}",
+                            idx: idx,
+                            draft: draft.clone(),
+                            accepted: accepted.read().get(idx).copied().unwrap_or(true),
+                            on_toggle: move |_| {
+                                let mut current_accepted = accepted.write();
+                                if let Some(slot) = current_accepted.get_mut(idx) {
+                                    *slot = !*slot;
+                                }
+                            },
+                        }
+                    }
+                }
+
+                if let Some(commodity) = manual_fx_commodity.clone() {
+                    div { class: "mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg",
+                        label { class: "block text-sm font-semibold text-amber-200 mb-2",
+                            "Manual FX rate (1 {commodity} = ? CAD)"
+                        }
+                        p { class: "text-xs text-obsidian-text-muted mb-3",
+                            "Required because {commodity} is outside the daily-rate provider's coverage. The rate is recorded as an hledger P directive at the batch's effective date."
+                        }
+                        input {
+                            r#type: "text",
+                            inputmode: "decimal",
+                            placeholder: "e.g., 0.00088",
+                            class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-obsidian-text",
+                            value: "{fx_rate_input.read()}",
+                            oninput: move |evt| fx_rate_input.set(evt.value()),
+                        }
+                    }
+                }
+
+                div { class: "flex gap-3 items-center",
+                    button {
+                        class: "flex-1 px-4 py-3 bg-obsidian-accent text-black font-semibold rounded-lg hover:bg-obsidian-accent/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+                        disabled: *busy.read() || accepted_count == 0
+                            || (manual_fx_commodity.is_some() && fx_rate_input.read().trim().is_empty()),
+                        onclick: {
+                            let batch_id = b.batch_id.clone();
+                            let manual_fx_commodity = manual_fx_commodity.clone();
+                            move |_| {
+                                let batch_id = batch_id.clone();
+                                let manual_fx_commodity = manual_fx_commodity.clone();
+                                let accepted_indices: Vec<usize> = accepted
+                                    .read()
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(i, on)| if *on { Some(i) } else { None })
+                                    .collect();
+                                let rate = fx_rate_input.read().trim().to_string();
+                                spawn(async move {
+                                    busy.set(true);
+                                    feedback.set(None);
+                                    let (fx_rate, fx_commodity) = match manual_fx_commodity {
+                                        Some(c) if !rate.is_empty() => (Some(rate), Some(c)),
+                                        _ => (None, None),
+                                    };
+                                    let res = bridge::invoke_commit_batch(
+                                        &batch_id,
+                                        accepted_indices,
+                                        fx_rate,
+                                        fx_commodity,
+                                    )
+                                    .await;
+                                    busy.set(false);
+                                    match res {
+                                        Ok(_) => on_done.call(()),
+                                        Err(e) => feedback.set(Some(format!("Commit failed: {e}"))),
+                                    }
+                                });
+                            }
+                        },
+                        if *busy.read() {
+                            "Committing…"
+                        } else if accepted_count == row_count {
+                            "Commit all {accepted_count}"
+                        } else {
+                            "Commit {accepted_count} of {row_count}"
+                        }
+                    }
+                    button {
+                        class: "px-4 py-3 bg-obsidian-sidebar border border-white/10 text-obsidian-text-muted rounded-lg hover:text-obsidian-text hover:border-red-500/40 hover:text-red-300 transition-colors disabled:opacity-50",
+                        disabled: *busy.read(),
+                        onclick: {
+                            let batch_id = b.batch_id.clone();
+                            move |_| {
+                                let batch_id = batch_id.clone();
+                                spawn(async move {
+                                    busy.set(true);
+                                    feedback.set(None);
+                                    let res = bridge::invoke_dismiss_batch(&batch_id, None).await;
+                                    busy.set(false);
+                                    match res {
+                                        Ok(()) => on_done.call(()),
+                                        Err(e) => feedback.set(Some(format!("Dismiss failed: {e}"))),
+                                    }
+                                });
+                            }
+                        },
+                        "Dismiss"
+                    }
+                }
+
+                if let Some(msg) = feedback.read().clone() {
+                    div { class: "mt-4 p-3 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                        "{msg}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn DraftRow(
+    idx: usize,
+    draft: DraftTransactionView,
+    accepted: bool,
+    on_toggle: EventHandler<()>,
+) -> Element {
+    let border = if accepted {
+        "border-obsidian-accent/40"
+    } else {
+        "border-white/5 opacity-60"
+    };
+    rsx! {
+        div { class: "p-3 bg-obsidian-sidebar/60 border {border} rounded-lg",
+            div { class: "flex items-start gap-3",
+                input {
+                    r#type: "checkbox",
+                    class: "mt-1",
+                    checked: accepted,
+                    onchange: move |_| on_toggle.call(()),
+                }
+                div { class: "flex-1 min-w-0",
+                    div { class: "flex items-baseline gap-2 mb-1",
+                        span { class: "text-xs text-obsidian-text-muted font-mono", "#{idx + 1}" }
+                        span { class: "text-sm font-medium text-obsidian-text", "{draft.date}" }
+                    }
+                    div { class: "text-sm text-obsidian-text truncate mb-2", "{draft.description}" }
+                    div { class: "space-y-1",
+                        for posting in &draft.postings {
+                            div { class: "flex justify-between gap-3 text-xs",
+                                span { class: "text-obsidian-text-muted font-mono truncate", "{posting.account}" }
+                                span { class: "text-obsidian-text font-mono shrink-0",
+                                    "{posting.amount} {posting.commodity}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
