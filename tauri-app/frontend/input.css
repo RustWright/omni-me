@@ -8,3 +8,15 @@ body {
     padding: 0;
     overflow: hidden;
 }
+
+/* Mobile-only bottom padding that clears the BottomNav AND the Android
+ * gesture/system-nav inset. md: breakpoint resets it because SideNav
+ * doesn't overlap the content column on desktop. */
+.pb-mobile-nav {
+    padding-bottom: calc(4rem + env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+    .pb-mobile-nav {
+        padding-bottom: 1.5rem;
+    }
+}

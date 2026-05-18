@@ -110,12 +110,31 @@ async fn main() {
                 device_id.clone(),
             )
             .await;
+            // OMNI_AUTO_IMPORT_INTERVAL_SECS env override: lets a dev-test
+            // shrink the 30-min default to e.g. 60s so a batch lands during
+            // a manual test window. Clamped to [60, 3600] — below 60s would
+            // hammer upstream APIs (Wise rate-limits etc.), above 3600s is
+            // not meaningfully different from the default for testing
+            // purposes. Out-of-band: use POST /auto_import/tick?source=...
+            // for an instant on-demand tick that bypasses the interval.
+            let interval_override = std::env::var("OMNI_AUTO_IMPORT_INTERVAL_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|s| s.clamp(60, 3600))
+                .map(std::time::Duration::from_secs);
+            if let Some(d) = interval_override {
+                tracing::info!(
+                    interval_secs = d.as_secs(),
+                    "auto-import interval overridden via OMNI_AUTO_IMPORT_INTERVAL_SECS"
+                );
+            }
             let config = SourceConfig {
                 ws_driver_script: creds
                     .wealthsimple_python
                     .as_ref()
                     .and_then(|w| w.driver_script.clone()),
                 imap_sources,
+                interval: interval_override,
                 ..SourceConfig::default()
             };
             let _handles = setup_from_credentials(

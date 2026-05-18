@@ -51,19 +51,28 @@ pub fn BottomNav(active: Tab, on_switch: EventHandler<Tab>) -> Element {
     };
 
     rsx! {
-        nav { class: "md:hidden flex items-center gap-1 px-2 py-1 bg-obsidian-sidebar border-t border-white/5 fixed bottom-0 left-0 right-0 z-[100]",
-            for tab in ALL_TABS.iter().copied() {
-                {
-                    let (label, icon_path) = tab_meta(tab);
-                    rsx! {
-                        button {
-                            key: "{label}",
-                            class: "{button_class(tab)}",
-                            onclick: move |_| on_switch.call(tab),
-                            svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: icon_path }
+        // Outer wrapper carries the iOS/Android safe-area inset (`env()`),
+        // so on a device with a gesture bar the row of buttons sits above
+        // the system chrome instead of being half-eclipsed by it. Requires
+        // `viewport-fit=cover` on the document's viewport meta — set in
+        // `main.rs::install_viewport_fit_cover`. Inner div keeps the
+        // original `py-1` padding visually intact.
+        nav { class: "md:hidden bg-obsidian-sidebar border-t border-white/5 fixed bottom-0 left-0 right-0 z-[100]",
+            style: "padding-bottom: env(safe-area-inset-bottom);",
+            div { class: "flex items-center gap-1 px-2 py-1",
+                for tab in ALL_TABS.iter().copied() {
+                    {
+                        let (label, icon_path) = tab_meta(tab);
+                        rsx! {
+                            button {
+                                key: "{label}",
+                                class: "{button_class(tab)}",
+                                onclick: move |_| on_switch.call(tab),
+                                svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: icon_path }
+                                }
+                                span { "{label}" }
                             }
-                            span { "{label}" }
                         }
                     }
                 }
