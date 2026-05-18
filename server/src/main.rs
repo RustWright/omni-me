@@ -11,6 +11,7 @@ use omni_me_core::auto_import::imap_source::{CursorStore, ImapSource, SurrealCur
 use omni_me_core::auto_import::receipts::ReceiptHandler;
 use omni_me_core::auto_import::sc_ngn::ScNgnHandler;
 use omni_me_core::auto_import::setup::{setup_from_credentials, SourceConfig};
+use omni_me_core::auto_import_scheduler::SourceRegistry;
 use omni_me_core::credentials::{self, Credentials};
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::{gemini::GeminiExtractor, null::NullExtractor, DocumentExtractor};
@@ -68,11 +69,16 @@ async fn main() {
         }
     };
 
+    // Shared registry — populated below by setup_from_credentials, read by
+    // the /auto_import/status + /auto_import/tick route handlers via AppState.
+    let auto_import_registry = SourceRegistry::new();
+
     let state = AppState {
         db: db_arc.clone(),
         llm_client,
         blob_dir: Arc::new(blob_dir),
         extractor: extractor.clone(),
+        auto_import_registry: auto_import_registry.clone(),
     };
 
     // Auto-import scheduler — Wise + WS + IMAP spin up from credentials.toml.
@@ -118,7 +124,9 @@ async fn main() {
                 event_store_arc,
                 server_projections,
                 device_id,
-            );
+                &auto_import_registry,
+            )
+            .await;
             tracing::info!(path = %creds_path.display(), "auto-import scheduler initialized");
         }
         None => {
@@ -136,6 +144,7 @@ async fn main() {
         .layer(DefaultBodyLimit::max(256 * 1024))
         .merge(routes::blob_routes())
         .merge(routes::documents_routes())
+        .merge(routes::auto_import_routes())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

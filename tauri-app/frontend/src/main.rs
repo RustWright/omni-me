@@ -47,6 +47,19 @@ fn App() -> Element {
         }
     });
 
+    // Pending Android share-target intake (Phase 3.3). The Kotlin handler
+    // writes bytes to filesDir whenever a SEND intent arrives; we pull on
+    // mount and switch to Finances so the capture flow picks it up.
+    let pending_share: Signal<Option<types::PendingShareCapture>> = use_signal(|| None);
+    use_context_provider(|| pending_share);
+    let mut pending_share_mut = pending_share;
+    use_future(move || async move {
+        if let Ok(Some(capture)) = bridge::invoke_take_pending_share_intent().await {
+            pending_share_mut.set(Some(capture));
+            active_tab.set(Tab::Finances);
+        }
+    });
+
     rsx! {
         // Required for Dioxus 0.7 Tailwind integration
         link { rel: "stylesheet", href: asset!("/assets/tailwind.css") }

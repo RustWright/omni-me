@@ -35,6 +35,7 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
         blob_dir: Arc::new(blob_path),
         extractor: Arc::new(NullExtractor),
+        auto_import_registry: Default::default(),
     };
 
     let app = Router::new()

@@ -271,3 +271,35 @@ pub struct TransactionFormDraft {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment: Option<AttachmentRef>,
 }
+
+// ---------------------------------------------------------------------------
+// Auto-import observability (Phase 3.9) — mirrors server's SourceStatusView.
+// ---------------------------------------------------------------------------
+
+/// Wire shape returned by the server's `/auto_import/status` route. The
+/// `health` string is one of "unknown" | "healthy" | "stale" | "degraded";
+/// the UI maps it to a colored badge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AutoImportSourceView {
+    pub name: String,
+    #[serde(default)]
+    pub last_tick_at: Option<String>,
+    /// Last tick outcome — tagged enum on the wire:
+    /// `{ "kind": "not_yet_run" }` |
+    /// `{ "kind": "success", "events_appended": N }` |
+    /// `{ "kind": "failure", "error": "..." }`.
+    pub last_outcome: serde_json::Value,
+    pub interval_secs: u64,
+    pub health: String,
+}
+
+/// Captured payload from an Android share-target SEND intent (Phase 3.3).
+/// `MainActivity.kt` writes bytes + meta to filesDir; `take_pending_share_intent`
+/// reads + clears them and ships the pair up.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingShareCapture {
+    pub mime: String,
+    pub filename: String,
+    pub size: u64,
+    pub bytes: Vec<u8>,
+}

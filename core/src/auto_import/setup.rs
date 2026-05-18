@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
-use crate::auto_import_scheduler::{spawn, AutoImportSource};
+use crate::auto_import_scheduler::{spawn_with_registry, AutoImportSource, SourceRegistry};
 use crate::credentials::Credentials;
 use crate::events::{EventStore, ProjectionRunner};
 
@@ -51,15 +51,21 @@ pub struct SourceConfig {
 
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
-/// Spawn one task per configured source. Returns the JoinHandles so the
-/// caller can wait on / abort them at shutdown. An empty return value
-/// means no sources were configured — startup succeeds (graceful).
-pub fn setup_from_credentials(
+/// Spawn one task per configured source. Each source is registered in
+/// `registry` before its scheduler task starts, so manual-tick (Phase 3.9)
+/// can find the source by name and status reads see every configured
+/// source even before its first tick completes.
+///
+/// Returns the JoinHandles so the caller can abort them at shutdown. An
+/// empty return value means no sources were configured — startup succeeds
+/// (graceful).
+pub async fn setup_from_credentials(
     creds: &Credentials,
     config: &SourceConfig,
     store: Arc<dyn EventStore>,
     projections: ProjectionRunner,
     device_id: String,
+    registry: &SourceRegistry,
 ) -> Vec<JoinHandle<()>> {
     let mut handles = Vec::new();
     let interval = config.interval.unwrap_or(DEFAULT_INTERVAL);
@@ -73,7 +79,8 @@ pub fn setup_from_credentials(
             config.wise_account_map.clone(),
         ));
         tracing::info!(source = source.name(), interval_secs = interval.as_secs(), "spawning auto-import");
-        handles.push(spawn(source, interval));
+        registry.register(source.clone(), interval).await;
+        handles.push(spawn_with_registry(registry.clone(), source, interval));
     }
 
     if let (Some(ws), Some(driver)) =
@@ -88,7 +95,8 @@ pub fn setup_from_credentials(
             config.ws_account_map.clone(),
         ));
         tracing::info!(source = source.name(), interval_secs = interval.as_secs(), "spawning auto-import");
-        handles.push(spawn(source, interval));
+        registry.register(source.clone(), interval).await;
+        handles.push(spawn_with_registry(registry.clone(), source, interval));
     } else if creds.wealthsimple_python.is_some() && config.ws_driver_script.is_none() {
         tracing::warn!(
             "wealthsimple_python configured but no driver script path provided — skipping spawn"
@@ -101,7 +109,8 @@ pub fn setup_from_credentials(
     for source in &config.imap_sources {
         let s: Arc<dyn AutoImportSource> = source.clone();
         tracing::info!(source = s.name(), interval_secs = interval.as_secs(), "spawning auto-import");
-        handles.push(spawn(s, interval));
+        registry.register(s.clone(), interval).await;
+        handles.push(spawn_with_registry(registry.clone(), s, interval));
     }
     if !creds.imap.is_empty() && config.imap_sources.is_empty() {
         tracing::warn!(
@@ -140,14 +149,18 @@ mod tests {
     #[tokio::test]
     async fn no_credentials_means_no_handles() {
         let (_db, store, projections) = test_runner().await;
+        let registry = SourceRegistry::new();
         let handles = setup_from_credentials(
             &Credentials::default(),
             &SourceConfig::default(),
             store,
             projections,
             "device-1".into(),
-        );
+            &registry,
+        )
+        .await;
         assert_eq!(handles.len(), 0);
+        assert_eq!(registry.snapshot().await.len(), 0);
     }
 
     #[tokio::test]
@@ -160,14 +173,18 @@ mod tests {
             }),
             ..Credentials::default()
         };
+        let registry = SourceRegistry::new();
         let handles = setup_from_credentials(
             &creds,
             &SourceConfig::default(),
             store,
             projections,
             "device-1".into(),
-        );
+            &registry,
+        )
+        .await;
         assert_eq!(handles.len(), 1);
+        assert_eq!(registry.snapshot().await.len(), 1);
         // Abort so the spawned task doesn't outlive the test.
         for h in handles {
             h.abort();
@@ -191,13 +208,16 @@ mod tests {
             ws_driver_script: Some(PathBuf::from("/nonexistent/driver.py")),
             ..SourceConfig::default()
         };
+        let registry = SourceRegistry::new();
         let handles = setup_from_credentials(
             &creds,
             &config,
             store,
             projections,
             "device-1".into(),
-        );
+            &registry,
+        )
+        .await;
         assert_eq!(handles.len(), 1);
         for h in handles {
             h.abort();
@@ -217,13 +237,16 @@ mod tests {
             }),
             ..Credentials::default()
         };
+        let registry = SourceRegistry::new();
         let handles = setup_from_credentials(
             &creds,
             &SourceConfig::default(),
             store,
             projections,
             "device-1".into(),
-        );
+            &registry,
+        )
+        .await;
         assert_eq!(handles.len(), 0, "no driver path → no spawn (with warning)");
     }
 
@@ -248,14 +271,18 @@ mod tests {
             ws_driver_script: Some(PathBuf::from("/nonexistent/driver.py")),
             ..SourceConfig::default()
         };
+        let registry = SourceRegistry::new();
         let handles = setup_from_credentials(
             &creds,
             &config,
             store,
             projections,
             "device-1".into(),
-        );
+            &registry,
+        )
+        .await;
         assert_eq!(handles.len(), 2);
+        assert_eq!(registry.snapshot().await.len(), 2);
         for h in handles {
             h.abort();
         }

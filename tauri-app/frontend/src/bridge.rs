@@ -3,8 +3,9 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "mock")]
 use crate::types::{AttachmentRef, ExtractedPostingView, TaskResult};
 use crate::types::{
-    CompletionEntry, ExtractedDraft, GenericNoteItem, JournalEntryItem, LlmResult, RoutineGroup,
-    RoutineItem, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft,
+    AutoImportSourceView, CompletionEntry, ExtractedDraft, GenericNoteItem, JournalEntryItem,
+    LlmResult, PendingShareCapture, RoutineGroup, RoutineItem, SyncInfo, SyncStatus,
+    SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft,
 };
 
 // Tauri IPC
@@ -1078,5 +1079,136 @@ pub async fn invoke_record_transaction(draft: TransactionFormDraft) -> Result<()
             draft: TransactionFormDraft,
         }
         invoke_unit("record_transaction", &Args { draft }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Attachment cache (Phase 3.8 — surfaces Phase 3.7 cache commands in Settings)
+// -----------------------------------------------------------------------------
+
+pub async fn invoke_attachment_cache_size() -> Result<u64, String> {
+    #[cfg(feature = "mock")]
+    {
+        // Plausible "you've captured a few receipts" value.
+        Ok(3 * 1024 * 1024 + 412 * 1024)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("attachment_cache_size", &Args {}).await
+    }
+}
+
+pub async fn invoke_clear_attachment_cache() -> Result<u64, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(3 * 1024 * 1024 + 412 * 1024)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("clear_attachment_cache", &Args {}).await
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Auto-import observability (Phase 3.9)
+// -----------------------------------------------------------------------------
+
+pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        // A plausible four-source picture: healthy Wise, healthy WS, never-run
+        // IMAP receipts, and a degraded SC NGN handler. Covers all four
+        // health states in one snapshot so the UI can be inspected against
+        // each badge color without contriving credentials.
+        let now = chrono::Utc::now();
+        let two_min_ago = now - chrono::Duration::minutes(2);
+        let three_hours_ago = now - chrono::Duration::hours(3);
+        Ok(vec![
+            AutoImportSourceView {
+                name: "wise".into(),
+                last_tick_at: Some(two_min_ago.to_rfc3339()),
+                last_outcome: serde_json::json!({ "kind": "success", "events_appended": 0 }),
+                interval_secs: 1800,
+                health: "healthy".into(),
+            },
+            AutoImportSourceView {
+                name: "wealthsimple-snaptrade".into(),
+                last_tick_at: Some(three_hours_ago.to_rfc3339()),
+                last_outcome: serde_json::json!({ "kind": "success", "events_appended": 12 }),
+                interval_secs: 1800,
+                health: "stale".into(),
+            },
+            AutoImportSourceView {
+                name: "imap-receipts".into(),
+                last_tick_at: None,
+                last_outcome: serde_json::json!({ "kind": "not_yet_run" }),
+                interval_secs: 1800,
+                health: "unknown".into(),
+            },
+            AutoImportSourceView {
+                name: "imap-standardchartered-ngn".into(),
+                last_tick_at: Some((now - chrono::Duration::minutes(10)).to_rfc3339()),
+                last_outcome: serde_json::json!({
+                    "kind": "failure",
+                    "error": "decrypt failed: wrong password",
+                }),
+                interval_secs: 1800,
+                health: "degraded".into(),
+            },
+        ])
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_auto_import_sources", &Args {}).await
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ManualTickResult {
+    pub events_appended: usize,
+}
+
+pub async fn invoke_trigger_auto_import_tick(source: &str) -> Result<ManualTickResult, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = source;
+        crate::timer::sleep_ms(900).await;
+        Ok(ManualTickResult { events_appended: 3 })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            source: &'a str,
+        }
+        invoke("trigger_auto_import_tick", &Args { source }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Android share-target intake (Phase 3.3)
+// -----------------------------------------------------------------------------
+
+/// Returns the pending shared file if MainActivity.kt has captured one since
+/// the last call. Idempotent: each take consumes (and deletes) the underlying
+/// side-files, so calling repeatedly during a session is safe.
+pub async fn invoke_take_pending_share_intent() -> Result<Option<PendingShareCapture>, String> {
+    #[cfg(feature = "mock")]
+    {
+        // No share intent in browser dev. Returning None lets the regular
+        // capture-tile flow take over.
+        Ok(None)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("take_pending_share_intent", &Args {}).await
     }
 }

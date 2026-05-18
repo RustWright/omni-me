@@ -281,6 +281,11 @@ pub fn run() {
             commands::attachments::fetch_attachment,
             commands::attachments::attachment_cache_size,
             commands::attachments::clear_attachment_cache,
+            // Auto-import observability (Phase 3.9)
+            commands::auto_import::list_auto_import_sources,
+            commands::auto_import::trigger_auto_import_tick,
+            // Android share-target intake (Phase 3.3)
+            commands::share_intent::take_pending_share_intent,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

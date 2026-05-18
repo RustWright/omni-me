@@ -53,6 +53,7 @@ async fn start_server_on_port(
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
         blob_dir: Arc::new(blob_path),
         extractor: Arc::new(NullExtractor),
+        auto_import_registry: Default::default(),
     };
 
     let app = make_router(state);
@@ -91,6 +92,7 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
         blob_dir: Arc::new(blob_path2),
         extractor: Arc::new(NullExtractor),
+        auto_import_registry: Default::default(),
     };
     let app = make_router(state);
 

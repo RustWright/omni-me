@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
 use crate::bridge;
-use crate::types::{AttachmentRef, ExtractedDraft, PostingInput, TransactionFormDraft};
+use crate::types::{
+    AttachmentRef, ExtractedDraft, PendingShareCapture, PostingInput, TransactionFormDraft,
+};
 
 /// Which kind of file-based capture the user opened. Drives the picker
 /// `accept` filter, the camera hint, the title, and whether the hint
