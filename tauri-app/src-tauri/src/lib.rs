@@ -8,7 +8,8 @@ use tauri::Manager;
 
 use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
-    BudgetProjection, NotesProjection, ProjectionRunner, RoutinesProjection, SurrealEventStore,
+    AutoImportProjection, BudgetProjection, NotesProjection, ProjectionRunner, RoutinesProjection,
+    SurrealEventStore,
 };
 use omni_me_core::journal_file::JournalFile;
 use omni_me_core::sync::{
@@ -138,6 +139,7 @@ pub fn run() {
                         Box::new(NotesProjection),
                         Box::new(RoutinesProjection),
                         Box::new(BudgetProjection),
+                        Box::new(AutoImportProjection),
                         Box::new(JournalFile::new(journal_path)),
                     ],
                 );

@@ -89,11 +89,28 @@
 - [ ] Last-tick timestamp updates after a successful manual fetch
 - [ ] Interval display matches configured per-source intervals
 
-## Phase 3.10 — Auto-import review screen
+## Phase 3.10 — Auto-import batch pipeline (backend only this round)
 
-**Scope TBD this session — depends on chosen approach.**
+**Scope this testing round:** UI deferred to next session — verify the backend pipeline indirectly via server logs + direct SurrealDB queries against the client. Anything UI-dependent gets `[deferred]`.
 
-- [ ] (placeholders to add once scope locks)
+**Useful queries on the client's SurrealDB** (via `surreal sql` or whatever shell is convenient):
+```
+SELECT batch_id, source, dedup_key, status, fetched_at
+FROM pending_auto_import_batches
+ORDER BY fetched_at DESC;
+```
+
+- [ ] Trigger a manual Wise fetch (Settings → Auto-Import → Fetch now). Server log shows `tracing::info!` for "wise auto-import" with a non-zero draft count; the event log gains an `auto_import_batch_proposed` event
+- [ ] Wait for sync; the client's `pending_auto_import_batches` table shows a new pending row with `source = "wise"` and the right draft_postings JSON
+- [ ] Trigger an SC NGN fetch (or wait for natural IMAP poll). Same pipeline; `source = "sc_ngn"`; `dedup_key` shape is `sc_ngn-uid-{N}`
+- [ ] **Idempotency check (IMAP-driven):** trigger a second SC NGN fetch within the polling window so the same message-UID gets re-fetched. Verify the projection still has only ONE pending row (UPSERT collapsing on same dedup_key)
+- [ ] **Idempotency edge case:** if you can simulate (or wait for) a polling-source double-tick of Wise with no new transactions, expect TWO rows (different per-tick dedup_keys for polling sources — by design until Cycle 4 polish)
+- [ ] Verify auto-import does NOT silently land `TransactionRecorded` events anymore — checking the `transactions` SurrealDB table after a tick should show NO new rows from auto-import (those only land after user commit, which is 3.10.5 UI work)
+- [ ] **(deferred — 3.10.6 UI)** pending banner on Finances Home shows count
+- [ ] **(deferred — 3.10.6 UI)** batch review screen renders per-row accept checkboxes + edit
+- [ ] **(deferred — 3.10.6 UI)** NGN batches surface the FX prompt at the batch level
+- [ ] **(deferred — 3.10.6 UI)** Save → `TransactionRecorded` × N + optional `ExchangeRateRecorded` land in the event log + projection
+- [ ] **(deferred — 3.10.6 UI)** Dismiss → `AutoImportBatchDismissed` event lands; the next IMAP fetch of the same UID does NOT re-propose
 
 ---
 

@@ -25,9 +25,94 @@
 use chrono::{NaiveDate, Utc};
 
 use crate::accounts::make_unmatched_mirror;
-use crate::events::{EventType, NewEvent, Posting, TransactionRecordedPayload};
+use crate::events::{DraftTransaction, EventType, NewEvent, Posting, TransactionRecordedPayload};
 
 use super::{ExtractedPosting, ExtractionResult};
+
+// ============================================================================
+// Draft-level mapping (Phase 3.10). Each handler now produces drafts that get
+// wrapped into one `AutoImportBatchProposed` event by `to_proposed_event`.
+// Drafts already include the `Unmatched` mirror — the user can re-target the
+// mirror to a real account during batch review before commit.
+// ============================================================================
+
+/// Statement-flavored draft mapping: one draft per result.posting, signed from
+/// the bank's perspective. Uses `bank_account` for every draft's real posting.
+pub fn statement_extraction_to_drafts(
+    result: &ExtractionResult,
+    source_prefix: &str,
+    bank_account: &str,
+    bank_commodity: &str,
+) -> Vec<DraftTransaction> {
+    let date = result.date.unwrap_or_else(fallback_date);
+    let description = result
+        .description
+        .clone()
+        .unwrap_or_else(|| format!("{bank_account} statement entry"));
+
+    let mut drafts = Vec::with_capacity(result.postings.len());
+    for (i, p) in result.postings.iter().enumerate() {
+        let external_id = format!("{source_prefix}-{i}");
+        let real = Posting {
+            account: bank_account.to_string(),
+            commodity: if p.commodity.is_empty() {
+                bank_commodity.to_string()
+            } else {
+                p.commodity.clone()
+            },
+            amount: p.amount,
+            fx_rate: None,
+            tags: vec![],
+        };
+        let mirror = make_unmatched_mirror(&real);
+        let line_desc = p
+            .line_label
+            .clone()
+            .unwrap_or_else(|| description.clone());
+        drafts.push(DraftTransaction {
+            external_id,
+            date,
+            description: line_desc,
+            postings: vec![real, mirror],
+        });
+    }
+    drafts
+}
+
+/// Receipt-flavored draft mapping: one draft per line item with positive cost.
+pub fn receipt_extraction_to_drafts(
+    result: &ExtractionResult,
+    source_prefix: &str,
+) -> Vec<DraftTransaction> {
+    let date = result.date.unwrap_or_else(fallback_date);
+    let default_description = result
+        .description
+        .clone()
+        .unwrap_or_else(|| "imported receipt".to_string());
+
+    let mut drafts = Vec::with_capacity(result.postings.len());
+    for (i, p) in result.postings.iter().enumerate() {
+        let external_id = format!("{source_prefix}-{i}");
+        let real = build_receipt_posting(p);
+        let mirror = make_unmatched_mirror(&real);
+        let line_desc = p
+            .line_label
+            .clone()
+            .unwrap_or_else(|| default_description.clone());
+        drafts.push(DraftTransaction {
+            external_id,
+            date,
+            description: line_desc,
+            postings: vec![real, mirror],
+        });
+    }
+    drafts
+}
+
+// ============================================================================
+// Event-level mapping (legacy — kept for handlers not yet migrated to drafts).
+// Will be removed once all handlers consume the draft helpers above.
+// ============================================================================
 
 /// Build one TransactionRecorded NewEvent from a single real-account posting.
 /// The mirror posting goes to `Unmatched`. Caller picks the txn_id +

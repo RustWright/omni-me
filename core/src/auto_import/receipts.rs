@@ -22,11 +22,12 @@ use tokio::process::Command;
 use crate::auto_import_scheduler::ImportError;
 use crate::events::NewEvent;
 use crate::extraction::{
-    receipt_extraction_to_events, DocumentExtractor, ExtractionHint,
+    receipt_extraction_to_drafts, DocumentExtractor, ExtractionHint,
 };
 
 use super::imap::{ImapHandler, ImapMessage};
 use super::mime::parse_eml;
+use super::to_proposed_event;
 
 pub struct ReceiptHandler {
     name: String,
@@ -167,12 +168,28 @@ impl ImapHandler for ReceiptHandler {
             subject = %parsed.subject,
             confidence = result.confidence,
             postings = result.postings.len(),
-            "receipt: emitting events"
+            "receipt: producing proposed batch"
         );
 
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
-        let events = receipt_extraction_to_events(&result, &source_prefix, &self.device_id);
-        Ok(events)
+        let drafts = receipt_extraction_to_drafts(&result, &source_prefix);
+        if drafts.is_empty() {
+            return Ok(vec![]);
+        }
+        let dedup_key = format!("{}-uid-{}", self.name, message.uid);
+        let source_metadata = serde_json::json!({
+            "from": message.from,
+            "subject": parsed.subject,
+            "uid": message.uid,
+        });
+        let event = to_proposed_event(
+            self.name(),
+            dedup_key,
+            drafts,
+            Some(source_metadata),
+            self.device_id.clone(),
+        );
+        Ok(vec![event])
     }
 }
 

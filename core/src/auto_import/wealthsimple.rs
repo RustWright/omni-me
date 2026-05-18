@@ -42,7 +42,7 @@ use crate::accounts::{make_unmatched_mirror, UNMATCHED_ACCOUNT};
 use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary};
 use crate::credentials::WealthSimplePythonCredentials;
 use crate::events::{
-    EventStore, EventType, NewEvent, Posting, ProjectionRunner, TransactionRecordedPayload,
+    DraftTransaction, EventStore, Posting, ProjectionRunner,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -165,9 +165,10 @@ impl WealthSimpleSource {
         Ok(envelope)
     }
 
-    /// Convert one WS transaction into a `TransactionRecorded` event payload.
-    /// Real-account posting + Unmatched mirror.
-    fn build_event(&self, txn: &WsTransaction) -> Option<NewEvent> {
+    /// Convert one WS transaction into a draft transaction. Real-account
+    /// posting + Unmatched mirror. Returns None when the account_id has
+    /// no mapping (skipped with warning by caller).
+    fn build_draft(&self, txn: &WsTransaction) -> Option<DraftTransaction> {
         let account = self.account_map.get(&txn.account_id)?.clone();
         let real_posting = Posting {
             account,
@@ -178,23 +179,12 @@ impl WealthSimpleSource {
         };
         let mirror = make_unmatched_mirror(&real_posting);
 
-        let txn_id = format!("ws-{}", txn.external_id);
-        let payload = TransactionRecordedPayload {
-            txn_id: txn_id.clone(),
+        let external_id = format!("ws-{}", txn.external_id);
+        Some(DraftTransaction {
+            external_id,
             date: txn.date,
             description: txn.description.clone(),
             postings: vec![real_posting, mirror],
-            attachment: None,
-        };
-        let payload_json = serde_json::to_value(&payload).ok()?;
-
-        Some(NewEvent {
-            id: Some(txn_id.clone()),
-            event_type: EventType::TransactionRecorded.to_string(),
-            aggregate_id: txn_id,
-            timestamp: Utc::now(),
-            device_id: self.device_id.clone(),
-            payload: payload_json,
         })
     }
 }
@@ -208,11 +198,11 @@ impl AutoImportSource for WealthSimpleSource {
     async fn pull(&self) -> Result<ImportSummary, ImportError> {
         let envelope = self.run_driver().await?;
 
-        let mut to_append: Vec<NewEvent> = Vec::new();
+        let mut drafts: Vec<DraftTransaction> = Vec::new();
         let mut skipped_unmapped = 0usize;
         for txn in &envelope.transactions {
-            match self.build_event(txn) {
-                Some(e) => to_append.push(e),
+            match self.build_draft(txn) {
+                Some(d) => drafts.push(d),
                 None => skipped_unmapped += 1,
             }
         }
@@ -223,16 +213,28 @@ impl AutoImportSource for WealthSimpleSource {
             );
         }
 
-        if to_append.is_empty() {
+        if drafts.is_empty() {
             return Ok(ImportSummary { events_appended: 0 });
         }
 
-        // Append + apply atomically across the batch. Duplicates (re-run of
-        // the same external_id) will be rejected by the event store's id
-        // uniqueness constraint; that's the dedup mechanism.
+        // Polling source: per-tick unique dedup_key. Row-level dedup at
+        // commit time uses the stable `ws-{external_id}` — projection's
+        // CREATE silently fails on duplicate txn id.
+        let source_metadata = serde_json::json!({
+            "draft_count": drafts.len(),
+        });
+        let dedup_key = format!("wealthsimple-python-{}", Utc::now().timestamp_millis());
+        let proposed_event = super::to_proposed_event(
+            self.name(),
+            dedup_key,
+            drafts,
+            Some(source_metadata),
+            self.device_id.clone(),
+        );
+
         let appended = self
             .store
-            .append_batch(to_append)
+            .append_batch(vec![proposed_event])
             .await
             .map_err(|e| ImportError::Upstream(format!("append batch: {e}")))?;
 
@@ -385,15 +387,11 @@ EOF\n",
         );
 
         let summary = source.pull().await.unwrap();
+        // Post 3.10.3: one AutoImportBatchProposed event per non-empty tick.
+        // The previous `transactions` row check was removed — rows only land
+        // after user commit (Phase 3.10.4+).
         assert_eq!(summary.events_appended, 1);
-
-        // Verify the projection got it with the mirror posting.
-        let mut resp = db
-            .query("SELECT description FROM type::record('transactions', 'ws-t1')")
-            .await
-            .unwrap();
-        let desc: Option<String> = resp.take("description").unwrap();
-        assert_eq!(desc.as_deref(), Some("Loblaws"));
+        let _ = db; // touched to avoid unused-binding warning until 3.10.4 lands
     }
 
     #[tokio::test]
@@ -425,9 +423,9 @@ EOF\n",
     }
 
     #[test]
-    fn build_event_uses_external_id_for_deterministic_dedup() {
+    fn build_draft_uses_external_id_for_deterministic_dedup() {
         let (_dir, driver) = write_shell_driver("#!/bin/bash\nexit 0\n");
-        // Sync construction is fine since build_event doesn't touch async.
+        // Sync construction is fine since build_draft doesn't touch async.
         let creds = cred("/bin/bash");
         let map = map_one("ws-cash", "Assets:WealthSimple:Cash");
 
@@ -452,8 +450,11 @@ EOF\n",
             amount: Decimal::from_str("-87.42").unwrap(),
             commodity: "CAD".into(),
         };
-        let event = source.build_event(&txn).unwrap();
-        assert_eq!(event.id.as_deref(), Some("ws-txn-abc-123"));
-        assert_eq!(event.aggregate_id, "ws-txn-abc-123");
+        let draft = source.build_draft(&txn).unwrap();
+        // external_id on the draft is what fans out into the eventual
+        // TransactionRecorded's txn_id on commit — same stable shape.
+        assert_eq!(draft.external_id, "ws-txn-abc-123");
+        assert_eq!(draft.postings.len(), 2);
+        assert_eq!(draft.postings[1].account, UNMATCHED_ACCOUNT);
     }
 }

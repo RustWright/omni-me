@@ -23,11 +23,12 @@ use tokio::process::Command;
 use crate::auto_import_scheduler::ImportError;
 use crate::events::NewEvent;
 use crate::extraction::{
-    statement_extraction_to_events, DocumentExtractor, ExtractionHint,
+    statement_extraction_to_drafts, DocumentExtractor, ExtractionHint,
 };
 
 use super::imap::{ImapHandler, ImapMessage};
 use super::mime::parse_eml;
+use super::to_proposed_event;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScError {
@@ -179,18 +180,37 @@ impl ImapHandler for ScNgnHandler {
             handler = self.name(),
             confidence = result.confidence,
             postings = result.postings.len(),
-            "sc_ngn: emitting events"
+            "sc_ngn: producing proposed batch"
         );
 
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
-        let events = statement_extraction_to_events(
+        let drafts = statement_extraction_to_drafts(
             &result,
             &source_prefix,
             &self.hledger_account,
             &self.commodity,
-            &self.device_id,
         );
-        Ok(events)
+        if drafts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // dedup_key uses the IMAP message UID so re-fetching the same statement
+        // email produces the same key — the projection's idempotency check
+        // (3.10.4) drops re-proposals with a matching key.
+        let dedup_key = format!("{}-uid-{}", self.name, message.uid);
+        let source_metadata = serde_json::json!({
+            "from": message.from,
+            "subject": message.subject,
+            "uid": message.uid,
+        });
+        let event = to_proposed_event(
+            self.name(),
+            dedup_key,
+            drafts,
+            Some(source_metadata),
+            self.device_id.clone(),
+        );
+        Ok(vec![event])
     }
 }
 
