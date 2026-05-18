@@ -403,6 +403,10 @@ Items found via the end-of-Phase-2 audit that are *known* and either intentional
 - **SurrealDB tempfile race in tests** — known + documented in `~/.claude/projects/.../memory/project_known_bugs.md` (reproduced 3× during this session). Tests pass on rerun.
 - **`cargo tauri dev` runtime not smoke-tested this session.** Only `cargo run -p omni-me-server` got the boot smoke test. Tauri startup path changed (auto-import wiring removed) but app wasn't actually booted. **Fix:** verify on first Phase 3 UI work.
 - **Wise `fxRate` and `totalFees` surface as posting tags, not typed fields** — see Session 5 log entry. Phase 4 polish could promote to typed `FxRate` + separate fee posting if a reliable Wise direction convention is confirmed.
+- **Auto-import source health bugs (surfaced 2026-05-18 device test)** — three independent issues observed in `/auto_import/status` on a running server:
+  - **`gmail_work` + `yahoo`: intermittent `save cursor: Connection uninitialised`.** Same error in both; only fires on ticks that actually have an email to save cursor state for (most ticks have 0 events and succeed). Likely a SurrealDB connection-state issue specific to the cursor-store write path. The handlers still consume the events; it's the cursor save that fails.
+  - **`gmail_personal`: manual tick returns HTTP 502 after successfully producing a batch.** The `AutoImportBatchProposed` event is appended (verified — phone synced and rendered the walmart receipt batch correctly during device test) but the HTTP handler returns Bad Gateway. Some downstream error after the append.
+  - **`wealthsimple-python`: OTP required (genuine credential expiry).** Saved session at `~/.local/share/omni-me/ws-session.json` invalidated; needs interactive re-auth. Already known per the earlier WS session-expired entry above — re-tripped after the next rotation.
 
 ---
 
