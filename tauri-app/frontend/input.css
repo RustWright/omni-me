@@ -9,11 +9,23 @@ body {
     overflow: hidden;
 }
 
+/* Safe-area inset bridge. Android Chromium WebView doesn't auto-forward
+ * the bottom navigation/gesture bar to env(safe-area-inset-*); MainActivity
+ * injects the actual values into these CSS custom properties via
+ * evaluateJavascript. The env() fallback in var() keeps iOS/desktop working
+ * — env() resolves correctly there. */
+:root {
+    --safe-area-inset-top: env(safe-area-inset-top, 0px);
+    --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-inset-left: env(safe-area-inset-left, 0px);
+    --safe-area-inset-right: env(safe-area-inset-right, 0px);
+}
+
 /* Mobile-only bottom padding that clears the BottomNav AND the Android
  * gesture/system-nav inset. md: breakpoint resets it because SideNav
  * doesn't overlap the content column on desktop. */
 .pb-mobile-nav {
-    padding-bottom: calc(4rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(4rem + var(--safe-area-inset-bottom));
 }
 @media (min-width: 768px) {
     .pb-mobile-nav {

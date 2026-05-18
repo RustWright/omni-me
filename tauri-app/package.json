@@ -9,8 +9,12 @@
     "build:frontend:dev": "cd frontend && dx build --platform web",
     "copy:editor:release": "mkdir -p frontend/target/dx/frontend/release/web/public/assets/js && cp assets/js/editor.bundle.js frontend/target/dx/frontend/release/web/public/assets/js/",
     "copy:editor:dev": "mkdir -p frontend/target/dx/frontend/debug/web/public/assets/js && cp assets/js/editor.bundle.js frontend/target/dx/frontend/debug/web/public/assets/js/",
-    "build": "npm run build:editor && npm run build:frontend && npm run copy:editor:release",
-    "dev": "npm run build:editor && npm run build:frontend:dev && npm run copy:editor:dev"
+    "_clean-android-assets": "find src-tauri/gen/android/app/src/main/assets -mindepth 1 -not -name tauri.conf.json -exec rm -rf {} + 2>/dev/null || true",
+    "_patch-android-viewport": "sed -i 's|<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">|<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">|' src-tauri/gen/android/app/src/main/assets/index.html",
+    "copy:android:dev": "if [ -d src-tauri/gen/android/app/src/main/assets ]; then npm run _clean-android-assets && cp -r frontend/target/dx/frontend/debug/web/public/. src-tauri/gen/android/app/src/main/assets/ && npm run _patch-android-viewport; fi",
+    "copy:android:release": "if [ -d src-tauri/gen/android/app/src/main/assets ]; then npm run _clean-android-assets && cp -r frontend/target/dx/frontend/release/web/public/. src-tauri/gen/android/app/src/main/assets/ && npm run _patch-android-viewport; fi",
+    "build": "npm run build:editor && npm run build:frontend && npm run copy:editor:release && npm run copy:android:release",
+    "dev": "npm run build:editor && npm run build:frontend:dev && npm run copy:editor:dev && npm run copy:android:dev"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

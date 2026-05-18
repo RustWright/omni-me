@@ -32,45 +32,9 @@ fn main() {
     dioxus::launch(App);
 }
 
-/// Update the document's `<meta name="viewport">` to include `viewport-fit=cover`
-/// (without disturbing the existing `width=device-width, initial-scale=1`).
-///
-/// Why this lives in code rather than the static `index.html`: the HTML
-/// shipped by `dx serve` / `dx build` is generated from a Dioxus template we
-/// don't currently customize. Mutating the meta tag from WASM on first mount
-/// is a one-line fix that survives Dioxus template upgrades.
-///
-/// Without `viewport-fit=cover`, Android WebView constrains the entire
-/// viewport to the system "safe area" — so `env(safe-area-inset-bottom)`
-/// returns 0 and the BottomNav still appears flush with the device edge,
-/// behind the gesture bar. With it, the WebView paints edge-to-edge and
-/// `env()` returns the real inset that the nav uses to lift itself.
-fn install_viewport_fit_cover() {
-    let Some(window) = web_sys::window() else { return };
-    let Some(document) = window.document() else { return };
-    let Some(meta) = document.query_selector("meta[name=\"viewport\"]").ok().flatten() else {
-        return;
-    };
-    let current = meta.get_attribute("content").unwrap_or_default();
-    if current.contains("viewport-fit=cover") {
-        return;
-    }
-    let next = if current.is_empty() {
-        "width=device-width, initial-scale=1, viewport-fit=cover".to_string()
-    } else {
-        format!("{current}, viewport-fit=cover")
-    };
-    let _ = meta.set_attribute("content", &next);
-}
-
 #[component]
 fn App() -> Element {
     let mut active_tab = use_signal(|| Tab::Journal);
-
-    // Runs exactly once per mount — the meta tag mutation is idempotent
-    // (early-returns if `viewport-fit=cover` is already present) so even
-    // double-mount under HMR is safe.
-    use_hook(install_viewport_fit_cover);
 
     // Timezone: default to UTC, load from backend on mount.
     let mut tz_signal = use_signal(|| Tz::UTC);
@@ -141,3 +105,4 @@ fn App() -> Element {
         }
     }
 }
+

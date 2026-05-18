@@ -51,14 +51,13 @@ pub fn BottomNav(active: Tab, on_switch: EventHandler<Tab>) -> Element {
     };
 
     rsx! {
-        // Outer wrapper carries the iOS/Android safe-area inset (`env()`),
-        // so on a device with a gesture bar the row of buttons sits above
-        // the system chrome instead of being half-eclipsed by it. Requires
-        // `viewport-fit=cover` on the document's viewport meta — set in
-        // `main.rs::install_viewport_fit_cover`. Inner div keeps the
-        // original `py-1` padding visually intact.
+        // Outer wrapper carries the safe-area inset via the
+        // `--safe-area-inset-bottom` custom property (defined in input.css
+        // with an env() fallback for iOS/desktop; overridden by MainActivity's
+        // inset bridge on Android, where env() doesn't include the bottom
+        // nav bar). Inner div keeps the original `py-1` visually intact.
         nav { class: "md:hidden bg-obsidian-sidebar border-t border-white/5 fixed bottom-0 left-0 right-0 z-[100]",
-            style: "padding-bottom: env(safe-area-inset-bottom);",
+            style: "padding-bottom: var(--safe-area-inset-bottom);",
             div { class: "flex items-center gap-1 px-2 py-1",
                 for tab in ALL_TABS.iter().copied() {
                     {
