@@ -3,6 +3,7 @@ package com.omni_me.app
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import org.json.JSONObject
 import java.io.File
@@ -26,8 +27,18 @@ import java.io.FileOutputStream
 class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
+        // Force-enable Chrome DevTools remote inspection regardless of build
+        // profile. Tauri only sets this for --debug builds, but we're forced
+        // to use --release for Android (debug bakes in dev URL via
+        // cfg!(debug_assertions)). Process-wide flag covering every WebView.
+        WebView.setWebContentsDebuggingEnabled(true)
         super.onCreate(savedInstanceState)
         intent?.let { handleSendIntent(it) }
+        // Bridge Android's system-bar insets into CSS custom properties so
+        // the frontend can `padding-bottom: var(--safe-area-inset-bottom)`.
+        // Implementation lives in `InsetBridge.kt` (same override pattern as
+        // this file — see `build.rs::apply_android_overrides`).
+        InsetBridge.install(this)
     }
 
     override fun onNewIntent(intent: Intent) {

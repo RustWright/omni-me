@@ -31,6 +31,10 @@ fn apply_android_overrides() {
             "java/com/omni_me/app/MainActivity.kt",
             "java/com/omni_me/app/MainActivity.kt",
         ),
+        (
+            "java/com/omni_me/app/InsetBridge.kt",
+            "java/com/omni_me/app/InsetBridge.kt",
+        ),
     ];
 
     for (src_rel, dst_rel) in pairs {
