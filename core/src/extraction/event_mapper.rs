@@ -1,4 +1,4 @@
-//! Map `ExtractionResult` → `Vec<NewEvent>` per handler semantic.
+//! Map `ExtractionResult` → `Vec<DraftTransaction>` per handler semantic.
 //!
 //! Two flavors because bank statements and receipts have opposite sign
 //! conventions:
@@ -6,35 +6,28 @@
 //! - **Statement extraction** — each posting in the result represents one
 //!   row of the statement, signed from the bank's perspective (negative =
 //!   outflow). The handler knows which hledger account corresponds to that
-//!   bank. Each posting becomes a TransactionRecorded with the bank-side
-//!   posting + an `Unmatched` mirror; user assigns the real other-side
-//!   account during review.
+//!   bank. Each posting becomes a draft with the bank-side posting + an
+//!   `Unmatched` mirror; user assigns the real other-side account during
+//!   batch review.
 //!
 //! - **Receipt extraction** — each posting in the result represents a line
 //!   item (positive cost). We don't yet know which card/account paid (could
-//!   be one of several). Each posting becomes a TransactionRecorded with
-//!   the extracted expense-side (using `account_hint` as a guess) + an
-//!   `Unmatched` mirror; user assigns the real payment account during
-//!   review.
+//!   be one of several). Each posting becomes a draft with the extracted
+//!   expense-side (using `account_hint` as a guess) + an `Unmatched`
+//!   mirror; user assigns the real payment account during batch review.
 //!
-//! Both flavors emit deterministic txn ids derived from a caller-provided
+//! Both flavors emit deterministic external ids derived from a caller-provided
 //! prefix (e.g. `"ngn-uid-14272"`) so re-processing the same source event
-//! never duplicates rows — the budget projection's CREATE silently fails
-//! on duplicate id, which is the intended dedup mechanism.
+//! never duplicates rows — `AutoImportProjection`'s UPSERT collapses on the
+//! `{source}-{dedup_key}` composite, and the per-draft `external_id` keeps
+//! committed `TransactionRecorded` events deterministic via the same prefix.
 
 use chrono::{NaiveDate, Utc};
 
 use crate::accounts::make_unmatched_mirror;
-use crate::events::{DraftTransaction, EventType, NewEvent, Posting, TransactionRecordedPayload};
+use crate::events::{DraftTransaction, Posting};
 
 use super::{ExtractedPosting, ExtractionResult};
-
-// ============================================================================
-// Draft-level mapping (Phase 3.10). Each handler now produces drafts that get
-// wrapped into one `AutoImportBatchProposed` event by `to_proposed_event`.
-// Drafts already include the `Unmatched` mirror — the user can re-target the
-// mirror to a real account during batch review before commit.
-// ============================================================================
 
 /// Statement-flavored draft mapping: one draft per result.posting, signed from
 /// the bank's perspective. Uses `bank_account` for every draft's real posting.
@@ -109,113 +102,8 @@ pub fn receipt_extraction_to_drafts(
     drafts
 }
 
-// ============================================================================
-// Event-level mapping (legacy — kept for handlers not yet migrated to drafts).
-// Will be removed once all handlers consume the draft helpers above.
-// ============================================================================
-
-/// Build one TransactionRecorded NewEvent from a single real-account posting.
-/// The mirror posting goes to `Unmatched`. Caller picks the txn_id +
-/// description; this is the lowest-level helper both flavors converge on.
-fn build_event(
-    txn_id: String,
-    date: NaiveDate,
-    description: String,
-    real_posting: Posting,
-    device_id: &str,
-) -> Option<NewEvent> {
-    let mirror = make_unmatched_mirror(&real_posting);
-    let payload = TransactionRecordedPayload {
-        txn_id: txn_id.clone(),
-        date,
-        description,
-        postings: vec![real_posting, mirror],
-        attachment: None,
-    };
-    let payload_json = serde_json::to_value(&payload).ok()?;
-    Some(NewEvent {
-        id: Some(txn_id.clone()),
-        event_type: EventType::TransactionRecorded.to_string(),
-        aggregate_id: txn_id,
-        timestamp: Utc::now(),
-        device_id: device_id.to_string(),
-        payload: payload_json,
-    })
-}
-
 fn fallback_date() -> NaiveDate {
     Utc::now().date_naive()
-}
-
-/// Statement-flavored mapping: bank-side posting per result.posting, with
-/// sign already matching the bank's ledger convention. Uses `bank_account`
-/// for every posting (statements are scoped to one account).
-pub fn statement_extraction_to_events(
-    result: &ExtractionResult,
-    source_prefix: &str,
-    bank_account: &str,
-    bank_commodity: &str,
-    device_id: &str,
-) -> Vec<NewEvent> {
-    let date = result.date.unwrap_or_else(fallback_date);
-    let description = result
-        .description
-        .clone()
-        .unwrap_or_else(|| format!("{bank_account} statement entry"));
-
-    let mut events = Vec::with_capacity(result.postings.len());
-    for (i, p) in result.postings.iter().enumerate() {
-        let txn_id = format!("{source_prefix}-{i}");
-        let real = Posting {
-            account: bank_account.to_string(),
-            commodity: if p.commodity.is_empty() {
-                bank_commodity.to_string()
-            } else {
-                p.commodity.clone()
-            },
-            amount: p.amount,
-            fx_rate: None,
-            tags: vec![],
-        };
-        let line_desc = p
-            .line_label
-            .clone()
-            .unwrap_or_else(|| description.clone());
-        if let Some(e) = build_event(txn_id, date, line_desc, real, device_id) {
-            events.push(e);
-        }
-    }
-    events
-}
-
-/// Receipt-flavored mapping: each line item becomes a TransactionRecorded
-/// with the extracted positive-cost posting (account = `account_hint` or
-/// fallback `"Expenses:Unknown"`) + an Unmatched mirror. User assigns the
-/// real payment account in the review UI.
-pub fn receipt_extraction_to_events(
-    result: &ExtractionResult,
-    source_prefix: &str,
-    device_id: &str,
-) -> Vec<NewEvent> {
-    let date = result.date.unwrap_or_else(fallback_date);
-    let default_description = result
-        .description
-        .clone()
-        .unwrap_or_else(|| "imported receipt".to_string());
-
-    let mut events = Vec::with_capacity(result.postings.len());
-    for (i, p) in result.postings.iter().enumerate() {
-        let txn_id = format!("{source_prefix}-{i}");
-        let real = build_receipt_posting(p);
-        let line_desc = p
-            .line_label
-            .clone()
-            .unwrap_or_else(|| default_description.clone());
-        if let Some(e) = build_event(txn_id, date, line_desc, real, device_id) {
-            events.push(e);
-        }
-    }
-    events
 }
 
 fn build_receipt_posting(p: &ExtractedPosting) -> Posting {
@@ -279,28 +167,25 @@ mod tests {
                 posting(None, "USD", "200.00"),
             ],
         );
-        let events = statement_extraction_to_events(
+        let drafts = statement_extraction_to_drafts(
             &result,
             "ngn-uid-14272",
             "Assets:CIBC:USD",
             "USD",
-            "device-1",
         );
-        assert_eq!(events.len(), 2);
-        // Both txn ids should follow the prefix-index convention
-        assert_eq!(events[0].id.as_deref(), Some("ngn-uid-14272-0"));
-        assert_eq!(events[1].id.as_deref(), Some("ngn-uid-14272-1"));
+        assert_eq!(drafts.len(), 2);
+        // Both external ids follow the prefix-index convention
+        assert_eq!(drafts[0].external_id, "ngn-uid-14272-0");
+        assert_eq!(drafts[1].external_id, "ngn-uid-14272-1");
 
-        // Inspect the payload: bank-side posting account = bank_account,
-        // mirror = Unmatched
-        let payload0 = &events[0].payload;
-        let postings = payload0["postings"].as_array().unwrap();
-        assert_eq!(postings.len(), 2);
-        assert_eq!(postings[0]["account"], "Assets:CIBC:USD");
-        assert_eq!(postings[1]["account"], "Unmatched");
+        // Bank-side posting account = bank_account, mirror = Unmatched
+        let p0 = &drafts[0].postings;
+        assert_eq!(p0.len(), 2);
+        assert_eq!(p0[0].account, "Assets:CIBC:USD");
+        assert_eq!(p0[1].account, "Unmatched");
         // Sign inversion on the mirror
-        assert_eq!(postings[0]["amount"], "-87.42");
-        assert_eq!(postings[1]["amount"], "87.42");
+        assert_eq!(p0[0].amount, Decimal::from_str("-87.42").unwrap());
+        assert_eq!(p0[1].amount, Decimal::from_str("87.42").unwrap());
     }
 
     #[test]
@@ -310,26 +195,21 @@ mod tests {
             Some("Audible"),
             vec![posting(Some("Expenses:Books"), "CAD", "6.99")],
         );
-        let events = receipt_extraction_to_events(&result, "audible-uid-2105", "device-1");
-        assert_eq!(events.len(), 1);
-        let postings = events[0].payload["postings"].as_array().unwrap();
-        assert_eq!(postings[0]["account"], "Expenses:Books");
-        assert_eq!(postings[1]["account"], "Unmatched");
+        let drafts = receipt_extraction_to_drafts(&result, "audible-uid-2105");
+        assert_eq!(drafts.len(), 1);
+        let p = &drafts[0].postings;
+        assert_eq!(p[0].account, "Expenses:Books");
+        assert_eq!(p[1].account, "Unmatched");
         // Receipt positive cost; mirror is negative
-        assert_eq!(postings[0]["amount"], "6.99");
-        assert_eq!(postings[1]["amount"], "-6.99");
+        assert_eq!(p[0].amount, Decimal::from_str("6.99").unwrap());
+        assert_eq!(p[1].amount, Decimal::from_str("-6.99").unwrap());
     }
 
     #[test]
     fn receipt_mapping_falls_back_when_no_hint() {
-        let result = result_with(
-            None,
-            None,
-            vec![posting(None, "CAD", "5.25")],
-        );
-        let events = receipt_extraction_to_events(&result, "x-uid-1", "d");
-        let postings = events[0].payload["postings"].as_array().unwrap();
-        assert_eq!(postings[0]["account"], "Expenses:Unknown");
+        let result = result_with(None, None, vec![posting(None, "CAD", "5.25")]);
+        let drafts = receipt_extraction_to_drafts(&result, "x-uid-1");
+        assert_eq!(drafts[0].postings[0].account, "Expenses:Unknown");
     }
 
     #[test]
@@ -341,9 +221,12 @@ mod tests {
             None,
             vec![posting(Some("Expenses:Food"), "CAD", "-5.25")],
         );
-        let events = receipt_extraction_to_events(&result, "x", "d");
-        let postings = events[0].payload["postings"].as_array().unwrap();
-        assert_eq!(postings[0]["amount"], "5.25", "abs() applied");
+        let drafts = receipt_extraction_to_drafts(&result, "x");
+        assert_eq!(
+            drafts[0].postings[0].amount,
+            Decimal::from_str("5.25").unwrap(),
+            "abs() applied",
+        );
     }
 
     #[test]
@@ -353,19 +236,19 @@ mod tests {
             Some("test"),
             vec![posting(None, "USD", "10.00"), posting(None, "USD", "20.00")],
         );
-        let first = statement_extraction_to_events(&result, "src", "Assets:X", "USD", "d");
-        let second = statement_extraction_to_events(&result, "src", "Assets:X", "USD", "d");
-        let ids_first: Vec<_> = first.iter().filter_map(|e| e.id.as_deref()).collect();
-        let ids_second: Vec<_> = second.iter().filter_map(|e| e.id.as_deref()).collect();
-        assert_eq!(ids_first, ids_second, "same input → same txn_ids → dedup");
+        let first = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD");
+        let second = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD");
+        let ids_first: Vec<_> = first.iter().map(|d| d.external_id.as_str()).collect();
+        let ids_second: Vec<_> = second.iter().map(|d| d.external_id.as_str()).collect();
+        assert_eq!(ids_first, ids_second, "same input → same external_ids → dedup");
     }
 
     #[test]
-    fn empty_postings_yields_no_events() {
+    fn empty_postings_yields_no_drafts() {
         let result = result_with(None, None, vec![]);
-        let events = statement_extraction_to_events(&result, "src", "Assets:X", "USD", "d");
-        assert!(events.is_empty());
-        let events2 = receipt_extraction_to_events(&result, "src", "d");
-        assert!(events2.is_empty());
+        let drafts = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD");
+        assert!(drafts.is_empty());
+        let drafts2 = receipt_extraction_to_drafts(&result, "src");
+        assert!(drafts2.is_empty());
     }
 }

@@ -301,7 +301,10 @@ mod tests {
         let store: Arc<dyn EventStore> = Arc::new(crate::events::SurrealEventStore::new(db.clone()));
         let runner = ProjectionRunner::new(
             db.clone(),
-            vec![Box::new(crate::events::BudgetProjection)],
+            vec![
+                Box::new(crate::events::BudgetProjection),
+                Box::new(crate::events::AutoImportProjection),
+            ],
         );
         runner.init_all().await.unwrap();
         (db, store, runner)
@@ -364,7 +367,7 @@ EOF\n",
 
     #[tokio::test]
     #[cfg(unix)]
-    async fn pull_writes_transaction_recorded_with_unmatched_mirror() {
+    async fn pull_projects_proposed_batch_with_unmatched_mirror() {
         let (_dir, driver) = write_shell_driver(
             "#!/bin/bash\ncat > /dev/null\ncat <<'EOF'\n\
             {\n\
@@ -387,11 +390,44 @@ EOF\n",
         );
 
         let summary = source.pull().await.unwrap();
-        // Post 3.10.3: one AutoImportBatchProposed event per non-empty tick.
-        // The previous `transactions` row check was removed — rows only land
-        // after user commit (Phase 3.10.4+).
         assert_eq!(summary.events_appended, 1);
-        let _ = db; // touched to avoid unused-binding warning until 3.10.4 lands
+
+        // 3.10.4 projection check: the appended AutoImportBatchProposed lands
+        // as one pending row, with the WS-derived `Assets:WealthSimple:Cash`
+        // + `Unmatched` mirror baked into draft_postings.
+        let mut resp = db
+            .query(
+                "SELECT source, dedup_key, status, draft_postings \
+                 FROM pending_auto_import_batches",
+            )
+            .await
+            .unwrap();
+        let sources: Vec<String> = resp.take("source").unwrap();
+        let dedup_keys: Vec<String> = resp.take("dedup_key").unwrap();
+        let statuses: Vec<String> = resp.take("status").unwrap();
+        let draft_postings: Vec<serde_json::Value> = resp.take("draft_postings").unwrap();
+        assert_eq!(sources, vec!["wealthsimple-python".to_string()]);
+        assert_eq!(statuses, vec!["pending".to_string()]);
+        assert!(
+            dedup_keys[0].starts_with("wealthsimple-python-"),
+            "polling-source dedup_key uses per-tick prefix, got {:?}",
+            dedup_keys[0],
+        );
+
+        let drafts = draft_postings[0].as_array().unwrap();
+        assert_eq!(drafts.len(), 1, "one transaction → one draft");
+        let draft = &drafts[0];
+        assert_eq!(draft["external_id"], "ws-t1");
+        assert_eq!(draft["description"], "Loblaws");
+        assert_eq!(draft["date"], "2026-05-16");
+        let postings = draft["postings"].as_array().unwrap();
+        assert_eq!(postings.len(), 2);
+        assert_eq!(postings[0]["account"], "Assets:WealthSimple:Cash");
+        assert_eq!(postings[0]["amount"], "-87.42");
+        assert_eq!(postings[0]["commodity"], "CAD");
+        assert_eq!(postings[1]["account"], "Unmatched");
+        assert_eq!(postings[1]["amount"], "87.42");
+        assert_eq!(postings[1]["commodity"], "CAD");
     }
 
     #[tokio::test]
