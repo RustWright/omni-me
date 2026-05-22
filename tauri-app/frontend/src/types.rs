@@ -331,6 +331,56 @@ pub struct PendingBatchView {
     pub source_metadata: Option<serde_json::Value>,
 }
 
+/// Frontend mirror of `core::db::queries::TxnFilter`. All fields optional;
+/// blank strings get normalized to None by the backend before the WHERE
+/// clause builds, so empty inputs don't need pre-trimming here.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TxnFilter {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+impl TxnFilter {
+    /// True when no axis is set — used to skip the "clear filters" UI and
+    /// to suppress the "filtered" badge on the list header.
+    pub fn is_empty(&self) -> bool {
+        self.date_from.is_none()
+            && self.date_to.is_none()
+            && self.account.is_none()
+            && self.tag.is_none()
+            && self.category.is_none()
+    }
+}
+
+/// Frontend mirror of `commands::budget::TransactionView`. The `postings` and
+/// `attachment` fields land as `serde_json::Value` because the backend stores
+/// them as SurrealDB FLEXIBLE objects and routes through `into_json_value()` —
+/// see the doc-comment in `commands::budget`. List views project a friendlier
+/// shape inline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransactionView {
+    pub id: String,
+    pub date: String,
+    pub description: String,
+    pub postings: serde_json::Value,
+    #[serde(default)]
+    pub attachment: Option<serde_json::Value>,
+    pub category: Option<String>,
+    #[serde(default)]
+    pub tags_top: Vec<String>,
+    pub cleared: bool,
+    pub statement_source: Option<String>,
+    pub cleared_date: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommitBatchResult {
     pub events_appended: usize,

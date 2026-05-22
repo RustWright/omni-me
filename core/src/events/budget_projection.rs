@@ -1113,4 +1113,179 @@ mod tests {
         let after = snapshot(&db).await;
         assert_eq!(before, after);
     }
+
+    // --- Filter coverage for list_transactions (Phase 4.1) -------------------
+
+    async fn seed_txn(
+        store: &SurrealEventStore,
+        runner: &ProjectionRunner,
+        id: &str,
+        date: &str,
+        desc: &str,
+        account: &str,
+        amount: &str,
+    ) {
+        let neg = format!("-{amount}");
+        emit(
+            store,
+            runner,
+            "transaction_recorded",
+            id,
+            serde_json::json!({
+                "txn_id": id,
+                "date": date,
+                "description": desc,
+                "postings": [
+                    { "account": account, "commodity": "CAD", "amount": amount },
+                    { "account": "Assets:Cash", "commodity": "CAD", "amount": neg },
+                ]
+            }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn list_transactions_filter_by_date_range() {
+        use crate::db::queries::{self, TxnFilter};
+        let (db, store, runner) = fixture().await;
+        seed_txn(&store, &runner, "t1", "2026-05-01", "Old", "Expenses:Food", "10.00").await;
+        seed_txn(&store, &runner, "t2", "2026-05-15", "Mid", "Expenses:Food", "20.00").await;
+        seed_txn(&store, &runner, "t3", "2026-05-31", "New", "Expenses:Food", "30.00").await;
+
+        let rows = queries::list_transactions(
+            &db,
+            TxnFilter {
+                date_from: Some("2026-05-10".into()),
+                date_to: Some("2026-05-20".into()),
+                ..Default::default()
+            },
+            100,
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "t2");
+    }
+
+    #[tokio::test]
+    async fn list_transactions_filter_by_account_substring_case_insensitive() {
+        use crate::db::queries::{self, TxnFilter};
+        let (db, store, runner) = fixture().await;
+        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Groceries", "10.00").await;
+        seed_txn(&store, &runner, "t2", "2026-05-15", "B", "Expenses:Dining", "10.00").await;
+        seed_txn(&store, &runner, "t3", "2026-05-15", "C", "Assets:Chequing", "10.00").await;
+
+        let rows = queries::list_transactions(
+            &db,
+            TxnFilter {
+                account: Some("expenses".into()),
+                ..Default::default()
+            },
+            100,
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        let mut ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, ["t1", "t2"]);
+    }
+
+    #[tokio::test]
+    async fn list_transactions_filter_by_category_exact() {
+        use crate::db::queries::{self, TxnFilter};
+        let (db, store, runner) = fixture().await;
+        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Food", "10.00").await;
+        seed_txn(&store, &runner, "t2", "2026-05-15", "B", "Expenses:Food", "10.00").await;
+        emit(
+            &store,
+            &runner,
+            "transaction_categorized",
+            "t1",
+            serde_json::json!({ "txn_id": "t1", "category": "Groceries" }),
+        )
+        .await;
+
+        let rows = queries::list_transactions(
+            &db,
+            TxnFilter {
+                category: Some("Groceries".into()),
+                ..Default::default()
+            },
+            100,
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "t1");
+    }
+
+    #[tokio::test]
+    async fn list_transactions_filter_by_tag_membership() {
+        use crate::db::queries::{self, TxnFilter};
+        let (db, store, runner) = fixture().await;
+        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Food", "10.00").await;
+        seed_txn(&store, &runner, "t2", "2026-05-15", "B", "Expenses:Food", "10.00").await;
+        emit(
+            &store,
+            &runner,
+            "transaction_tagged",
+            "t1",
+            serde_json::json!({ "txn_id": "t1", "tags": ["business"] }),
+        )
+        .await;
+
+        let rows = queries::list_transactions(
+            &db,
+            TxnFilter {
+                tag: Some("business".into()),
+                ..Default::default()
+            },
+            100,
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "t1");
+    }
+
+    #[tokio::test]
+    async fn list_transactions_empty_filter_returns_all_visible() {
+        use crate::db::queries::{self, TxnFilter};
+        let (db, store, runner) = fixture().await;
+        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Food", "10.00").await;
+        seed_txn(&store, &runner, "t2", "2026-05-16", "B", "Expenses:Food", "10.00").await;
+
+        let rows = queries::list_transactions(&db, TxnFilter::default(), 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_transactions_blank_strings_treated_as_unset() {
+        use crate::db::queries::{self, TxnFilter};
+        let (db, store, runner) = fixture().await;
+        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Food", "10.00").await;
+
+        let rows = queries::list_transactions(
+            &db,
+            TxnFilter {
+                date_from: Some("   ".into()),
+                date_to: Some("".into()),
+                account: Some("  ".into()),
+                tag: Some("".into()),
+                category: Some("   ".into()),
+            },
+            100,
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1, "blank filters should not exclude rows");
+    }
 }

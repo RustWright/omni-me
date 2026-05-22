@@ -5,11 +5,11 @@
 //! Reads go through `core::db::queries`.
 
 use chrono::NaiveDate;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use omni_me_core::db::queries::{
-    self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow,
+    self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow, TxnFilter,
 };
 use omni_me_core::events::{
     AttachmentRef, EventType, Posting, TransactionRecordedPayload,
@@ -105,15 +105,59 @@ pub async fn delete_transaction(
     append_and_apply(&state, EventType::TransactionDeleted, txn_id, payload).await
 }
 
+/// Wire-shape projection of one transaction row. Mirrors `TransactionRow` but
+/// deserialises `postings` / `attachment` / `balancing_posting` from SurrealDB
+/// `Value` into plain JSON so the frontend gets idiomatic shapes. Pattern
+/// mirror of `list_pending_batches` in `commands::auto_import`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionView {
+    pub id: String,
+    pub date: String,
+    pub description: String,
+    pub postings: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<serde_json::Value>,
+    pub category: Option<String>,
+    pub tags_top: Vec<String>,
+    pub cleared: bool,
+    pub statement_source: Option<String>,
+    pub cleared_date: Option<String>,
+}
+
+fn row_to_view(row: TransactionRow) -> TransactionView {
+    TransactionView {
+        id: row.id,
+        date: row.date,
+        description: row.description,
+        postings: row.postings.into_json_value(),
+        attachment: row
+            .attachment
+            .map(|v| v.into_json_value())
+            .filter(|v| !v.is_null()),
+        category: row.category,
+        tags_top: row.tags_top,
+        cleared: row.cleared,
+        statement_source: row.statement_source,
+        cleared_date: row.cleared_date,
+    }
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_transactions(
     state: State<'_, AppState>,
+    filter: Option<TxnFilter>,
     limit: Option<u32>,
     offset: Option<u32>,
-) -> Result<Vec<TransactionRow>, String> {
-    queries::list_transactions(&state.db, limit.unwrap_or(100), offset.unwrap_or(0))
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<Vec<TransactionView>, String> {
+    let rows = queries::list_transactions(
+        &state.db,
+        filter.unwrap_or_default(),
+        limit.unwrap_or(100),
+        offset.unwrap_or(0),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(row_to_view).collect())
 }
 
 // --- Accounts + Budgets + Recurring (1.9) ---

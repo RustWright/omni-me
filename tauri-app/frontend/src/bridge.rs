@@ -5,7 +5,8 @@ use crate::types::{AttachmentRef, ExtractedPostingView, TaskResult};
 use crate::types::{
     AutoImportSourceView, CommitBatchResult, CompletionEntry, ExtractedDraft, GenericNoteItem,
     JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture, RoutineGroup, RoutineItem,
-    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft,
+    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView,
+    TxnFilter,
 };
 
 // Tauri IPC
@@ -1079,6 +1080,40 @@ pub async fn invoke_record_transaction(draft: TransactionFormDraft) -> Result<()
             draft: TransactionFormDraft,
         }
         invoke_unit("record_transaction", &Args { draft }).await
+    }
+}
+
+/// List committed transactions, newest first. Hidden rows (`removed=true` or
+/// `superseded_by IS NOT NONE`) are filtered server-side. The optional
+/// `filter` narrows by date range / account substring / tag / category;
+/// blank strings inside are treated as unset.
+pub async fn invoke_list_transactions(
+    filter: TxnFilter,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<TransactionView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (filter, limit, offset);
+        Ok(Vec::new())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            filter: TxnFilter,
+            limit: u32,
+            offset: u32,
+        }
+        invoke(
+            "list_transactions",
+            &Args {
+                filter,
+                limit,
+                offset,
+            },
+        )
+        .await
     }
 }
 

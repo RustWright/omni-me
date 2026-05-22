@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
 use super::{Database, DbError};
@@ -415,22 +415,105 @@ const TXN_FIELDS: &str = "meta::id(id) AS id, date, description, postings, attac
         cleared, statement_source, cleared_date,
         <string> created_at AS created_at, <string> updated_at AS updated_at";
 
+/// Filters for `list_transactions`. All fields optional; an empty struct
+/// returns every visible row. Empty/whitespace strings are treated as
+/// absent by `normalize` so the frontend can send blank inputs without
+/// a separate clear step.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TxnFilter {
+    /// Inclusive lower bound on `date` (YYYY-MM-DD).
+    pub date_from: Option<String>,
+    /// Inclusive upper bound on `date` (YYYY-MM-DD).
+    pub date_to: Option<String>,
+    /// Case-insensitive substring match against any posting's `account`.
+    pub account: Option<String>,
+    /// Exact match against `tags_top`.
+    pub tag: Option<String>,
+    /// Exact match against `category`.
+    pub category: Option<String>,
+}
+
+impl TxnFilter {
+    /// Drop blank strings so the dynamic WHERE clause skips them entirely.
+    fn normalize(mut self) -> Self {
+        fn blank(s: &Option<String>) -> bool {
+            s.as_deref().map(|v| v.trim().is_empty()).unwrap_or(true)
+        }
+        if blank(&self.date_from) {
+            self.date_from = None;
+        }
+        if blank(&self.date_to) {
+            self.date_to = None;
+        }
+        if blank(&self.account) {
+            self.account = None;
+        }
+        if blank(&self.tag) {
+            self.tag = None;
+        }
+        if blank(&self.category) {
+            self.category = None;
+        }
+        self
+    }
+}
+
 pub async fn list_transactions(
     db: &Database,
+    filter: TxnFilter,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<TransactionRow>, DbError> {
+    let filter = filter.normalize();
+    let mut where_clauses: Vec<&str> = vec!["removed = false", "superseded_by IS NONE"];
+    if filter.date_from.is_some() {
+        where_clauses.push("date >= $date_from");
+    }
+    if filter.date_to.is_some() {
+        where_clauses.push("date <= $date_to");
+    }
+    if filter.category.is_some() {
+        where_clauses.push("category = $category");
+    }
+    if filter.tag.is_some() {
+        where_clauses.push("$tag IN tags_top");
+    }
+    if filter.account.is_some() {
+        // SurrealDB v3: array::any with a closure returns true if any
+        // posting's account contains the substring (case-insensitive).
+        where_clauses.push(
+            "array::any(postings, |$p| \
+             string::lowercase($p.account) CONTAINS string::lowercase($account))",
+        );
+    }
+    let where_sql = where_clauses.join(" AND ");
     let q = format!(
         "SELECT {TXN_FIELDS} FROM transactions
-         WHERE removed = false AND superseded_by IS NONE
+         WHERE {where_sql}
          ORDER BY date DESC, created_at DESC
          LIMIT $limit START $offset"
     );
-    let mut resp = db
+
+    let mut query = db
         .query(q.as_str())
         .bind(("limit", limit as i64))
-        .bind(("offset", offset as i64))
-        .await?;
+        .bind(("offset", offset as i64));
+    if let Some(v) = filter.date_from {
+        query = query.bind(("date_from", v));
+    }
+    if let Some(v) = filter.date_to {
+        query = query.bind(("date_to", v));
+    }
+    if let Some(v) = filter.category {
+        query = query.bind(("category", v));
+    }
+    if let Some(v) = filter.tag {
+        query = query.bind(("tag", v));
+    }
+    if let Some(v) = filter.account {
+        query = query.bind(("account", v));
+    }
+    let mut resp = query.await?;
     let rows: Vec<TransactionRow> = resp.take(0)?;
     Ok(rows)
 }

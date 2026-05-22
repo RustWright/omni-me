@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 use crate::bridge;
 use crate::types::{
     AttachmentRef, DraftTransactionView, ExtractedDraft, PendingBatchView, PendingShareCapture,
-    PostingInput, TransactionFormDraft,
+    PostingInput, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -71,6 +71,8 @@ enum FinancesView {
     /// `selected_batch_id` signal alongside the view enum (the enum stays
     /// `Copy` so this variant can't carry the String inline).
     BatchReview,
+    /// Committed-transactions browse screen (Phase 4.1).
+    TransactionList,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -134,6 +136,7 @@ pub fn FinancesPage() -> Element {
                             view.set(FinancesView::TransactionForm);
                         },
                         on_open_batches: move |_| view.set(FinancesView::BatchList),
+                        on_open_transactions: move |_| view.set(FinancesView::TransactionList),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -206,6 +209,11 @@ pub fn FinancesPage() -> Element {
                         },
                     }
                 }
+                FinancesView::TransactionList => rsx! {
+                    TransactionListView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                    }
+                },
             }
         }
     }
@@ -219,6 +227,7 @@ fn HomeView(
     on_open_email: EventHandler<()>,
     on_open_manual: EventHandler<()>,
     on_open_batches: EventHandler<()>,
+    on_open_transactions: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -290,12 +299,25 @@ fn HomeView(
             }
         }
 
-        // Placeholder until Phase 4 (transactions list) lands
+        // --- Recent transactions section ---
         div { class: "border-b border-white/5 pb-2 mb-4",
             h2 { class: "text-lg font-bold text-obsidian-text", "Recent" }
         }
-        div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
-            "Transactions list lands in Phase 4."
+        button {
+            class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+            onclick: move |_| on_open_transactions.call(()),
+            div {
+                div { class: "text-sm font-semibold text-obsidian-text", "View transactions" }
+                div { class: "text-xs text-obsidian-text-muted mt-1",
+                    "Browse everything you've recorded."
+                }
+            }
+            svg { class: "w-5 h-5 text-obsidian-text-muted",
+                fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                    d: "M9 5l7 7-7 7"
+                }
+            }
         }
     }
 }
@@ -1448,6 +1470,353 @@ fn DraftRow(
                                     "{posting.amount} {posting.commodity}"
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Transaction list (Phase 4.1)
+//
+// Browse-first slice: paginated `list_transactions` reads, no filters yet,
+// rows are non-clickable (4.2 lands the detail view). Filter chips +
+// click-through both layer on top of this shell without restructuring.
+// =============================================================================
+
+const TXN_PAGE_SIZE: u32 = 50;
+
+/// Minimal posting view extracted from a `TransactionView.postings` JSON
+/// array. The full backend `Posting` carries `fx_rate` + `tags` too; rows
+/// only need the at-a-glance fields. Detail view (4.2) will re-decode the
+/// full shape.
+#[derive(Debug, Clone)]
+struct PostingRowView {
+    account: String,
+    amount: String,
+    commodity: String,
+}
+
+/// Decode `TransactionView.postings` (serde_json::Value, FLEXIBLE on the
+/// backend) into a Vec of display rows. Postings missing required fields
+/// are silently dropped — `record_transaction` validates upstream so this
+/// is defensive only.
+fn posting_views(value: &serde_json::Value) -> Vec<PostingRowView> {
+    value
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    Some(PostingRowView {
+                        account: p.get("account")?.as_str()?.to_string(),
+                        amount: p.get("amount")?.as_str()?.to_string(),
+                        commodity: p.get("commodity")?.as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[component]
+fn TransactionListView(on_back: EventHandler<()>) -> Element {
+    let mut transactions: Signal<Vec<TransactionView>> = use_signal(Vec::new);
+    let mut loading: Signal<bool> = use_signal(|| true);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let mut has_more: Signal<bool> = use_signal(|| false);
+    let mut offset: Signal<u32> = use_signal(|| 0);
+    // `active_filter` is what the current page reflects. `draft_filter` is
+    // what the FilterBar inputs hold; only Apply copies draft → active.
+    // Keeping them separate means typing in a field doesn't fire queries
+    // and accidental edits don't invalidate the current page until Apply.
+    let mut active_filter: Signal<TxnFilter> = use_signal(TxnFilter::default);
+    let draft_filter: Signal<TxnFilter> = use_signal(TxnFilter::default);
+
+    // Load (or re-load) the first page whenever active_filter changes.
+    // Re-deriving via use_effect keeps the dependency wiring honest — the
+    // effect re-runs on any signal read inside it.
+    use_effect(move || {
+        let filter = active_filter.read().clone();
+        spawn(async move {
+            loading.set(true);
+            error.set(None);
+            match bridge::invoke_list_transactions(filter, TXN_PAGE_SIZE, 0).await {
+                Ok(rows) => {
+                    has_more.set(rows.len() as u32 == TXN_PAGE_SIZE);
+                    offset.set(rows.len() as u32);
+                    transactions.set(rows);
+                }
+                Err(e) => error.set(Some(e)),
+            }
+            loading.set(false);
+        });
+    });
+
+    let load_more = move |_| {
+        if *loading.read() {
+            return;
+        }
+        let current_offset = *offset.read();
+        let filter = active_filter.read().clone();
+        spawn(async move {
+            loading.set(true);
+            match bridge::invoke_list_transactions(filter, TXN_PAGE_SIZE, current_offset).await {
+                Ok(rows) => {
+                    has_more.set(rows.len() as u32 == TXN_PAGE_SIZE);
+                    let mut all = transactions.read().clone();
+                    all.extend(rows);
+                    offset.set(all.len() as u32);
+                    transactions.set(all);
+                }
+                Err(e) => error.set(Some(e)),
+            }
+            loading.set(false);
+        });
+    };
+
+    let rows = transactions.read().clone();
+    let is_loading = *loading.read();
+    let err_msg = error.read().clone();
+    let show_empty = rows.is_empty() && !is_loading && err_msg.is_none();
+    let filter_active = !active_filter.read().is_empty();
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Transactions"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        FilterBar {
+            draft: draft_filter,
+            on_apply: move |applied: TxnFilter| {
+                active_filter.set(applied);
+            },
+            on_clear: move |_| {
+                draft_filter.clone().set(TxnFilter::default());
+                active_filter.set(TxnFilter::default());
+            },
+            filter_active: filter_active,
+        }
+
+        if let Some(msg) = err_msg {
+            div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "Failed to load transactions: {msg}"
+            }
+        }
+
+        if show_empty {
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                if filter_active {
+                    "No transactions match these filters."
+                } else {
+                    "No transactions yet. Capture one from the Finances home."
+                }
+            }
+        } else {
+            div { class: "space-y-2",
+                for txn in rows {
+                    TransactionListRow {
+                        key: "{txn.id}",
+                        txn: txn,
+                    }
+                }
+            }
+
+            if is_loading {
+                div { class: "mt-4 p-4 text-center text-obsidian-text-muted text-sm",
+                    "Loading…"
+                }
+            } else if *has_more.read() {
+                div { class: "mt-4 flex justify-center",
+                    button {
+                        class: "px-4 py-2 bg-obsidian-sidebar border border-white/10 text-obsidian-text-muted text-sm rounded-md hover:border-obsidian-accent/40 hover:text-obsidian-text transition-colors",
+                        onclick: load_more,
+                        "Load more"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Filter inputs above the list. `draft` is held by the parent so typing
+/// doesn't fire requests; only Apply copies into the parent's `active_filter`
+/// signal. Clear resets both the inputs and the active filter.
+#[component]
+fn FilterBar(
+    draft: Signal<TxnFilter>,
+    on_apply: EventHandler<TxnFilter>,
+    on_clear: EventHandler<()>,
+    filter_active: bool,
+) -> Element {
+    let input_class = "px-2 py-1.5 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-xs outline-none focus:border-obsidian-accent placeholder-obsidian-text-muted";
+    let date_val_from = draft.read().date_from.clone().unwrap_or_default();
+    let date_val_to = draft.read().date_to.clone().unwrap_or_default();
+    let account_val = draft.read().account.clone().unwrap_or_default();
+    let category_val = draft.read().category.clone().unwrap_or_default();
+    let tag_val = draft.read().tag.clone().unwrap_or_default();
+
+    rsx! {
+        div { class: "mb-4 p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg",
+            div { class: "flex flex-wrap items-end gap-2",
+                label { class: "flex flex-col gap-1",
+                    span { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest", "From" }
+                    input {
+                        r#type: "date",
+                        class: "{input_class}",
+                        value: "{date_val_from}",
+                        oninput: move |e| {
+                            let v = e.value();
+                            let mut next = draft.read().clone();
+                            next.date_from = if v.is_empty() { None } else { Some(v) };
+                            draft.clone().set(next);
+                        },
+                    }
+                }
+                label { class: "flex flex-col gap-1",
+                    span { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest", "To" }
+                    input {
+                        r#type: "date",
+                        class: "{input_class}",
+                        value: "{date_val_to}",
+                        oninput: move |e| {
+                            let v = e.value();
+                            let mut next = draft.read().clone();
+                            next.date_to = if v.is_empty() { None } else { Some(v) };
+                            draft.clone().set(next);
+                        },
+                    }
+                }
+                label { class: "flex flex-col gap-1 flex-1 min-w-[140px]",
+                    span { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest", "Account contains" }
+                    input {
+                        r#type: "text",
+                        placeholder: "e.g. Groceries",
+                        class: "{input_class}",
+                        value: "{account_val}",
+                        oninput: move |e| {
+                            let v = e.value();
+                            let mut next = draft.read().clone();
+                            next.account = if v.is_empty() { None } else { Some(v) };
+                            draft.clone().set(next);
+                        },
+                    }
+                }
+                label { class: "flex flex-col gap-1 flex-1 min-w-[120px]",
+                    span { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest", "Category" }
+                    input {
+                        r#type: "text",
+                        placeholder: "exact",
+                        class: "{input_class}",
+                        value: "{category_val}",
+                        oninput: move |e| {
+                            let v = e.value();
+                            let mut next = draft.read().clone();
+                            next.category = if v.is_empty() { None } else { Some(v) };
+                            draft.clone().set(next);
+                        },
+                    }
+                }
+                label { class: "flex flex-col gap-1 flex-1 min-w-[120px]",
+                    span { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest", "Tag" }
+                    input {
+                        r#type: "text",
+                        placeholder: "exact",
+                        class: "{input_class}",
+                        value: "{tag_val}",
+                        oninput: move |e| {
+                            let v = e.value();
+                            let mut next = draft.read().clone();
+                            next.tag = if v.is_empty() { None } else { Some(v) };
+                            draft.clone().set(next);
+                        },
+                    }
+                }
+                div { class: "flex gap-2 items-center",
+                    button {
+                        class: "px-3 py-1.5 bg-obsidian-accent text-black text-xs font-semibold rounded-md hover:opacity-90 transition-opacity",
+                        r#type: "button",
+                        onclick: move |_| on_apply.call(draft.read().clone()),
+                        "Apply"
+                    }
+                    if filter_active {
+                        button {
+                            class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-text underline",
+                            r#type: "button",
+                            onclick: move |_| on_clear.call(()),
+                            "Clear"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One row in the transaction list. Ledger-style: every posting line is
+/// shown so the user sees exactly where money moved. Header carries
+/// description + all four state signals (category, tags, cleared,
+/// attachment) and wraps naturally on narrow screens so the description
+/// never truncates.
+#[component]
+fn TransactionListRow(txn: TransactionView) -> Element {
+    let postings = posting_views(&txn.postings);
+    let has_attachment = txn.attachment.is_some();
+    rsx! {
+        div { class: "p-3 bg-obsidian-sidebar/60 border border-white/5 rounded-lg",
+            // Header — flex-wrap so trailing chips/icons spill to a second
+            // line on mobile rather than pushing description off-screen.
+            div { class: "flex flex-wrap items-center gap-x-2 gap-y-1 mb-2",
+                span { class: "text-xs text-obsidian-text-muted font-mono shrink-0",
+                    "{txn.date}"
+                }
+                span { class: "text-sm text-obsidian-text", "{txn.description}" }
+                if let Some(cat) = txn.category.clone() {
+                    span { class: "text-[10px] px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full font-medium",
+                        "{cat}"
+                    }
+                }
+                for tag in txn.tags_top.iter().cloned() {
+                    span { class: "text-[10px] px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded-full font-mono",
+                        "#{tag}"
+                    }
+                }
+                if txn.cleared {
+                    span {
+                        class: "text-xs text-emerald-400",
+                        title: "Reconciled against a statement",
+                        "✓"
+                    }
+                }
+                if has_attachment {
+                    svg {
+                        class: "w-3.5 h-3.5 text-obsidian-text-muted",
+                        fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        title { "Has attachment" }
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                            d: "M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+                        }
+                    }
+                }
+            }
+            // Postings — one row per leg, account left-truncated, amount
+            // right-aligned. Mono font keeps decimals visually stacked.
+            div { class: "space-y-0.5 pl-3",
+                for posting in postings {
+                    div { class: "flex justify-between gap-3 text-xs font-mono",
+                        span { class: "text-obsidian-text-muted truncate",
+                            "{posting.account}"
+                        }
+                        span { class: "text-obsidian-text shrink-0",
+                            "{posting.amount} {posting.commodity}"
                         }
                     }
                 }
