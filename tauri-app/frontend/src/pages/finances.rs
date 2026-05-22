@@ -1532,6 +1532,181 @@ struct PostingRowView {
     commodity: String,
 }
 
+/// Inline category-edit chip. Click → input replaces chip. Save on Enter or
+/// button; Cancel on Escape. Empty trimmed value clears the category. Used
+/// inside both the list row (where parent clicks navigate to detail — chip
+/// click events must `stop_propagation`) and the detail body.
+#[component]
+fn EditableCategoryChip(
+    current: Option<String>,
+    on_save: EventHandler<String>,
+) -> Element {
+    let mut editing = use_signal(|| false);
+    let mut draft = use_signal(|| current.clone().unwrap_or_default());
+
+    let current_display = current.clone();
+
+    rsx! {
+        if *editing.read() {
+            div {
+                class: "inline-flex items-center gap-1",
+                onclick: move |e| e.stop_propagation(),
+                input {
+                    r#type: "text",
+                    class: "px-2 py-0.5 text-[10px] bg-obsidian-bg border border-obsidian-accent rounded-full text-obsidian-text outline-none w-32",
+                    placeholder: "Category",
+                    value: "{draft.read()}",
+                    autofocus: true,
+                    oninput: move |e| draft.set(e.value()),
+                    onkeydown: move |e| {
+                        let key = e.key().to_string();
+                        if key == "Enter" {
+                            let value = draft.read().trim().to_string();
+                            on_save.call(value);
+                            editing.set(false);
+                        } else if key == "Escape" {
+                            draft.set(current_display.clone().unwrap_or_default());
+                            editing.set(false);
+                        }
+                    },
+                }
+                button {
+                    r#type: "button",
+                    class: "text-[10px] text-obsidian-accent hover:underline",
+                    onclick: move |e| {
+                        e.stop_propagation();
+                        let value = draft.read().trim().to_string();
+                        on_save.call(value);
+                        editing.set(false);
+                    },
+                    "Save"
+                }
+                button {
+                    r#type: "button",
+                    class: "text-[10px] text-obsidian-text-muted hover:text-obsidian-text",
+                    onclick: move |e| {
+                        e.stop_propagation();
+                        draft.set(current.clone().unwrap_or_default());
+                        editing.set(false);
+                    },
+                    "Cancel"
+                }
+            }
+        } else {
+            button {
+                r#type: "button",
+                class: if current.is_some() {
+                    "text-[10px] px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full font-medium hover:bg-obsidian-accent/25"
+                } else {
+                    "text-[10px] px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded-full font-medium hover:bg-white/10 border border-dashed border-white/10"
+                },
+                onclick: move |e| {
+                    e.stop_propagation();
+                    editing.set(true);
+                },
+                {
+                    match current.clone() {
+                        Some(c) if !c.is_empty() => rsx!{ "{c}" },
+                        _ => rsx!{ "+ category" },
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Inline tag-list editor. Existing tags render with × removers; trailing
+/// "+ tag" enters an input. Like the category chip, all interactions
+/// `stop_propagation` so the parent row's click handler doesn't fire.
+#[component]
+fn EditableTagList(
+    current: Vec<String>,
+    on_save: EventHandler<Vec<String>>,
+) -> Element {
+    let mut adding = use_signal(|| false);
+    let mut draft = use_signal(String::new);
+
+    rsx! {
+        div {
+            class: "inline-flex flex-wrap items-center gap-1",
+            onclick: move |e| e.stop_propagation(),
+            for (idx, tag) in current.iter().cloned().enumerate() {
+                span { class: "text-[10px] inline-flex items-center gap-1 px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded-full font-mono",
+                    "#{tag}"
+                    button {
+                        r#type: "button",
+                        class: "text-obsidian-text-muted hover:text-red-300 leading-none",
+                        onclick: {
+                            let tags = current.clone();
+                            move |e: dioxus::prelude::Event<dioxus::prelude::MouseData>| {
+                                e.stop_propagation();
+                                let mut next = tags.clone();
+                                if idx < next.len() {
+                                    next.remove(idx);
+                                    on_save.call(next);
+                                }
+                            }
+                        },
+                        "×"
+                    }
+                }
+            }
+            if *adding.read() {
+                input {
+                    r#type: "text",
+                    class: "px-2 py-0.5 text-[10px] bg-obsidian-bg border border-obsidian-accent rounded-full text-obsidian-text outline-none w-24",
+                    placeholder: "tag",
+                    value: "{draft.read()}",
+                    autofocus: true,
+                    oninput: move |e| draft.set(e.value()),
+                    onkeydown: {
+                        let tags = current.clone();
+                        move |e: dioxus::prelude::Event<dioxus::prelude::KeyboardData>| {
+                            let key = e.key().to_string();
+                            if key == "Enter" {
+                                let value = draft.read().trim().to_string();
+                                if !value.is_empty() && !tags.iter().any(|t| t == &value) {
+                                    let mut next = tags.clone();
+                                    next.push(value);
+                                    on_save.call(next);
+                                }
+                                draft.set(String::new());
+                                adding.set(false);
+                            } else if key == "Escape" {
+                                draft.set(String::new());
+                                adding.set(false);
+                            }
+                        }
+                    },
+                    onblur: {
+                        let tags = current.clone();
+                        move |_| {
+                            let value = draft.read().trim().to_string();
+                            if !value.is_empty() && !tags.iter().any(|t| t == &value) {
+                                let mut next = tags.clone();
+                                next.push(value);
+                                on_save.call(next);
+                            }
+                            draft.set(String::new());
+                            adding.set(false);
+                        }
+                    },
+                }
+            } else {
+                button {
+                    r#type: "button",
+                    class: "text-[10px] px-2 py-0.5 bg-transparent text-obsidian-text-muted rounded-full font-mono border border-dashed border-white/10 hover:border-obsidian-accent hover:text-obsidian-accent",
+                    onclick: move |e| {
+                        e.stop_propagation();
+                        adding.set(true);
+                    },
+                    "+ tag"
+                }
+            }
+        }
+    }
+}
+
 /// Decode `TransactionView.postings` (serde_json::Value, FLEXIBLE on the
 /// backend) into a Vec of display rows. Postings missing required fields
 /// are silently dropped — `record_transaction` validates upstream so this
@@ -1806,11 +1981,54 @@ fn FilterBar(
 /// shown so the user sees exactly where money moved. Header carries
 /// description + all four state signals (category, tags, cleared,
 /// attachment) and wraps naturally on narrow screens so the description
-/// never truncates. Clicking anywhere on the row routes to the detail view.
+/// never truncates. Clicking anywhere on the row routes to the detail view;
+/// category / tag chips are interactive (inline edit, stop_propagation).
 #[component]
 fn TransactionListRow(txn: TransactionView, on_click: EventHandler<()>) -> Element {
-    let postings = posting_views(&txn.postings);
-    let has_attachment = txn.attachment.is_some();
+    // Local mutable mirror of the prop so inline edits render optimistically
+    // without waiting for a parent refetch. Backend errors revert the change
+    // via the error toast on the chip itself.
+    let local = use_signal(|| txn.clone());
+    let snapshot = local.read().clone();
+    let postings = posting_views(&snapshot.postings);
+    let has_attachment = snapshot.attachment.is_some();
+    let txn_id = snapshot.id.clone();
+
+    let on_save_category = {
+        let id = txn_id.clone();
+        let mut local = local;
+        move |value: String| {
+            let id = id.clone();
+            spawn(async move {
+                if let Err(e) = bridge::invoke_categorize_transaction(&id, &value).await {
+                    web_sys::console::error_1(&format!("categorize failed: {e}").into());
+                    return;
+                }
+                let mut next = local.read().clone();
+                next.category = if value.is_empty() { None } else { Some(value) };
+                local.set(next);
+            });
+        }
+    };
+
+    let on_save_tags = {
+        let id = txn_id.clone();
+        let mut local = local;
+        move |tags: Vec<String>| {
+            let id = id.clone();
+            let tags_clone = tags.clone();
+            spawn(async move {
+                if let Err(e) = bridge::invoke_tag_transaction(&id, tags_clone).await {
+                    web_sys::console::error_1(&format!("tag failed: {e}").into());
+                    return;
+                }
+                let mut next = local.read().clone();
+                next.tags_top = tags;
+                local.set(next);
+            });
+        }
+    };
+
     rsx! {
         button {
             r#type: "button",
@@ -1820,20 +2038,18 @@ fn TransactionListRow(txn: TransactionView, on_click: EventHandler<()>) -> Eleme
             // line on mobile rather than pushing description off-screen.
             div { class: "flex flex-wrap items-center gap-x-2 gap-y-1 mb-2",
                 span { class: "text-xs text-obsidian-text-muted font-mono shrink-0",
-                    "{txn.date}"
+                    "{snapshot.date}"
                 }
-                span { class: "text-sm text-obsidian-text", "{txn.description}" }
-                if let Some(cat) = txn.category.clone() {
-                    span { class: "text-[10px] px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full font-medium",
-                        "{cat}"
-                    }
+                span { class: "text-sm text-obsidian-text", "{snapshot.description}" }
+                EditableCategoryChip {
+                    current: snapshot.category.clone(),
+                    on_save: on_save_category,
                 }
-                for tag in txn.tags_top.iter().cloned() {
-                    span { class: "text-[10px] px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded-full font-mono",
-                        "#{tag}"
-                    }
+                EditableTagList {
+                    current: snapshot.tags_top.clone(),
+                    on_save: on_save_tags,
                 }
-                if txn.cleared {
+                if snapshot.cleared {
                     span {
                         class: "text-xs text-emerald-400",
                         title: "Reconciled against a statement",
@@ -2006,8 +2222,49 @@ fn TransactionDetailView(txn_id: String, on_back: EventHandler<()>) -> Element {
 
 #[component]
 fn TransactionDetailBody(txn: TransactionView) -> Element {
-    let postings = posting_views(&txn.postings);
-    let attachment_meta = txn.attachment.as_ref().and_then(extract_attachment_meta);
+    // Local mirror of the prop for optimistic-edit updates. Same pattern as
+    // TransactionListRow — backend writes succeed before the projection
+    // refresh would otherwise re-render us.
+    let local = use_signal(|| txn.clone());
+    let snapshot = local.read().clone();
+    let postings = posting_views(&snapshot.postings);
+    let attachment_meta = snapshot.attachment.as_ref().and_then(extract_attachment_meta);
+    let txn_id = snapshot.id.clone();
+
+    let on_save_category = {
+        let id = txn_id.clone();
+        let mut local = local;
+        move |value: String| {
+            let id = id.clone();
+            spawn(async move {
+                if let Err(e) = bridge::invoke_categorize_transaction(&id, &value).await {
+                    web_sys::console::error_1(&format!("categorize failed: {e}").into());
+                    return;
+                }
+                let mut next = local.read().clone();
+                next.category = if value.is_empty() { None } else { Some(value) };
+                local.set(next);
+            });
+        }
+    };
+
+    let on_save_tags = {
+        let id = txn_id.clone();
+        let mut local = local;
+        move |tags: Vec<String>| {
+            let id = id.clone();
+            let tags_clone = tags.clone();
+            spawn(async move {
+                if let Err(e) = bridge::invoke_tag_transaction(&id, tags_clone).await {
+                    web_sys::console::error_1(&format!("tag failed: {e}").into());
+                    return;
+                }
+                let mut next = local.read().clone();
+                next.tags_top = tags;
+                local.set(next);
+            });
+        }
+    };
 
     rsx! {
         div { class: "space-y-6",
@@ -2015,33 +2272,31 @@ fn TransactionDetailBody(txn: TransactionView) -> Element {
             div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
                 div { class: "flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-3",
                     span { class: "text-sm text-obsidian-text-muted font-mono",
-                        "{txn.date}"
+                        "{snapshot.date}"
                     }
                     h2 { class: "text-lg font-semibold text-obsidian-text",
-                        "{txn.description}"
+                        "{snapshot.description}"
                     }
                 }
-                div { class: "flex flex-wrap gap-2",
-                    if let Some(cat) = txn.category.clone() {
-                        span { class: "text-xs px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full font-medium",
-                            "{cat}"
-                        }
+                div { class: "flex flex-wrap gap-2 items-center",
+                    EditableCategoryChip {
+                        current: snapshot.category.clone(),
+                        on_save: on_save_category,
                     }
-                    for tag in txn.tags_top.iter().cloned() {
-                        span { class: "text-xs px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded-full font-mono",
-                            "#{tag}"
-                        }
+                    EditableTagList {
+                        current: snapshot.tags_top.clone(),
+                        on_save: on_save_tags,
                     }
-                    if txn.cleared {
+                    if snapshot.cleared {
                         span { class: "text-xs px-2 py-0.5 bg-emerald-500/15 text-emerald-300 rounded-full",
                             "✓ Cleared"
-                            if let Some(date) = txn.cleared_date.clone() {
+                            if let Some(date) = snapshot.cleared_date.clone() {
                                 " · {date}"
                             }
                         }
                     }
                 }
-                if let Some(src) = txn.statement_source.clone() {
+                if let Some(src) = snapshot.statement_source.clone() {
                     div { class: "mt-3 text-xs text-obsidian-text-muted",
                         "Statement: "
                         span { class: "font-mono", "{src}" }

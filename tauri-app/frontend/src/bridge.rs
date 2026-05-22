@@ -1117,6 +1117,48 @@ pub async fn invoke_list_transactions(
     }
 }
 
+/// Set (or clear) the LLM-derived category for a transaction. Empty string
+/// clears it. Backend appends a `TransactionCategorized` event; the
+/// projection writes `category` on the row. Used by inline-edit chips in
+/// the Phase 4.1 list and Phase 4.2 detail views.
+pub async fn invoke_categorize_transaction(txn_id: &str, category: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (txn_id, category);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            txn_id: &'a str,
+            category: &'a str,
+        }
+        invoke_unit("categorize_transaction", &Args { txn_id, category }).await
+    }
+}
+
+/// Replace the top-level tag set for a transaction. The full vector is the
+/// new state — to add a tag, send `current_tags + [new]`; to remove, send
+/// the filtered vector. Backend's `on_transaction_tagged` projection sets
+/// `tags_top = $tags`, so this is a complete-replacement op.
+pub async fn invoke_tag_transaction(txn_id: &str, tags: Vec<String>) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (txn_id, tags);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            txn_id: &'a str,
+            tags: Vec<String>,
+        }
+        invoke_unit("tag_transaction", &Args { txn_id, tags }).await
+    }
+}
+
 /// Fetch a single transaction by id. Returns `None` if the row is missing,
 /// removed, or has been superseded by a merge (the projection hides those).
 pub async fn invoke_get_transaction(txn_id: &str) -> Result<Option<TransactionView>, String> {
