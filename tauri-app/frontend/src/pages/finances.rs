@@ -73,6 +73,9 @@ enum FinancesView {
     BatchReview,
     /// Committed-transactions browse screen (Phase 4.1).
     TransactionList,
+    /// Single-transaction detail screen with attachment viewer (Phase 4.2).
+    /// Selected `txn_id` rides along in `selected_txn_id` (variant stays Copy).
+    TransactionDetail,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -82,6 +85,7 @@ pub fn FinancesPage() -> Element {
     let mut view = use_signal(|| FinancesView::Home);
     let mut pending_draft: Signal<Option<ExtractedDraft>> = use_signal(|| None);
     let mut selected_batch_id: Signal<Option<String>> = use_signal(|| None);
+    let mut selected_txn_id: Signal<Option<String>> = use_signal(|| None);
     // Pending-batch count, refreshed every time the user lands on Home. A
     // separate signal (not derived from listing the batches inline) keeps the
     // Home banner cheap — one COUNT query instead of a full SELECT every
@@ -212,8 +216,37 @@ pub fn FinancesPage() -> Element {
                 FinancesView::TransactionList => rsx! {
                     TransactionListView {
                         on_back: move |_| view.set(FinancesView::Home),
+                        on_open_txn: move |txn_id: String| {
+                            selected_txn_id.set(Some(txn_id));
+                            view.set(FinancesView::TransactionDetail);
+                        },
                     }
                 },
+                FinancesView::TransactionDetail => {
+                    let tid = selected_txn_id.read().clone();
+                    match tid {
+                        Some(txn_id) => rsx! {
+                            TransactionDetailView {
+                                txn_id: txn_id,
+                                on_back: move |_| {
+                                    selected_txn_id.set(None);
+                                    view.set(FinancesView::TransactionList);
+                                },
+                            }
+                        },
+                        None => rsx! {
+                            div {
+                                class: "text-obsidian-text-muted text-sm",
+                                "No transaction selected. "
+                                button {
+                                    class: "underline",
+                                    onclick: move |_| view.set(FinancesView::TransactionList),
+                                    "Back to list"
+                                }
+                            }
+                        },
+                    }
+                }
             }
         }
     }
@@ -1521,7 +1554,10 @@ fn posting_views(value: &serde_json::Value) -> Vec<PostingRowView> {
 }
 
 #[component]
-fn TransactionListView(on_back: EventHandler<()>) -> Element {
+fn TransactionListView(
+    on_back: EventHandler<()>,
+    on_open_txn: EventHandler<String>,
+) -> Element {
     let mut transactions: Signal<Vec<TransactionView>> = use_signal(Vec::new);
     let mut loading: Signal<bool> = use_signal(|| true);
     let mut error: Signal<Option<String>> = use_signal(|| None);
@@ -1625,7 +1661,12 @@ fn TransactionListView(on_back: EventHandler<()>) -> Element {
                 for txn in rows {
                     TransactionListRow {
                         key: "{txn.id}",
-                        txn: txn,
+                        txn: txn.clone(),
+                        on_click: {
+                            let id = txn.id.clone();
+                            let handler = on_open_txn;
+                            move |_| handler.call(id.clone())
+                        },
                     }
                 }
             }
@@ -1765,13 +1806,16 @@ fn FilterBar(
 /// shown so the user sees exactly where money moved. Header carries
 /// description + all four state signals (category, tags, cleared,
 /// attachment) and wraps naturally on narrow screens so the description
-/// never truncates.
+/// never truncates. Clicking anywhere on the row routes to the detail view.
 #[component]
-fn TransactionListRow(txn: TransactionView) -> Element {
+fn TransactionListRow(txn: TransactionView, on_click: EventHandler<()>) -> Element {
     let postings = posting_views(&txn.postings);
     let has_attachment = txn.attachment.is_some();
     rsx! {
-        div { class: "p-3 bg-obsidian-sidebar/60 border border-white/5 rounded-lg",
+        button {
+            r#type: "button",
+            class: "block w-full text-left p-3 bg-obsidian-sidebar/60 border border-white/5 rounded-lg hover:border-obsidian-accent/40 transition-colors",
+            onclick: move |_| on_click.call(()),
             // Header — flex-wrap so trailing chips/icons spill to a second
             // line on mobile rather than pushing description off-screen.
             div { class: "flex flex-wrap items-center gap-x-2 gap-y-1 mb-2",
@@ -1818,6 +1862,294 @@ fn TransactionListRow(txn: TransactionView) -> Element {
                         span { class: "text-obsidian-text shrink-0",
                             "{posting.amount} {posting.commodity}"
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Transaction detail view (Phase 4.2)
+//
+// Read-only view of one transaction's full payload plus an attachment viewer.
+// Edit (category + tag) lands in Phase 4.3. Attachment rendering uses
+// `URL.createObjectURL(Blob)` so large PDFs don't bloat the DOM via base64
+// data URIs; the URL is revoked when the component unmounts via a guard.
+// =============================================================================
+
+/// Owns a blob: URL for an attachment and revokes it on Drop so the WebView
+/// doesn't accumulate orphaned object URLs across navigations. Holding this
+/// inside a `Signal<Option<ObjectUrlGuard>>` ties the URL's lifetime to the
+/// detail view component.
+struct ObjectUrlGuard(String);
+
+impl ObjectUrlGuard {
+    fn from_bytes(bytes: &[u8], mime: &str) -> Result<Self, String> {
+        use wasm_bindgen::JsCast;
+        let arr = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+        arr.copy_from(bytes);
+        let parts = js_sys::Array::new();
+        parts.push(&arr.buffer());
+        let opts = web_sys::BlobPropertyBag::new();
+        opts.set_type(mime);
+        let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(
+            parts.unchecked_ref(),
+            &opts,
+        )
+        .map_err(|e| format!("blob construct: {e:?}"))?;
+        let url = web_sys::Url::create_object_url_with_blob(&blob)
+            .map_err(|e| format!("object url: {e:?}"))?;
+        Ok(Self(url))
+    }
+
+    fn url(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for ObjectUrlGuard {
+    fn drop(&mut self) {
+        let _ = web_sys::Url::revoke_object_url(&self.0);
+    }
+}
+
+/// What kind of inline rendering the attachment supports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachmentRender {
+    Image,
+    Pdf,
+    Other,
+}
+
+fn classify_attachment(mime: &str) -> AttachmentRender {
+    let mime = mime.to_ascii_lowercase();
+    if mime.starts_with("image/") {
+        AttachmentRender::Image
+    } else if mime == "application/pdf" || mime == "application/x-pdf" {
+        AttachmentRender::Pdf
+    } else {
+        AttachmentRender::Other
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AttachmentMeta {
+    sha256: String,
+    filename: String,
+    mime_type: String,
+    size: u64,
+}
+
+/// Pull the four `AttachmentRef` fields out of the serde_json::Value the
+/// backend ships. Returns None when the field is null or any required key
+/// is missing — defensive only; `record_transaction` validates upstream.
+fn extract_attachment_meta(value: &serde_json::Value) -> Option<AttachmentMeta> {
+    Some(AttachmentMeta {
+        sha256: value.get("sha256")?.as_str()?.to_string(),
+        filename: value.get("filename")?.as_str()?.to_string(),
+        mime_type: value.get("mime_type")?.as_str()?.to_string(),
+        size: value.get("size")?.as_u64().unwrap_or(0),
+    })
+}
+
+#[component]
+fn TransactionDetailView(txn_id: String, on_back: EventHandler<()>) -> Element {
+    let mut txn: Signal<Option<Result<TransactionView, String>>> = use_signal(|| None);
+    let txn_id_for_load = txn_id.clone();
+
+    use_effect(move || {
+        let id = txn_id_for_load.clone();
+        spawn(async move {
+            let res = bridge::invoke_get_transaction(&id).await;
+            let mapped = match res {
+                Ok(Some(t)) => Ok(t),
+                Ok(None) => Err(format!(
+                    "Transaction {id} not found. It may have been deleted or merged on another device."
+                )),
+                Err(e) => Err(e),
+            };
+            txn.set(Some(mapped));
+        });
+    });
+
+    let header = rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Transaction"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← List"
+            }
+        }
+    };
+
+    match txn.read().clone() {
+        None => rsx! {
+            {header}
+            div { class: "text-obsidian-text-muted text-sm", "Loading…" }
+        },
+        Some(Err(msg)) => rsx! {
+            {header}
+            div { class: "p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "{msg}"
+            }
+        },
+        Some(Ok(t)) => rsx! {
+            {header}
+            TransactionDetailBody { txn: t }
+        },
+    }
+}
+
+#[component]
+fn TransactionDetailBody(txn: TransactionView) -> Element {
+    let postings = posting_views(&txn.postings);
+    let attachment_meta = txn.attachment.as_ref().and_then(extract_attachment_meta);
+
+    rsx! {
+        div { class: "space-y-6",
+            // --- Metadata block ---
+            div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+                div { class: "flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-3",
+                    span { class: "text-sm text-obsidian-text-muted font-mono",
+                        "{txn.date}"
+                    }
+                    h2 { class: "text-lg font-semibold text-obsidian-text",
+                        "{txn.description}"
+                    }
+                }
+                div { class: "flex flex-wrap gap-2",
+                    if let Some(cat) = txn.category.clone() {
+                        span { class: "text-xs px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full font-medium",
+                            "{cat}"
+                        }
+                    }
+                    for tag in txn.tags_top.iter().cloned() {
+                        span { class: "text-xs px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded-full font-mono",
+                            "#{tag}"
+                        }
+                    }
+                    if txn.cleared {
+                        span { class: "text-xs px-2 py-0.5 bg-emerald-500/15 text-emerald-300 rounded-full",
+                            "✓ Cleared"
+                            if let Some(date) = txn.cleared_date.clone() {
+                                " · {date}"
+                            }
+                        }
+                    }
+                }
+                if let Some(src) = txn.statement_source.clone() {
+                    div { class: "mt-3 text-xs text-obsidian-text-muted",
+                        "Statement: "
+                        span { class: "font-mono", "{src}" }
+                    }
+                }
+            }
+
+            // --- Postings ---
+            div {
+                h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2",
+                    "Postings"
+                }
+                div { class: "space-y-1 p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg",
+                    for posting in postings {
+                        div { class: "flex justify-between gap-3 text-sm font-mono",
+                            span { class: "text-obsidian-text-muted truncate",
+                                "{posting.account}"
+                            }
+                            span { class: "text-obsidian-text shrink-0",
+                                "{posting.amount} {posting.commodity}"
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- Attachment ---
+            if let Some(meta) = attachment_meta {
+                AttachmentViewer { meta: meta }
+            }
+        }
+    }
+}
+
+#[component]
+fn AttachmentViewer(meta: AttachmentMeta) -> Element {
+    let mut url_guard: Signal<Option<ObjectUrlGuard>> = use_signal(|| None);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+
+    let sha256 = meta.sha256.clone();
+    let mime = meta.mime_type.clone();
+    use_effect(move || {
+        let sha = sha256.clone();
+        let mime = mime.clone();
+        spawn(async move {
+            match bridge::invoke_fetch_attachment(&sha).await {
+                Ok(bytes) => match ObjectUrlGuard::from_bytes(&bytes, &mime) {
+                    Ok(guard) => url_guard.set(Some(guard)),
+                    Err(e) => error.set(Some(e)),
+                },
+                Err(e) => error.set(Some(e)),
+            }
+        });
+    });
+
+    let render = classify_attachment(&meta.mime_type);
+    let size_kb = (meta.size as f64 / 1024.0).round() as u64;
+
+    rsx! {
+        div {
+            h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2",
+                "Attachment"
+            }
+            div { class: "p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg space-y-3",
+                div { class: "flex items-center gap-2 text-xs text-obsidian-text-muted",
+                    svg { class: "w-3.5 h-3.5 text-obsidian-accent",
+                        fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                            d: "M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+                        }
+                    }
+                    span { class: "font-mono text-obsidian-text", "{meta.filename}" }
+                    span { " · {size_kb} KB · {meta.mime_type}" }
+                }
+
+                if let Some(msg) = error.read().clone() {
+                    div { class: "p-3 bg-red-950/30 border border-red-500/30 rounded text-xs text-red-300",
+                        "Couldn't load attachment: {msg}"
+                    }
+                } else {
+                    match url_guard.read().as_ref().map(|g| g.url().to_string()) {
+                        None => rsx! {
+                            div { class: "text-xs text-obsidian-text-muted", "Loading attachment…" }
+                        },
+                        Some(url) => match render {
+                            AttachmentRender::Image => rsx! {
+                                img {
+                                    src: "{url}",
+                                    alt: "{meta.filename}",
+                                    class: "max-w-full max-h-[600px] rounded border border-white/10",
+                                }
+                            },
+                            AttachmentRender::Pdf => rsx! {
+                                iframe {
+                                    src: "{url}",
+                                    class: "w-full h-[600px] rounded border border-white/10 bg-white",
+                                    title: "{meta.filename}",
+                                }
+                            },
+                            AttachmentRender::Other => rsx! {
+                                a {
+                                    href: "{url}",
+                                    download: "{meta.filename}",
+                                    class: "inline-block px-3 py-1.5 text-xs bg-obsidian-accent text-black font-medium rounded hover:opacity-90",
+                                    "Download {meta.filename}"
+                                }
+                            },
+                        },
                     }
                 }
             }
@@ -1887,5 +2219,53 @@ mod tests {
         // is calibrated for the listed subtypes.
         assert_eq!(classify_share_mime("image/tiff", "r.tiff"), None);
         assert_eq!(classify_share_mime("image/svg+xml", "r.svg"), None);
+    }
+
+    // --- Phase 4.2 attachment-render classifier --------------------------
+
+    #[test]
+    fn classify_attachment_routes_images_to_image_render() {
+        assert_eq!(classify_attachment("image/jpeg"), AttachmentRender::Image);
+        assert_eq!(classify_attachment("image/png"), AttachmentRender::Image);
+        assert_eq!(classify_attachment("IMAGE/HEIC"), AttachmentRender::Image);
+    }
+
+    #[test]
+    fn classify_attachment_routes_pdf_variants_to_pdf_render() {
+        assert_eq!(classify_attachment("application/pdf"), AttachmentRender::Pdf);
+        assert_eq!(classify_attachment("APPLICATION/PDF"), AttachmentRender::Pdf);
+        assert_eq!(classify_attachment("application/x-pdf"), AttachmentRender::Pdf);
+    }
+
+    #[test]
+    fn classify_attachment_falls_back_to_other_for_unknown_mime() {
+        assert_eq!(classify_attachment("text/plain"), AttachmentRender::Other);
+        assert_eq!(classify_attachment("application/zip"), AttachmentRender::Other);
+        assert_eq!(classify_attachment(""), AttachmentRender::Other);
+    }
+
+    #[test]
+    fn extract_attachment_meta_decodes_complete_ref() {
+        let v = serde_json::json!({
+            "sha256": "abc123",
+            "filename": "receipt.jpg",
+            "mime_type": "image/jpeg",
+            "size": 1024,
+        });
+        let meta = extract_attachment_meta(&v).unwrap();
+        assert_eq!(meta.sha256, "abc123");
+        assert_eq!(meta.filename, "receipt.jpg");
+        assert_eq!(meta.mime_type, "image/jpeg");
+        assert_eq!(meta.size, 1024);
+    }
+
+    #[test]
+    fn extract_attachment_meta_returns_none_when_required_field_missing() {
+        let v = serde_json::json!({
+            "filename": "x.pdf",
+            "mime_type": "application/pdf",
+            "size": 5000,
+        });
+        assert!(extract_attachment_meta(&v).is_none(), "missing sha256 should fail");
     }
 }

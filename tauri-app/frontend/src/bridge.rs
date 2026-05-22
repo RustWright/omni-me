@@ -1117,6 +1117,44 @@ pub async fn invoke_list_transactions(
     }
 }
 
+/// Fetch a single transaction by id. Returns `None` if the row is missing,
+/// removed, or has been superseded by a merge (the projection hides those).
+pub async fn invoke_get_transaction(txn_id: &str) -> Result<Option<TransactionView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = txn_id;
+        Ok(None)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            txn_id: &'a str,
+        }
+        invoke("get_transaction", &Args { txn_id }).await
+    }
+}
+
+/// Fetch attachment bytes by content-address. Cache-first inside Tauri;
+/// on miss, the backend round-trips to the server's `/blobs/{sha256}` and
+/// populates the local LRU. Used by the Phase 4.2 detail-view attachment
+/// viewer.
+pub async fn invoke_fetch_attachment(sha256: &str) -> Result<Vec<u8>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = sha256;
+        Ok(Vec::new())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            sha256: &'a str,
+        }
+        invoke("fetch_attachment", &Args { sha256 }).await
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Attachment cache (Phase 3.8 — surfaces Phase 3.7 cache commands in Settings)
 // -----------------------------------------------------------------------------

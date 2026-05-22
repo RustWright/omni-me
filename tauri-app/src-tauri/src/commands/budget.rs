@@ -143,6 +143,17 @@ fn row_to_view(row: TransactionRow) -> TransactionView {
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn get_transaction(
+    state: State<'_, AppState>,
+    txn_id: String,
+) -> Result<Option<TransactionView>, String> {
+    let row = queries::get_transaction(&state.db, &txn_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(row.map(row_to_view))
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn list_transactions(
     state: State<'_, AppState>,
     filter: Option<TxnFilter>,

@@ -19,6 +19,9 @@ web-sys = { version = "0.3", features = [
     "Element",
     "Node",
     "console",
+    "Blob",
+    "BlobPropertyBag",
+    "Url",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
