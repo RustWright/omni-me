@@ -280,6 +280,12 @@ pub fn FinancesPage() -> Element {
                     DashboardView {
                         on_back: move |_| view.set(FinancesView::Home),
                         on_open_unmatched: move |_| {
+                            // Phase 4.5 spec target was the 5.7 reconciliation
+                            // review, which doesn't exist yet — route to the
+                            // filtered txn list as the best available
+                            // destination. Swap to FinancesView::Reconciliation
+                            // (or whichever variant Phase 5.7 introduces) once
+                            // that screen ships.
                             pending_txn_filter.set(Some(TxnFilter {
                                 account: Some("Unmatched".to_string()),
                                 ..TxnFilter::default()

@@ -1514,9 +1514,13 @@ pub async fn invoke_check_affordability(
 
 #[cfg(feature = "mock")]
 fn mock_dashboard_summary() -> DashboardSummaryView {
+    // Net worth = sum of listable accounts' totals from mock_account_summaries
+    // EXCLUDING Unmatched (per dashboard policy): 4287.42 + 1054.65 + -1450.18
+    // = 3891.89. Keep these two mocks in sync so dashboard + accounts screens
+    // tell the same story in screenshots.
     DashboardSummaryView {
         base_currency: "CAD".into(),
-        net_worth_in_base: Some("4891.89".into()),
+        net_worth_in_base: Some("3891.89".into()),
         unmatched_balance: Some("-1.50".into()),
         monthly_buckets: vec![
             MonthlyTrendBucketView {
@@ -1576,9 +1580,11 @@ fn mock_dashboard_summary() -> DashboardSummaryView {
 #[cfg(feature = "mock")]
 fn mock_check_affordability(amount: &str) -> AffordVerdictView {
     // Mirror the conservative-after-recurring policy in the mock so the UI
-    // feels right without a real backend round-trip.
+    // feels right without a real backend round-trip. Net worth literal must
+    // match `mock_dashboard_summary`'s `net_worth_in_base` — sum of listable
+    // accounts ex-Unmatched per the dashboard policy.
     let amt: f64 = amount.parse().unwrap_or(0.0);
-    let net_worth = 4891.89_f64;
+    let net_worth = 3891.89_f64;
     // Mock recurring: 16.99 + 55 + 1850 = 1921.99 (all monthly).
     let recurring = 16.99 + 55.0 + 1850.0;
     let remaining = net_worth - recurring - amt;
