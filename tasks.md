@@ -213,6 +213,10 @@ Cycle 4 is dedicated polish + stable-v1 release.
 
 - [ ] **Lift `core::balances::LISTABLE_ACCOUNTS` into the `accounts` SurrealDB table** (currently a code constant; edits require a recompile). The `accounts` table + `AccountAdded` events already exist from Phase 1.9 but no UI manages them — Cycle 4 adds a Settings page section "Declared Accounts" with add/remove rows. `is_listable_account` then becomes a DB lookup over declared rows. Optional: a new `AccountRemoved` event so the soft-delete is reversible. [S]
 
+**Liquidity-aware `can_i_afford` (Cycle 3 Phase 4.5 surfaced 2026-05-23):**
+
+- [ ] **Compute "afford" against liquid assets, not total net worth.** Phase 4.5 ships the conservative-after-recurring policy (`net_worth - recurring - amount`), which counts illiquid assets (RRSP, FHSA, locked-in savings) as available. The real question users ask is "after my bills, do I have enough *spendable* money for this?" — that needs an `is_liquid: bool` per declared account (added in the same Settings section that drives [[user-managed-declared-accounts-list]]). `can_i_afford` then sums only liquid accounts' `total_in_base`. Likely a struct rename: `AffordVerdict.policy_label` becomes `"Liquid assets − next month's recurring"`. [S]
+
 **Cross-submodule state management (Cycle 3 Phase 3 gap surfaced 2026-05-17):**
 
 - [ ] **Tab-switch protection for in-flight captures.** Today's symptom: user kicks off a photo upload + Gemini extract round trip, then taps another top-level tab before it returns; `FinancesPage` unmounts and the captured bytes + draft progress vanish silently with no recovery path. Same shape applies to any other long-running per-tab work added later. **Fix scope:** lift in-flight captures (and any future "started here but takes a while" state) into a top-level shared store keyed by capture-id so navigating away doesn't kill the future; show a "you have an in-flight capture" affordance on Home if the user wanders back. This is the broader "sub-module state isolation hurts cross-tab continuity" rework — applies anywhere a page is the de-facto owner of work that outlives its own mount. [M]

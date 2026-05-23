@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use omni_me_core::balances::{self, AccountSummary, CommodityBalance};
+use omni_me_core::dashboard::{self, AffordVerdict, DashboardSummary, MonthlyTrendBucket, RecurringObligation};
 use omni_me_core::db::queries::{
     self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow, TxnFilter,
 };
@@ -289,6 +290,188 @@ pub async fn account_summaries(
     let summaries = balances::account_summaries(&journal_content, &declared, &base, as_of_date)
         .map_err(|e| format!("balance computation: {e}"))?;
     Ok(summaries.into_iter().map(summary_to_view).collect())
+}
+
+// --- Dashboard (Phase 4.5 + 4.6) --------------------------------------------
+
+/// Wire shape for one monthly trend bucket. Decimals → String.
+#[derive(Debug, Clone, Serialize)]
+pub struct MonthlyTrendBucketView {
+    pub month: String,
+    pub income: String,
+    pub spending: String,
+}
+
+/// Wire shape for one confirmed recurring obligation.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecurringObligationView {
+    pub vendor: String,
+    pub amount: String,
+    pub commodity: String,
+    pub cadence_days: u32,
+}
+
+/// Wire shape for the full dashboard payload.
+#[derive(Debug, Clone, Serialize)]
+pub struct DashboardSummaryView {
+    pub base_currency: String,
+    pub net_worth_in_base: Option<String>,
+    pub unmatched_balance: Option<String>,
+    pub monthly_buckets: Vec<MonthlyTrendBucketView>,
+    pub recurring: Vec<RecurringObligationView>,
+}
+
+/// Wire shape for an affordability verdict.
+#[derive(Debug, Clone, Serialize)]
+pub struct AffordVerdictView {
+    pub can_afford: bool,
+    pub remaining_in_base: String,
+    pub base_currency: String,
+    pub policy_label: String,
+}
+
+fn bucket_to_view(b: MonthlyTrendBucket) -> MonthlyTrendBucketView {
+    MonthlyTrendBucketView {
+        month: b.month,
+        income: b.income.to_string(),
+        spending: b.spending.to_string(),
+    }
+}
+
+fn recurring_to_view(r: RecurringObligation) -> RecurringObligationView {
+    RecurringObligationView {
+        vendor: r.vendor,
+        amount: r.amount.to_string(),
+        commodity: r.commodity,
+        cadence_days: r.cadence_days,
+    }
+}
+
+fn dashboard_to_view(s: DashboardSummary) -> DashboardSummaryView {
+    DashboardSummaryView {
+        base_currency: s.base_currency,
+        net_worth_in_base: s.net_worth_in_base.map(|d| d.to_string()),
+        unmatched_balance: s.unmatched_balance.map(|d| d.to_string()),
+        monthly_buckets: s.monthly_buckets.into_iter().map(bucket_to_view).collect(),
+        recurring: s.recurring.into_iter().map(recurring_to_view).collect(),
+    }
+}
+
+/// R1 dashboard payload (Phase 4.5 + 4.6). Reads the local journal +
+/// recurring patterns + declared accounts; runs `dashboard_summary`
+/// in-process.
+///
+/// `months_back` defaults to 6 — enough trend to spot direction without
+/// dominating the screen. `base_currency` defaults to "CAD". `as_of`
+/// defaults to today.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dashboard_summary(
+    state: State<'_, AppState>,
+    base_currency: Option<String>,
+    as_of: Option<String>,
+    months_back: Option<u32>,
+) -> Result<DashboardSummaryView, String> {
+    let base = base_currency.unwrap_or_else(|| "CAD".to_string());
+    let months = months_back.unwrap_or(6).max(1);
+    let as_of_date = match as_of {
+        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            .map_err(|e| format!("bad as_of date: {e}"))?,
+        None => chrono::Utc::now().date_naive(),
+    };
+
+    let journal_path = state.app_data_dir.join("budget.journal");
+    let journal_content = match tokio::fs::read_to_string(&journal_path).await {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("read journal file: {e}")),
+    };
+
+    let declared = queries::list_accounts(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let recurring = queries::list_recurring_patterns(&state.db, Some("confirmed"))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Fetch only the transactions touching the trend window. Cutoff is the
+    // first day of the earliest month we care about.
+    let cutoff = month_cutoff_date(as_of_date, months);
+    let monthly_txns = queries::list_transactions_since(&state.db, &cutoff)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let summary = dashboard::dashboard_summary(
+        &journal_content,
+        &declared,
+        &recurring,
+        &base,
+        as_of_date,
+        &monthly_txns,
+        months,
+    )
+    .map_err(|e| format!("dashboard computation: {e}"))?;
+    Ok(dashboard_to_view(summary))
+}
+
+/// Test-the-policy command for the Can-I-Afford widget. Calls
+/// `dashboard_summary` then `dashboard::can_i_afford` on the result.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn check_affordability(
+    state: State<'_, AppState>,
+    amount: String,
+    base_currency: Option<String>,
+    as_of: Option<String>,
+    months_back: Option<u32>,
+) -> Result<AffordVerdictView, String> {
+    use std::str::FromStr;
+    let amt = rust_decimal::Decimal::from_str(amount.trim())
+        .map_err(|e| format!("bad amount: {e}"))?;
+    let summary_view = dashboard_summary(state, base_currency, as_of, months_back).await?;
+    // Rebuild a minimal DashboardSummary for the verdict — we already
+    // stringified Decimals at the boundary, so parse back here. Avoids
+    // double DB I/O by reusing the summary we just computed.
+    let summary = dashboard::DashboardSummary {
+        base_currency: summary_view.base_currency.clone(),
+        net_worth_in_base: summary_view
+            .net_worth_in_base
+            .as_deref()
+            .and_then(|s| rust_decimal::Decimal::from_str(s).ok()),
+        unmatched_balance: summary_view
+            .unmatched_balance
+            .as_deref()
+            .and_then(|s| rust_decimal::Decimal::from_str(s).ok()),
+        monthly_buckets: vec![],
+        recurring: summary_view
+            .recurring
+            .iter()
+            .map(|r| dashboard::RecurringObligation {
+                vendor: r.vendor.clone(),
+                amount: rust_decimal::Decimal::from_str(&r.amount).unwrap_or_default(),
+                commodity: r.commodity.clone(),
+                cadence_days: r.cadence_days,
+            })
+            .collect(),
+    };
+    let verdict: AffordVerdict = dashboard::can_i_afford(amt, &summary);
+    Ok(AffordVerdictView {
+        can_afford: verdict.can_afford,
+        remaining_in_base: verdict.remaining_in_base.to_string(),
+        base_currency: summary_view.base_currency,
+        policy_label: verdict.policy_label,
+    })
+}
+
+/// First-day-of-month string for `months_back-1` months before `as_of`.
+/// Used to scope the `list_transactions_since` query feeding the trend.
+fn month_cutoff_date(as_of: NaiveDate, months_back: u32) -> String {
+    use chrono::Datelike;
+    let mut y = as_of.year();
+    let mut m = as_of.month() as i32 - (months_back as i32 - 1);
+    while m <= 0 {
+        m += 12;
+        y -= 1;
+    }
+    format!("{y:04}-{m:02}-01")
 }
 
 #[tauri::command(rename_all = "snake_case")]

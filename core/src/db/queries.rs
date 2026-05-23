@@ -629,3 +629,34 @@ pub async fn get_pending_batch_by_id(
     let rows: Vec<PendingBatchRow> = resp.take(0)?;
     Ok(rows.into_iter().next())
 }
+
+// --- Dashboard primitives (Phase 4.5+4.6) ---
+
+/// One transaction's date + raw postings — minimal columns for monthly
+/// trend bucketing. Avoid pulling the full `TransactionRow` shape into the
+/// aggregator since the dashboard doesn't need merge/clear/attachment
+/// fields.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct TxnPostingsRow {
+    pub date: String,
+    pub postings: DbValue,
+}
+
+/// Fetch visible transactions on or after `cutoff_date`, ordered by date.
+/// Used by `core::dashboard::monthly_buckets` to compute the income /
+/// spending trend without round-tripping the full TransactionRow shape.
+pub async fn list_transactions_since(
+    db: &Database,
+    cutoff_date: &str,
+) -> Result<Vec<TxnPostingsRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT date, postings FROM transactions
+             WHERE removed = false AND superseded_by IS NONE AND date >= $cutoff
+             ORDER BY date ASC",
+        )
+        .bind(("cutoff", cutoff_date.to_string()))
+        .await?;
+    let rows: Vec<TxnPostingsRow> = resp.take(0)?;
+    Ok(rows)
+}

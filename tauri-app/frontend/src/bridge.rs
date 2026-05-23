@@ -1,12 +1,15 @@
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "mock")]
-use crate::types::{AttachmentRef, CommodityBalanceView, ExtractedPostingView, TaskResult};
 use crate::types::{
-    AccountSummaryView, AutoImportSourceView, CommitBatchResult, CompletionEntry, ExtractedDraft,
-    GenericNoteItem, JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture,
-    RoutineGroup, RoutineItem, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
-    TransactionFormDraft, TransactionView, TxnFilter,
+    AttachmentRef, CommodityBalanceView, ExtractedPostingView, MonthlyTrendBucketView,
+    RecurringObligationView, TaskResult,
+};
+use crate::types::{
+    AccountSummaryView, AffordVerdictView, AutoImportSourceView, CommitBatchResult, CompletionEntry,
+    DashboardSummaryView, ExtractedDraft, GenericNoteItem, JournalEntryItem, LlmResult,
+    PendingBatchView, PendingShareCapture, RoutineGroup, RoutineItem, SyncInfo, SyncStatus,
+    SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 // Tauri IPC
@@ -1444,6 +1447,147 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
             total_in_base: Some("-1.50".into()),
         },
     ]
+}
+
+// -----------------------------------------------------------------------------
+// Dashboard (Phase 4.5 + 4.6 — R1 financial-health glance)
+// -----------------------------------------------------------------------------
+
+pub async fn invoke_dashboard_summary(
+    base_currency: Option<&str>,
+) -> Result<DashboardSummaryView, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = base_currency;
+        Ok(mock_dashboard_summary())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            base_currency: Option<&'a str>,
+            as_of: Option<&'a str>,
+            months_back: Option<u32>,
+        }
+        invoke(
+            "dashboard_summary",
+            &Args {
+                base_currency,
+                as_of: None,
+                months_back: None,
+            },
+        )
+        .await
+    }
+}
+
+pub async fn invoke_check_affordability(
+    amount: &str,
+    base_currency: Option<&str>,
+) -> Result<AffordVerdictView, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = base_currency;
+        Ok(mock_check_affordability(amount))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            amount: &'a str,
+            base_currency: Option<&'a str>,
+            as_of: Option<&'a str>,
+            months_back: Option<u32>,
+        }
+        invoke(
+            "check_affordability",
+            &Args {
+                amount,
+                base_currency,
+                as_of: None,
+                months_back: None,
+            },
+        )
+        .await
+    }
+}
+
+#[cfg(feature = "mock")]
+fn mock_dashboard_summary() -> DashboardSummaryView {
+    DashboardSummaryView {
+        base_currency: "CAD".into(),
+        net_worth_in_base: Some("4891.89".into()),
+        unmatched_balance: Some("-1.50".into()),
+        monthly_buckets: vec![
+            MonthlyTrendBucketView {
+                month: "2025-12".into(),
+                income: "3200.00".into(),
+                spending: "2814.55".into(),
+            },
+            MonthlyTrendBucketView {
+                month: "2026-01".into(),
+                income: "3200.00".into(),
+                spending: "2940.18".into(),
+            },
+            MonthlyTrendBucketView {
+                month: "2026-02".into(),
+                income: "3200.00".into(),
+                spending: "2670.42".into(),
+            },
+            MonthlyTrendBucketView {
+                month: "2026-03".into(),
+                income: "3450.00".into(),
+                spending: "3105.77".into(),
+            },
+            MonthlyTrendBucketView {
+                month: "2026-04".into(),
+                income: "3200.00".into(),
+                spending: "2890.31".into(),
+            },
+            MonthlyTrendBucketView {
+                month: "2026-05".into(),
+                income: "1820.00".into(),
+                spending: "1450.18".into(),
+            },
+        ],
+        recurring: vec![
+            RecurringObligationView {
+                vendor: "Netflix".into(),
+                amount: "16.99".into(),
+                commodity: "CAD".into(),
+                cadence_days: 30,
+            },
+            RecurringObligationView {
+                vendor: "Telus mobile".into(),
+                amount: "55.00".into(),
+                commodity: "CAD".into(),
+                cadence_days: 30,
+            },
+            RecurringObligationView {
+                vendor: "Rent".into(),
+                amount: "1850.00".into(),
+                commodity: "CAD".into(),
+                cadence_days: 30,
+            },
+        ],
+    }
+}
+
+#[cfg(feature = "mock")]
+fn mock_check_affordability(amount: &str) -> AffordVerdictView {
+    // Mirror the conservative-after-recurring policy in the mock so the UI
+    // feels right without a real backend round-trip.
+    let amt: f64 = amount.parse().unwrap_or(0.0);
+    let net_worth = 4891.89_f64;
+    // Mock recurring: 16.99 + 55 + 1850 = 1921.99 (all monthly).
+    let recurring = 16.99 + 55.0 + 1850.0;
+    let remaining = net_worth - recurring - amt;
+    AffordVerdictView {
+        can_afford: remaining > 0.0,
+        remaining_in_base: format!("{remaining:.2}"),
+        base_currency: "CAD".into(),
+        policy_label: "Net worth − next month's recurring".into(),
+    }
 }
 
 // -----------------------------------------------------------------------------

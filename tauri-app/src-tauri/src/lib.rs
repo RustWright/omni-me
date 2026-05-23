@@ -275,6 +275,8 @@ pub fn run() {
             commands::budget::add_account,
             commands::budget::list_accounts,
             commands::budget::account_summaries,
+            commands::budget::dashboard_summary,
+            commands::budget::check_affordability,
             commands::budget::set_budget,
             commands::budget::list_budgets,
             commands::budget::confirm_recurring,

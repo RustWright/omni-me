@@ -411,3 +411,43 @@ pub struct AccountSummaryView {
     pub balances: Vec<CommodityBalanceView>,
     pub total_in_base: Option<String>,
 }
+
+/// One month's income / spending bucket. Mirrors
+/// `core::dashboard::MonthlyTrendBucket` with Decimals stringified.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MonthlyTrendBucketView {
+    pub month: String,
+    pub income: String,
+    pub spending: String,
+}
+
+/// One confirmed recurring obligation. Mirrors
+/// `core::dashboard::RecurringObligation`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecurringObligationView {
+    pub vendor: String,
+    pub amount: String,
+    pub commodity: String,
+    pub cadence_days: u32,
+}
+
+/// R1 dashboard payload (Phase 4.5 + 4.6). Mirrors
+/// `core::dashboard::DashboardSummary`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DashboardSummaryView {
+    pub base_currency: String,
+    pub net_worth_in_base: Option<String>,
+    pub unmatched_balance: Option<String>,
+    pub monthly_buckets: Vec<MonthlyTrendBucketView>,
+    pub recurring: Vec<RecurringObligationView>,
+}
+
+/// Verdict for a "Can I afford X?" query. Mirrors
+/// `core::dashboard::AffordVerdict` plus the base currency.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AffordVerdictView {
+    pub can_afford: bool,
+    pub remaining_in_base: String,
+    pub base_currency: String,
+    pub policy_label: String,
+}

@@ -2,8 +2,10 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::types::{
-    AccountSummaryView, AttachmentRef, DraftTransactionView, ExtractedDraft, PendingBatchView,
-    PendingShareCapture, PostingInput, TransactionFormDraft, TransactionView, TxnFilter,
+    AccountSummaryView, AffordVerdictView, AttachmentRef, DashboardSummaryView,
+    DraftTransactionView, ExtractedDraft, MonthlyTrendBucketView, PendingBatchView,
+    PendingShareCapture, PostingInput, RecurringObligationView, TransactionFormDraft,
+    TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -79,6 +81,9 @@ enum FinancesView {
     /// Accounts screen — per-account balances aggregated to base currency
     /// (Phase 4.4). One card per declared+listable account.
     AccountList,
+    /// R1 financial-health glance dashboard (Phase 4.5 + 4.6). Net worth,
+    /// Unmatched, monthly trend, recurring, can-I-afford.
+    Dashboard,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -89,6 +94,10 @@ pub fn FinancesPage() -> Element {
     let mut pending_draft: Signal<Option<ExtractedDraft>> = use_signal(|| None);
     let mut selected_batch_id: Signal<Option<String>> = use_signal(|| None);
     let mut selected_txn_id: Signal<Option<String>> = use_signal(|| None);
+    // Dashboard widget click-through can seed the next TransactionList
+    // render with a pre-applied filter (e.g. account: "Unmatched"). One-shot
+    // — the list reads + clears it on mount.
+    let mut pending_txn_filter: Signal<Option<TxnFilter>> = use_signal(|| None);
     // Pending-batch count, refreshed every time the user lands on Home. A
     // separate signal (not derived from listing the batches inline) keeps the
     // Home banner cheap — one COUNT query instead of a full SELECT every
@@ -145,6 +154,7 @@ pub fn FinancesPage() -> Element {
                         on_open_batches: move |_| view.set(FinancesView::BatchList),
                         on_open_transactions: move |_| view.set(FinancesView::TransactionList),
                         on_open_accounts: move |_| view.set(FinancesView::AccountList),
+                        on_open_dashboard: move |_| view.set(FinancesView::Dashboard),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -217,13 +227,23 @@ pub fn FinancesPage() -> Element {
                         },
                     }
                 }
-                FinancesView::TransactionList => rsx! {
-                    TransactionListView {
-                        on_back: move |_| view.set(FinancesView::Home),
-                        on_open_txn: move |txn_id: String| {
-                            selected_txn_id.set(Some(txn_id));
-                            view.set(FinancesView::TransactionDetail);
-                        },
+                FinancesView::TransactionList => {
+                    // Drain the one-shot filter seed (set by dashboard
+                    // widget click-throughs). Snapshot + clear before render
+                    // so a back-and-forth doesn't re-apply it.
+                    let seed = pending_txn_filter.read().clone();
+                    if seed.is_some() {
+                        pending_txn_filter.set(None);
+                    }
+                    rsx! {
+                        TransactionListView {
+                            on_back: move |_| view.set(FinancesView::Home),
+                            on_open_txn: move |txn_id: String| {
+                                selected_txn_id.set(Some(txn_id));
+                                view.set(FinancesView::TransactionDetail);
+                            },
+                            initial_filter: seed,
+                        }
                     }
                 },
                 FinancesView::TransactionDetail => {
@@ -256,6 +276,18 @@ pub fn FinancesPage() -> Element {
                         on_back: move |_| view.set(FinancesView::Home),
                     }
                 },
+                FinancesView::Dashboard => rsx! {
+                    DashboardView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                        on_open_unmatched: move |_| {
+                            pending_txn_filter.set(Some(TxnFilter {
+                                account: Some("Unmatched".to_string()),
+                                ..TxnFilter::default()
+                            }));
+                            view.set(FinancesView::TransactionList);
+                        },
+                    }
+                },
             }
         }
     }
@@ -271,6 +303,7 @@ fn HomeView(
     on_open_batches: EventHandler<()>,
     on_open_transactions: EventHandler<()>,
     on_open_accounts: EventHandler<()>,
+    on_open_dashboard: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -342,11 +375,27 @@ fn HomeView(
             }
         }
 
-        // --- Recent transactions section ---
+        // --- Recent / glance section ---
         div { class: "border-b border-white/5 pb-2 mb-4",
-            h2 { class: "text-lg font-bold text-obsidian-text", "Recent" }
+            h2 { class: "text-lg font-bold text-obsidian-text", "Glance + browse" }
         }
         div { class: "space-y-3",
+            button {
+                class: "w-full p-4 bg-obsidian-accent/10 border border-obsidian-accent/30 rounded-lg flex items-center justify-between hover:bg-obsidian-accent/15 hover:border-obsidian-accent/50 transition-colors text-left",
+                onclick: move |_| on_open_dashboard.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-accent", "Dashboard" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Net worth, trend, recurring, and can-I-afford."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
             button {
                 class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
                 onclick: move |_| on_open_transactions.call(()),
@@ -1760,6 +1809,11 @@ fn posting_views(value: &serde_json::Value) -> Vec<PostingRowView> {
 fn TransactionListView(
     on_back: EventHandler<()>,
     on_open_txn: EventHandler<String>,
+    /// Optional initial filter seed — used when entering the screen from a
+    /// dashboard widget click-through (e.g. Unmatched balance → list
+    /// filtered to `account: "Unmatched"`). None = blank filter.
+    #[props(default = None)]
+    initial_filter: Option<TxnFilter>,
 ) -> Element {
     let mut transactions: Signal<Vec<TransactionView>> = use_signal(Vec::new);
     let mut loading: Signal<bool> = use_signal(|| true);
@@ -1770,8 +1824,9 @@ fn TransactionListView(
     // what the FilterBar inputs hold; only Apply copies draft → active.
     // Keeping them separate means typing in a field doesn't fire queries
     // and accidental edits don't invalidate the current page until Apply.
-    let mut active_filter: Signal<TxnFilter> = use_signal(TxnFilter::default);
-    let draft_filter: Signal<TxnFilter> = use_signal(TxnFilter::default);
+    let seed = initial_filter.clone().unwrap_or_default();
+    let mut active_filter: Signal<TxnFilter> = use_signal(|| seed.clone());
+    let draft_filter: Signal<TxnFilter> = use_signal(|| seed.clone());
 
     // Load (or re-load) the first page whenever active_filter changes.
     // Re-deriving via use_effect keeps the dependency wiring honest — the
@@ -2609,6 +2664,375 @@ fn AccountSummaryCard(summary: AccountSummaryView) -> Element {
     }
 }
 
+// =============================================================================
+// Phase 4.5 + 4.6 — R1 financial-health glance dashboard
+// =============================================================================
+
+/// Largest signed `(income, spending)` figure across all months — used to
+/// normalize the trend chart's bar heights. Returns `None` when every
+/// month is exactly zero (an entirely empty trend renders flat).
+fn max_trend_magnitude(buckets: &[MonthlyTrendBucketView]) -> Option<f64> {
+    let max = buckets
+        .iter()
+        .flat_map(|b| {
+            [
+                b.income.parse::<f64>().unwrap_or(0.0).abs(),
+                b.spending.parse::<f64>().unwrap_or(0.0).abs(),
+            ]
+        })
+        .fold(0.0_f64, f64::max);
+    if max <= 0.0 {
+        None
+    } else {
+        Some(max)
+    }
+}
+
+/// Project a numeric string + scale onto a 0-100% bar height. Defensive on
+/// parse failure (returns 0).
+fn bar_height_pct(amount: &str, scale: f64) -> f64 {
+    if scale <= 0.0 {
+        return 0.0;
+    }
+    let v = amount.parse::<f64>().unwrap_or(0.0).abs();
+    ((v / scale) * 100.0).clamp(0.0, 100.0)
+}
+
+/// Pretty-print a cadence in days as a human label.
+/// 30 → "monthly", 14 → "biweekly", 7 → "weekly", else "every N days".
+fn cadence_label(days: u32) -> String {
+    match days {
+        7 => "weekly".to_string(),
+        14 => "biweekly".to_string(),
+        30 | 31 => "monthly".to_string(),
+        n if n == 0 => "—".to_string(),
+        n => format!("every {n} days"),
+    }
+}
+
+#[component]
+fn DashboardView(
+    on_back: EventHandler<()>,
+    on_open_unmatched: EventHandler<()>,
+) -> Element {
+    let mut summary: Signal<Option<DashboardSummaryView>> = use_signal(|| None);
+    let mut loading: Signal<bool> = use_signal(|| true);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+
+    use_effect(move || {
+        spawn(async move {
+            loading.set(true);
+            error.set(None);
+            match bridge::invoke_dashboard_summary(Some("CAD")).await {
+                Ok(s) => summary.set(Some(s)),
+                Err(e) => error.set(Some(e)),
+            }
+            loading.set(false);
+        });
+    });
+
+    let snapshot = summary.read().clone();
+    let is_loading = *loading.read();
+    let err_msg = error.read().clone();
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Dashboard"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        if let Some(msg) = err_msg {
+            div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "Failed to load dashboard: {msg}"
+            }
+        }
+
+        if is_loading && snapshot.is_none() {
+            div { class: "p-6 text-center text-obsidian-text-muted text-sm", "Loading…" }
+        } else if let Some(s) = snapshot {
+            div { class: "grid grid-cols-1 md:grid-cols-2 gap-3",
+                NetWorthCard {
+                    net_worth: s.net_worth_in_base.clone(),
+                    base_currency: s.base_currency.clone(),
+                }
+                UnmatchedCard {
+                    unmatched: s.unmatched_balance.clone(),
+                    base_currency: s.base_currency.clone(),
+                    on_click: move |_| on_open_unmatched.call(()),
+                }
+            }
+            MonthlyTrendCard {
+                buckets: s.monthly_buckets.clone(),
+                base_currency: s.base_currency.clone(),
+            }
+            RecurringCard {
+                recurring: s.recurring.clone(),
+                base_currency: s.base_currency.clone(),
+            }
+            AffordCard {
+                base_currency: s.base_currency.clone(),
+            }
+        }
+    }
+}
+
+#[component]
+fn NetWorthCard(net_worth: Option<String>, base_currency: String) -> Element {
+    rsx! {
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+            div { class: "text-xs text-obsidian-text-muted uppercase tracking-wider mb-1",
+                "Net worth"
+            }
+            match net_worth {
+                Some(v) => rsx! {
+                    div { class: "text-2xl font-bold text-obsidian-text font-mono",
+                        "{format_money(&v, &base_currency)}"
+                    }
+                },
+                None => rsx! {
+                    div { class: "text-2xl font-bold text-obsidian-text-muted", "—" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Declare an account or record a transaction to populate this."
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn UnmatchedCard(
+    unmatched: Option<String>,
+    base_currency: String,
+    on_click: EventHandler<()>,
+) -> Element {
+    // Treat exactly-zero as nothing to show; non-zero is the
+    // reconciliation-pending signal that earns the orange accent.
+    let is_pending = unmatched
+        .as_deref()
+        .and_then(|s| s.parse::<f64>().ok())
+        .is_some_and(|v| v.abs() > 0.0);
+    let border = if is_pending {
+        "border-amber-500/40 hover:border-amber-400/60"
+    } else {
+        "border-white/10 hover:border-obsidian-accent/40"
+    };
+
+    rsx! {
+        button {
+            class: "p-4 bg-obsidian-sidebar/60 border rounded-lg text-left w-full transition-colors {border}",
+            onclick: move |_| on_click.call(()),
+            div { class: "text-xs text-obsidian-text-muted uppercase tracking-wider mb-1",
+                "Unmatched balance"
+            }
+            match unmatched {
+                Some(v) => rsx! {
+                    div { class: "text-2xl font-bold font-mono",
+                        class: if is_pending { "text-amber-300" } else { "text-obsidian-text" },
+                        "{format_money(&v, &base_currency)}"
+                    }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        if is_pending {
+                            "Reconciliation pending — tap to review unmatched transactions."
+                        } else {
+                            "Steady-state zero. Everything reconciles."
+                        }
+                    }
+                },
+                None => rsx! {
+                    div { class: "text-2xl font-bold text-obsidian-text-muted", "—" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "No unmatched activity to clear."
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn MonthlyTrendCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String) -> Element {
+    let scale = max_trend_magnitude(&buckets);
+    rsx! {
+        div { class: "mt-3 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+            div { class: "flex items-baseline justify-between mb-3",
+                div { class: "text-xs text-obsidian-text-muted uppercase tracking-wider",
+                    "Income vs. spending — last {buckets.len()} months"
+                }
+                div { class: "flex items-center gap-3 text-[10px] text-obsidian-text-muted",
+                    span { class: "flex items-center gap-1",
+                        span { class: "inline-block w-2 h-2 bg-emerald-500/70 rounded-sm" }
+                        "income"
+                    }
+                    span { class: "flex items-center gap-1",
+                        span { class: "inline-block w-2 h-2 bg-rose-500/70 rounded-sm" }
+                        "spending"
+                    }
+                }
+            }
+            match scale {
+                None => rsx! {
+                    div { class: "text-sm text-obsidian-text-muted text-center py-6",
+                        "No income or spending in the trend window yet."
+                    }
+                },
+                Some(s) => rsx! {
+                    div { class: "flex items-end gap-2 h-32",
+                        for bucket in buckets.iter() {
+                            div { class: "flex-1 flex flex-col items-center gap-1",
+                                div { class: "flex-1 w-full flex items-end gap-0.5",
+                                    div { class: "flex-1 bg-emerald-500/70 rounded-sm",
+                                        style: "height: {bar_height_pct(&bucket.income, s)}%",
+                                        title: "{format_money(&bucket.income, &base_currency)} income",
+                                    }
+                                    div { class: "flex-1 bg-rose-500/70 rounded-sm",
+                                        style: "height: {bar_height_pct(&bucket.spending, s)}%",
+                                        title: "{format_money(&bucket.spending, &base_currency)} spending",
+                                    }
+                                }
+                                div { class: "text-[10px] text-obsidian-text-muted font-mono",
+                                    "{bucket.month}"
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn RecurringCard(recurring: Vec<RecurringObligationView>, base_currency: String) -> Element {
+    rsx! {
+        div { class: "mt-3 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+            div { class: "text-xs text-obsidian-text-muted uppercase tracking-wider mb-3",
+                "Recurring obligations"
+            }
+            if recurring.is_empty() {
+                div { class: "text-sm text-obsidian-text-muted text-center py-4",
+                    "No confirmed recurring patterns yet. Phase 5.3 detection scanner will populate this."
+                }
+            } else {
+                div { class: "space-y-2",
+                    for r in recurring.iter() {
+                        div { class: "flex items-baseline justify-between text-sm",
+                            div { class: "min-w-0",
+                                span { class: "text-obsidian-text font-medium", "{r.vendor}" }
+                                span { class: "text-obsidian-text-muted text-xs ml-2",
+                                    "{cadence_label(r.cadence_days)}"
+                                }
+                            }
+                            span { class: "font-mono text-obsidian-text shrink-0",
+                                "{format_money(&r.amount, &r.commodity)}"
+                            }
+                        }
+                    }
+                }
+            }
+            // Show the base currency hint only when at least one obligation
+            // is in a non-base commodity — keeps the card uncluttered for
+            // the all-CAD common case.
+            if recurring.iter().any(|r| !r.commodity.eq_ignore_ascii_case(&base_currency)) {
+                div { class: "text-[10px] text-obsidian-text-muted mt-2",
+                    "Base currency: {base_currency}"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn AffordCard(base_currency: String) -> Element {
+    let mut amount: Signal<String> = use_signal(String::new);
+    let mut verdict: Signal<Option<AffordVerdictView>> = use_signal(|| None);
+    let mut loading: Signal<bool> = use_signal(|| false);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+
+    let submit = move |_| {
+        let raw = amount.read().clone();
+        if raw.trim().is_empty() {
+            return;
+        }
+        loading.set(true);
+        error.set(None);
+        spawn(async move {
+            match bridge::invoke_check_affordability(raw.trim(), Some("CAD")).await {
+                Ok(v) => {
+                    verdict.set(Some(v));
+                }
+                Err(e) => error.set(Some(e)),
+            }
+            loading.set(false);
+        });
+    };
+
+    let current_verdict = verdict.read().clone();
+    let err_msg = error.read().clone();
+
+    rsx! {
+        div { class: "mt-3 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+            div { class: "text-xs text-obsidian-text-muted uppercase tracking-wider mb-3",
+                "Can I afford …"
+            }
+            form {
+                class: "flex gap-2 items-stretch",
+                onsubmit: submit,
+                div { class: "flex items-center bg-obsidian-bg/60 border border-white/10 rounded px-3 flex-1",
+                    span { class: "text-obsidian-text-muted text-sm mr-2", "{base_currency}" }
+                    input {
+                        class: "bg-transparent text-obsidian-text text-sm w-full py-2 focus:outline-none",
+                        r#type: "text",
+                        placeholder: "Amount",
+                        value: "{amount.read()}",
+                        oninput: move |e| amount.set(e.value().clone()),
+                    }
+                }
+                button {
+                    class: "px-4 py-2 bg-obsidian-accent text-black text-sm font-medium rounded hover:opacity-90 disabled:opacity-50",
+                    r#type: "submit",
+                    disabled: *loading.read(),
+                    if *loading.read() { "Checking…" } else { "Check" }
+                }
+            }
+
+            if let Some(msg) = err_msg {
+                div { class: "mt-3 p-2 bg-red-950/30 border border-red-500/30 rounded text-xs text-red-300",
+                    "{msg}"
+                }
+            }
+
+            if let Some(v) = current_verdict {
+                div { class: "mt-3 p-3 border rounded",
+                    class: if v.can_afford {
+                        "bg-emerald-950/30 border-emerald-500/40"
+                    } else {
+                        "bg-rose-950/30 border-rose-500/40"
+                    },
+                    div { class: "flex items-baseline justify-between gap-3",
+                        div { class: "text-sm font-semibold",
+                            class: if v.can_afford { "text-emerald-300" } else { "text-rose-300" },
+                            if v.can_afford { "Yes — you'd have " } else { "No — you'd be at " }
+                            span { class: "font-mono",
+                                "{format_money(&v.remaining_in_base, &v.base_currency)}"
+                            }
+                        }
+                    }
+                    div { class: "text-[11px] text-obsidian-text-muted mt-1",
+                        "Policy: {v.policy_label}"
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2747,5 +3171,64 @@ mod tests {
     fn format_money_handles_negative_amounts() {
         assert_eq!(format_money("-1450.18", "CAD"), "-1,450.18 CAD");
         assert_eq!(format_money("-1.5", "CAD"), "-1.50 CAD");
+    }
+
+    // --- Phase 4.5+4.6 dashboard helpers ---------------------------------
+
+    fn bucket(month: &str, income: &str, spending: &str) -> MonthlyTrendBucketView {
+        MonthlyTrendBucketView {
+            month: month.into(),
+            income: income.into(),
+            spending: spending.into(),
+        }
+    }
+
+    #[test]
+    fn max_trend_magnitude_picks_largest_absolute_across_income_and_spending() {
+        let b = vec![
+            bucket("2026-01", "3200.00", "2940.18"),
+            bucket("2026-02", "3450.00", "1500.00"),
+            bucket("2026-03", "1820.00", "1450.18"),
+        ];
+        assert_eq!(max_trend_magnitude(&b), Some(3450.0));
+    }
+
+    #[test]
+    fn max_trend_magnitude_returns_none_when_all_zero() {
+        let b = vec![bucket("2026-01", "0", "0"), bucket("2026-02", "0", "0")];
+        assert_eq!(max_trend_magnitude(&b), None);
+    }
+
+    #[test]
+    fn bar_height_pct_scales_correctly() {
+        assert_eq!(bar_height_pct("1000", 4000.0), 25.0);
+        assert_eq!(bar_height_pct("4000", 4000.0), 100.0);
+        // Negative amounts use absolute value (income amounts are always
+        // positive in the trend, but defensive against a negative slipping in).
+        assert_eq!(bar_height_pct("-500", 4000.0), 12.5);
+    }
+
+    #[test]
+    fn bar_height_pct_clamps_to_100() {
+        assert_eq!(bar_height_pct("9999", 1000.0), 100.0);
+    }
+
+    #[test]
+    fn bar_height_pct_zero_scale_returns_zero() {
+        assert_eq!(bar_height_pct("100", 0.0), 0.0);
+    }
+
+    #[test]
+    fn cadence_label_names_common_cadences() {
+        assert_eq!(cadence_label(7), "weekly");
+        assert_eq!(cadence_label(14), "biweekly");
+        assert_eq!(cadence_label(30), "monthly");
+        assert_eq!(cadence_label(31), "monthly");
+    }
+
+    #[test]
+    fn cadence_label_falls_back_to_every_n_days() {
+        assert_eq!(cadence_label(3), "every 3 days");
+        assert_eq!(cadence_label(60), "every 60 days");
     }
 }
