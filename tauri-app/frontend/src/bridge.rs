@@ -1083,6 +1083,151 @@ pub async fn invoke_record_transaction(draft: TransactionFormDraft) -> Result<()
     }
 }
 
+/// Mock fixture set used by every Phase-4 read path under `--features mock`.
+/// Four transactions covering the visual variety the list/detail screens need
+/// to render meaningfully: mixed categories, mixed tags (with `food` and
+/// `recurring` each appearing twice so tag filters return >1 row), one
+/// uncategorized transfer (so empty-category state is visible), one image
+/// attachment (whose bytes are served by `invoke_fetch_attachment` below).
+#[cfg(feature = "mock")]
+const LOBLAWS_RECEIPT_SHA256: &str =
+    "0000000000000000000000000000000000000000000000000000000000000001";
+
+#[cfg(feature = "mock")]
+const LOBLAWS_RECEIPT_BYTES: &[u8] = include_bytes!("mocks/receipt-loblaws.png");
+
+#[cfg(feature = "mock")]
+fn mock_transactions() -> Vec<TransactionView> {
+    fn posting(account: &str, amount: &str, commodity: &str) -> serde_json::Value {
+        serde_json::json!({
+            "account": account,
+            "amount": amount,
+            "commodity": commodity,
+            "tags": [],
+        })
+    }
+    fn attachment(filename: &str, mime: &str, size: u64) -> serde_json::Value {
+        serde_json::json!({
+            "sha256": LOBLAWS_RECEIPT_SHA256,
+            "filename": filename,
+            "mime_type": mime,
+            "size": size,
+        })
+    }
+
+    vec![
+        TransactionView {
+            id: "mock-loblaws".into(),
+            date: "2026-05-18".into(),
+            description: "Loblaws — weekly groceries".into(),
+            postings: serde_json::Value::Array(vec![
+                posting("Expenses:Groceries", "42.18", "CAD"),
+                posting("Assets:Wealthsimple:Cash", "-42.18", "CAD"),
+            ]),
+            attachment: Some(attachment(
+                "loblaws-2026-05-18.png",
+                "image/png",
+                LOBLAWS_RECEIPT_BYTES.len() as u64,
+            )),
+            category: Some("groceries".into()),
+            tags_top: vec!["food".into(), "recurring".into()],
+            cleared: true,
+            statement_source: Some("gmail_personal".into()),
+            cleared_date: Some("2026-05-19".into()),
+        },
+        TransactionView {
+            id: "mock-wholefoods".into(),
+            date: "2026-05-15".into(),
+            description: "Whole Foods — produce run".into(),
+            postings: serde_json::Value::Array(vec![
+                posting("Expenses:Groceries", "31.04", "CAD"),
+                posting("Liabilities:Visa", "-31.04", "CAD"),
+            ]),
+            attachment: None,
+            category: Some("groceries".into()),
+            tags_top: vec!["food".into()],
+            cleared: true,
+            statement_source: Some("cibc_statement".into()),
+            cleared_date: Some("2026-05-16".into()),
+        },
+        TransactionView {
+            id: "mock-indigo".into(),
+            date: "2026-05-14".into(),
+            description: "Indigo — Rust for Rustaceans".into(),
+            postings: serde_json::Value::Array(vec![
+                posting("Expenses:Books", "57.49", "CAD"),
+                posting("Liabilities:Visa", "-57.49", "CAD"),
+            ]),
+            attachment: None,
+            category: Some("books".into()),
+            tags_top: vec!["learning".into()],
+            cleared: false,
+            statement_source: None,
+            cleared_date: None,
+        },
+        TransactionView {
+            id: "mock-spotify".into(),
+            date: "2026-05-10".into(),
+            description: "Spotify Premium".into(),
+            postings: serde_json::Value::Array(vec![
+                posting("Expenses:Subscriptions", "11.30", "CAD"),
+                posting("Liabilities:Visa", "-11.30", "CAD"),
+            ]),
+            attachment: None,
+            category: None,
+            tags_top: vec!["recurring".into()],
+            cleared: true,
+            statement_source: Some("cibc_statement".into()),
+            cleared_date: Some("2026-05-11".into()),
+        },
+    ]
+}
+
+/// Mirror of the backend's WHERE-clause behavior: AND across set axes;
+/// account match is case-insensitive substring; tag/category are exact;
+/// date_from/date_to are inclusive ISO-string compares.
+#[cfg(feature = "mock")]
+fn mock_apply_filter(rows: Vec<TransactionView>, filter: &TxnFilter) -> Vec<TransactionView> {
+    rows.into_iter()
+        .filter(|t| {
+            if let Some(df) = filter.date_from.as_deref().filter(|s| !s.is_empty()) {
+                if t.date.as_str() < df {
+                    return false;
+                }
+            }
+            if let Some(dt) = filter.date_to.as_deref().filter(|s| !s.is_empty()) {
+                if t.date.as_str() > dt {
+                    return false;
+                }
+            }
+            if let Some(cat) = filter.category.as_deref().filter(|s| !s.is_empty()) {
+                if t.category.as_deref() != Some(cat) {
+                    return false;
+                }
+            }
+            if let Some(tag) = filter.tag.as_deref().filter(|s| !s.is_empty()) {
+                if !t.tags_top.iter().any(|x| x == tag) {
+                    return false;
+                }
+            }
+            if let Some(acc) = filter.account.as_deref().filter(|s| !s.is_empty()) {
+                let needle = acc.to_lowercase();
+                let postings = t.postings.as_array().cloned().unwrap_or_default();
+                let any_match = postings.iter().any(|p| {
+                    p.get("account")
+                        .and_then(|a| a.as_str())
+                        .map(|s| s.to_lowercase().contains(&needle))
+                        .unwrap_or(false)
+                });
+                if !any_match {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect()
+}
+
 /// List committed transactions, newest first. Hidden rows (`removed=true` or
 /// `superseded_by IS NOT NONE`) are filtered server-side. The optional
 /// `filter` narrows by date range / account substring / tag / category;
@@ -1094,8 +1239,10 @@ pub async fn invoke_list_transactions(
 ) -> Result<Vec<TransactionView>, String> {
     #[cfg(feature = "mock")]
     {
-        let _ = (filter, limit, offset);
-        Ok(Vec::new())
+        let filtered = mock_apply_filter(mock_transactions(), &filter);
+        let start = offset as usize;
+        let end = (start + limit as usize).min(filtered.len());
+        Ok(filtered.into_iter().skip(start).take(end - start).collect())
     }
     #[cfg(not(feature = "mock"))]
     {
@@ -1164,8 +1311,7 @@ pub async fn invoke_tag_transaction(txn_id: &str, tags: Vec<String>) -> Result<(
 pub async fn invoke_get_transaction(txn_id: &str) -> Result<Option<TransactionView>, String> {
     #[cfg(feature = "mock")]
     {
-        let _ = txn_id;
-        Ok(None)
+        Ok(mock_transactions().into_iter().find(|t| t.id == txn_id))
     }
     #[cfg(not(feature = "mock"))]
     {
@@ -1184,8 +1330,11 @@ pub async fn invoke_get_transaction(txn_id: &str) -> Result<Option<TransactionVi
 pub async fn invoke_fetch_attachment(sha256: &str) -> Result<Vec<u8>, String> {
     #[cfg(feature = "mock")]
     {
-        let _ = sha256;
-        Ok(Vec::new())
+        if sha256 == LOBLAWS_RECEIPT_SHA256 {
+            Ok(LOBLAWS_RECEIPT_BYTES.to_vec())
+        } else {
+            Err(format!("mock attachment not found: {sha256}"))
+        }
     }
     #[cfg(not(feature = "mock"))]
     {
