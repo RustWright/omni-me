@@ -274,6 +274,7 @@ pub fn run() {
             // Budget — accounts, budgets, recurring
             commands::budget::add_account,
             commands::budget::list_accounts,
+            commands::budget::account_summaries,
             commands::budget::set_budget,
             commands::budget::list_budgets,
             commands::budget::confirm_recurring,

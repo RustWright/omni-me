@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::types::{
-    AttachmentRef, DraftTransactionView, ExtractedDraft, PendingBatchView, PendingShareCapture,
-    PostingInput, TransactionFormDraft, TransactionView, TxnFilter,
+    AccountSummaryView, AttachmentRef, DraftTransactionView, ExtractedDraft, PendingBatchView,
+    PendingShareCapture, PostingInput, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -76,6 +76,9 @@ enum FinancesView {
     /// Single-transaction detail screen with attachment viewer (Phase 4.2).
     /// Selected `txn_id` rides along in `selected_txn_id` (variant stays Copy).
     TransactionDetail,
+    /// Accounts screen — per-account balances aggregated to base currency
+    /// (Phase 4.4). One card per declared+listable account.
+    AccountList,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -141,6 +144,7 @@ pub fn FinancesPage() -> Element {
                         },
                         on_open_batches: move |_| view.set(FinancesView::BatchList),
                         on_open_transactions: move |_| view.set(FinancesView::TransactionList),
+                        on_open_accounts: move |_| view.set(FinancesView::AccountList),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -247,6 +251,11 @@ pub fn FinancesPage() -> Element {
                         },
                     }
                 }
+                FinancesView::AccountList => rsx! {
+                    AccountListView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                    }
+                },
             }
         }
     }
@@ -261,6 +270,7 @@ fn HomeView(
     on_open_manual: EventHandler<()>,
     on_open_batches: EventHandler<()>,
     on_open_transactions: EventHandler<()>,
+    on_open_accounts: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -336,19 +346,37 @@ fn HomeView(
         div { class: "border-b border-white/5 pb-2 mb-4",
             h2 { class: "text-lg font-bold text-obsidian-text", "Recent" }
         }
-        button {
-            class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
-            onclick: move |_| on_open_transactions.call(()),
-            div {
-                div { class: "text-sm font-semibold text-obsidian-text", "View transactions" }
-                div { class: "text-xs text-obsidian-text-muted mt-1",
-                    "Browse everything you've recorded."
+        div { class: "space-y-3",
+            button {
+                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+                onclick: move |_| on_open_transactions.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-text", "View transactions" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Browse everything you've recorded."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
                 }
             }
-            svg { class: "w-5 h-5 text-obsidian-text-muted",
-                fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                    d: "M9 5l7 7-7 7"
+            button {
+                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+                onclick: move |_| on_open_accounts.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-text", "Accounts" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Balances per account, aggregated to your base currency."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
                 }
             }
         }
@@ -2412,6 +2440,175 @@ fn AttachmentViewer(meta: AttachmentMeta) -> Element {
     }
 }
 
+// =============================================================================
+// Phase 4.4 — Accounts screen
+// =============================================================================
+
+/// Format a stringified Decimal balance for display:
+///   "1234.5" + "CAD" → "1,234.50 CAD"
+///   "-1450.18" + "CAD" → "-1,450.18 CAD"
+///
+/// Pure formatting on string inputs (the wire shape) — no rust_decimal
+/// dep in the frontend. Pads to 2 decimal places (matches every-day money
+/// display); accepts more decimal places verbatim (e.g. BTC). Adds
+/// thousands separators on the integer part.
+fn format_money(amount: &str, commodity: &str) -> String {
+    let (sign, magnitude) = match amount.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", amount),
+    };
+    let (int_part, frac_part) = match magnitude.split_once('.') {
+        Some((i, f)) => (i, f.to_string()),
+        None => (magnitude, String::new()),
+    };
+    let frac_padded = if frac_part.len() < 2 {
+        format!("{frac_part:0<2}")
+    } else {
+        frac_part
+    };
+    let int_grouped = group_thousands(int_part);
+    format!("{sign}{int_grouped}.{frac_padded} {commodity}")
+}
+
+fn group_thousands(int_part: &str) -> String {
+    let bytes = int_part.as_bytes();
+    let mut out = String::with_capacity(bytes.len() + bytes.len() / 3);
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(b as char);
+    }
+    out
+}
+
+#[component]
+fn AccountListView(on_back: EventHandler<()>) -> Element {
+    let mut summaries: Signal<Vec<AccountSummaryView>> = use_signal(Vec::new);
+    let mut loading: Signal<bool> = use_signal(|| true);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+
+    use_effect(move || {
+        spawn(async move {
+            loading.set(true);
+            error.set(None);
+            match bridge::invoke_account_summaries(Some("CAD")).await {
+                Ok(rows) => summaries.set(rows),
+                Err(e) => error.set(Some(e)),
+            }
+            loading.set(false);
+        });
+    });
+
+    let rows = summaries.read().clone();
+    let is_loading = *loading.read();
+    let err_msg = error.read().clone();
+    let show_empty = rows.is_empty() && !is_loading && err_msg.is_none();
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Accounts"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        if let Some(msg) = err_msg {
+            div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "Failed to load accounts: {msg}"
+            }
+        }
+
+        if is_loading {
+            div { class: "p-6 text-center text-obsidian-text-muted text-sm",
+                "Loading…"
+            }
+        } else if show_empty {
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                "No accounts to show yet. Record a transaction or declare an account from Settings to populate this screen."
+            }
+        } else {
+            div { class: "space-y-3",
+                for summary in rows {
+                    AccountSummaryCard {
+                        key: "{summary.account}",
+                        summary: summary,
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn AccountSummaryCard(summary: AccountSummaryView) -> Element {
+    let header_label = summary
+        .display_name
+        .clone()
+        .unwrap_or_else(|| summary.account.clone());
+    let sub_label = if summary.display_name.is_some() {
+        Some(summary.account.clone())
+    } else {
+        None
+    };
+
+    rsx! {
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+            div { class: "flex items-baseline justify-between gap-3 mb-3",
+                div { class: "min-w-0",
+                    div { class: "text-sm font-semibold text-obsidian-text truncate",
+                        "{header_label}"
+                    }
+                    if let Some(sub) = sub_label {
+                        div { class: "text-xs text-obsidian-text-muted truncate", "{sub}" }
+                    }
+                }
+                match summary.total_in_base.as_deref() {
+                    Some(total) => rsx! {
+                        div { class: "text-sm font-mono text-obsidian-text shrink-0",
+                            "{format_money(total, \"CAD\")}"
+                        }
+                    },
+                    None => rsx! {
+                        div { class: "text-sm font-mono text-obsidian-text-muted shrink-0", "—" }
+                    },
+                }
+            }
+
+            if !summary.balances.is_empty() {
+                div { class: "space-y-1 border-t border-white/5 pt-2",
+                    for bal in summary.balances.iter() {
+                        div { class: "flex items-baseline justify-between text-xs text-obsidian-text-muted font-mono",
+                            span { "{format_money(&bal.quantity, &bal.commodity)}" }
+                            match bal.value_in_base.as_deref() {
+                                Some(v) if bal.commodity != "CAD" => rsx! {
+                                    span { class: "text-obsidian-text-muted/70",
+                                        "≈ {format_money(v, \"CAD\")}"
+                                    }
+                                },
+                                _ => rsx! { span {} },
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(date) = summary.last_reconciled_through.as_deref() {
+                div { class: "mt-3 text-xs text-obsidian-text-muted",
+                    "Last reconciled through {date}"
+                    if let Some(bal) = summary.last_statement_balance.as_deref() {
+                        " · statement {format_money(bal, \"CAD\")}"
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2522,5 +2719,33 @@ mod tests {
             "size": 5000,
         });
         assert!(extract_attachment_meta(&v).is_none(), "missing sha256 should fail");
+    }
+
+    // --- Phase 4.4 money formatter --------------------------------------
+
+    #[test]
+    fn format_money_pads_fractional_to_two_digits() {
+        assert_eq!(format_money("5", "CAD"), "5.00 CAD");
+        assert_eq!(format_money("5.4", "CAD"), "5.40 CAD");
+        assert_eq!(format_money("5.40", "CAD"), "5.40 CAD");
+    }
+
+    #[test]
+    fn format_money_preserves_extra_precision_for_crypto() {
+        // BTC-style amounts shouldn't lose precision to a 2-digit floor.
+        assert_eq!(format_money("0.00123456", "BTC"), "0.00123456 BTC");
+    }
+
+    #[test]
+    fn format_money_adds_thousands_separators() {
+        assert_eq!(format_money("1234.5", "CAD"), "1,234.50 CAD");
+        assert_eq!(format_money("1234567.89", "CAD"), "1,234,567.89 CAD");
+        assert_eq!(format_money("999.99", "CAD"), "999.99 CAD");
+    }
+
+    #[test]
+    fn format_money_handles_negative_amounts() {
+        assert_eq!(format_money("-1450.18", "CAD"), "-1,450.18 CAD");
+        assert_eq!(format_money("-1.5", "CAD"), "-1.50 CAD");
     }
 }

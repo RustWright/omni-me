@@ -8,6 +8,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use omni_me_core::balances::{self, AccountSummary, CommodityBalance};
 use omni_me_core::db::queries::{
     self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow, TxnFilter,
 };
@@ -207,6 +208,87 @@ pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountRow>
     queries::list_accounts(&state.db)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Wire shape for one commodity holding — Decimal → String at the boundary
+/// so the frontend doesn't have to depend on `rust_decimal`. Mirrors
+/// `core::balances::CommodityBalance`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CommodityBalanceView {
+    pub commodity: String,
+    pub quantity: String,
+    pub value_in_base: Option<String>,
+}
+
+/// Wire shape for one account on the Accounts screen. Mirrors
+/// `core::balances::AccountSummary` with Decimals stringified.
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountSummaryView {
+    pub account: String,
+    pub display_name: Option<String>,
+    pub last_reconciled_through: Option<String>,
+    pub last_statement_balance: Option<String>,
+    pub balances: Vec<CommodityBalanceView>,
+    pub total_in_base: Option<String>,
+}
+
+fn balance_to_view(b: CommodityBalance) -> CommodityBalanceView {
+    CommodityBalanceView {
+        commodity: b.commodity,
+        quantity: b.quantity.to_string(),
+        value_in_base: b.value_in_base.map(|d| d.to_string()),
+    }
+}
+
+fn summary_to_view(s: AccountSummary) -> AccountSummaryView {
+    AccountSummaryView {
+        account: s.account,
+        display_name: s.display_name,
+        last_reconciled_through: s.last_reconciled_through,
+        last_statement_balance: s.last_statement_balance,
+        balances: s.balances.into_iter().map(balance_to_view).collect(),
+        total_in_base: s.total_in_base.map(|d| d.to_string()),
+    }
+}
+
+/// Per-account summary for the Accounts screen (Phase 4.4). Reads the
+/// per-device journal file in-process via `core::balances::account_summaries`
+/// + merges declared-account metadata. The journal lives at
+/// `<app_data>/budget.journal` per `lib.rs::setup`.
+///
+/// `base_currency` defaults to "CAD" when the caller doesn't supply one.
+/// `as_of` defaults to today (UTC) and drives FX-rate selection — latest
+/// `P`-directive rate ≤ that date wins.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn account_summaries(
+    state: State<'_, AppState>,
+    base_currency: Option<String>,
+    as_of: Option<String>,
+) -> Result<Vec<AccountSummaryView>, String> {
+    let base = base_currency.unwrap_or_else(|| "CAD".to_string());
+    let as_of_date = match as_of {
+        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            .map_err(|e| format!("bad as_of date: {e}"))?,
+        None => chrono::Utc::now().date_naive(),
+    };
+
+    let journal_path = state.app_data_dir.join("budget.journal");
+    let journal_content = match tokio::fs::read_to_string(&journal_path).await {
+        Ok(s) => s,
+        // Missing file = fresh install or never-imported state. Return
+        // declared accounts only (which may also be empty); the screen
+        // renders a "no accounts yet" empty state.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("read journal file: {e}")),
+    };
+
+    let declared = queries::list_accounts(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let summaries = balances::account_summaries(&journal_content, &declared, &base, as_of_date)
+        .map_err(|e| format!("balance computation: {e}"))?;
+    Ok(summaries.into_iter().map(summary_to_view).collect())
 }
 
 #[tauri::command(rename_all = "snake_case")]

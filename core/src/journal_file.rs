@@ -165,11 +165,13 @@ fn render_tag_comment(tags: &[Tag]) -> Option<String> {
 }
 
 /// Render an `ExchangeRateRecorded` as an hledger `P` (price) directive.
-/// Format: `P {date} {base} {rate} {quote}` — ledger-utils consumes this to
-/// value foreign-commodity postings in the user's base currency.
+/// Format: `P {date} 00:00:00 {base} {rate} {quote}` — `ledger-parser` v6
+/// requires a datetime (not just a date) for the price line, so we append
+/// `00:00:00` for daily rates. ledger-utils consumes this to value
+/// foreign-commodity postings in the user's base currency.
 pub fn render_exchange_rate(p: &ExchangeRateRecordedPayload) -> String {
     format!(
-        "P {} {} {} {}  ; source:{}\n\n",
+        "P {} 00:00:00 {} {} {}  ; source:{}\n\n",
         p.date, p.base, p.rate, p.quote, p.source
     )
 }
@@ -412,7 +414,30 @@ account Assets:WealthSimple:Cash  ; commodity:CAD
             source: "frankfurter".into(),
         };
         let rendered = render_exchange_rate(&payload);
-        assert_eq!(rendered, "P 2026-05-16 USD 1.37 CAD  ; source:frankfurter\n\n");
+        assert_eq!(
+            rendered,
+            "P 2026-05-16 00:00:00 USD 1.37 CAD  ; source:frankfurter\n\n"
+        );
+    }
+
+    #[test]
+    fn render_exchange_rate_roundtrips_through_parser() {
+        // Phase 4.4 surfaced a real bug: ledger-parser's P-directive grammar
+        // requires a datetime, but the renderer used to emit only a date.
+        // This roundtrip locks the contract — if a future renderer change
+        // drops the time component, account_summaries() breaks again.
+        use crate::events::ExchangeRateRecordedPayload;
+        use rust_decimal::Decimal;
+        use std::str::FromStr;
+        let payload = ExchangeRateRecordedPayload {
+            date: chrono::NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
+            base: "USD".into(),
+            quote: "CAD".into(),
+            rate: Decimal::from_str("1.37").unwrap(),
+            source: "frankfurter".into(),
+        };
+        let rendered = render_exchange_rate(&payload);
+        crate::ledger::parse(&rendered).expect("P directive must parse");
     }
 
     #[tokio::test]
@@ -431,7 +456,7 @@ account Assets:WealthSimple:Cash  ; commodity:CAD
         );
         proj.apply(&event, &db).await.unwrap();
         let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
-        assert!(contents.contains("P 2026-05-16 USD 1.37 CAD"));
+        assert!(contents.contains("P 2026-05-16 00:00:00 USD 1.37 CAD"));
     }
 
     #[tokio::test]

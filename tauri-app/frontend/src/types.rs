@@ -387,3 +387,27 @@ pub struct CommitBatchResult {
     pub txns_recorded: usize,
     pub fx_recorded: bool,
 }
+
+/// One commodity holding on an account. Mirrors
+/// `core::balances::CommodityBalance`. Quantity arrives as a string so the
+/// frontend doesn't need a Decimal dep — display-only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommodityBalanceView {
+    pub commodity: String,
+    pub quantity: String,
+    pub value_in_base: Option<String>,
+}
+
+/// Per-account summary for the Accounts screen (Phase 4.4). Mirrors
+/// `core::balances::AccountSummary`. `total_in_base` and `value_in_base` are
+/// `None` when no FX rate is available for a commodity in the journal — the
+/// UI renders an em-dash in that case.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccountSummaryView {
+    pub account: String,
+    pub display_name: Option<String>,
+    pub last_reconciled_through: Option<String>,
+    pub last_statement_balance: Option<String>,
+    pub balances: Vec<CommodityBalanceView>,
+    pub total_in_base: Option<String>,
+}

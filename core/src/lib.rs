@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod auto_close;
+pub mod balances;
 #[cfg(feature = "auto-import")]
 pub mod auto_import;
 #[cfg(feature = "auto-import")]

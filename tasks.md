@@ -209,6 +209,10 @@ Cycle 4 is dedicated polish + stable-v1 release.
 - [ ] **LLM-translated NL queries for R2** — evaluation only; ship only if real usage demands it
 - [ ] **PaddleOCR sidecar** — moved from Cycle 3 backlog (7.11) since Gemini was sole Cycle 3 extractor
 
+**User-managed declared-accounts list (Cycle 3 Phase 4.4 surfaced 2026-05-23):**
+
+- [ ] **Lift `core::balances::LISTABLE_ACCOUNTS` into the `accounts` SurrealDB table** (currently a code constant; edits require a recompile). The `accounts` table + `AccountAdded` events already exist from Phase 1.9 but no UI manages them — Cycle 4 adds a Settings page section "Declared Accounts" with add/remove rows. `is_listable_account` then becomes a DB lookup over declared rows. Optional: a new `AccountRemoved` event so the soft-delete is reversible. [S]
+
 **Cross-submodule state management (Cycle 3 Phase 3 gap surfaced 2026-05-17):**
 
 - [ ] **Tab-switch protection for in-flight captures.** Today's symptom: user kicks off a photo upload + Gemini extract round trip, then taps another top-level tab before it returns; `FinancesPage` unmounts and the captured bytes + draft progress vanish silently with no recovery path. Same shape applies to any other long-running per-tab work added later. **Fix scope:** lift in-flight captures (and any future "started here but takes a while" state) into a top-level shared store keyed by capture-id so navigating away doesn't kill the future; show a "you have an in-flight capture" affordance on Home if the user wanders back. This is the broader "sub-module state isolation hurts cross-tab continuity" rework — applies anywhere a page is the de-facto owner of work that outlives its own mount. [M]

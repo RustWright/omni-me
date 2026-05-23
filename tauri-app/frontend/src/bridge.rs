@@ -1,12 +1,12 @@
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "mock")]
-use crate::types::{AttachmentRef, ExtractedPostingView, TaskResult};
+use crate::types::{AttachmentRef, CommodityBalanceView, ExtractedPostingView, TaskResult};
 use crate::types::{
-    AutoImportSourceView, CommitBatchResult, CompletionEntry, ExtractedDraft, GenericNoteItem,
-    JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture, RoutineGroup, RoutineItem,
-    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView,
-    TxnFilter,
+    AccountSummaryView, AutoImportSourceView, CommitBatchResult, CompletionEntry, ExtractedDraft,
+    GenericNoteItem, JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture,
+    RoutineGroup, RoutineItem, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
+    TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 // Tauri IPC
@@ -1344,6 +1344,106 @@ pub async fn invoke_fetch_attachment(sha256: &str) -> Result<Vec<u8>, String> {
         }
         invoke("fetch_attachment", &Args { sha256 }).await
     }
+}
+
+// -----------------------------------------------------------------------------
+// Account summaries (Phase 4.4 — Accounts screen)
+// -----------------------------------------------------------------------------
+
+/// Fetch per-account balance summaries for the Accounts screen. Backend reads
+/// the local journal in-process via `core::balances::account_summaries`,
+/// converts to base currency at the latest available rate, and merges
+/// declared-account metadata.
+pub async fn invoke_account_summaries(
+    base_currency: Option<&str>,
+) -> Result<Vec<AccountSummaryView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = base_currency;
+        Ok(mock_account_summaries())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            base_currency: Option<&'a str>,
+            as_of: Option<&'a str>,
+        }
+        invoke(
+            "account_summaries",
+            &Args {
+                base_currency,
+                as_of: None,
+            },
+        )
+        .await
+    }
+}
+
+#[cfg(feature = "mock")]
+fn mock_account_summaries() -> Vec<AccountSummaryView> {
+    vec![
+        AccountSummaryView {
+            account: "Assets:Wealthsimple:Cash".into(),
+            display_name: Some("Wealthsimple Cash".into()),
+            last_reconciled_through: Some("2026-05-15".into()),
+            last_statement_balance: Some("4250.00".into()),
+            balances: vec![CommodityBalanceView {
+                commodity: "CAD".into(),
+                quantity: "4287.42".into(),
+                value_in_base: Some("4287.42".into()),
+            }],
+            total_in_base: Some("4287.42".into()),
+        },
+        AccountSummaryView {
+            account: "Assets:Wise:CAD".into(),
+            display_name: Some("Wise multi-currency".into()),
+            last_reconciled_through: None,
+            last_statement_balance: None,
+            balances: vec![
+                CommodityBalanceView {
+                    commodity: "CAD".into(),
+                    quantity: "812.50".into(),
+                    value_in_base: Some("812.50".into()),
+                },
+                CommodityBalanceView {
+                    commodity: "EUR".into(),
+                    quantity: "120.00".into(),
+                    value_in_base: Some("180.50".into()),
+                },
+                CommodityBalanceView {
+                    commodity: "USD".into(),
+                    quantity: "45.00".into(),
+                    value_in_base: Some("61.65".into()),
+                },
+            ],
+            total_in_base: Some("1054.65".into()),
+        },
+        AccountSummaryView {
+            account: "Liabilities:CIBC:CreditCard".into(),
+            display_name: Some("CIBC Aventura".into()),
+            last_reconciled_through: Some("2026-04-30".into()),
+            last_statement_balance: Some("-1182.06".into()),
+            balances: vec![CommodityBalanceView {
+                commodity: "CAD".into(),
+                quantity: "-1450.18".into(),
+                value_in_base: Some("-1450.18".into()),
+            }],
+            total_in_base: Some("-1450.18".into()),
+        },
+        AccountSummaryView {
+            account: "Unmatched".into(),
+            display_name: None,
+            last_reconciled_through: None,
+            last_statement_balance: None,
+            balances: vec![CommodityBalanceView {
+                commodity: "CAD".into(),
+                quantity: "-1.50".into(),
+                value_in_base: Some("-1.50".into()),
+            }],
+            total_in_base: Some("-1.50".into()),
+        },
+    ]
 }
 
 // -----------------------------------------------------------------------------
