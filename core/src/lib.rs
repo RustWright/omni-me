@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod auto_close;
 pub mod balances;
+pub mod budget;
 pub mod dashboard;
 #[cfg(feature = "auto-import")]
 pub mod auto_import;

@@ -511,6 +511,22 @@ pub async fn list_budgets(state: State<'_, AppState>) -> Result<Vec<BudgetRow>, 
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn remove_budget(
+    state: State<'_, AppState>,
+    category: String,
+) -> Result<(), String> {
+    tracing::info!(category = %category, "remove_budget");
+    let payload = serde_json::json!({ "category": category });
+    append_and_apply(
+        &state,
+        EventType::BudgetRemoved,
+        category,
+        payload,
+    )
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn confirm_recurring(
     state: State<'_, AppState>,
     pattern_id: String,

@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::types::{
-    AccountSummaryView, AffordVerdictView, AttachmentRef, DashboardSummaryView,
+    AccountSummaryView, AffordVerdictView, AttachmentRef, BudgetRow, DashboardSummaryView,
     DraftTransactionView, ExtractedDraft, MonthlyTrendBucketView, PendingBatchView,
     PendingShareCapture, PostingInput, RecurringObligationView, TransactionFormDraft,
     TransactionView, TxnFilter,
@@ -84,6 +84,9 @@ enum FinancesView {
     /// R1 financial-health glance dashboard (Phase 4.5 + 4.6). Net worth,
     /// Unmatched, monthly trend, recurring, can-I-afford.
     Dashboard,
+    /// W4 budget setup screen (Phase 5.1). Per-category targets with
+    /// per-cycle (monthly default; weekly / biweekly) cadence.
+    BudgetList,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -155,6 +158,7 @@ pub fn FinancesPage() -> Element {
                         on_open_transactions: move |_| view.set(FinancesView::TransactionList),
                         on_open_accounts: move |_| view.set(FinancesView::AccountList),
                         on_open_dashboard: move |_| view.set(FinancesView::Dashboard),
+                        on_open_budgets: move |_| view.set(FinancesView::BudgetList),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -294,6 +298,11 @@ pub fn FinancesPage() -> Element {
                         },
                     }
                 },
+                FinancesView::BudgetList => rsx! {
+                    BudgetListView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                    }
+                },
             }
         }
     }
@@ -310,6 +319,7 @@ fn HomeView(
     on_open_transactions: EventHandler<()>,
     on_open_accounts: EventHandler<()>,
     on_open_dashboard: EventHandler<()>,
+    on_open_budgets: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -425,6 +435,31 @@ fn HomeView(
                     div { class: "text-sm font-semibold text-obsidian-text", "Accounts" }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
                         "Balances per account, aggregated to your base currency."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
+        }
+
+        // --- Plan + reconcile section (Phase 5). 5.4 confirm-recurring +
+        // 5.7 reconciliation review will add their own cards alongside Budgets
+        // as those screens land.
+        div { class: "border-b border-white/5 pb-2 mt-10 mb-4",
+            h2 { class: "text-lg font-bold text-obsidian-text", "Plan + reconcile" }
+        }
+        div { class: "space-y-3",
+            button {
+                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+                onclick: move |_| on_open_budgets.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-text", "Budgets" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Set per-category targets; weekly, biweekly, or monthly."
                     }
                 }
                 svg { class: "w-5 h-5 text-obsidian-text-muted",
@@ -2535,7 +2570,7 @@ fn group_thousands(int_part: &str) -> String {
     let bytes = int_part.as_bytes();
     let mut out = String::with_capacity(bytes.len() + bytes.len() / 3);
     for (i, &b) in bytes.iter().enumerate() {
-        if i > 0 && (bytes.len() - i) % 3 == 0 {
+        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(b as char);
@@ -2711,7 +2746,7 @@ fn cadence_label(days: u32) -> String {
         7 => "weekly".to_string(),
         14 => "biweekly".to_string(),
         30 | 31 => "monthly".to_string(),
-        n if n == 0 => "—".to_string(),
+        0 => "—".to_string(),
         n => format!("every {n} days"),
     }
 }
@@ -3040,6 +3075,343 @@ fn AffordCard(base_currency: String) -> Element {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Budgets (Phase 5.1) — W4 setup screen.
+// -----------------------------------------------------------------------------
+
+/// Cadence options exposed in the period `<select>`. `"custom:N"` is supported
+/// by the event schema but not surfaced here — sticking to the three named
+/// cadences keeps the picker honest with what the spec asked for. If a custom
+/// budget arrives from another source (sync, hand-edited event log), the list
+/// row displays the raw string so the user can at least see it.
+const PERIOD_CHOICES: &[(&str, &str)] = &[
+    ("monthly", "Monthly"),
+    ("biweekly", "Biweekly"),
+    ("weekly", "Weekly"),
+];
+
+/// Human label for a period string. Falls back to the raw value for anything
+/// the picker doesn't surface (e.g., a hand-crafted `"custom:90"`).
+fn period_label(period: &str) -> String {
+    PERIOD_CHOICES
+        .iter()
+        .find(|(value, _)| *value == period)
+        .map(|(_, label)| (*label).to_string())
+        .unwrap_or_else(|| period.to_string())
+}
+
+/// Trim a category input and reject if empty. Returns `Some(trimmed)` if the
+/// trimmed string is non-empty.
+fn normalize_category(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Validate an amount string — must parse as a finite positive number.
+/// Returns the trimmed canonical string on success, or an error message on
+/// failure. Kept lax (f64-parse) to match the rest of the manual-entry
+/// surface; the event store accepts any decimal string and the projection
+/// keeps it verbatim.
+fn validate_amount(raw: &str) -> Result<String, &'static str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Amount is required");
+    }
+    let parsed: f64 = trimmed.parse().map_err(|_| "Amount must be a number")?;
+    if !parsed.is_finite() {
+        return Err("Amount must be finite");
+    }
+    if parsed <= 0.0 {
+        return Err("Amount must be greater than zero");
+    }
+    Ok(trimmed.to_string())
+}
+
+#[component]
+fn BudgetListView(on_back: EventHandler<()>) -> Element {
+    let mut rows: Signal<Vec<BudgetRow>> = use_signal(Vec::new);
+    let mut loading: Signal<bool> = use_signal(|| true);
+    let mut load_error: Signal<Option<String>> = use_signal(|| None);
+
+    // Add/edit form state. `editing_category` is `Some(category)` when the
+    // form is editing an existing row (category field locked); `None` means
+    // a fresh add. Inputs stay as raw strings so the user's typing isn't
+    // disturbed by mid-edit reformatting.
+    let mut editing_category: Signal<Option<String>> = use_signal(|| None);
+    let mut category_input: Signal<String> = use_signal(String::new);
+    let mut amount_input: Signal<String> = use_signal(String::new);
+    let mut period_input: Signal<String> = use_signal(|| "monthly".to_string());
+    let mut form_error: Signal<Option<String>> = use_signal(|| None);
+    let mut saving: Signal<bool> = use_signal(|| false);
+
+    let load_rows = move || {
+        spawn(async move {
+            loading.set(true);
+            load_error.set(None);
+            match bridge::invoke_list_budgets().await {
+                Ok(fetched) => rows.set(fetched),
+                Err(e) => load_error.set(Some(e)),
+            }
+            loading.set(false);
+        });
+    };
+
+    use_effect(move || {
+        load_rows();
+    });
+
+    let mut reset_form = move || {
+        editing_category.set(None);
+        category_input.set(String::new());
+        amount_input.set(String::new());
+        period_input.set("monthly".to_string());
+        form_error.set(None);
+    };
+
+    let mut save = move || {
+        let raw_category = category_input.read().clone();
+        let raw_amount = amount_input.read().clone();
+        let period = period_input.read().clone();
+        let editing = editing_category.read().clone();
+
+        // When editing, the category is locked to the existing row's id; the
+        // input is read-only and we use the locked value instead.
+        let category = match editing {
+            Some(ref cat) => cat.clone(),
+            None => match normalize_category(&raw_category) {
+                Some(c) => c,
+                None => {
+                    form_error.set(Some("Category is required".to_string()));
+                    return;
+                }
+            },
+        };
+
+        let amount = match validate_amount(&raw_amount) {
+            Ok(a) => a,
+            Err(msg) => {
+                form_error.set(Some(msg.to_string()));
+                return;
+            }
+        };
+
+        form_error.set(None);
+        saving.set(true);
+        spawn(async move {
+            match bridge::invoke_set_budget(&category, &amount, &period).await {
+                Ok(_row) => {
+                    reset_form();
+                    load_rows();
+                }
+                Err(e) => form_error.set(Some(format!("Save failed: {e}"))),
+            }
+            saving.set(false);
+        });
+    };
+
+    let mut start_edit = move |row: BudgetRow| {
+        editing_category.set(Some(row.id.clone()));
+        category_input.set(row.id);
+        amount_input.set(row.amount);
+        period_input.set(row.period);
+        form_error.set(None);
+    };
+
+    let remove = move |category: String| {
+        spawn(async move {
+            if let Err(e) = bridge::invoke_remove_budget(&category).await {
+                load_error.set(Some(format!("Remove failed: {e}")));
+                return;
+            }
+            // If the form was editing this row, drop the edit context.
+            let was_editing = editing_category
+                .read()
+                .as_ref()
+                .map(|c| c == &category)
+                .unwrap_or(false);
+            if was_editing {
+                reset_form();
+            }
+            load_rows();
+        });
+    };
+
+    let snapshot = rows.read().clone();
+    let is_loading = *loading.read();
+    let err_msg = load_error.read().clone();
+    let form_err = form_error.read().clone();
+    let is_saving = *saving.read();
+    let editing = editing_category.read().clone();
+    let editing_some = editing.is_some();
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Budgets"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        // --- Add / edit form ---
+        div { class: "mb-6 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+            div { class: "flex items-center justify-between mb-3",
+                div { class: "text-sm font-semibold text-obsidian-text",
+                    if editing_some {
+                        "Edit budget"
+                    } else {
+                        "Add a budget"
+                    }
+                }
+                if editing_some {
+                    button {
+                        class: "text-xs text-obsidian-text-muted hover:text-obsidian-text underline",
+                        onclick: move |_| reset_form(),
+                        "Cancel edit"
+                    }
+                }
+            }
+
+            div { class: "space-y-3",
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1",
+                        "Category"
+                    }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-60",
+                        r#type: "text",
+                        placeholder: "Expenses:Groceries",
+                        value: "{category_input.read()}",
+                        disabled: editing_some,
+                        oninput: move |e| category_input.set(e.value()),
+                    }
+                }
+                div { class: "grid grid-cols-2 gap-3",
+                    div {
+                        label { class: "block text-xs text-obsidian-text-muted mb-1",
+                            "Target amount"
+                        }
+                        input {
+                            class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
+                            r#type: "text",
+                            inputmode: "decimal",
+                            placeholder: "0.00",
+                            value: "{amount_input.read()}",
+                            oninput: move |e| amount_input.set(e.value()),
+                        }
+                    }
+                    div {
+                        label { class: "block text-xs text-obsidian-text-muted mb-1",
+                            "Cycle"
+                        }
+                        select {
+                            class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                            value: "{period_input.read()}",
+                            onchange: move |e| period_input.set(e.value()),
+                            for (value, label) in PERIOD_CHOICES.iter() {
+                                option { value: "{value}", "{label}" }
+                            }
+                        }
+                    }
+                }
+
+                if let Some(msg) = form_err {
+                    div { class: "text-xs text-red-300 px-1", "{msg}" }
+                }
+
+                div { class: "flex justify-end gap-2 pt-1",
+                    button {
+                        class: "px-4 py-2 bg-obsidian-accent/90 hover:bg-obsidian-accent text-black text-sm font-semibold rounded disabled:opacity-50",
+                        disabled: is_saving,
+                        onclick: move |_| save(),
+                        if is_saving {
+                            "Saving…"
+                        } else if editing_some {
+                            "Save changes"
+                        } else {
+                            "Add budget"
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Existing budgets list ---
+        if let Some(msg) = err_msg {
+            div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "{msg}"
+            }
+        }
+
+        if is_loading {
+            div { class: "p-6 text-center text-obsidian-text-muted text-sm",
+                "Loading…"
+            }
+        } else if snapshot.is_empty() {
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                "No budgets yet. Add one above to start tracking a category target."
+            }
+        } else {
+            div { class: "space-y-2",
+                for row in snapshot {
+                    BudgetRowCard {
+                        key: "{row.id}",
+                        row: row.clone(),
+                        on_edit: {
+                            let r = row.clone();
+                            move |_| start_edit(r.clone())
+                        },
+                        on_remove: {
+                            let cat = row.id.clone();
+                            move |_| remove(cat.clone())
+                        },
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn BudgetRowCard(
+    row: BudgetRow,
+    on_edit: EventHandler<()>,
+    on_remove: EventHandler<()>,
+) -> Element {
+    let period_text = period_label(&row.period);
+    rsx! {
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between gap-3",
+            div { class: "min-w-0 flex-1",
+                div { class: "text-sm font-semibold text-obsidian-text truncate",
+                    "{row.id}"
+                }
+                div { class: "text-xs text-obsidian-text-muted mt-1",
+                    "{row.amount} · {period_text}"
+                }
+            }
+            div { class: "flex gap-2 shrink-0",
+                button {
+                    class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-accent border border-white/10 hover:border-obsidian-accent/40 rounded",
+                    onclick: move |_| on_edit.call(()),
+                    "Edit"
+                }
+                button {
+                    class: "px-3 py-1.5 text-xs text-red-300/80 hover:text-red-300 border border-red-500/20 hover:border-red-500/40 rounded",
+                    onclick: move |_| on_remove.call(()),
+                    "Remove"
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3237,5 +3609,47 @@ mod tests {
     fn cadence_label_falls_back_to_every_n_days() {
         assert_eq!(cadence_label(3), "every 3 days");
         assert_eq!(cadence_label(60), "every 60 days");
+    }
+
+    // --- Budget helpers (5.1) ---
+
+    #[test]
+    fn period_label_uses_named_cadence() {
+        assert_eq!(period_label("monthly"), "Monthly");
+        assert_eq!(period_label("biweekly"), "Biweekly");
+        assert_eq!(period_label("weekly"), "Weekly");
+    }
+
+    #[test]
+    fn period_label_falls_back_to_raw_for_unknown() {
+        // A hand-crafted custom:N round-trips through the picker unchanged.
+        assert_eq!(period_label("custom:90"), "custom:90");
+    }
+
+    #[test]
+    fn normalize_category_trims_and_rejects_empty() {
+        assert_eq!(normalize_category("  Expenses:Groceries "), Some("Expenses:Groceries".to_string()));
+        assert_eq!(normalize_category(""), None);
+        assert_eq!(normalize_category("   "), None);
+    }
+
+    #[test]
+    fn validate_amount_accepts_positive_decimal() {
+        assert_eq!(validate_amount(" 12.50 "), Ok("12.50".to_string()));
+        assert_eq!(validate_amount("0.01"), Ok("0.01".to_string()));
+    }
+
+    #[test]
+    fn validate_amount_rejects_blank_or_zero_or_negative() {
+        assert!(validate_amount("").is_err());
+        assert!(validate_amount("   ").is_err());
+        assert!(validate_amount("0").is_err());
+        assert!(validate_amount("-5").is_err());
+    }
+
+    #[test]
+    fn validate_amount_rejects_non_numeric() {
+        assert!(validate_amount("abc").is_err());
+        assert!(validate_amount("12.5x").is_err());
     }
 }

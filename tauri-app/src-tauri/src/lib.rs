@@ -279,6 +279,7 @@ pub fn run() {
             commands::budget::check_affordability,
             commands::budget::set_budget,
             commands::budget::list_budgets,
+            commands::budget::remove_budget,
             commands::budget::confirm_recurring,
             commands::budget::list_recurring,
             // Document extraction (forwards to server-side GeminiExtractor)

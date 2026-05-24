@@ -6,10 +6,10 @@ use crate::types::{
     RecurringObligationView, TaskResult,
 };
 use crate::types::{
-    AccountSummaryView, AffordVerdictView, AutoImportSourceView, CommitBatchResult, CompletionEntry,
-    DashboardSummaryView, ExtractedDraft, GenericNoteItem, JournalEntryItem, LlmResult,
-    PendingBatchView, PendingShareCapture, RoutineGroup, RoutineItem, SyncInfo, SyncStatus,
-    SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
+    AccountSummaryView, AffordVerdictView, AutoImportSourceView, BudgetRow, CommitBatchResult,
+    CompletionEntry, DashboardSummaryView, ExtractedDraft, GenericNoteItem, JournalEntryItem,
+    LlmResult, PendingBatchView, PendingShareCapture, RoutineGroup, RoutineItem, SyncInfo,
+    SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 // Tauri IPC
@@ -1193,25 +1193,25 @@ fn mock_transactions() -> Vec<TransactionView> {
 fn mock_apply_filter(rows: Vec<TransactionView>, filter: &TxnFilter) -> Vec<TransactionView> {
     rows.into_iter()
         .filter(|t| {
-            if let Some(df) = filter.date_from.as_deref().filter(|s| !s.is_empty()) {
-                if t.date.as_str() < df {
-                    return false;
-                }
+            if let Some(df) = filter.date_from.as_deref().filter(|s| !s.is_empty())
+                && t.date.as_str() < df
+            {
+                return false;
             }
-            if let Some(dt) = filter.date_to.as_deref().filter(|s| !s.is_empty()) {
-                if t.date.as_str() > dt {
-                    return false;
-                }
+            if let Some(dt) = filter.date_to.as_deref().filter(|s| !s.is_empty())
+                && t.date.as_str() > dt
+            {
+                return false;
             }
-            if let Some(cat) = filter.category.as_deref().filter(|s| !s.is_empty()) {
-                if t.category.as_deref() != Some(cat) {
-                    return false;
-                }
+            if let Some(cat) = filter.category.as_deref().filter(|s| !s.is_empty())
+                && t.category.as_deref() != Some(cat)
+            {
+                return false;
             }
-            if let Some(tag) = filter.tag.as_deref().filter(|s| !s.is_empty()) {
-                if !t.tags_top.iter().any(|x| x == tag) {
-                    return false;
-                }
+            if let Some(tag) = filter.tag.as_deref().filter(|s| !s.is_empty())
+                && !t.tags_top.iter().any(|x| x == tag)
+            {
+                return false;
             }
             if let Some(acc) = filter.account.as_deref().filter(|s| !s.is_empty()) {
                 let needle = acc.to_lowercase();
@@ -1522,6 +1522,97 @@ pub async fn invoke_check_affordability(
         )
         .await
     }
+}
+
+// -----------------------------------------------------------------------------
+// Budgets (Phase 5.1) — per-category targets persisted via BudgetSet event.
+// -----------------------------------------------------------------------------
+
+pub async fn invoke_list_budgets() -> Result<Vec<BudgetRow>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_budgets())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_budgets", &Args {}).await
+    }
+}
+
+pub async fn invoke_set_budget(
+    category: &str,
+    amount: &str,
+    period: &str,
+) -> Result<BudgetRow, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(BudgetRow {
+            id: category.to_string(),
+            amount: amount.to_string(),
+            period: period.to_string(),
+            removed: false,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            category: &'a str,
+            amount: &'a str,
+            period: &'a str,
+        }
+        invoke(
+            "set_budget",
+            &Args {
+                category,
+                amount,
+                period,
+            },
+        )
+        .await
+    }
+}
+
+pub async fn invoke_remove_budget(category: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = category;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            category: &'a str,
+        }
+        invoke_unit("remove_budget", &Args { category }).await
+    }
+}
+
+#[cfg(feature = "mock")]
+fn mock_budgets() -> Vec<BudgetRow> {
+    vec![
+        BudgetRow {
+            id: "Expenses:Groceries".to_string(),
+            amount: "600.00".to_string(),
+            period: "monthly".to_string(),
+            removed: false,
+        },
+        BudgetRow {
+            id: "Expenses:DiningOut".to_string(),
+            amount: "120.00".to_string(),
+            period: "biweekly".to_string(),
+            removed: false,
+        },
+        BudgetRow {
+            id: "Expenses:Transit".to_string(),
+            amount: "40.00".to_string(),
+            period: "weekly".to_string(),
+            removed: false,
+        },
+    ]
 }
 
 #[cfg(feature = "mock")]
