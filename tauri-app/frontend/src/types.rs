@@ -510,3 +510,29 @@ pub struct ImportStatementCsvResult {
     pub imported: usize,
     pub skipped_zero_rows: usize,
 }
+
+/// Compact preview for one side of a reconciliation pair (Phase 5.7).
+/// Mirrors `commands::budget::ReconciliationTxnPreview`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReconciliationTxnPreview {
+    pub txn_id: String,
+    pub date: String,
+    pub description: String,
+    pub unmatched_amount: String,
+    pub unmatched_commodity: String,
+    pub statement_source: Option<String>,
+}
+
+/// One reconciliation candidate pair with inline previews. Mirrors
+/// `commands::budget::MatchCandidateView`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchCandidateView {
+    pub primary_id: String,
+    pub secondary_id: String,
+    pub score: f64,
+    pub days_apart: u32,
+    pub description_similarity: f64,
+    pub clears_statement: bool,
+    pub primary: ReconciliationTxnPreview,
+    pub secondary: ReconciliationTxnPreview,
+}

@@ -8,9 +8,10 @@ use crate::types::{
 use crate::types::{
     AccountSummaryView, AffordVerdictView, AutoImportSourceView, BudgetProgress, BudgetRow,
     CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft, GenericNoteItem,
-    ImportStatementCsvResult, JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture,
-    RecurringPattern, RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus,
-    SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
+    ImportStatementCsvResult, JournalEntryItem, LlmResult, MatchCandidateView, PendingBatchView,
+    PendingShareCapture, ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem,
+    ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
+    TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 // Tauri IPC
@@ -1700,6 +1701,109 @@ pub async fn invoke_import_cibc_chequing_csv(
         )
         .await
     }
+}
+
+// -----------------------------------------------------------------------------
+// Reconciliation (Phase 5.6 + 5.7) — list candidates, merge a pair.
+// -----------------------------------------------------------------------------
+
+pub async fn invoke_list_match_candidates(
+    max_days_gap: Option<u32>,
+) -> Result<Vec<MatchCandidateView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = max_days_gap;
+        Ok(mock_match_candidates())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            max_days_gap: Option<u32>,
+        }
+        invoke("list_match_candidates", &Args { max_days_gap }).await
+    }
+}
+
+pub async fn invoke_merge_transactions(
+    primary_id: &str,
+    secondary_id: &str,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (primary_id, secondary_id);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            primary_id: &'a str,
+            secondary_id: &'a str,
+        }
+        invoke_unit(
+            "merge_transactions",
+            &Args {
+                primary_id,
+                secondary_id,
+            },
+        )
+        .await
+    }
+}
+
+#[cfg(feature = "mock")]
+fn mock_match_candidates() -> Vec<MatchCandidateView> {
+    vec![
+        MatchCandidateView {
+            primary_id: "01JK001".to_string(),
+            secondary_id: "01JK002".to_string(),
+            score: 0.95,
+            days_apart: 0,
+            description_similarity: 1.0,
+            clears_statement: true,
+            primary: ReconciliationTxnPreview {
+                txn_id: "01JK001".to_string(),
+                date: "2026-05-15".to_string(),
+                description: "Loblaws Groceries".to_string(),
+                unmatched_amount: "42.18".to_string(),
+                unmatched_commodity: "CAD".to_string(),
+                statement_source: None,
+            },
+            secondary: ReconciliationTxnPreview {
+                txn_id: "01JK002".to_string(),
+                date: "2026-05-15".to_string(),
+                description: "LOBLAWS".to_string(),
+                unmatched_amount: "-42.18".to_string(),
+                unmatched_commodity: "CAD".to_string(),
+                statement_source: Some("cibc-chequing-2026-05".to_string()),
+            },
+        },
+        MatchCandidateView {
+            primary_id: "01JK003".to_string(),
+            secondary_id: "01JK004".to_string(),
+            score: 0.72,
+            days_apart: 3,
+            description_similarity: 0.5,
+            clears_statement: true,
+            primary: ReconciliationTxnPreview {
+                txn_id: "01JK003".to_string(),
+                date: "2026-05-10".to_string(),
+                description: "Hydro Bill".to_string(),
+                unmatched_amount: "87.50".to_string(),
+                unmatched_commodity: "CAD".to_string(),
+                statement_source: None,
+            },
+            secondary: ReconciliationTxnPreview {
+                txn_id: "01JK004".to_string(),
+                date: "2026-05-13".to_string(),
+                description: "Toronto Hydro".to_string(),
+                unmatched_amount: "-87.50".to_string(),
+                unmatched_commodity: "CAD".to_string(),
+                statement_source: Some("cibc-chequing-2026-05".to_string()),
+            },
+        },
+    ]
 }
 
 pub async fn invoke_dismiss_recurring(pattern_id: &str) -> Result<(), String> {

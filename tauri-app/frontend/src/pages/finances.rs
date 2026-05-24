@@ -3,9 +3,10 @@ use dioxus::prelude::*;
 use crate::bridge;
 use crate::types::{
     AccountSummaryView, AffordVerdictView, AttachmentRef, BudgetProgress, BudgetRow,
-    DashboardSummaryView, DraftTransactionView, ExtractedDraft, MonthlyTrendBucketView,
-    PendingBatchView, PendingShareCapture, PostingInput, RecurringObligationView, RecurringPattern,
-    ScanRecurringResult, TransactionFormDraft, TransactionView, TxnFilter,
+    DashboardSummaryView, DraftTransactionView, ExtractedDraft, MatchCandidateView,
+    MonthlyTrendBucketView, PendingBatchView, PendingShareCapture, PostingInput,
+    RecurringObligationView, RecurringPattern, ScanRecurringResult, TransactionFormDraft,
+    TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -94,6 +95,10 @@ enum FinancesView {
     /// a `TransactionRecorded` with one source-account posting + one
     /// `Unmatched` placeholder, awaiting 5.7 reconciliation pairing.
     StatementImport,
+    /// Unified reconciliation review (Phase 5.7). Two-column candidate
+    /// pairs from the matching engine (5.6); accept merges, dismiss
+    /// skips. Reachable from Home + the dashboard's Unmatched widget.
+    Reconciliation,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -168,6 +173,7 @@ pub fn FinancesPage() -> Element {
                         on_open_budgets: move |_| view.set(FinancesView::BudgetList),
                         on_open_recurring: move |_| view.set(FinancesView::RecurringReview),
                         on_open_statement_import: move |_| view.set(FinancesView::StatementImport),
+                        on_open_reconciliation: move |_| view.set(FinancesView::Reconciliation),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -293,17 +299,10 @@ pub fn FinancesPage() -> Element {
                     DashboardView {
                         on_back: move |_| view.set(FinancesView::Home),
                         on_open_unmatched: move |_| {
-                            // Phase 4.5 spec target was the 5.7 reconciliation
-                            // review, which doesn't exist yet — route to the
-                            // filtered txn list as the best available
-                            // destination. Swap to FinancesView::Reconciliation
-                            // (or whichever variant Phase 5.7 introduces) once
-                            // that screen ships.
-                            pending_txn_filter.set(Some(TxnFilter {
-                                account: Some("Unmatched".to_string()),
-                                ..TxnFilter::default()
-                            }));
-                            view.set(FinancesView::TransactionList);
+                            // Per 4.5 spec — Unmatched widget click-through
+                            // lands the user in 5.7's reconciliation review
+                            // (now that 5.7 has shipped).
+                            view.set(FinancesView::Reconciliation);
                         },
                     }
                 },
@@ -319,6 +318,11 @@ pub fn FinancesPage() -> Element {
                 },
                 FinancesView::StatementImport => rsx! {
                     StatementImportView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                    }
+                },
+                FinancesView::Reconciliation => rsx! {
+                    ReconciliationReviewView {
                         on_back: move |_| view.set(FinancesView::Home),
                     }
                 },
@@ -341,6 +345,7 @@ fn HomeView(
     on_open_budgets: EventHandler<()>,
     on_open_recurring: EventHandler<()>,
     on_open_statement_import: EventHandler<()>,
+    on_open_reconciliation: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -513,6 +518,22 @@ fn HomeView(
                     div { class: "text-sm font-semibold text-obsidian-text", "Import statement" }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
                         "Drop a CIBC chequing CSV — each row lands in Unmatched, ready to reconcile."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
+            button {
+                class: "w-full p-4 bg-obsidian-accent/10 border border-obsidian-accent/30 rounded-lg flex items-center justify-between hover:bg-obsidian-accent/15 hover:border-obsidian-accent/50 transition-colors text-left",
+                onclick: move |_| on_open_reconciliation.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-accent", "Reconcile" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Pair Unmatched-touching transactions across sources — merge confirmed matches."
                     }
                 }
                 svg { class: "w-5 h-5 text-obsidian-text-muted",
@@ -3888,6 +3909,222 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Reconciliation review (Phase 5.7) — two-column pairs, merge or dismiss.
+// -----------------------------------------------------------------------------
+
+/// Label for the confidence indicator on a candidate row.
+fn confidence_label(score: f64) -> &'static str {
+    if score >= 0.85 {
+        "High"
+    } else if score >= 0.6 {
+        "Medium"
+    } else {
+        "Low"
+    }
+}
+
+/// Tailwind background class for the confidence pill, matching `confidence_label`.
+fn confidence_color_class(score: f64) -> &'static str {
+    if score >= 0.85 {
+        "bg-emerald-500/20 text-emerald-200 border-emerald-500/40"
+    } else if score >= 0.6 {
+        "bg-amber-400/15 text-amber-200 border-amber-400/30"
+    } else {
+        "bg-obsidian-text-muted/10 text-obsidian-text-muted border-white/10"
+    }
+}
+
+#[component]
+fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
+    let mut candidates: Signal<Vec<MatchCandidateView>> = use_signal(Vec::new);
+    let mut loading: Signal<bool> = use_signal(|| true);
+    let mut load_error: Signal<Option<String>> = use_signal(|| None);
+    // Dismissed pairs (by "primary|secondary" key) — local-only, not
+    // persisted. A "skip for now" affordance that doesn't pollute the
+    // event log. Reload re-surfaces them.
+    let mut dismissed: Signal<std::collections::HashSet<String>> =
+        use_signal(std::collections::HashSet::new);
+    // Pair currently being merged — disables the row's buttons so a
+    // double-click can't fire two merges.
+    let mut merging_pair: Signal<Option<String>> = use_signal(|| None);
+
+    let load_candidates = move || {
+        spawn(async move {
+            loading.set(true);
+            load_error.set(None);
+            match bridge::invoke_list_match_candidates(Some(7)).await {
+                Ok(rows) => candidates.set(rows),
+                Err(e) => load_error.set(Some(e)),
+            }
+            loading.set(false);
+        });
+    };
+
+    use_effect(move || {
+        load_candidates();
+    });
+
+    let merge = move |primary_id: String, secondary_id: String| {
+        let key = format!("{primary_id}|{secondary_id}");
+        spawn(async move {
+            merging_pair.set(Some(key.clone()));
+            match bridge::invoke_merge_transactions(&primary_id, &secondary_id).await {
+                Ok(_) => {
+                    // Refetch — the merged pair drops out, and any other
+                    // candidates that referenced the absorbed secondary
+                    // also drop.
+                    load_candidates();
+                }
+                Err(e) => load_error.set(Some(format!("Merge failed: {e}"))),
+            }
+            merging_pair.set(None);
+        });
+    };
+
+    let mut dismiss = move |primary_id: String, secondary_id: String| {
+        let key = format!("{primary_id}|{secondary_id}");
+        let mut set = dismissed.read().clone();
+        set.insert(key);
+        dismissed.set(set);
+    };
+
+    let snapshot = candidates.read().clone();
+    let dismissed_set = dismissed.read().clone();
+    let is_loading = *loading.read();
+    let err_msg = load_error.read().clone();
+    let active_merge = merging_pair.read().clone();
+
+    let visible: Vec<MatchCandidateView> = snapshot
+        .into_iter()
+        .filter(|c| !dismissed_set.contains(&format!("{}|{}", c.primary_id, c.secondary_id)))
+        .collect();
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Reconcile"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-xs text-obsidian-text-muted",
+            "Pairs of Unmatched-touching transactions whose amounts cancel out. Merge accepts the pair into one transaction (with the statement side automatically cleared); Skip hides the pair until next reload."
+        }
+
+        if let Some(msg) = err_msg {
+            div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "{msg}"
+            }
+        }
+
+        if is_loading {
+            div { class: "p-6 text-center text-obsidian-text-muted text-sm",
+                "Loading candidates…"
+            }
+        } else if visible.is_empty() {
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                "No reconciliation candidates. Import a statement or wait for more auto-imported transactions to accumulate."
+            }
+        } else {
+            div { class: "space-y-3",
+                for c in visible {
+                    {
+                        let key = format!("{}|{}", c.primary_id, c.secondary_id);
+                        let is_merging = active_merge.as_deref() == Some(key.as_str());
+                        rsx! {
+                            CandidateCard {
+                                key: "{key}",
+                                cand: c.clone(),
+                                is_merging,
+                                on_merge: {
+                                    let p = c.primary_id.clone();
+                                    let s = c.secondary_id.clone();
+                                    move |_| merge(p.clone(), s.clone())
+                                },
+                                on_dismiss: {
+                                    let p = c.primary_id.clone();
+                                    let s = c.secondary_id.clone();
+                                    move |_| dismiss(p.clone(), s.clone())
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn CandidateCard(
+    cand: MatchCandidateView,
+    is_merging: bool,
+    on_merge: EventHandler<()>,
+    on_dismiss: EventHandler<()>,
+) -> Element {
+    let conf = confidence_label(cand.score);
+    let conf_class = confidence_color_class(cand.score);
+    rsx! {
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+            div { class: "flex items-center gap-2",
+                span {
+                    class: "px-2 py-0.5 text-xs font-semibold border rounded-full {conf_class}",
+                    "{conf}"
+                }
+                span { class: "text-xs text-obsidian-text-muted",
+                    "{cand.days_apart} day(s) apart · descriptions {(cand.description_similarity * 100.0) as u32}% similar"
+                }
+                if cand.clears_statement {
+                    span { class: "text-xs text-obsidian-accent",
+                        "· clears statement"
+                    }
+                }
+            }
+            div { class: "grid grid-cols-2 gap-3",
+                CandidateSide { txn: cand.primary.clone() }
+                CandidateSide { txn: cand.secondary.clone() }
+            }
+            div { class: "flex gap-2 justify-end pt-1",
+                button {
+                    class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-text border border-white/10 hover:border-white/20 rounded disabled:opacity-50",
+                    disabled: is_merging,
+                    onclick: move |_| on_dismiss.call(()),
+                    "Skip"
+                }
+                button {
+                    class: "px-4 py-1.5 text-xs font-semibold text-black bg-obsidian-accent/90 hover:bg-obsidian-accent rounded disabled:opacity-50",
+                    disabled: is_merging,
+                    onclick: move |_| on_merge.call(()),
+                    if is_merging { "Merging…" } else { "Merge" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn CandidateSide(txn: crate::types::ReconciliationTxnPreview) -> Element {
+    let source_label = txn.statement_source.as_deref().unwrap_or("captured");
+    rsx! {
+        div { class: "p-3 bg-obsidian-bg/60 border border-white/5 rounded text-xs space-y-1",
+            div { class: "text-obsidian-text font-medium truncate",
+                "{txn.description}"
+            }
+            div { class: "text-obsidian-text-muted",
+                "{txn.date} · {txn.unmatched_amount} {txn.unmatched_commodity}"
+            }
+            div { class: "text-obsidian-text-muted/80 italic truncate",
+                "{source_label}"
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4178,5 +4415,23 @@ mod tests {
     #[test]
     fn recurring_cadence_label_falls_back_to_every_n_days() {
         assert_eq!(recurring_cadence_label(90), "every 90 days");
+    }
+
+    // --- Reconciliation helpers (5.7) ---
+
+    #[test]
+    fn confidence_label_thresholds() {
+        assert_eq!(confidence_label(0.95), "High");
+        assert_eq!(confidence_label(0.85), "High");
+        assert_eq!(confidence_label(0.7), "Medium");
+        assert_eq!(confidence_label(0.6), "Medium");
+        assert_eq!(confidence_label(0.4), "Low");
+    }
+
+    #[test]
+    fn confidence_color_class_aligns_with_label() {
+        assert!(confidence_color_class(0.95).contains("emerald"));
+        assert!(confidence_color_class(0.7).contains("amber"));
+        assert!(confidence_color_class(0.4).contains("muted"));
     }
 }

@@ -18,7 +18,7 @@ use omni_me_core::events::{
     AttachmentRef, EventType, Posting, TransactionRecordedPayload,
 };
 use omni_me_core::recurring;
-use omni_me_core::reconciliation::{self, MatchCandidate, UnmatchedTxn};
+use omni_me_core::reconciliation::{self, UnmatchedTxn};
 use omni_me_core::statement_csv::{self, MoneyDirection};
 use omni_me_core::accounts;
 use rust_decimal::Decimal;
@@ -846,7 +846,21 @@ pub async fn import_cibc_chequing_csv(
     })
 }
 
-/// Wire shape for one reconciliation candidate (Phase 5.6).
+/// Compact preview of one side of a reconciliation pair — just enough
+/// for the review UI to render the row without a second round-trip.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReconciliationTxnPreview {
+    pub txn_id: String,
+    pub date: String,
+    pub description: String,
+    pub unmatched_amount: String,
+    pub unmatched_commodity: String,
+    pub statement_source: Option<String>,
+}
+
+/// Wire shape for one reconciliation candidate (Phase 5.6 + 5.7).
+/// Includes inline previews for both sides so the UI can render the
+/// pair in one render pass.
 #[derive(Debug, Clone, Serialize)]
 pub struct MatchCandidateView {
     pub primary_id: String,
@@ -855,17 +869,8 @@ pub struct MatchCandidateView {
     pub days_apart: u32,
     pub description_similarity: f64,
     pub clears_statement: bool,
-}
-
-fn candidate_to_view(c: MatchCandidate) -> MatchCandidateView {
-    MatchCandidateView {
-        primary_id: c.primary_id,
-        secondary_id: c.secondary_id,
-        score: c.score,
-        days_apart: c.signals.days_apart,
-        description_similarity: c.signals.description_similarity,
-        clears_statement: c.clears_statement,
-    }
+    pub primary: ReconciliationTxnPreview,
+    pub secondary: ReconciliationTxnPreview,
 }
 
 /// Flatten a TransactionRow into an UnmatchedTxn, picking out the
@@ -899,6 +904,98 @@ fn unmatched_from_row(row: &TransactionRow) -> Option<UnmatchedTxn> {
     })
 }
 
+/// Merge two `Unmatched`-touching transactions into one. Emits
+/// `TransactionsMerged` (always) + `TransactionCleared` (when exactly one
+/// side has `statement_source`). The surviving transaction id is the
+/// lexicographically smaller of the two, matching the candidate
+/// engine's `primary_id` convention.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn merge_transactions(
+    state: State<'_, AppState>,
+    primary_id: String,
+    secondary_id: String,
+) -> Result<(), String> {
+    let primary = queries::get_transaction(&state.db, &primary_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("primary transaction {primary_id} not found"))?;
+    let secondary = queries::get_transaction(&state.db, &secondary_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("secondary transaction {secondary_id} not found"))?;
+
+    // Strip Unmatched legs from both — they're equal-and-opposite so the
+    // combined non-Unmatched postings balance to zero.
+    let primary_legs = strip_unmatched_legs(&primary.postings.clone().into_json_value());
+    let secondary_legs = strip_unmatched_legs(&secondary.postings.clone().into_json_value());
+    let mut combined: Vec<serde_json::Value> = primary_legs;
+    combined.extend(secondary_legs);
+
+    let combined_description = if primary.description.is_empty() {
+        secondary.description.clone()
+    } else {
+        primary.description.clone()
+    };
+    let combined_attachment = primary
+        .attachment
+        .clone()
+        .map(|a| a.into_json_value())
+        .or_else(|| secondary.attachment.clone().map(|a| a.into_json_value()));
+
+    let merged_payload = serde_json::json!({
+        "primary_id": primary_id,
+        "merged_ids": [secondary_id],
+        "combined_postings": combined,
+        "combined_description": combined_description,
+        "combined_attachment": combined_attachment,
+        "balancing_posting": null,
+    });
+    append_and_apply(
+        &state,
+        EventType::TransactionsMerged,
+        primary_id.clone(),
+        merged_payload,
+    )
+    .await?;
+
+    // Cleared flag: exactly one side has statement_source.
+    let (source, cleared_date) = match (&primary.statement_source, &secondary.statement_source) {
+        (Some(s), None) => (Some(s.clone()), primary.date.clone()),
+        (None, Some(s)) => (Some(s.clone()), secondary.date.clone()),
+        _ => (None, String::new()),
+    };
+    if let Some(s) = source {
+        let cleared_payload = serde_json::json!({
+            "txn_id": primary_id,
+            "statement_source": s,
+            "cleared_date": cleared_date,
+        });
+        append_and_apply(
+            &state,
+            EventType::TransactionCleared,
+            primary_id,
+            cleared_payload,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn strip_unmatched_legs(postings: &serde_json::Value) -> Vec<serde_json::Value> {
+    postings
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| {
+            p.get("account")
+                .and_then(|v| v.as_str())
+                .map(|s| s != "Unmatched")
+                .unwrap_or(true)
+        })
+        .collect()
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_match_candidates(
     state: State<'_, AppState>,
@@ -910,7 +1007,41 @@ pub async fn list_match_candidates(
         .map_err(|e| e.to_string())?;
     let unmatched: Vec<UnmatchedTxn> = rows.iter().filter_map(unmatched_from_row).collect();
     let cands = reconciliation::find_match_candidates(&unmatched, window);
-    Ok(cands.into_iter().map(candidate_to_view).collect())
+
+    // Build a lookup so each candidate can carry its preview without
+    // re-iterating the row list.
+    let by_id: std::collections::HashMap<String, &UnmatchedTxn> =
+        unmatched.iter().map(|u| (u.txn_id.clone(), u)).collect();
+
+    let views = cands
+        .into_iter()
+        .filter_map(|c| {
+            let p = by_id.get(&c.primary_id)?;
+            let s = by_id.get(&c.secondary_id)?;
+            Some(MatchCandidateView {
+                primary_id: c.primary_id.clone(),
+                secondary_id: c.secondary_id.clone(),
+                score: c.score,
+                days_apart: c.signals.days_apart,
+                description_similarity: c.signals.description_similarity,
+                clears_statement: c.clears_statement,
+                primary: txn_preview(p),
+                secondary: txn_preview(s),
+            })
+        })
+        .collect();
+    Ok(views)
+}
+
+fn txn_preview(u: &UnmatchedTxn) -> ReconciliationTxnPreview {
+    ReconciliationTxnPreview {
+        txn_id: u.txn_id.clone(),
+        date: u.date.to_string(),
+        description: u.description.clone(),
+        unmatched_amount: u.unmatched_amount.to_string(),
+        unmatched_commodity: u.unmatched_commodity.clone(),
+        statement_source: u.statement_source.clone(),
+    }
 }
 
 #[tauri::command(rename_all = "snake_case")]
