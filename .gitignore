@@ -16,6 +16,7 @@ reviews/
 .curiosities/
 logbook/_drafts/
 logbook/_assets/
+/*.png
 ui_dev/
 UI_design.md
 tauri-app/frontend/assets/tailwind.css
