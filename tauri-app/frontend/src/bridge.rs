@@ -6,10 +6,11 @@ use crate::types::{
     RecurringObligationView, TaskResult,
 };
 use crate::types::{
-    AccountSummaryView, AffordVerdictView, AutoImportSourceView, BudgetRow, CommitBatchResult,
-    CompletionEntry, DashboardSummaryView, ExtractedDraft, GenericNoteItem, JournalEntryItem,
-    LlmResult, PendingBatchView, PendingShareCapture, RoutineGroup, RoutineItem, SyncInfo,
-    SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
+    AccountSummaryView, AffordVerdictView, AutoImportSourceView, BudgetProgress, BudgetRow,
+    CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft, GenericNoteItem,
+    JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture, RoutineGroup, RoutineItem,
+    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView,
+    TxnFilter,
 };
 
 // Tauri IPC
@@ -1575,6 +1576,32 @@ pub async fn invoke_set_budget(
     }
 }
 
+pub async fn invoke_budget_progress(
+    base_currency: Option<&str>,
+) -> Result<Vec<BudgetProgress>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = base_currency;
+        Ok(mock_budget_progress())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            base_currency: Option<&'a str>,
+            as_of: Option<&'a str>,
+        }
+        invoke(
+            "budget_progress",
+            &Args {
+                base_currency,
+                as_of: None,
+            },
+        )
+        .await
+    }
+}
+
 pub async fn invoke_remove_budget(category: &str) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
@@ -1589,6 +1616,42 @@ pub async fn invoke_remove_budget(category: &str) -> Result<(), String> {
         }
         invoke_unit("remove_budget", &Args { category }).await
     }
+}
+
+#[cfg(feature = "mock")]
+fn mock_budget_progress() -> Vec<BudgetProgress> {
+    vec![
+        BudgetProgress {
+            category: "Expenses:Groceries".to_string(),
+            period: "monthly".to_string(),
+            period_start: "2026-05-01".to_string(),
+            period_end: "2026-05-31".to_string(),
+            target: "600.00".to_string(),
+            actual: "225.00".to_string(),
+            percent_used: 37.5,
+            over_budget: false,
+        },
+        BudgetProgress {
+            category: "Expenses:DiningOut".to_string(),
+            period: "biweekly".to_string(),
+            period_start: "2026-05-02".to_string(),
+            period_end: "2026-05-15".to_string(),
+            target: "120.00".to_string(),
+            actual: "145.00".to_string(),
+            percent_used: 120.83,
+            over_budget: true,
+        },
+        BudgetProgress {
+            category: "Expenses:Transit".to_string(),
+            period: "weekly".to_string(),
+            period_start: "2026-05-10".to_string(),
+            period_end: "2026-05-16".to_string(),
+            target: "40.00".to_string(),
+            actual: "32.50".to_string(),
+            percent_used: 81.25,
+            over_budget: false,
+        },
+    ]
 }
 
 #[cfg(feature = "mock")]

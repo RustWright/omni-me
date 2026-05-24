@@ -2,10 +2,10 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::types::{
-    AccountSummaryView, AffordVerdictView, AttachmentRef, BudgetRow, DashboardSummaryView,
-    DraftTransactionView, ExtractedDraft, MonthlyTrendBucketView, PendingBatchView,
-    PendingShareCapture, PostingInput, RecurringObligationView, TransactionFormDraft,
-    TransactionView, TxnFilter,
+    AccountSummaryView, AffordVerdictView, AttachmentRef, BudgetProgress, BudgetRow,
+    DashboardSummaryView, DraftTransactionView, ExtractedDraft, MonthlyTrendBucketView,
+    PendingBatchView, PendingShareCapture, PostingInput, RecurringObligationView,
+    TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -3131,9 +3131,37 @@ fn validate_amount(raw: &str) -> Result<String, &'static str> {
     Ok(trimmed.to_string())
 }
 
+/// Tailwind class for a progress-bar fill based on `over_budget` + raw
+/// percent. Three tiers — green under 75%, amber 75-100%, red over budget.
+/// Picks a class string rather than a color value so the existing Tailwind
+/// purge sees them at build time.
+fn progress_color_class(percent_used: f64, over_budget: bool) -> &'static str {
+    if over_budget {
+        "bg-red-500/70"
+    } else if percent_used >= 75.0 {
+        "bg-amber-400/70"
+    } else {
+        "bg-emerald-500/70"
+    }
+}
+
+/// CSS-`width` string for the progress bar's fill — visually clamps at
+/// 100% so an over-budget bar doesn't overflow its container, while the
+/// numeric label below the bar still shows the true percentage.
+fn progress_width_pct(percent_used: f64) -> f64 {
+    percent_used.clamp(0.0, 100.0)
+}
+
+/// Compact "May 1 – May 31" label for the period range. Used in the
+/// per-row progress sub-line.
+fn period_range_label(start: &str, end: &str) -> String {
+    format!("{start} – {end}")
+}
+
 #[component]
 fn BudgetListView(on_back: EventHandler<()>) -> Element {
     let mut rows: Signal<Vec<BudgetRow>> = use_signal(Vec::new);
+    let mut progress: Signal<Vec<BudgetProgress>> = use_signal(Vec::new);
     let mut loading: Signal<bool> = use_signal(|| true);
     let mut load_error: Signal<Option<String>> = use_signal(|| None);
 
@@ -3155,6 +3183,13 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
             match bridge::invoke_list_budgets().await {
                 Ok(fetched) => rows.set(fetched),
                 Err(e) => load_error.set(Some(e)),
+            }
+            // Progress is best-effort — if it fails (bad amount string,
+            // missing journal, FX gap), the list still renders without
+            // bars rather than hiding the budgets behind a load error.
+            match bridge::invoke_budget_progress(Some("CAD")).await {
+                Ok(fetched) => progress.set(fetched),
+                Err(_) => progress.set(Vec::new()),
             }
             loading.set(false);
         });
@@ -3360,18 +3395,24 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
             }
         } else {
             div { class: "space-y-2",
-                for row in snapshot {
-                    BudgetRowCard {
-                        key: "{row.id}",
-                        row: row.clone(),
-                        on_edit: {
-                            let r = row.clone();
-                            move |_| start_edit(r.clone())
-                        },
-                        on_remove: {
-                            let cat = row.id.clone();
-                            move |_| remove(cat.clone())
-                        },
+                {
+                    let progress_snapshot = progress.read().clone();
+                    rsx! {
+                        for row in snapshot {
+                            BudgetRowCard {
+                                key: "{row.id}",
+                                row: row.clone(),
+                                progress: progress_snapshot.iter().find(|p| p.category == row.id).cloned(),
+                                on_edit: {
+                                    let r = row.clone();
+                                    move |_| start_edit(r.clone())
+                                },
+                                on_remove: {
+                                    let cat = row.id.clone();
+                                    move |_| remove(cat.clone())
+                                },
+                            }
+                        }
                     }
                 }
             }
@@ -3382,31 +3423,62 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
 #[component]
 fn BudgetRowCard(
     row: BudgetRow,
+    progress: Option<BudgetProgress>,
     on_edit: EventHandler<()>,
     on_remove: EventHandler<()>,
 ) -> Element {
     let period_text = period_label(&row.period);
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between gap-3",
-            div { class: "min-w-0 flex-1",
-                div { class: "text-sm font-semibold text-obsidian-text truncate",
-                    "{row.id}"
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex flex-col gap-3",
+            div { class: "flex items-center justify-between gap-3",
+                div { class: "min-w-0 flex-1",
+                    div { class: "text-sm font-semibold text-obsidian-text truncate",
+                        "{row.id}"
+                    }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "{row.amount} · {period_text}"
+                    }
                 }
-                div { class: "text-xs text-obsidian-text-muted mt-1",
-                    "{row.amount} · {period_text}"
+                div { class: "flex gap-2 shrink-0",
+                    button {
+                        class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-accent border border-white/10 hover:border-obsidian-accent/40 rounded",
+                        onclick: move |_| on_edit.call(()),
+                        "Edit"
+                    }
+                    button {
+                        class: "px-3 py-1.5 text-xs text-red-300/80 hover:text-red-300 border border-red-500/20 hover:border-red-500/40 rounded",
+                        onclick: move |_| on_remove.call(()),
+                        "Remove"
+                    }
                 }
             }
-            div { class: "flex gap-2 shrink-0",
-                button {
-                    class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-accent border border-white/10 hover:border-obsidian-accent/40 rounded",
-                    onclick: move |_| on_edit.call(()),
-                    "Edit"
+            if let Some(p) = progress {
+                BudgetProgressBar { progress: p }
+            }
+        }
+    }
+}
+
+#[component]
+fn BudgetProgressBar(progress: BudgetProgress) -> Element {
+    let width = progress_width_pct(progress.percent_used);
+    let color = progress_color_class(progress.percent_used, progress.over_budget);
+    let verdict = if progress.over_budget {
+        format!("Over by {:.0}%", progress.percent_used - 100.0)
+    } else {
+        format!("{:.0}% used", progress.percent_used)
+    };
+    rsx! {
+        div {
+            div { class: "w-full h-2 bg-obsidian-bg rounded-full overflow-hidden",
+                div {
+                    class: "{color} h-full transition-all",
+                    style: "width: {width}%",
                 }
-                button {
-                    class: "px-3 py-1.5 text-xs text-red-300/80 hover:text-red-300 border border-red-500/20 hover:border-red-500/40 rounded",
-                    onclick: move |_| on_remove.call(()),
-                    "Remove"
-                }
+            }
+            div { class: "flex items-center justify-between mt-1.5 text-xs text-obsidian-text-muted",
+                span { "{progress.actual} of {progress.target} · {verdict}" }
+                span { "{period_range_label(&progress.period_start, &progress.period_end)}" }
             }
         }
     }
@@ -3651,5 +3723,41 @@ mod tests {
     fn validate_amount_rejects_non_numeric() {
         assert!(validate_amount("abc").is_err());
         assert!(validate_amount("12.5x").is_err());
+    }
+
+    // --- Budget progress helpers (5.2) ---
+
+    #[test]
+    fn progress_color_picks_red_when_over_budget() {
+        assert_eq!(progress_color_class(105.0, true), "bg-red-500/70");
+    }
+
+    #[test]
+    fn progress_color_picks_amber_in_warning_band() {
+        assert_eq!(progress_color_class(75.0, false), "bg-amber-400/70");
+        assert_eq!(progress_color_class(99.9, false), "bg-amber-400/70");
+    }
+
+    #[test]
+    fn progress_color_picks_green_under_warning_band() {
+        assert_eq!(progress_color_class(0.0, false), "bg-emerald-500/70");
+        assert_eq!(progress_color_class(50.0, false), "bg-emerald-500/70");
+    }
+
+    #[test]
+    fn progress_width_pct_clamps_at_100() {
+        // Over-budget bars stop filling visually at 100% — the verdict text
+        // surfaces the true over-by-X% number below.
+        assert_eq!(progress_width_pct(150.0), 100.0);
+        assert_eq!(progress_width_pct(50.0), 50.0);
+        assert_eq!(progress_width_pct(-10.0), 0.0);
+    }
+
+    #[test]
+    fn period_range_label_joins_endpoints() {
+        assert_eq!(
+            period_range_label("2026-05-01", "2026-05-31"),
+            "2026-05-01 – 2026-05-31"
+        );
     }
 }

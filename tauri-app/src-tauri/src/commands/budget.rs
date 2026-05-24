@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use omni_me_core::balances::{self, AccountSummary, CommodityBalance};
+use omni_me_core::budget::{self, BudgetProgress};
 use omni_me_core::dashboard::{self, AffordVerdict, DashboardSummary, MonthlyTrendBucket, RecurringObligation};
 use omni_me_core::db::queries::{
     self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow, TxnFilter,
@@ -508,6 +509,95 @@ pub async fn list_budgets(state: State<'_, AppState>) -> Result<Vec<BudgetRow>, 
     queries::list_budgets(&state.db)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Wire shape for `budget_progress` — Decimals carried as strings + dates
+/// as ISO strings, same boundary convention as the dashboard view types.
+#[derive(Debug, Clone, Serialize)]
+pub struct BudgetProgressView {
+    pub category: String,
+    pub period: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub target: String,
+    pub actual: String,
+    pub percent_used: f64,
+    pub over_budget: bool,
+}
+
+fn budget_progress_to_view(p: BudgetProgress) -> BudgetProgressView {
+    BudgetProgressView {
+        category: p.category,
+        period: p.period,
+        period_start: p.period_start.to_string(),
+        period_end: p.period_end.to_string(),
+        target: p.target.to_string(),
+        actual: p.actual.to_string(),
+        percent_used: p.percent_used,
+        over_budget: p.over_budget,
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn budget_progress(
+    state: State<'_, AppState>,
+    base_currency: Option<String>,
+    as_of: Option<String>,
+) -> Result<Vec<BudgetProgressView>, String> {
+    let base = base_currency.unwrap_or_else(|| "CAD".to_string());
+    let as_of_date = match as_of {
+        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            .map_err(|e| format!("bad as_of date: {e}"))?,
+        None => chrono::Utc::now().date_naive(),
+    };
+
+    let budgets = queries::list_budgets(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    if budgets.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Triple shape compute_budget_progress wants — also lets us find the
+    // earliest window start across all budgets for the txn cutoff query.
+    let mut triples: Vec<(String, rust_decimal::Decimal, String)> = Vec::with_capacity(budgets.len());
+    for b in &budgets {
+        let amount = b
+            .amount
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|e| format!("budget {} has unparseable amount {}: {e}", b.id, b.amount))?;
+        triples.push((b.id.clone(), amount, b.period.clone()));
+    }
+
+    let earliest_start = triples
+        .iter()
+        .filter_map(|(_, _, period)| omni_me_core::budget::current_period_window(period, as_of_date))
+        .map(|(start, _)| start)
+        .min()
+        .unwrap_or(as_of_date);
+    let cutoff = earliest_start.to_string();
+
+    let journal_path = state.app_data_dir.join("budget.journal");
+    let journal_content = match tokio::fs::read_to_string(&journal_path).await {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("read journal file: {e}")),
+    };
+
+    let txn_rows = queries::list_transactions_since(&state.db, &cutoff)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let summary = budget::budget_progress_summary(
+        &journal_content,
+        &triples,
+        &txn_rows,
+        &base,
+        as_of_date,
+    )
+    .map_err(|e| format!("budget progress computation: {e}"))?;
+
+    Ok(summary.into_iter().map(budget_progress_to_view).collect())
 }
 
 #[tauri::command(rename_all = "snake_case")]

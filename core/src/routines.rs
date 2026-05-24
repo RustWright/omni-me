@@ -122,7 +122,7 @@ impl Frequency {
 }
 
 /// Last calendar day of the month containing `date` (28-31).
-fn last_day_of_month(date: NaiveDate) -> u32 {
+pub(crate) fn last_day_of_month(date: NaiveDate) -> u32 {
     [31, 30, 29, 28]
         .into_iter()
         .find(|&day| NaiveDate::from_ymd_opt(date.year(), date.month(), day).is_some())
@@ -224,7 +224,9 @@ mod tests {
         // The wire form is exact: no `.trim()`, no `.to_lowercase()`. Locks the
         // contract against a future "be helpful" refactor that would silently
         // accept variants the event payload writer never produces.
-        for s in ["DAILY", "Daily", "Weekly", "MONTHLY", "Custom:3", " daily ", "daily\n"] {
+        for s in [
+            "DAILY", "Daily", "Weekly", "MONTHLY", "Custom:3", " daily ", "daily\n",
+        ] {
             let err = s.parse::<Frequency>().unwrap_err();
             assert!(
                 matches!(err, FrequencyParseError::UnknownVariant(_)),
@@ -331,8 +333,7 @@ mod tests {
         }
         // Months that DO have a 31st still fire on the 31st, not earlier.
         assert!(
-            Frequency::Monthly
-                .should_run_on(anchor, NaiveDate::from_ymd_opt(2026, 3, 31).unwrap())
+            Frequency::Monthly.should_run_on(anchor, NaiveDate::from_ymd_opt(2026, 3, 31).unwrap())
         );
         assert!(
             !Frequency::Monthly
@@ -345,15 +346,14 @@ mod tests {
         // 2024 is a leap year — Feb 29 exists, so the day-29 anchor fires on Feb 29.
         let anchor = NaiveDate::from_ymd_opt(2024, 1, 29).unwrap();
         assert!(
-            Frequency::Monthly
-                .should_run_on(anchor, NaiveDate::from_ymd_opt(2024, 2, 29).unwrap())
+            Frequency::Monthly.should_run_on(anchor, NaiveDate::from_ymd_opt(2024, 2, 29).unwrap())
         );
         // 2026 is not a leap year — day-29 anchor clamps to Feb 28.
         let anchor_nonleap = NaiveDate::from_ymd_opt(2026, 1, 29).unwrap();
-        assert!(
-            Frequency::Monthly
-                .should_run_on(anchor_nonleap, NaiveDate::from_ymd_opt(2026, 2, 28).unwrap())
-        );
+        assert!(Frequency::Monthly.should_run_on(
+            anchor_nonleap,
+            NaiveDate::from_ymd_opt(2026, 2, 28).unwrap()
+        ));
         // Day-30 anchor in non-leap Feb also clamps to Feb 28.
         let anchor_30 = NaiveDate::from_ymd_opt(2026, 1, 30).unwrap();
         assert!(

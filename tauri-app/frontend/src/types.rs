@@ -463,3 +463,17 @@ pub struct BudgetRow {
     pub period: String,
     pub removed: bool,
 }
+
+/// Actual-vs-planned snapshot for one budget over its current period window
+/// (Phase 5.2). Mirrors `commands::budget::BudgetProgressView`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BudgetProgress {
+    pub category: String,
+    pub period: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub target: String,
+    pub actual: String,
+    pub percent_used: f64,
+    pub over_budget: bool,
+}
