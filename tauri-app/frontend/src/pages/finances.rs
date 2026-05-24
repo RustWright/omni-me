@@ -4,8 +4,8 @@ use crate::bridge;
 use crate::types::{
     AccountSummaryView, AffordVerdictView, AttachmentRef, BudgetProgress, BudgetRow,
     DashboardSummaryView, DraftTransactionView, ExtractedDraft, MonthlyTrendBucketView,
-    PendingBatchView, PendingShareCapture, PostingInput, RecurringObligationView,
-    TransactionFormDraft, TransactionView, TxnFilter,
+    PendingBatchView, PendingShareCapture, PostingInput, RecurringObligationView, RecurringPattern,
+    ScanRecurringResult, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -87,6 +87,9 @@ enum FinancesView {
     /// W4 budget setup screen (Phase 5.1). Per-category targets with
     /// per-cycle (monthly default; weekly / biweekly) cadence.
     BudgetList,
+    /// W3 recurring confirm/dismiss screen (Phase 5.4). Lists patterns
+    /// surfaced by the scanner, each accept/dismiss per row.
+    RecurringReview,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -159,6 +162,7 @@ pub fn FinancesPage() -> Element {
                         on_open_accounts: move |_| view.set(FinancesView::AccountList),
                         on_open_dashboard: move |_| view.set(FinancesView::Dashboard),
                         on_open_budgets: move |_| view.set(FinancesView::BudgetList),
+                        on_open_recurring: move |_| view.set(FinancesView::RecurringReview),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -303,6 +307,11 @@ pub fn FinancesPage() -> Element {
                         on_back: move |_| view.set(FinancesView::Home),
                     }
                 },
+                FinancesView::RecurringReview => rsx! {
+                    RecurringReviewView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                    }
+                },
             }
         }
     }
@@ -320,6 +329,7 @@ fn HomeView(
     on_open_accounts: EventHandler<()>,
     on_open_dashboard: EventHandler<()>,
     on_open_budgets: EventHandler<()>,
+    on_open_recurring: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -460,6 +470,22 @@ fn HomeView(
                     div { class: "text-sm font-semibold text-obsidian-text", "Budgets" }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
                         "Set per-category targets; weekly, biweekly, or monthly."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
+            button {
+                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+                onclick: move |_| on_open_recurring.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-text", "Recurring" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Review detected subscription patterns; accept or dismiss each."
                     }
                 }
                 svg { class: "w-5 h-5 text-obsidian-text-muted",
@@ -3484,6 +3510,197 @@ fn BudgetProgressBar(progress: BudgetProgress) -> Element {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Recurring review (Phase 5.4) — confirm/dismiss detected patterns.
+// -----------------------------------------------------------------------------
+
+/// Format a `cadence_days` integer as a human-readable cadence label.
+/// Mirrors the existing `cadence_label` shape but lives in 5.4 so the
+/// recurring review can present "monthly" / "weekly" / "every N days"
+/// alongside its row data without round-tripping to the dashboard.
+fn recurring_cadence_label(cadence_days: u32) -> String {
+    match cadence_days {
+        7 => "weekly".to_string(),
+        14 => "biweekly".to_string(),
+        30 | 31 => "monthly".to_string(),
+        0 => "—".to_string(),
+        n => format!("every {n} days"),
+    }
+}
+
+#[component]
+fn RecurringReviewView(on_back: EventHandler<()>) -> Element {
+    let mut rows: Signal<Vec<RecurringPattern>> = use_signal(Vec::new);
+    let mut loading: Signal<bool> = use_signal(|| true);
+    let mut load_error: Signal<Option<String>> = use_signal(|| None);
+    let mut scanning: Signal<bool> = use_signal(|| false);
+    let mut last_scan: Signal<Option<ScanRecurringResult>> = use_signal(|| None);
+
+    let load_rows = move || {
+        spawn(async move {
+            loading.set(true);
+            load_error.set(None);
+            match bridge::invoke_list_recurring(Some("detected")).await {
+                Ok(fetched) => rows.set(fetched),
+                Err(e) => load_error.set(Some(e)),
+            }
+            loading.set(false);
+        });
+    };
+
+    use_effect(move || {
+        load_rows();
+    });
+
+    let scan = move || {
+        spawn(async move {
+            scanning.set(true);
+            match bridge::invoke_scan_recurring(None).await {
+                Ok(result) => {
+                    last_scan.set(Some(result));
+                    load_rows();
+                }
+                Err(e) => load_error.set(Some(format!("Scan failed: {e}"))),
+            }
+            scanning.set(false);
+        });
+    };
+
+    let confirm = move |pattern_id: String| {
+        spawn(async move {
+            if let Err(e) = bridge::invoke_confirm_recurring(&pattern_id).await {
+                load_error.set(Some(format!("Confirm failed: {e}")));
+                return;
+            }
+            load_rows();
+        });
+    };
+
+    let dismiss = move |pattern_id: String| {
+        spawn(async move {
+            if let Err(e) = bridge::invoke_dismiss_recurring(&pattern_id).await {
+                load_error.set(Some(format!("Dismiss failed: {e}")));
+                return;
+            }
+            load_rows();
+        });
+    };
+
+    let snapshot = rows.read().clone();
+    let is_loading = *loading.read();
+    let is_scanning = *scanning.read();
+    let err_msg = load_error.read().clone();
+    let scan_summary = last_scan.read().clone();
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Recurring"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between gap-3",
+            div { class: "min-w-0",
+                div { class: "text-sm font-semibold text-obsidian-text",
+                    "Scan for new patterns"
+                }
+                div { class: "text-xs text-obsidian-text-muted mt-1",
+                    "Sweeps the last year of expense transactions."
+                }
+                if let Some(s) = scan_summary {
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Last scan: {s.detected} detected · {s.new_emitted} new · {s.already_tracked} already tracked"
+                    }
+                }
+            }
+            button {
+                class: "px-4 py-2 bg-obsidian-accent/90 hover:bg-obsidian-accent text-black text-sm font-semibold rounded shrink-0 disabled:opacity-50",
+                disabled: is_scanning,
+                onclick: move |_| scan(),
+                if is_scanning { "Scanning…" } else { "Scan now" }
+            }
+        }
+
+        if let Some(msg) = err_msg {
+            div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "{msg}"
+            }
+        }
+
+        if is_loading {
+            div { class: "p-6 text-center text-obsidian-text-muted text-sm",
+                "Loading…"
+            }
+        } else if snapshot.is_empty() {
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                "No detected patterns awaiting review. Run a scan to surface new candidates, or check back after more transactions accumulate."
+            }
+        } else {
+            div { class: "space-y-2",
+                for row in snapshot {
+                    RecurringRowCard {
+                        key: "{row.pattern_id}",
+                        row: row.clone(),
+                        on_confirm: {
+                            let pid = row.pattern_id.clone();
+                            move |_| confirm(pid.clone())
+                        },
+                        on_dismiss: {
+                            let pid = row.pattern_id.clone();
+                            move |_| dismiss(pid.clone())
+                        },
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn RecurringRowCard(
+    row: RecurringPattern,
+    on_confirm: EventHandler<()>,
+    on_dismiss: EventHandler<()>,
+) -> Element {
+    let cadence = recurring_cadence_label(row.cadence_days);
+    let span_label = match (row.first_seen.as_deref(), row.last_seen.as_deref()) {
+        (Some(f), Some(l)) => format!("{f} → {l}"),
+        _ => "—".to_string(),
+    };
+    rsx! {
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex flex-col gap-3",
+            div { class: "min-w-0",
+                div { class: "text-sm font-semibold text-obsidian-text truncate",
+                    "{row.vendor}"
+                }
+                div { class: "text-xs text-obsidian-text-muted mt-1",
+                    "{row.amount} {row.commodity} · {cadence} · {row.occurrences} occurrences"
+                }
+                div { class: "text-xs text-obsidian-text-muted",
+                    "Seen: {span_label}"
+                }
+            }
+            div { class: "flex gap-2 justify-end",
+                button {
+                    class: "px-3 py-1.5 text-xs text-red-300/80 hover:text-red-300 border border-red-500/20 hover:border-red-500/40 rounded",
+                    onclick: move |_| on_dismiss.call(()),
+                    "Dismiss"
+                }
+                button {
+                    class: "px-3 py-1.5 text-xs text-emerald-300/90 hover:text-emerald-200 border border-emerald-500/30 hover:border-emerald-500/50 rounded",
+                    onclick: move |_| on_confirm.call(()),
+                    "Confirm"
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3759,5 +3976,20 @@ mod tests {
             period_range_label("2026-05-01", "2026-05-31"),
             "2026-05-01 – 2026-05-31"
         );
+    }
+
+    // --- Recurring helpers (5.4) ---
+
+    #[test]
+    fn recurring_cadence_label_names_known_cadences() {
+        assert_eq!(recurring_cadence_label(7), "weekly");
+        assert_eq!(recurring_cadence_label(14), "biweekly");
+        assert_eq!(recurring_cadence_label(30), "monthly");
+        assert_eq!(recurring_cadence_label(31), "monthly");
+    }
+
+    #[test]
+    fn recurring_cadence_label_falls_back_to_every_n_days() {
+        assert_eq!(recurring_cadence_label(90), "every 90 days");
     }
 }

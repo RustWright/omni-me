@@ -633,14 +633,61 @@ pub async fn confirm_recurring(
     .await
 }
 
+/// Parsed wire shape for a recurring pattern row. Mirrors the fields the
+/// scanner writes into the flexible `pattern` JSON (vendor, amount,
+/// commodity, cadence_days, occurrences, first_seen, last_seen) plus the
+/// row's `pattern_id` + `status`. Replaces the raw `RecurringPatternRow`
+/// shape across the wire so the frontend doesn't walk arbitrary JSON.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecurringPatternView {
+    pub pattern_id: String,
+    pub status: String,
+    pub vendor: String,
+    pub amount: String,
+    pub commodity: String,
+    pub cadence_days: u32,
+    pub occurrences: u32,
+    pub first_seen: Option<String>,
+    pub last_seen: Option<String>,
+}
+
+fn pattern_row_to_view(row: RecurringPatternRow) -> Option<RecurringPatternView> {
+    let pattern = row.pattern.into_json_value();
+    Some(RecurringPatternView {
+        pattern_id: row.id,
+        status: row.status,
+        vendor: pattern.get("vendor")?.as_str()?.to_string(),
+        amount: pattern.get("amount")?.as_str()?.to_string(),
+        commodity: pattern
+            .get("commodity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("CAD")
+            .to_string(),
+        cadence_days: pattern.get("cadence_days")?.as_u64()? as u32,
+        occurrences: pattern
+            .get("occurrences")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        first_seen: pattern
+            .get("first_seen")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        last_seen: pattern
+            .get("last_seen")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    })
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_recurring(
     state: State<'_, AppState>,
     status: Option<String>,
-) -> Result<Vec<RecurringPatternRow>, String> {
-    queries::list_recurring_patterns(&state.db, status.as_deref())
+) -> Result<Vec<RecurringPatternView>, String> {
+    let rows = queries::list_recurring_patterns(&state.db, status.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().filter_map(pattern_row_to_view).collect())
 }
 
 /// Result of a recurring-pattern scan — how many candidates the detector

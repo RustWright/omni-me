@@ -8,9 +8,9 @@ use crate::types::{
 use crate::types::{
     AccountSummaryView, AffordVerdictView, AutoImportSourceView, BudgetProgress, BudgetRow,
     CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft, GenericNoteItem,
-    JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture, RoutineGroup, RoutineItem,
-    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView,
-    TxnFilter,
+    JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture, RecurringPattern,
+    RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot,
+    TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 // Tauri IPC
@@ -1600,6 +1600,110 @@ pub async fn invoke_budget_progress(
         )
         .await
     }
+}
+
+// -----------------------------------------------------------------------------
+// Recurring patterns (Phase 5.3 + 5.4) — scan / list / confirm / dismiss.
+// -----------------------------------------------------------------------------
+
+pub async fn invoke_scan_recurring(
+    lookback_days: Option<u32>,
+) -> Result<ScanRecurringResult, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = lookback_days;
+        Ok(ScanRecurringResult {
+            detected: 3,
+            new_emitted: 2,
+            already_tracked: 1,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            lookback_days: Option<u32>,
+        }
+        invoke("scan_recurring", &Args { lookback_days }).await
+    }
+}
+
+pub async fn invoke_list_recurring(
+    status: Option<&str>,
+) -> Result<Vec<RecurringPattern>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = status;
+        Ok(mock_recurring_patterns())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            status: Option<&'a str>,
+        }
+        invoke("list_recurring", &Args { status }).await
+    }
+}
+
+pub async fn invoke_confirm_recurring(pattern_id: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = pattern_id;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            pattern_id: &'a str,
+        }
+        invoke_unit("confirm_recurring", &Args { pattern_id }).await
+    }
+}
+
+pub async fn invoke_dismiss_recurring(pattern_id: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = pattern_id;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            pattern_id: &'a str,
+        }
+        invoke_unit("dismiss_recurring", &Args { pattern_id }).await
+    }
+}
+
+#[cfg(feature = "mock")]
+fn mock_recurring_patterns() -> Vec<RecurringPattern> {
+    vec![
+        RecurringPattern {
+            pattern_id: "recurring-aaaaaaaaaaaaaaaa".to_string(),
+            status: "detected".to_string(),
+            vendor: "Expenses:Netflix".to_string(),
+            amount: "15.99".to_string(),
+            commodity: "CAD".to_string(),
+            cadence_days: 30,
+            occurrences: 6,
+            first_seen: Some("2025-12-15".to_string()),
+            last_seen: Some("2026-05-15".to_string()),
+        },
+        RecurringPattern {
+            pattern_id: "recurring-bbbbbbbbbbbbbbbb".to_string(),
+            status: "detected".to_string(),
+            vendor: "Expenses:Coffee".to_string(),
+            amount: "5.50".to_string(),
+            commodity: "CAD".to_string(),
+            cadence_days: 7,
+            occurrences: 14,
+            first_seen: Some("2026-02-01".to_string()),
+            last_seen: Some("2026-05-15".to_string()),
+        },
+    ]
 }
 
 pub async fn invoke_remove_budget(category: &str) -> Result<(), String> {

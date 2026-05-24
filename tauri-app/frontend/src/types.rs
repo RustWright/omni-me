@@ -477,3 +477,28 @@ pub struct BudgetProgress {
     pub percent_used: f64,
     pub over_budget: bool,
 }
+
+/// One row from the `recurring_patterns` projection, parsed into a clean
+/// shape (Phase 5.4). Mirrors `commands::budget::RecurringPatternView`.
+/// `status` is one of `"detected"` / `"confirmed"` / `"dismissed"`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecurringPattern {
+    pub pattern_id: String,
+    pub status: String,
+    pub vendor: String,
+    pub amount: String,
+    pub commodity: String,
+    pub cadence_days: u32,
+    pub occurrences: u32,
+    pub first_seen: Option<String>,
+    pub last_seen: Option<String>,
+}
+
+/// Result of a recurring-pattern scan. Mirrors
+/// `commands::budget::ScanRecurringResult`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScanRecurringResult {
+    pub detected: usize,
+    pub new_emitted: usize,
+    pub already_tracked: usize,
+}
