@@ -661,6 +661,27 @@ pub async fn list_transactions_since(
     Ok(rows)
 }
 
+/// Fetch all visible CLEARED transactions on or before `as_of_date`,
+/// used by the 5.8 balance check to total cleared activity for an
+/// account against a statement closing balance. Returns the minimal
+/// posting shape (no need for the full TransactionRow surface).
+pub async fn list_cleared_transactions(
+    db: &Database,
+    as_of_date: &str,
+) -> Result<Vec<TxnPostingsRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT date, postings FROM transactions
+             WHERE removed = false AND superseded_by IS NONE
+               AND cleared = true AND date <= $as_of
+             ORDER BY date ASC",
+        )
+        .bind(("as_of", as_of_date.to_string()))
+        .await?;
+    let rows: Vec<TxnPostingsRow> = resp.take(0)?;
+    Ok(rows)
+}
+
 /// Fetch all visible transactions whose `postings` array contains an
 /// `Unmatched` account leg — these are the candidates for reconciliation
 /// pairing (Phase 5.6). Returns the full `TransactionRow` so the caller

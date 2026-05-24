@@ -6,12 +6,12 @@ use crate::types::{
     RecurringObligationView, TaskResult,
 };
 use crate::types::{
-    AccountSummaryView, AffordVerdictView, AutoImportSourceView, BudgetProgress, BudgetRow,
-    CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft, GenericNoteItem,
-    ImportStatementCsvResult, JournalEntryItem, LlmResult, MatchCandidateView, PendingBatchView,
-    PendingShareCapture, ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem,
-    ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
-    TransactionFormDraft, TransactionView, TxnFilter,
+    AccountSummaryView, AffordVerdictView, AutoImportSourceView, BalanceCheckView, BudgetProgress,
+    BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft,
+    GenericNoteItem, ImportStatementCsvResult, JournalEntryItem, LlmResult, MatchCandidateView,
+    PendingBatchView, PendingShareCapture, ReconciliationTxnPreview, RecurringPattern,
+    RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot,
+    TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 // Tauri IPC
@@ -1804,6 +1804,46 @@ fn mock_match_candidates() -> Vec<MatchCandidateView> {
             },
         },
     ]
+}
+
+pub async fn invoke_check_account_balance(
+    account: &str,
+    commodity: &str,
+    statement_balance: &str,
+    as_of: Option<&str>,
+) -> Result<BalanceCheckView, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (account, commodity, statement_balance, as_of);
+        Ok(BalanceCheckView {
+            account: account.to_string(),
+            commodity: commodity.to_string(),
+            cleared_total: "1480.00".to_string(),
+            statement_balance: statement_balance.to_string(),
+            discrepancy: "-20.00".to_string(),
+            ok: false,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            account: &'a str,
+            commodity: &'a str,
+            statement_balance: &'a str,
+            as_of: Option<&'a str>,
+        }
+        invoke(
+            "check_account_balance",
+            &Args {
+                account,
+                commodity,
+                statement_balance,
+                as_of,
+            },
+        )
+        .await
+    }
 }
 
 pub async fn invoke_dismiss_recurring(pattern_id: &str) -> Result<(), String> {

@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::types::{
-    AccountSummaryView, AffordVerdictView, AttachmentRef, BudgetProgress, BudgetRow,
-    DashboardSummaryView, DraftTransactionView, ExtractedDraft, MatchCandidateView,
+    AccountSummaryView, AffordVerdictView, AttachmentRef, BalanceCheckView, BudgetProgress,
+    BudgetRow, DashboardSummaryView, DraftTransactionView, ExtractedDraft, MatchCandidateView,
     MonthlyTrendBucketView, PendingBatchView, PendingShareCapture, PostingInput,
     RecurringObligationView, RecurringPattern, ScanRecurringResult, TransactionFormDraft,
     TransactionView, TxnFilter,
@@ -99,6 +99,10 @@ enum FinancesView {
     /// pairs from the matching engine (5.6); accept merges, dismiss
     /// skips. Reachable from Home + the dashboard's Unmatched widget.
     Reconciliation,
+    /// Balance-check form (Phase 5.8). Compares sum of cleared
+    /// transactions on an account to a user-supplied statement closing
+    /// balance; flags discrepancy.
+    BalanceCheck,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -174,6 +178,7 @@ pub fn FinancesPage() -> Element {
                         on_open_recurring: move |_| view.set(FinancesView::RecurringReview),
                         on_open_statement_import: move |_| view.set(FinancesView::StatementImport),
                         on_open_reconciliation: move |_| view.set(FinancesView::Reconciliation),
+                        on_open_balance_check: move |_| view.set(FinancesView::BalanceCheck),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -326,6 +331,11 @@ pub fn FinancesPage() -> Element {
                         on_back: move |_| view.set(FinancesView::Home),
                     }
                 },
+                FinancesView::BalanceCheck => rsx! {
+                    BalanceCheckFormView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                    }
+                },
             }
         }
     }
@@ -346,6 +356,7 @@ fn HomeView(
     on_open_recurring: EventHandler<()>,
     on_open_statement_import: EventHandler<()>,
     on_open_reconciliation: EventHandler<()>,
+    on_open_balance_check: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -534,6 +545,22 @@ fn HomeView(
                     div { class: "text-sm font-semibold text-obsidian-accent", "Reconcile" }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
                         "Pair Unmatched-touching transactions across sources — merge confirmed matches."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
+            button {
+                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+                onclick: move |_| on_open_balance_check.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-text", "Balance check" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Verify a cleared-transaction total against a statement closing balance."
                     }
                 }
                 svg { class: "w-5 h-5 text-obsidian-text-muted",
@@ -4120,6 +4147,144 @@ fn CandidateSide(txn: crate::types::ReconciliationTxnPreview) -> Element {
             }
             div { class: "text-obsidian-text-muted/80 italic truncate",
                 "{source_label}"
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Balance check (Phase 5.8) — cleared vs statement closing balance.
+// -----------------------------------------------------------------------------
+
+#[component]
+fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
+    let mut account: Signal<String> = use_signal(|| "Assets:CIBC:Chequing".to_string());
+    let mut commodity: Signal<String> = use_signal(|| "CAD".to_string());
+    let mut statement_balance: Signal<String> = use_signal(String::new);
+    let mut as_of: Signal<String> = use_signal(|| chrono::Utc::now().date_naive().to_string());
+    let mut result: Signal<Option<BalanceCheckView>> = use_signal(|| None);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let mut checking: Signal<bool> = use_signal(|| false);
+
+    let mut run_check = move || {
+        let acc = account.read().clone();
+        let comm = commodity.read().clone();
+        let bal = statement_balance.read().clone();
+        let asof = as_of.read().clone();
+        if bal.trim().is_empty() {
+            error.set(Some("Statement balance is required".to_string()));
+            return;
+        }
+        checking.set(true);
+        error.set(None);
+        spawn(async move {
+            match bridge::invoke_check_account_balance(&acc, &comm, &bal, Some(&asof)).await {
+                Ok(r) => result.set(Some(r)),
+                Err(e) => error.set(Some(format!("Check failed: {e}"))),
+            }
+            checking.set(false);
+        });
+    };
+
+    let snapshot = result.read().clone();
+    let err_msg = error.read().clone();
+    let is_checking = *checking.read();
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Balance check"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+            div {
+                label { class: "block text-xs text-obsidian-text-muted mb-1", "Account" }
+                input {
+                    class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                    r#type: "text",
+                    value: "{account.read()}",
+                    oninput: move |e| account.set(e.value()),
+                }
+            }
+            div { class: "grid grid-cols-3 gap-3",
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1", "Commodity" }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        r#type: "text",
+                        value: "{commodity.read()}",
+                        oninput: move |e| commodity.set(e.value()),
+                    }
+                }
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1", "Statement balance" }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        r#type: "text",
+                        inputmode: "decimal",
+                        placeholder: "1500.00",
+                        value: "{statement_balance.read()}",
+                        oninput: move |e| statement_balance.set(e.value()),
+                    }
+                }
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1", "As of" }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        r#type: "date",
+                        value: "{as_of.read()}",
+                        oninput: move |e| as_of.set(e.value()),
+                    }
+                }
+            }
+            div { class: "flex justify-end",
+                button {
+                    class: "px-4 py-2 bg-obsidian-accent/90 hover:bg-obsidian-accent text-black text-sm font-semibold rounded disabled:opacity-50",
+                    disabled: is_checking,
+                    onclick: move |_| run_check(),
+                    if is_checking { "Checking…" } else { "Check" }
+                }
+            }
+        }
+
+        if let Some(msg) = err_msg {
+            div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "{msg}"
+            }
+        }
+
+        if let Some(r) = snapshot {
+            BalanceCheckResultCard { result: r }
+        }
+    }
+}
+
+#[component]
+fn BalanceCheckResultCard(result: BalanceCheckView) -> Element {
+    let verdict_class = if result.ok {
+        "bg-emerald-950/30 border-emerald-500/30 text-emerald-200"
+    } else {
+        "bg-amber-950/30 border-amber-500/30 text-amber-200"
+    };
+    let verdict_label = if result.ok {
+        "Balanced — cleared total matches the statement.".to_string()
+    } else {
+        format!(
+            "Discrepancy: {} {} ({} cleared vs {} on statement)",
+            result.discrepancy, result.commodity, result.cleared_total, result.statement_balance
+        )
+    };
+    rsx! {
+        div { class: "p-4 border rounded-lg space-y-2 {verdict_class}",
+            div { class: "text-sm font-semibold", "{verdict_label}" }
+            div { class: "text-xs opacity-80",
+                "Account: {result.account} · cleared total {result.cleared_total} {result.commodity}"
             }
         }
     }

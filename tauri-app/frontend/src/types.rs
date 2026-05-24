@@ -536,3 +536,15 @@ pub struct MatchCandidateView {
     pub primary: ReconciliationTxnPreview,
     pub secondary: ReconciliationTxnPreview,
 }
+
+/// Result of a balance check (Phase 5.8). Mirrors
+/// `commands::budget::BalanceCheckView`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BalanceCheckView {
+    pub account: String,
+    pub commodity: String,
+    pub cleared_total: String,
+    pub statement_balance: String,
+    pub discrepancy: String,
+    pub ok: bool,
+}

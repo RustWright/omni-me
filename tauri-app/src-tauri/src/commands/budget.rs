@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use omni_me_core::balances::{self, AccountSummary, CommodityBalance};
-use omni_me_core::budget::{self, BudgetProgress};
+use omni_me_core::budget::{self, BalanceCheckResult, BudgetProgress};
 use omni_me_core::dashboard::{self, AffordVerdict, DashboardSummary, MonthlyTrendBucket, RecurringObligation};
 use omni_me_core::db::queries::{
     self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow, TxnFilter,
@@ -1042,6 +1042,55 @@ fn txn_preview(u: &UnmatchedTxn) -> ReconciliationTxnPreview {
         unmatched_commodity: u.unmatched_commodity.clone(),
         statement_source: u.statement_source.clone(),
     }
+}
+
+/// Wire shape for `check_account_balance` — decimals as strings.
+#[derive(Debug, Clone, Serialize)]
+pub struct BalanceCheckView {
+    pub account: String,
+    pub commodity: String,
+    pub cleared_total: String,
+    pub statement_balance: String,
+    pub discrepancy: String,
+    pub ok: bool,
+}
+
+fn balance_check_to_view(r: BalanceCheckResult) -> BalanceCheckView {
+    BalanceCheckView {
+        account: r.account,
+        commodity: r.commodity,
+        cleared_total: r.cleared_total.to_string(),
+        statement_balance: r.statement_balance.to_string(),
+        discrepancy: r.discrepancy.to_string(),
+        ok: r.ok,
+    }
+}
+
+/// Sum cleared postings on an account through `as_of` and compare to a
+/// user-supplied statement closing balance (Phase 5.8).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn check_account_balance(
+    state: State<'_, AppState>,
+    account: String,
+    commodity: String,
+    statement_balance: String,
+    as_of: Option<String>,
+) -> Result<BalanceCheckView, String> {
+    let as_of_date = match as_of {
+        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            .map_err(|e| format!("bad as_of date: {e}"))?,
+        None => chrono::Utc::now().date_naive(),
+    };
+    let statement_balance_dec = statement_balance
+        .parse::<Decimal>()
+        .map_err(|e| format!("statement_balance: {e}"))?;
+
+    let rows = queries::list_cleared_transactions(&state.db, &as_of_date.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+    let cleared_total = budget::sum_cleared_postings(&rows, &account, &commodity);
+    let result = budget::balance_check(&account, &commodity, cleared_total, statement_balance_dec);
+    Ok(balance_check_to_view(result))
 }
 
 #[tauri::command(rename_all = "snake_case")]

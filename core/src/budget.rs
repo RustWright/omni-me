@@ -184,6 +184,85 @@ pub fn budget_progress_summary(
     Ok(compute_budget_progress(budgets, &postings, as_of))
 }
 
+/// Outcome of a `balance_check` — sum of cleared postings on the
+/// requested account compared against a user-supplied statement closing
+/// balance. `discrepancy = cleared_total - statement_balance`. `ok` is
+/// true when discrepancy is exactly zero.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BalanceCheckResult {
+    pub account: String,
+    pub commodity: String,
+    pub cleared_total: Decimal,
+    pub statement_balance: Decimal,
+    pub discrepancy: Decimal,
+    pub ok: bool,
+}
+
+/// Compare a sum of cleared postings to a user-supplied statement
+/// closing balance.
+///
+/// Pure fn over numeric inputs — the caller (Tauri layer) is responsible
+/// for: (a) querying cleared transactions from the projection; (b)
+/// summing the postings on the target account in the target commodity;
+/// and (c) handing the resulting `cleared_total` here for comparison.
+pub fn balance_check(
+    account: &str,
+    commodity: &str,
+    cleared_total: Decimal,
+    statement_balance: Decimal,
+) -> BalanceCheckResult {
+    let discrepancy = cleared_total - statement_balance;
+    BalanceCheckResult {
+        account: account.to_string(),
+        commodity: commodity.to_string(),
+        cleared_total,
+        statement_balance,
+        discrepancy,
+        ok: discrepancy.is_zero(),
+    }
+}
+
+/// Sum postings on `account` in `commodity` from a list of pre-filtered
+/// cleared `TxnPostingsRow`s. Skips legs in other commodities (caller
+/// handles FX conversion if needed; for the balance-check use case the
+/// statement is in one currency so single-commodity is the right scope).
+pub fn sum_cleared_postings(
+    rows: &[TxnPostingsRow],
+    account: &str,
+    commodity: &str,
+) -> Decimal {
+    let mut total = Decimal::ZERO;
+    for row in rows {
+        let postings = row.postings.clone().into_json_value();
+        let Some(arr) = postings.as_array() else {
+            continue;
+        };
+        for p in arr {
+            let Some(acc) = p.get("account").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if acc != account {
+                continue;
+            }
+            let posting_commodity = p
+                .get("commodity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("CAD");
+            if !posting_commodity.eq_ignore_ascii_case(commodity) {
+                continue;
+            }
+            let Some(amount_raw) = p.get("amount").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(qty) = amount_raw.parse::<Decimal>() else {
+                continue;
+            };
+            total += qty;
+        }
+    }
+    total
+}
+
 pub fn compute_budget_progress(
     budgets: &[(String, Decimal, String)],
     postings: &[DatedPosting],
@@ -430,6 +509,29 @@ mod tests {
         ];
         let out = collect_expense_parsed(&rows, "CAD", &Prices::new());
         assert!(out.is_empty());
+    }
+
+    // --- Balance check (5.8) ---
+
+    #[test]
+    fn balance_check_zero_discrepancy_is_ok() {
+        let r = balance_check("Assets:CIBC:Chequing", "CAD", Decimal::from(1500), Decimal::from(1500));
+        assert!(r.ok);
+        assert_eq!(r.discrepancy, Decimal::ZERO);
+    }
+
+    #[test]
+    fn balance_check_positive_discrepancy_means_cleared_exceeds_statement() {
+        let r = balance_check("Assets:CIBC:Chequing", "CAD", Decimal::from(1525), Decimal::from(1500));
+        assert!(!r.ok);
+        assert_eq!(r.discrepancy, Decimal::from(25));
+    }
+
+    #[test]
+    fn balance_check_negative_discrepancy_means_cleared_short_of_statement() {
+        let r = balance_check("Assets:CIBC:Chequing", "CAD", Decimal::from(1480), Decimal::from(1500));
+        assert!(!r.ok);
+        assert_eq!(r.discrepancy, Decimal::from(-20));
     }
 
     #[test]

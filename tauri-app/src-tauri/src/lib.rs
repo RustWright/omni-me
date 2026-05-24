@@ -288,6 +288,7 @@ pub fn run() {
             commands::budget::import_cibc_chequing_csv,
             commands::budget::list_match_candidates,
             commands::budget::merge_transactions,
+            commands::budget::check_account_balance,
             // Document extraction (forwards to server-side GeminiExtractor)
             commands::extract::extract_document,
             // Local attachment cache (Phase 3.7)
