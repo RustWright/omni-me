@@ -136,6 +136,13 @@ impl BudgetProjection {
             .to_string();
         let postings = event.payload["postings"].clone();
         let attachment = event.payload.get("attachment").cloned();
+        // Statement provenance flows in from CSV-imported events (Phase 5.5);
+        // None for capture/auto-import/manual entries.
+        let statement_source = event
+            .payload
+            .get("statement_source")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
@@ -151,7 +158,7 @@ impl BudgetProjection {
                 merged_ids: [],
                 balancing_posting: NONE,
                 cleared: false,
-                statement_source: NONE,
+                statement_source: $statement_source,
                 cleared_date: NONE,
                 created_at: type::datetime($ts),
                 updated_at: type::datetime($ts)
@@ -162,6 +169,7 @@ impl BudgetProjection {
         .bind(("description", description))
         .bind(("postings", postings))
         .bind(("attachment", attachment))
+        .bind(("statement_source", statement_source))
         .bind(("ts", ts))
         .await?;
         Ok(())

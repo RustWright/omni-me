@@ -8,9 +8,9 @@ use crate::types::{
 use crate::types::{
     AccountSummaryView, AffordVerdictView, AutoImportSourceView, BudgetProgress, BudgetRow,
     CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft, GenericNoteItem,
-    JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture, RecurringPattern,
-    RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot,
-    TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
+    ImportStatementCsvResult, JournalEntryItem, LlmResult, PendingBatchView, PendingShareCapture,
+    RecurringPattern, RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus,
+    SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 // Tauri IPC
@@ -1659,6 +1659,46 @@ pub async fn invoke_confirm_recurring(pattern_id: &str) -> Result<(), String> {
             pattern_id: &'a str,
         }
         invoke_unit("confirm_recurring", &Args { pattern_id }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Statement CSV import (Phase 5.5) — CIBC chequing today, more formats later.
+// -----------------------------------------------------------------------------
+
+pub async fn invoke_import_cibc_chequing_csv(
+    csv_text: &str,
+    source_account: &str,
+    statement_source: &str,
+    commodity: Option<&str>,
+) -> Result<ImportStatementCsvResult, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (csv_text, source_account, statement_source, commodity);
+        Ok(ImportStatementCsvResult {
+            imported: 3,
+            skipped_zero_rows: 0,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            csv_text: &'a str,
+            source_account: &'a str,
+            statement_source: &'a str,
+            commodity: Option<&'a str>,
+        }
+        invoke(
+            "import_cibc_chequing_csv",
+            &Args {
+                csv_text,
+                source_account,
+                statement_source,
+                commodity,
+            },
+        )
+        .await
     }
 }
 

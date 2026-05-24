@@ -18,6 +18,8 @@ use omni_me_core::events::{
     AttachmentRef, EventType, Posting, TransactionRecordedPayload,
 };
 use omni_me_core::recurring;
+use omni_me_core::statement_csv::{self, MoneyDirection};
+use omni_me_core::accounts;
 
 use super::shared::append_and_apply;
 use crate::AppState;
@@ -49,6 +51,7 @@ pub async fn record_transaction(
         description: draft.description,
         postings: draft.postings,
         attachment: draft.attachment,
+        statement_source: None,
     };
     let payload_json = serde_json::to_value(&payload).map_err(|e| e.to_string())?;
 
@@ -765,6 +768,79 @@ pub async fn scan_recurring(
         detected,
         new_emitted: emitted,
         already_tracked: skipped,
+    })
+}
+
+/// Result of a CIBC chequing CSV import.
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportStatementCsvResult {
+    pub imported: usize,
+    pub skipped_zero_rows: usize,
+}
+
+/// Import a CIBC chequing CSV export — each parsed row becomes a
+/// `TransactionRecorded` event with one posting on `source_account` and a
+/// balancing `Unmatched` placeholder. `statement_source` tags the events
+/// for the 5.7 reconciliation review (which uses it to mark cleared
+/// status when paired with a non-statement-sourced event).
+///
+/// Commodity defaults to CAD; the user picks the source account, which
+/// implicitly fixes the currency for this batch (mixing currencies in a
+/// single statement isn't a CIBC export shape).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn import_cibc_chequing_csv(
+    state: State<'_, AppState>,
+    csv_text: String,
+    source_account: String,
+    statement_source: String,
+    commodity: Option<String>,
+) -> Result<ImportStatementCsvResult, String> {
+    let commodity = commodity.unwrap_or_else(|| "CAD".to_string());
+    let parsed = statement_csv::parse_cibc_chequing(&csv_text)
+        .map_err(|e| format!("csv parse: {e}"))?;
+
+    let mut imported = 0usize;
+    for row in &parsed {
+        // Sign convention: Outflow = money leaving source (debit column on
+        // chequing, charge on credit card). Negate for outflow, pass for
+        // inflow — works uniformly for Assets and Liabilities accounts
+        // since hledger's liability-is-negative convention is preserved.
+        let signed_amount = match row.direction {
+            MoneyDirection::Outflow => -row.amount,
+            MoneyDirection::Inflow => row.amount,
+        };
+        let source_posting = Posting {
+            account: source_account.clone(),
+            commodity: commodity.clone(),
+            amount: signed_amount,
+            fx_rate: None,
+            tags: vec![],
+        };
+        let unmatched_posting = accounts::make_unmatched_mirror(&source_posting);
+
+        let txn_id = ulid::Ulid::new().to_string();
+        let payload = TransactionRecordedPayload {
+            txn_id: txn_id.clone(),
+            date: row.date,
+            description: row.description.clone(),
+            postings: vec![source_posting, unmatched_posting],
+            attachment: None,
+            statement_source: Some(statement_source.clone()),
+        };
+        let payload_json = serde_json::to_value(&payload).map_err(|e| e.to_string())?;
+        append_and_apply(
+            &state,
+            EventType::TransactionRecorded,
+            txn_id,
+            payload_json,
+        )
+        .await?;
+        imported += 1;
+    }
+
+    Ok(ImportStatementCsvResult {
+        imported,
+        skipped_zero_rows: 0, // parser already filtered these; surfaced for symmetry
     })
 }
 

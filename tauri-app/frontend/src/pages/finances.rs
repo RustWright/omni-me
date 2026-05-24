@@ -90,6 +90,10 @@ enum FinancesView {
     /// W3 recurring confirm/dismiss screen (Phase 5.4). Lists patterns
     /// surfaced by the scanner, each accept/dismiss per row.
     RecurringReview,
+    /// CIBC chequing CSV import screen (Phase 5.5). Each parsed row emits
+    /// a `TransactionRecorded` with one source-account posting + one
+    /// `Unmatched` placeholder, awaiting 5.7 reconciliation pairing.
+    StatementImport,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -163,6 +167,7 @@ pub fn FinancesPage() -> Element {
                         on_open_dashboard: move |_| view.set(FinancesView::Dashboard),
                         on_open_budgets: move |_| view.set(FinancesView::BudgetList),
                         on_open_recurring: move |_| view.set(FinancesView::RecurringReview),
+                        on_open_statement_import: move |_| view.set(FinancesView::StatementImport),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -312,6 +317,11 @@ pub fn FinancesPage() -> Element {
                         on_back: move |_| view.set(FinancesView::Home),
                     }
                 },
+                FinancesView::StatementImport => rsx! {
+                    StatementImportView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                    }
+                },
             }
         }
     }
@@ -330,6 +340,7 @@ fn HomeView(
     on_open_dashboard: EventHandler<()>,
     on_open_budgets: EventHandler<()>,
     on_open_recurring: EventHandler<()>,
+    on_open_statement_import: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -486,6 +497,22 @@ fn HomeView(
                     div { class: "text-sm font-semibold text-obsidian-text", "Recurring" }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
                         "Review detected subscription patterns; accept or dismiss each."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
+            button {
+                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+                onclick: move |_| on_open_statement_import.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-text", "Import statement" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Drop a CIBC chequing CSV — each row lands in Unmatched, ready to reconcile."
                     }
                 }
                 svg { class: "w-5 h-5 text-obsidian-text-muted",
@@ -3696,6 +3723,166 @@ fn RecurringRowCard(
                     onclick: move |_| on_confirm.call(()),
                     "Confirm"
                 }
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Statement CSV import (Phase 5.5) — CIBC chequing.
+// -----------------------------------------------------------------------------
+
+/// Default statement_source label for a CIBC chequing import based on
+/// today's calendar year + month. Format `"cibc-chequing-YYYY-MM"`,
+/// matching the convention used in the event-validation tests and in
+/// the reconciliation review's expected source-tag shape.
+fn default_statement_source_label() -> String {
+    let today = chrono::Utc::now().date_naive();
+    format!(
+        "cibc-chequing-{}-{:02}",
+        chrono::Datelike::year(&today),
+        chrono::Datelike::month(&today)
+    )
+}
+
+#[component]
+fn StatementImportView(on_back: EventHandler<()>) -> Element {
+    let mut source_account: Signal<String> =
+        use_signal(|| "Assets:CIBC:Chequing".to_string());
+    let mut statement_source: Signal<String> = use_signal(default_statement_source_label);
+    let mut commodity: Signal<String> = use_signal(|| "CAD".to_string());
+    let mut status: Signal<Option<String>> = use_signal(|| None);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let mut importing: Signal<bool> = use_signal(|| false);
+
+    let on_file_picked = move |evt: Event<FormData>| {
+        let files = evt.files();
+        let Some(file) = files.into_iter().next() else {
+            return;
+        };
+        let src = source_account.read().clone();
+        let label = statement_source.read().clone();
+        let comm = commodity.read().clone();
+        importing.set(true);
+        error.set(None);
+        status.set(None);
+        spawn(async move {
+            let bytes = match file.read_bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(e) => {
+                    error.set(Some(format!("Couldn't read file: {e}")));
+                    importing.set(false);
+                    return;
+                }
+            };
+            let csv_text = match String::from_utf8(bytes) {
+                Ok(s) => s,
+                Err(_) => {
+                    error.set(Some(
+                        "File isn't valid UTF-8 — re-export the CSV from CIBC online banking."
+                            .to_string(),
+                    ));
+                    importing.set(false);
+                    return;
+                }
+            };
+            match bridge::invoke_import_cibc_chequing_csv(
+                &csv_text,
+                &src,
+                &label,
+                Some(&comm),
+            )
+            .await
+            {
+                Ok(result) => status.set(Some(format!(
+                    "Imported {} transactions. Each lands in Unmatched, ready for reconciliation review.",
+                    result.imported
+                ))),
+                Err(e) => error.set(Some(format!("Import failed: {e}"))),
+            }
+            importing.set(false);
+        });
+    };
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Import statement"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+            div {
+                label { class: "block text-xs text-obsidian-text-muted mb-1",
+                    "Source account"
+                }
+                input {
+                    class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                    r#type: "text",
+                    value: "{source_account.read()}",
+                    oninput: move |e| source_account.set(e.value()),
+                }
+            }
+            div { class: "grid grid-cols-2 gap-3",
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1",
+                        "Statement label"
+                    }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        r#type: "text",
+                        value: "{statement_source.read()}",
+                        oninput: move |e| statement_source.set(e.value()),
+                    }
+                }
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1",
+                        "Commodity"
+                    }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        r#type: "text",
+                        value: "{commodity.read()}",
+                        oninput: move |e| commodity.set(e.value()),
+                    }
+                }
+            }
+
+            div {
+                label { class: "block text-xs text-obsidian-text-muted mb-1",
+                    "CSV file"
+                }
+                input {
+                    class: "w-full text-sm text-obsidian-text file:mr-3 file:px-3 file:py-1.5 file:bg-obsidian-accent/90 file:hover:bg-obsidian-accent file:text-black file:rounded file:border-none file:text-xs file:font-semibold disabled:opacity-50",
+                    r#type: "file",
+                    accept: ".csv,text/csv",
+                    disabled: *importing.read(),
+                    onchange: on_file_picked,
+                }
+            }
+        }
+
+        if let Some(msg) = error.read().clone() {
+            div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "{msg}"
+            }
+        }
+
+        if let Some(msg) = status.read().clone() {
+            div { class: "mb-4 p-4 bg-emerald-950/30 border border-emerald-500/30 rounded-lg text-sm text-emerald-200",
+                "{msg}"
+            }
+        }
+
+        div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-xs text-obsidian-text-muted space-y-2",
+            div { class: "font-semibold text-obsidian-text", "What this does" }
+            div {
+                "Each parsed row becomes one transaction with a posting on the source account and a balancing entry on the Unmatched clearing account. Use the reconciliation review screen (Phase 5.7) to pair these against captured receipts or auto-imported transactions."
             }
         }
     }

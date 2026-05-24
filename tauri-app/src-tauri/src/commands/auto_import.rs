@@ -219,6 +219,7 @@ pub async fn commit_batch(
             description: draft.description.clone(),
             postings: draft.postings.clone(),
             attachment: None,
+            statement_source: None,
         };
         new_events.push(NewEvent {
             id: None,

@@ -380,6 +380,12 @@ pub struct TransactionRecordedPayload {
     pub postings: Vec<Posting>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment: Option<AttachmentRef>,
+    /// Provenance tag for statement-imported transactions (Phase 5.5).
+    /// `None` for capture/auto-import/manual entries; `Some("cibc-chequing-2026-05")`
+    /// for rows imported from a bank statement CSV. Used by the unified
+    /// reconciliation engine (5.7) to mark the cleared side on merge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statement_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

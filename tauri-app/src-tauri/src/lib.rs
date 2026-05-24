@@ -285,6 +285,7 @@ pub fn run() {
             commands::budget::dismiss_recurring,
             commands::budget::scan_recurring,
             commands::budget::list_recurring,
+            commands::budget::import_cibc_chequing_csv,
             // Document extraction (forwards to server-side GeminiExtractor)
             commands::extract::extract_document,
             // Local attachment cache (Phase 3.7)

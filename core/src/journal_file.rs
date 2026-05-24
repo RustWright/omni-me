@@ -223,6 +223,7 @@ mod tests {
             description: "Loblaws grocery run".into(),
             postings: vec![cad("-87.42"), expense_posting("Expenses:Groceries", "87.42", vec![])],
             attachment: None,
+            statement_source: None,
         };
         let rendered = render_transaction(&t);
         let expected = "\
@@ -248,6 +249,7 @@ mod tests {
                 mime_type: "image/jpeg".into(),
                 size: 1024,
             }),
+            statement_source: None,
         };
         let rendered = render_transaction(&t);
         assert!(rendered.contains("    ; txn_id:01JKTXN, attachment:abc123\n"));

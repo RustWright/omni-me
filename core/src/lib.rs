@@ -19,4 +19,5 @@ pub mod llm;
 pub mod preprocess;
 pub mod recurring;
 pub mod routines;
+pub mod statement_csv;
 pub mod sync;

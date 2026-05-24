@@ -201,6 +201,7 @@ mod tests {
                 },
             ],
             attachment: None,
+            statement_source: None,
         };
         let rendered = crate::journal_file::render_transaction(&payload);
         let bal = balances(&rendered).unwrap();
