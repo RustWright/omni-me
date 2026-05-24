@@ -1423,6 +1423,18 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
             total_in_base: Some("1054.65".into()),
         },
         AccountSummaryView {
+            account: "Assets:StandardChartered:NGN".into(),
+            display_name: Some("Standard Chartered NGN".into()),
+            last_reconciled_through: None,
+            last_statement_balance: None,
+            balances: vec![CommodityBalanceView {
+                commodity: "NGN".into(),
+                quantity: "52400.00".into(),
+                value_in_base: None,
+            }],
+            total_in_base: None,
+        },
+        AccountSummaryView {
             account: "Liabilities:CIBC:CreditCard".into(),
             display_name: Some("CIBC Aventura".into()),
             last_reconciled_through: Some("2026-04-30".into()),
