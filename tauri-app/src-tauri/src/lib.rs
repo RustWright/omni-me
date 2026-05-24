@@ -282,6 +282,8 @@ pub fn run() {
             commands::budget::remove_budget,
             commands::budget::budget_progress,
             commands::budget::confirm_recurring,
+            commands::budget::dismiss_recurring,
+            commands::budget::scan_recurring,
             commands::budget::list_recurring,
             // Document extraction (forwards to server-side GeminiExtractor)
             commands::extract::extract_document,

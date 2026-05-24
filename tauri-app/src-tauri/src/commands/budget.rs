@@ -17,6 +17,7 @@ use omni_me_core::db::queries::{
 use omni_me_core::events::{
     AttachmentRef, EventType, Posting, TransactionRecordedPayload,
 };
+use omni_me_core::recurring;
 
 use super::shared::append_and_apply;
 use crate::AppState;
@@ -640,4 +641,98 @@ pub async fn list_recurring(
     queries::list_recurring_patterns(&state.db, status.as_deref())
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Result of a recurring-pattern scan — how many candidates the detector
+/// found vs how many were already tracked (and therefore skipped to
+/// preserve user confirmations).
+#[derive(Debug, Clone, Serialize)]
+pub struct ScanRecurringResult {
+    pub detected: usize,
+    pub new_emitted: usize,
+    pub already_tracked: usize,
+}
+
+/// Sweep the transaction log for recurring expense patterns, emitting
+/// `RecurringTransactionDetected` events for patterns NOT already in the
+/// `recurring_patterns` table. The skip-already-tracked check preserves
+/// user confirmations/dismissals across re-scans — re-emitting `detected`
+/// against a `confirmed` row would silently revert it.
+///
+/// Scope: looks back `lookback_days` (default 365). A year is enough to
+/// surface monthly subscriptions with the 3-occurrence minimum and to
+/// catch quarterly patterns; longer windows add cost without proportional
+/// value for a "what's recurring right now" question.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn scan_recurring(
+    state: State<'_, AppState>,
+    lookback_days: Option<u32>,
+) -> Result<ScanRecurringResult, String> {
+    let lookback = lookback_days.unwrap_or(365);
+    let cutoff = (chrono::Utc::now().date_naive() - chrono::Duration::days(lookback as i64))
+        .to_string();
+
+    let txn_rows = queries::list_transactions_since(&state.db, &cutoff)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let patterns = recurring::detect_patterns(&txn_rows);
+    let detected = patterns.len();
+
+    let existing_rows = queries::list_recurring_patterns(&state.db, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let existing_ids: std::collections::HashSet<String> =
+        existing_rows.iter().map(|r| r.id.clone()).collect();
+
+    let mut emitted = 0usize;
+    let mut skipped = 0usize;
+    for p in patterns {
+        if existing_ids.contains(&p.pattern_id) {
+            skipped += 1;
+            continue;
+        }
+        let payload = serde_json::json!({
+            "pattern_id": p.pattern_id,
+            "pattern": {
+                "vendor": p.vendor,
+                "amount": p.amount.to_string(),
+                "commodity": p.commodity,
+                "cadence_days": p.cadence_days,
+                "occurrences": p.occurrences,
+                "first_seen": p.first_seen.to_string(),
+                "last_seen": p.last_seen.to_string(),
+            }
+        });
+        append_and_apply(
+            &state,
+            EventType::RecurringTransactionDetected,
+            p.pattern_id.clone(),
+            payload,
+        )
+        .await?;
+        emitted += 1;
+    }
+
+    Ok(ScanRecurringResult {
+        detected,
+        new_emitted: emitted,
+        already_tracked: skipped,
+    })
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn dismiss_recurring(
+    state: State<'_, AppState>,
+    pattern_id: String,
+) -> Result<(), String> {
+    tracing::info!(pattern_id = %pattern_id, "dismiss_recurring");
+    let payload = serde_json::json!({ "pattern_id": pattern_id });
+    append_and_apply(
+        &state,
+        EventType::RecurringTransactionDismissed,
+        pattern_id,
+        payload,
+    )
+    .await
 }

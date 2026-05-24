@@ -17,5 +17,6 @@ pub mod journal_file;
 pub mod ledger;
 pub mod llm;
 pub mod preprocess;
+pub mod recurring;
 pub mod routines;
 pub mod sync;
