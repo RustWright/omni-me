@@ -2889,10 +2889,10 @@ fn MonthlyTrendCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String)
                     }
                 },
                 Some(s) => rsx! {
-                    div { class: "flex items-end gap-2 h-32",
+                    div { class: "flex items-stretch gap-2 h-32",
                         for bucket in buckets.iter() {
-                            div { class: "flex-1 flex flex-col items-center gap-1",
-                                div { class: "flex-1 w-full flex items-end gap-0.5",
+                            div { class: "flex-1 flex flex-col items-center gap-1 min-h-0",
+                                div { class: "flex-1 w-full flex items-end gap-0.5 min-h-0",
                                     div { class: "flex-1 bg-emerald-500/70 rounded-sm",
                                         style: "height: {bar_height_pct(&bucket.income, s)}%",
                                         title: "{format_money(&bucket.income, &base_currency)} income",
@@ -2961,7 +2961,8 @@ fn AffordCard(base_currency: String) -> Element {
     let mut loading: Signal<bool> = use_signal(|| false);
     let mut error: Signal<Option<String>> = use_signal(|| None);
 
-    let submit = move |_| {
+    let submit = move |e: FormEvent| {
+        e.prevent_default();
         let raw = amount.read().clone();
         if raw.trim().is_empty() {
             return;
