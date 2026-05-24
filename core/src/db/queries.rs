@@ -660,3 +660,29 @@ pub async fn list_transactions_since(
     let rows: Vec<TxnPostingsRow> = resp.take(0)?;
     Ok(rows)
 }
+
+/// Fetch all visible transactions whose `postings` array contains an
+/// `Unmatched` account leg — these are the candidates for reconciliation
+/// pairing (Phase 5.6). Returns the full `TransactionRow` so the caller
+/// can read `statement_source` (drives the clears-statement flag) and
+/// `description` (drives the description-similarity signal) in addition
+/// to the posting amounts.
+pub async fn list_unmatched_transactions(
+    db: &Database,
+) -> Result<Vec<TransactionRow>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT id, date, description, postings, attachment, category,
+                    tags_top, removed, superseded_by, merged_ids,
+                    balancing_posting, cleared, statement_source, cleared_date,
+                    created_at, updated_at
+             FROM transactions
+             WHERE removed = false
+               AND superseded_by IS NONE
+               AND array::any(postings, |$p| $p.account = 'Unmatched')
+             ORDER BY date ASC",
+        )
+        .await?;
+    let rows: Vec<TransactionRow> = resp.take(0)?;
+    Ok(rows)
+}

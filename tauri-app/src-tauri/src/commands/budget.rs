@@ -18,8 +18,10 @@ use omni_me_core::events::{
     AttachmentRef, EventType, Posting, TransactionRecordedPayload,
 };
 use omni_me_core::recurring;
+use omni_me_core::reconciliation::{self, MatchCandidate, UnmatchedTxn};
 use omni_me_core::statement_csv::{self, MoneyDirection};
 use omni_me_core::accounts;
+use rust_decimal::Decimal;
 
 use super::shared::append_and_apply;
 use crate::AppState;
@@ -842,6 +844,73 @@ pub async fn import_cibc_chequing_csv(
         imported,
         skipped_zero_rows: 0, // parser already filtered these; surfaced for symmetry
     })
+}
+
+/// Wire shape for one reconciliation candidate (Phase 5.6).
+#[derive(Debug, Clone, Serialize)]
+pub struct MatchCandidateView {
+    pub primary_id: String,
+    pub secondary_id: String,
+    pub score: f64,
+    pub days_apart: u32,
+    pub description_similarity: f64,
+    pub clears_statement: bool,
+}
+
+fn candidate_to_view(c: MatchCandidate) -> MatchCandidateView {
+    MatchCandidateView {
+        primary_id: c.primary_id,
+        secondary_id: c.secondary_id,
+        score: c.score,
+        days_apart: c.signals.days_apart,
+        description_similarity: c.signals.description_similarity,
+        clears_statement: c.clears_statement,
+    }
+}
+
+/// Flatten a TransactionRow into an UnmatchedTxn, picking out the
+/// `Unmatched` posting's signed amount + commodity. Returns `None` if
+/// the row has no Unmatched leg (shouldn't happen if the caller queried
+/// via `list_unmatched_transactions`, but defensive).
+fn unmatched_from_row(row: &TransactionRow) -> Option<UnmatchedTxn> {
+    let postings = row.postings.clone().into_json_value();
+    let arr = postings.as_array()?;
+    let unmatched_posting = arr.iter().find(|p| {
+        p.get("account")
+            .and_then(|v| v.as_str())
+            .map(|s| s == "Unmatched")
+            .unwrap_or(false)
+    })?;
+    let amount_raw = unmatched_posting.get("amount")?.as_str()?;
+    let amount = amount_raw.parse::<Decimal>().ok()?;
+    let commodity = unmatched_posting
+        .get("commodity")
+        .and_then(|v| v.as_str())
+        .unwrap_or("CAD")
+        .to_string();
+    let date = chrono::NaiveDate::parse_from_str(&row.date, "%Y-%m-%d").ok()?;
+    Some(UnmatchedTxn {
+        txn_id: row.id.clone(),
+        date,
+        description: row.description.clone(),
+        unmatched_amount: amount,
+        unmatched_commodity: commodity,
+        statement_source: row.statement_source.clone(),
+    })
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_match_candidates(
+    state: State<'_, AppState>,
+    max_days_gap: Option<u32>,
+) -> Result<Vec<MatchCandidateView>, String> {
+    let window = max_days_gap.unwrap_or(7);
+    let rows = queries::list_unmatched_transactions(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let unmatched: Vec<UnmatchedTxn> = rows.iter().filter_map(unmatched_from_row).collect();
+    let cands = reconciliation::find_match_candidates(&unmatched, window);
+    Ok(cands.into_iter().map(candidate_to_view).collect())
 }
 
 #[tauri::command(rename_all = "snake_case")]
