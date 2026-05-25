@@ -1,5 +1,6 @@
 mod auto_close_scheduler;
 mod commands;
+mod recurring_scanner;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -171,6 +172,16 @@ pub fn run() {
                     timezone_shared.clone(),
                 );
 
+                // Recurring-pattern scanner (Phase 5.3) — warm-up 60s after
+                // boot, then 24h cadence. Skip-already-tracked logic in
+                // `run_one_scan` preserves user confirmations across ticks.
+                recurring_scanner::spawn(
+                    db.clone(),
+                    event_store.clone(),
+                    projections.clone(),
+                    device_id.clone(),
+                );
+
                 // Auto-import runs server-side (per `feedback_llm_server_side.md`).
                 // Tauri client just projects synced events into its local DB +
                 // journal file via the BudgetProjection + JournalFile entries in
@@ -287,7 +298,9 @@ pub fn run() {
             commands::budget::list_recurring,
             commands::budget::import_cibc_chequing_csv,
             commands::budget::list_match_candidates,
+            commands::budget::list_unmatched_without_candidates,
             commands::budget::merge_transactions,
+            commands::budget::resolve_unmatched,
             commands::budget::check_account_balance,
             // Document extraction (forwards to server-side GeminiExtractor)
             commands::extract::extract_document,

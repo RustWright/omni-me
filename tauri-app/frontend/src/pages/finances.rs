@@ -5,8 +5,8 @@ use crate::types::{
     AccountSummaryView, AffordVerdictView, AttachmentRef, BalanceCheckView, BudgetProgress,
     BudgetRow, DashboardSummaryView, DraftTransactionView, ExtractedDraft, MatchCandidateView,
     MonthlyTrendBucketView, PendingBatchView, PendingShareCapture, PostingInput,
-    RecurringObligationView, RecurringPattern, ScanRecurringResult, TransactionFormDraft,
-    TransactionView, TxnFilter,
+    ReconciliationTxnPreview, RecurringObligationView, RecurringPattern, ScanRecurringResult,
+    TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -3930,7 +3930,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
         div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-xs text-obsidian-text-muted space-y-2",
             div { class: "font-semibold text-obsidian-text", "What this does" }
             div {
-                "Each parsed row becomes one transaction with a posting on the source account and a balancing entry on the Unmatched clearing account. Use the reconciliation review screen (Phase 5.7) to pair these against captured receipts or auto-imported transactions."
+                "Each parsed row becomes one transaction with a posting on the source account and a balancing entry on the Unmatched clearing account. Use the Reconcile screen to pair these against captured receipts or auto-imported transactions."
             }
         }
     }
@@ -3965,6 +3965,7 @@ fn confidence_color_class(score: f64) -> &'static str {
 #[component]
 fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
     let mut candidates: Signal<Vec<MatchCandidateView>> = use_signal(Vec::new);
+    let mut no_match_rows: Signal<Vec<ReconciliationTxnPreview>> = use_signal(Vec::new);
     let mut loading: Signal<bool> = use_signal(|| true);
     let mut load_error: Signal<Option<String>> = use_signal(|| None);
     // Dismissed pairs (by "primary|secondary" key) — local-only, not
@@ -3983,6 +3984,11 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
             match bridge::invoke_list_match_candidates(Some(7)).await {
                 Ok(rows) => candidates.set(rows),
                 Err(e) => load_error.set(Some(e)),
+            }
+            // No-match rows load is best-effort — if it fails, the
+            // matched pairs section still renders.
+            if let Ok(rows) = bridge::invoke_list_unmatched_without_candidates(Some(7)).await {
+                no_match_rows.set(rows);
             }
             loading.set(false);
         });
@@ -4016,7 +4022,18 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
         dismissed.set(set);
     };
 
+    let resolve = move |txn_id: String, category: String| {
+        spawn(async move {
+            if let Err(e) = bridge::invoke_resolve_unmatched(&txn_id, &category).await {
+                load_error.set(Some(format!("Resolve failed: {e}")));
+                return;
+            }
+            load_candidates();
+        });
+    };
+
     let snapshot = candidates.read().clone();
+    let no_match_snapshot = no_match_rows.read().clone();
     let dismissed_set = dismissed.read().clone();
     let is_loading = *loading.read();
     let err_msg = load_error.read().clone();
@@ -4026,6 +4043,8 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
         .into_iter()
         .filter(|c| !dismissed_set.contains(&format!("{}|{}", c.primary_id, c.secondary_id)))
         .collect();
+    let visible_empty = visible.is_empty();
+    let no_match_empty = no_match_snapshot.is_empty();
 
     rsx! {
         div { class: "flex items-center justify-between mb-4",
@@ -4057,7 +4076,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
             div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
                 "No reconciliation candidates. Import a statement or wait for more auto-imported transactions to accumulate."
             }
-        } else {
+        } else if !visible_empty {
             div { class: "space-y-3",
                 for c in visible {
                     {
@@ -4082,6 +4101,84 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
                         }
                     }
                 }
+            }
+        }
+
+        // --- No-match path (5.7) — Unmatched-touching transactions with
+        // no candidate. User assigns a category to convert the Unmatched
+        // leg into a real category leg; statement-sourced rows auto-clear.
+        if !no_match_empty {
+            div { class: "mt-6 mb-3 border-b border-white/5 pb-2",
+                h2 { class: "text-sm font-bold text-obsidian-text",
+                    "No-match transactions ({no_match_snapshot.len()})"
+                }
+                p { class: "text-xs text-obsidian-text-muted mt-1",
+                    "Statement rows or auto-imports with no pairing candidate — assign a category to resolve each."
+                }
+            }
+            div { class: "space-y-3",
+                for row in no_match_snapshot {
+                    NoMatchRowCard {
+                        key: "{row.txn_id}",
+                        row: row.clone(),
+                        on_resolve: {
+                            let id = row.txn_id.clone();
+                            move |category: String| resolve(id.clone(), category)
+                        },
+                    }
+                }
+            }
+        } else if !is_loading && visible_empty {
+            // True empty state — no pairs AND no no-match rows.
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                "No reconciliation candidates. Import a statement or wait for more auto-imported transactions to accumulate."
+            }
+        }
+    }
+}
+
+#[component]
+fn NoMatchRowCard(row: ReconciliationTxnPreview, on_resolve: EventHandler<String>) -> Element {
+    let mut category_input: Signal<String> = use_signal(String::new);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let source_label = row.statement_source.as_deref().unwrap_or("captured");
+
+    let mut submit = move || {
+        let cat = category_input.read().trim().to_string();
+        if cat.is_empty() {
+            error.set(Some("Category required".to_string()));
+            return;
+        }
+        error.set(None);
+        on_resolve.call(cat);
+    };
+
+    rsx! {
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+            div { class: "min-w-0",
+                div { class: "text-sm font-semibold text-obsidian-text truncate",
+                    "{row.description}"
+                }
+                div { class: "text-xs text-obsidian-text-muted mt-1",
+                    "{row.date} · {row.unmatched_amount} {row.unmatched_commodity} · {source_label}"
+                }
+            }
+            div { class: "flex gap-2",
+                input {
+                    class: "flex-1 px-3 py-1.5 bg-obsidian-bg border border-white/10 rounded text-xs text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
+                    r#type: "text",
+                    placeholder: "Expenses:Groceries",
+                    value: "{category_input.read()}",
+                    oninput: move |e| category_input.set(e.value()),
+                }
+                button {
+                    class: "px-3 py-1.5 text-xs font-semibold text-black bg-obsidian-accent/90 hover:bg-obsidian-accent rounded",
+                    onclick: move |_| submit(),
+                    "Resolve"
+                }
+            }
+            if let Some(msg) = error.read().clone() {
+                div { class: "text-xs text-red-300 px-1", "{msg}" }
             }
         }
     }

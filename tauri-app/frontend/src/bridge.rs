@@ -1725,6 +1725,44 @@ pub async fn invoke_list_match_candidates(
     }
 }
 
+pub async fn invoke_list_unmatched_without_candidates(
+    max_days_gap: Option<u32>,
+) -> Result<Vec<ReconciliationTxnPreview>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = max_days_gap;
+        Ok(mock_unmatched_no_candidate())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            max_days_gap: Option<u32>,
+        }
+        invoke("list_unmatched_without_candidates", &Args { max_days_gap }).await
+    }
+}
+
+pub async fn invoke_resolve_unmatched(
+    txn_id: &str,
+    category: &str,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (txn_id, category);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            txn_id: &'a str,
+            category: &'a str,
+        }
+        invoke_unit("resolve_unmatched", &Args { txn_id, category }).await
+    }
+}
+
 pub async fn invoke_merge_transactions(
     primary_id: &str,
     secondary_id: &str,
@@ -1750,6 +1788,28 @@ pub async fn invoke_merge_transactions(
         )
         .await
     }
+}
+
+#[cfg(feature = "mock")]
+fn mock_unmatched_no_candidate() -> Vec<ReconciliationTxnPreview> {
+    vec![
+        ReconciliationTxnPreview {
+            txn_id: "01JK099".to_string(),
+            date: "2026-05-12".to_string(),
+            description: "Costco Wholesale".to_string(),
+            unmatched_amount: "-185.42".to_string(),
+            unmatched_commodity: "CAD".to_string(),
+            statement_source: Some("cibc-chequing-2026-05".to_string()),
+        },
+        ReconciliationTxnPreview {
+            txn_id: "01JK100".to_string(),
+            date: "2026-05-13".to_string(),
+            description: "Etransfer to Jane".to_string(),
+            unmatched_amount: "-50.00".to_string(),
+            unmatched_commodity: "CAD".to_string(),
+            statement_source: Some("cibc-chequing-2026-05".to_string()),
+        },
+    ]
 }
 
 #[cfg(feature = "mock")]

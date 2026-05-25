@@ -251,6 +251,10 @@ impl BudgetProjection {
             .and_then(|v| v.as_str())
             .map(String::from);
         let date = changes.get("date").and_then(|v| v.as_str()).map(String::from);
+        // Postings rewrite (Phase 5.7 no-match path) — replaces the full
+        // `postings` array, used when the reconciliation review converts
+        // an Unmatched leg into a real category leg.
+        let postings = changes.get("postings").cloned();
 
         // Collapse known-field updates into one statement (atomic by definition).
         // Unknown change keys are ignored — schema-flexible by design.
@@ -260,6 +264,9 @@ impl BudgetProjection {
         }
         if date.is_some() {
             sets.push("date = $date");
+        }
+        if postings.is_some() {
+            sets.push("postings = $postings");
         }
         if sets.is_empty() {
             return Ok(());
@@ -277,6 +284,9 @@ impl BudgetProjection {
         }
         if let Some(d) = date {
             q = q.bind(("date", d));
+        }
+        if let Some(p) = postings {
+            q = q.bind(("postings", p));
         }
         q.await?;
         Ok(())

@@ -9,4 +9,4 @@ pub mod share_intent;
 pub mod sync;
 pub mod timezone;
 
-mod shared;
+pub(crate) mod shared;

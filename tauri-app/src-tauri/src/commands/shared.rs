@@ -8,7 +8,7 @@ use crate::AppState;
 /// runner. Used by every single-event command in `notes` and `routines`.
 /// The batched import path in `commands::import` uses `append_batch` directly
 /// and intentionally does not go through this helper.
-pub(super) async fn append_and_apply(
+pub(crate) async fn append_and_apply(
     state: &AppState,
     event_type: EventType,
     aggregate_id: String,

@@ -981,6 +981,91 @@ pub async fn merge_transactions(
     Ok(())
 }
 
+/// Resolve an Unmatched-touching transaction by replacing its Unmatched
+/// posting with a real category leg (Phase 5.7 no-match path). Emits
+/// `TransactionUpdated` with the rewritten postings; if the transaction
+/// has `statement_source` set, additionally emits `TransactionCleared`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn resolve_unmatched(
+    state: State<'_, AppState>,
+    txn_id: String,
+    category: String,
+) -> Result<(), String> {
+    let row = queries::get_transaction(&state.db, &txn_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("transaction {txn_id} not found"))?;
+
+    let postings_json = row.postings.clone().into_json_value();
+    let arr = postings_json
+        .as_array()
+        .ok_or_else(|| "transaction postings not an array".to_string())?;
+    let unmatched_idx = arr
+        .iter()
+        .position(|p| {
+            p.get("account")
+                .and_then(|v| v.as_str())
+                .map(|s| s == "Unmatched")
+                .unwrap_or(false)
+        })
+        .ok_or_else(|| "transaction has no Unmatched posting to resolve".to_string())?;
+    let unmatched = &arr[unmatched_idx];
+    let amount = unmatched
+        .get("amount")
+        .and_then(|v| v.as_str())
+        .unwrap_or("0")
+        .to_string();
+    let commodity = unmatched
+        .get("commodity")
+        .and_then(|v| v.as_str())
+        .unwrap_or("CAD")
+        .to_string();
+
+    // Build the replacement category posting — same amount + commodity,
+    // opposite sign would already balance, but the Unmatched leg already
+    // carried the balancing sign (inversion of the source posting), so
+    // we keep the SAME amount + commodity here. The result balances
+    // because we're only renaming the account.
+    let replacement = serde_json::json!({
+        "account": category.clone(),
+        "amount": amount,
+        "commodity": commodity,
+        "fx_rate": null,
+        "tags": [],
+    });
+    let mut new_postings: Vec<serde_json::Value> = arr.clone();
+    new_postings[unmatched_idx] = replacement;
+
+    let update_payload = serde_json::json!({
+        "txn_id": txn_id,
+        "changes": { "postings": new_postings },
+    });
+    append_and_apply(
+        &state,
+        EventType::TransactionUpdated,
+        txn_id.clone(),
+        update_payload,
+    )
+    .await?;
+
+    // Auto-clear when this resolved transaction traces back to a statement.
+    if let Some(source) = row.statement_source.clone() {
+        let cleared_payload = serde_json::json!({
+            "txn_id": txn_id,
+            "statement_source": source,
+            "cleared_date": row.date,
+        });
+        append_and_apply(
+            &state,
+            EventType::TransactionCleared,
+            txn_id,
+            cleared_payload,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 fn strip_unmatched_legs(postings: &serde_json::Value) -> Vec<serde_json::Value> {
     postings
         .as_array()
@@ -994,6 +1079,31 @@ fn strip_unmatched_legs(postings: &serde_json::Value) -> Vec<serde_json::Value> 
                 .unwrap_or(true)
         })
         .collect()
+}
+
+/// Return Unmatched-touching transactions that DO NOT appear in any
+/// match candidate at the current `max_days_gap` window — the no-match
+/// path for 5.7's reconciliation review.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_unmatched_without_candidates(
+    state: State<'_, AppState>,
+    max_days_gap: Option<u32>,
+) -> Result<Vec<ReconciliationTxnPreview>, String> {
+    let window = max_days_gap.unwrap_or(7);
+    let rows = queries::list_unmatched_transactions(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let unmatched: Vec<UnmatchedTxn> = rows.iter().filter_map(unmatched_from_row).collect();
+    let cands = reconciliation::find_match_candidates(&unmatched, window);
+    let paired_ids: std::collections::HashSet<String> = cands
+        .iter()
+        .flat_map(|c| [c.primary_id.clone(), c.secondary_id.clone()])
+        .collect();
+    Ok(unmatched
+        .iter()
+        .filter(|u| !paired_ids.contains(&u.txn_id))
+        .map(txn_preview)
+        .collect())
 }
 
 #[tauri::command(rename_all = "snake_case")]
