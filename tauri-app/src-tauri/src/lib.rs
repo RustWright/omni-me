@@ -64,6 +64,11 @@ pub struct AppState {
     /// refuses to ingest any path that doesn't sit under this root, so the
     /// frontend can't redirect commit reads to arbitrary files on disk.
     pub last_import_root: tokio::sync::Mutex<Option<PathBuf>>,
+    /// Canonical path of the most recently previewed hledger journal. The
+    /// companion `commit_journal_import` command refuses to ingest anything
+    /// that doesn't match this path — mirrors the `last_import_root` shape
+    /// but pointed at a file instead of a directory.
+    pub last_journal_import_path: tokio::sync::Mutex<Option<PathBuf>>,
 }
 
 /// Derive a TCP probe target (`host:port`) from the sync server URL. Used by
@@ -220,6 +225,7 @@ pub fn run() {
                     network_monitor,
                     status_reporter,
                     last_import_root: tokio::sync::Mutex::new(None),
+                    last_journal_import_path: tokio::sync::Mutex::new(None),
                 });
             });
 
@@ -274,6 +280,9 @@ pub fn run() {
             commands::import::preview_import,
             commands::import::commit_import,
             commands::import::export_obsidian,
+            // hledger journal import (Phase 6.2 + 6.3)
+            commands::journal_import::preview_journal_import,
+            commands::journal_import::commit_journal_import,
             // Budget — transactions
             commands::budget::record_transaction,
             commands::budget::update_transaction,

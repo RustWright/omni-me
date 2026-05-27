@@ -29,6 +29,7 @@ rust_decimal = { version = "1", default-features = false, features = ["serde-wit
 serde_with = { version = "3", default-features = false, features = ["macros", "std"] }
 ledger-parser = "6"
 ledger-utils = "0.6"
+glob = "0.3"
 base64 = "0.22"
 toml = "0.8"
 tracing = "0.1"

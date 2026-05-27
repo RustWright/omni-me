@@ -3905,6 +3905,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "glob",
  "imap",
  "ledger-parser",
  "ledger-utils",

@@ -548,3 +548,74 @@ pub struct BalanceCheckView {
     pub discrepancy: String,
     pub ok: bool,
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6.2 / 6.3 — hledger journal import.
+//
+// Wire-shape mirrors of the Tauri command DTOs in
+// `tauri-app/src-tauri/src/commands/journal_import.rs`. Kept here so views
+// can compose them without crate-crossing imports.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JournalImportAccountStats {
+    pub account: String,
+    pub transaction_count: usize,
+    pub posting_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JournalImportPosting {
+    pub account: String,
+    pub commodity: String,
+    pub amount: String,
+    pub fx_quote: Option<String>,
+    pub fx_rate: Option<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JournalImportSampleTxn {
+    pub source_index: usize,
+    pub txn_id: String,
+    pub date: String,
+    pub description: String,
+    pub postings: Vec<JournalImportPosting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JournalImportParseError {
+    pub path: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JournalImportPreview {
+    pub root: String,
+    pub files_parsed: usize,
+    pub total_bytes: usize,
+    pub transactions_count: usize,
+    pub per_account: Vec<JournalImportAccountStats>,
+    pub commodities: Vec<String>,
+    pub sample_transactions: Vec<JournalImportSampleTxn>,
+    pub parse_errors: Vec<JournalImportParseError>,
+    pub balance_failures: Vec<String>,
+    pub already_imported_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JournalImportPlan {
+    pub accounts_to_drop: Vec<String>,
+    pub account_renames: std::collections::HashMap<String, String>,
+    pub apply_a2_rewriter: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JournalImportResult {
+    pub committed_count: usize,
+    pub skipped_existing_count: usize,
+    pub dropped_count: usize,
+    pub balance_failures: Vec<String>,
+    pub parse_errors: Vec<JournalImportParseError>,
+    pub a2_rewrites: usize,
+}

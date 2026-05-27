@@ -3,10 +3,11 @@ use dioxus::prelude::*;
 use crate::bridge;
 use crate::types::{
     AccountSummaryView, AffordVerdictView, AttachmentRef, BalanceCheckView, BudgetProgress,
-    BudgetRow, DashboardSummaryView, DraftTransactionView, ExtractedDraft, MatchCandidateView,
-    MonthlyTrendBucketView, PendingBatchView, PendingShareCapture, PostingInput,
-    ReconciliationTxnPreview, RecurringObligationView, RecurringPattern, ScanRecurringResult,
-    TransactionFormDraft, TransactionView, TxnFilter,
+    BudgetRow, DashboardSummaryView, DraftTransactionView, ExtractedDraft, JournalImportPlan,
+    JournalImportPreview, JournalImportResult, MatchCandidateView, MonthlyTrendBucketView,
+    PendingBatchView, PendingShareCapture, PostingInput, ReconciliationTxnPreview,
+    RecurringObligationView, RecurringPattern, ScanRecurringResult, TransactionFormDraft,
+    TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -103,6 +104,10 @@ enum FinancesView {
     /// transactions on an account to a user-supplied statement closing
     /// balance; flags discrepancy.
     BalanceCheck,
+    /// hledger journal import (Phase 6.2 + 6.3). User picks a path,
+    /// previews per-account stats, optionally drops/renames accounts,
+    /// and commits as a batch of TransactionRecorded events.
+    JournalImport,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -179,6 +184,7 @@ pub fn FinancesPage() -> Element {
                         on_open_statement_import: move |_| view.set(FinancesView::StatementImport),
                         on_open_reconciliation: move |_| view.set(FinancesView::Reconciliation),
                         on_open_balance_check: move |_| view.set(FinancesView::BalanceCheck),
+                        on_open_journal_import: move |_| view.set(FinancesView::JournalImport),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -336,6 +342,11 @@ pub fn FinancesPage() -> Element {
                         on_back: move |_| view.set(FinancesView::Home),
                     }
                 },
+                FinancesView::JournalImport => rsx! {
+                    JournalImportView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                    }
+                },
             }
         }
     }
@@ -357,6 +368,7 @@ fn HomeView(
     on_open_statement_import: EventHandler<()>,
     on_open_reconciliation: EventHandler<()>,
     on_open_balance_check: EventHandler<()>,
+    on_open_journal_import: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -561,6 +573,22 @@ fn HomeView(
                     div { class: "text-sm font-semibold text-obsidian-text", "Balance check" }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
                         "Verify a cleared-transaction total against a statement closing balance."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
+            button {
+                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+                onclick: move |_| on_open_journal_import.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-text", "Import journal" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Bring in an existing hledger journal. Preview accounts, drop or rename, then commit."
                     }
                 }
                 svg { class: "w-5 h-5 text-obsidian-text-muted",
@@ -4382,6 +4410,360 @@ fn BalanceCheckResultCard(result: BalanceCheckView) -> Element {
             div { class: "text-sm font-semibold", "{verdict_label}" }
             div { class: "text-xs opacity-80",
                 "Account: {result.account} · cleared total {result.cleared_total} {result.commodity}"
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6.2 + 6.3 — hledger journal import view.
+//
+// Three states: Idle (path input + Preview button), Previewed (per-account
+// table + drop/rename + Commit), Done (result summary). One signal per state
+// keeps the UI flat — no enum nesting needed since transitions are linear
+// (Idle → Previewed → Done) and a Back button covers the only reverse path.
+// ---------------------------------------------------------------------------
+
+#[component]
+fn JournalImportView(on_back: EventHandler<()>) -> Element {
+    let mut path: Signal<String> = use_signal(String::new);
+    let mut preview: Signal<Option<JournalImportPreview>> = use_signal(|| None);
+    let mut result: Signal<Option<JournalImportResult>> = use_signal(|| None);
+    let mut loading: Signal<bool> = use_signal(|| false);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let mut apply_a2: Signal<bool> = use_signal(|| true);
+    // Set of account names the user has unchecked. Default: include all.
+    let mut dropped: Signal<std::collections::HashSet<String>> =
+        use_signal(std::collections::HashSet::new);
+    // Per-account rename mapping. Empty string means no rename. Keyed by
+    // original account name.
+    let mut renames: Signal<std::collections::HashMap<String, String>> =
+        use_signal(std::collections::HashMap::new);
+
+    let on_preview = move |_| {
+        let p = path.read().trim().to_string();
+        if p.is_empty() {
+            error.set(Some("Enter a path to your main.ledger file.".into()));
+            return;
+        }
+        loading.set(true);
+        error.set(None);
+        preview.set(None);
+        result.set(None);
+        dropped.set(std::collections::HashSet::new());
+        renames.set(std::collections::HashMap::new());
+        spawn(async move {
+            match bridge::invoke_preview_journal_import(&p).await {
+                Ok(view) => preview.set(Some(view)),
+                Err(e) => error.set(Some(format!("Preview failed: {e}"))),
+            }
+            loading.set(false);
+        });
+    };
+
+    let on_commit = move |_| {
+        let p = path.read().trim().to_string();
+        let drops: Vec<String> = dropped.read().iter().cloned().collect();
+        let rename_map: std::collections::HashMap<String, String> = renames
+            .read()
+            .iter()
+            .filter_map(|(k, v)| {
+                let trimmed = v.trim();
+                if trimmed.is_empty() || trimmed == k {
+                    None
+                } else {
+                    Some((k.clone(), trimmed.to_string()))
+                }
+            })
+            .collect();
+        let plan = JournalImportPlan {
+            accounts_to_drop: drops,
+            account_renames: rename_map,
+            apply_a2_rewriter: *apply_a2.read(),
+        };
+        loading.set(true);
+        error.set(None);
+        spawn(async move {
+            match bridge::invoke_commit_journal_import(&p, plan).await {
+                Ok(res) => {
+                    result.set(Some(res));
+                    preview.set(None);
+                }
+                Err(e) => error.set(Some(format!("Commit failed: {e}"))),
+            }
+            loading.set(false);
+        });
+    };
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
+                "Import journal"
+            }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        if let Some(err) = error.read().clone() {
+            div { class: "mb-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg text-sm text-rose-300",
+                "{err}"
+            }
+        }
+
+        // --- Idle / path-entry state ---
+        if preview.read().is_none() && result.read().is_none() {
+            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1",
+                        "Path to main.ledger"
+                    }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        r#type: "text",
+                        placeholder: "/home/you/journals/main.ledger",
+                        value: "{path.read()}",
+                        oninput: move |e| path.set(e.value()),
+                    }
+                    p { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Parses the file plus any included sub-journals. Per-file errors are surfaced for review — they never abort the walk."
+                    }
+                }
+                button {
+                    class: "px-4 py-2 bg-obsidian-accent/90 hover:bg-obsidian-accent text-black rounded text-sm font-semibold disabled:opacity-50",
+                    disabled: *loading.read(),
+                    onclick: on_preview,
+                    if *loading.read() { "Previewing…" } else { "Preview" }
+                }
+            }
+        }
+
+        // --- Previewed state ---
+        if let Some(view) = preview.read().clone() {
+            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+                div { class: "grid grid-cols-2 md:grid-cols-4 gap-3 text-sm",
+                    StatCell { label: "Files", value: "{view.files_parsed}" }
+                    StatCell { label: "Transactions", value: "{view.transactions_count}" }
+                    StatCell { label: "Accounts", value: "{view.per_account.len()}" }
+                    StatCell { label: "Commodities", value: "{view.commodities.len()}" }
+                }
+                div { class: "text-xs text-obsidian-text-muted",
+                    "Parsed root: {view.root}"
+                }
+                if view.already_imported_count > 0 {
+                    div { class: "text-xs text-amber-300",
+                        "{view.already_imported_count} transactions already in your projection — they'll be skipped on commit."
+                    }
+                }
+
+                label { class: "flex items-center gap-2 text-sm text-obsidian-text",
+                    input {
+                        r#type: "checkbox",
+                        checked: *apply_a2.read(),
+                        onchange: move |e| apply_a2.set(e.value() == "true"),
+                    }
+                    span { "Apply A2 business→tag rewrite (recommended)" }
+                }
+                p { class: "text-xs text-obsidian-text-muted -mt-1",
+                    "Rewrites Expenses:Business:* into the plain category with a type:business posting tag."
+                }
+            }
+
+            if !view.parse_errors.is_empty() {
+                div { class: "mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-200 space-y-1",
+                    div { class: "font-semibold mb-1",
+                        "{view.parse_errors.len()} files had issues (continuing without them):"
+                    }
+                    for err in view.parse_errors.iter().take(10) {
+                        div { class: "truncate", "• {err.path}: {err.message}" }
+                    }
+                    if view.parse_errors.len() > 10 {
+                        div { "… and {view.parse_errors.len() - 10} more" }
+                    }
+                }
+            }
+
+            if !view.balance_failures.is_empty() {
+                div { class: "mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-200 space-y-1",
+                    div { class: "font-semibold mb-1",
+                        "{view.balance_failures.len()} transactions couldn't be balanced:"
+                    }
+                    for fail in view.balance_failures.iter().take(10) {
+                        div { class: "truncate", "• {fail}" }
+                    }
+                }
+            }
+
+            div { class: "mb-4",
+                h2 { class: "text-lg font-bold text-obsidian-text mb-2", "Accounts" }
+                p { class: "text-xs text-obsidian-text-muted mb-3",
+                    "Uncheck any account you don't want to bring over. Renames take effect on commit."
+                }
+                div { class: "space-y-2",
+                    for stats in view.per_account.iter().cloned() {
+                        AccountRow {
+                            stats: stats.clone(),
+                            dropped: dropped,
+                            renames: renames,
+                        }
+                    }
+                }
+            }
+
+            if !view.sample_transactions.is_empty() {
+                div { class: "mb-4",
+                    h2 { class: "text-lg font-bold text-obsidian-text mb-2",
+                        "First {view.sample_transactions.len()} transactions"
+                    }
+                    div { class: "space-y-2 max-h-96 overflow-y-auto pr-1",
+                        for txn in view.sample_transactions.iter().cloned() {
+                            SampleTxnRow { txn: txn.clone() }
+                        }
+                    }
+                }
+            }
+
+            div { class: "flex gap-2",
+                button {
+                    class: "px-4 py-2 bg-obsidian-accent/90 hover:bg-obsidian-accent text-black rounded text-sm font-semibold disabled:opacity-50",
+                    disabled: *loading.read(),
+                    onclick: on_commit,
+                    if *loading.read() { "Committing…" } else { "Commit import" }
+                }
+                button {
+                    class: "px-4 py-2 bg-obsidian-sidebar border border-white/10 hover:border-white/20 text-obsidian-text rounded text-sm",
+                    onclick: move |_| { preview.set(None); error.set(None); },
+                    "Cancel"
+                }
+            }
+        }
+
+        // --- Done state ---
+        if let Some(res) = result.read().clone() {
+            div { class: "mb-4 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-sm text-emerald-200 space-y-2",
+                div { class: "font-semibold",
+                    "Imported {res.committed_count} transactions"
+                }
+                if res.skipped_existing_count > 0 {
+                    div { "Skipped {res.skipped_existing_count} already-imported transactions (idempotent)." }
+                }
+                if res.dropped_count > 0 {
+                    div { "Dropped {res.dropped_count} transactions touching unchecked accounts." }
+                }
+                if res.a2_rewrites > 0 {
+                    div { "Rewrote {res.a2_rewrites} business-account postings to type:business tags." }
+                }
+                if !res.balance_failures.is_empty() {
+                    div { class: "text-amber-300",
+                        "{res.balance_failures.len()} transactions couldn't be balanced and were skipped."
+                    }
+                }
+            }
+            button {
+                class: "px-4 py-2 bg-obsidian-sidebar border border-white/10 hover:border-white/20 text-obsidian-text rounded text-sm",
+                onclick: move |_| { result.set(None); on_back.call(()); },
+                "Back to Finances"
+            }
+        }
+    }
+}
+
+#[component]
+fn StatCell(label: &'static str, value: String) -> Element {
+    rsx! {
+        div { class: "p-2 bg-obsidian-bg border border-white/5 rounded",
+            div { class: "text-xs text-obsidian-text-muted", "{label}" }
+            div { class: "text-lg font-semibold text-obsidian-text", "{value}" }
+        }
+    }
+}
+
+#[component]
+fn AccountRow(
+    stats: crate::types::JournalImportAccountStats,
+    dropped: Signal<std::collections::HashSet<String>>,
+    renames: Signal<std::collections::HashMap<String, String>>,
+) -> Element {
+    let account_for_drop = stats.account.clone();
+    let account_for_rename_key = stats.account.clone();
+    let account_for_rename_value = stats.account.clone();
+    let account_for_classes = stats.account.clone();
+    let account_for_default = stats.account.clone();
+    let included = !dropped.read().contains(&stats.account);
+    let current_rename = renames.read().get(&stats.account).cloned();
+    let rename_value = current_rename.unwrap_or_else(|| account_for_default.clone());
+    let row_class = if included {
+        "flex items-center gap-2 p-2 bg-obsidian-bg/60 border border-white/5 rounded"
+    } else {
+        "flex items-center gap-2 p-2 bg-obsidian-bg/30 border border-white/5 rounded opacity-50"
+    };
+    rsx! {
+        div { class: "{row_class}",
+            input {
+                r#type: "checkbox",
+                checked: included,
+                onchange: move |e| {
+                    let mut set = dropped.write();
+                    if e.value() == "true" {
+                        set.remove(&account_for_drop);
+                    } else {
+                        set.insert(account_for_drop.clone());
+                    }
+                },
+            }
+            div { class: "flex-1 min-w-0",
+                div { class: "text-sm text-obsidian-text font-mono truncate",
+                    "{account_for_classes}"
+                }
+                div { class: "text-xs text-obsidian-text-muted",
+                    "{stats.transaction_count} txn · {stats.posting_count} postings"
+                }
+            }
+            input {
+                class: "w-44 px-2 py-1 bg-obsidian-bg border border-white/10 rounded text-xs text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                r#type: "text",
+                placeholder: "rename to…",
+                value: "{rename_value}",
+                oninput: move |e| {
+                    let new_value = e.value();
+                    let mut map = renames.write();
+                    if new_value.trim().is_empty() || new_value.trim() == account_for_rename_key {
+                        map.remove(&account_for_rename_key);
+                    } else {
+                        map.insert(account_for_rename_value.clone(), new_value);
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn SampleTxnRow(txn: crate::types::JournalImportSampleTxn) -> Element {
+    rsx! {
+        div { class: "p-2 bg-obsidian-bg/60 border border-white/5 rounded text-xs",
+            div { class: "flex justify-between items-baseline",
+                div { class: "font-semibold text-obsidian-text", "{txn.date} · {txn.description}" }
+                div { class: "text-obsidian-text-muted font-mono", "{txn.txn_id}" }
+            }
+            div { class: "mt-1 space-y-0.5 font-mono",
+                for posting in txn.postings.iter() {
+                    div { class: "flex justify-between text-obsidian-text-muted",
+                        span { class: "truncate", "{posting.account}" }
+                        span {
+                            "{posting.amount} {posting.commodity}"
+                            if let Some(rate) = posting.fx_rate.as_ref() {
+                                if let Some(quote) = posting.fx_quote.as_ref() {
+                                    span { class: "ml-1 text-emerald-400",
+                                        " @ {rate} {quote}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

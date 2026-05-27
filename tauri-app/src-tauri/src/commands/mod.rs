@@ -3,6 +3,7 @@ pub mod auto_import;
 pub mod budget;
 pub mod extract;
 pub mod import;
+pub mod journal_import;
 pub mod notes;
 pub mod routines;
 pub mod share_intent;

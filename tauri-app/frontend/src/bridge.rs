@@ -2401,3 +2401,103 @@ pub async fn invoke_take_pending_share_intent() -> Result<Option<PendingShareCap
         invoke("take_pending_share_intent", &Args {}).await
     }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6.2 / 6.3 — hledger journal import.
+// ---------------------------------------------------------------------------
+
+pub async fn invoke_preview_journal_import(
+    path: &str,
+) -> Result<crate::types::JournalImportPreview, String> {
+    #[cfg(feature = "mock")]
+    {
+        use crate::types::*;
+        let _ = path;
+        Ok(JournalImportPreview {
+            root: path.to_string(),
+            files_parsed: 3,
+            total_bytes: 12_400,
+            transactions_count: 42,
+            per_account: vec![
+                JournalImportAccountStats {
+                    account: "Assets:Cash".into(),
+                    transaction_count: 30,
+                    posting_count: 30,
+                },
+                JournalImportAccountStats {
+                    account: "Expenses:Groceries".into(),
+                    transaction_count: 10,
+                    posting_count: 10,
+                },
+                JournalImportAccountStats {
+                    account: "Expenses:Business:Subscriptions".into(),
+                    transaction_count: 2,
+                    posting_count: 2,
+                },
+            ],
+            commodities: vec!["CAD".into(), "USD".into()],
+            sample_transactions: vec![JournalImportSampleTxn {
+                source_index: 0,
+                txn_id: "import-deadbeefcafef00d-1".into(),
+                date: "2026-05-26".into(),
+                description: "Coffee".into(),
+                postings: vec![
+                    JournalImportPosting {
+                        account: "Expenses:Cafe".into(),
+                        commodity: "CAD".into(),
+                        amount: "5.25".into(),
+                        fx_quote: None,
+                        fx_rate: None,
+                        tags: vec![],
+                    },
+                    JournalImportPosting {
+                        account: "Assets:Cash".into(),
+                        commodity: "CAD".into(),
+                        amount: "-5.25".into(),
+                        fx_quote: None,
+                        fx_rate: None,
+                        tags: vec![],
+                    },
+                ],
+            }],
+            parse_errors: vec![],
+            balance_failures: vec![],
+            already_imported_count: 0,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            path: &'a str,
+        }
+        invoke("preview_journal_import", &Args { path }).await
+    }
+}
+
+pub async fn invoke_commit_journal_import(
+    path: &str,
+    plan: crate::types::JournalImportPlan,
+) -> Result<crate::types::JournalImportResult, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (path, &plan);
+        Ok(crate::types::JournalImportResult {
+            committed_count: 40,
+            skipped_existing_count: 0,
+            dropped_count: 2,
+            balance_failures: vec![],
+            parse_errors: vec![],
+            a2_rewrites: 2,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            path: &'a str,
+            plan: &'a crate::types::JournalImportPlan,
+        }
+        invoke("commit_journal_import", &Args { path, plan: &plan }).await
+    }
+}

@@ -14,6 +14,7 @@ pub mod extraction;
 pub mod fx;
 pub mod import;
 pub mod journal_file;
+pub mod journal_import;
 pub mod ledger;
 pub mod llm;
 pub mod preprocess;
