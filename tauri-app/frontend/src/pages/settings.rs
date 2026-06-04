@@ -197,6 +197,9 @@ pub fn SettingsPage() -> Element {
                 }
             }
 
+            // --- Base Currency (Phase 7.3) ---
+            BaseCurrencySection {}
+
             // --- Obsidian Import / Export ---
             super::import_export::ImportExportSection {}
 
@@ -228,6 +231,67 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} MiB", bytes as f64 / MIB as f64)
     } else {
         format!("{:.2} GiB", bytes as f64 / GIB as f64)
+    }
+}
+
+/// ISO-4217 codes offered by the picker — the user's actual account currencies
+/// first, then a few common ones. The backend accepts any 3-letter code, so this
+/// list is just the convenient menu, not a hard constraint.
+const CURRENCY_CODES: &[&str] = &["CAD", "USD", "EUR", "GBP", "NGN", "AUD", "JPY", "CHF"];
+
+/// Base-currency picker (Phase 7.3). The selection persists server-side and is
+/// read by the dashboard / accounts / budget aggregation as the FX base.
+#[component]
+fn BaseCurrencySection() -> Element {
+    let mut current = use_signal(|| "CAD".to_string());
+    let mut status = use_signal(|| None::<String>);
+
+    use_future(move || async move {
+        if let Ok(code) = bridge::invoke_get_base_currency().await {
+            current.set(code);
+        }
+    });
+
+    let selected = current.read().clone();
+
+    rsx! {
+        div { class: "mb-10 space-y-6",
+            div { class: "border-b border-white/5 pb-2 mb-4",
+                h2 { class: "text-lg font-bold text-obsidian-text", "Base Currency" }
+            }
+            div {
+                label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                    "Currency for net worth, accounts, and budget totals"
+                }
+                select {
+                    class: "px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                    value: "{selected}",
+                    onchange: move |e| {
+                        let code = e.value();
+                        spawn(async move {
+                            match bridge::invoke_update_base_currency(&code).await {
+                                Ok(_) => {
+                                    status.set(Some(format!("Base currency set to {code}.")));
+                                    current.set(code);
+                                }
+                                Err(e) => status.set(Some(format!("Error: {e}"))),
+                            }
+                        });
+                    },
+                    for code in CURRENCY_CODES {
+                        option { value: "{code}", "{code}" }
+                    }
+                }
+                p { class: "text-xs text-obsidian-text-muted mt-2",
+                    "Foreign-currency holdings are converted to this currency on the dashboard and accounts screens using your latest recorded FX rates."
+                }
+            }
+            if let Some(s) = &*status.read() {
+                div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
+                    "{s}"
+                }
+            }
+        }
     }
 }
 

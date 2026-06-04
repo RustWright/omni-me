@@ -908,6 +908,36 @@ pub async fn invoke_update_timezone(timezone: &str) -> Result<(), String> {
     }
 }
 
+/// Base currency used by dashboard / accounts FX aggregation (Phase 7.3).
+pub async fn invoke_get_base_currency() -> Result<String, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok("CAD".to_string())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("get_base_currency", &Args {}).await
+    }
+}
+
+pub async fn invoke_update_base_currency(currency: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = currency;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            currency: &'a str,
+        }
+        invoke_unit("update_base_currency", &Args { currency }).await
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Obsidian import / export
 // -----------------------------------------------------------------------------

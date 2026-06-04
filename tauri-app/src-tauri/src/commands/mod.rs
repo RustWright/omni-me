@@ -6,6 +6,7 @@ pub mod import;
 pub mod journal_import;
 pub mod notes;
 pub mod routines;
+pub mod settings;
 pub mod share_intent;
 pub mod sync;
 pub mod timezone;

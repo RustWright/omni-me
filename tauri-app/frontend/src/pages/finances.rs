@@ -3109,7 +3109,7 @@ fn AccountListView(on_back: EventHandler<()>) -> Element {
         spawn(async move {
             loading.set(true);
             error.set(None);
-            match bridge::invoke_account_summaries(Some("CAD")).await {
+            match bridge::invoke_account_summaries(None).await {
                 Ok(rows) => summaries.set(rows),
                 Err(e) => error.set(Some(e)),
             }
@@ -3285,7 +3285,7 @@ fn DashboardView(
         spawn(async move {
             loading.set(true);
             error.set(None);
-            match bridge::invoke_dashboard_summary(Some("CAD")).await {
+            match bridge::invoke_dashboard_summary(None).await {
                 Ok(s) => summary.set(Some(s)),
                 Err(e) => error.set(Some(e)),
             }
@@ -3526,7 +3526,7 @@ fn AffordCard(base_currency: String) -> Element {
         loading.set(true);
         error.set(None);
         spawn(async move {
-            match bridge::invoke_check_affordability(raw.trim(), Some("CAD")).await {
+            match bridge::invoke_check_affordability(raw.trim(), None).await {
                 Ok(v) => {
                     verdict.set(Some(v));
                 }
@@ -3708,7 +3708,7 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
             // Progress is best-effort — if it fails (bad amount string,
             // missing journal, FX gap), the list still renders without
             // bars rather than hiding the budgets behind a load error.
-            match bridge::invoke_budget_progress(Some("CAD")).await {
+            match bridge::invoke_budget_progress(None).await {
                 Ok(fetched) => progress.set(fetched),
                 Err(_) => progress.set(Vec::new()),
             }

@@ -23,6 +23,7 @@ const DEVICE_ID_FILE: &str = "device_id";
 const SERVER_URL_FILE: &str = "server_url";
 const DEFAULT_SERVER_URL: &str = "http://localhost:3000";
 const TIMEZONE_FILE: &str = "timezone";
+const BASE_CURRENCY_FILE: &str = "base_currency";
 
 /// Load a string value from a file, or use a default and persist it.
 fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> String) -> String {
@@ -46,6 +47,9 @@ pub struct AppState {
     pub device_id: String,
     pub server_url: tokio::sync::RwLock<String>,
     pub timezone: Arc<tokio::sync::RwLock<String>>,
+    /// FX base currency for dashboard / accounts aggregation (Phase 7.3).
+    /// Persisted to `BASE_CURRENCY_FILE`; defaults to CAD.
+    pub base_currency: tokio::sync::RwLock<String>,
     pub app_data_dir: std::path::PathBuf,
     /// Local LRU mirror of `/blobs/<sha256>` — see `commands::attachments`.
     pub attachment_cache_dir: std::path::PathBuf,
@@ -164,6 +168,8 @@ pub fn run() {
                 let timezone = load_or_create(&app_data, TIMEZONE_FILE, || {
                     iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string())
                 });
+                let base_currency =
+                    load_or_create(&app_data, BASE_CURRENCY_FILE, || "CAD".to_string());
 
                 tracing::info!(device_id = %device_id, server_url = %server_url, timezone = %timezone, "App initialized");
 
@@ -216,6 +222,7 @@ pub fn run() {
                     device_id,
                     server_url: tokio::sync::RwLock::new(server_url),
                     timezone: timezone_shared,
+                    base_currency: tokio::sync::RwLock::new(base_currency),
                     app_data_dir: app_data,
                     attachment_cache_dir,
                     http: reqwest::Client::new(),
@@ -276,6 +283,8 @@ pub fn run() {
             // Timezone
             commands::timezone::get_timezone,
             commands::timezone::update_timezone,
+            commands::settings::get_base_currency,
+            commands::settings::update_base_currency,
             // Obsidian import/export
             commands::import::preview_import,
             commands::import::commit_import,

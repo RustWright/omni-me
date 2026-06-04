@@ -325,7 +325,10 @@ pub async fn account_summaries(
     base_currency: Option<String>,
     as_of: Option<String>,
 ) -> Result<Vec<AccountSummaryView>, String> {
-    let base = base_currency.unwrap_or_else(|| "CAD".to_string());
+    let base = match base_currency {
+        Some(b) => b,
+        None => state.base_currency.read().await.clone(),
+    };
     let as_of_date = match as_of {
         Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
             .map_err(|e| format!("bad as_of date: {e}"))?,
@@ -430,7 +433,10 @@ pub async fn dashboard_summary(
     as_of: Option<String>,
     months_back: Option<u32>,
 ) -> Result<DashboardSummaryView, String> {
-    let base = base_currency.unwrap_or_else(|| "CAD".to_string());
+    let base = match base_currency {
+        Some(b) => b,
+        None => state.base_currency.read().await.clone(),
+    };
     let months = months_back.unwrap_or(6).max(1);
     let as_of_date = match as_of {
         Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
@@ -602,7 +608,10 @@ pub async fn budget_progress(
     base_currency: Option<String>,
     as_of: Option<String>,
 ) -> Result<Vec<BudgetProgressView>, String> {
-    let base = base_currency.unwrap_or_else(|| "CAD".to_string());
+    let base = match base_currency {
+        Some(b) => b,
+        None => state.base_currency.read().await.clone(),
+    };
     let as_of_date = match as_of {
         Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
             .map_err(|e| format!("bad as_of date: {e}"))?,
