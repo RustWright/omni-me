@@ -18,6 +18,7 @@ pub mod journal_import;
 pub mod ledger;
 pub mod llm;
 pub mod preprocess;
+pub mod query;
 pub mod reconciliation;
 pub mod recurring;
 pub mod routines;

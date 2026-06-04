@@ -17,6 +17,7 @@ use omni_me_core::db::queries::{
 use omni_me_core::events::{
     AttachmentRef, EventType, Posting, TransactionRecordedPayload,
 };
+use omni_me_core::query::{self, QueryPosting, QueryTxn};
 use omni_me_core::recurring;
 use omni_me_core::reconciliation::{self, UnmatchedTxn};
 use omni_me_core::statement_csv::{self, MoneyDirection};
@@ -178,6 +179,57 @@ pub async fn list_transactions(
     .await
     .map_err(|e| e.to_string())?;
     Ok(rows.into_iter().map(row_to_view).collect())
+}
+
+/// R2 ad-hoc query (Phase 7.2): parse the DSL, evaluate it host-side over the
+/// live transaction set, and return the filtered, paginated page. The engine
+/// (`omni_me_core::query`) is pure and DB-free; this command just feeds it
+/// projection rows mapped into `QueryTxn`. A parse error surfaces as the `Err`
+/// string so the builder can show it inline.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn run_transaction_query(
+    state: State<'_, AppState>,
+    dsl: String,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<Vec<TransactionView>, String> {
+    let query = query::parse(&dsl).map_err(|e| e.to_string())?;
+    let rows = queries::query_candidate_transactions(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let limit = limit.unwrap_or(100) as usize;
+    let offset = offset.unwrap_or(0) as usize;
+    let matched = rows
+        .into_iter()
+        .map(row_to_view)
+        .filter(|view| query::matches(&query, &view_to_querytxn(view)))
+        .skip(offset)
+        .take(limit)
+        .collect();
+    Ok(matched)
+}
+
+/// Map a wire `TransactionView` into the query engine's `QueryTxn`. Postings
+/// round-trip through `core::events::Posting`, whose `Deserialize` already knows
+/// the string-amount + string-tag encoding, so the posting shape isn't
+/// re-implemented here.
+fn view_to_querytxn(view: &TransactionView) -> QueryTxn {
+    let postings: Vec<Posting> =
+        serde_json::from_value(view.postings.clone()).unwrap_or_default();
+    QueryTxn {
+        date: view.date.clone(),
+        description: view.description.clone(),
+        top_tags: view.tags_top.clone(),
+        postings: postings
+            .into_iter()
+            .map(|p| QueryPosting {
+                account: p.account,
+                commodity: p.commodity,
+                amount: p.amount,
+                tags: p.tags,
+            })
+            .collect(),
+    }
 }
 
 // --- Accounts + Budgets + Recurring (1.9) ---

@@ -1269,6 +1269,90 @@ pub async fn invoke_list_transactions(
     }
 }
 
+/// R2 ad-hoc query (Phase 7.2): send a DSL string to the host engine and get
+/// back the filtered, paginated transaction page. Real evaluation lives in
+/// `omni_me_core::query`; the mock branch does a light account/desc substring
+/// approximation so `dx serve --features mock` stays interactive without a
+/// backend (it intentionally does *not* reproduce segment-prefix / amount / date
+/// semantics — those are covered by the core engine's own tests).
+pub async fn invoke_run_transaction_query(
+    dsl: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<TransactionView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let filtered = mock_apply_dsl(mock_transactions(), dsl);
+        let start = offset as usize;
+        let end = (start + limit as usize).min(filtered.len());
+        Ok(filtered
+            .into_iter()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            dsl: &'a str,
+            limit: u32,
+            offset: u32,
+        }
+        invoke(
+            "run_transaction_query",
+            &Args { dsl, limit, offset },
+        )
+        .await
+    }
+}
+
+/// Mock-only, deliberately loose DSL approximation: handles `account:` and
+/// `desc:` substring terms (case-insensitive), ANDs them (or ORs if the query
+/// contains a bare `OR`), and ignores every other field. Enough to make the
+/// builder feel live under `dx serve --features mock`.
+#[cfg(feature = "mock")]
+fn mock_apply_dsl(rows: Vec<TransactionView>, dsl: &str) -> Vec<TransactionView> {
+    let use_any = dsl.split_whitespace().any(|t| t == "OR");
+    let terms: Vec<(String, String)> = dsl
+        .split_whitespace()
+        .filter(|t| *t != "OR" && *t != "AND")
+        .filter_map(|t| t.split_once(':').map(|(f, v)| (f.to_lowercase(), v.to_string())))
+        .filter(|(f, _)| matches!(f.as_str(), "account" | "acct" | "desc" | "description"))
+        .map(|(f, v)| (f, v.trim_matches('"').trim_end_matches('$').to_lowercase()))
+        .collect();
+    if terms.is_empty() {
+        return rows;
+    }
+    rows.into_iter()
+        .filter(|t| {
+            let results: Vec<bool> = terms
+                .iter()
+                .map(|(field, val)| match field.as_str() {
+                    "account" | "acct" => t
+                        .postings
+                        .as_array()
+                        .map(|ps| {
+                            ps.iter().any(|p| {
+                                p.get("account")
+                                    .and_then(|a| a.as_str())
+                                    .map(|s| s.to_lowercase().contains(val.as_str()))
+                                    .unwrap_or(false)
+                            })
+                        })
+                        .unwrap_or(false),
+                    _ => t.description.to_lowercase().contains(val.as_str()),
+                })
+                .collect();
+            if use_any {
+                results.into_iter().any(|x| x)
+            } else {
+                results.into_iter().all(|x| x)
+            }
+        })
+        .collect()
+}
+
 /// Set (or clear) the LLM-derived category for a transaction. Empty string
 /// clears it. Backend appends a `TransactionCategorized` event; the
 /// projection writes `category` on the row. Used by inline-edit chips in

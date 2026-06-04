@@ -108,6 +108,9 @@ enum FinancesView {
     /// previews per-account stats, optionally drops/renames accounts,
     /// and commits as a batch of TransactionRecorded events.
     JournalImport,
+    /// R2 ad-hoc query builder (Phase 7.1 + 7.2). Compose field predicates into
+    /// a filter DSL, evaluate it host-side, and browse the matching transactions.
+    Query,
 }
 
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
@@ -185,6 +188,7 @@ pub fn FinancesPage() -> Element {
                         on_open_reconciliation: move |_| view.set(FinancesView::Reconciliation),
                         on_open_balance_check: move |_| view.set(FinancesView::BalanceCheck),
                         on_open_journal_import: move |_| view.set(FinancesView::JournalImport),
+                        on_open_query: move |_| view.set(FinancesView::Query),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -347,6 +351,15 @@ pub fn FinancesPage() -> Element {
                         on_back: move |_| view.set(FinancesView::Home),
                     }
                 },
+                FinancesView::Query => rsx! {
+                    QueryBuilderView {
+                        on_back: move |_| view.set(FinancesView::Home),
+                        on_open_txn: move |txn_id: String| {
+                            selected_txn_id.set(Some(txn_id));
+                            view.set(FinancesView::TransactionDetail);
+                        },
+                    }
+                },
             }
         }
     }
@@ -369,6 +382,7 @@ fn HomeView(
     on_open_reconciliation: EventHandler<()>,
     on_open_balance_check: EventHandler<()>,
     on_open_journal_import: EventHandler<()>,
+    on_open_query: EventHandler<()>,
 ) -> Element {
     rsx! {
         h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
@@ -468,6 +482,22 @@ fn HomeView(
                     div { class: "text-sm font-semibold text-obsidian-text", "View transactions" }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
                         "Browse everything you've recorded."
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
+            button {
+                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+                onclick: move |_| on_open_query.call(()),
+                div {
+                    div { class: "text-sm font-semibold text-obsidian-text", "Query transactions" }
+                    div { class: "text-xs text-obsidian-text-muted mt-1",
+                        "Build a filter — account, tag, date, amount — and run it."
                     }
                 }
                 svg { class: "w-5 h-5 text-obsidian-text-muted",
@@ -2109,6 +2139,368 @@ fn TransactionListView(
                         class: "px-4 py-2 bg-obsidian-sidebar border border-white/10 text-obsidian-text-muted text-sm rounded-md hover:border-obsidian-accent/40 hover:text-obsidian-text transition-colors",
                         onclick: load_more,
                         "Load more"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Which field a query-builder row filters on. Mirrors the `core::query`
+/// grammar's field keys; the builder only ever emits valid DSL.
+#[derive(Clone, Copy, PartialEq)]
+enum QField {
+    Account,
+    Tag,
+    Date,
+    Amount,
+    Commodity,
+    Description,
+}
+
+impl QField {
+    fn as_key(self) -> &'static str {
+        match self {
+            QField::Account => "account",
+            QField::Tag => "tag",
+            QField::Date => "date",
+            QField::Amount => "amount",
+            QField::Commodity => "commodity",
+            QField::Description => "description",
+        }
+    }
+    fn from_key(s: &str) -> Self {
+        match s {
+            "tag" => QField::Tag,
+            "date" => QField::Date,
+            "amount" => QField::Amount,
+            "commodity" => QField::Commodity,
+            "description" => QField::Description,
+            _ => QField::Account,
+        }
+    }
+    fn placeholder(self) -> &'static str {
+        match self {
+            QField::Account => "Expenses:Food",
+            QField::Tag => "business  or  type:business",
+            QField::Date => "YYYY-MM-DD or YYYY-MM",
+            QField::Amount => "0.00",
+            QField::Commodity => "CAD",
+            QField::Description => "text contains…",
+        }
+    }
+}
+
+/// One builder row. All state lives in the parent's `rows` signal, so the inputs
+/// are controlled and index-keying the list is safe (no per-row local state).
+#[derive(Clone, PartialEq)]
+struct QueryRow {
+    field: QField,
+    /// Primary value: account path / tag / date-from / amount / commodity / desc.
+    value: String,
+    /// Secondary value: date-to (Date field only).
+    value2: String,
+    /// Account field only — checked emits subtree match, unchecked appends `$`.
+    include_subtree: bool,
+    /// Amount field only — the comparison operator the DSL emits.
+    amount_op: String,
+}
+
+impl QueryRow {
+    fn new() -> Self {
+        QueryRow {
+            field: QField::Account,
+            value: String::new(),
+            value2: String::new(),
+            include_subtree: true,
+            amount_op: ">=".into(),
+        }
+    }
+}
+
+/// Assemble the canonical query DSL from builder rows. Empty rows are skipped;
+/// this mirrors `core::query::parser` so whatever it emits round-trips through
+/// the host engine.
+fn build_query_dsl(rows: &[QueryRow], any: bool) -> String {
+    let mut terms: Vec<String> = Vec::new();
+    for r in rows {
+        let v = r.value.trim();
+        match r.field {
+            QField::Account => {
+                if v.is_empty() {
+                    continue;
+                }
+                let anchor = if r.include_subtree { "" } else { "$" };
+                terms.push(format!("account:{v}{anchor}"));
+            }
+            QField::Tag => {
+                if !v.is_empty() {
+                    terms.push(format!("tag:{v}"));
+                }
+            }
+            QField::Date => {
+                let to = r.value2.trim();
+                if v.is_empty() && to.is_empty() {
+                    continue;
+                }
+                terms.push(format!("date:{v}..{to}"));
+            }
+            QField::Amount => {
+                if !v.is_empty() {
+                    terms.push(format!("amount:{}{}", r.amount_op, v));
+                }
+            }
+            QField::Commodity => {
+                if !v.is_empty() {
+                    terms.push(format!("commodity:{v}"));
+                }
+            }
+            QField::Description => {
+                if v.is_empty() {
+                    continue;
+                }
+                if v.chars().any(char::is_whitespace) {
+                    terms.push(format!("desc:\"{v}\""));
+                } else {
+                    terms.push(format!("desc:{v}"));
+                }
+            }
+        }
+    }
+    let sep = if any { " OR " } else { " " };
+    terms.join(sep)
+}
+
+/// R2 ad-hoc query builder (Phase 7.1). Compose field predicates, watch the
+/// generated DSL update live, run it against the host engine (Phase 7.2), and
+/// browse matching transactions with the same row component as the browse list.
+#[component]
+fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>) -> Element {
+    let mut rows: Signal<Vec<QueryRow>> = use_signal(|| vec![QueryRow::new()]);
+    let mut any: Signal<bool> = use_signal(|| false);
+    let mut results: Signal<Vec<TransactionView>> = use_signal(Vec::new);
+    let mut loading: Signal<bool> = use_signal(|| false);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let mut has_run: Signal<bool> = use_signal(|| false);
+
+    let input_class = "px-2 py-1.5 bg-obsidian-bg border border-white/10 rounded-md text-obsidian-text text-xs outline-none focus:border-obsidian-accent placeholder-obsidian-text-muted";
+    let select_class = "px-2 py-1.5 bg-obsidian-bg border border-white/10 rounded-md text-obsidian-text text-xs outline-none focus:border-obsidian-accent";
+
+    let dsl = build_query_dsl(&rows.read(), *any.read());
+    let dsl_empty = dsl.trim().is_empty();
+
+    let run = {
+        let dsl = dsl.clone();
+        move |_| {
+            let dsl = dsl.clone();
+            spawn(async move {
+                loading.set(true);
+                error.set(None);
+                has_run.set(true);
+                match bridge::invoke_run_transaction_query(&dsl, TXN_PAGE_SIZE, 0).await {
+                    Ok(r) => results.set(r),
+                    Err(e) => {
+                        error.set(Some(e));
+                        results.set(Vec::new());
+                    }
+                }
+                loading.set(false);
+            });
+        }
+    };
+
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Query transactions" }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        div { class: "mb-4 flex items-center gap-2 text-sm",
+            span { class: "text-obsidian-text-muted", "Match" }
+            button {
+                class: if !*any.read() {
+                    "px-3 py-1 rounded-md bg-obsidian-accent text-black font-semibold"
+                } else {
+                    "px-3 py-1 rounded-md bg-obsidian-sidebar border border-white/10 text-obsidian-text-muted hover:text-obsidian-text"
+                },
+                onclick: move |_| any.set(false),
+                "ALL"
+            }
+            button {
+                class: if *any.read() {
+                    "px-3 py-1 rounded-md bg-obsidian-accent text-black font-semibold"
+                } else {
+                    "px-3 py-1 rounded-md bg-obsidian-sidebar border border-white/10 text-obsidian-text-muted hover:text-obsidian-text"
+                },
+                onclick: move |_| any.set(true),
+                "ANY"
+            }
+            span { class: "text-obsidian-text-muted text-xs", "of the filters below" }
+        }
+
+        div { class: "space-y-2",
+            for (i, row) in rows.read().clone().into_iter().enumerate() {
+                div {
+                    key: "{i}",
+                    class: "flex flex-wrap items-center gap-2 p-2 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+                    select {
+                        class: "{select_class}",
+                        value: "{row.field.as_key()}",
+                        onchange: move |e| {
+                            rows.write()[i].field = QField::from_key(&e.value());
+                        },
+                        option { value: "account", "Account" }
+                        option { value: "tag", "Tag" }
+                        option { value: "date", "Date" }
+                        option { value: "amount", "Amount" }
+                        option { value: "commodity", "Commodity" }
+                        option { value: "description", "Description" }
+                    }
+
+                    match row.field {
+                        QField::Account => rsx! {
+                            input {
+                                r#type: "text",
+                                class: "{input_class} flex-1 min-w-[140px]",
+                                placeholder: "{QField::Account.placeholder()}",
+                                value: "{row.value}",
+                                oninput: move |e| rows.write()[i].value = e.value(),
+                            }
+                            label { class: "flex items-center gap-1 text-xs text-obsidian-text-muted whitespace-nowrap",
+                                input {
+                                    r#type: "checkbox",
+                                    checked: row.include_subtree,
+                                    onchange: move |e| rows.write()[i].include_subtree = e.value() == "true",
+                                }
+                                "Include sub-accounts"
+                            }
+                        },
+                        QField::Amount => rsx! {
+                            select {
+                                class: "{select_class}",
+                                value: "{row.amount_op}",
+                                onchange: move |e| rows.write()[i].amount_op = e.value(),
+                                option { value: ">=", "≥" }
+                                option { value: ">", ">" }
+                                option { value: "<=", "≤" }
+                                option { value: "<", "<" }
+                                option { value: "=", "=" }
+                            }
+                            input {
+                                r#type: "text",
+                                class: "{input_class} flex-1 min-w-[100px]",
+                                placeholder: "{QField::Amount.placeholder()}",
+                                value: "{row.value}",
+                                oninput: move |e| rows.write()[i].value = e.value(),
+                            }
+                        },
+                        QField::Date => rsx! {
+                            input {
+                                r#type: "text",
+                                class: "{input_class} flex-1 min-w-[120px]",
+                                placeholder: "from — {QField::Date.placeholder()}",
+                                value: "{row.value}",
+                                oninput: move |e| rows.write()[i].value = e.value(),
+                            }
+                            span { class: "text-obsidian-text-muted text-xs", "to" }
+                            input {
+                                r#type: "text",
+                                class: "{input_class} flex-1 min-w-[120px]",
+                                placeholder: "(optional)",
+                                value: "{row.value2}",
+                                oninput: move |e| rows.write()[i].value2 = e.value(),
+                            }
+                        },
+                        _ => rsx! {
+                            input {
+                                r#type: "text",
+                                class: "{input_class} flex-1 min-w-[140px]",
+                                placeholder: "{row.field.placeholder()}",
+                                value: "{row.value}",
+                                oninput: move |e| rows.write()[i].value = e.value(),
+                            }
+                        },
+                    }
+
+                    button {
+                        class: "ml-auto text-obsidian-text-muted hover:text-red-400 text-sm px-2",
+                        title: "Remove filter",
+                        onclick: move |_| {
+                            let mut w = rows.write();
+                            if w.len() > 1 {
+                                w.remove(i);
+                            }
+                        },
+                        "✕"
+                    }
+                }
+            }
+        }
+
+        button {
+            class: "mt-3 text-sm text-obsidian-accent hover:underline",
+            onclick: move |_| rows.write().push(QueryRow::new()),
+            "+ Add filter"
+        }
+
+        div { class: "mt-4",
+            div { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest mb-1", "Generated query" }
+            div {
+                class: "font-mono text-xs bg-obsidian-bg border border-white/10 rounded-md px-3 py-2 text-obsidian-text break-all min-h-[2.25rem]",
+                if dsl_empty {
+                    span { class: "text-obsidian-text-muted", "(add a filter above)" }
+                } else {
+                    "{dsl}"
+                }
+            }
+        }
+
+        div { class: "mt-4",
+            button {
+                class: "px-4 py-2 bg-obsidian-accent text-black font-semibold text-sm rounded-md hover:bg-obsidian-accent/90 disabled:opacity-40 disabled:cursor-not-allowed",
+                disabled: dsl_empty,
+                onclick: run,
+                "Run query"
+            }
+        }
+
+        if let Some(msg) = error.read().clone() {
+            div { class: "mt-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                "Query error: {msg}"
+            }
+        }
+
+        if *loading.read() {
+            div { class: "mt-4 p-4 text-center text-obsidian-text-muted text-sm", "Running…" }
+        } else if *has_run.read() {
+            {
+                let out = results.read().clone();
+                if out.is_empty() {
+                    rsx! {
+                        div { class: "mt-4 p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                            "No transactions match this query."
+                        }
+                    }
+                } else {
+                    rsx! {
+                        div { class: "mt-4 mb-2 text-xs text-obsidian-text-muted", "{out.len()} result(s)" }
+                        div { class: "space-y-2",
+                            for txn in out {
+                                TransactionListRow {
+                                    key: "{txn.id}",
+                                    txn: txn.clone(),
+                                    on_click: {
+                                        let id = txn.id.clone();
+                                        let handler = on_open_txn;
+                                        move |_| handler.call(id.clone())
+                                    },
+                                }
+                            }
+                        }
                     }
                 }
             }

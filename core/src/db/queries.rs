@@ -533,6 +533,24 @@ pub async fn get_transaction(
     Ok(rows.into_iter().next())
 }
 
+/// Fetch every live transaction (not removed, not superseded) for in-Rust query
+/// evaluation (Phase 7.2 R2). Unlike [`list_transactions`], this applies no
+/// field filter and no DB-side pagination — the query DSL is evaluated host-side
+/// over the full set, then the *filtered* result is paginated at the command
+/// boundary. At personal scale (a few thousand transactions) loading the live
+/// set per query is cheap; a date-range push-down is a possible Cycle-4
+/// optimization if this ever grows.
+pub async fn query_candidate_transactions(db: &Database) -> Result<Vec<TransactionRow>, DbError> {
+    let q = format!(
+        "SELECT {TXN_FIELDS} FROM transactions
+         WHERE removed = false AND superseded_by IS NONE
+         ORDER BY date DESC, created_at DESC"
+    );
+    let mut resp = db.query(q.as_str()).await?;
+    let rows: Vec<TransactionRow> = resp.take(0)?;
+    Ok(rows)
+}
+
 pub async fn list_accounts(db: &Database) -> Result<Vec<AccountRow>, DbError> {
     let mut resp = db
         .query(

@@ -290,6 +290,7 @@ pub fn run() {
             commands::budget::tag_transaction,
             commands::budget::delete_transaction,
             commands::budget::list_transactions,
+            commands::budget::run_transaction_query,
             commands::budget::get_transaction,
             // Budget — accounts, budgets, recurring
             commands::budget::add_account,
