@@ -24,6 +24,7 @@ const SERVER_URL_FILE: &str = "server_url";
 const DEFAULT_SERVER_URL: &str = "http://localhost:3000";
 const TIMEZONE_FILE: &str = "timezone";
 const BASE_CURRENCY_FILE: &str = "base_currency";
+const WORKSPACE_FILE: &str = "workspace.json";
 
 /// Load a string value from a file, or use a default and persist it.
 fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> String) -> String {
@@ -285,6 +286,9 @@ pub fn run() {
             commands::timezone::update_timezone,
             commands::settings::get_base_currency,
             commands::settings::update_base_currency,
+            // Workspace continuity persistence (1.8a)
+            commands::workspace::get_workspace,
+            commands::workspace::save_workspace,
             // Obsidian import/export
             commands::import::preview_import,
             commands::import::commit_import,

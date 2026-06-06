@@ -1,5 +1,7 @@
+mod autosave;
 mod bridge;
 mod components;
+mod continuity;
 mod duration;
 mod journal_template;
 mod pages;
@@ -35,6 +37,10 @@ fn main() {
 #[component]
 fn App() -> Element {
     let mut active_tab = use_signal(|| Tab::Journal);
+
+    // Continuity store (Phase 1.1): root-held per-page editing state that
+    // survives page unmount on tab switch. Pages read it via `use_continuity`.
+    let _continuity = continuity::use_continuity_provider();
 
     // Timezone: default to UTC, load from backend on mount.
     let mut tz_signal = use_signal(|| Tz::UTC);

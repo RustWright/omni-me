@@ -10,5 +10,6 @@ pub mod settings;
 pub mod share_intent;
 pub mod sync;
 pub mod timezone;
+pub mod workspace;
 
 pub(crate) mod shared;

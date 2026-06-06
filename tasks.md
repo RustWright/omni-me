@@ -49,14 +49,16 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] user act
 
 ## Phase 1 — Daily-use foundation *(unblocks dogfooding; do first)* `(logbook)`
 
-- [ ] **1.1** Root continuity store: `use_context_provider` at app root (`tauri-app/frontend/src/main.rs`, joins existing tz/pending-share contexts), state keyed by identity (note path / capture-id / list-instance). [M]
-- [ ] **1.2** Migrate journal editor (`pages/journal.rs`) to the store; drop page ownership of `content`/`last_saved_content`/save loop. [M]
-- [ ] **1.3** Migrate generic notes editor (`pages/notes.rs`) to the store. [M]
-- [ ] **1.4** Migrate in-flight finances captures (Phase-3 gap) into the store keyed by capture-id; "in-flight capture" affordance on Home. [M]
-- [ ] **1.5** Migrate transaction-list pagination state (`transactions`/`offset` signals) into the store keyed by list-instance — fixes nav-to-detail-and-back reset (`project.md` carry). [S]
-- [ ] **1.6** Relocate the auto-save loop into the store (preserve debounce + generation-counter cancel from `pages/journal.rs:151-222`) so unmount can't drop a pending save. [M]
-- [ ] **1.7** Auto-save resilience: retry/backoff on failure + a glanceable save-state indicator (saved / saving / unsaved / failed). [S]
-- [ ] **1.8** Workspace persistence (Level 2-A): serialize open-note/scroll/cursor/active-area to a settings file (mirror `commands/settings.rs` pattern); rehydrate on boot. [M]
+- [x] **1.1** Root continuity store: `use_context_provider` at app root (`tauri-app/frontend/src/main.rs`, joins existing tz/pending-share contexts), state keyed by identity (note path / capture-id / list-instance). [M]
+- [x] **1.2** Migrate journal editor (`pages/journal.rs`) to the store; drop page ownership of `content`/`last_saved_content`/save loop. [M]
+- [x] **1.3** Migrate generic notes editor (`pages/notes.rs`) to the store. [M]
+- [x] **1.4** Migrate in-flight finances captures (Phase-3 gap) into the store keyed by capture-id; "in-flight capture" affordance on Home. [M]
+- [x] **1.5** Migrate transaction-list pagination state (`transactions`/`offset` signals) into the store keyed by list-instance — fixes nav-to-detail-and-back reset (`project.md` carry). [S]
+- [x] **1.6** ~~Relocate the auto-save loop into the store~~ — **resolved via lean path (B), 2026-06-06.** Post-1.2–1.5 the store already retains unsaved content and re-fires the save on remount (covers nav-away-and-back); no root save daemon (avoids the id-writeback coordination). The `edit → leave → never-return → app-kill` gap folds into the extended 1.8 (persist the store to disk). Decision rationale in memory `project-autosave-robustness-b`. [M]
+- [x] **1.7** Auto-save resilience: retry/backoff on failure + a glanceable save-state indicator (saved / saving / unsaved / failed). [S] — shared `autosave.rs` (`SaveState` + `save_with_retry` + `SaveIndicator`); backoff policy = exp 500/1000/2000/4000ms × 4 then fail; wired into journal + notes auto-save & manual save.
+- [~] **1.8** Workspace persistence (Level 2-A) — **split a/b:**
+  - [x] **1.8a** Store persistence (closes the 1.6 kill-gap): serde on store value types + `PersistedWorkspace` (maps as `Vec<(key,val)>` — serde_json rejects enum map keys); backend `get_workspace`/`save_workspace` (JSON file in `app_data_dir`, mirrors `commands/settings.rs`) + bridge fns + mock stubs; boot-load (writer-gated on `loaded`) + debounced write-back in `use_continuity_provider`. Frontend clippy clean + backend `omni-me-app` check clean. **Not yet run against real disk** (mock has no backend — verify in next full-app/on-device run).
+  - [ ] **1.8b** Position restoration: open-note / active-tab / scroll / cursor (CodeMirror cursor+scroll JS interop + nav-state plumbing across pages). Deferred to next session. Includes auto-showing persisted unsaved edits on the *initially-open* page at boot (1.8a persists + recovers-on-renavigation, but doesn't re-show the first page until you navigate away and back). [M]
 - [ ] **1.9** Keyboard occlusion: extend `android-overrides/.../InsetBridge.kt` to read `WindowInsetsCompat.Type.ime()`, **chain** (not replace) the listener, inject `--keyboard-inset-bottom` CSS var (Android 15 SDK-35 requires the IME inset type). [M]
 - [ ] **1.10** Web side: keep the caret scrolled above the keyboard via the injected var / `visualViewport`. [S]
 - [ ] **1.11** Nav drawer (Dioxus) + hamburger button; nesting discipline so top-level destinations stay bounded. [M]

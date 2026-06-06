@@ -908,6 +908,38 @@ pub async fn invoke_update_timezone(timezone: &str) -> Result<(), String> {
     }
 }
 
+/// Read the persisted continuity-store blob from disk (1.8a). Empty string =
+/// nothing persisted yet. Mock has no backend, so it returns empty.
+pub async fn invoke_get_workspace() -> Result<String, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(String::new())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("get_workspace", &Args {}).await
+    }
+}
+
+/// Persist the continuity-store blob to disk (1.8a). Mock is a no-op.
+pub async fn invoke_save_workspace(json: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = json;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            json: &'a str,
+        }
+        invoke_unit("save_workspace", &Args { json }).await
+    }
+}
+
 /// Base currency used by dashboard / accounts FX aggregation (Phase 7.3).
 pub async fn invoke_get_base_currency() -> Result<String, String> {
     #[cfg(feature = "mock")]

@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::bridge;
+use crate::continuity::{use_continuity, CaptureDraft, ContinuityKey, ListState, PostingDraft};
 use crate::types::{
     AccountSummaryView, AffordVerdictView, AttachmentRef, BalanceCheckView, BudgetProgress,
     BudgetRow, DashboardSummaryView, DraftTransactionView, ExtractedDraft, JournalImportPlan,
@@ -117,6 +118,7 @@ enum FinancesView {
 /// surface (Phase 4), workflows (Phase 5), and import (Phase 6).
 #[component]
 pub fn FinancesPage() -> Element {
+    let store = use_continuity();
     let mut view = use_signal(|| FinancesView::Home);
     let mut pending_draft: Signal<Option<ExtractedDraft>> = use_signal(|| None);
     let mut selected_batch_id: Signal<Option<String>> = use_signal(|| None);
@@ -164,6 +166,28 @@ pub fn FinancesPage() -> Element {
         }
     });
 
+    // In-flight capture (1.4): if a half-finished TransactionForm draft is
+    // stashed in the store, surface a "resume" affordance on Home. Only read
+    // (and thus subscribe to) the capture store while actually on Home — this
+    // keeps form keystrokes, which write the store on every change, from
+    // re-rendering the whole FinancesPage. `filter(is_empty)` is
+    // belt-and-suspenders; the form's mirror already drops empty drafts.
+    let pending_capture = if matches!(*view.read(), FinancesView::Home) {
+        store
+            .get_capture(&active_capture_key())
+            .filter(|d| !d.is_empty())
+    } else {
+        None
+    };
+    let pending_capture_label = pending_capture.as_ref().map(|d| {
+        let desc = d.description.trim();
+        if desc.is_empty() {
+            "Untitled capture".to_string()
+        } else {
+            desc.to_string()
+        }
+    });
+
     rsx! {
         div { class: "max-w-3xl mx-auto w-full animate-in fade-in duration-300",
 
@@ -171,10 +195,17 @@ pub fn FinancesPage() -> Element {
                 FinancesView::Home => rsx! {
                     HomeView {
                         pending_count: *pending_batch_count.read(),
+                        has_pending_capture: pending_capture.is_some(),
+                        pending_capture_label: pending_capture_label.clone(),
+                        on_resume_capture: move |_| view.set(FinancesView::TransactionForm),
                         on_open_photo: move |_| view.set(FinancesView::Capture(DocumentKind::Photo)),
                         on_open_pdf: move |_| view.set(FinancesView::Capture(DocumentKind::Pdf)),
                         on_open_email: move |_| view.set(FinancesView::Email),
                         on_open_manual: move |_| {
+                            // Manual entry is a fresh blank form: clear any stale
+                            // in-flight capture so the form starts empty instead
+                            // of resuming it (Resume is the explicit path).
+                            store.remove_capture(&active_capture_key());
                             pending_draft.set(None);
                             view.set(FinancesView::TransactionForm);
                         },
@@ -368,6 +399,9 @@ pub fn FinancesPage() -> Element {
 #[component]
 fn HomeView(
     pending_count: u64,
+    has_pending_capture: bool,
+    pending_capture_label: Option<String>,
+    on_resume_capture: EventHandler<()>,
     on_open_photo: EventHandler<()>,
     on_open_pdf: EventHandler<()>,
     on_open_email: EventHandler<()>,
@@ -409,6 +443,35 @@ fn HomeView(
                     }
                 }
                 svg { class: "w-5 h-5 text-obsidian-text-muted",
+                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                        d: "M9 5l7 7-7 7"
+                    }
+                }
+            }
+        }
+
+        // --- Resume in-flight capture (1.4) ---
+        if has_pending_capture {
+            button {
+                class: "w-full mb-6 px-4 py-3 bg-amber-500/10 border border-amber-500/40 rounded-lg flex items-center justify-between hover:bg-amber-500/15 transition-colors",
+                onclick: move |_| on_resume_capture.call(()),
+                div { class: "flex items-center gap-3 min-w-0",
+                    span { class: "inline-flex items-center justify-center w-8 h-8 bg-amber-500/20 text-amber-400 rounded-full shrink-0",
+                        svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
+                                d: "M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                            }
+                        }
+                    }
+                    div { class: "text-left min-w-0",
+                        div { class: "text-sm font-semibold text-obsidian-text", "Resume capture in progress" }
+                        if let Some(label) = &pending_capture_label {
+                            div { class: "text-xs text-obsidian-text-muted truncate", "{label}" }
+                        }
+                    }
+                }
+                svg { class: "w-5 h-5 text-obsidian-text-muted shrink-0",
                     fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
                     path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
                         d: "M9 5l7 7-7 7"
@@ -1096,34 +1159,68 @@ impl PostingRow {
 
 const DEFAULT_COMMODITY: &str = "CAD";
 
+/// Continuity key for the in-flight capture (task 1.4). The UI only ever has one
+/// `TransactionForm` open at a time, so a single fixed slot suffices — much like
+/// `ContinuityKey::NewNote` for the notes draft.
+fn active_capture_key() -> ContinuityKey {
+    ContinuityKey::Capture("active".to_string())
+}
+
 #[component]
 fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -> Element {
-    // Pre-populate from extracted draft when provided.
-    let (init_date, init_desc, init_rows, init_attachment) = match initial {
-        Some(d) => {
-            let rows: Vec<PostingRow> = if d.postings.is_empty() {
-                vec![
-                    PostingRow::empty(DEFAULT_COMMODITY),
-                    PostingRow::empty(DEFAULT_COMMODITY),
-                ]
-            } else {
-                d.postings
-                    .iter()
-                    .map(|p| PostingRow {
-                        account: p.account_hint.clone().unwrap_or_default(),
-                        commodity: p.commodity.clone(),
-                        amount: p.amount.clone(),
-                    })
-                    .collect()
-            };
-            (
-                d.date.unwrap_or_default(),
-                d.description.unwrap_or_default(),
-                rows,
-                d.attachment,
-            )
-        }
-        None => (
+    let store = use_continuity();
+
+    // Hydration precedence (1.4):
+    //   1. a fresh extraction (`initial = Some`) wins over any stale stored
+    //      draft — the user just captured something new;
+    //   2. otherwise a stored draft means the user chose Resume (the Manual
+    //      path clears the slot before navigating here, so reaching this arm
+    //      with a draft is always a deliberate resume);
+    //   3. otherwise a blank manual form.
+    let (init_date, init_desc, init_rows, init_attachment) = if let Some(d) = initial {
+        let rows: Vec<PostingRow> = if d.postings.is_empty() {
+            vec![
+                PostingRow::empty(DEFAULT_COMMODITY),
+                PostingRow::empty(DEFAULT_COMMODITY),
+            ]
+        } else {
+            d.postings
+                .iter()
+                .map(|p| PostingRow {
+                    account: p.account_hint.clone().unwrap_or_default(),
+                    commodity: p.commodity.clone(),
+                    amount: p.amount.clone(),
+                })
+                .collect()
+        };
+        (
+            d.date.unwrap_or_default(),
+            d.description.unwrap_or_default(),
+            rows,
+            d.attachment,
+        )
+    } else if let Some(c) = store.peek_capture(&active_capture_key()) {
+        // `peek`, not `get`: this one-time hydration must not subscribe the
+        // render to the store, or the write-through mirror below would re-render
+        // the form on every keystroke.
+        let rows: Vec<PostingRow> = if c.postings.is_empty() {
+            vec![
+                PostingRow::empty(DEFAULT_COMMODITY),
+                PostingRow::empty(DEFAULT_COMMODITY),
+            ]
+        } else {
+            c.postings
+                .into_iter()
+                .map(|p| PostingRow {
+                    account: p.account,
+                    commodity: p.commodity,
+                    amount: p.amount,
+                })
+                .collect()
+        };
+        (c.date, c.description, rows, c.attachment)
+    } else {
+        (
             String::new(),
             String::new(),
             vec![
@@ -1131,7 +1228,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                 PostingRow::empty(DEFAULT_COMMODITY),
             ],
             None,
-        ),
+        )
     };
 
     let mut date = use_signal(|| init_date);
@@ -1140,6 +1237,32 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
     let attachment: Signal<Option<AttachmentRef>> = use_signal(|| init_attachment);
     let mut saving = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
+
+    // Write-through mirror (1.4): stash the live form as a CaptureDraft so a tab
+    // switch can't lose it. Empty drafts are removed rather than stored, so an
+    // untouched blank form doesn't raise the Home "resume" affordance or linger.
+    use_effect(move || {
+        let draft = CaptureDraft {
+            date: date.read().clone(),
+            description: description.read().clone(),
+            postings: postings
+                .read()
+                .iter()
+                .map(|r| PostingDraft {
+                    account: r.account.clone(),
+                    commodity: r.commodity.clone(),
+                    amount: r.amount.clone(),
+                })
+                .collect(),
+            attachment: attachment.read().clone(),
+        };
+        let key = active_capture_key();
+        if draft.is_empty() {
+            store.remove_capture(&key);
+        } else {
+            store.put_capture(key, draft);
+        }
+    });
 
     let on_save = move |_| {
         if *saving.read() {
@@ -1208,6 +1331,9 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
             match bridge::invoke_record_transaction(submission).await {
                 Ok(()) => {
                     saving.set(false);
+                    // Capture committed — drop the in-flight draft so it doesn't
+                    // resurface as a "resume" on Home.
+                    store.remove_capture(&active_capture_key());
                     on_done.call(());
                 }
                 Err(e) => {
@@ -1225,7 +1351,11 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
             div { class: "flex items-center gap-3 mb-2",
                 button {
                     class: "text-obsidian-text-muted hover:text-obsidian-text text-sm flex items-center gap-1",
-                    onclick: move |_| on_done.call(()),
+                    onclick: move |_| {
+                        // Cancel abandons the in-flight capture.
+                        store.remove_capture(&active_capture_key());
+                        on_done.call(());
+                    },
                     svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
                         path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M15 19l-7-7 7-7" }
                     }
@@ -2015,24 +2145,56 @@ fn TransactionListView(
     #[props(default = None)]
     initial_filter: Option<TxnFilter>,
 ) -> Element {
-    let mut transactions: Signal<Vec<TransactionView>> = use_signal(Vec::new);
-    let mut loading: Signal<bool> = use_signal(|| true);
+    let store = use_continuity();
+    let list_key = ContinuityKey::TxnList("main".to_string());
+
+    // Continuity (1.5): restore the list across a detail round-trip. Precedence
+    // mirrors the capture flow — a dashboard click-through (`initial_filter =
+    // Some`) is a deliberate new query and overrides any restored list;
+    // otherwise a stored list state means we're returning from detail and
+    // should rehydrate rows + offset + filter instead of re-fetching page 0.
+    let restored = if initial_filter.is_some() {
+        None
+    } else {
+        store.peek_list(&list_key)
+    };
+    let seed = initial_filter.clone().unwrap_or_default();
+    let (init_txns, init_offset, init_has_more, init_filter, init_loading) = match &restored {
+        Some(ls) => (
+            ls.transactions.clone(),
+            ls.offset,
+            ls.has_more,
+            ls.filter.clone(),
+            false,
+        ),
+        None => (Vec::new(), 0, false, seed.clone(), true),
+    };
+
+    let mut transactions: Signal<Vec<TransactionView>> = use_signal(|| init_txns);
+    let mut loading: Signal<bool> = use_signal(|| init_loading);
     let mut error: Signal<Option<String>> = use_signal(|| None);
-    let mut has_more: Signal<bool> = use_signal(|| false);
-    let mut offset: Signal<u32> = use_signal(|| 0);
+    let mut has_more: Signal<bool> = use_signal(|| init_has_more);
+    let mut offset: Signal<u32> = use_signal(|| init_offset);
     // `active_filter` is what the current page reflects. `draft_filter` is
     // what the FilterBar inputs hold; only Apply copies draft → active.
     // Keeping them separate means typing in a field doesn't fire queries
     // and accidental edits don't invalidate the current page until Apply.
-    let seed = initial_filter.clone().unwrap_or_default();
-    let mut active_filter: Signal<TxnFilter> = use_signal(|| seed.clone());
-    let draft_filter: Signal<TxnFilter> = use_signal(|| seed.clone());
+    let mut active_filter: Signal<TxnFilter> = use_signal(|| init_filter.clone());
+    let draft_filter: Signal<TxnFilter> = use_signal(|| init_filter.clone());
+    // One-shot: true only when we hydrated from the store, so the load effect
+    // below skips its first fetch (the rows are already populated).
+    let mut restored_pending = use_signal(|| restored.is_some());
 
-    // Load (or re-load) the first page whenever active_filter changes.
-    // Re-deriving via use_effect keeps the dependency wiring honest — the
-    // effect re-runs on any signal read inside it.
+    // Load (or re-load) the first page whenever active_filter changes — except
+    // on the first run after a store-restore, where re-fetching would discard
+    // the rehydrated rows and scroll position.
     use_effect(move || {
         let filter = active_filter.read().clone();
+        // peek (not read) so flipping the flag doesn't re-trigger this effect.
+        if *restored_pending.peek() {
+            restored_pending.set(false);
+            return;
+        }
         spawn(async move {
             loading.set(true);
             error.set(None);
@@ -2047,6 +2209,21 @@ fn TransactionListView(
             loading.set(false);
         });
     });
+
+    // Write-through mirror (1.5): keep the stored list current so the detail
+    // round-trip restores the latest rows / offset / filter.
+    {
+        let key = list_key.clone();
+        use_effect(move || {
+            let state = ListState {
+                transactions: transactions.read().clone(),
+                offset: *offset.read(),
+                has_more: *has_more.read(),
+                filter: active_filter.read().clone(),
+            };
+            store.put_list(key.clone(), state);
+        });
+    }
 
     let load_more = move |_| {
         if *loading.read() {

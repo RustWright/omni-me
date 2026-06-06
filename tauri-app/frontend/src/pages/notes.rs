@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 
+use crate::autosave::{self, SaveIndicator, SaveState};
 use crate::bridge;
 use crate::components::editor::Editor;
+use crate::continuity::{use_continuity, ContinuityKey, EditSession};
 use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
 use crate::types::GenericNoteItem;
 
@@ -292,18 +294,26 @@ fn NoteCard(note: GenericNoteItem, on_click: EventHandler<String>) -> Element {
 
 #[component]
 fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
-    let is_new = note_id.is_none();
-    let mut loading = use_signal(|| !is_new);
+    // Continuity store (1.3): the notes editing session is held at the app root
+    // so a tab switch (which unmounts NoteEditor) doesn't lose typed text or a
+    // half-written title. Saved notes key by id; an unsaved draft keys to the
+    // single `NewNote` slot until its first save promotes it to `Note(id)`.
+    let store = use_continuity();
+
+    let mut loading = use_signal(|| true);
     let mut title = use_signal(String::new);
     let mut content = use_signal(String::new);
     let mut initial_content = use_signal(String::new);
     let mut saving = use_signal(|| false);
     let mut save_status = use_signal(|| None::<String>);
+    // True once an auto-save exhausts its retries (1.7); drives the `Failed`
+    // pill, cleared when the next save starts or succeeds.
+    let mut save_failed = use_signal(|| false);
     let mut fetch_error = use_signal(|| None::<String>);
     // Runtime-tracked id. Starts as the prop value, gets populated after the
-    // first manual Save creates a new note. This is what auto-save and
-    // subsequent manual Saves consult — without it, a second click on a
-    // never-created note would create a duplicate.
+    // first manual Save creates a new note. This is what auto-save, subsequent
+    // manual Saves, and the continuity key all consult — without it, a second
+    // click on a never-created note would create a duplicate.
     let mut local_note_id = use_signal(|| note_id.clone());
     // Mirrors the body that was last persisted to the backend. Auto-save
     // diffs `content` against this; load and successful save both update it
@@ -312,12 +322,32 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
     // Generation counter so a newer keystroke can cancel an older pending
     // save (each scheduled save bails if `save_generation` has moved on).
     let mut save_generation = use_signal(|| 0u64);
+    // Gate the write-through mirror until the first hydrate completes, so the
+    // empty pre-load signals can't clobber an existing stored session.
+    let mut hydrated = use_signal(|| false);
 
     let note_id_for_load = note_id.clone();
     let _load = use_future(move || {
         let id = note_id_for_load.clone();
         async move {
-            if let Some(id) = id {
+            // Mount key: an existing note by id, else the single draft slot.
+            let key = match &id {
+                Some(id) => ContinuityKey::Note(id.clone()),
+                None => ContinuityKey::NewNote,
+            };
+            let stored = store.get(&key);
+
+            if let Some(s) = stored {
+                // Restore an in-flight session: a saved note re-opened mid-edit,
+                // or a draft resumed after navigating away. Prefer it over the
+                // persisted copy (it's newer).
+                title.set(s.title);
+                last_saved_content.set(s.last_saved_content);
+                content.set(s.content.clone());
+                initial_content.set(s.content);
+                save_generation.set(s.save_generation);
+            } else if let Some(id) = id {
+                // No session: load the persisted note from the backend.
                 match bridge::invoke_get_generic_note(&id).await {
                     Ok(n) => {
                         title.set(n.title);
@@ -328,9 +358,34 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                     }
                     Err(e) => fetch_error.set(Some(e)),
                 }
-                loading.set(false);
             }
+            // else: brand-new blank draft — signals keep their empty defaults.
+
+            hydrated.set(true);
+            loading.set(false);
         }
+    });
+
+    // Write-through mirror (1.3): keep the root-held session current so a tab
+    // switch can't lose typed-but-unsaved work. The key is derived from
+    // `local_note_id` each run, so when the first save promotes the draft
+    // (None -> Some(id)) the session follows to `Note(id)`; the save handler
+    // clears the stale `NewNote` slot.
+    use_effect(move || {
+        if !*hydrated.read() {
+            return;
+        }
+        let key = match local_note_id.read().clone() {
+            Some(id) => ContinuityKey::Note(id),
+            None => ContinuityKey::NewNote,
+        };
+        let session = EditSession {
+            title: title.read().clone(),
+            content: content.read().clone(),
+            last_saved_content: last_saved_content.read().clone(),
+            save_generation: *save_generation.read(),
+        };
+        store.put(key, session);
     });
 
     // Auto-save (option ii): only runs once the note has an id. New-note
@@ -361,7 +416,15 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
             let snapshot = content.peek().clone();
 
             saving.set(true);
-            let result = bridge::invoke_update_generic_note(&nid, &snapshot).await;
+            save_failed.set(false);
+            // Retry/backoff (1.7): re-issue the update with a fresh future each
+            // attempt so a transient failure rides out per the backoff policy.
+            let result = autosave::save_with_retry(|| {
+                let nid = nid.clone();
+                let snapshot = snapshot.clone();
+                async move { bridge::invoke_update_generic_note(&nid, &snapshot).await }
+            })
+            .await;
             saving.set(false);
 
             match result {
@@ -372,6 +435,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                     }
                 }
                 Err(e) => {
+                    save_failed.set(true);
                     save_status.set(Some(format!("Auto-save failed: {e}")));
                 }
             }
@@ -395,6 +459,19 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                     value: "{title}",
                     oninput: move |e| title.set(e.value()),
                 }
+                {
+                    // Glanceable save state (1.7): in-flight > failed > dirty > clean.
+                    let save_state = if *saving.read() {
+                        SaveState::Saving
+                    } else if *save_failed.read() {
+                        SaveState::Failed
+                    } else if *content.read() != *last_saved_content.read() {
+                        SaveState::Unsaved
+                    } else {
+                        SaveState::Saved
+                    };
+                    rsx! { SaveIndicator { state: save_state } }
+                }
                 button {
                     class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50 shrink-0",
                     disabled: *saving.read() || title.read().trim().is_empty(),
@@ -402,6 +479,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                         let existing_id = local_note_id.peek().clone();
                         saving.set(true);
                         save_status.set(None);
+                        save_failed.set(false);
                         spawn(async move {
                             let t = title.read().clone();
                             let body = content.read().clone();
@@ -421,6 +499,11 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                                     .await
                                     .map(|created| {
                                         local_note_id.set(Some(created.id));
+                                        // Draft promoted to a real note: the
+                                        // mirror now writes to `Note(id)`, so
+                                        // clear the stale `NewNote` slot — a
+                                        // later "New Note" should start blank.
+                                        store.remove(&ContinuityKey::NewNote);
                                     })
                             };
                             saving.set(false);
@@ -432,7 +515,10 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                                         bridge::js_mark_editor_clean();
                                     }
                                 }
-                                Err(e) => save_status.set(Some(format!("Save failed: {e}"))),
+                                Err(e) => {
+                                    save_failed.set(true);
+                                    save_status.set(Some(format!("Save failed: {e}")));
+                                }
                             }
                         });
                     },

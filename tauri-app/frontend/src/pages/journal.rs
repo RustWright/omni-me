@@ -4,8 +4,10 @@ use chrono::{Datelike, NaiveDate};
 use chrono_tz::Tz;
 use dioxus::prelude::*;
 
+use crate::autosave::{self, SaveIndicator, SaveState};
 use crate::bridge;
 use crate::components::editor::Editor;
+use crate::continuity::{use_continuity, ContinuityKey, EditSession};
 use crate::journal_template;
 use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
 use crate::types::JournalEntryItem;
@@ -104,6 +106,9 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
     let mut processing = use_signal(|| false);
     let mut error_msg = use_signal(|| None::<String>);
     let mut save_status = use_signal(|| None::<String>);
+    // True once an auto-save exhausts its retries (1.7). Drives the `Failed`
+    // save-state pill; cleared when the next save starts or succeeds.
+    let mut save_failed = use_signal(|| false);
     let mut llm_result = use_signal(|| None::<crate::types::LlmResult>);
     let mut llm_error = use_signal(|| None::<String>);
     let mut content = use_signal(String::new);
@@ -117,36 +122,87 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
     // and bails out post-sleep if the counter has moved on.
     let mut save_generation = use_signal(|| 0u64);
 
+    // Continuity store (1.2): this day's editing session is held at the app
+    // root, so switching tabs (which unmounts DayView) no longer drops typed
+    // text. Keyed by date — each day gets its own slot.
+    let store = use_continuity();
+    let continuity_key = ContinuityKey::Journal(date.clone());
+    // Gate the write-through mirror below until the first hydrate finishes, so
+    // the empty pre-load signals can't clobber an existing stored session.
+    let mut hydrated = use_signal(|| false);
+
     let is_today_view = date == today;
 
     let date_for_load = date.clone();
+    let key_for_load = continuity_key.clone();
     let _load = use_future(move || {
         let d = date_for_load.clone();
+        let key = key_for_load.clone();
         async move {
+            // Prefer an in-flight session (content the user left mid-edit when
+            // they navigated away) over the persisted copy. Entry metadata
+            // (id / closed / complete) always comes fresh from the backend.
+            let stored = store.get(&key);
             match bridge::invoke_get_journal_by_date(&d).await {
                 Ok(Some(e)) => {
-                    let raw = e.raw_text.clone();
-                    last_saved_content.set(raw.clone());
-                    content.set(raw);
+                    if let Some(s) = stored {
+                        content.set(s.content);
+                        last_saved_content.set(s.last_saved_content);
+                        save_generation.set(s.save_generation);
+                    } else {
+                        let raw = e.raw_text.clone();
+                        last_saved_content.set(raw.clone());
+                        content.set(raw);
+                    }
                     entry.set(Some(e));
                     error_msg.set(None);
+                    hydrated.set(true);
                 }
                 Ok(None) => {
-                    // New entry: prime both signals with the default template so
-                    // an immediate Save without keystrokes still persists it,
-                    // and so auto-save doesn't treat the template-vs-empty
-                    // diff as user input.
-                    let template = journal_template::render(&d);
-                    last_saved_content.set(template.clone());
-                    content.set(template);
+                    if let Some(s) = stored {
+                        content.set(s.content);
+                        last_saved_content.set(s.last_saved_content);
+                        save_generation.set(s.save_generation);
+                    } else {
+                        // New entry: prime both signals with the default
+                        // template so an immediate Save without keystrokes still
+                        // persists it, and so auto-save doesn't treat the
+                        // template-vs-empty diff as user input.
+                        let template = journal_template::render(&d);
+                        last_saved_content.set(template.clone());
+                        content.set(template);
+                    }
                     entry.set(None);
                     error_msg.set(None);
+                    hydrated.set(true);
                 }
+                // On error, leave `hydrated` false: the mirror stays inert so a
+                // transient fetch failure can't overwrite a good stored session.
                 Err(e) => error_msg.set(Some(e)),
             }
             loading.set(false);
         }
     });
+
+    // Write-through mirror (1.2): keep the root-held session current so a tab
+    // switch (which unmounts this component) can't lose typed-but-unsaved text.
+    // Runs only post-hydrate; re-fires on any content / save-state change.
+    {
+        let key_for_mirror = continuity_key.clone();
+        use_effect(move || {
+            if !*hydrated.read() {
+                return;
+            }
+            let session = EditSession {
+                // Journal entries have no title — keyed by date.
+                title: String::new(),
+                content: content.read().clone(),
+                last_saved_content: last_saved_content.read().clone(),
+                save_generation: *save_generation.read(),
+            };
+            store.put(key_for_mirror.clone(), session);
+        });
+    }
 
     // Auto-save: any divergence between `content` and `last_saved_content`
     // schedules a debounced save. The generation counter cancels older
@@ -193,15 +249,27 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                 let jid = entry.peek().as_ref().map(|e| e.journal_id.clone());
 
                 saving.set(true);
-                let result = if let Some(id) = jid {
-                    bridge::invoke_update_journal_entry(&id, &snapshot)
-                        .await
-                        .map(|_| None)
-                } else {
-                    bridge::invoke_create_journal_entry(&date, &snapshot)
-                        .await
-                        .map(Some)
-                };
+                save_failed.set(false);
+                // Retry/backoff (1.7): each attempt re-issues the same create-or-
+                // update with a fresh future (cloning the captured strings), so a
+                // transient failure rides out per the backoff policy. `Some(entry)`
+                // distinguishes a create (returns the new entry) from an update.
+                let result = autosave::save_with_retry(|| {
+                    let snapshot = snapshot.clone();
+                    let jid = jid.clone();
+                    let date = date.clone();
+                    async move {
+                        match jid {
+                            Some(id) => bridge::invoke_update_journal_entry(&id, &snapshot)
+                                .await
+                                .map(|_| None),
+                            None => bridge::invoke_create_journal_entry(&date, &snapshot)
+                                .await
+                                .map(Some),
+                        }
+                    }
+                })
+                .await;
                 saving.set(false);
 
                 match result {
@@ -219,6 +287,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                         }
                     }
                     Err(e) => {
+                        save_failed.set(true);
                         save_status.set(Some(format!("Auto-save failed: {e}")));
                     }
                 }
@@ -269,6 +338,20 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                         } else {
                             rsx! {}
                         }
+                    }
+                    {
+                        // Glanceable save state (1.7), derived from existing
+                        // signals: in-flight > failed > dirty > clean.
+                        let save_state = if *saving.read() {
+                            SaveState::Saving
+                        } else if *save_failed.read() {
+                            SaveState::Failed
+                        } else if *content.read() != *last_saved_content.read() {
+                            SaveState::Unsaved
+                        } else {
+                            SaveState::Saved
+                        };
+                        rsx! { SaveIndicator { state: save_state } }
                     }
                 }
 
@@ -367,6 +450,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                         let jid = jid.clone();
                                         saving.set(true);
                                         save_status.set(None);
+                                        save_failed.set(false);
                                         spawn(async move {
                                             let text = content.read().clone();
                                             let result = if let Some(id) = jid {
@@ -391,7 +475,10 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                                         bridge::js_mark_editor_clean();
                                                     }
                                                 }
-                                                Err(e) => save_status.set(Some(format!("Save failed: {e}"))),
+                                                Err(e) => {
+                                                    save_failed.set(true);
+                                                    save_status.set(Some(format!("Save failed: {e}")));
+                                                }
                                             }
                                         });
                                     }
@@ -408,12 +495,11 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
             } else {
                 {
                     let is_closed = entry.read().as_ref().map(|e| e.closed).unwrap_or(false);
-                    let is_new = entry.read().is_none();
-                    let initial = if is_new {
-                        journal_template::render(&date)
-                    } else {
-                        entry.read().as_ref().map(|e| e.raw_text.clone()).unwrap_or_default()
-                    };
+                    // Seed CodeMirror from the hydrated session content (store-
+                    // restored on remount, else backend/template from the load
+                    // future). `peek` so DayView doesn't re-subscribe to every
+                    // keystroke — content changes shouldn't re-render the page.
+                    let initial = content.peek().clone();
                     let editor_class = if is_closed {
                         "rounded-lg border border-white/10 overflow-hidden shadow-2xl opacity-60"
                     } else {
