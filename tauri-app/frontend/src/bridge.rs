@@ -33,6 +33,8 @@ extern "C" {
     );
     #[wasm_bindgen(js_name = getEditorContent)]
     pub fn js_get_editor_content() -> String;
+    #[wasm_bindgen(js_name = getEditorCursor)]
+    pub fn js_get_editor_cursor() -> usize;
     #[wasm_bindgen(js_name = setEditorContent)]
     pub fn js_set_editor_content(content: &str);
     #[wasm_bindgen(js_name = destroyEditor)]

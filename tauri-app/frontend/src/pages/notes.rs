@@ -23,8 +23,59 @@ enum NotesView {
 
 #[component]
 pub fn NotesPage() -> Element {
-    let sub_tab = use_signal(|| NotesSubTab::Recent);
-    let view = use_signal(|| NotesView::List);
+    let store = use_continuity();
+    let mut sub_tab = use_signal(|| NotesSubTab::Recent);
+    let mut view = use_signal(|| NotesView::List);
+
+    // 1.8b nav restoration: re-open the note + sub-tab the user last had here.
+    // Gated on `is_loaded` for the boot race; re-applies per mount for within-
+    // session continuity. One-shot per mount via `restored`.
+    let mut restored = use_signal(|| false);
+    use_effect(move || {
+        if *restored.peek() || !store.is_loaded() {
+            return;
+        }
+        let saved = store.nav_peek();
+        view.set(match saved.notes_view.as_deref() {
+            Some("edit") => saved
+                .notes_edit_id
+                .clone()
+                .map(NotesView::Edit)
+                .unwrap_or(NotesView::List),
+            // "new" intentionally falls back to List on restore: the draft's
+            // content is preserved in the store (cursor/content continuity) and
+            // resumes when New is reopened, so we skip the new→edit promotion
+            // bookkeeping a faithful New restore would need.
+            _ => NotesView::List,
+        });
+        sub_tab.set(match saved.notes_subtab.as_deref() {
+            Some("search") => NotesSubTab::Search,
+            _ => NotesSubTab::Recent,
+        });
+        restored.set(true);
+    });
+
+    // Write-through: mirror the view + sub-tab into nav (and persist to disk).
+    // Gated on `restored` so empty defaults can't clobber saved nav pre-restore.
+    use_effect(move || {
+        if !*restored.read() {
+            return;
+        }
+        let (vk, eid) = match &*view.read() {
+            NotesView::List => ("list", None),
+            NotesView::New => ("new", None),
+            NotesView::Edit(id) => ("edit", Some(id.clone())),
+        };
+        let sub = match *sub_tab.read() {
+            NotesSubTab::Recent => "recent",
+            NotesSubTab::Search => "search",
+        };
+        store.update_nav(|n| {
+            n.notes_view = Some(vk.to_string());
+            n.notes_edit_id = eid;
+            n.notes_subtab = Some(sub.to_string());
+        });
+    });
 
     rsx! {
         div { class: "max-w-3xl mx-auto w-full",
@@ -322,6 +373,9 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
     // Generation counter so a newer keystroke can cancel an older pending
     // save (each scheduled save bails if `save_generation` has moved on).
     let mut save_generation = use_signal(|| 0u64);
+    // Caret offset (1.8b): tracked live via the editor's `on_cursor`, mirrored
+    // into the session, fed back as `initial_cursor` on remount.
+    let mut cursor = use_signal(|| 0usize);
     // Gate the write-through mirror until the first hydrate completes, so the
     // empty pre-load signals can't clobber an existing stored session.
     let mut hydrated = use_signal(|| false);
@@ -330,6 +384,12 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
     let _load = use_future(move || {
         let id = note_id_for_load.clone();
         async move {
+            // 1.8b boot race: wait for the store's disk snapshot so a note left
+            // open at app-kill re-shows its unsaved session at boot instead of
+            // racing the load and falling back to the backend copy.
+            while !store.loaded_peek() {
+                sleep_ms(20).await;
+            }
             // Mount key: an existing note by id, else the single draft slot.
             let key = match &id {
                 Some(id) => ContinuityKey::Note(id.clone()),
@@ -346,6 +406,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                 content.set(s.content.clone());
                 initial_content.set(s.content);
                 save_generation.set(s.save_generation);
+                cursor.set(s.cursor);
             } else if let Some(id) = id {
                 // No session: load the persisted note from the backend.
                 match bridge::invoke_get_generic_note(&id).await {
@@ -384,6 +445,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
             content: content.read().clone(),
             last_saved_content: last_saved_content.read().clone(),
             save_generation: *save_generation.read(),
+            cursor: *cursor.read(),
         };
         store.put(key, session);
     });
@@ -539,6 +601,8 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                     Editor {
                         initial_content: initial_content.read().clone(),
                         on_change: move |new_content: String| content.set(new_content),
+                        initial_cursor: *cursor.peek(),
+                        on_cursor: move |p: usize| cursor.set(p),
                     }
                 }
             }

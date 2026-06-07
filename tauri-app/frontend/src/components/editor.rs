@@ -4,9 +4,10 @@ use wasm_bindgen::JsCast;
 
 use crate::bridge::{js_create_editor, js_destroy_editor};
 
-/// Build a `{ journalMode, readOnly }` options object for `createEditor`.
-/// Returned as a `JsValue` so the wasm_bindgen extern can forward it directly.
-fn editor_options(journal_mode: bool, read_only: bool) -> JsValue {
+/// Build the base `{ journalMode, readOnly, initialCursor }` options object for
+/// `createEditor`. Returned as an `Object` (not `JsValue`) so the caller can
+/// attach the `onCursor` callback before forwarding it.
+fn editor_options(journal_mode: bool, read_only: bool, initial_cursor: usize) -> js_sys::Object {
     let obj = js_sys::Object::new();
     let _ = js_sys::Reflect::set(
         &obj,
@@ -18,7 +19,24 @@ fn editor_options(journal_mode: bool, read_only: bool) -> JsValue {
         &JsValue::from_str("readOnly"),
         &JsValue::from_bool(read_only),
     );
-    obj.into()
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("initialCursor"),
+        &JsValue::from_f64(initial_cursor as f64),
+    );
+    obj
+}
+
+/// Attach the `onCursor` selection-change callback to an options object (1.8b).
+/// Leaks the closure intentionally (same lifetime strategy as `on_change`): the
+/// editor lives as long as the page, and a fresh editor is created per mount.
+fn attach_cursor_cb(obj: &js_sys::Object, on_cursor: Option<EventHandler<usize>>) {
+    let Some(handler) = on_cursor else { return };
+    let closure = Closure::wrap(Box::new(move |pos: usize| handler.call(pos)) as Box<dyn Fn(usize)>);
+    if let Some(f) = closure.as_ref().dyn_ref::<js_sys::Function>() {
+        let _ = js_sys::Reflect::set(obj, &JsValue::from_str("onCursor"), f);
+    }
+    closure.forget();
 }
 
 const EDITOR_CONTAINER_ID: &str = "editor-container";
@@ -29,6 +47,11 @@ pub fn Editor(
     on_change: EventHandler<String>,
     #[props(default = false)] read_only: bool,
     #[props(default = false)] journal_mode: bool,
+    /// Caret offset to restore on mount (1.8b). 0 = no restore.
+    #[props(default = 0)] initial_cursor: usize,
+    /// Fired on every selection change so the page can keep the stored caret
+    /// offset current. `None` = the surface doesn't track cursor position.
+    #[props(default)] on_cursor: Option<EventHandler<usize>>,
 ) -> Element {
     let mut editor_ready = use_signal(|| false);
 
@@ -104,11 +127,13 @@ pub fn Editor(
                 on_change_closure.forget(); // Leak memory intentionally
 
                 // 4. Initialize the editor
+                let opts = editor_options(journal_mode, read_only, initial_cursor);
+                attach_cursor_cb(&opts, on_cursor);
                 js_create_editor(
                     editor_container_id,
                     &initial,
                     Some(&on_change_fn),
-                    editor_options(journal_mode, read_only),
+                    opts.into(),
                 );
 
                 Some(()) // Indicates success
@@ -172,11 +197,13 @@ pub fn Editor(
             on_change_closure.forget();
 
             // Initialize the editor (original logic)
+            let opts = editor_options(journal_mode, read_only, initial_cursor);
+            attach_cursor_cb(&opts, on_cursor);
             js_create_editor(
                 EDITOR_CONTAINER_ID,
                 &initial,
                 Some(&on_change_fn),
-                editor_options(journal_mode, read_only),
+                opts.into(),
             );
 
             editor_ready.set(true);

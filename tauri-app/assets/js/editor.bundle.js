@@ -25256,6 +25256,42 @@
   var journalTimestampKeymap = keymap.of([
     { key: "Enter", run: timestampEnterHandler }
   ]);
+  function findScrollParent(el) {
+    let node = el ? el.parentElement : null;
+    while (node) {
+      const oy = getComputedStyle(node).overflowY;
+      if (oy === "auto" || oy === "scroll") {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+  var keepCaretQueued = false;
+  function keepCaretAboveKeyboard() {
+    if (keepCaretQueued) return;
+    keepCaretQueued = true;
+    requestAnimationFrame(() => {
+      keepCaretQueued = false;
+      const vv = window.visualViewport;
+      if (!editorView || !vv || !editorView.hasFocus) return;
+      const head = editorView.state.selection.main.head;
+      const coords = editorView.coordsAtPos(head);
+      if (!coords) return;
+      const visibleBottom = vv.offsetTop + vv.height;
+      const margin = 24;
+      const overflow = coords.bottom - (visibleBottom - margin);
+      if (overflow > 0) {
+        const scroller = findScrollParent(editorView.dom);
+        if (scroller) scroller.scrollTop += overflow;
+        else window.scrollBy(0, overflow);
+      }
+    });
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", keepCaretAboveKeyboard);
+    window.visualViewport.addEventListener("scroll", keepCaretAboveKeyboard);
+  }
   window.createEditor = function(elementId, initialContent, onChange, options) {
     if (editorView) {
       editorView.destroy();
@@ -25269,6 +25305,8 @@
     }
     const journalMode = !!(options && options.journalMode);
     const readOnly2 = !!(options && options.readOnly);
+    const onCursor = options && typeof options.onCursor === "function" ? options.onCursor : null;
+    const initialCursor = options && Number.isFinite(options.initialCursor) ? options.initialCursor : 0;
     const extensions = [
       minimalSetup,
       markdown(),
@@ -25284,11 +25322,17 @@
     }
     extensions.push(
       EditorView.updateListener.of((update) => {
-        if (!update.docChanged) return;
-        if (!suppressDirty) emitDirty();
-        if (typeof onChange === "function") {
-          const content2 = update.state.doc.toString();
-          onChange(content2);
+        if (update.docChanged) {
+          if (!suppressDirty) emitDirty();
+          if (typeof onChange === "function") {
+            onChange(update.state.doc.toString());
+          }
+        }
+        if (update.selectionSet && onCursor) {
+          onCursor(update.state.selection.main.head);
+        }
+        if (update.docChanged || update.selectionSet) {
+          keepCaretAboveKeyboard();
         }
       })
     );
@@ -25299,10 +25343,23 @@
       }),
       parent
     });
+    if (initialCursor > 0) {
+      const pos = clampCursor(initialCursor, editorView.state.doc.length);
+      if (pos != null) {
+        editorView.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+      }
+    }
   };
+  function clampCursor(pos, docLength) {
+    return Math.min(pos, docLength);
+  }
   window.getEditorContent = function() {
     if (!editorView) return "";
     return editorView.state.doc.toString();
+  };
+  window.getEditorCursor = function() {
+    if (!editorView) return 0;
+    return editorView.state.selection.main.head;
   };
   window.setEditorContent = function(content2) {
     if (!editorView) return;

@@ -36,6 +36,9 @@ use dioxus::prelude::*;
 /// - `title`: the note title. Used by the generic-notes editor (which has a
 ///   title field); the journal editor leaves it empty — journal entries are
 ///   keyed by date, not titled.
+/// - `cursor`: char offset of the selection head when the page was last left
+///   (1.8b). Restored into CodeMirror on remount so returning to a note drops
+///   the caret — and, via `scrollIntoView`, the viewport — back where it was.
 ///
 /// Transient UI (loading / error / llm-result / "Saving…" flags) deliberately
 /// stays page-local — losing it on unmount is harmless and re-derives on remount.
@@ -45,6 +48,10 @@ pub struct EditSession {
     pub content: String,
     pub last_saved_content: String,
     pub save_generation: u64,
+    /// `#[serde(default)]` so a pre-1.8b on-disk blob (no `cursor` key) still
+    /// deserializes — it just restores at offset 0.
+    #[serde(default)]
+    pub cursor: usize,
 }
 
 /// `ContinuityKey` — the identity that addresses one entry in
@@ -105,6 +112,31 @@ pub struct ListState {
     pub filter: crate::types::TxnFilter,
 }
 
+/// Restorable navigation position (1.8b): which top-level tab the user last had
+/// open, plus each feature's sub-position, so a boot — or an Android app-kill —
+/// returns them where they were instead of the default Journal/Today.
+///
+/// Stored as plain strings (not the page-local `Tab` / view enums) so this
+/// foundational module stays dependency-free, mirroring `CaptureDraft`'s
+/// primitive typing. Each page owns the string⇆enum mapping at its boundary.
+/// Every field is optional: a fresh install (or a pre-1.8b on-disk blob) leaves
+/// them `None`, and each page falls back to its own default.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct NavState {
+    /// Top-level tab key: "journal" | "notes" | "routines" | "finances" | "settings".
+    pub tab: Option<String>,
+    /// Journal: the selected day (`YYYY-MM-DD`).
+    pub journal_date: Option<String>,
+    /// Journal sub-tab: "today" | "calendar".
+    pub journal_subtab: Option<String>,
+    /// Notes view: "list" | "new" | "edit".
+    pub notes_view: Option<String>,
+    /// Notes: the open note's id when `notes_view == "edit"`.
+    pub notes_edit_id: Option<String>,
+    /// Notes sub-tab: "recent" | "search".
+    pub notes_subtab: Option<String>,
+}
+
 /// Debounce before flushing the store to disk (1.8a). A touch longer than the
 /// editor auto-save debounce so a burst of edits batches into one write.
 const PERSIST_DEBOUNCE_MS: i32 = 1500;
@@ -117,6 +149,9 @@ pub struct PersistedWorkspace {
     pub sessions: Vec<(ContinuityKey, EditSession)>,
     pub captures: Vec<(ContinuityKey, CaptureDraft)>,
     pub lists: Vec<(ContinuityKey, ListState)>,
+    /// `#[serde(default)]` so a pre-1.8b blob (no `nav` key) still loads.
+    #[serde(default)]
+    pub nav: NavState,
 }
 
 /// Root continuity store. Cheap to copy (it's a handle to a `Signal`); one
@@ -126,9 +161,28 @@ pub struct ContinuityStore {
     sessions: Signal<HashMap<ContinuityKey, EditSession>>,
     captures: Signal<HashMap<ContinuityKey, CaptureDraft>>,
     lists: Signal<HashMap<ContinuityKey, ListState>>,
+    /// Last navigation position (1.8b), restored at boot.
+    nav: Signal<NavState>,
+    /// Flips true once the boot disk-read finishes (1.8a/1.8b). Pages gate their
+    /// first hydration on this so the initially-open page sees a disk-restored
+    /// session instead of racing the load and falling back to the backend copy.
+    loaded: Signal<bool>,
 }
 
 impl ContinuityStore {
+    /// Non-subscribing read of the boot-load flag — for the page hydration gate,
+    /// which polls inside an async load future and must not subscribe.
+    pub fn loaded_peek(&self) -> bool {
+        *self.loaded.peek()
+    }
+
+    /// Subscribing read of the boot-load flag — for the nav-restore effects,
+    /// which must re-run when the disk snapshot finishes loading (a page can
+    /// mount before that happens).
+    pub fn is_loaded(&self) -> bool {
+        *self.loaded.read()
+    }
+
     /// Snapshot the session for `key`, if one is being tracked.
     pub fn get(&self, key: &ContinuityKey) -> Option<EditSession> {
         self.sessions.read().get(key).cloned()
@@ -185,6 +239,21 @@ impl ContinuityStore {
         lists.write().insert(key, state);
     }
 
+    /// Non-subscribing snapshot of the saved navigation position (1.8b) — for
+    /// one-time boot restoration / page-init reads, which must not subscribe.
+    pub fn nav_peek(&self) -> NavState {
+        self.nav.peek().clone()
+    }
+
+    /// Mutate the saved navigation position in place. Pages call this from a
+    /// write-through effect as their sub-position changes; the debounced persist
+    /// effect (which subscribes to `nav`) then flushes it to disk.
+    pub fn update_nav(&self, f: impl FnOnce(&mut NavState)) {
+        let mut nav = self.nav;
+        let mut guard = nav.write();
+        f(&mut guard);
+    }
+
     /// Snapshot all three maps for on-disk persistence (1.8a). Reads — and thus
     /// subscribes — so the debounced persist effect re-runs on any change.
     pub fn snapshot_for_persist(&self) -> PersistedWorkspace {
@@ -207,17 +276,20 @@ impl ContinuityStore {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            nav: self.nav.read().clone(),
         }
     }
 
-    /// Replace all three maps from a persisted snapshot (boot rehydrate, 1.8a).
+    /// Replace all maps + nav from a persisted snapshot (boot rehydrate, 1.8a/1.8b).
     pub fn load_from_persist(&self, w: PersistedWorkspace) {
         let mut sessions = self.sessions;
         let mut captures = self.captures;
         let mut lists = self.lists;
+        let mut nav = self.nav;
         *sessions.write() = w.sessions.into_iter().collect();
         *captures.write() = w.captures.into_iter().collect();
         *lists.write() = w.lists.into_iter().collect();
+        *nav.write() = w.nav;
     }
 }
 
@@ -227,16 +299,19 @@ pub fn use_continuity_provider() -> ContinuityStore {
     let sessions = use_signal(HashMap::<ContinuityKey, EditSession>::new);
     let captures = use_signal(HashMap::<ContinuityKey, CaptureDraft>::new);
     let lists = use_signal(HashMap::<ContinuityKey, ListState>::new);
+    let nav = use_signal(NavState::default);
+    // `loaded` gates the persistence writer until the boot read finishes (1.8a)
+    // *and* is read by pages to gate first hydration (1.8b). It lives on the
+    // struct so descendants can consult it via `loaded_peek`.
+    let mut loaded = use_signal(|| false);
     let store = ContinuityStore {
         sessions,
         captures,
         lists,
+        nav,
+        loaded,
     };
     use_context_provider(|| store);
-
-    // Persistence (1.8a). `loaded` gates the writer until the boot read finishes,
-    // so an empty pre-load snapshot can't clobber the on-disk file.
-    let mut loaded = use_signal(|| false);
 
     // Boot: read the persisted store from disk and repopulate the maps. On a
     // read *error* we leave the writer disabled so a transient failure can't

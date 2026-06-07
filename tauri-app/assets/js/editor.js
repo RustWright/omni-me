@@ -297,6 +297,88 @@ const journalTimestampKeymap = keymap.of([
 ]);
 
 // ---------------------------------------------------------------------------
+// 1.10 - Keep the caret above the soft keyboard
+// ---------------------------------------------------------------------------
+//
+// On Android (edge-to-edge) the WebView does NOT resize when the keyboard
+// opens — it overlays the bottom. So the layout viewport still reports full
+// height and CodeMirror's own scrollIntoView believes the caret is visible
+// when it's actually behind the keyboard. The visualViewport API *does* shrink
+// to exclude the keyboard, so we use it to detect the occluded region and nudge
+// the page scroller until the caret clears it. The `--keyboard-inset-bottom`
+// padding (set by InsetBridge.kt) guarantees there's scroll room to do so.
+
+function findScrollParent(el) {
+  // Nearest ancestor that *can* scroll vertically. We deliberately don't gate
+  // on `scrollHeight > clientHeight`: when the keyboard opens, the keyboard-
+  // inset padding (which makes the container scrollable) and this lookup can
+  // race, and setting `scrollTop` on a not-yet-overflowing element is a safe
+  // no-op that the browser clamps. The editor's first such ancestor is the
+  // page's main content column (`body` itself is `overflow: hidden`).
+  let node = el ? el.parentElement : null;
+  while (node) {
+    const oy = getComputedStyle(node).overflowY;
+    if (oy === "auto" || oy === "scroll") {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+// How much the keyboard occludes from the bottom, in CSS px.
+//
+// Prefer `--keyboard-inset-bottom` (set natively by InsetBridge.kt from the
+// Android IME inset): on Android edge-to-edge the layout/visual viewport does
+// NOT shrink when the IME opens, so `visualViewport.height` stays full and
+// can't reveal the occluded region — but the native inset can. Fall back to
+// visualViewport for desktop browsers / iOS, where it does shrink.
+function keyboardInsetPx() {
+  const v = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(
+      "--keyboard-inset-bottom",
+    ),
+  );
+  if (Number.isFinite(v) && v > 0) return v;
+  const vv = window.visualViewport;
+  if (vv) {
+    const occluded = window.innerHeight - (vv.offsetTop + vv.height);
+    if (occluded > 1) return occluded;
+  }
+  return 0;
+}
+
+let keepCaretQueued = false;
+function keepCaretAboveKeyboard() {
+  // Coalesce bursts (a keystroke fires doc + selection updates) into one rAF.
+  if (keepCaretQueued) return;
+  keepCaretQueued = true;
+  requestAnimationFrame(() => {
+    keepCaretQueued = false;
+    if (!editorView || !editorView.hasFocus) return;
+    const kb = keyboardInsetPx();
+    if (kb <= 0) return; // keyboard hidden -> nothing to do
+    const head = editorView.state.selection.main.head;
+    const coords = editorView.coordsAtPos(head);
+    if (!coords) return;
+    const margin = 24;
+    const visibleBottom = window.innerHeight - kb;
+    const overflow = coords.bottom - (visibleBottom - margin);
+    if (overflow > 0) {
+      const scroller = findScrollParent(editorView.dom);
+      if (scroller) scroller.scrollTop += overflow;
+      else window.scrollBy(0, overflow);
+    }
+  });
+}
+
+if (window.visualViewport) {
+  // Where the viewport does shrink, keyboard show/hide + pans land here.
+  window.visualViewport.addEventListener("resize", keepCaretAboveKeyboard);
+  window.visualViewport.addEventListener("scroll", keepCaretAboveKeyboard);
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -325,6 +407,13 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
 
   const journalMode = !!(options && options.journalMode);
   const readOnly = !!(options && options.readOnly);
+  // 1.8b position restoration: a saved caret offset to restore, and a callback
+  // fired whenever the selection moves so the Rust side can keep the stored
+  // offset current.
+  const onCursor =
+    options && typeof options.onCursor === "function" ? options.onCursor : null;
+  const initialCursor =
+    options && Number.isFinite(options.initialCursor) ? options.initialCursor : 0;
 
   const extensions = [
     minimalSetup,
@@ -347,14 +436,24 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
     extensions.push(EditorView.editable.of(false));
   }
 
-  // Change listener: update onChange callback + dirty/clean signalling.
+  // Update listener: doc changes drive onChange + dirty/clean signalling;
+  // selection changes drive onCursor (1.8b) so the stored caret offset tracks
+  // the live cursor even when the user only navigates (arrows / clicks) without
+  // editing.
   extensions.push(
     EditorView.updateListener.of((update) => {
-      if (!update.docChanged) return;
-      if (!suppressDirty) emitDirty();
-      if (typeof onChange === "function") {
-        const content = update.state.doc.toString();
-        onChange(content);
+      if (update.docChanged) {
+        if (!suppressDirty) emitDirty();
+        if (typeof onChange === "function") {
+          onChange(update.state.doc.toString());
+        }
+      }
+      if (update.selectionSet && onCursor) {
+        onCursor(update.state.selection.main.head);
+      }
+      // Typing or moving the caret while the keyboard is up: keep it visible.
+      if (update.docChanged || update.selectionSet) {
+        keepCaretAboveKeyboard();
       }
     }),
   );
@@ -366,7 +465,32 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
     }),
     parent,
   });
+
+  // Restore the saved caret (1.8b). `scrollIntoView` makes CodeMirror walk up to
+  // the real scroll parent (the page's overflow-y-auto column — this editor has
+  // no fixed height, so its own scroller never engages) and bring the line into
+  // view. A selection-only dispatch isn't a doc change, so it won't flip dirty.
+  if (initialCursor > 0) {
+    const pos = clampCursor(initialCursor, editorView.state.doc.length);
+    if (pos != null) {
+      editorView.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+    }
+  }
 };
+
+/**
+ * Clamp a saved caret offset to a document that may have changed since it was
+ * stored (e.g. the note was edited elsewhere, or restored content is shorter).
+ * Returns the offset to restore, or null/undefined to skip restoration.
+ * @param {number} pos - The saved caret offset.
+ * @param {number} docLength - Current document length in characters.
+ * @returns {number|null|undefined}
+ */
+function clampCursor(pos, docLength) {
+  // Saved offset overflows a now-shorter doc -> drop the caret at the end
+  // (keeps the user near where they were); otherwise restore it verbatim.
+  return Math.min(pos, docLength);
+}
 
 /**
  * Get the current editor content.
@@ -375,6 +499,16 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
 window.getEditorContent = function () {
   if (!editorView) return "";
   return editorView.state.doc.toString();
+};
+
+/**
+ * Get the current caret offset (selection head). Used as an unmount-time
+ * fallback so a position is captured even if no selection event fired (1.8b).
+ * @returns {number} The caret offset, or 0 if no editor exists.
+ */
+window.getEditorCursor = function () {
+  if (!editorView) return 0;
+  return editorView.state.selection.main.head;
 };
 
 /**

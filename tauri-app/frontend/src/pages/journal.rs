@@ -26,6 +26,7 @@ pub enum JournalSubTab {
 
 #[component]
 pub fn JournalPage() -> Element {
+    let store = use_continuity();
     let mut sub_tab = use_signal(|| JournalSubTab::Today);
     let tz_signal: Signal<Tz> = use_context();
     // `&*signal.read()` is explicit on purpose: makes it clear we're
@@ -34,6 +35,45 @@ pub fn JournalPage() -> Element {
     let today = UserDate::today(&*tz_signal.read()).to_date_string();
 
     let mut selected_date = use_signal(|| today.clone());
+
+    // 1.8b nav restoration: re-open the day + sub-tab the user last had here.
+    // Gated on `is_loaded` so it picks up the disk snapshot even when this page
+    // mounts before the boot read finishes; also re-applies on every remount,
+    // giving within-session continuity (tab away to Notes and back keeps the
+    // viewed day). One-shot per mount via `restored`.
+    let mut restored = use_signal(|| false);
+    use_effect(move || {
+        if *restored.peek() || !store.is_loaded() {
+            return;
+        }
+        let saved = store.nav_peek();
+        if let Some(d) = saved.journal_date {
+            selected_date.set(d);
+        }
+        sub_tab.set(match saved.journal_subtab.as_deref() {
+            Some("calendar") => JournalSubTab::Calendar,
+            _ => JournalSubTab::Today,
+        });
+        restored.set(true);
+    });
+
+    // Write-through: mirror the sub-position into nav (and persist to disk).
+    // Gated on `restored` so the empty-default values can't clobber the saved
+    // nav before the restore above applies it.
+    use_effect(move || {
+        if !*restored.read() {
+            return;
+        }
+        let date = selected_date.read().clone();
+        let sub = match *sub_tab.read() {
+            JournalSubTab::Today => "today",
+            JournalSubTab::Calendar => "calendar",
+        };
+        store.update_nav(|n| {
+            n.journal_date = Some(date);
+            n.journal_subtab = Some(sub.to_string());
+        });
+    });
 
     rsx! {
         div { class: "max-w-3xl mx-auto w-full",
@@ -121,6 +161,10 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
     // debounced save: each scheduled save captures its gen at schedule time
     // and bails out post-sleep if the counter has moved on.
     let mut save_generation = use_signal(|| 0u64);
+    // Caret offset (1.8b). Tracked live via the editor's `on_cursor` callback,
+    // mirrored into the session, and fed back as `initial_cursor` on remount so
+    // returning to this day restores the caret + viewport.
+    let mut cursor = use_signal(|| 0usize);
 
     // Continuity store (1.2): this day's editing session is held at the app
     // root, so switching tabs (which unmounts DayView) no longer drops typed
@@ -139,6 +183,14 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
         let d = date_for_load.clone();
         let key = key_for_load.clone();
         async move {
+            // 1.8b boot race: the store loads its disk snapshot asynchronously.
+            // Wait for it so the *initially-open* day sees a restored session
+            // instead of racing the read and falling back to the backend copy.
+            // (Cheap local read — resolves in a tick or two; mirrors the editor
+            // bundle's existing poll-until-ready pattern.)
+            while !store.loaded_peek() {
+                sleep_ms(20).await;
+            }
             // Prefer an in-flight session (content the user left mid-edit when
             // they navigated away) over the persisted copy. Entry metadata
             // (id / closed / complete) always comes fresh from the backend.
@@ -149,6 +201,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                         content.set(s.content);
                         last_saved_content.set(s.last_saved_content);
                         save_generation.set(s.save_generation);
+                        cursor.set(s.cursor);
                     } else {
                         let raw = e.raw_text.clone();
                         last_saved_content.set(raw.clone());
@@ -163,6 +216,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                         content.set(s.content);
                         last_saved_content.set(s.last_saved_content);
                         save_generation.set(s.save_generation);
+                        cursor.set(s.cursor);
                     } else {
                         // New entry: prime both signals with the default
                         // template so an immediate Save without keystrokes still
@@ -199,6 +253,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                 content: content.read().clone(),
                 last_saved_content: last_saved_content.read().clone(),
                 save_generation: *save_generation.read(),
+                cursor: *cursor.read(),
             };
             store.put(key_for_mirror.clone(), session);
         });
@@ -513,6 +568,8 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                 on_change: move |new_content: String| content.set(new_content),
                                 read_only: is_closed,
                                 journal_mode: true,
+                                initial_cursor: *cursor.peek(),
+                                on_cursor: move |p: usize| cursor.set(p),
                             }
                         }
                     }

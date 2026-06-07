@@ -38,40 +38,75 @@ const ALL_TABS: &[Tab] = &[
     Tab::Settings,
 ];
 
-/// Mobile bottom tab bar. Hidden at `md` breakpoint and above.
+/// Mobile slide-in navigation drawer (1.11). Replaces the bottom tab bar on
+/// small screens: opened by the header hamburger button (and, in 1.12, a
+/// left-edge swipe), it slides over the content with a tap-to-dismiss scrim.
+/// Hidden at `md+`, where `SideNav` is the persistent nav.
+///
+/// Both the scrim and the panel are *always* rendered (their visibility is
+/// class-toggled, not `if`-gated) so the open/close transition can animate —
+/// a conditionally-mounted node would just pop in.
 #[component]
-pub fn BottomNav(active: Tab, on_switch: EventHandler<Tab>) -> Element {
-    let button_class = move |tab: Tab| -> String {
+pub fn NavDrawer(
+    active: Tab,
+    open: bool,
+    on_switch: EventHandler<Tab>,
+    on_close: EventHandler<()>,
+) -> Element {
+    let row_class = move |tab: Tab| -> String {
         let is_active = active == tab;
         if is_active {
-            "flex-1 flex flex-col items-center justify-center min-h-[48px] py-1 border-none bg-obsidian-sidebar text-obsidian-accent font-semibold text-xs rounded-lg transition-all duration-150 cursor-pointer gap-0.5".into()
+            "flex items-center gap-3 px-3 py-2 rounded-lg bg-obsidian-bg text-obsidian-accent font-semibold text-sm cursor-pointer transition-all duration-150".into()
         } else {
-            "flex-1 flex flex-col items-center justify-center min-h-[48px] py-1 border-none bg-transparent text-obsidian-text-muted font-normal text-xs rounded-lg transition-all duration-150 cursor-pointer hover:bg-white/5 gap-0.5".into()
+            "flex items-center gap-3 px-3 py-2 rounded-lg bg-transparent text-obsidian-text-muted font-medium text-sm cursor-pointer hover:bg-white/5 hover:text-obsidian-text transition-all duration-150".into()
         }
     };
 
+    // Scrim: fades in; `pointer-events-none` when closed so it never blocks the
+    // content underneath. Tap anywhere on it to dismiss.
+    let scrim_class = if open {
+        "md:hidden fixed inset-0 z-[140] bg-black/50 transition-opacity duration-200 opacity-100"
+    } else {
+        "md:hidden fixed inset-0 z-[140] bg-black/50 transition-opacity duration-200 opacity-0 pointer-events-none"
+    };
+    // Panel: slides between fully off-screen (`-translate-x-full`) and flush.
+    let panel_base = "md:hidden fixed inset-y-0 left-0 z-[150] w-64 max-w-[80vw] bg-obsidian-sidebar border-r border-white/5 px-3 py-5 flex flex-col gap-1 transition-transform duration-200 ease-out";
+    let panel_class = if open {
+        format!("{panel_base} translate-x-0")
+    } else {
+        format!("{panel_base} -translate-x-full")
+    };
+
     rsx! {
-        // Outer wrapper carries the safe-area inset via the
-        // `--safe-area-inset-bottom` custom property (defined in input.css
-        // with an env() fallback for iOS/desktop; overridden by MainActivity's
-        // inset bridge on Android, where env() doesn't include the bottom
-        // nav bar). Inner div keeps the original `py-1` visually intact.
-        nav { class: "md:hidden bg-obsidian-sidebar border-t border-white/5 fixed bottom-0 left-0 right-0 z-[100]",
-            style: "padding-bottom: var(--safe-area-inset-bottom);",
-            div { class: "flex items-center gap-1 px-2 py-1",
-                for tab in ALL_TABS.iter().copied() {
-                    {
-                        let (label, icon_path) = tab_meta(tab);
-                        rsx! {
-                            button {
-                                key: "{label}",
-                                class: "{button_class(tab)}",
-                                onclick: move |_| on_switch.call(tab),
-                                svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: icon_path }
-                                }
-                                span { "{label}" }
+        div {
+            class: "{scrim_class}",
+            "aria-hidden": "true",
+            onclick: move |_| on_close.call(()),
+        }
+        aside {
+            class: "{panel_class}",
+            // Clear the status bar / gesture bar on Android via the inset vars.
+            style: "padding-top: calc(1.25rem + var(--safe-area-inset-top)); padding-bottom: calc(1.25rem + var(--safe-area-inset-bottom));",
+            div { class: "px-3 pb-4 mb-2 border-b border-white/5",
+                h1 { class: "text-lg font-bold text-obsidian-accent tracking-tight", "Omni-Me" }
+                p { class: "text-[10px] uppercase tracking-[0.2em] text-obsidian-text-muted mt-1", "Personal OS" }
+            }
+
+            for tab in ALL_TABS.iter().copied() {
+                {
+                    let (label, icon_path) = tab_meta(tab);
+                    rsx! {
+                        button {
+                            key: "{label}",
+                            class: "{row_class(tab)}",
+                            onclick: move |_| {
+                                on_switch.call(tab);
+                                on_close.call(());
+                            },
+                            svg { class: "w-5 h-5 shrink-0", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: icon_path }
                             }
+                            span { class: "flex-1 text-left", "{label}" }
                         }
                     }
                 }

@@ -19,13 +19,20 @@ body {
     --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
     --safe-area-inset-left: env(safe-area-inset-left, 0px);
     --safe-area-inset-right: env(safe-area-inset-right, 0px);
+    /* Soft-keyboard occlusion height (1.9/1.10). InsetBridge.kt overwrites this
+     * from the Android IME inset; stays 0px on desktop/iOS where the keyboard
+     * either doesn't occlude a fixed WebView or is handled by the OS. */
+    --keyboard-inset-bottom: 0px;
 }
 
-/* Mobile-only bottom padding that clears the BottomNav AND the Android
- * gesture/system-nav inset. md: breakpoint resets it because SideNav
- * doesn't overlap the content column on desktop. */
+/* Mobile content bottom padding. Since the bottom tab bar was replaced by the
+ * slide-in drawer (1.11) there's no fixed bar to clear — just the Android
+ * gesture/system-nav inset, the keyboard inset (so the IME has scroll room to
+ * lift the caret above it, 1.10; 0 when hidden), plus a little breathing room
+ * matching the desktop padding. md: keeps that base since SideNav doesn't
+ * overlap the content column. */
 .pb-mobile-nav {
-    padding-bottom: calc(4rem + var(--safe-area-inset-bottom));
+    padding-bottom: calc(1.5rem + var(--safe-area-inset-bottom) + var(--keyboard-inset-bottom));
 }
 @media (min-width: 768px) {
     .pb-mobile-nav {

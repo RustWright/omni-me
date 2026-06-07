@@ -1,6 +1,8 @@
 package com.omni_me.app
 
 import android.app.Activity
+import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.View
@@ -13,8 +15,9 @@ import androidx.core.view.WindowInsetsCompat
  * Android Chromium WebView auto-forwards display cutouts and the top status
  * bar to env(safe-area-inset-*) but NOT the bottom navigation/gesture bar —
  * a long-standing Chromium limitation. Without this bridge, anything
- * `fixed; bottom: 0` (the BottomNav, future commit buttons, etc.) sits
- * behind the system nav bar.
+ * positioned against the bottom (the nav drawer's last items, the content
+ * scroll area's last row, future commit buttons) sits behind the system
+ * nav bar. The same listener also surfaces the IME (keyboard) inset (1.9).
  *
  * This file lives outside the `generated/` subdir, so Tauri's android-init
  * template generation will never touch it. `MainActivity.kt` calls `install`
@@ -32,15 +35,33 @@ object InsetBridge {
     private var cachedBottomPx = 0
     private var cachedLeftPx = 0
     private var cachedRightPx = 0
+    // Soft-keyboard (IME) occlusion height in CSS px (1.9). 0 when the keyboard
+    // is hidden. Surfaced separately from the static system-bar insets because
+    // it changes dynamically as the keyboard shows/hides, and the web side needs
+    // it to keep the caret scrolled above the keyboard (1.10).
+    private var cachedKeyboardPx = 0
+    // Display density, cached so the gesture-exclusion re-applies (below) can
+    // convert dp without re-reading resources.
+    private var density = 1f
+
+    // Left-edge strip (dp) reserved for the drawer-open swipe (1.12); must match
+    // `EDGE_SWIPE_START_PX` on the web side. The OS caps total exclusion height
+    // per edge (~200dp), so this is best-effort — the hamburger is the
+    // guaranteed opener.
+    private const val EDGE_SWIPE_DP = 24
 
     fun install(activity: Activity) {
         val root = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
-        val density = activity.resources.displayMetrics.density
+        density = activity.resources.displayMetrics.density
 
+        // One listener handles every inset type — adding the IME here (rather
+        // than registering a second `setOnApplyWindowInsetsListener`, which would
+        // *replace* this one) keeps system-bar and keyboard handling chained.
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val sysBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             val tappable = insets.getInsets(WindowInsetsCompat.Type.tappableElement())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             // Different Android versions / nav modes report the bottom area
             // under different inset types — pick the largest so we get a
             // non-zero value regardless. 3-button nav fills `navigationBars`,
@@ -50,7 +71,11 @@ object InsetBridge {
             cachedBottomPx = (effectiveBottom / density).toInt()
             cachedLeftPx = (sysBars.left / density).toInt()
             cachedRightPx = (sysBars.right / density).toInt()
+            // `ime().bottom` already includes the nav-bar height when the
+            // keyboard is up, so it's the full bottom occlusion; 0 when hidden.
+            cachedKeyboardPx = (ime.bottom / density).toInt()
             applyToWebView(root)
+            applyGestureExclusion(root)
             insets
         }
 
@@ -60,8 +85,21 @@ object InsetBridge {
         // a schedule so a later mutation lands on the loaded document.
         val handler = Handler(Looper.getMainLooper())
         for (delayMs in listOf(500L, 1500L, 3000L, 6000L, 10000L)) {
-            handler.postDelayed({ applyToWebView(root) }, delayMs)
+            handler.postDelayed({
+                applyToWebView(root)
+                applyGestureExclusion(root)
+            }, delayMs)
         }
+    }
+
+    // 1.12: reserve the left-edge strip for the drawer-open swipe so the system
+    // back-gesture doesn't intercept it. Set on the content root (gesture
+    // exclusion is view-local); re-applied on the schedule because `root.height`
+    // is 0 until the first layout. API 29+; the OS clamps the height for us.
+    private fun applyGestureExclusion(root: ViewGroup) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || root.height == 0) return
+        val edgePx = (EDGE_SWIPE_DP * density).toInt()
+        root.systemGestureExclusionRects = listOf(Rect(0, 0, edgePx, root.height))
     }
 
     private fun applyToWebView(root: ViewGroup) {
@@ -71,7 +109,8 @@ object InsetBridge {
                 """r.setProperty('--safe-area-inset-top','${cachedTopPx}px');""" +
                 """r.setProperty('--safe-area-inset-bottom','${cachedBottomPx}px');""" +
                 """r.setProperty('--safe-area-inset-left','${cachedLeftPx}px');""" +
-                """r.setProperty('--safe-area-inset-right','${cachedRightPx}px');})();""",
+                """r.setProperty('--safe-area-inset-right','${cachedRightPx}px');""" +
+                """r.setProperty('--keyboard-inset-bottom','${cachedKeyboardPx}px');})();""",
             null,
         )
     }
