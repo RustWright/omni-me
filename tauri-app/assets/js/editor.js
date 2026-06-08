@@ -378,6 +378,12 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener("scroll", keepCaretAboveKeyboard);
 }
 
+// On Android edge-to-edge the visual viewport does NOT shrink for the IME, so the
+// resize/scroll listeners above never fire when the keyboard opens. The native
+// InsetBridge dispatches this event right after it updates --keyboard-inset-bottom,
+// which is the only reliable "keyboard moved" signal on that platform.
+window.addEventListener("omni:keyboardinset", keepCaretAboveKeyboard);
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------

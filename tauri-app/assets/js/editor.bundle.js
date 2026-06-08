@@ -25267,19 +25267,34 @@
     }
     return null;
   }
+  function keyboardInsetPx() {
+    const v = parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue(
+        "--keyboard-inset-bottom"
+      )
+    );
+    if (Number.isFinite(v) && v > 0) return v;
+    const vv = window.visualViewport;
+    if (vv) {
+      const occluded = window.innerHeight - (vv.offsetTop + vv.height);
+      if (occluded > 1) return occluded;
+    }
+    return 0;
+  }
   var keepCaretQueued = false;
   function keepCaretAboveKeyboard() {
     if (keepCaretQueued) return;
     keepCaretQueued = true;
     requestAnimationFrame(() => {
       keepCaretQueued = false;
-      const vv = window.visualViewport;
-      if (!editorView || !vv || !editorView.hasFocus) return;
+      if (!editorView || !editorView.hasFocus) return;
+      const kb = keyboardInsetPx();
+      if (kb <= 0) return;
       const head = editorView.state.selection.main.head;
       const coords = editorView.coordsAtPos(head);
       if (!coords) return;
-      const visibleBottom = vv.offsetTop + vv.height;
       const margin = 24;
+      const visibleBottom = window.innerHeight - kb;
       const overflow = coords.bottom - (visibleBottom - margin);
       if (overflow > 0) {
         const scroller = findScrollParent(editorView.dom);
@@ -25292,6 +25307,7 @@
     window.visualViewport.addEventListener("resize", keepCaretAboveKeyboard);
     window.visualViewport.addEventListener("scroll", keepCaretAboveKeyboard);
   }
+  window.addEventListener("omni:keyboardinset", keepCaretAboveKeyboard);
   window.createEditor = function(elementId, initialContent, onChange, options) {
     if (editorView) {
       editorView.destroy();

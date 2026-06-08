@@ -110,7 +110,12 @@ object InsetBridge {
                 """r.setProperty('--safe-area-inset-bottom','${cachedBottomPx}px');""" +
                 """r.setProperty('--safe-area-inset-left','${cachedLeftPx}px');""" +
                 """r.setProperty('--safe-area-inset-right','${cachedRightPx}px');""" +
-                """r.setProperty('--keyboard-inset-bottom','${cachedKeyboardPx}px');})();""",
+                """r.setProperty('--keyboard-inset-bottom','${cachedKeyboardPx}px');""" +
+                // On edge-to-edge the visual viewport doesn't resize when the IME
+                // opens, so the web layer has no native event for the keyboard. Emit
+                // one here, right after the inset CSS var updates, so editor.js can
+                // re-scroll the caret above the keyboard.
+                """window.dispatchEvent(new Event('omni:keyboardinset'));})();""",
             null,
         )
     }
