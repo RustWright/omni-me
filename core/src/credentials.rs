@@ -1,4 +1,4 @@
-//! Server-side credential store for auto-import sources.
+//! Server-side credential store for the public engine.
 //!
 //! Storage is a single TOML file at `$XDG_CONFIG_HOME/omni-me/credentials.toml`
 //! (or `$HOME/.config/omni-me/credentials.toml` if XDG is unset), with file
@@ -7,9 +7,16 @@
 //! generally lack a Secret Service daemon — this TOML approach is the
 //! pragmatic equivalent.
 //!
-//! Add a new integration by extending `Credentials` with a new optional
-//! struct field. Missing fields deserialize as `None` — partially-configured
-//! installs are valid (e.g., Wise set up but SnapTrade not yet).
+//! The public engine knows only two *generic* credential kinds: IMAP mailbox
+//! pollers and the Gemini extractor key. Bank-specific credentials live in the
+//! private overlay, which deserializes its own struct from the **same**
+//! `credentials.toml` — serde ignores unknown sections in both directions
+//! (neither struct uses `deny_unknown_fields`), so the public and private
+//! views of the file coexist without either knowing the other's sections.
+//!
+//! Add a new generic integration by extending `Credentials` with a new field.
+//! Missing fields deserialize as `None`/empty — partially-configured installs
+//! are valid (e.g. Gemini set up but no IMAP accounts yet).
 //!
 //! Tauri-client side credentials (sync token, etc.) stay separate and use
 //! Tauri's storage plugins; this module is server-only.
@@ -29,56 +36,23 @@ pub enum CredentialError {
     Serialize(#[from] toml::ser::Error),
 }
 
-/// Top-level credentials struct — extend with a new field per integration.
-/// All fields default to `None` so partial configurations are valid.
+/// Public-engine credentials — only the generic kinds. Bank-specific sections
+/// in the same TOML file are ignored here (serde skips unknown fields) and are
+/// read by the private overlay's own credentials struct.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Credentials {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snaptrade: Option<SnapTradeCredentials>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wise: Option<WiseCredentials>,
     /// Name-keyed map so multiple email accounts can be configured (e.g.
     /// `gmail_personal`, `gmail_work`, `yahoo`). Each key is a user-chosen
     /// label that shows up in tracing + status displays. Empty/missing =
     /// no IMAP accounts configured.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub imap: std::collections::HashMap<String, ImapCredentials>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wealthsimple_python: Option<WealthSimplePythonCredentials>,
     /// Gemini Flash multimodal API key — used by the document extractor for
     /// receipts, bank statements, paystubs, etc. When absent, handlers fall
     /// back to `NullExtractor` (no events emitted) — a useful signal that
     /// the key needs configuring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini: Option<GeminiCredentials>,
-    /// Standard Chartered account configurations — `account_number` (the
-    /// NUBAN) drives PDF password derivation; `hledger_account` + `commodity`
-    /// are the bank-side posting target for emitted events. Multiple entries
-    /// supported (e.g. one USD account + one NGN account).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sc_accounts: Vec<ScAccountCredentials>,
-}
-
-/// SnapTrade free-tier connection — `client_id` + `consumer_key` from the
-/// dashboard, `user_id` minted per end-user during the initial OAuth-style
-/// connection flow.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SnapTradeCredentials {
-    pub client_id: String,
-    pub consumer_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user_secret: Option<String>,
-}
-
-/// Wise API personal token (read-only scope sufficient for transaction pull).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WiseCredentials {
-    pub api_token: String,
-    /// Wise account profile id — needed for some endpoints.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<String>,
 }
 
 /// IMAP poller — host + port + account + app-password (NOT main login).
@@ -97,47 +71,9 @@ fn default_imap_label() -> String {
     "omni-me".to_string()
 }
 
-/// `gboudreau/ws-api-python` subprocess fallback. Stores the WealthSimple
-/// login that gets piped to the Python script's prompt.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WealthSimplePythonCredentials {
-    pub email: String,
-    pub password: String,
-    /// Path to the Python executable that has `ws-api` installed.
-    /// Defaults to `python3` if not set.
-    #[serde(default = "default_python_executable")]
-    pub python_path: String,
-    /// Filesystem path to the user-managed driver script (see
-    /// `scripts/wealthsimple_driver_example.py`). Required for WS spawn
-    /// even when other WS credentials are configured.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub driver_script: Option<std::path::PathBuf>,
-    /// Filesystem path where the driver persists the WS session (so OTP is
-    /// only required on first run + after session expiry). Defaults to
-    /// `/tmp/ws-omni-session.json` when absent — fine for dev, should be
-    /// set to a stable path like `~/.local/share/omni-me/ws-session.json`
-    /// in production so server restarts don't reset the auth state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_path: Option<std::path::PathBuf>,
-}
-
-fn default_python_executable() -> String {
-    "python3".to_string()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiCredentials {
     pub api_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScAccountCredentials {
-    /// NUBAN account number — used as the input to `sc_ngn::derive_pdf_password`.
-    pub account_number: String,
-    /// hledger account this SC account maps to (e.g. `Assets:StandardChartered:USD`).
-    pub hledger_account: String,
-    /// Commodity the account holds (e.g. `USD`, `NGN`).
-    pub commodity: String,
 }
 
 /// Default location for the credentials file. Follows XDG Base Directory.
@@ -203,9 +139,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("does-not-exist.toml");
         let creds = load(&path).unwrap();
-        assert!(creds.snaptrade.is_none());
-        assert!(creds.wise.is_none());
         assert!(creds.imap.is_empty());
+        assert!(creds.gemini.is_none());
     }
 
     #[test]
@@ -236,52 +171,63 @@ mod tests {
         );
 
         let original = Credentials {
-            snaptrade: Some(SnapTradeCredentials {
-                client_id: "client-abc".into(),
-                consumer_key: "key-xyz".into(),
-                user_id: Some("user-1".into()),
-                user_secret: Some("secret-shh".into()),
-            }),
-            wise: Some(WiseCredentials {
-                api_token: "wise-token".into(),
-                profile_id: Some("profile-42".into()),
-            }),
             imap: imap_accounts,
-            wealthsimple_python: None,
-            gemini: None,
-            sc_accounts: Vec::new(),
+            gemini: Some(GeminiCredentials {
+                api_key: "gemini-key".into(),
+            }),
         };
 
         save(&path, &original).unwrap();
         let reloaded = load(&path).unwrap();
 
-        assert_eq!(
-            reloaded.snaptrade.as_ref().unwrap().client_id,
-            "client-abc"
-        );
-        assert_eq!(reloaded.wise.as_ref().unwrap().api_token, "wise-token");
         assert_eq!(reloaded.imap.len(), 2);
         assert_eq!(reloaded.imap["gmail_personal"].port, 993);
         assert_eq!(reloaded.imap["yahoo"].host, "imap.mail.yahoo.com");
-        assert!(reloaded.wealthsimple_python.is_none());
+        assert_eq!(reloaded.gemini.as_ref().unwrap().api_key, "gemini-key");
+    }
+
+    #[test]
+    fn unknown_bank_sections_are_ignored() {
+        // The private overlay writes its own [wise] / [wealthsimple_python]
+        // sections into the same file. The public Credentials view must load
+        // cleanly past them rather than erroring on unknown keys.
+        let toml_str = r#"
+            [gemini]
+            api_key = "k"
+
+            [imap.gmail_personal]
+            host = "imap.gmail.com"
+            port = 993
+            account = "me@gmail.com"
+            app_password = "pw"
+
+            [wise]
+            api_token = "ignored-by-public"
+
+            [[sc_accounts]]
+            account_number = "0001"
+            hledger_account = "Assets:SC:USD"
+            commodity = "USD"
+        "#;
+        let creds: Credentials = toml::from_str(toml_str).unwrap();
+        assert_eq!(creds.gemini.unwrap().api_key, "k");
+        assert_eq!(creds.imap.len(), 1);
     }
 
     #[test]
     fn partial_config_is_valid() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("credentials.toml");
-        // Only wise configured — the other integrations stay absent.
+        // Only gemini configured — IMAP stays absent.
         let creds = Credentials {
-            wise: Some(WiseCredentials {
-                api_token: "only-wise".into(),
-                profile_id: None,
+            gemini: Some(GeminiCredentials {
+                api_key: "only-gemini".into(),
             }),
             ..Credentials::default()
         };
         save(&path, &creds).unwrap();
         let reloaded = load(&path).unwrap();
-        assert!(reloaded.wise.is_some());
-        assert!(reloaded.snaptrade.is_none());
+        assert!(reloaded.gemini.is_some());
         assert!(reloaded.imap.is_empty());
     }
 

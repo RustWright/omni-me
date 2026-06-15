@@ -1,288 +1,75 @@
-//! `setup_from_credentials` — read `credentials.toml`, instantiate each
-//! configured `AutoImportSource`, spawn scheduler tasks. Called once at
-//! server startup; returns the set of `JoinHandle`s so the caller can
-//! optionally abort them on shutdown.
+//! Generic auto-import source spawner.
 //!
-//! Scope today:
-//! - Wise (REST) sources spin up when `[wise]` is present.
-//! - WealthSimple subprocess sources spin up when `[wealthsimple_python]`
-//!   is present AND a `driver_script` path is configured by the caller.
-//! - IMAP wiring needs the real `AsyncImapFetcher` impl + per-account
-//!   handler-config glue, deferred to a follow-up — `setup_imap_accounts`
-//!   skeleton is here so the call shape is stable.
+//! After the open-core split this module knows nothing about any specific
+//! upstream. The composition root (the private overlay binary, or any other
+//! caller) builds the `Vec<Arc<dyn AutoImportSource>>` and hands it here to be
+//! registered + spawned. Keeping this fully generic is what lets the public
+//! engine ship with zero bank-specific code — a caller that supplies no sources
+//! gets a working server with auto-import simply idle.
 //!
-//! Interval defaults to 30 minutes — chosen as a reasonable balance for
-//! per-day-tx-volume use. Override per-source via `SourceConfig::interval`.
+//! Interval defaults to 30 minutes (`DEFAULT_INTERVAL`) — a reasonable balance
+//! for per-day-tx-volume use. Callers pass the effective interval explicitly so
+//! an env-override / per-deployment policy lives at the composition root, not here.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
 use crate::auto_import_scheduler::{spawn_with_registry, AutoImportSource, SourceRegistry};
-use crate::credentials::Credentials;
-use crate::events::{EventStore, ProjectionRunner};
 
-use super::imap_source::ImapSource;
-use super::wealthsimple::WealthSimpleSource;
-use super::wise::WiseSource;
+/// Default poll interval when the caller doesn't override it.
+pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
-/// Per-source spawn configuration the caller decides. Account-name maps
-/// can't sensibly default; the caller knows which hledger accounts each
-/// integration corresponds to.
-#[derive(Default)]
-pub struct SourceConfig {
-    /// Override the default 30-minute poll interval.
-    pub interval: Option<Duration>,
-    /// Wise balance currency → hledger account (e.g. `"CAD" → "Assets:Wise:CAD"`).
-    pub wise_account_map: HashMap<String, String>,
-    /// WealthSimple ws-api account_id → hledger account.
-    pub ws_account_map: HashMap<String, String>,
-    /// Filesystem path to the Python driver script (Phase 2.9 contract).
-    pub ws_driver_script: Option<PathBuf>,
-    /// Pre-constructed IMAP sources — caller builds these because handler
-    /// composition (which ScNgnHandler / ReceiptHandler attaches to which
-    /// account, with what sender patterns + account mappings) is a per-app
-    /// policy decision rather than something derivable from credentials alone.
-    /// Pass an empty Vec to skip IMAP entirely.
-    pub imap_sources: Vec<Arc<ImapSource>>,
-}
-
-const DEFAULT_INTERVAL: Duration = Duration::from_secs(30 * 60);
-
-/// Spawn one task per configured source. Each source is registered in
-/// `registry` before its scheduler task starts, so manual-tick (Phase 3.9)
-/// can find the source by name and status reads see every configured
-/// source even before its first tick completes.
+/// Register each source in `registry`, then spawn its perpetual scheduler task.
 ///
-/// Returns the JoinHandles so the caller can abort them at shutdown. An
-/// empty return value means no sources were configured — startup succeeds
-/// (graceful).
-pub async fn setup_from_credentials(
-    creds: &Credentials,
-    config: &SourceConfig,
-    store: Arc<dyn EventStore>,
-    projections: ProjectionRunner,
-    device_id: String,
+/// Each source is registered *before* its task starts, so a manual-tick lookup
+/// can find it by name and status reads see every configured source even before
+/// its first tick completes.
+///
+/// Returns the `JoinHandle`s so the caller can abort them at shutdown. An empty
+/// `sources` vec returns an empty vec — startup succeeds (graceful zero-config).
+pub async fn spawn_sources(
+    sources: Vec<Arc<dyn AutoImportSource>>,
+    interval: Duration,
     registry: &SourceRegistry,
 ) -> Vec<JoinHandle<()>> {
-    let mut handles = Vec::new();
-    let interval = config.interval.unwrap_or(DEFAULT_INTERVAL);
-
-    if let Some(wise) = &creds.wise {
-        let source: Arc<dyn AutoImportSource> = Arc::new(WiseSource::new(
-            wise.clone(),
-            store.clone(),
-            projections.clone(),
-            device_id.clone(),
-            config.wise_account_map.clone(),
-        ));
-        tracing::info!(source = source.name(), interval_secs = interval.as_secs(), "spawning auto-import");
+    let mut handles = Vec::with_capacity(sources.len());
+    for source in sources {
+        tracing::info!(
+            source = source.name(),
+            interval_secs = interval.as_secs(),
+            "spawning auto-import"
+        );
         registry.register(source.clone(), interval).await;
         handles.push(spawn_with_registry(registry.clone(), source, interval));
     }
-
-    if let (Some(ws), Some(driver)) =
-        (&creds.wealthsimple_python, &config.ws_driver_script)
-    {
-        let source: Arc<dyn AutoImportSource> = Arc::new(WealthSimpleSource::new(
-            ws.clone(),
-            driver.clone(),
-            store.clone(),
-            projections.clone(),
-            device_id.clone(),
-            config.ws_account_map.clone(),
-        ));
-        tracing::info!(source = source.name(), interval_secs = interval.as_secs(), "spawning auto-import");
-        registry.register(source.clone(), interval).await;
-        handles.push(spawn_with_registry(registry.clone(), source, interval));
-    } else if creds.wealthsimple_python.is_some() && config.ws_driver_script.is_none() {
-        tracing::warn!(
-            "wealthsimple_python configured but no driver script path provided — skipping spawn"
-        );
-    }
-
-    // IMAP: spawn each pre-built source the caller passed in. We deliberately
-    // don't auto-construct sources from `creds.imap` here because handler
-    // composition is a per-app policy decision.
-    for source in &config.imap_sources {
-        let s: Arc<dyn AutoImportSource> = source.clone();
-        tracing::info!(source = s.name(), interval_secs = interval.as_secs(), "spawning auto-import");
-        registry.register(s.clone(), interval).await;
-        handles.push(spawn_with_registry(registry.clone(), s, interval));
-    }
-    if !creds.imap.is_empty() && config.imap_sources.is_empty() {
-        tracing::warn!(
-            count = creds.imap.len(),
-            "IMAP accounts configured in credentials but no ImapSources passed to setup — none spawned"
-        );
-    }
-
     handles
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::{Credentials, WealthSimplePythonCredentials, WiseCredentials};
-
-    async fn test_runner() -> (
-        crate::db::Database,
-        Arc<dyn EventStore>,
-        ProjectionRunner,
-    ) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        let store: Arc<dyn EventStore> =
-            Arc::new(crate::events::SurrealEventStore::new(db.clone()));
-        let runner = ProjectionRunner::new(
-            db.clone(),
-            vec![Box::new(crate::events::BudgetProjection)],
-        );
-        runner.init_all().await.unwrap();
-        (db, store, runner)
-    }
+    use crate::auto_import_scheduler::null::NullSource;
 
     #[tokio::test]
-    async fn no_credentials_means_no_handles() {
-        let (_db, store, projections) = test_runner().await;
+    async fn empty_sources_spawns_nothing() {
         let registry = SourceRegistry::new();
-        let handles = setup_from_credentials(
-            &Credentials::default(),
-            &SourceConfig::default(),
-            store,
-            projections,
-            "device-1".into(),
-            &registry,
-        )
-        .await;
+        let handles = spawn_sources(Vec::new(), DEFAULT_INTERVAL, &registry).await;
         assert_eq!(handles.len(), 0);
         assert_eq!(registry.snapshot().await.len(), 0);
     }
 
     #[tokio::test]
-    async fn wise_creds_spawn_one_source() {
-        let (_db, store, projections) = test_runner().await;
-        let creds = Credentials {
-            wise: Some(WiseCredentials {
-                api_token: "test-token".into(),
-                profile_id: None,
-            }),
-            ..Credentials::default()
-        };
+    async fn n_sources_register_and_spawn_n_handles() {
         let registry = SourceRegistry::new();
-        let handles = setup_from_credentials(
-            &creds,
-            &SourceConfig::default(),
-            store,
-            projections,
-            "device-1".into(),
-            &registry,
-        )
-        .await;
-        assert_eq!(handles.len(), 1);
-        assert_eq!(registry.snapshot().await.len(), 1);
-        // Abort so the spawned task doesn't outlive the test.
-        for h in handles {
-            h.abort();
-        }
-    }
-
-    #[tokio::test]
-    async fn ws_creds_with_driver_path_spawn_one_source() {
-        let (_db, store, projections) = test_runner().await;
-        let creds = Credentials {
-            wealthsimple_python: Some(WealthSimplePythonCredentials {
-                email: "x@y".into(),
-                password: "p".into(),
-                python_path: "/usr/bin/python3".into(),
-                driver_script: None,
-                session_path: None,
-            }),
-            ..Credentials::default()
-        };
-        let config = SourceConfig {
-            ws_driver_script: Some(PathBuf::from("/nonexistent/driver.py")),
-            ..SourceConfig::default()
-        };
-        let registry = SourceRegistry::new();
-        let handles = setup_from_credentials(
-            &creds,
-            &config,
-            store,
-            projections,
-            "device-1".into(),
-            &registry,
-        )
-        .await;
-        assert_eq!(handles.len(), 1);
-        for h in handles {
-            h.abort();
-        }
-    }
-
-    #[tokio::test]
-    async fn ws_creds_without_driver_path_does_not_spawn() {
-        let (_db, store, projections) = test_runner().await;
-        let creds = Credentials {
-            wealthsimple_python: Some(WealthSimplePythonCredentials {
-                email: "x@y".into(),
-                password: "p".into(),
-                python_path: "/usr/bin/python3".into(),
-                driver_script: None,
-                session_path: None,
-            }),
-            ..Credentials::default()
-        };
-        let registry = SourceRegistry::new();
-        let handles = setup_from_credentials(
-            &creds,
-            &SourceConfig::default(),
-            store,
-            projections,
-            "device-1".into(),
-            &registry,
-        )
-        .await;
-        assert_eq!(handles.len(), 0, "no driver path → no spawn (with warning)");
-    }
-
-    #[tokio::test]
-    async fn both_wise_and_ws_spawn_two_sources() {
-        let (_db, store, projections) = test_runner().await;
-        let creds = Credentials {
-            wise: Some(WiseCredentials {
-                api_token: "tok".into(),
-                profile_id: None,
-            }),
-            wealthsimple_python: Some(WealthSimplePythonCredentials {
-                email: "x".into(),
-                password: "p".into(),
-                python_path: "/usr/bin/python3".into(),
-                driver_script: None,
-                session_path: None,
-            }),
-            ..Credentials::default()
-        };
-        let config = SourceConfig {
-            ws_driver_script: Some(PathBuf::from("/nonexistent/driver.py")),
-            ..SourceConfig::default()
-        };
-        let registry = SourceRegistry::new();
-        let handles = setup_from_credentials(
-            &creds,
-            &config,
-            store,
-            projections,
-            "device-1".into(),
-            &registry,
-        )
-        .await;
+        let sources: Vec<Arc<dyn AutoImportSource>> = vec![
+            Arc::new(NullSource::new("alpha")),
+            Arc::new(NullSource::new("beta")),
+        ];
+        let handles = spawn_sources(sources, DEFAULT_INTERVAL, &registry).await;
         assert_eq!(handles.len(), 2);
         assert_eq!(registry.snapshot().await.len(), 2);
+        // Abort so the spawned tasks don't outlive the test.
         for h in handles {
             h.abort();
         }

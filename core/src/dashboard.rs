@@ -60,8 +60,8 @@ pub struct RecurringObligation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashboardSummary {
     pub base_currency: String,
-    /// Sum of every listable account's `total_in_base` (filters per
-    /// `balances::is_listable_account`). `None` when no listable account
+    /// Sum of every roster account's `total_in_base` (filtered by the roster
+    /// passed to `account_summaries`). `None` when no listable account
     /// has any convertible balance — UI renders an em-dash.
     pub net_worth_in_base: Option<Decimal>,
     /// `Unmatched` clearing-account balance in base currency. `None` when
@@ -87,6 +87,10 @@ pub struct AffordVerdict {
 
 /// Build the dashboard summary in one shot. Pure function — takes parsed
 /// inputs, returns a struct. The Tauri command wraps the I/O.
+// Eight inputs: a pure aggregator fanning the same parsed journal + metadata
+// into several sub-computations. Bundling them into a params struct would add
+// indirection without clarifying anything — allow the extra argument.
+#[allow(clippy::too_many_arguments)]
 pub fn dashboard_summary(
     journal_content: &str,
     declared: &[AccountRow],
@@ -95,8 +99,10 @@ pub fn dashboard_summary(
     as_of: NaiveDate,
     monthly_txns: &[TxnPostingsRow],
     months_back: u32,
+    roster: &[String],
 ) -> Result<DashboardSummary, LedgerError> {
-    let summaries = balances::account_summaries(journal_content, declared, base_currency, as_of)?;
+    let summaries =
+        balances::account_summaries(journal_content, declared, base_currency, as_of, roster)?;
 
     let net_worth_in_base = sum_listable_net_worth(&summaries);
     let unmatched_balance = summaries
@@ -362,6 +368,20 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
+    /// Roster the dashboard fixtures were written against (WS / Wise / CIBC /
+    /// Unmatched). Net-worth + unmatched assertions depend on these surfacing.
+    fn roster() -> Vec<String> {
+        [
+            "Assets:Wealthsimple:Cash",
+            "Assets:Wise:CAD",
+            "Liabilities:CIBC:CreditCard",
+            "Unmatched",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+
     fn postings_json(items: &[(&str, &str, &str)]) -> serde_json::Value {
         serde_json::Value::Array(
             items
@@ -421,7 +441,7 @@ mod tests {
     Unmatched                     -250.00 CAD
 ";
         let summary =
-            dashboard_summary(journal, &[], &[], "CAD", day(2026, 5, 23), &[], 6).unwrap();
+            dashboard_summary(journal, &[], &[], "CAD", day(2026, 5, 23), &[], 6, &roster()).unwrap();
 
         // Listable accounts: Assets:Wealthsimple:Cash (+3000) + Assets:Wise:CAD (+250)
         // Unmatched (-250) is explicitly excluded from net worth.
@@ -436,7 +456,7 @@ mod tests {
     Assets:Wealthsimple:Cash       -5.25 CAD
     Expenses:Coffee                 5.25 CAD
 ";
-        let s = dashboard_summary(journal, &[], &[], "CAD", day(2026, 5, 23), &[], 6).unwrap();
+        let s = dashboard_summary(journal, &[], &[], "CAD", day(2026, 5, 23), &[], 6, &roster()).unwrap();
         assert_eq!(s.unmatched_balance, None);
     }
 

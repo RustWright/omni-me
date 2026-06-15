@@ -10,9 +10,9 @@
 //! that lists every sender. The dispatch loop (`imap::poll_once`) routes
 //! each message to the first handler that claims it.
 //!
-//! Event-emission deferred (same shape as `ScNgnHandler` — wires through
-//! Gemini, returns empty Vec for now to avoid duplicate-event ghosts during
-//! the bring-up period).
+//! Event-emission deferred (same shape as the bank-specific IMAP handlers in
+//! the private overlay — wires through Gemini, returns empty Vec for now to
+//! avoid duplicate-event ghosts during the bring-up period).
 
 use async_trait::async_trait;
 use std::process::Stdio;
@@ -35,7 +35,7 @@ pub struct ReceiptHandler {
     /// (substring match — `"@audible.ca"`, `"oxio.com"`, etc.).
     sender_patterns: Vec<String>,
     /// Excluded patterns — handlers earlier in the dispatch chain may
-    /// claim these (e.g. ScNgnHandler claims `@sc.com`); this list lets
+    /// claim these (e.g. a bank statement handler claims its own sender); this list lets
     /// a downstream "catch-all" receipt handler skip them defensively.
     excluded_patterns: Vec<String>,
     device_id: String,

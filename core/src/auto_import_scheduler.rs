@@ -146,7 +146,7 @@ impl SourceRegistry {
         Self::default()
     }
 
-    /// Register a source. Called by `setup_from_credentials` before spawning
+    /// Register a source. Called by `spawn_sources` before spawning
     /// the scheduler task — `spawn_with_registry` then updates status here on
     /// every tick.
     pub async fn register(&self, source: Arc<dyn AutoImportSource>, interval: Duration) {

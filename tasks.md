@@ -65,21 +65,49 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] user act
 - [x] **1.12** Edge-swipe open — **done 2026-06-06 (web verified; native rides 1.13).** *Web:* root-shell `ontouchstart`/`move`/`end` track a touch that *starts* in the left `EDGE_SWIPE_START_PX`(24) strip while the drawer is closed and opens it once it travels `EDGE_SWIPE_OPEN_PX`(48) right; no `preventDefault`, so scroll/typing untouched. **Synthetic-touch-verified:** edge swipe (x8→x80) opens; mid-screen swipe (x200→x280) is a no-op; 0 console errors. *Native:* `InsetBridge.applyGestureExclusion` sets `systemGestureExclusionRects` on the content root for a 24dp left strip (API 29+, re-applied on the boot schedule since `root.height` is 0 early; OS clamps the height, so best-effort — hamburger stays the guaranteed opener). Not compiled (no Android build this session). [M]
 - [x] **1.13** On-device APK verification (Samsung, Android 10 / API 29) — **COMPLETE 2026-06-08:** 1.9 inset + 1.10 caret-above-keyboard both verified on-device (caret clears the keyboard by the exact 24px margin). The real blocker — found after a long debug — was the build pipeline embedding a **stale debug frontend** (`frontendDist`=debug baked into the `.so`), so no JS change reached the device; fixed via `scripts/android-build.sh release` (see friction log + `BUILD.md`). 1.10 native-event fix: `InsetBridge` dispatches `omni:keyboardinset` → `editor.js` re-runs `keepCaretAboveKeyboard`. Pre-fix investigation notes:** Build pipeline issues found + fixed first: (1) release build OOM-froze the 7GB laptop → memory-safe env overrides (`CARGO_PROFILE_RELEASE_LTO=false`/`CODEGEN_UNITS=16`/`OPT_LEVEL=1`, `CARGO_BUILD_JOBS=1`) + a MemAvailable watchdog; (2) APK shipped **mock** data because `frontendDist`=debug dir held a stale `dx serve --features mock` build (latent: `beforeBuildCommand` builds release but `frontendDist`=debug → android always bundles the debug dir) — rebuilt debug dir non-mock. APK signed with debug keystore, sideloaded. **Verified on real backend:** ✅ tab restore across app-kill (reopened on Finances — NavState lives only in the workspace file, not the DB); ✅ content persistence across kill (marker survived); ✅ caret restore across kill (`getEditorCursor`=156, non-zero, at edit point); ✅ drawer open + navigate; ✅ InsetBridge injects real `--safe-area-inset-bottom` (48px). **Found + fixing:** ❌ keyboard inset (1.9) — `adjustResize` fix building. **Still to check:** caret-above-keyboard (1.10) once 1.9 lands; edge-swipe is a no-op to test here (device is 3-button nav → no back-gesture conflict). [S]
 
-## Phase 2 — Server go-live *(can overlap Phase 1)*
+## Phase 2 — Server go-live *(deploy — runs AFTER the Phase 3 split; kept lean until then)*
 
-- [ ] **2.1** Provision Hetzner VPS. [USER] (account/payment)
-- [ ] **2.2** Server runtime for the `server/` binary: systemd unit or container + persistent data dir. [M]
-- [ ] **2.3** Extend `.github/workflows/ci.yml` with a deploy stage (CI test/build already exists). [M]
-- [ ] **2.4** Sync reachability: phone↔VPS over Tailscale (sync auth still deferred per `feedback`/existing decision). [S]
-- [ ] **2.5** Verify: phone syncs against the VPS with the laptop off. [XS]
+**Execution order (revised 2026-06-13):** **Phase 3 (split) runs before Phase 2 (deploy)** —
+not parallel as originally framed. The deploy pipeline's *home and shape* depend on the split's
+repo topology + the Model-A-vs-B image decision, and the current repo is already **public**, so
+a personal deploy pipeline can't live there. Detailed deploy design is deferred until the split
+settles, to avoid designing against a topology that will change (`feedback-sequence-by-dependency`).
 
-## Phase 3 — Open-core split + extensibility *(the one-way door)* `(logbook)` `(demo?)`
+**Decisions that survive the reorder** (`project-deploy-runtime`, `feedback-ci-cd-over-sysadmin`):
+Docker container (not systemd); dual-provider (Hetzner + DO 60-day trial); one provider-neutral
+image; Tailscale reachability (phone reaches the server by tailnet hostname); heavy CI/CD with
+health-gated deploy + auto-rollback, SHA-tagged images, pre-deploy snapshots, one box at a time,
+nothing exposed publicly. **The "deploy to my box" pipeline is homed on the private side** (private
+overlay under Model A); only "build/test/publish the public image" stays public.
 
-- [ ] **3.1** Create private overlay crate (new workspace member) written against `core`'s `AutoImportSource`. [M]
-- [ ] **3.2** Move bank adapters (`core/src/auto_import/{wealthsimple,wise,sc_ngn}.rs` + WS python driver + credential structs) into the overlay; keep generic plumbing (`imap*.rs`, `receipts.rs`, `mime.rs`, trait) public. [L]
-- [ ] **3.3** Invert source instantiation in `server/src/main.rs` (`ImapSource::new` / `ScNgnHandler::new`) to pull from the overlay; public build = zero sources. [M]
+- [ ] **2.1** Containerize *runtime* config — split-agnostic, safe to prep anytime: `docker-compose` volume layout (surreal_data + blobs → one volume via `BLOB_DIR`), `/health` healthcheck, runtime secret mount (`credentials.toml` + `GEMINI_API_KEY`), `restart: unless-stopped`. [S]
+- [ ] **2.2** Provision Hetzner + DO boxes (Ubuntu LTS, ~2GB RAM — CI builds the image, box only runs it) + Docker + Tailscale bootstrap. [USER] — **defer DO until deploy is ready so the 60-day trial clock doesn't burn idle; no box is needed for the split itself.**
+- [ ] **2.3** Deploy pipeline — **DETAIL AFTER THE SPLIT** (homed per topology / Model A-vs-B): build the real image → push to the right registry → deploy over the tailnet → health-gate + auto-rollback → pre-deploy snapshot → dual-target rollout (DO then Hetzner). [—]
+- [ ] **2.4** Verify go-live: **phone syncs against the VPS with the laptop OFF**; kill one box, the phone still syncs via the other. [S]
+- [ ] **2.5** **Blocker:** WS auto-import must not run on the VPS until app-entered re-auth (3.5a / `SOURCE_REAUTH_DESIGN.md`) ships — otherwise OTP re-prime needs SSH. Until then WS stays local-only. [—]
+
+## Phase 3 — Open-core split + extensibility *(the one-way door — RUNS BEFORE Phase 2)* `(logbook)` `(demo?)`
+
+**First decision when opening this phase:** Model A (bank adapters compiled into a private image;
+deploy pipeline lives in the private overlay repo) vs Model B (public zero-source image everywhere;
+bank adapters run as box-local subprocess plugins per 3.5 — deploy stays mostly public). Lean A now
+(least work, matches 3.1–3.3), B as the end-state once the subprocess mechanism matures. This choice
+sets the Phase 2 deploy topology.
+
+**STATUS 2026-06-14 — STEP 1 (relocate) COMPLETE (3.1–3.3).** Destination resolved = Model B via a
+foundation-first path. Private overlay `RustWright/omni-me-private` created + pushed (`main`@`8b07e83`)
++ registered as a `productive_learning` submodule; public engine bank-free + 446 tests/clippy clean;
+private clippy clean + 23/23 adapter tests + green smoke test vs real config (graceful WS degradation
+verified live). SurrealDB pinned 3.0.4 in both repos (lockstep — see backlog). **STEP 2 = next session:**
+subprocess-helper conversion (3.5) + app-OTP re-auth (3.5a) + freeze the app↔helper JSON contract +
+harden the absolute `driver_script` path the smoke test flagged.
+
+- [x] **3.1** Create private overlay crate written against `core`'s `AutoImportSource`. [M] — **done 2026-06-14**; path-deps on the public crates (pinned git-dep deferred to deploy).
+- [x] **3.2** Move bank adapters (`wealthsimple`/`wise`/`sc_ngn` + WS python driver + credential structs) into the overlay; generic plumbing (`imap*.rs`, `receipts.rs`, `mime.rs`, trait) stays public. [L] — **done 2026-06-14**; public copies `git rm`'d after private verified.
+- [x] **3.3** Invert source instantiation — done via the `run(RunConfig{source_builder})` seam in `server/src/lib.rs` (not literally `main.rs`); public `main.rs` = zero-sources builder. [M] — **done 2026-06-14**.
 - [ ] **3.4** Public app degrades gracefully to zero configured sources + zero declared accounts (no crash; manual entry / journal / budget all work). [M]
 - [ ] **3.5** Subprocess-plugin runner: generalize the WS subprocess pattern into a config-driven `SubprocessSource` (command / args / schedule / secret-ref / account-map → JSON drafts). [L] `(demo?)`
+- [ ] **3.5a** Interactive source re-auth (**app-entered OTP**) per `SOURCE_REAUTH_DESIGN.md` — generic `AuthState` + `/sources/status` + `/sources/{name}/reauth/{start,submit}` in the **public** engine; WS driver login-protocol in the **private** overlay; client "Reconnect {source}" UI. Removes the SSH-to-VPS-for-OTP failure mode. **Hard precondition for deploying WS auto-import to the VPS (Phase 2).** [M] `(logbook)`
 - [ ] **3.6** Config-driven generic sources: CSV first (+ REST / IMAP) parameterized by config. [L]
 - [ ] **3.7** In-app source-registration UI (Settings): add / edit / remove sources; secrets referenced by name. [M]
 - [ ] **3.8** Provider-swap: OpenAI-compatible `LlmClient` impl + Settings picker (base URL / model / key); `DocumentExtractor` on the same config rail. [M]
@@ -107,6 +135,7 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] user act
 - [ ] **6.1** App logo (desktop + Android assets; replace default Tauri). [S]
 - [ ] **6.2** Branch-gate workflow: feature branches + merge gates to protect stable. [S]
 - [ ] **6.3** v1 semver stamp + git tag. [XS]
+- [ ] **6.4** Archive + reset `project.md` (session log + status history → `.archive/`, leaving a lean current-state doc) once stable-v1 ships — it's grown unwieldy carrying every session's detail. Consider the same for `tasks.md`. Tie to the v1 tag so the archived snapshot is a clean cut point. [S]
 
 ---
 
@@ -152,6 +181,7 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] user act
 - [ ] PaddleOCR sidecar (escape hatch from Cycle-3 7.11).
 - [ ] WealthSimple native-Rust port (if the subprocess path proves stable).
 - [ ] C1 email auto-fetch (vs paste); R3 self-employment dashboards; R4 tax-form validation.
+- [ ] SurrealDB bump past 3.0.4 — **lockstep across both repos** (public + private overlay each pin their own lock; out-of-sync re-floats the overlay to 3.1 + `diskann`, which fails to compile on the current toolchain, rust#100013). No vector-search usage today, so no pull; revisit when vector search is wanted or the toolchain resolves #100013. Patch 3.0.x bumps are safe meanwhile. [S]
 
 ---
 

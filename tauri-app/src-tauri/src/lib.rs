@@ -25,6 +25,11 @@ const DEFAULT_SERVER_URL: &str = "http://localhost:3000";
 const TIMEZONE_FILE: &str = "timezone";
 const BASE_CURRENCY_FILE: &str = "base_currency";
 const WORKSPACE_FILE: &str = "workspace.json";
+/// Newline-separated list of hledger account names to surface on the Accounts
+/// screen (the "roster"). Absent/empty file ⇒ empty roster ⇒ empty Accounts
+/// screen. The user's real roster file ships from the private overlay repo and
+/// is installed into `app_data_dir`. `#`-prefixed and blank lines are ignored.
+const ROSTER_FILE: &str = "roster";
 
 /// Load a string value from a file, or use a default and persist it.
 fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> String) -> String {
@@ -40,6 +45,23 @@ fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> 
     val
 }
 
+/// Load the account roster — one account name per line; `#` comments and blank
+/// lines are ignored. Missing file ⇒ empty roster (graceful zero-config: the
+/// public engine ships no roster, so the Accounts screen is simply empty until
+/// the user installs their roster file).
+fn load_roster(app_data: &Path) -> Vec<String> {
+    let path = app_data.join(ROSTER_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => contents
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(String::from)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 
 pub struct AppState {
     pub db: Database,
@@ -51,6 +73,10 @@ pub struct AppState {
     /// FX base currency for dashboard / accounts aggregation (Phase 7.3).
     /// Persisted to `BASE_CURRENCY_FILE`; defaults to CAD.
     pub base_currency: tokio::sync::RwLock<String>,
+    /// Account-list roster — hledger account names surfaced on the Accounts /
+    /// dashboard screens. Loaded from `ROSTER_FILE`; empty ⇒ empty Accounts
+    /// screen. The real roster is supplied by the private overlay.
+    pub roster: tokio::sync::RwLock<Vec<String>>,
     pub app_data_dir: std::path::PathBuf,
     /// Local LRU mirror of `/blobs/<sha256>` — see `commands::attachments`.
     pub attachment_cache_dir: std::path::PathBuf,
@@ -171,8 +197,9 @@ pub fn run() {
                 });
                 let base_currency =
                     load_or_create(&app_data, BASE_CURRENCY_FILE, || "CAD".to_string());
+                let roster = load_roster(&app_data);
 
-                tracing::info!(device_id = %device_id, server_url = %server_url, timezone = %timezone, "App initialized");
+                tracing::info!(device_id = %device_id, server_url = %server_url, timezone = %timezone, roster_len = roster.len(), "App initialized");
 
                 let timezone_shared = Arc::new(tokio::sync::RwLock::new(timezone));
 
@@ -224,6 +251,7 @@ pub fn run() {
                     server_url: tokio::sync::RwLock::new(server_url),
                     timezone: timezone_shared,
                     base_currency: tokio::sync::RwLock::new(base_currency),
+                    roster: tokio::sync::RwLock::new(roster),
                     app_data_dir: app_data,
                     attachment_cache_dir,
                     http: reqwest::Client::new(),

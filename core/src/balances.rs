@@ -17,8 +17,10 @@
 //! Both paths land as the same hledger `P` directive shape, so this module
 //! consumes them uniformly through `Prices::insert_from`.
 //!
-//! Account-set policy lives in [`is_listable_account`] — see that fn for the
-//! list rule (which prefixes count as "an account" for display purposes).
+//! Account-set policy is the caller-supplied roster passed to
+//! [`account_summaries`] — a list of account names to surface. The public
+//! engine defaults to an empty roster; the user's real roster is delivered at
+//! the client via the settings-file rail (`tauri-app` `ROSTER_FILE`).
 
 use std::collections::BTreeMap;
 
@@ -56,33 +58,14 @@ pub struct AccountSummary {
     pub total_in_base: Option<Decimal>,
 }
 
-/// Explicit allowlist of accounts that surface on the Accounts screen.
-/// Edit this list when an account graduates from "appears in postings" to
-/// "I want to see its balance at a glance" (or vice versa).
-///
-/// Drop-by-default: any account name not in this list is filtered out, so
-/// new auto-import-discovered accounts never appear on the screen silently.
-///
-/// `Unmatched` lives here too — it's the one-word top-level clearing
-/// account from `project_unmatched_account_pattern.md`, and its non-zero
-/// balance is the reconciliation-pending signal that Phase 4.5 will
-/// surface as its own dashboard widget.
-///
-/// Cycle 4 plans to lift this list into the `accounts` SurrealDB table
-/// (driven by a Settings UI that emits `AccountAdded` / future
-/// `AccountRemoved` events). Until then it's a code constant.
-pub const LISTABLE_ACCOUNTS: &[&str] = &[
-    "Assets:Wealthsimple:Cash",
-    "Assets:Wise:CAD",
-    "Liabilities:CIBC:CreditCard",
-    "Unmatched",
-];
-
-/// Decide whether `account` should surface on the Accounts screen.
-/// Pure lookup against [`LISTABLE_ACCOUNTS`].
-pub fn is_listable_account(account: &str) -> bool {
-    LISTABLE_ACCOUNTS.contains(&account)
-}
+// Account-set policy is now the `roster` argument to `account_summaries` (a
+// caller-supplied list of account names). Drop-by-default still holds: any
+// account not named in the roster is filtered out, so auto-import-discovered
+// accounts never appear silently. The public engine passes an empty roster;
+// the user's real roster lives in the private overlay and is delivered to the
+// client via the settings-file rail (`tauri-app` ROSTER_FILE). `Unmatched`
+// (the one-word clearing account from project_unmatched_account_pattern.md)
+// surfaces only when the roster includes it.
 
 /// Compute account summaries from journal content + declared-account
 /// metadata. Pure function — no file I/O, no DB access — so it's
@@ -90,11 +73,15 @@ pub fn is_listable_account(account: &str) -> bool {
 ///
 /// `as_of` is the date used for FX conversion (latest rate ≤ that date wins
 /// per `Prices::get_rate` semantics). Callers typically pass "today".
+///
+/// `roster` is the drop-by-default allowlist of account names to surface; an
+/// empty roster yields an empty list (the public engine's default).
 pub fn account_summaries(
     journal_content: &str,
     declared: &[AccountRow],
     base_currency: &str,
     as_of: NaiveDate,
+    roster: &[String],
 ) -> Result<Vec<AccountSummary>, LedgerError> {
     let parsed = ledger::parse(journal_content)?;
     let mut prices = Prices::new();
@@ -109,14 +96,18 @@ pub fn account_summaries(
     // Collect candidate account names: those in the computed balance plus
     // any declared account that hasn't been touched yet (so it still shows
     // up with a zero balance).
+    // Drop-by-default: only accounts named in the caller-supplied roster
+    // surface. Public engine passes an empty roster → empty Accounts screen.
+    let listable: std::collections::HashSet<&str> = roster.iter().map(String::as_str).collect();
+
     let mut account_names: BTreeMap<String, ()> = BTreeMap::new();
     for name in balance.account_balances.keys() {
-        if is_listable_account(name) {
+        if listable.contains(name.as_str()) {
             account_names.insert(name.clone(), ());
         }
     }
     for name in declared_by_name.keys() {
-        if is_listable_account(name) {
+        if listable.contains(*name) {
             account_names.insert((*name).to_string(), ());
         }
     }
@@ -212,25 +203,37 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 5, 23).unwrap()
     }
 
+    /// The user-style roster the existing fixtures were written against.
+    fn roster() -> Vec<String> {
+        [
+            "Assets:Wealthsimple:Cash",
+            "Assets:Wise:CAD",
+            "Liabilities:CIBC:CreditCard",
+            "Unmatched",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+
     #[test]
-    fn is_listable_account_includes_user_allowlist_only() {
-        // The four entries currently in LISTABLE_ACCOUNTS — explicit
-        // allowlist, drop-by-default for everything else.
-        assert!(is_listable_account("Assets:Wealthsimple:Cash"));
-        assert!(is_listable_account("Assets:Wise:CAD"));
-        assert!(is_listable_account("Liabilities:CIBC:CreditCard"));
-        assert!(is_listable_account("Unmatched"));
+    fn account_summaries_filters_to_roster_drop_by_default() {
+        let journal = "\
+2026-05-20 Coffee
+    Assets:Wealthsimple:Cash       -5.25 CAD
+    Expenses:Coffee                 5.25 CAD
+";
+        // Roster omits Assets:Wealthsimple:Cash on purpose → nothing surfaces,
+        // proving membership (not mere presence in postings) is required.
+        let narrow = vec!["Unmatched".to_string()];
+        let summaries = account_summaries(journal, &[], "CAD", as_of(), &narrow).unwrap();
+        assert!(summaries.is_empty(), "no roster account touched → empty list");
 
-        // Spending / income categories never qualify.
-        assert!(!is_listable_account("Expenses:Groceries"));
-        assert!(!is_listable_account("Income:Salary"));
-        assert!(!is_listable_account("Equity:OpeningBalances"));
-
-        // Drop-by-default: unknown accounts (typos, sub-accounts not on the
-        // list, future names) don't sneak onto the screen silently.
-        assert!(!is_listable_account("Assets:Cash")); // not on the list
-        assert!(!is_listable_account("Trading:Exchange"));
-        assert!(!is_listable_account("Random:Garbage"));
+        // Full roster → the WS account surfaces; Expenses:Coffee (never in the
+        // roster) is still dropped.
+        let summaries = account_summaries(journal, &[], "CAD", as_of(), &roster()).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].account, "Assets:Wealthsimple:Cash");
     }
 
     #[test]
@@ -245,7 +248,7 @@ mod tests {
     Expenses:Groceries             42.18 CAD
 ";
         let summaries =
-            account_summaries(journal, &[], "CAD", as_of()).expect("balance computation");
+            account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
 
         // Only Assets:Wealthsimple:Cash survives the filter; Expenses:* are
         // dropped.
@@ -281,7 +284,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     Expenses:Coffee                -10.00 CAD
 ";
         let summaries =
-            account_summaries(journal, &[], "CAD", as_of()).expect("balance computation");
+            account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
 
         let wise = summaries
             .iter()
@@ -324,7 +327,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     Expenses:Random                 100.00 CAD
 ";
         let summaries =
-            account_summaries(journal, &[], "CAD", as_of()).expect("balance computation");
+            account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
 
         let ws = &summaries[0];
         assert_eq!(ws.account, "Assets:Wealthsimple:Cash");
@@ -358,7 +361,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
             "2026-05-15",
             "1000.00",
         )];
-        let summaries = account_summaries(journal, &declared, "CAD", as_of()).unwrap();
+        let summaries = account_summaries(journal, &declared, "CAD", as_of(), &roster()).unwrap();
 
         let ws = summaries
             .iter()
@@ -383,7 +386,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
             "CAD",
             Some("CIBC Aventura"),
         )];
-        let summaries = account_summaries(journal, &declared, "CAD", as_of()).unwrap();
+        let summaries = account_summaries(journal, &declared, "CAD", as_of(), &roster()).unwrap();
 
         let cibc = summaries
             .iter()
@@ -398,7 +401,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     fn account_summaries_handles_empty_journal() {
         // Fresh-install path: no journal content + no declarations → empty
         // list, not an error.
-        let summaries = account_summaries("", &[], "CAD", as_of()).unwrap();
+        let summaries = account_summaries("", &[], "CAD", as_of(), &roster()).unwrap();
         assert!(summaries.is_empty());
     }
 
@@ -411,7 +414,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     Assets:Wealthsimple:Cash       250.00 CAD
     Unmatched                     -250.00 CAD
 ";
-        let summaries = account_summaries(journal, &[], "CAD", as_of()).unwrap();
+        let summaries = account_summaries(journal, &[], "CAD", as_of(), &roster()).unwrap();
         let unmatched = summaries.iter().find(|s| s.account == "Unmatched");
         assert!(unmatched.is_some(), "Unmatched must remain visible");
         assert_eq!(

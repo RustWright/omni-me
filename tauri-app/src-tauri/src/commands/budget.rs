@@ -349,8 +349,10 @@ pub async fn account_summaries(
         .await
         .map_err(|e| e.to_string())?;
 
-    let summaries = balances::account_summaries(&journal_content, &declared, &base, as_of_date)
-        .map_err(|e| format!("balance computation: {e}"))?;
+    let roster = state.roster.read().await.clone();
+    let summaries =
+        balances::account_summaries(&journal_content, &declared, &base, as_of_date, &roster)
+            .map_err(|e| format!("balance computation: {e}"))?;
     Ok(summaries.into_iter().map(summary_to_view).collect())
 }
 
@@ -465,6 +467,7 @@ pub async fn dashboard_summary(
         .await
         .map_err(|e| e.to_string())?;
 
+    let roster = state.roster.read().await.clone();
     let summary = dashboard::dashboard_summary(
         &journal_content,
         &declared,
@@ -473,6 +476,7 @@ pub async fn dashboard_summary(
         as_of_date,
         &monthly_txns,
         months,
+        &roster,
     )
     .map_err(|e| format!("dashboard computation: {e}"))?;
     Ok(dashboard_to_view(summary))
