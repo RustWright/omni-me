@@ -24,6 +24,7 @@ pub mod imap_source;
 pub mod mime;
 pub mod receipts;
 pub mod setup;
+pub mod subprocess;
 
 /// Wrap a vec of draft transactions into a single `AutoImportBatchProposed`
 /// event. Called by each handler's `pull()` after fetching + per-row dedup.

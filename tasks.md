@@ -98,16 +98,30 @@ sets the Phase 2 deploy topology.
 foundation-first path. Private overlay `RustWright/omni-me-private` created + pushed (`main`@`8b07e83`)
 + registered as a `productive_learning` submodule; public engine bank-free + 446 tests/clippy clean;
 private clippy clean + 23/23 adapter tests + green smoke test vs real config (graceful WS degradation
-verified live). SurrealDB pinned 3.0.4 in both repos (lockstep — see backlog). **STEP 2 = next session:**
-subprocess-helper conversion (3.5) + app-OTP re-auth (3.5a) + freeze the app↔helper JSON contract +
-harden the absolute `driver_script` path the smoke test flagged.
+verified live). SurrealDB pinned 3.0.4 in both repos (lockstep — see backlog).
+
+**STATUS 2026-06-15 — STEP 2a (subprocess contract + WS pull-helper) COMPLETE.** Froze the engine↔helper
+JSON contract in prose (`SUBPROCESS_SOURCE_CONTRACT.md`) + code (`HelperRequest`/`HelperResponse`/
+`HelperStatus` public serde types in `core::auto_import::subprocess`). Built the generic public
+`SubprocessSource` (the WS adapter's generic tail, generalized; 6 fake-helper tests). Converted WS to a
+standalone `ws-helper` binary in the overlay (`fetch_drafts` + `src/bin/ws-helper.rs`) that **reads its
+own credentials** — the engine never sees a bank secret (boundary now structural). Helper discovery =
+sibling-of-current-exe + `OMNI_WS_HELPER` override (the convention all future plugins reuse). Hardened
+the `driver_script` path (engine validates the helper command; helper resolves driver to absolute +
+existence-checks). Public 6 new tests + clippy clean (still bank-free); private builds both binaries +
+22 tests + clippy clean. **Smoke-verified live:** WS now ticks via `SubprocessSource → ws-helper →
+python driver`; real session-expiry → driver exit 5 → `needs_reauth` → graceful backoff, Wise + 3 IMAP
+unaffected. **STEP 2b = next session:** app-OTP re-auth full stack (3.5a — `AuthState` + `/reauth` route
++ WS helper `reauth` verb (already frozen in the contract) + Dioxus "Reconnect" UI). Deferred: Wise
+helper; SC email-handler wrinkle (out-of-scope per the contract — stays in-process; recommended future
+shape = helper decrypts PDF, engine extracts via LLM); real account-map (3.9).
 
 - [x] **3.1** Create private overlay crate written against `core`'s `AutoImportSource`. [M] — **done 2026-06-14**; path-deps on the public crates (pinned git-dep deferred to deploy).
 - [x] **3.2** Move bank adapters (`wealthsimple`/`wise`/`sc_ngn` + WS python driver + credential structs) into the overlay; generic plumbing (`imap*.rs`, `receipts.rs`, `mime.rs`, trait) stays public. [L] — **done 2026-06-14**; public copies `git rm`'d after private verified.
 - [x] **3.3** Invert source instantiation — done via the `run(RunConfig{source_builder})` seam in `server/src/lib.rs` (not literally `main.rs`); public `main.rs` = zero-sources builder. [M] — **done 2026-06-14**.
 - [ ] **3.4** Public app degrades gracefully to zero configured sources + zero declared accounts (no crash; manual entry / journal / budget all work). [M]
-- [ ] **3.5** Subprocess-plugin runner: generalize the WS subprocess pattern into a config-driven `SubprocessSource` (command / args / schedule / secret-ref / account-map → JSON drafts). [L] `(demo?)`
-- [ ] **3.5a** Interactive source re-auth (**app-entered OTP**) per `SOURCE_REAUTH_DESIGN.md` — generic `AuthState` + `/sources/status` + `/sources/{name}/reauth/{start,submit}` in the **public** engine; WS driver login-protocol in the **private** overlay; client "Reconnect {source}" UI. Removes the SSH-to-VPS-for-OTP failure mode. **Hard precondition for deploying WS auto-import to the VPS (Phase 2).** [M] `(logbook)`
+- [x] **3.5** Subprocess-plugin runner: generic public `SubprocessSource` (command + args; helper owns creds + account-map, so "secret-ref" became "helper reads its own secrets" — a stronger boundary; schedule stays the engine's interval). WS converted to the `ws-helper` binary; contract frozen in `SUBPROCESS_SOURCE_CONTRACT.md` + code types. [L] — **done 2026-06-15 (Step 2a)**; smoke-verified live. Multi-source config *registration* (declare sources via config/UI) is 3.6/3.7; CSV/REST helpers fan out from this runner.
+- [ ] **3.5a** Interactive source re-auth (**app-entered OTP**) per `SOURCE_REAUTH_DESIGN.md` — generic `AuthState` + `/sources/status` + `/sources/{name}/reauth/{start,submit}` in the **public** engine; WS driver login-protocol in the **private** overlay; client "Reconnect {source}" UI. Removes the SSH-to-VPS-for-OTP failure mode. **Hard precondition for deploying WS auto-import to the VPS (Phase 2).** [M] `(logbook)` — **contract half already frozen (Step 2a):** `HelperRequest::Reauth{otp}` verb + `needs_reauth`/`reauth_ok`/`invalid_otp` statuses exist; `ws-helper` returns `needs_reauth` on driver exit 5 (live-verified). Remaining = engine `AuthState` + route + helper `reauth` handler + Dioxus UI.
 - [ ] **3.6** Config-driven generic sources: CSV first (+ REST / IMAP) parameterized by config. [L]
 - [ ] **3.7** In-app source-registration UI (Settings): add / edit / remove sources; secrets referenced by name. [M]
 - [ ] **3.8** Provider-swap: OpenAI-compatible `LlmClient` impl + Settings picker (base URL / model / key); `DocumentExtractor` on the same config rail. [M]
