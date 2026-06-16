@@ -1,7 +1,10 @@
 # Design: Interactive source re-authentication (app-entered OTP)
 
-> Status: **design only — not built.** Targets Step 2 (subprocess-helper conversion) and is a
-> hard dependency of Phase 2 (VPS deploy). Until built, the local terminal prime is the stopgap.
+> Status: **server half built 2026-06-15.** The engine `AuthState` model, the `POST /auto_import/reauth`
+> route, and the `ws-helper` `reauth` handler are implemented + unit-tested (the route shape is
+> `/auto_import/*`, not the `/sources/*` this doc originally sketched — it follows the live route prefix).
+> **Remaining: the client "Reconnect {source}" UI + the real-OTP happy-path test** (next session). Still a
+> hard dependency of Phase 2 (VPS deploy). Until the UI ships, the local terminal prime is the stopgap.
 > Motivating consumer: the WealthSimple auto-import source (private overlay).
 
 ## Problem

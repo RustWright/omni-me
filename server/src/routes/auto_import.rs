@@ -20,7 +20,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use omni_me_core::auto_import_scheduler::{
-    SourceStatus, classify_source_health, SourceHealth,
+    ReauthOutcome, SourceStatus, classify_source_health, SourceHealth,
 };
 
 use crate::AppState;
@@ -29,6 +29,7 @@ pub fn auto_import_routes() -> Router<AppState> {
     Router::new()
         .route("/auto_import/status", get(status_handler))
         .route("/auto_import/tick", post(tick_handler))
+        .route("/auto_import/reauth", post(reauth_handler))
 }
 
 #[derive(Serialize)]
@@ -82,5 +83,33 @@ async fn tick_handler(
 impl IntoResponse for TickResponseOk {
     fn into_response(self) -> axum::response::Response {
         Json(self).into_response()
+    }
+}
+
+/// `POST /auto_import/reauth` — drive interactive re-auth for one source. The
+/// OTP lives in the JSON **body** (not the query string) so it never lands in
+/// access logs. The response is the `ReauthOutcome` verbatim
+/// (`{"status":"active"|"invalid_otp"|"not_supported"|"error",…}`); only an
+/// unknown source name is a transport error (404).
+#[derive(Deserialize)]
+struct ReauthRequest {
+    source: String,
+    otp: String,
+}
+
+async fn reauth_handler(
+    State(state): State<AppState>,
+    Json(req): Json<ReauthRequest>,
+) -> Result<Json<ReauthOutcome>, (StatusCode, String)> {
+    match state
+        .auto_import_registry
+        .reauth(&req.source, &req.otp)
+        .await
+    {
+        Ok(outcome) => Ok(Json(outcome)),
+        Err(omni_me_core::auto_import_scheduler::ImportError::NotConfigured(msg)) => {
+            Err((StatusCode::NOT_FOUND, msg))
+        }
+        Err(e) => Err((StatusCode::BAD_GATEWAY, e.to_string())),
     }
 }

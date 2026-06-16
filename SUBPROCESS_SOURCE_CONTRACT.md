@@ -1,9 +1,9 @@
 # Contract: subprocess auto-import sources (engine ↔ helper)
 
-> Status: **frozen 2026-06-15.** The `pull` verb is implemented; the `reauth` verb is **defined here but
-> implemented next session** (see `SOURCE_REAUTH_DESIGN.md` for the auth-state half). This is a
-> freeze-once interface: the deploy image and any third-party data-source plugin key off it, so it
-> changes only with a deliberate version bump.
+> Status: **frozen 2026-06-15.** Both verbs are implemented server-side (`pull` since the freeze;
+> `reauth` server half added 2026-06-15 — see `SOURCE_REAUTH_DESIGN.md` for the auth-state model the
+> client "Reconnect" UI consumes, which lands next). This is a freeze-once interface: the deploy image
+> and any third-party data-source plugin key off it, so it changes only with a deliberate version bump.
 
 ## What this is
 
@@ -50,8 +50,8 @@ One line of JSON on the helper's **stdin**, followed by EOF (the engine closes t
 ```
 
 - **`pull`** — fetch whatever is new and return drafts. The normal scheduled tick. *(implemented)*
-- **`reauth`** — complete an interactive re-authentication using the supplied one-time code, persist the
-  refreshed credential, and return the new auth state. *(defined; implemented next session)*
+- **`reauth`** — complete an interactive re-authentication using the supplied one-time `otp`, persist the
+  refreshed credential, and report `reauth_ok` / `invalid_otp` / `error`. *(implemented)*
 
 A helper that only ever does `pull` may treat any other verb as `error`.
 
@@ -75,8 +75,8 @@ One line of JSON on the helper's **stdout**:
 |----------------|----------------------------------------------------------------------|-----------------|
 | `ok`           | success; `drafts` may be empty (no new data is **not** a failure)     | wrap + append + project the drafts; record a successful tick |
 | `needs_reauth` | the stored credential is expired/invalid; the helper did **not** loop on login | degrade this source (surface as needing re-auth); do **not** hammer login. Other sources unaffected |
-| `reauth_ok`    | `reauth` succeeded; credential refreshed and persisted               | return the source to active *(reauth path — next session)* |
-| `invalid_otp`  | `reauth` ran but the code was wrong                                  | tell the client the code was rejected *(reauth path — next session)* |
+| `reauth_ok`    | `reauth` succeeded; credential refreshed and persisted               | return the source to `Active`; the client clears the Reconnect prompt |
+| `invalid_otp`  | `reauth` ran but the code was wrong                                  | tell the client the code was rejected; the source stays `NeedsReauth` |
 | `error`        | anything unexpected; `message` carries detail                        | treat as a transient failure → exponential backoff |
 
 ### Exit code
@@ -89,7 +89,9 @@ JSON; the engine treats that as a transient error and backs off. This keeps stru
 > A helper may wrap an inner tool with its own exit-code scheme (the WealthSimple helper wraps a Python
 > driver whose codes `2`–`6` distinguish malformed-input / missing-library / login-failed / OTP-required
 > / transient). Those inner codes are an implementation detail **below** this contract — the helper
-> translates them into a `status` and exits `0`.
+> translates them into a `status` and exits `0`. The same inner code can read differently per verb: a
+> `pull` reads exit `5` (no session) as `needs_reauth`, while a `reauth` reads exit `4` (login rejected)
+> as `invalid_otp`.
 
 ## `drafts` — the helper builds them fully
 

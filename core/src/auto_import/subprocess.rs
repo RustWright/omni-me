@@ -25,7 +25,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::auto_import::to_proposed_event;
-use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary};
+use crate::auto_import_scheduler::{
+    AutoImportSource, ImportError, ImportSummary, ReauthOutcome,
+};
 use crate::events::{DraftTransaction, EventStore, ProjectionRunner};
 
 /// Engine → helper request, sent as one JSON line on the helper's stdin.
@@ -233,13 +235,15 @@ impl AutoImportSource for SubprocessSource {
         let response = self.run_helper(&HelperRequest::Pull).await?;
         match response.status {
             HelperStatus::Ok => self.ingest(response).await,
-            // Until 3.5a's AuthState lands, a needs-reauth source surfaces as a
-            // labeled error → the scheduler backs off (the helper returns fast
-            // without looping on login, so there's no lockout risk).
-            HelperStatus::NeedsReauth => Err(ImportError::Upstream(format!(
-                "{} needs re-auth — run the Reconnect flow (or local re-prime)",
-                self.name
-            ))),
+            // A needs-reauth signal rides its own ImportError variant so the
+            // registry can flip the source to AuthState::NeedsReauth (3.5a).
+            // The scheduler still backs off on it — harmless, since the helper
+            // returns fast without looping on login (no lockout risk).
+            HelperStatus::NeedsReauth => Err(ImportError::NeedsReauth(
+                response.message.unwrap_or_else(|| {
+                    format!("{} session expired — reconnect required", self.name)
+                }),
+            )),
             HelperStatus::Error => Err(ImportError::Upstream(
                 response
                     .message
@@ -250,6 +254,40 @@ impl AutoImportSource for SubprocessSource {
                 "{} returned a reauth status to a pull request",
                 self.name
             ))),
+        }
+    }
+
+    fn reauth_capable(&self) -> bool {
+        // Any subprocess source can be sent a `reauth` verb; whether the helper
+        // actually does anything useful with it is the helper's business. The
+        // engine offers the affordance uniformly.
+        true
+    }
+
+    async fn reauth(&self, otp: &str) -> ReauthOutcome {
+        let response = match self
+            .run_helper(&HelperRequest::Reauth {
+                otp: otp.to_string(),
+            })
+            .await
+        {
+            Ok(r) => r,
+            // Spawn/transport failure (helper missing, crashed, bad JSON) —
+            // report as an error outcome the route can render, not a panic.
+            Err(e) => return ReauthOutcome::Error { message: e.to_string() },
+        };
+        match response.status {
+            HelperStatus::ReauthOk => ReauthOutcome::Active,
+            HelperStatus::InvalidOtp => ReauthOutcome::InvalidOtp,
+            HelperStatus::Error => ReauthOutcome::Error {
+                message: response
+                    .message
+                    .unwrap_or_else(|| format!("{} reauth error", self.name)),
+            },
+            // A helper that answers a reauth with a pull status is misbehaving.
+            HelperStatus::Ok | HelperStatus::NeedsReauth => ReauthOutcome::Error {
+                message: format!("{} returned a pull status to a reauth request", self.name),
+            },
         }
     }
 }
@@ -351,16 +389,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pull_maps_needs_reauth_to_error() {
+    async fn pull_needs_reauth_status_yields_needs_reauth_error() {
         let (_helper_dir, helper) = emit_helper(r#"{"status":"needs_reauth"}"#);
         let (_db, store, projections) = test_db_and_runner().await;
         let source = source_with(helper, vec![], store, projections);
 
         let err = source.pull().await.unwrap_err();
+        // The distinct variant is what lets the registry flip AuthState — a
+        // generic Upstream error wouldn't.
         match err {
-            ImportError::Upstream(msg) => assert!(msg.contains("re-auth"), "msg: {msg}"),
-            other => panic!("expected Upstream, got {other:?}"),
+            ImportError::NeedsReauth(msg) => assert!(msg.contains("reconnect"), "msg: {msg}"),
+            other => panic!("expected NeedsReauth, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn reauth_ok_status_yields_active() {
+        let (_helper_dir, helper) = emit_helper(r#"{"status":"reauth_ok"}"#);
+        let (_db, store, projections) = test_db_and_runner().await;
+        let source = source_with(helper, vec![], store, projections);
+
+        assert_eq!(source.reauth("123456").await, ReauthOutcome::Active);
+    }
+
+    #[tokio::test]
+    async fn reauth_invalid_otp_status_yields_invalid_otp() {
+        let (_helper_dir, helper) = emit_helper(r#"{"status":"invalid_otp"}"#);
+        let (_db, store, projections) = test_db_and_runner().await;
+        let source = source_with(helper, vec![], store, projections);
+
+        assert_eq!(source.reauth("000000").await, ReauthOutcome::InvalidOtp);
+    }
+
+    #[tokio::test]
+    async fn reauth_error_status_carries_message() {
+        let (_helper_dir, helper) =
+            emit_helper(r#"{"status":"error","message":"driver crashed"}"#);
+        let (_db, store, projections) = test_db_and_runner().await;
+        let source = source_with(helper, vec![], store, projections);
+
+        match source.reauth("123456").await {
+            ReauthOutcome::Error { message } => assert!(message.contains("driver crashed")),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reauth_sends_reauth_verb_with_otp_on_stdin() {
+        // Capture stdin to prove the OTP rides the wire in the tagged form.
+        let (_helper_dir, helper) = write_shell_helper(
+            "#!/bin/bash\ncat > \"$1\"\necho '{\"status\":\"reauth_ok\"}'\n",
+        );
+        let captured = _helper_dir.path().join("stdin.txt");
+        let (_db, store, projections) = test_db_and_runner().await;
+        let source = source_with(
+            helper,
+            vec![captured.to_string_lossy().to_string()],
+            store,
+            projections,
+        );
+
+        source.reauth("987654").await;
+        let sent = std::fs::read_to_string(&captured).unwrap();
+        assert_eq!(sent.trim(), r#"{"verb":"reauth","otp":"987654"}"#);
     }
 
     #[tokio::test]
