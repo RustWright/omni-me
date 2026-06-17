@@ -12,13 +12,14 @@
 
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
 
+use omni_me_core::auto_import::config::{self, SourceDef};
 use omni_me_core::auto_import_scheduler::{
     ReauthOutcome, SourceStatus, classify_source_health, SourceHealth,
 };
@@ -30,6 +31,14 @@ pub fn auto_import_routes() -> Router<AppState> {
         .route("/auto_import/status", get(status_handler))
         .route("/auto_import/tick", post(tick_handler))
         .route("/auto_import/reauth", post(reauth_handler))
+        // Source-definition CRUD (3.7). These read/write the server-side
+        // `sources.toml` only — restart-to-apply: the running registry is NOT
+        // mutated, so an add/edit/remove takes effect on the next server boot.
+        .route(
+            "/auto_import/sources",
+            get(list_sources_handler).post(add_source_handler),
+        )
+        .route("/auto_import/sources/{name}", delete(remove_source_handler))
 }
 
 #[derive(Serialize)]
@@ -112,4 +121,62 @@ async fn reauth_handler(
         }
         Err(e) => Err((StatusCode::BAD_GATEWAY, e.to_string())),
     }
+}
+
+// =============================================================================
+// Source-definition CRUD (3.7) — restart-to-apply
+// =============================================================================
+//
+// These edit the server-side `sources.toml` only; they never touch the running
+// registry, so a change takes effect on the next server boot. The UI surfaces
+// this as "applies on next restart". Single-user-behind-Tailscale posture means
+// the load-modify-save is unguarded against concurrent writers (acceptable per
+// [[project-auth-deferred]]); `config::save` is itself atomic (temp + rename).
+
+fn internal_err<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
+    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+/// `GET /auto_import/sources` — the *configured* source definitions (distinct
+/// from `/status`'s *running* snapshot). Drives the Settings management list.
+async fn list_sources_handler() -> Result<Json<Vec<SourceDef>>, (StatusCode, String)> {
+    let path = config::default_path().map_err(internal_err)?;
+    let cfg = config::load(&path).map_err(internal_err)?;
+    Ok(Json(cfg.sources))
+}
+
+/// `POST /auto_import/sources` — add or replace a definition (keyed by name).
+/// Rejected with 400 if the definition is invalid (missing required fields /
+/// unknown type) so a bad config never reaches the file.
+async fn add_source_handler(
+    Json(def): Json<SourceDef>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    config::validate(&def).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let path = config::default_path().map_err(internal_err)?;
+    let mut cfg = config::load(&path).map_err(internal_err)?;
+    // Upsert by name (edit = replace).
+    cfg.sources.retain(|s| s.name != def.name);
+    cfg.sources.push(def);
+    config::save(&path, &cfg).map_err(internal_err)?;
+    Ok(Json(
+        serde_json::json!({ "status": "saved", "applies": "next_restart" }),
+    ))
+}
+
+/// `DELETE /auto_import/sources/{name}` — remove a definition. 404 if no such
+/// name is configured.
+async fn remove_source_handler(
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let path = config::default_path().map_err(internal_err)?;
+    let mut cfg = config::load(&path).map_err(internal_err)?;
+    let before = cfg.sources.len();
+    cfg.sources.retain(|s| s.name != name);
+    if cfg.sources.len() == before {
+        return Err((StatusCode::NOT_FOUND, format!("no source named '{name}'")));
+    }
+    config::save(&path, &cfg).map_err(internal_err)?;
+    Ok(Json(
+        serde_json::json!({ "status": "removed", "applies": "next_restart" }),
+    ))
 }

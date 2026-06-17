@@ -10,7 +10,7 @@ default = []
 # default features off — keeps openssl-sys out of the Android dep tree
 # (per [[feedback-llm-server-side]] and [[project-auto-import-host]] the
 # scheduler lives in `omni-me-server`, not in the client).
-auto-import = ["dep:imap", "dep:native-tls"]
+auto-import = ["dep:imap", "dep:native-tls", "dep:csv"]
 
 [dependencies]
 surrealdb = { version = "3", features = ["kv-surrealkv"] }
@@ -37,6 +37,7 @@ mail-parser = "0.10"
 tempfile = "3"
 imap = { version = "2", optional = true }
 native-tls = { version = "0.2", optional = true }
+csv = { version = "1", optional = true }
 
 
 [dev-dependencies]

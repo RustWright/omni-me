@@ -554,30 +554,66 @@ fn outcome_summary(outcome: &serde_json::Value) -> String {
     }
 }
 
+/// Source name from a config-definition JSON object.
+fn config_name(def: &serde_json::Value) -> Option<String> {
+    def.get("name").and_then(|v| v.as_str()).map(str::to_string)
+}
+
+/// One-line human summary of a config definition for the management list.
+fn config_summary(def: &serde_json::Value) -> String {
+    match def.get("type").and_then(|v| v.as_str()).unwrap_or("?") {
+        "csv" => {
+            let path = def.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let account = def.get("account").and_then(|v| v.as_str()).unwrap_or("");
+            format!("CSV · {path} → {account}")
+        }
+        "subprocess" => {
+            let cmd = def.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            format!("Subprocess · {cmd}")
+        }
+        other => other.to_string(),
+    }
+}
+
 #[component]
 fn AutoImportSection() -> Element {
     let mut sources: Signal<Option<Vec<AutoImportSourceView>>> = use_signal(|| None);
+    let mut configs: Signal<Option<Vec<serde_json::Value>>> = use_signal(|| None);
     let mut loading_msg = use_signal(|| None::<String>);
     let ticking = use_signal(|| None::<String>);
+    let mut show_form = use_signal(|| false);
+    let mut edit_target = use_signal(|| None::<serde_json::Value>);
 
+    // Re-pull both the *configured* definitions and the *running* status.
     let refresh = move || {
         spawn(async move {
             match bridge::invoke_list_auto_import_sources().await {
-                Ok(list) => {
-                    sources.set(Some(list));
-                    loading_msg.set(None);
-                }
-                Err(e) => loading_msg.set(Some(format!("Couldn't load sources: {e}"))),
+                Ok(list) => sources.set(Some(list)),
+                Err(e) => loading_msg.set(Some(format!("Couldn't load running sources: {e}"))),
+            }
+            match bridge::invoke_list_source_configs().await {
+                Ok(list) => configs.set(Some(list)),
+                Err(e) => loading_msg.set(Some(format!("Couldn't load source configs: {e}"))),
             }
         });
     };
 
     use_future(move || async move {
-        match bridge::invoke_list_auto_import_sources().await {
-            Ok(list) => sources.set(Some(list)),
-            Err(e) => loading_msg.set(Some(format!("Couldn't load sources: {e}"))),
+        if let Ok(list) = bridge::invoke_list_auto_import_sources().await {
+            sources.set(Some(list));
+        }
+        if let Ok(list) = bridge::invoke_list_source_configs().await {
+            configs.set(Some(list));
         }
     });
+
+    // By-name lookup of running status so a configured row can show whether it's
+    // live yet (it isn't, until the server restarts — restart-to-apply).
+    let runtime_list = sources.read().clone().unwrap_or_default();
+    let running: std::collections::HashMap<String, AutoImportSourceView> = runtime_list
+        .iter()
+        .map(|s| (s.name.clone(), s.clone()))
+        .collect();
 
     rsx! {
         div { class: "mb-10 space-y-4",
@@ -591,72 +627,137 @@ fn AutoImportSection() -> Element {
             }
 
             p { class: "text-sm text-obsidian-text-muted",
-                "Background pullers that import transactions from WealthSimple, Wise, and "
-                "monitored email inboxes. Configuration lives in the server's "
-                span { class: "font-mono text-xs", "credentials.toml" }
-                "; this panel surfaces what's running, when each source last ticked, and lets you trigger an out-of-band fetch."
+                "Background pullers that import transactions from configured sources — "
+                "CSV files and subprocess helpers (plus, in private builds, bank adapters). "
+                "Add or remove generic sources below; changes are saved on the server and "
+                "apply on its next restart."
             }
 
-            match &*sources.read() {
-                None => rsx! {
-                    div { class: "text-sm text-obsidian-text-muted italic", "Loading…" }
-                },
-                Some(list) if list.is_empty() => rsx! {
-                    div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-sm text-obsidian-text-muted",
-                        "No auto-import sources configured. Edit "
-                        span { class: "font-mono text-xs", "credentials.toml" }
-                        " on the server and restart it to enable Wise / WealthSimple / IMAP pollers."
+            // --- Configured sources (editable) ---
+            div { class: "space-y-2",
+                div { class: "flex items-center justify-between",
+                    h3 { class: "text-sm font-semibold text-obsidian-text", "Configured sources" }
+                    button {
+                        class: "text-xs px-2 py-1 rounded bg-obsidian-accent/10 text-obsidian-accent hover:bg-obsidian-accent/20 transition-colors",
+                        onclick: move |_| { edit_target.set(None); show_form.set(true); },
+                        "+ Add source"
                     }
-                },
-                Some(list) => {
-                    let rows = list.clone();
-                    rsx! {
-                        div { class: "space-y-2",
-                            for src in rows.into_iter() {
-                                AutoImportRow {
-                                    source: src.clone(),
-                                    ticking_now: ticking.read().as_deref() == Some(src.name.as_str()),
-                                    on_tick: {
-                                        let name = src.name.clone();
-                                        let mut ticking = ticking;
-                                        let mut sources = sources;
-                                        let mut loading_msg = loading_msg;
-                                        move |_: ()| {
-                                            let name = name.clone();
-                                            ticking.set(Some(name.clone()));
-                                            spawn(async move {
-                                                let result = bridge::invoke_trigger_auto_import_tick(&name).await;
-                                                match result {
-                                                    Ok(r) => loading_msg.set(Some(format!(
-                                                        "Manual tick on '{name}' appended {} events.",
-                                                        r.events_appended
-                                                    ))),
-                                                    Err(e) => loading_msg.set(Some(format!(
-                                                        "Manual tick on '{name}' failed: {e}"
-                                                    ))),
-                                                }
-                                                ticking.set(None);
-                                                // Re-pull status after the tick so the
-                                                // row reflects the new last_outcome.
-                                                if let Ok(list) = bridge::invoke_list_auto_import_sources().await {
-                                                    sources.set(Some(list));
-                                                }
-                                            });
+                }
+
+                if *show_form.read() {
+                    AddSourceForm {
+                        initial: edit_target.read().clone(),
+                        on_saved: move |_: ()| {
+                            show_form.set(false);
+                            edit_target.set(None);
+                            loading_msg.set(Some("Saved. Applies on the next server restart.".into()));
+                            refresh();
+                        },
+                        on_cancel: move |_: ()| { show_form.set(false); edit_target.set(None); },
+                    }
+                }
+
+                match configs.read().as_ref() {
+                    None => rsx! {
+                        div { class: "text-sm text-obsidian-text-muted italic", "Loading…" }
+                    },
+                    Some(list) if list.is_empty() => rsx! {
+                        div { class: "p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-sm text-obsidian-text-muted",
+                            "No generic sources configured yet. Use “+ Add source” to declare a CSV file or a subprocess helper."
+                        }
+                    },
+                    Some(list) => {
+                        let defs = list.clone();
+                        rsx! {
+                            div { class: "space-y-2",
+                                for def in defs.into_iter() {
+                                    {
+                                        let nm = config_name(&def);
+                                        let run = nm.as_ref().and_then(|n| running.get(n)).cloned();
+                                        rsx! {
+                                            ConfiguredSourceRow {
+                                                def: def.clone(),
+                                                running_health: run.map(|s| s.health),
+                                                on_edit: move |d: serde_json::Value| {
+                                                    edit_target.set(Some(d));
+                                                    show_form.set(true);
+                                                },
+                                                on_removed: move |_: ()| {
+                                                    loading_msg.set(Some("Removed. Applies on the next server restart.".into()));
+                                                    refresh();
+                                                },
+                                            }
                                         }
-                                    },
-                                    on_reauth_success: {
-                                        let mut sources = sources;
-                                        move |_: ()| {
-                                            // A successful reconnect clears the source's
-                                            // NeedsReauth server-side; re-pull so the row
-                                            // drops back to its normal health state.
-                                            spawn(async move {
-                                                if let Ok(list) = bridge::invoke_list_auto_import_sources().await {
-                                                    sources.set(Some(list));
-                                                }
-                                            });
-                                        }
-                                    },
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- Running now (live status) ---
+            div { class: "space-y-2 pt-2",
+                h3 { class: "text-sm font-semibold text-obsidian-text", "Running now" }
+                match &*sources.read() {
+                    None => rsx! {
+                        div { class: "text-sm text-obsidian-text-muted italic", "Loading…" }
+                    },
+                    Some(list) if list.is_empty() => rsx! {
+                        div { class: "p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-sm text-obsidian-text-muted",
+                            "Nothing running. Configured sources start on the next server restart; built-in bank sources (private builds) appear here once they tick."
+                        }
+                    },
+                    Some(list) => {
+                        let rows = list.clone();
+                        rsx! {
+                            div { class: "space-y-2",
+                                for src in rows.into_iter() {
+                                    AutoImportRow {
+                                        source: src.clone(),
+                                        ticking_now: ticking.read().as_deref() == Some(src.name.as_str()),
+                                        on_tick: {
+                                            let name = src.name.clone();
+                                            let mut ticking = ticking;
+                                            let mut sources = sources;
+                                            let mut loading_msg = loading_msg;
+                                            move |_: ()| {
+                                                let name = name.clone();
+                                                ticking.set(Some(name.clone()));
+                                                spawn(async move {
+                                                    let result = bridge::invoke_trigger_auto_import_tick(&name).await;
+                                                    match result {
+                                                        Ok(r) => loading_msg.set(Some(format!(
+                                                            "Manual tick on '{name}' appended {} events.",
+                                                            r.events_appended
+                                                        ))),
+                                                        Err(e) => loading_msg.set(Some(format!(
+                                                            "Manual tick on '{name}' failed: {e}"
+                                                        ))),
+                                                    }
+                                                    ticking.set(None);
+                                                    // Re-pull status after the tick so the
+                                                    // row reflects the new last_outcome.
+                                                    if let Ok(list) = bridge::invoke_list_auto_import_sources().await {
+                                                        sources.set(Some(list));
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        on_reauth_success: {
+                                            let mut sources = sources;
+                                            move |_: ()| {
+                                                // A successful reconnect clears the source's
+                                                // NeedsReauth server-side; re-pull so the row
+                                                // drops back to its normal health state.
+                                                spawn(async move {
+                                                    if let Ok(list) = bridge::invoke_list_auto_import_sources().await {
+                                                        sources.set(Some(list));
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    }
                                 }
                             }
                         }
@@ -856,6 +957,345 @@ fn AutoImportRow(
                             "{text}"
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// One row in the *Configured sources* list (3.7). Shows the definition's name,
+/// type summary, and whether it's live yet — a configured-but-not-running source
+/// shows an amber "pending restart" (restart-to-apply), a running one borrows the
+/// live health badge. Offers Edit (re-open the form prefilled) + Remove.
+#[component]
+fn ConfiguredSourceRow(
+    def: serde_json::Value,
+    running_health: Option<String>,
+    on_edit: EventHandler<serde_json::Value>,
+    on_removed: EventHandler<()>,
+) -> Element {
+    let name = config_name(&def).unwrap_or_else(|| "(unnamed)".into());
+    let summary = config_summary(&def);
+    let enabled = def.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    let mut removing = use_signal(|| false);
+    let mut err = use_signal(|| None::<String>);
+
+    let (badge_label, badge_classes): (String, &'static str) = match &running_health {
+        Some(h) => {
+            let (label, classes) = health_badge(h);
+            (label.to_string(), classes)
+        }
+        None => (
+            "pending restart".into(),
+            "bg-amber-500/10 text-amber-300 border border-amber-500/20",
+        ),
+    };
+
+    rsx! {
+        div { class: "p-3 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+            div { class: "flex items-center justify-between gap-2",
+                div { class: "min-w-0",
+                    div { class: "flex items-center gap-2",
+                        span { class: "font-mono text-sm text-obsidian-text truncate", "{name}" }
+                        span { class: "text-[10px] px-1.5 py-0.5 rounded {badge_classes}", "{badge_label}" }
+                        if !enabled {
+                            span { class: "text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-obsidian-text-muted",
+                                "disabled"
+                            }
+                        }
+                    }
+                    div { class: "text-xs text-obsidian-text-muted truncate mt-0.5", "{summary}" }
+                }
+                div { class: "flex items-center gap-1 shrink-0",
+                    button {
+                        class: "text-xs px-2 py-1 rounded hover:bg-white/5 text-obsidian-text-muted hover:text-obsidian-text transition-colors",
+                        onclick: {
+                            let def = def.clone();
+                            move |_| on_edit.call(def.clone())
+                        },
+                        "Edit"
+                    }
+                    button {
+                        class: "text-xs px-2 py-1 rounded hover:bg-red-500/10 text-obsidian-text-muted hover:text-red-300 transition-colors disabled:opacity-50",
+                        disabled: *removing.read(),
+                        onclick: {
+                            let name = name.clone();
+                            move |_| {
+                                let name = name.clone();
+                                removing.set(true);
+                                err.set(None);
+                                spawn(async move {
+                                    match bridge::invoke_remove_source_config(&name).await {
+                                        Ok(()) => on_removed.call(()),
+                                        Err(e) => {
+                                            err.set(Some(e));
+                                            removing.set(false);
+                                        }
+                                    }
+                                });
+                            }
+                        },
+                        if *removing.read() { "Removing…" } else { "Remove" }
+                    }
+                }
+            }
+            if let Some(e) = &*err.read() {
+                div { class: "text-xs text-red-300 mt-1", "{e}" }
+            }
+        }
+    }
+}
+
+/// Add / edit a config-driven source (3.7). Builds the source definition as an
+/// untyped JSON object (the client crate has no `core::auto_import` types) and
+/// posts it; the server validates + persists. `initial = Some(def)` is edit
+/// mode (the name is the key, so it's locked); `None` is add mode.
+#[component]
+fn AddSourceForm(
+    initial: Option<serde_json::Value>,
+    on_saved: EventHandler<()>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    let is_edit = initial.is_some();
+    let init = initial.clone().unwrap_or_else(|| serde_json::json!({}));
+    let g = |k: &str| {
+        init.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let gcol = |k: &str| {
+        init.get("columns")
+            .and_then(|c| c.get(k))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let or = |s: String, dflt: &str| if s.is_empty() { dflt.to_string() } else { s };
+
+    let mut name = use_signal(|| g("name"));
+    let mut kind = use_signal(|| or(g("type"), "csv"));
+    // csv fields
+    let mut path = use_signal(|| g("path"));
+    let mut account = use_signal(|| g("account"));
+    let mut commodity = use_signal(|| or(g("commodity"), "CAD"));
+    let mut has_header =
+        use_signal(|| init.get("has_header").and_then(|v| v.as_bool()).unwrap_or(true));
+    let mut date_format = use_signal(|| or(g("date_format"), "%Y-%m-%d"));
+    let mut col_date = use_signal(|| or(gcol("date"), "Date"));
+    let mut col_amount = use_signal(|| or(gcol("amount"), "Amount"));
+    let mut col_desc = use_signal(|| or(gcol("description"), "Description"));
+    let mut col_id = use_signal(|| gcol("id"));
+    // subprocess fields
+    let mut command = use_signal(|| g("command"));
+    let mut args = use_signal(|| {
+        init.get("args")
+            .and_then(|a| a.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default()
+    });
+
+    let mut saving = use_signal(|| false);
+    let mut err = use_signal(|| None::<String>);
+
+    let lbl = "block text-xs text-obsidian-text-muted mb-1";
+    let inp = "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none";
+
+    let submit = move |_| {
+        let nm = name.read().trim().to_string();
+        if nm.is_empty() {
+            err.set(Some("Name is required.".into()));
+            return;
+        }
+        if !nm
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            err.set(Some(
+                "Name may contain only letters, numbers, dashes, and underscores.".into(),
+            ));
+            return;
+        }
+
+        let source = if kind.read().as_str() == "csv" {
+            let path_v = path.read().trim().to_string();
+            let account_v = account.read().trim().to_string();
+            if path_v.is_empty() {
+                err.set(Some("File path is required.".into()));
+                return;
+            }
+            if account_v.is_empty() {
+                err.set(Some("Account is required.".into()));
+                return;
+            }
+            let mut cols = serde_json::json!({
+                "date": col_date.read().trim(),
+                "amount": col_amount.read().trim(),
+                "description": col_desc.read().trim(),
+            });
+            let id_v = col_id.read().trim().to_string();
+            if !id_v.is_empty() {
+                cols["id"] = serde_json::json!(id_v);
+            }
+            serde_json::json!({
+                "name": nm,
+                "type": "csv",
+                "enabled": true,
+                "path": path_v,
+                "account": account_v,
+                "commodity": or(commodity.read().trim().to_string(), "CAD"),
+                "has_header": *has_header.read(),
+                "date_format": or(date_format.read().trim().to_string(), "%Y-%m-%d"),
+                "columns": cols,
+            })
+        } else {
+            let command_v = command.read().trim().to_string();
+            if command_v.is_empty() {
+                err.set(Some("Command is required.".into()));
+                return;
+            }
+            let arg_vec: Vec<String> =
+                args.read().split_whitespace().map(str::to_string).collect();
+            serde_json::json!({
+                "name": nm,
+                "type": "subprocess",
+                "enabled": true,
+                "command": command_v,
+                "args": arg_vec,
+            })
+        };
+
+        saving.set(true);
+        err.set(None);
+        spawn(async move {
+            match bridge::invoke_add_source_config(source).await {
+                Ok(()) => on_saved.call(()),
+                Err(e) => {
+                    err.set(Some(e));
+                    saving.set(false);
+                }
+            }
+        });
+    };
+
+    rsx! {
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-accent/30 rounded-lg space-y-3",
+            div { class: "text-sm font-semibold text-obsidian-text",
+                if is_edit { "Edit source" } else { "Add source" }
+            }
+
+            div { class: "grid grid-cols-2 gap-3",
+                div {
+                    label { class: lbl, "Name" }
+                    input {
+                        class: inp,
+                        r#type: "text",
+                        placeholder: "my-checking",
+                        value: "{name}",
+                        disabled: is_edit,
+                        oninput: move |e| name.set(e.value()),
+                    }
+                }
+                div {
+                    label { class: lbl, "Type" }
+                    select {
+                        class: inp,
+                        value: "{kind}",
+                        onchange: move |e| kind.set(e.value()),
+                        option { value: "csv", "CSV file" }
+                        option { value: "subprocess", "Subprocess helper" }
+                    }
+                }
+            }
+
+            if kind.read().as_str() == "csv" {
+                div { class: "space-y-3",
+                    div {
+                        label { class: lbl, "File path (on server)" }
+                        input { class: inp, placeholder: "/data/imports/checking.csv", value: "{path}", oninput: move |e| path.set(e.value()) }
+                    }
+                    div { class: "grid grid-cols-2 gap-3",
+                        div {
+                            label { class: lbl, "Account" }
+                            input { class: inp, placeholder: "Assets:Bank:Chequing", value: "{account}", oninput: move |e| account.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Commodity" }
+                            input { class: inp, placeholder: "CAD", value: "{commodity}", oninput: move |e| commodity.set(e.value()) }
+                        }
+                    }
+                    div { class: "grid grid-cols-3 gap-3",
+                        div {
+                            label { class: lbl, "Date column" }
+                            input { class: inp, value: "{col_date}", oninput: move |e| col_date.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Amount column" }
+                            input { class: inp, value: "{col_amount}", oninput: move |e| col_amount.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Description column" }
+                            input { class: inp, value: "{col_desc}", oninput: move |e| col_desc.set(e.value()) }
+                        }
+                    }
+                    div { class: "grid grid-cols-2 gap-3",
+                        div {
+                            label { class: lbl, "Id column (optional)" }
+                            input { class: inp, placeholder: "Ref", value: "{col_id}", oninput: move |e| col_id.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Date format" }
+                            input { class: inp, placeholder: "%Y-%m-%d", value: "{date_format}", oninput: move |e| date_format.set(e.value()) }
+                        }
+                    }
+                    label { class: "flex items-center gap-2 text-xs text-obsidian-text-muted",
+                        input {
+                            r#type: "checkbox",
+                            checked: *has_header.read(),
+                            onchange: move |e| has_header.set(e.value() == "true"),
+                        }
+                        "File has a header row"
+                    }
+                }
+            } else {
+                div { class: "space-y-3",
+                    div {
+                        label { class: lbl, "Command" }
+                        input { class: inp, placeholder: "/opt/omni/helpers/my-scraper", value: "{command}", oninput: move |e| command.set(e.value()) }
+                    }
+                    div {
+                        label { class: lbl, "Args (space-separated)" }
+                        input { class: inp, placeholder: "--since 30d", value: "{args}", oninput: move |e| args.set(e.value()) }
+                    }
+                }
+            }
+
+            div { class: "text-xs text-obsidian-text-muted",
+                "Saved to the server's "
+                span { class: "font-mono", "sources.toml" }
+                ". New and changed sources start on the next server restart."
+            }
+
+            if let Some(e) = &*err.read() {
+                div { class: "text-xs text-red-300", "{e}" }
+            }
+
+            div { class: "flex items-center gap-2",
+                button {
+                    class: "px-3 py-1.5 rounded bg-obsidian-accent text-obsidian-bg text-sm font-medium disabled:opacity-60",
+                    disabled: *saving.read(),
+                    onclick: submit,
+                    if *saving.read() { "Saving…" } else { "Save" }
+                }
+                button {
+                    class: "px-3 py-1.5 rounded text-sm text-obsidian-text-muted hover:text-obsidian-text transition-colors",
+                    onclick: move |_| on_cancel.call(()),
+                    "Cancel"
                 }
             }
         }

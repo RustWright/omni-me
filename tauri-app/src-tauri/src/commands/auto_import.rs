@@ -149,6 +149,98 @@ pub async fn reauth_source(
 }
 
 // =============================================================================
+// Source-definition CRUD (3.7) — thin HTTP proxies to /auto_import/sources
+// =============================================================================
+//
+// Source definitions are untyped `serde_json::Value` at this layer: the client
+// builds `core` WITHOUT the `auto-import` feature (keeps IMAP/openssl out of the
+// Android tree), so `config::SourceDef` isn't in scope here. The frontend
+// assembles the JSON object; the server validates + persists. Restart-to-apply:
+// these mutate `sources.toml` only, so changes take effect on the next restart.
+
+/// `GET /auto_import/sources` — the configured source definitions (distinct
+/// from the running `/status` list).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_source_configs(
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let server_url = state.server_url.read().await.clone();
+    let url = format!("{}/auto_import/sources", server_url.trim_end_matches('/'));
+    let resp = state
+        .http
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("source configs fetch: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("source configs: server returned {}", resp.status()));
+    }
+    resp.json::<Vec<serde_json::Value>>()
+        .await
+        .map_err(|e| format!("source configs decode: {e}"))
+}
+
+/// `POST /auto_import/sources` — add or replace a definition (keyed by name).
+/// A 400 (invalid definition) surfaces as an `Err` the form renders inline.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn add_source_config(
+    state: State<'_, AppState>,
+    source: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let server_url = state.server_url.read().await.clone();
+    let url = format!("{}/auto_import/sources", server_url.trim_end_matches('/'));
+    let resp = state
+        .http
+        .post(&url)
+        .json(&source)
+        .send()
+        .await
+        .map_err(|e| format!("add source: {e}"))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("add source body: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("server returned {status}: {body}"));
+    }
+    serde_json::from_str::<serde_json::Value>(&body)
+        .map_err(|e| format!("add source decode: {e}"))
+}
+
+/// `DELETE /auto_import/sources/{name}` — remove a definition.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn remove_source_config(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let server_url = state.server_url.read().await.clone();
+    // Source names are constrained to simple identifiers (the Add form
+    // rejects path-unsafe characters), so the name is path-safe as-is.
+    let url = format!(
+        "{}/auto_import/sources/{}",
+        server_url.trim_end_matches('/'),
+        name
+    );
+    let resp = state
+        .http
+        .delete(&url)
+        .send()
+        .await
+        .map_err(|e| format!("remove source: {e}"))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("remove source body: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("server returned {status}: {body}"));
+    }
+    serde_json::from_str::<serde_json::Value>(&body)
+        .map_err(|e| format!("remove source decode: {e}"))
+}
+
+// =============================================================================
 // Batch review (Phase 3.10.5)
 // =============================================================================
 

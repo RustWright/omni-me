@@ -95,19 +95,29 @@ pub async fn run(cfg: RunConfig) {
     // Gemini key resolution order: GEMINI_API_KEY env var → credentials.toml
     // [gemini].api_key. Env wins so CI/secret-manager flows still work; the
     // credentials fallback lets local dev boot without exporting the key.
-    let api_key = match std::env::var("GEMINI_API_KEY") {
-        Ok(v) if !v.is_empty() => v,
-        _ => {
-            let creds_path = credentials::default_path()
-                .expect("XDG_CONFIG_HOME / HOME must be set for credentials path");
-            credentials::load(&creds_path)
+    //
+    // Both are OPTIONAL: a zero-config public engine must boot with no key at
+    // all (3.4). When absent, the client carries an empty key and LLM-backed
+    // routes (`/notes/{id}/process`) fail gracefully at call time with an error
+    // response — they never crash the server at boot. Document extraction has
+    // its own NullExtractor fallback below.
+    let api_key = std::env::var("GEMINI_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .or_else(|| {
+            credentials::default_path()
                 .ok()
+                .and_then(|p| credentials::load(&p).ok())
                 .and_then(|c| c.gemini.map(|g| g.api_key))
                 .filter(|k| !k.is_empty())
-                .expect("GEMINI_API_KEY env var unset and no gemini.api_key in credentials.toml")
-        }
-    };
-    let llm_client = Arc::new(GeminiClient::new(api_key));
+        });
+    if api_key.is_none() {
+        tracing::warn!(
+            "no Gemini API key (GEMINI_API_KEY unset + no gemini.api_key in credentials.toml) — \
+             LLM note-processing will return errors; document extraction uses NullExtractor"
+        );
+    }
+    let llm_client = Arc::new(GeminiClient::new(api_key.unwrap_or_default()));
 
     let blob_dir: PathBuf = std::env::var("BLOB_DIR")
         .unwrap_or_else(|_| DEFAULT_BLOB_DIR.into())
@@ -122,9 +132,13 @@ pub async fn run(cfg: RunConfig) {
     // Document extractor (NullExtractor fallback when no Gemini key) — lifted
     // out of any auto-import conditional so AppState always carries one; the
     // /documents/extract route needs it regardless of auto-import config.
-    let creds_path = credentials::default_path()
-        .expect("XDG_CONFIG_HOME / HOME must be set for credentials path");
-    let extractor: Arc<dyn DocumentExtractor> = match credentials::load(&creds_path).ok() {
+    // Path resolution + load are both graceful: a missing credentials file (or
+    // even an unresolvable config dir) degrades to NullExtractor rather than
+    // panicking — part of the zero-config boot guarantee (3.4).
+    let extractor: Arc<dyn DocumentExtractor> = match credentials::default_path()
+        .ok()
+        .and_then(|p| credentials::load(&p).ok())
+    {
         Some(c) => build_extractor(&c),
         None => {
             tracing::warn!("no credentials.toml — documents/extract will use NullExtractor");

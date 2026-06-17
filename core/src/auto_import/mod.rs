@@ -18,6 +18,8 @@ use crate::events::{AutoImportBatchProposedPayload, DraftTransaction, EventType,
 use chrono::Utc;
 use serde_json::Value;
 
+pub mod config;
+pub mod csv;
 pub mod imap;
 pub mod imap_real;
 pub mod imap_source;

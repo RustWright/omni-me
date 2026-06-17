@@ -2420,6 +2420,100 @@ pub async fn invoke_reauth_source(source: &str, otp: &str) -> Result<serde_json:
 }
 
 // -----------------------------------------------------------------------------
+// Source-definition CRUD (3.7) — manage config-driven sources from Settings
+// -----------------------------------------------------------------------------
+//
+// Definitions are untyped JSON end-to-end: the form builds the object, the
+// server validates + persists it to `sources.toml`. Restart-to-apply, so a
+// just-saved source shows "pending restart" until the server reboots. The mock
+// keeps an in-memory list (single-threaded WASM) so add/remove reflect live for
+// the Playwright walkthrough — matching how the real *configured* list updates
+// immediately even though the *running* status won't until restart.
+
+#[cfg(feature = "mock")]
+thread_local! {
+    static MOCK_SOURCE_CONFIGS: std::cell::RefCell<Vec<serde_json::Value>> =
+        std::cell::RefCell::new(vec![serde_json::json!({
+            "name": "my-checking",
+            "type": "csv",
+            "enabled": true,
+            "path": "/data/imports/checking.csv",
+            "account": "Assets:MyBank:Checking",
+            "commodity": "CAD",
+            "has_header": true,
+            "columns": { "date": "Date", "amount": "Amount", "description": "Memo" }
+        })]);
+}
+
+/// The configured source definitions (distinct from the running `/status`
+/// list). One entry per `[[source]]` in the server's `sources.toml`.
+pub async fn invoke_list_source_configs() -> Result<Vec<serde_json::Value>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(MOCK_SOURCE_CONFIGS.with(|c| c.borrow().clone()))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_source_configs", &Args {}).await
+    }
+}
+
+/// Add or replace a source definition (keyed by `name`). A server-side
+/// validation failure (missing required field / unknown type) surfaces as
+/// `Err`, which the form renders inline.
+pub async fn invoke_add_source_config(source: serde_json::Value) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        crate::timer::sleep_ms(400).await;
+        let name = source
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if name.trim().is_empty() {
+            return Err("source name is required".into());
+        }
+        MOCK_SOURCE_CONFIGS.with(|c| {
+            let mut v = c.borrow_mut();
+            v.retain(|s| s.get("name").and_then(|n| n.as_str()) != Some(name.as_str()));
+            v.push(source.clone());
+        });
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            source: &'a serde_json::Value,
+        }
+        invoke_unit("add_source_config", &Args { source: &source }).await
+    }
+}
+
+/// Remove a source definition by name.
+pub async fn invoke_remove_source_config(name: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        crate::timer::sleep_ms(300).await;
+        MOCK_SOURCE_CONFIGS.with(|c| {
+            c.borrow_mut()
+                .retain(|s| s.get("name").and_then(|n| n.as_str()) != Some(name));
+        });
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            name: &'a str,
+        }
+        invoke_unit("remove_source_config", &Args { name }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Auto-import batch review (Phase 3.10.5/.6)
 // -----------------------------------------------------------------------------
 

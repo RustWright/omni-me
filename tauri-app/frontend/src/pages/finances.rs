@@ -4392,8 +4392,9 @@ fn default_statement_source_label() -> String {
 
 #[component]
 fn StatementImportView(on_back: EventHandler<()>) -> Element {
-    let mut source_account: Signal<String> =
-        use_signal(|| "Assets:CIBC:Chequing".to_string());
+    // No bank-specific default — the public engine ships with zero declared
+    // accounts (3.4). The field is free-text; the placeholder shows the shape.
+    let mut source_account: Signal<String> = use_signal(String::new);
     let mut statement_source: Signal<String> = use_signal(default_statement_source_label);
     let mut commodity: Signal<String> = use_signal(|| "CAD".to_string());
     let mut status: Signal<Option<String>> = use_signal(|| None);
@@ -4467,8 +4468,9 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                     "Source account"
                 }
                 input {
-                    class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                    class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
                     r#type: "text",
+                    placeholder: "Assets:Bank:Chequing",
                     value: "{source_account.read()}",
                     oninput: move |e| source_account.set(e.value()),
                 }
@@ -4852,7 +4854,8 @@ fn CandidateSide(txn: crate::types::ReconciliationTxnPreview) -> Element {
 
 #[component]
 fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
-    let mut account: Signal<String> = use_signal(|| "Assets:CIBC:Chequing".to_string());
+    // No bank-specific default (3.4) — placeholder shows the shape instead.
+    let mut account: Signal<String> = use_signal(String::new);
     let mut commodity: Signal<String> = use_signal(|| "CAD".to_string());
     let mut statement_balance: Signal<String> = use_signal(String::new);
     let mut as_of: Signal<String> = use_signal(|| chrono::Utc::now().date_naive().to_string());
@@ -4900,8 +4903,9 @@ fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
             div {
                 label { class: "block text-xs text-obsidian-text-muted mb-1", "Account" }
                 input {
-                    class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                    class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
                     r#type: "text",
+                    placeholder: "Assets:Bank:Chequing",
                     value: "{account.read()}",
                     oninput: move |e| account.set(e.value()),
                 }
