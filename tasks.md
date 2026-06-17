@@ -194,6 +194,28 @@ only flips `auth_state`, so the successful pull is independent evidence). **This
 
 ## Running friction log *(fill during dogfooding; triage into the live phase)*
 
+- [ ] **Account-field autocomplete + unknown-account affordance** (dogfooding 2026-06-17). Everywhere
+  the user types an account name, offer a **type-ahead dropdown** of matching accounts (search-box
+  style); and make it **visually clear when the typed account is not yet in the ledger**.
+  - **Build once, reuse everywhere:** a single shared `AccountInput` typeahead component, not a
+    per-form re-implementation (shared-UI-shape principle). **Input sites to cover:** TransactionForm
+    (add/edit posting), `QueryBuilderView` account predicate (R2), budget setup (category = account),
+    reconciliation no-match category fill-in (`resolve_unmatched`), balance-check account field,
+    journal-import rename inputs.
+  - **Suggestion source:** the `accounts` table once **3.9** lands (declared accounts), likely unioned
+    with accounts actually *seen* in the ledger/journal projection. **Hard dependency on 3.9** (lifts
+    the roster into a queryable table) — do after it.
+  - **Unknown-account affordance is context-dependent:** in an **add** context a non-existent account
+    is *allowed* but flagged "New account — will be created" (catches typos without blocking intent);
+    in a **query** context, flag "No such account in the ledger" so an empty result reads as "this
+    account doesn't exist", not "no matching transactions" (consistent with the empty-search-shows-
+    nothing principle).
+  - **Open design Qs:** does "exists" mean *declared* (accounts table) or *seen in ledger* (used in ≥1
+    posting)? — they diverge. Segment-aware completion over the `:`-hierarchy (mirroring the R2
+    account matcher) so typing `Expenses:F` suggests `Expenses:Food` etc.?
+  - Triage: data dependency rides on **Phase 3 / 3.9**; the cross-app UI layer could land as its own
+    3.x or in **Phase 5** (editor/typing feel). [M]
+
 - **Android build-pipeline root cause — resolved 2026-06-08.** Symptom: no JS/frontend change
   reached the device all session despite many rebuild+reinstall cycles (only native Kotlin
   changes took effect). **Not a cache.** Cause: `tauri-build` **embeds `frontendDist` into the
