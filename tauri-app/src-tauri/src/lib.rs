@@ -362,6 +362,7 @@ pub fn run() {
             // Auto-import observability (Phase 3.9)
             commands::auto_import::list_auto_import_sources,
             commands::auto_import::trigger_auto_import_tick,
+            commands::auto_import::reauth_source,
             // Auto-import batch review (Phase 3.10.5)
             commands::auto_import::list_pending_batches,
             commands::auto_import::commit_batch,

@@ -84,7 +84,7 @@ overlay under Model A); only "build/test/publish the public image" stays public.
 - [ ] **2.2** Provision Hetzner + DO boxes (Ubuntu LTS, ~2GB RAM — CI builds the image, box only runs it) + Docker + Tailscale bootstrap. [USER] — **defer DO until deploy is ready so the 60-day trial clock doesn't burn idle; no box is needed for the split itself.**
 - [ ] **2.3** Deploy pipeline — **DETAIL AFTER THE SPLIT** (homed per topology / Model A-vs-B): build the real image → push to the right registry → deploy over the tailnet → health-gate + auto-rollback → pre-deploy snapshot → dual-target rollout (DO then Hetzner). [—]
 - [ ] **2.4** Verify go-live: **phone syncs against the VPS with the laptop OFF**; kill one box, the phone still syncs via the other. [S]
-- [ ] **2.5** **Blocker:** WS auto-import must not run on the VPS until app-entered re-auth (3.5a / `SOURCE_REAUTH_DESIGN.md`) ships — otherwise OTP re-prime needs SSH. Until then WS stays local-only. [—]
+- [ ] **2.5** **Precondition MET 2026-06-17:** app-entered re-auth (3.5a / `SOURCE_REAUTH_DESIGN.md`) has shipped + is real-OTP-verified, so WS auto-import may run on the VPS — the SSH-for-OTP failure mode is gone. The remaining work here is just the deploy itself (Phase 2); WS stays local-only only until the deploy pipeline lands. [—]
 
 ## Phase 3 — Open-core split + extensibility *(the one-way door — RUNS BEFORE Phase 2)* `(logbook)` `(demo?)`
 
@@ -135,12 +135,32 @@ SubprocessSource, false for wise + 3 IMAP); a dummy-OTP reauth drove the *real* 
 **Deferred to next session (the rest of 3.5a):** Dioxus "Reconnect {source}" UI + OTP field +
 Playwright + the real-OTP happy-path test. Contract docs + `SOURCE_REAUTH_DESIGN.md` updated.
 
+**STATUS 2026-06-17 — STEP 2c (app-OTP re-auth CLIENT, 3.5a DONE) COMPLETE.** The Dioxus client now
+drives the proven backend, finishing 3.5a. **Inline-in-row UX:** the existing Auto-Import Sources
+settings row (`AutoImportRow`) grows an amber "Reconnect needed" callout + `Reconnect` button when a
+source is `needs_reauth` + `reauth_capable`; the button expands an inline 6-digit OTP field whose
+`Submit` calls the new `reauth_source` Tauri command → `POST /auto_import/reauth` (OTP in body). The
+`ReauthOutcome` drives the row: `active`→success+collapse+parent re-pulls `/status`→healthy;
+`invalid_otp`→"code rejected", field stays; `not_supported`/`error`→inline message. **The seam that
+was silently swallowing the signal:** each proxy `AutoImportSourceView` (Tauri command layer +
+frontend types) deserialized lossily, dropping the server's `auth_state`/`reauth_capable`; declared
+both (`#[serde(default)]`) at every hop so it survives to the screen. Orthogonal to `health` (passive
+"data flowing" vs imperative "user must act") — a degraded-but-active SC source shows no callout, only
+`needs_reauth` does. Clippy clean (Tauri + frontend, both feature configs). **Playwright mock
+walkthrough (5 states, 0 console errors):** WS shows the callout, others don't; Reconnect reveals the
+field; `000000`→rejected (field stays); valid 6-digit→success→row returns healthy on refresh. PNGs in
+`logbook/_assets/source-reauth-reconnect/`. **Real-OTP happy path proven E2E vs the real WS account**
+(`cargo tauri dev` desktop → private server on real `credentials.toml`): a live TOTP flipped
+`auth_state → active`, then a manual `Fetch now` came back `last_outcome: success` / `health: healthy`
+— proving the **session refreshed**, not just the flag cleared (the two-clocks model: `registry.reauth`
+only flips `auth_state`, so the successful pull is independent evidence). **This unblocks 2.5.**
+
 - [x] **3.1** Create private overlay crate written against `core`'s `AutoImportSource`. [M] — **done 2026-06-14**; path-deps on the public crates (pinned git-dep deferred to deploy).
 - [x] **3.2** Move bank adapters (`wealthsimple`/`wise`/`sc_ngn` + WS python driver + credential structs) into the overlay; generic plumbing (`imap*.rs`, `receipts.rs`, `mime.rs`, trait) stays public. [L] — **done 2026-06-14**; public copies `git rm`'d after private verified.
 - [x] **3.3** Invert source instantiation — done via the `run(RunConfig{source_builder})` seam in `server/src/lib.rs` (not literally `main.rs`); public `main.rs` = zero-sources builder. [M] — **done 2026-06-14**.
 - [ ] **3.4** Public app degrades gracefully to zero configured sources + zero declared accounts (no crash; manual entry / journal / budget all work). [M]
 - [x] **3.5** Subprocess-plugin runner: generic public `SubprocessSource` (command + args; helper owns creds + account-map, so "secret-ref" became "helper reads its own secrets" — a stronger boundary; schedule stays the engine's interval). WS converted to the `ws-helper` binary; contract frozen in `SUBPROCESS_SOURCE_CONTRACT.md` + code types. [L] — **done 2026-06-15 (Step 2a)**; smoke-verified live. Multi-source config *registration* (declare sources via config/UI) is 3.6/3.7; CSV/REST helpers fan out from this runner.
-- [ ] **3.5a** Interactive source re-auth (**app-entered OTP**) per `SOURCE_REAUTH_DESIGN.md` — generic `AuthState` + status + reauth route in the **public** engine; WS driver login-protocol in the **private** overlay; client "Reconnect {source}" UI. Removes the SSH-to-VPS-for-OTP failure mode. **Hard precondition for deploying WS auto-import to the VPS (Phase 2).** [M] `(logbook)` — **server half DONE 2026-06-15 (Step 2b):** engine `AuthState`/`ReauthOutcome` + registry state-tracking + `POST /auto_import/reauth` + `auth_state`/`reauth_capable` on `GET /auto_import/status` + `SubprocessSource` reauth verb + `ws-helper` `reauth` handler (`wealthsimple::reauth`). Live round-trip GREEN (dummy OTP → real driver → `invalid_otp`; non-capable→`not_supported`; unknown→404). Routes landed under `/auto_import/*` (not `/sources/*` as the design sketched — matches the live prefix). **Remaining = the client side:** Dioxus "Reconnect {source}" + OTP-field UI + Playwright + real-OTP happy-path test.
+- [x] **3.5a** Interactive source re-auth (**app-entered OTP**) per `SOURCE_REAUTH_DESIGN.md` — generic `AuthState` + status + reauth route in the **public** engine; WS driver login-protocol in the **private** overlay; client "Reconnect {source}" UI. Removes the SSH-to-VPS-for-OTP failure mode. **Was the hard precondition for deploying WS auto-import to the VPS (Phase 2) — now MET.** [M] `(logbook)` — **DONE 2026-06-17.** Server half (Step 2b, 2026-06-15): engine `AuthState`/`ReauthOutcome` + registry state-tracking + `POST /auto_import/reauth` + `auth_state`/`reauth_capable` on `GET /auto_import/status` + `SubprocessSource` reauth verb + `ws-helper` `reauth` handler (`wealthsimple::reauth`). Client half (Step 2c, 2026-06-17): inline "Reconnect {source}" callout + OTP field in `AutoImportRow` + `reauth_source` Tauri command, the lossy-serde seam widened at every proxy hop. Routes under `/auto_import/*` (not `/sources/*` as the design sketched). **Verified:** clippy clean (both feature configs); Playwright mock walkthrough of all 5 states (0 console errors); **real-OTP happy path E2E vs the real WS account** — live TOTP → `auth_state: active`, manual Fetch → `last_outcome: success`/`health: healthy` (session refreshed, not just flag cleared). `(logbook)` capture deferred to a later drafting pass; PNGs preserved in `logbook/_assets/source-reauth-reconnect/`.
 - [ ] **3.6** Config-driven generic sources: CSV first (+ REST / IMAP) parameterized by config. [L]
 - [ ] **3.7** In-app source-registration UI (Settings): add / edit / remove sources; secrets referenced by name. [M]
 - [ ] **3.8** Provider-swap: OpenAI-compatible `LlmClient` impl + Settings picker (base URL / model / key); `DocumentExtractor` on the same config rail. [M]

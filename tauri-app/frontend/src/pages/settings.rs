@@ -644,6 +644,19 @@ fn AutoImportSection() -> Element {
                                             });
                                         }
                                     },
+                                    on_reauth_success: {
+                                        let mut sources = sources;
+                                        move |_: ()| {
+                                            // A successful reconnect clears the source's
+                                            // NeedsReauth server-side; re-pull so the row
+                                            // drops back to its normal health state.
+                                            spawn(async move {
+                                                if let Ok(list) = bridge::invoke_list_auto_import_sources().await {
+                                                    sources.set(Some(list));
+                                                }
+                                            });
+                                        }
+                                    },
                                 }
                             }
                         }
@@ -665,10 +678,32 @@ fn AutoImportRow(
     source: AutoImportSourceView,
     ticking_now: bool,
     on_tick: EventHandler<()>,
+    on_reauth_success: EventHandler<()>,
 ) -> Element {
     let (label, badge_classes) = health_badge(&source.health);
     let relative = format_relative_time(source.last_tick_at.as_deref());
     let summary = outcome_summary(&source.last_outcome);
+
+    // Re-auth is orthogonal to health: `health` answers "is data flowing" (a
+    // transient blip you wait out), while `auth_state` answers "must the user
+    // act". A `needs_reauth` source surfaces an inline Reconnect affordance so
+    // the one-time code can be entered in-app — never via SSH to the host.
+    let needs_reauth =
+        source.auth_state.get("kind").and_then(|k| k.as_str()) == Some("needs_reauth");
+    let reauth_reason = source
+        .auth_state
+        .get("reason")
+        .and_then(|r| r.as_str())
+        .unwrap_or("This source's session has expired — reconnect to resume importing.")
+        .to_string();
+    let can_reauth = needs_reauth && source.reauth_capable;
+    let name = source.name.clone();
+
+    let mut show_otp = use_signal(|| false);
+    let mut otp = use_signal(String::new);
+    let mut submitting = use_signal(|| false);
+    // (is_error, text) — green confirmation vs red rejection/error.
+    let mut msg = use_signal(|| None::<(bool, String)>);
 
     rsx! {
         div { class: "p-4 bg-obsidian-sidebar/60 border border-white/5 rounded-lg",
@@ -691,6 +726,136 @@ fn AutoImportRow(
                     disabled: ticking_now,
                     onclick: move |_| on_tick.call(()),
                     if ticking_now { "Fetching…" } else { "Fetch now" }
+                }
+            }
+
+            if needs_reauth {
+                div { class: "mt-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 space-y-2",
+                    div { class: "flex items-start justify-between gap-3",
+                        div { class: "min-w-0",
+                            div { class: "text-[10px] font-bold uppercase tracking-widest text-amber-400 mb-0.5",
+                                "Reconnect needed"
+                            }
+                            div { class: "text-xs text-obsidian-text-muted", "{reauth_reason}" }
+                        }
+                        if can_reauth && !*show_otp.read() {
+                            button {
+                                class: "shrink-0 px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-semibold rounded hover:bg-amber-500/30 transition-colors",
+                                onclick: move |_| {
+                                    show_otp.set(true);
+                                    msg.set(None);
+                                },
+                                "Reconnect"
+                            }
+                        }
+                    }
+
+                    if can_reauth && *show_otp.read() {
+                        div { class: "space-y-2",
+                            label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest block",
+                                "Authenticator code"
+                            }
+                            div { class: "flex items-center gap-2",
+                                input {
+                                    class: "w-32 px-3 py-1.5 bg-obsidian-sidebar border border-white/15 rounded text-obsidian-text text-sm font-mono tracking-[0.4em] text-center outline-none focus:border-obsidian-accent transition-colors disabled:opacity-40",
+                                    r#type: "text",
+                                    inputmode: "numeric",
+                                    autocomplete: "one-time-code",
+                                    maxlength: "6",
+                                    placeholder: "······",
+                                    value: "{otp}",
+                                    disabled: *submitting.read(),
+                                    oninput: move |e| {
+                                        // Keep digits only, cap at 6 — TOTP is a 6-digit code.
+                                        let cleaned: String =
+                                            e.value().chars().filter(|c| c.is_ascii_digit()).take(6).collect();
+                                        otp.set(cleaned);
+                                    },
+                                }
+                                button {
+                                    class: "px-3 py-1.5 bg-obsidian-accent text-white text-xs font-bold rounded hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed",
+                                    disabled: *submitting.read() || otp.read().len() != 6,
+                                    onclick: {
+                                        let name = name.clone();
+                                        move |_| {
+                                            let name = name.clone();
+                                            let code = otp.read().clone();
+                                            submitting.set(true);
+                                            msg.set(None);
+                                            spawn(async move {
+                                                let result = bridge::invoke_reauth_source(&name, &code).await;
+                                                submitting.set(false);
+                                                match result {
+                                                    Ok(outcome) => match outcome
+                                                        .get("status")
+                                                        .and_then(|s| s.as_str())
+                                                    {
+                                                        Some("active") => {
+                                                            msg.set(Some((
+                                                                false,
+                                                                "Reconnected — session refreshed.".into(),
+                                                            )));
+                                                            otp.set(String::new());
+                                                            show_otp.set(false);
+                                                            on_reauth_success.call(());
+                                                        }
+                                                        Some("invalid_otp") => {
+                                                            msg.set(Some((
+                                                                true,
+                                                                "Authenticator code rejected — try again.".into(),
+                                                            )));
+                                                            otp.set(String::new());
+                                                        }
+                                                        Some("not_supported") => {
+                                                            msg.set(Some((
+                                                                true,
+                                                                "This source can't be reconnected from here.".into(),
+                                                            )));
+                                                        }
+                                                        _ => {
+                                                            let m = outcome
+                                                                .get("message")
+                                                                .and_then(|m| m.as_str())
+                                                                .unwrap_or("Reconnect failed — please try again.")
+                                                                .to_string();
+                                                            msg.set(Some((true, m)));
+                                                        }
+                                                    },
+                                                    Err(e) => {
+                                                        msg.set(Some((true, format!("Reconnect failed: {e}"))))
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    },
+                                    if *submitting.read() { "Reconnecting…" } else { "Submit" }
+                                }
+                                button {
+                                    class: "px-2 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-text disabled:opacity-40",
+                                    disabled: *submitting.read(),
+                                    onclick: move |_| {
+                                        show_otp.set(false);
+                                        otp.set(String::new());
+                                        msg.set(None);
+                                    },
+                                    "Cancel"
+                                }
+                            }
+                        }
+                    }
+
+                    if needs_reauth && !source.reauth_capable {
+                        div { class: "text-[10px] text-obsidian-text-muted/70",
+                            "This source can't be reconnected from the app — check its credentials on the server."
+                        }
+                    }
+
+                    if let Some((is_err, text)) = &*msg.read() {
+                        div {
+                            class: if *is_err { "text-[11px] text-red-400" } else { "text-[11px] text-emerald-400" },
+                            "{text}"
+                        }
+                    }
                 }
             }
         }

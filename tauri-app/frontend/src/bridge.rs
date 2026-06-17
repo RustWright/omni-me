@@ -2310,13 +2310,25 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 last_outcome: serde_json::json!({ "kind": "success", "events_appended": 0 }),
                 interval_secs: 1800,
                 health: "healthy".into(),
+                auth_state: serde_json::json!({ "kind": "active" }),
+                reauth_capable: false,
             },
+            // The WS subprocess source: session expired → needs_reauth +
+            // reauth_capable, so the inline Reconnect affordance renders in mock.
             AutoImportSourceView {
-                name: "wealthsimple-snaptrade".into(),
+                name: "wealthsimple-python".into(),
                 last_tick_at: Some(three_hours_ago.to_rfc3339()),
-                last_outcome: serde_json::json!({ "kind": "success", "events_appended": 12 }),
+                last_outcome: serde_json::json!({
+                    "kind": "failure",
+                    "error": "needs re-auth: WealthSimple session expired — OTP required",
+                }),
                 interval_secs: 1800,
-                health: "stale".into(),
+                health: "degraded".into(),
+                auth_state: serde_json::json!({
+                    "kind": "needs_reauth",
+                    "reason": "Session expired — reconnect required",
+                }),
+                reauth_capable: true,
             },
             AutoImportSourceView {
                 name: "imap-receipts".into(),
@@ -2324,6 +2336,8 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 last_outcome: serde_json::json!({ "kind": "not_yet_run" }),
                 interval_secs: 1800,
                 health: "unknown".into(),
+                auth_state: serde_json::json!({ "kind": "active" }),
+                reauth_capable: false,
             },
             AutoImportSourceView {
                 name: "imap-standardchartered-ngn".into(),
@@ -2334,6 +2348,8 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 }),
                 interval_secs: 1800,
                 health: "degraded".into(),
+                auth_state: serde_json::json!({ "kind": "active" }),
+                reauth_capable: false,
             },
         ])
     }
@@ -2364,6 +2380,42 @@ pub async fn invoke_trigger_auto_import_tick(source: &str) -> Result<ManualTickR
             source: &'a str,
         }
         invoke("trigger_auto_import_tick", &Args { source }).await
+    }
+}
+
+/// Relay a one-time authenticator code to re-auth a source. Returns the
+/// `ReauthOutcome` JSON verbatim (`{ "status": "active" | "invalid_otp" |
+/// "not_supported" | "error", "message"? }`) — the caller dispatches on
+/// `status`. The mock simulates the WS driver's fresh-login verdict so the
+/// inline Reconnect flow is fully walkable under `--features mock`:
+/// the all-zeros code is rejected, any other 6-digit code succeeds, and a
+/// malformed code surfaces an error.
+pub async fn invoke_reauth_source(source: &str, otp: &str) -> Result<serde_json::Value, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = source;
+        crate::timer::sleep_ms(700).await;
+        let is_six_digits = otp.len() == 6 && otp.bytes().all(|b| b.is_ascii_digit());
+        let outcome = if !is_six_digits {
+            serde_json::json!({
+                "status": "error",
+                "message": "Enter the 6-digit code from your authenticator app.",
+            })
+        } else if otp == "000000" {
+            serde_json::json!({ "status": "invalid_otp" })
+        } else {
+            serde_json::json!({ "status": "active" })
+        };
+        Ok(outcome)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            source: &'a str,
+            otp: &'a str,
+        }
+        invoke("reauth_source", &Args { source, otp }).await
     }
 }
 

@@ -1,11 +1,14 @@
 # Design: Interactive source re-authentication (app-entered OTP)
 
-> Status: **server half built 2026-06-15.** The engine `AuthState` model, the `POST /auto_import/reauth`
-> route, and the `ws-helper` `reauth` handler are implemented + unit-tested (the route shape is
-> `/auto_import/*`, not the `/sources/*` this doc originally sketched — it follows the live route prefix).
-> **Remaining: the client "Reconnect {source}" UI + the real-OTP happy-path test** (next session). Still a
-> hard dependency of Phase 2 (VPS deploy). Until the UI ships, the local terminal prime is the stopgap.
-> Motivating consumer: the WealthSimple auto-import source (private overlay).
+> Status: **COMPLETE 2026-06-17 (task 3.5a fully shipped + live-verified, full stack).** The engine
+> `AuthState` model, the `POST /auto_import/reauth` route, and the `ws-helper` `reauth` handler (server
+> half, 2026-06-15) plus the **Dioxus client** — inline "Reconnect {source}" callout + OTP field in the
+> Auto-Import Sources settings row — are all built. Route shape is `/auto_import/*` (not the `/sources/*`
+> this doc originally sketched — it follows the live route prefix). **Real-OTP happy path proven against
+> the real WS account:** a live TOTP code flipped `auth_state → active` and the next manual pull came back
+> `last_outcome: success` / `health: healthy` (proving the session refreshed, not just the flag cleared).
+> This **unblocks task 2.5** (WS auto-import may deploy to the VPS once Phase 2 lands). Motivating
+> consumer: the WealthSimple auto-import source (private overlay).
 
 ## Problem
 
@@ -104,10 +107,30 @@ Consequences:
 
 ## Client side
 
-A source-health surface (Settings, or a status chip) reads `GET /sources/status`. When a source is
-`NeedsReauth`, show **"Reconnect {source}"**. Tap → `reauth/start` → UI shows "{source} sent you a
-code" + an OTP input → user enters it → `reauth/submit` → success returns the chip to healthy. This
-reuses the existing client→server HTTP transport; no new channel.
+**Built 2026-06-17 (inline-in-row).** The Auto-Import Sources section of Settings already lists each
+source with a health badge and a `Fetch now` button (`AutoImportRow`, `frontend/src/pages/settings.rs`).
+Re-auth is folded into that same row rather than a modal or banner: when a source reports
+`auth_state.kind == "needs_reauth"` **and** `reauth_capable`, the row grows an amber "Reconnect needed"
+callout carrying the `reason`. A `Reconnect` button expands an **inline** 6-digit OTP field (digit-
+filtered on input); `Submit` calls the `reauth_source` Tauri command → `POST /auto_import/reauth` (OTP
+in the JSON body, never the URL — it must not land in access logs). The `ReauthOutcome` JSON drives the
+row: `active` → success toast, field collapses, parent re-pulls `GET /auto_import/status` so the row
+returns to healthy; `invalid_otp` → "Authenticator code rejected — try again", field stays, input
+clears; `not_supported`/`error` → the message inline. No `reauth/start` step (TOTP collapsed the fork).
+
+The key seam to get right was **serde survival**: the server emits `auth_state`/`reauth_capable`, but
+each hop's proxy struct (`AutoImportSourceView` in both the Tauri command layer and the frontend types)
+deserializes lossily — an undeclared field is silently dropped. Every layer's struct had to declare the
+new fields (`#[serde(default)]` so old mocks/servers stay parseable) for the signal to reach the screen.
+
+This is **orthogonal to the health badge**: `health` is passive ("is data flowing — wait out a transient
+blip"), `auth_state` is imperative ("the user must act"). A degraded-but-active source (e.g. an SC PDF
+decrypt failure) shows *no* Reconnect callout; only `needs_reauth` does.
+
+Re-auth runs on **two clocks**: the OTP code is short-lived (~30 s TOTP), the session it mints lasts
+~weeks. `registry.reauth` only flips `auth_state` (it does *not* pull) — so `auth_state → active` proves
+the OTP clock, and a separate successful pull (`last_outcome: success`) proves the session clock. The
+real-OTP test exercised both: a live code, then a manual `Fetch now` that came back healthy.
 
 ## Security
 
@@ -120,13 +143,16 @@ reuses the existing client→server HTTP transport; no new channel.
 
 - **Step 2 (subprocess-helper conversion)** is the natural home: the helper's JSON contract gains the
   `reauth start/submit` verbs at the same time it's being frozen.
-- **Phase 2 (VPS deploy)** is **blocked on this** — going headless-on-VPS without it reintroduces the
-  SSH-to-OTP problem. Don't deploy WS auto-import to the VPS until app-entered re-auth ships.
-- Until then, the **local terminal prime** remains the documented stopgap (local server only).
+- **Phase 2 (VPS deploy)** was **blocked on this** — going headless-on-VPS without it reintroduces the
+  SSH-to-OTP problem. **Unblocked 2026-06-17:** app-entered re-auth has shipped, so WS auto-import may
+  deploy to the VPS once the deploy pipeline (Phase 2) lands.
+- The **local terminal prime** is no longer needed once deployed — the app reconnects WS itself.
 
 ## Open questions
 
 1. ~~Is this WS account's 2FA TOTP or SMS?~~ **Resolved 2026-06-14: TOTP** → single-step `submit`,
    no `start`/trigger needed (see the driver-protocol section).
-2. Where does the source-health surface live in the client — Settings, or a persistent status chip?
-3. Should `reauth/submit` be rate-limited to avoid repeated bad-code login attempts (lockout risk)?
+2. ~~Where does the source-health surface live in the client — Settings, or a persistent status chip?~~
+   **Resolved 2026-06-17: inline in the existing Auto-Import Sources settings row** (no modal/banner).
+3. Should `reauth` be rate-limited to avoid repeated bad-code login attempts (lockout risk)? **Still
+   open** — low risk behind Tailscale; deferred (noted, not built). Revisit if the VPS ever opens up.

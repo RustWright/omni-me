@@ -42,6 +42,18 @@ pub struct AutoImportSourceView {
     pub last_outcome: serde_json::Value,
     pub interval_secs: u64,
     pub health: String,
+    /// Authentication state, tagged enum on the wire:
+    /// `{ "kind": "active" }` | `{ "kind": "needs_reauth", "reason": "..." }`.
+    /// Orthogonal to `health` — a source can be healthy-but-needs-reauth has
+    /// no meaning, but degraded-because-needs-reauth surfaces here so the UI can
+    /// offer a "Reconnect" action instead of just "wait it out". Defaulted so an
+    /// older server that predates Step 2b still deserializes (→ treated active).
+    #[serde(default)]
+    pub auth_state: serde_json::Value,
+    /// Whether this source supports interactive re-auth at all (only the
+    /// subprocess-backed WS source does today; Wise/IMAP are `false`).
+    #[serde(default)]
+    pub reauth_capable: bool,
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -99,6 +111,41 @@ pub async fn trigger_auto_import_tick(
     }
     serde_json::from_str::<TickResponse>(&body)
         .map_err(|e| format!("auto-import tick decode: {e}"))
+}
+
+/// Drive interactive re-auth for one source by relaying a one-time code to the
+/// server's `POST /auto_import/reauth`. The OTP travels in the **JSON body**
+/// (never the query string) so it can't leak into access logs. The successful
+/// response is the `ReauthOutcome` verbatim — `{ "status": "active" }` |
+/// `{ "status": "invalid_otp" }` | `{ "status": "not_supported" }` |
+/// `{ "status": "error", "message": "..." }` — all of which are *normal*
+/// outcomes (HTTP 200) the UI dispatches on, not transport errors. Only an
+/// unknown source (404) or a server fault surfaces as `Err`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn reauth_source(
+    state: State<'_, AppState>,
+    source: String,
+    otp: String,
+) -> Result<serde_json::Value, String> {
+    let server_url = state.server_url.read().await.clone();
+    let url = format!("{}/auto_import/reauth", server_url.trim_end_matches('/'));
+    let resp = state
+        .http
+        .post(&url)
+        .json(&serde_json::json!({ "source": source, "otp": otp }))
+        .send()
+        .await
+        .map_err(|e| format!("reauth request: {e}"))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("reauth body: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("server returned {status}: {body}"));
+    }
+    serde_json::from_str::<serde_json::Value>(&body)
+        .map_err(|e| format!("reauth decode: {e}"))
 }
 
 // =============================================================================

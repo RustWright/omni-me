@@ -291,6 +291,17 @@ pub struct AutoImportSourceView {
     pub last_outcome: serde_json::Value,
     pub interval_secs: u64,
     pub health: String,
+    /// Authentication state — tagged enum on the wire:
+    /// `{ "kind": "active" }` | `{ "kind": "needs_reauth", "reason": "..." }`.
+    /// Drives the inline "Reconnect" affordance. `#[serde(default)]` (→ `Null`)
+    /// keeps pre-Step-2b mocks/servers parseable; the UI treats `Null`/missing
+    /// `kind` as active.
+    #[serde(default)]
+    pub auth_state: serde_json::Value,
+    /// Whether the source supports interactive re-auth (only the WS subprocess
+    /// source does today). Gates whether the Reconnect button/OTP field render.
+    #[serde(default)]
+    pub reauth_capable: bool,
 }
 
 /// Captured payload from an Android share-target SEND intent (Phase 3.3).
