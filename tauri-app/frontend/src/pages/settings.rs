@@ -209,6 +209,9 @@ pub fn SettingsPage() -> Element {
             // --- Auto-Import Sources (Phase 3.9) ---
             AutoImportSection {}
 
+            // --- LLM Provider (3.8 bring-your-own-LLM) ---
+            LlmProviderSection {}
+
             // --- Danger Zone ---
             DangerZone {}
         }
@@ -607,8 +610,9 @@ fn AutoImportSection() -> Element {
         }
     });
 
-    // By-name lookup of running status so a configured row can show whether it's
-    // live yet (it isn't, until the server restarts — restart-to-apply).
+    // By-name lookup of running status so a configured row can show its live
+    // health — an added source spawns into the registry immediately, so it
+    // appears here on the next refresh (live add/remove).
     let runtime_list = sources.read().clone().unwrap_or_default();
     let running: std::collections::HashMap<String, AutoImportSourceView> = runtime_list
         .iter()
@@ -629,8 +633,8 @@ fn AutoImportSection() -> Element {
             p { class: "text-sm text-obsidian-text-muted",
                 "Background pullers that import transactions from configured sources — "
                 "CSV files and subprocess helpers (plus, in private builds, bank adapters). "
-                "Add or remove generic sources below; changes are saved on the server and "
-                "apply on its next restart."
+                "Add or remove generic sources below; changes save on the server and apply "
+                "live — no restart."
             }
 
             // --- Configured sources (editable) ---
@@ -650,7 +654,7 @@ fn AutoImportSection() -> Element {
                         on_saved: move |_: ()| {
                             show_form.set(false);
                             edit_target.set(None);
-                            loading_msg.set(Some("Saved. Applies on the next server restart.".into()));
+                            loading_msg.set(Some("Saved — applied live.".into()));
                             refresh();
                         },
                         on_cancel: move |_: ()| { show_form.set(false); edit_target.set(None); },
@@ -683,7 +687,7 @@ fn AutoImportSection() -> Element {
                                                     show_form.set(true);
                                                 },
                                                 on_removed: move |_: ()| {
-                                                    loading_msg.set(Some("Removed. Applies on the next server restart.".into()));
+                                                    loading_msg.set(Some("Removed — applied live.".into()));
                                                     refresh();
                                                 },
                                             }
@@ -705,7 +709,7 @@ fn AutoImportSection() -> Element {
                     },
                     Some(list) if list.is_empty() => rsx! {
                         div { class: "p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-sm text-obsidian-text-muted",
-                            "Nothing running. Configured sources start on the next server restart; built-in bank sources (private builds) appear here once they tick."
+                            "Nothing running yet. Added sources start ticking immediately; built-in bank sources (private builds) appear here once they tick."
                         }
                     },
                     Some(list) => {
@@ -768,6 +772,131 @@ fn AutoImportSection() -> Element {
             if let Some(msg) = &*loading_msg.read() {
                 div { class: "p-3 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-xs text-obsidian-accent animate-in zoom-in-95 duration-200",
                     "{msg}"
+                }
+            }
+        }
+    }
+}
+
+/// LLM provider picker (3.8 bring-your-own-LLM). Gemini by default; pick an
+/// OpenAI-compatible endpoint (Ollama / llama.cpp / vLLM / commercial) to bring
+/// your own. Restart-to-apply — the running client is chosen at boot — unlike
+/// the auto-import sources above, which apply live. The api_key is write-only:
+/// it's never read back (the form shows "key configured" via `has_key`), and a
+/// blank field on save preserves the stored key.
+#[component]
+fn LlmProviderSection() -> Element {
+    let mut provider = use_signal(|| "gemini".to_string());
+    let mut base_url = use_signal(String::new);
+    let mut model = use_signal(String::new);
+    let mut api_key = use_signal(String::new); // never prefilled (write-only)
+    let mut has_key = use_signal(|| false);
+    let mut saving = use_signal(|| false);
+    let mut msg = use_signal(|| None::<String>);
+
+    use_future(move || async move {
+        if let Ok(cfg) = bridge::invoke_get_llm_config().await {
+            provider.set(cfg.provider);
+            base_url.set(cfg.base_url.unwrap_or_default());
+            model.set(cfg.model.unwrap_or_default());
+            has_key.set(cfg.has_key);
+        }
+    });
+
+    let lbl = "block text-xs text-obsidian-text-muted mb-1";
+    let inp = "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none";
+
+    let is_openai = provider.read().as_str() == "openai_compatible";
+    let key_placeholder = if *has_key.read() {
+        "•••••••• (leave blank to keep current)"
+    } else {
+        "sk-… (blank is fine for local servers)"
+    };
+
+    let submit = move |_| {
+        let body = serde_json::json!({
+            "provider": provider.read().clone(),
+            "base_url": base_url.read().trim().to_string(),
+            "model": model.read().trim().to_string(),
+            "api_key": api_key.read().clone(),
+        });
+        let had_key_input = !api_key.read().trim().is_empty();
+        saving.set(true);
+        msg.set(None);
+        spawn(async move {
+            match bridge::invoke_set_llm_config(body).await {
+                Ok(()) => {
+                    msg.set(Some("Saved. Applies on the next server restart.".into()));
+                    if had_key_input {
+                        has_key.set(true);
+                    }
+                    api_key.set(String::new());
+                }
+                Err(e) => msg.set(Some(format!("Save failed: {e}"))),
+            }
+            saving.set(false);
+        });
+    };
+
+    rsx! {
+        div { class: "mb-10 space-y-4",
+            div { class: "border-b border-white/5 pb-2 mb-4",
+                h2 { class: "text-lg font-bold text-obsidian-text", "LLM Provider" }
+            }
+            p { class: "text-sm text-obsidian-text-muted",
+                "Which model processes your notes — tagging, task and expense extraction. The "
+                "default is Google Gemini; point it at any OpenAI-compatible endpoint (Ollama, "
+                "llama.cpp, vLLM, or a commercial API) to bring your own. Document extraction "
+                "still uses Gemini for now."
+            }
+
+            div {
+                label { class: lbl, "Provider" }
+                select {
+                    class: inp,
+                    value: "{provider}",
+                    onchange: move |e| provider.set(e.value()),
+                    option { value: "gemini", "Google Gemini (default)" }
+                    option { value: "openai_compatible", "OpenAI-compatible" }
+                }
+            }
+
+            if is_openai {
+                div { class: "space-y-3",
+                    div {
+                        label { class: lbl, "Base URL" }
+                        input { class: inp, placeholder: "http://localhost:11434/v1", value: "{base_url}", oninput: move |e| base_url.set(e.value()) }
+                    }
+                    div {
+                        label { class: lbl, "Model" }
+                        input { class: inp, placeholder: "llama3.1", value: "{model}", oninput: move |e| model.set(e.value()) }
+                    }
+                    div {
+                        label { class: lbl, "API key" }
+                        input {
+                            class: inp,
+                            r#type: "password",
+                            placeholder: key_placeholder,
+                            value: "{api_key}",
+                            oninput: move |e| api_key.set(e.value()),
+                        }
+                    }
+                }
+            }
+
+            div { class: "flex items-center gap-3",
+                button {
+                    class: "px-3 py-1.5 rounded bg-obsidian-accent text-obsidian-bg text-sm font-medium disabled:opacity-60",
+                    disabled: *saving.read(),
+                    onclick: submit,
+                    if *saving.read() { "Saving…" } else { "Save" }
+                }
+                span { class: "text-xs text-obsidian-text-muted", "Applies on the next server restart." }
+            }
+
+            if let Some(m) = &*msg.read() {
+                div { class: "p-3 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-xs text-obsidian-accent",
+                    "{m}"
                 }
             }
         }
@@ -964,9 +1093,9 @@ fn AutoImportRow(
 }
 
 /// One row in the *Configured sources* list (3.7). Shows the definition's name,
-/// type summary, and whether it's live yet — a configured-but-not-running source
-/// shows an amber "pending restart" (restart-to-apply), a running one borrows the
-/// live health badge. Offers Edit (re-open the form prefilled) + Remove.
+/// type summary, and its live status — a running source borrows the live health
+/// badge; one that isn't currently running (e.g. disabled) shows a neutral
+/// "not running". Offers Edit (re-open the form prefilled) + Remove.
 #[component]
 fn ConfiguredSourceRow(
     def: serde_json::Value,
@@ -986,8 +1115,8 @@ fn ConfiguredSourceRow(
             (label.to_string(), classes)
         }
         None => (
-            "pending restart".into(),
-            "bg-amber-500/10 text-amber-300 border border-amber-500/20",
+            "not running".into(),
+            "bg-white/5 text-obsidian-text-muted border border-white/10",
         ),
     };
 
@@ -1278,7 +1407,7 @@ fn AddSourceForm(
             div { class: "text-xs text-obsidian-text-muted",
                 "Saved to the server's "
                 span { class: "font-mono", "sources.toml" }
-                ". New and changed sources start on the next server restart."
+                " and applied live — new and changed sources start ticking immediately."
             }
 
             if let Some(e) = &*err.read() {

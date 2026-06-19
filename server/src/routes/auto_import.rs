@@ -31,9 +31,10 @@ pub fn auto_import_routes() -> Router<AppState> {
         .route("/auto_import/status", get(status_handler))
         .route("/auto_import/tick", post(tick_handler))
         .route("/auto_import/reauth", post(reauth_handler))
-        // Source-definition CRUD (3.7). These read/write the server-side
-        // `sources.toml` only — restart-to-apply: the running registry is NOT
-        // mutated, so an add/edit/remove takes effect on the next server boot.
+        // Source-definition CRUD (3.7 + live fast-follow). These persist to the
+        // server-side `sources.toml` AND apply live: add/edit (re)builds + spawns
+        // the source into the running registry, remove aborts its task — no
+        // restart required.
         .route(
             "/auto_import/sources",
             get(list_sources_handler).post(add_source_handler),
@@ -124,14 +125,15 @@ async fn reauth_handler(
 }
 
 // =============================================================================
-// Source-definition CRUD (3.7) — restart-to-apply
+// Source-definition CRUD (3.7) — persist + apply live
 // =============================================================================
 //
-// These edit the server-side `sources.toml` only; they never touch the running
-// registry, so a change takes effect on the next server boot. The UI surfaces
-// this as "applies on next restart". Single-user-behind-Tailscale posture means
-// the load-modify-save is unguarded against concurrent writers (acceptable per
-// [[project-auth-deferred]]); `config::save` is itself atomic (temp + rename).
+// These persist to the server-side `sources.toml` AND mutate the running
+// registry: add/edit builds the source and (re)spawns it, remove aborts its
+// task — the change takes effect immediately, no restart. Single-user-behind-
+// Tailscale posture means the load-modify-save is unguarded against concurrent
+// writers (acceptable per [[project-auth-deferred]]); `config::save` is itself
+// atomic (temp + rename).
 
 fn internal_err<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
@@ -149,23 +151,39 @@ async fn list_sources_handler() -> Result<Json<Vec<SourceDef>>, (StatusCode, Str
 /// Rejected with 400 if the definition is invalid (missing required fields /
 /// unknown type) so a bad config never reaches the file.
 async fn add_source_handler(
+    State(state): State<AppState>,
     Json(def): Json<SourceDef>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     config::validate(&def).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let path = config::default_path().map_err(internal_err)?;
     let mut cfg = config::load(&path).map_err(internal_err)?;
-    // Upsert by name (edit = replace).
+    // Upsert by name (edit = replace) in the on-disk definitions.
     cfg.sources.retain(|s| s.name != def.name);
-    cfg.sources.push(def);
+    cfg.sources.push(def.clone());
     config::save(&path, &cfg).map_err(internal_err)?;
-    Ok(Json(
-        serde_json::json!({ "status": "saved", "applies": "next_restart" }),
-    ))
+
+    // Apply live: build the source from the def and (re)spawn it straight into
+    // the running registry — `spawn_one` aborts+replaces any prior instance of
+    // the same name, so an edit takes effect without a restart. A *disabled* def
+    // builds to `None`; we just tear down any running instance.
+    match config::build_one(&def, &state.store, &state.projections, &state.device_id) {
+        Some(source) => {
+            state
+                .auto_import_registry
+                .spawn_one(source, state.default_interval)
+                .await;
+        }
+        None => {
+            state.auto_import_registry.remove(&def.name).await;
+        }
+    }
+    Ok(Json(serde_json::json!({ "status": "saved", "applies": "live" })))
 }
 
 /// `DELETE /auto_import/sources/{name}` — remove a definition. 404 if no such
 /// name is configured.
 async fn remove_source_handler(
+    State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let path = config::default_path().map_err(internal_err)?;
@@ -176,7 +194,7 @@ async fn remove_source_handler(
         return Err((StatusCode::NOT_FOUND, format!("no source named '{name}'")));
     }
     config::save(&path, &cfg).map_err(internal_err)?;
-    Ok(Json(
-        serde_json::json!({ "status": "removed", "applies": "next_restart" }),
-    ))
+    // Tear the running task down live too (no-op if it wasn't spawned).
+    state.auto_import_registry.remove(&name).await;
+    Ok(Json(serde_json::json!({ "status": "removed", "applies": "live" })))
 }

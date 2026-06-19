@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use axum::{Json, Router, routing::get};
 use omni_me_core::db;
+use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::GeminiClient;
 use omni_me_server::{AppState, routes};
@@ -30,12 +31,20 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
     let blob_path = blob_dir.path().to_path_buf();
     std::mem::forget(blob_dir);
 
+    let db_arc = Arc::new(server_db);
+    let event_store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new((*db_arc).clone()));
+    let projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+
     let state = AppState {
-        db: Arc::new(server_db),
+        db: db_arc.clone(),
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
         blob_dir: Arc::new(blob_path),
         extractor: Arc::new(NullExtractor),
         auto_import_registry: Default::default(),
+        store: event_store,
+        projections,
+        device_id: "test-device".to_string(),
+        default_interval: std::time::Duration::from_secs(1800),
     };
 
     let app = Router::new()

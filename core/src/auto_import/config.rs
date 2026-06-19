@@ -31,10 +31,11 @@
 //! args = ["--since", "30d"]
 //! ```
 //!
-//! `schedule_secs` is parsed but **not yet honored** — per-source intervals
-//! need the `SourceBuilder` seam to carry a `Duration`, which ripples into the
-//! private overlay; deferred. Today every config source runs on the engine's
-//! global interval.
+//! `schedule_secs` sets a per-source poll interval that overrides the engine's
+//! global interval; a source with no `schedule_secs` inherits the global. It is
+//! carried by the source's own [`AutoImportSource::poll_interval`], so honoring
+//! it needs no change to the `SourceBuilder` seam (and thus no private-overlay
+//! change).
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -190,32 +191,32 @@ pub fn validate(def: &SourceDef) -> Result<(), String> {
     }
 }
 
-/// Construct live sources from config. Disabled or invalid definitions are
-/// skipped with a warning (never a panic) so one bad entry can't take down the
-/// whole engine — the zero-config robustness guarantee extends to
-/// partially-bad config. Reusable by both the public binary and the private
-/// overlay's composition root.
-pub fn build_generic_sources(
-    cfg: &SourcesConfig,
+/// Build a single live source from one definition, or `None` when the source is
+/// disabled, invalid, or of an unknown type (each skipped with a log, never a
+/// panic — one bad entry can't take down the engine). Used by
+/// [`build_generic_sources`] at boot *and* by the live add-source endpoint (the
+/// 3.7 fast-follow) to construct a source for the running registry without a
+/// restart.
+pub fn build_one(
+    def: &SourceDef,
     store: &Arc<dyn EventStore>,
     projections: &ProjectionRunner,
     device_id: &str,
-) -> Vec<Arc<dyn AutoImportSource>> {
-    let mut out: Vec<Arc<dyn AutoImportSource>> = Vec::new();
-    for def in &cfg.sources {
-        if !def.enabled {
-            tracing::info!(source = def.name, "skipping disabled source");
-            continue;
-        }
-        if let Err(e) = validate(def) {
-            tracing::warn!(source = def.name, error = %e, "skipping invalid source config");
-            continue;
-        }
-        let source: Arc<dyn AutoImportSource> = match def.kind.as_str() {
-            "csv" => {
-                // unwraps are validate()-guarded above.
-                let cols = def.columns.clone().unwrap();
-                Arc::new(CsvSource::new(
+) -> Option<Arc<dyn AutoImportSource>> {
+    if !def.enabled {
+        tracing::info!(source = def.name, "skipping disabled source");
+        return None;
+    }
+    if let Err(e) = validate(def) {
+        tracing::warn!(source = def.name, error = %e, "skipping invalid source config");
+        return None;
+    }
+    let source: Arc<dyn AutoImportSource> = match def.kind.as_str() {
+        "csv" => {
+            // unwraps are validate()-guarded above.
+            let cols = def.columns.clone().unwrap();
+            Arc::new(
+                CsvSource::new(
                     def.name.clone(),
                     def.path.clone().unwrap(),
                     def.account.clone().unwrap(),
@@ -233,23 +234,42 @@ pub fn build_generic_sources(
                     store.clone(),
                     projections.clone(),
                     device_id.to_string(),
-                ))
-            }
-            "subprocess" => Arc::new(SubprocessSource::new(
+                )
+                .with_schedule_secs(def.schedule_secs),
+            )
+        }
+        "subprocess" => Arc::new(
+            SubprocessSource::new(
                 def.name.clone(),
                 def.command.clone().unwrap(),
                 def.args.clone().unwrap_or_default(),
                 store.clone(),
                 projections.clone(),
                 device_id.to_string(),
-            )),
-            // validate() already rejected unknown types.
-            _ => continue,
-        };
-        let _ = def.schedule_secs; // parsed; per-source interval deferred.
-        out.push(source);
-    }
-    out
+            )
+            .with_schedule_secs(def.schedule_secs),
+        ),
+        // validate() already rejected unknown types.
+        _ => return None,
+    };
+    Some(source)
+}
+
+/// Construct live sources from config. Disabled or invalid definitions are
+/// skipped with a warning (never a panic) so one bad entry can't take down the
+/// whole engine — the zero-config robustness guarantee extends to
+/// partially-bad config. Reusable by both the public binary and the private
+/// overlay's composition root.
+pub fn build_generic_sources(
+    cfg: &SourcesConfig,
+    store: &Arc<dyn EventStore>,
+    projections: &ProjectionRunner,
+    device_id: &str,
+) -> Vec<Arc<dyn AutoImportSource>> {
+    cfg.sources
+        .iter()
+        .filter_map(|def| build_one(def, store, projections, device_id))
+        .collect()
 }
 
 #[cfg(test)]

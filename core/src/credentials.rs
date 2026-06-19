@@ -53,6 +53,33 @@ pub struct Credentials {
     /// the key needs configuring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini: Option<GeminiCredentials>,
+    /// Provider-swap config for the *text* LLM (3.8 bring-your-own-LLM). When
+    /// absent or `provider = "gemini"`, the engine uses the Gemini client keyed
+    /// by `GEMINI_API_KEY`/`[gemini]`. When `provider = "openai_compatible"`, it
+    /// builds an OpenAI-compatible client from `base_url`/`model`/`api_key`. The
+    /// document extractor still reads `[gemini]` — its provider-swap is a
+    /// deferred fast-follow that will read this same section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm: Option<LlmProviderConfig>,
+}
+
+/// Text-LLM provider selection + its connection config. Lives in
+/// `credentials.toml` because `api_key` is a secret; the non-secret fields ride
+/// along so one section fully describes the provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmProviderConfig {
+    /// `"gemini"` (default) or `"openai_compatible"`.
+    pub provider: String,
+    /// API root for the OpenAI-compatible endpoint (e.g.
+    /// `http://localhost:11434/v1`). Unused for `provider = "gemini"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// Model id (e.g. `llama3.1`, `gpt-4o-mini`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Bearer key. Empty/absent is valid for local servers that don't check it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
 }
 
 /// IMAP poller — host + port + account + app-password (NOT main login).
@@ -175,6 +202,7 @@ mod tests {
             gemini: Some(GeminiCredentials {
                 api_key: "gemini-key".into(),
             }),
+            llm: None,
         };
 
         save(&path, &original).unwrap();
@@ -229,6 +257,34 @@ mod tests {
         let reloaded = load(&path).unwrap();
         assert!(reloaded.gemini.is_some());
         assert!(reloaded.imap.is_empty());
+    }
+
+    #[test]
+    fn llm_provider_config_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        let creds = Credentials {
+            llm: Some(LlmProviderConfig {
+                provider: "openai_compatible".into(),
+                base_url: Some("http://localhost:11434/v1".into()),
+                model: Some("llama3.1".into()),
+                api_key: Some("sk-local".into()),
+            }),
+            ..Credentials::default()
+        };
+        save(&path, &creds).unwrap();
+        let llm = load(&path).unwrap().llm.unwrap();
+        assert_eq!(llm.provider, "openai_compatible");
+        assert_eq!(llm.base_url.as_deref(), Some("http://localhost:11434/v1"));
+        assert_eq!(llm.model.as_deref(), Some("llama3.1"));
+        assert_eq!(llm.api_key.as_deref(), Some("sk-local"));
+    }
+
+    #[test]
+    fn absent_llm_section_is_none() {
+        // No [llm] section → None → the engine keeps the Gemini default.
+        let creds: Credentials = toml::from_str("[gemini]\napi_key = \"k\"\n").unwrap();
+        assert!(creds.llm.is_none());
     }
 
     #[cfg(unix)]

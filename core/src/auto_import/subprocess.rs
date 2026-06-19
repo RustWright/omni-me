@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -103,6 +104,9 @@ pub struct SubprocessSource {
     store: Arc<dyn EventStore>,
     projections: ProjectionRunner,
     device_id: String,
+    /// Per-source poll interval (from `sources.toml` `schedule_secs`). `None`
+    /// inherits the engine's global interval.
+    schedule_secs: Option<u64>,
 }
 
 impl SubprocessSource {
@@ -121,7 +125,15 @@ impl SubprocessSource {
             store,
             projections,
             device_id,
+            schedule_secs: None,
         }
+    }
+
+    /// Declare a per-source poll interval (seconds). `None` keeps the global
+    /// default. Chained by the config builder from `SourceDef::schedule_secs`.
+    pub fn with_schedule_secs(mut self, schedule_secs: Option<u64>) -> Self {
+        self.schedule_secs = schedule_secs;
+        self
     }
 
     /// Spawn the helper, send `request` as one JSON line on stdin, and parse the
@@ -229,6 +241,10 @@ impl SubprocessSource {
 impl AutoImportSource for SubprocessSource {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn poll_interval(&self) -> Option<Duration> {
+        self.schedule_secs.map(Duration::from_secs)
     }
 
     async fn pull(&self) -> Result<ImportSummary, ImportError> {

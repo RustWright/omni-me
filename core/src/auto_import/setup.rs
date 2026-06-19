@@ -8,42 +8,35 @@
 //! gets a working server with auto-import simply idle.
 //!
 //! Interval defaults to 30 minutes (`DEFAULT_INTERVAL`) — a reasonable balance
-//! for per-day-tx-volume use. Callers pass the effective interval explicitly so
-//! an env-override / per-deployment policy lives at the composition root, not here.
+//! for per-day-tx-volume use. Callers pass the effective *global* interval; a
+//! source can override it for itself via `AutoImportSource::poll_interval`
+//! (config-declared sources carry their own `schedule_secs`).
 
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::task::JoinHandle;
 
-use crate::auto_import_scheduler::{spawn_with_registry, AutoImportSource, SourceRegistry};
+use crate::auto_import_scheduler::{AutoImportSource, SourceRegistry};
 
 /// Default poll interval when the caller doesn't override it.
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
-/// Register each source in `registry`, then spawn its perpetual scheduler task.
+/// Register + spawn each source on the `registry`, which then *owns* each
+/// scheduler task's handle — that ownership is what lets a source be torn down
+/// live (the in-app remove / edit flow) via [`SourceRegistry::remove`]. Each
+/// source's effective interval is its own `poll_interval()` if it declares one,
+/// else `interval`.
 ///
-/// Each source is registered *before* its task starts, so a manual-tick lookup
-/// can find it by name and status reads see every configured source even before
-/// its first tick completes.
-///
-/// Returns the `JoinHandle`s so the caller can abort them at shutdown. An empty
-/// `sources` vec returns an empty vec — startup succeeds (graceful zero-config).
+/// An empty `sources` vec is a no-op — startup still succeeds (graceful
+/// zero-config).
 pub async fn spawn_sources(
     sources: Vec<Arc<dyn AutoImportSource>>,
     interval: Duration,
     registry: &SourceRegistry,
-) -> Vec<JoinHandle<()>> {
-    let mut handles = Vec::with_capacity(sources.len());
+) {
     for source in sources {
-        tracing::info!(
-            source = source.name(),
-            interval_secs = interval.as_secs(),
-            "spawning auto-import"
-        );
-        registry.register(source.clone(), interval).await;
-        handles.push(spawn_with_registry(registry.clone(), source, interval));
+        tracing::info!(source = source.name(), "spawning auto-import");
+        registry.spawn_one(source, interval).await;
     }
-    handles
 }
 
 #[cfg(test)]
@@ -54,24 +47,23 @@ mod tests {
     #[tokio::test]
     async fn empty_sources_spawns_nothing() {
         let registry = SourceRegistry::new();
-        let handles = spawn_sources(Vec::new(), DEFAULT_INTERVAL, &registry).await;
-        assert_eq!(handles.len(), 0);
+        spawn_sources(Vec::new(), DEFAULT_INTERVAL, &registry).await;
         assert_eq!(registry.snapshot().await.len(), 0);
     }
 
     #[tokio::test]
-    async fn n_sources_register_and_spawn_n_handles() {
+    async fn n_sources_register_and_spawn() {
         let registry = SourceRegistry::new();
         let sources: Vec<Arc<dyn AutoImportSource>> = vec![
             Arc::new(NullSource::new("alpha")),
             Arc::new(NullSource::new("beta")),
         ];
-        let handles = spawn_sources(sources, DEFAULT_INTERVAL, &registry).await;
-        assert_eq!(handles.len(), 2);
+        spawn_sources(sources, DEFAULT_INTERVAL, &registry).await;
         assert_eq!(registry.snapshot().await.len(), 2);
-        // Abort so the spawned tasks don't outlive the test.
-        for h in handles {
-            h.abort();
-        }
+        // Tear down so the spawned tasks don't outlive the test (the registry
+        // owns the handles now, so removal aborts them).
+        assert!(registry.remove("alpha").await);
+        assert!(registry.remove("beta").await);
+        assert_eq!(registry.snapshot().await.len(), 0);
     }
 }

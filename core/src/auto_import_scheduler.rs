@@ -98,6 +98,16 @@ pub trait AutoImportSource: Send + Sync {
     /// after a partial failure must not duplicate events.
     async fn pull(&self) -> Result<ImportSummary, ImportError>;
 
+    /// This source's preferred success-case poll interval, if it declares one.
+    /// Default `None` → the source inherits the engine's global interval (set at
+    /// the composition root). Config-declared sources (CSV / subprocess) override
+    /// this with their `schedule_secs`, since for them the cadence *is* part of
+    /// the declaration. Bank adapters in the private overlay don't implement it
+    /// and keep the global default — so adding this method is non-breaking.
+    fn poll_interval(&self) -> Option<Duration> {
+        None
+    }
+
     /// Whether this source supports interactive re-auth (the Reconnect flow).
     /// Default `false`: most sources hold a stable credential and never need a
     /// user-supplied OTP. Surfaced in the status snapshot so the client knows
@@ -201,6 +211,12 @@ pub struct SourceStatus {
 struct RegisteredSource {
     source: Arc<dyn AutoImportSource>,
     status: SourceStatus,
+    /// Handle to the perpetual scheduler task, when this source was spawned via
+    /// [`SourceRegistry::spawn_one`]. `None` for status-only registrations (the
+    /// `register` path used by tests). Owning the handle here is what makes
+    /// [`SourceRegistry::remove`] able to *abort* a running source live —
+    /// dropping a `JoinHandle` only detaches, so removal must abort explicitly.
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// Shared map of source-name → `(source, status)`. The scheduler tasks hold
@@ -232,7 +248,53 @@ impl SourceRegistry {
             reauth_capable: source.reauth_capable(),
         };
         let mut guard = self.inner.write().await;
-        guard.insert(name, RegisteredSource { source, status });
+        guard.insert(
+            name,
+            RegisteredSource {
+                source,
+                status,
+                task: None,
+            },
+        );
+    }
+
+    /// Register a source, spawn its perpetual scheduler task, and store the task
+    /// handle so the source can be torn down live via [`remove`]. The effective
+    /// interval is the source's own [`AutoImportSource::poll_interval`] if it
+    /// declares one, else `default_interval`.
+    ///
+    /// Replaces cleanly: any prior source of the same name is aborted + dropped
+    /// first, so a live re-add (an edit) never leaks a detached task still
+    /// polling the old config. The entry is inserted *before* the task spawns so
+    /// the first `record_tick` lookup finds it; the handle is written back in a
+    /// second lock acquisition (the `task` field isn't read during ticks).
+    pub async fn spawn_one(&self, source: Arc<dyn AutoImportSource>, default_interval: Duration) {
+        let interval = source.poll_interval().unwrap_or(default_interval);
+        let name = source.name().to_string();
+        self.remove(&name).await;
+        self.register(source.clone(), interval).await;
+        let handle = spawn_with_registry(self.clone(), source, interval);
+        let mut guard = self.inner.write().await;
+        if let Some(r) = guard.get_mut(&name) {
+            r.task = Some(handle);
+        }
+    }
+
+    /// Tear down a source live: abort its scheduler task and drop it from the
+    /// registry. Returns whether a source by that name existed. Aborting is
+    /// explicit because dropping a `JoinHandle` only detaches the task — it
+    /// would keep polling otherwise.
+    pub async fn remove(&self, name: &str) -> bool {
+        let mut guard = self.inner.write().await;
+        match guard.remove(name) {
+            Some(r) => {
+                if let Some(h) = r.task {
+                    h.abort();
+                }
+                true
+            }
+            None => false,
+        }
     }
 
     /// Snapshot every registered source's current status. Order is not
@@ -424,6 +486,10 @@ pub mod null {
         /// `reauth_capable`, so a plain `NullSource` stays non-reauth (testing
         /// the trait defaults) while `.with_reauth(...)` opts in.
         scripted_reauth: Mutex<Option<ReauthOutcome>>,
+        /// Optional per-source poll interval override (read-only after build).
+        /// `None` keeps the trait default so a plain `NullSource` inherits the
+        /// global interval; `.with_poll_interval(...)` exercises the override.
+        poll_interval: Option<Duration>,
     }
 
     impl NullSource {
@@ -433,7 +499,15 @@ pub mod null {
                 scripted: Mutex::new(std::collections::VecDeque::new()),
                 call_count: Mutex::new(0),
                 scripted_reauth: Mutex::new(None),
+                poll_interval: None,
             }
+        }
+
+        /// Declare a per-source poll interval (overrides the global default in
+        /// `spawn_one`).
+        pub fn with_poll_interval(mut self, interval: Duration) -> Self {
+            self.poll_interval = Some(interval);
+            self
         }
 
         pub fn with_script(
@@ -466,6 +540,10 @@ pub mod null {
             *self.call_count.lock().unwrap() += 1;
             let next = self.scripted.lock().unwrap().pop_front();
             next.unwrap_or(Ok(ImportSummary { events_appended: 0 }))
+        }
+
+        fn poll_interval(&self) -> Option<Duration> {
+            self.poll_interval
         }
 
         fn reauth_capable(&self) -> bool {
@@ -694,6 +772,76 @@ mod tests {
 
         let snap = registry.snapshot().await;
         assert!(matches!(snap[0].last_outcome, TickOutcome::Failure { .. }));
+    }
+
+    // ----- Live lifecycle: spawn_one / remove (3.7 fast-follow) -----
+
+    #[tokio::test]
+    async fn spawn_one_then_remove() {
+        let registry = SourceRegistry::new();
+        registry
+            .spawn_one(
+                Arc::new(null::NullSource::new("live")),
+                Duration::from_secs(60),
+            )
+            .await;
+        assert_eq!(registry.snapshot().await.len(), 1);
+
+        assert!(registry.remove("live").await, "remove reports it existed");
+        assert_eq!(registry.snapshot().await.len(), 0);
+        assert!(
+            !registry.remove("live").await,
+            "a second remove finds nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_one_honors_source_poll_interval() {
+        let registry = SourceRegistry::new();
+        // The source declares 120s; the global default is 1800s — the source's
+        // own interval wins and is what the status surface records.
+        let src =
+            Arc::new(null::NullSource::new("fast").with_poll_interval(Duration::from_secs(120)));
+        registry.spawn_one(src, Duration::from_secs(1800)).await;
+
+        let snap = registry.snapshot().await;
+        assert_eq!(snap[0].interval_secs, 120);
+        registry.remove("fast").await;
+    }
+
+    #[tokio::test]
+    async fn spawn_one_without_override_uses_default_interval() {
+        let registry = SourceRegistry::new();
+        registry
+            .spawn_one(
+                Arc::new(null::NullSource::new("plain")),
+                Duration::from_secs(900),
+            )
+            .await;
+        assert_eq!(registry.snapshot().await[0].interval_secs, 900);
+        registry.remove("plain").await;
+    }
+
+    #[tokio::test]
+    async fn spawn_one_replaces_existing_by_name() {
+        let registry = SourceRegistry::new();
+        registry
+            .spawn_one(
+                Arc::new(null::NullSource::new("dup")),
+                Duration::from_secs(60),
+            )
+            .await;
+        // Re-adding the same name (an edit) replaces rather than duplicates.
+        registry
+            .spawn_one(
+                Arc::new(null::NullSource::new("dup").with_poll_interval(Duration::from_secs(300))),
+                Duration::from_secs(60),
+            )
+            .await;
+        let snap = registry.snapshot().await;
+        assert_eq!(snap.len(), 1, "re-add replaced, not duplicated");
+        assert_eq!(snap[0].interval_secs, 300, "the new config took effect");
+        registry.remove("dup").await;
     }
 
     // ----- AuthState tracking + reauth (3.5a) -----

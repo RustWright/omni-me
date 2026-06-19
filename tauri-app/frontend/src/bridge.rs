@@ -2303,7 +2303,7 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
         let now = chrono::Utc::now();
         let two_min_ago = now - chrono::Duration::minutes(2);
         let three_hours_ago = now - chrono::Duration::hours(3);
-        Ok(vec![
+        let mut sources = vec![
             AutoImportSourceView {
                 name: "wise".into(),
                 last_tick_at: Some(two_min_ago.to_rfc3339()),
@@ -2351,7 +2351,37 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 auth_state: serde_json::json!({ "kind": "active" }),
                 reauth_capable: false,
             },
-        ])
+        ];
+        // Fold the configured generic sources in as running entries — in the
+        // real engine an added config source is spawned live, so it appears in
+        // /status immediately. Honors per-source `schedule_secs` and dedups by
+        // name against the static (bank) four.
+        MOCK_SOURCE_CONFIGS.with(|c| {
+            for cfg in c.borrow().iter() {
+                let name = cfg
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if name.is_empty() || sources.iter().any(|s| s.name == name) {
+                    continue;
+                }
+                let interval = cfg
+                    .get("schedule_secs")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1800);
+                sources.push(AutoImportSourceView {
+                    name,
+                    last_tick_at: Some(two_min_ago.to_rfc3339()),
+                    last_outcome: serde_json::json!({ "kind": "success", "events_appended": 0 }),
+                    interval_secs: interval,
+                    health: "healthy".into(),
+                    auth_state: serde_json::json!({ "kind": "active" }),
+                    reauth_capable: false,
+                });
+            }
+        });
+        Ok(sources)
     }
     #[cfg(not(feature = "mock"))]
     {
@@ -2420,15 +2450,16 @@ pub async fn invoke_reauth_source(source: &str, otp: &str) -> Result<serde_json:
 }
 
 // -----------------------------------------------------------------------------
-// Source-definition CRUD (3.7) — manage config-driven sources from Settings
+// Source-definition CRUD (3.7 + live fast-follow) — manage config-driven sources
 // -----------------------------------------------------------------------------
 //
 // Definitions are untyped JSON end-to-end: the form builds the object, the
-// server validates + persists it to `sources.toml`. Restart-to-apply, so a
-// just-saved source shows "pending restart" until the server reboots. The mock
-// keeps an in-memory list (single-threaded WASM) so add/remove reflect live for
-// the Playwright walkthrough — matching how the real *configured* list updates
-// immediately even though the *running* status won't until restart.
+// server validates + persists it to `sources.toml` AND applies it live (builds +
+// spawns the source into the running registry; remove aborts its task). So a
+// just-saved source appears in BOTH the configured list and the running `/status`
+// snapshot without a restart. The mock keeps an in-memory list (single-threaded
+// WASM) that the mock `/status` reader folds in, mirroring that live behavior for
+// the Playwright walkthrough.
 
 #[cfg(feature = "mock")]
 thread_local! {
@@ -2510,6 +2541,97 @@ pub async fn invoke_remove_source_config(name: &str) -> Result<(), String> {
             name: &'a str,
         }
         invoke_unit("remove_source_config", &Args { name }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
+// LLM provider config (3.8 — bring-your-own-LLM)
+// -----------------------------------------------------------------------------
+//
+// Proxies to the server's GET/PUT /llm/config. The provider runs server-side, so
+// the client only relays the selection; the api_key is held server-side and
+// never read back (GET returns `has_key`, not the key). Restart-to-apply — the
+// running client was selected at boot, so a change applies on next server start.
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct LlmConfigView {
+    pub provider: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub has_key: bool,
+}
+
+#[cfg(feature = "mock")]
+thread_local! {
+    static MOCK_LLM_CONFIG: std::cell::RefCell<LlmConfigView> =
+        std::cell::RefCell::new(LlmConfigView {
+            provider: "gemini".into(),
+            base_url: None,
+            model: None,
+            has_key: true,
+        });
+}
+
+/// The server's current `[llm]` selection. `has_key` stands in for the secret
+/// (never returned).
+pub async fn invoke_get_llm_config() -> Result<LlmConfigView, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(MOCK_LLM_CONFIG.with(|c| c.borrow().clone()))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("get_llm_config", &Args {}).await
+    }
+}
+
+/// Persist the `[llm]` selection. `config` is `{provider, base_url?, model?,
+/// api_key?}`; a blank/absent `api_key` preserves the stored key server-side.
+pub async fn invoke_set_llm_config(config: serde_json::Value) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        crate::timer::sleep_ms(400).await;
+        MOCK_LLM_CONFIG.with(|c| {
+            let mut view = c.borrow_mut();
+            view.provider = config
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or("gemini")
+                .to_string();
+            view.base_url = config
+                .get("base_url")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            view.model = config
+                .get("model")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            // Mirror preserve-on-blank: a non-empty key sets has_key; a blank
+            // field leaves the prior key (and thus has_key) untouched.
+            if config
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .is_some_and(|k| !k.is_empty())
+            {
+                view.has_key = true;
+            }
+        });
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            config: &'a serde_json::Value,
+        }
+        invoke_unit("set_llm_config", &Args { config: &config }).await
     }
 }
 

@@ -367,6 +367,9 @@ pub fn run() {
             commands::auto_import::list_source_configs,
             commands::auto_import::add_source_config,
             commands::auto_import::remove_source_config,
+            // LLM provider config (3.8 bring-your-own-LLM)
+            commands::llm::get_llm_config,
+            commands::llm::set_llm_config,
             // Auto-import batch review (Phase 3.10.5)
             commands::auto_import::list_pending_batches,
             commands::auto_import::commit_batch,

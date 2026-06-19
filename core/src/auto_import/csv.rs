@@ -27,6 +27,7 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::auto_import::to_proposed_event;
 use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary};
@@ -62,6 +63,9 @@ pub struct CsvSource {
     store: Arc<dyn EventStore>,
     projections: ProjectionRunner,
     device_id: String,
+    /// Per-source poll interval (from `sources.toml` `schedule_secs`). `None`
+    /// inherits the engine's global interval.
+    schedule_secs: Option<u64>,
 }
 
 impl CsvSource {
@@ -89,7 +93,15 @@ impl CsvSource {
             store,
             projections,
             device_id: device_id.into(),
+            schedule_secs: None,
         }
+    }
+
+    /// Declare a per-source poll interval (seconds). `None` keeps the global
+    /// default. Chained by the config builder from `SourceDef::schedule_secs`.
+    pub fn with_schedule_secs(mut self, schedule_secs: Option<u64>) -> Self {
+        self.schedule_secs = schedule_secs;
+        self
     }
 
     fn parse_cfg(&self) -> ParseCfg<'_> {
@@ -266,6 +278,10 @@ fn stable_hash(parts: &[&str]) -> u64 {
 impl AutoImportSource for CsvSource {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn poll_interval(&self) -> Option<Duration> {
+        self.schedule_secs.map(Duration::from_secs)
     }
 
     async fn pull(&self) -> Result<ImportSummary, ImportError> {

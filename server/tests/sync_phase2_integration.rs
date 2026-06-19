@@ -13,7 +13,7 @@ use std::time::Duration;
 use axum::{Router, Json, routing::get};
 use chrono::Utc;
 use omni_me_core::db;
-use omni_me_core::events::{EventStore, NewEvent, SurrealEventStore};
+use omni_me_core::events::{EventStore, NewEvent, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::GeminiClient;
 use omni_me_core::sync::{
@@ -48,12 +48,17 @@ async fn start_server_on_port(
     let blob_dir = tempfile::tempdir().unwrap();
     let blob_path = blob_dir.path().to_path_buf();
     std::mem::forget(blob_dir);
+    let db_arc = Arc::new(server_db);
     let state = AppState {
-        db: Arc::new(server_db),
+        db: db_arc.clone(),
         llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
         blob_dir: Arc::new(blob_path),
         extractor: Arc::new(NullExtractor),
         auto_import_registry: Default::default(),
+        store: Arc::new(SurrealEventStore::new((*db_arc).clone())),
+        projections: ProjectionRunner::new((*db_arc).clone(), Vec::new()),
+        device_id: "test-device".to_string(),
+        default_interval: Duration::from_secs(1800),
     };
 
     let app = make_router(state);
@@ -93,6 +98,10 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
         blob_dir: Arc::new(blob_path2),
         extractor: Arc::new(NullExtractor),
         auto_import_registry: Default::default(),
+        store: Arc::new(SurrealEventStore::new(server_db.clone())),
+        projections: ProjectionRunner::new(server_db.clone(), Vec::new()),
+        device_id: "test-device".to_string(),
+        default_interval: Duration::from_secs(1800),
     };
     let app = make_router(state);
 

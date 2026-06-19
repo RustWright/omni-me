@@ -14,6 +14,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
 use tokio::signal;
@@ -26,7 +27,7 @@ use omni_me_core::credentials::{self, Credentials};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::{gemini::GeminiExtractor, null::NullExtractor, DocumentExtractor};
-use omni_me_core::llm::GeminiClient;
+use omni_me_core::llm::{GeminiClient, LlmClient, OpenAiCompatClient};
 
 const DB_PATH: &str = "surreal_data/server.db";
 const LISTEN_ADDR: &str = "0.0.0.0:3000";
@@ -35,12 +36,24 @@ const DEFAULT_BLOB_DIR: &str = "blobs";
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Database>,
-    pub llm_client: Arc<GeminiClient>,
+    /// Text LLM client — `Arc<dyn LlmClient>` so the provider is swappable
+    /// (3.8): Gemini by default, or any OpenAI-compatible endpoint when `[llm]`
+    /// selects it. Selected once at boot by [`build_llm_client`].
+    pub llm_client: Arc<dyn LlmClient>,
     pub blob_dir: Arc<PathBuf>,
     pub extractor: Arc<dyn DocumentExtractor>,
     /// Status registry for auto-import sources. Empty when the source builder
     /// returns no sources; populated by [`run`] via [`spawn_sources`].
     pub auto_import_registry: SourceRegistry,
+    /// The handles needed to *build* an auto-import source live — the in-app
+    /// add-source endpoint (3.7 fast-follow) constructs a source from these and
+    /// spawns it straight into `auto_import_registry`, no restart required.
+    /// `default_interval` is what a freshly-added source inherits unless it
+    /// declares its own `schedule_secs`.
+    pub store: Arc<dyn EventStore>,
+    pub projections: ProjectionRunner,
+    pub device_id: String,
+    pub default_interval: Duration,
 }
 
 /// The shared runtime handles [`run`] hands a [`SourceBuilder`] so it can
@@ -92,32 +105,33 @@ pub async fn run(cfg: RunConfig) {
         .await
         .expect("failed to connect to SurrealDB");
 
+    // Load server credentials once (graceful: missing/unreadable → default-empty,
+    // so a zero-config public engine still boots — 3.4). Reused for the Gemini
+    // key, the text-LLM provider swap (3.8), and the document extractor.
+    let creds = credentials::default_path()
+        .ok()
+        .and_then(|p| credentials::load(&p).ok())
+        .unwrap_or_default();
+
     // Gemini key resolution order: GEMINI_API_KEY env var → credentials.toml
     // [gemini].api_key. Env wins so CI/secret-manager flows still work; the
-    // credentials fallback lets local dev boot without exporting the key.
-    //
-    // Both are OPTIONAL: a zero-config public engine must boot with no key at
-    // all (3.4). When absent, the client carries an empty key and LLM-backed
-    // routes (`/notes/{id}/process`) fail gracefully at call time with an error
-    // response — they never crash the server at boot. Document extraction has
-    // its own NullExtractor fallback below.
-    let api_key = std::env::var("GEMINI_API_KEY")
+    // credentials fallback lets local dev boot without exporting the key. Both
+    // OPTIONAL — when absent the Gemini client carries an empty key and LLM
+    // routes error gracefully at call time rather than crashing boot (3.4).
+    let gemini_key = std::env::var("GEMINI_API_KEY")
         .ok()
         .filter(|k| !k.is_empty())
         .or_else(|| {
-            credentials::default_path()
-                .ok()
-                .and_then(|p| credentials::load(&p).ok())
-                .and_then(|c| c.gemini.map(|g| g.api_key))
+            creds
+                .gemini
+                .as_ref()
+                .map(|g| g.api_key.clone())
                 .filter(|k| !k.is_empty())
         });
-    if api_key.is_none() {
-        tracing::warn!(
-            "no Gemini API key (GEMINI_API_KEY unset + no gemini.api_key in credentials.toml) — \
-             LLM note-processing will return errors; document extraction uses NullExtractor"
-        );
-    }
-    let llm_client = Arc::new(GeminiClient::new(api_key.unwrap_or_default()));
+
+    // Text LLM client (3.8 provider-swap): `[llm]` selects the provider; the
+    // default is Gemini with the resolved key.
+    let llm_client = build_llm_client(&creds, gemini_key);
 
     let blob_dir: PathBuf = std::env::var("BLOB_DIR")
         .unwrap_or_else(|_| DEFAULT_BLOB_DIR.into())
@@ -131,37 +145,22 @@ pub async fn run(cfg: RunConfig) {
 
     // Document extractor (NullExtractor fallback when no Gemini key) — lifted
     // out of any auto-import conditional so AppState always carries one; the
-    // /documents/extract route needs it regardless of auto-import config.
-    // Path resolution + load are both graceful: a missing credentials file (or
-    // even an unresolvable config dir) degrades to NullExtractor rather than
-    // panicking — part of the zero-config boot guarantee (3.4).
-    let extractor: Arc<dyn DocumentExtractor> = match credentials::default_path()
-        .ok()
-        .and_then(|p| credentials::load(&p).ok())
-    {
-        Some(c) => build_extractor(&c),
-        None => {
-            tracing::warn!("no credentials.toml — documents/extract will use NullExtractor");
-            Arc::new(NullExtractor)
-        }
-    };
+    // /documents/extract route needs it regardless of auto-import config. Built
+    // from the already-loaded `creds`; a missing key degrades to NullExtractor
+    // rather than panicking — part of the zero-config boot guarantee (3.4). Its
+    // provider-swap (OpenAI-compatible vision) is a deferred fast-follow that
+    // will read the same `[llm]` section.
+    let extractor: Arc<dyn DocumentExtractor> = build_extractor(&creds);
 
     // Shared registry — populated below by spawn_sources, read by the
     // /auto_import/status + /auto_import/tick route handlers via AppState.
     let auto_import_registry = SourceRegistry::new();
 
-    let state = AppState {
-        db: db_arc.clone(),
-        llm_client,
-        blob_dir: Arc::new(blob_dir),
-        extractor: extractor.clone(),
-        auto_import_registry: auto_import_registry.clone(),
-    };
-
-    // Auto-import: the engine owns the store/projections/device_id but not the
-    // sources — those come from the caller's builder. Projections vec is empty:
-    // the server stores events + syncs them to clients, which run their own
-    // projections locally.
+    // Auto-import build handles. Built before AppState so the state can carry
+    // *clones* (the in-app add-source endpoint constructs + spawns a source live
+    // from them) while the boot-time `SourceCtx` builder consumes the originals.
+    // Projections vec is empty: the server stores events + syncs them to clients,
+    // which run their own projections locally.
     let device_id = std::env::var("OMNI_SERVER_DEVICE_ID")
         .unwrap_or_else(|_| "server-auto-import".to_string());
     let server_projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
@@ -178,9 +177,23 @@ pub async fn run(cfg: RunConfig) {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .map(|s| s.clamp(60, 3600))
-        .map(std::time::Duration::from_secs)
+        .map(Duration::from_secs)
         .unwrap_or(DEFAULT_INTERVAL);
 
+    let state = AppState {
+        db: db_arc.clone(),
+        llm_client,
+        blob_dir: Arc::new(blob_dir),
+        extractor: extractor.clone(),
+        auto_import_registry: auto_import_registry.clone(),
+        store: event_store_arc.clone(),
+        projections: server_projections.clone(),
+        device_id: device_id.clone(),
+        default_interval: interval,
+    };
+
+    // Auto-import: the engine owns the store/projections/device_id but not the
+    // sources — those come from the caller's builder.
     let ctx = SourceCtx {
         db: db_arc.clone(),
         store: event_store_arc,
@@ -190,7 +203,7 @@ pub async fn run(cfg: RunConfig) {
     };
     let sources = (cfg.source_builder)(ctx).await;
     let source_count = sources.len();
-    let _handles = spawn_sources(sources, interval, &auto_import_registry).await;
+    spawn_sources(sources, interval, &auto_import_registry).await;
     tracing::info!(
         sources = source_count,
         interval_secs = interval.as_secs(),
@@ -205,6 +218,7 @@ pub async fn run(cfg: RunConfig) {
         .merge(routes::blob_routes())
         .merge(routes::documents_routes())
         .merge(routes::auto_import_routes())
+        .merge(routes::llm_routes())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -241,6 +255,40 @@ fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
             Arc::new(NullExtractor)
         }
     }
+}
+
+/// Build the *text* LLM client (3.8 provider-swap). `[llm].provider ==
+/// "openai_compatible"` (with a non-empty `base_url` + `model`) selects the
+/// generic OpenAI-compatible client; anything else — including an absent `[llm]`
+/// section — uses Gemini keyed by `gemini_key`. A missing key never crashes
+/// boot: the Gemini client carries an empty key and LLM routes error at call
+/// time (3.4). The document extractor is built separately and stays on Gemini.
+fn build_llm_client(creds: &Credentials, gemini_key: Option<String>) -> Arc<dyn LlmClient> {
+    if let Some(cfg) = &creds.llm
+        && cfg.provider == "openai_compatible"
+    {
+        match (cfg.base_url.as_deref(), cfg.model.as_deref()) {
+            (Some(base_url), Some(model)) if !base_url.is_empty() && !model.is_empty() => {
+                tracing::info!(model = %model, "LLM client: OpenAI-compatible");
+                return Arc::new(OpenAiCompatClient::new(
+                    base_url,
+                    model,
+                    cfg.api_key.clone().unwrap_or_default(),
+                ));
+            }
+            _ => tracing::warn!(
+                "[llm] provider=openai_compatible but base_url/model missing — \
+                 falling back to Gemini"
+            ),
+        }
+    }
+    if gemini_key.is_none() {
+        tracing::warn!(
+            "no LLM provider configured (no [llm] + no Gemini key) — note-processing \
+             will error at call time"
+        );
+    }
+    Arc::new(GeminiClient::new(gemini_key.unwrap_or_default()))
 }
 
 async fn shutdown_signal() {
