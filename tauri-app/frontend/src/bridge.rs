@@ -1655,9 +1655,6 @@ fn apply_mock_account_overrides(base: Vec<AccountSummaryView>) -> Vec<AccountSum
 
 /// Full account-name set for the `AccountInput` typeahead (3.9 data layer):
 /// every account seen in the journal (all types) + ancestor segments.
-// Consumed by the upcoming shared `AccountInput` typeahead (friction-log [M]);
-// the data layer ships now, the component is the immediate follow-on.
-#[allow(dead_code)]
 pub async fn invoke_list_known_accounts() -> Result<Vec<String>, String> {
     #[cfg(feature = "mock")]
     {

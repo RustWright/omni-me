@@ -82,6 +82,10 @@ fn App() -> Element {
     // survives page unmount on tab switch. Pages read it via `use_continuity`.
     let continuity_store = continuity::use_continuity_provider();
 
+    // Known-account suggestions: one fetch of the `known_accounts` union, shared
+    // by every `AccountInput` typeahead. Consumers read it via `use_context`.
+    components::account_input::use_account_suggestions_provider();
+
     // 1.8b: restore the last-open tab once the store's disk snapshot has loaded.
     // Runs before any user interaction. The pending-share intake below still
     // wins when a capture is waiting — it sets Finances explicitly.

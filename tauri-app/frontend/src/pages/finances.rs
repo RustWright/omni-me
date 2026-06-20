@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::bridge;
+use crate::components::account_input::{AccountInput, AccountMode, AccountSuggestions};
 use crate::continuity::{use_continuity, CaptureDraft, ContinuityKey, ListState, PostingDraft};
 use crate::types::{
     AccountSummaryView, AffordVerdictView, AttachmentRef, BalanceCheckView, BudgetProgress,
@@ -1169,6 +1170,9 @@ fn active_capture_key() -> ContinuityKey {
 #[component]
 fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -> Element {
     let store = use_continuity();
+    // Refresh the typeahead's known-account list after a save can introduce a
+    // new account (a posting on an account never seen before).
+    let account_suggestions = use_context::<AccountSuggestions>();
 
     // Hydration precedence (1.4):
     //   1. a fresh extraction (`initial = Some`) wins over any stale stored
@@ -1331,6 +1335,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
             match bridge::invoke_record_transaction(submission).await {
                 Ok(()) => {
                     saving.set(false);
+                    account_suggestions.refresh();
                     // Capture committed — drop the in-flight draft so it doesn't
                     // resurface as a "resume" on Home.
                     store.remove_capture(&active_capture_key());
@@ -1414,15 +1419,16 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                     rsx! {
                         for (idx, row) in rows.into_iter().enumerate() {
                             div { key: "{idx}", class: "flex flex-wrap gap-2 items-center",
-                                input {
-                                    class: "flex-1 min-w-[200px] px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent",
-                                    r#type: "text",
-                                    placeholder: "Account (e.g. Expenses:Groceries)",
-                                    value: "{row.account}",
-                                    oninput: move |e| {
+                                AccountInput {
+                                    wrapper_class: "flex-1 min-w-[200px]".to_string(),
+                                    input_class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent".to_string(),
+                                    placeholder: "Account (e.g. Expenses:Groceries)".to_string(),
+                                    mode: AccountMode::Add,
+                                    value: row.account.clone(),
+                                    on_input: move |v: String| {
                                         let mut rows = postings.read().clone();
                                         if let Some(r) = rows.get_mut(idx) {
-                                            r.account = e.value().clone();
+                                            r.account = v;
                                         }
                                         postings.set(rows);
                                     },
@@ -2540,12 +2546,13 @@ fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>
 
                     match row.field {
                         QField::Account => rsx! {
-                            input {
-                                r#type: "text",
-                                class: "{input_class} flex-1 min-w-[140px]",
-                                placeholder: "{QField::Account.placeholder()}",
-                                value: "{row.value}",
-                                oninput: move |e| rows.write()[i].value = e.value(),
+                            AccountInput {
+                                wrapper_class: "flex-1 min-w-[140px]".to_string(),
+                                input_class: format!("{input_class} w-full"),
+                                mode: AccountMode::Query,
+                                placeholder: QField::Account.placeholder().to_string(),
+                                value: row.value.clone(),
+                                on_input: move |v: String| rows.write()[i].value = v,
                             }
                             label { class: "flex items-center gap-1 text-xs text-obsidian-text-muted whitespace-nowrap",
                                 input {
@@ -3858,6 +3865,8 @@ fn period_range_label(start: &str, end: &str) -> String {
 
 #[component]
 fn BudgetListView(on_back: EventHandler<()>) -> Element {
+    // A new budget category is a new account — keep the typeahead in sync.
+    let account_suggestions = use_context::<AccountSuggestions>();
     let mut rows: Signal<Vec<BudgetRow>> = use_signal(Vec::new);
     let mut progress: Signal<Vec<BudgetProgress>> = use_signal(Vec::new);
     let mut loading: Signal<bool> = use_signal(|| true);
@@ -3937,6 +3946,7 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
         spawn(async move {
             match bridge::invoke_set_budget(&category, &amount, &period).await {
                 Ok(_row) => {
+                    account_suggestions.refresh();
                     reset_form();
                     load_rows();
                 }
@@ -4017,13 +4027,13 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
                     label { class: "block text-xs text-obsidian-text-muted mb-1",
                         "Category"
                     }
-                    input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-60",
-                        r#type: "text",
-                        placeholder: "Expenses:Groceries",
-                        value: "{category_input.read()}",
+                    AccountInput {
+                        input_class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-60".to_string(),
+                        placeholder: "Expenses:Groceries".to_string(),
+                        mode: AccountMode::Add,
                         disabled: editing_some,
-                        oninput: move |e| category_input.set(e.value()),
+                        value: category_input.read().clone(),
+                        on_input: move |v: String| category_input.set(v),
                     }
                 }
                 div { class: "grid grid-cols-2 gap-3",
@@ -4467,12 +4477,12 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                 label { class: "block text-xs text-obsidian-text-muted mb-1",
                     "Source account"
                 }
-                input {
-                    class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
-                    r#type: "text",
-                    placeholder: "Assets:Bank:Chequing",
-                    value: "{source_account.read()}",
-                    oninput: move |e| source_account.set(e.value()),
+                AccountInput {
+                    input_class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                    placeholder: "Assets:Bank:Chequing".to_string(),
+                    mode: AccountMode::Add,
+                    value: source_account.read().clone(),
+                    on_input: move |v: String| source_account.set(v),
                 }
             }
             div { class: "grid grid-cols-2 gap-3",
@@ -4563,6 +4573,8 @@ fn confidence_color_class(score: f64) -> &'static str {
 
 #[component]
 fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
+    // Resolving an unmatched txn assigns a category (account) that may be new.
+    let account_suggestions = use_context::<AccountSuggestions>();
     let mut candidates: Signal<Vec<MatchCandidateView>> = use_signal(Vec::new);
     let mut no_match_rows: Signal<Vec<ReconciliationTxnPreview>> = use_signal(Vec::new);
     let mut loading: Signal<bool> = use_signal(|| true);
@@ -4627,6 +4639,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
                 load_error.set(Some(format!("Resolve failed: {e}")));
                 return;
             }
+            account_suggestions.refresh();
             load_candidates();
         });
     };
@@ -4763,12 +4776,13 @@ fn NoMatchRowCard(row: ReconciliationTxnPreview, on_resolve: EventHandler<String
                 }
             }
             div { class: "flex gap-2",
-                input {
-                    class: "flex-1 px-3 py-1.5 bg-obsidian-bg border border-white/10 rounded text-xs text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
-                    r#type: "text",
-                    placeholder: "Expenses:Groceries",
-                    value: "{category_input.read()}",
-                    oninput: move |e| category_input.set(e.value()),
+                AccountInput {
+                    wrapper_class: "flex-1".to_string(),
+                    input_class: "w-full px-3 py-1.5 bg-obsidian-bg border border-white/10 rounded text-xs text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                    placeholder: "Expenses:Groceries".to_string(),
+                    mode: AccountMode::Add,
+                    value: category_input.read().clone(),
+                    on_input: move |v: String| category_input.set(v),
                 }
                 button {
                     class: "px-3 py-1.5 text-xs font-semibold text-black bg-obsidian-accent/90 hover:bg-obsidian-accent rounded",
@@ -4902,12 +4916,12 @@ fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
         div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
             div {
                 label { class: "block text-xs text-obsidian-text-muted mb-1", "Account" }
-                input {
-                    class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
-                    r#type: "text",
-                    placeholder: "Assets:Bank:Chequing",
-                    value: "{account.read()}",
-                    oninput: move |e| account.set(e.value()),
+                AccountInput {
+                    input_class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                    placeholder: "Assets:Bank:Chequing".to_string(),
+                    mode: AccountMode::Query,
+                    value: account.read().clone(),
+                    on_input: move |v: String| account.set(v),
                 }
             }
             div { class: "grid grid-cols-3 gap-3",
@@ -5294,18 +5308,18 @@ fn AccountRow(
                     "{stats.transaction_count} txn · {stats.posting_count} postings"
                 }
             }
-            input {
-                class: "w-44 px-2 py-1 bg-obsidian-bg border border-white/10 rounded text-xs text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
-                r#type: "text",
-                placeholder: "rename to…",
-                value: "{rename_value}",
-                oninput: move |e| {
-                    let new_value = e.value();
+            AccountInput {
+                wrapper_class: "w-44".to_string(),
+                input_class: "w-full px-2 py-1 bg-obsidian-bg border border-white/10 rounded text-xs text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                placeholder: "rename to…".to_string(),
+                mode: AccountMode::Add,
+                value: rename_value.clone(),
+                on_input: move |v: String| {
                     let mut map = renames.write();
-                    if new_value.trim().is_empty() || new_value.trim() == account_for_rename_key {
+                    if v.trim().is_empty() || v.trim() == account_for_rename_key {
                         map.remove(&account_for_rename_key);
                     } else {
-                        map.insert(account_for_rename_value.clone(), new_value);
+                        map.insert(account_for_rename_value.clone(), v);
                     }
                 },
             }

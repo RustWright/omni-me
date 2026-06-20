@@ -249,9 +249,20 @@ vision toggle reveals + saves (0 console errors); PNGs in `logbook/_assets/{acco
 
 ## Running friction log *(fill during dogfooding; triage into the live phase)*
 
-- [ ] **Account-field autocomplete + unknown-account affordance** (dogfooding 2026-06-17). Everywhere
-  the user types an account name, offer a **type-ahead dropdown** of matching accounts (search-box
-  style); and make it **visually clear when the typed account is not yet in the ledger**.
+- [x] **Account-field autocomplete + unknown-account affordance** (dogfooding 2026-06-17). **DONE
+  2026-06-20 (public-repo / frontend-only).** Shared `AccountInput` (`components/account_input.rs`):
+  controlled `value`+`on_input` (each site keeps its save closure), suggestion dropdown + keyboard
+  nav (Arrow/Enter/Escape), `AccountMode::{Add,Query}`-driven unknown affordance (`Add`→"New account
+  — will be created", `Query`→amber "No such account in the ledger"), fed by an `AccountSuggestions`
+  root context (one `invoke_list_known_accounts` fetch, `refresh()` after account-creating saves).
+  Matching = **case-insensitive prefix, cap 8** (user Learn-by-Doing); `is_known` case-insensitive to
+  match. Wired into all **7** account-path sites (TransactionForm/Budget/NoMatch/StatementImport/
+  Journal-rename → Add; QueryBuilder/BalanceCheck → Query). Clippy clean both feature configs;
+  Playwright mock walkthrough green (0 console errors; PNGs `logbook/_assets/account-input-typeahead/`).
+  **Deferred to dogfooding:** segment-aware / leaf-by-short-name matching (`coffee`→`Expenses:Food:Coffee`)
+  until the mental model is clear; the Query-mode case-strictness nuance. Original ask:
+  Everywhere the user types an account name, offer a **type-ahead dropdown** of matching accounts
+  (search-box style); and make it **visually clear when the typed account is not yet in the ledger**.
   - **Build once, reuse everywhere:** a single shared `AccountInput` typeahead component, not a
     per-form re-implementation (shared-UI-shape principle). **Input sites to cover:** TransactionForm
     (add/edit posting), `QueryBuilderView` account predicate (R2), budget setup (category = account),
