@@ -1535,7 +1535,7 @@ pub async fn invoke_account_summaries(
 
 #[cfg(feature = "mock")]
 fn mock_account_summaries() -> Vec<AccountSummaryView> {
-    vec![
+    let base = vec![
         AccountSummaryView {
             account: "Assets:Wealthsimple:Cash".into(),
             display_name: Some("Wealthsimple Cash".into()),
@@ -1608,7 +1608,160 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
             }],
             total_in_base: Some("-1.50".into()),
         },
-    ]
+    ];
+    apply_mock_account_overrides(base)
+}
+
+// --- Auto-detected accounts (3.9) -------------------------------------------
+
+/// One auto-detected balance-bearing account + its override state, for the
+/// Settings → Accounts section. Mirrors the backend `DetectedAccountView`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct DetectedAccountView {
+    pub account: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+#[cfg(feature = "mock")]
+thread_local! {
+    /// account → (display_name override, hidden). Empty = no overrides yet.
+    static MOCK_ACCOUNT_OVERRIDES: std::cell::RefCell<
+        std::collections::HashMap<String, (Option<String>, bool)>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Apply the mock override store to the static summaries: drop hidden accounts
+/// and swap in renamed `display_name`s, so the mock Accounts screen reflects
+/// Settings edits live (matches the real auto-include-by-type behaviour).
+#[cfg(feature = "mock")]
+fn apply_mock_account_overrides(base: Vec<AccountSummaryView>) -> Vec<AccountSummaryView> {
+    MOCK_ACCOUNT_OVERRIDES.with(|o| {
+        let overrides = o.borrow();
+        base.into_iter()
+            .filter_map(|mut s| match overrides.get(&s.account) {
+                Some((_, true)) => None, // hidden
+                Some((Some(name), false)) => {
+                    s.display_name = Some(name.clone());
+                    Some(s)
+                }
+                _ => Some(s),
+            })
+            .collect()
+    })
+}
+
+/// Full account-name set for the `AccountInput` typeahead (3.9 data layer):
+/// every account seen in the journal (all types) + ancestor segments.
+// Consumed by the upcoming shared `AccountInput` typeahead (friction-log [M]);
+// the data layer ships now, the component is the immediate follow-on.
+#[allow(dead_code)]
+pub async fn invoke_list_known_accounts() -> Result<Vec<String>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok([
+            "Assets",
+            "Assets:Wealthsimple",
+            "Assets:Wealthsimple:Cash",
+            "Assets:Wise",
+            "Assets:Wise:CAD",
+            "Expenses",
+            "Expenses:Food",
+            "Expenses:Food:Groceries",
+            "Expenses:Food:Coffee",
+            "Income",
+            "Income:Salary",
+            "Liabilities",
+            "Liabilities:CIBC",
+            "Liabilities:CIBC:CreditCard",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_known_accounts", &Args {}).await
+    }
+}
+
+/// The detected balance-bearing accounts + override state for the Settings
+/// Accounts section (includes hidden ones so they can be un-hidden).
+pub async fn invoke_list_detected_accounts() -> Result<Vec<DetectedAccountView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let summaries = {
+            // Base set (pre-filter) so hidden accounts still appear in Settings.
+            let base_accounts = [
+                "Assets:Wealthsimple:Cash",
+                "Assets:Wise:CAD",
+                "Assets:StandardChartered:NGN",
+                "Liabilities:CIBC:CreditCard",
+                "Unmatched",
+            ];
+            MOCK_ACCOUNT_OVERRIDES.with(|o| {
+                let overrides = o.borrow();
+                base_accounts
+                    .iter()
+                    .map(|a| {
+                        let ov = overrides.get(*a);
+                        DetectedAccountView {
+                            account: (*a).to_string(),
+                            display_name: ov.and_then(|(n, _)| n.clone()),
+                            hidden: ov.is_some_and(|(_, h)| *h),
+                        }
+                    })
+                    .collect()
+            })
+        };
+        Ok(summaries)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_detected_accounts", &Args {}).await
+    }
+}
+
+/// Set per-account override (rename + hide) on an auto-detected account.
+pub async fn invoke_set_account_override(
+    account: String,
+    display_name: Option<String>,
+    hidden: bool,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        crate::timer::sleep_ms(200).await;
+        MOCK_ACCOUNT_OVERRIDES.with(|o| {
+            o.borrow_mut()
+                .insert(account.clone(), (display_name.clone(), hidden));
+        });
+        let _ = (account, display_name, hidden);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            account: &'a str,
+            display_name: Option<&'a str>,
+            hidden: bool,
+        }
+        invoke_unit(
+            "set_account_override",
+            &Args {
+                account: &account,
+                display_name: display_name.as_deref(),
+                hidden,
+            },
+        )
+        .await
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -2562,6 +2715,9 @@ pub struct LlmConfigView {
     pub model: Option<String>,
     #[serde(default)]
     pub has_key: bool,
+    /// 3.8a: also route the document extractor through this endpoint's vision API.
+    #[serde(default)]
+    pub vision: bool,
 }
 
 #[cfg(feature = "mock")]
@@ -2572,6 +2728,7 @@ thread_local! {
             base_url: None,
             model: None,
             has_key: true,
+            vision: false,
         });
 }
 
@@ -2622,6 +2779,10 @@ pub async fn invoke_set_llm_config(config: serde_json::Value) -> Result<(), Stri
             {
                 view.has_key = true;
             }
+            view.vision = config
+                .get("vision")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
         });
         Ok(())
     }

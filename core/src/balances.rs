@@ -167,6 +167,87 @@ fn convert_to_base(
     prices.convert(quantity, commodity, base, as_of).ok()
 }
 
+// --- Auto-detected account sets (3.9) ---------------------------------------
+//
+// The journal already records every account ever posted to, so the account
+// list never has to be hand-maintained. `auto_roster` derives the Accounts
+// screen (balance-bearing types only, so net worth stays correct);
+// `known_accounts` derives the full autocomplete set (all types + hierarchy).
+
+/// The top-level hledger account type — the segment before the first `:`
+/// (e.g. `Assets:Wealthsimple:Cash` → `Assets`). A name with no `:` is its own
+/// type (e.g. `Unmatched`).
+pub fn account_type(name: &str) -> &str {
+    name.split_once(':').map_or(name, |(top, _)| top)
+}
+
+/// Accounts that hold real money and belong on the Accounts screen / in net
+/// worth: `Assets` and `Liabilities`, plus the single `Unmatched` clearing
+/// account (`project_unmatched_account_pattern`). Excludes `Expenses` /
+/// `Income` / `Equity`, which are flow/category accounts, not balances.
+fn is_balance_bearing(name: &str) -> bool {
+    matches!(account_type(name), "Assets" | "Liabilities") || name == "Unmatched"
+}
+
+/// Insert `name` and every ancestor prefix into `set` (`A:B:C` → `A`, `A:B`,
+/// `A:B:C`) so hierarchical autocomplete can suggest intermediate nodes.
+fn insert_with_ancestors(set: &mut std::collections::BTreeSet<String>, name: &str) {
+    let mut prefix = String::new();
+    for seg in name.split(':') {
+        if !prefix.is_empty() {
+            prefix.push(':');
+        }
+        prefix.push_str(seg);
+        set.insert(prefix.clone());
+    }
+}
+
+/// Derive the Accounts-screen roster automatically (3.9 "auto-include by
+/// type"). Replaces the hand-maintained allowlist with: every balance-bearing
+/// account *seen in the journal*, unioned with declared balance-bearing
+/// accounts (so a just-declared, zero-balance account still shows), minus any
+/// the user has hidden. The result is the same drop-by-default allowlist that
+/// [`account_summaries`] already consumes — so its signature is unchanged.
+///
+/// Tolerant of a malformed journal: an unparseable file yields no *seen*
+/// accounts (declared ones still surface) and [`account_summaries`] reports the
+/// real parse error.
+pub fn auto_roster(journal_content: &str, declared: &[AccountRow], hidden: &[String]) -> Vec<String> {
+    let hidden: std::collections::HashSet<&str> = hidden.iter().map(String::as_str).collect();
+    let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    if let Ok(balance) = ledger::balances(journal_content) {
+        for name in balance.account_balances.keys() {
+            if is_balance_bearing(name) && !hidden.contains(name.as_str()) {
+                set.insert(name.clone());
+            }
+        }
+    }
+    for row in declared {
+        if is_balance_bearing(&row.id) && !hidden.contains(row.id.as_str()) {
+            set.insert(row.id.clone());
+        }
+    }
+    set.into_iter().collect()
+}
+
+/// The full account-name set for autocomplete (3.9 data layer): every account
+/// posted to in the journal (all types) ∪ declared accounts ∪ each name's
+/// ancestor segments, sorted + deduped. Powers the shared `AccountInput`
+/// typeahead so the user never maintains an account list by hand.
+pub fn known_accounts(journal_content: &str, declared: &[AccountRow]) -> Vec<String> {
+    let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    if let Ok(balance) = ledger::balances(journal_content) {
+        for name in balance.account_balances.keys() {
+            insert_with_ancestors(&mut set, name);
+        }
+    }
+    for row in declared {
+        insert_with_ancestors(&mut set, &row.id);
+    }
+    set.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +259,7 @@ mod tests {
             id: id.into(),
             commodity: commodity.into(),
             display_name: display.map(String::from),
+            hidden: false,
             last_reconciled_through: None,
             last_statement_balance: None,
         }
@@ -194,6 +276,7 @@ mod tests {
             id: id.into(),
             commodity: commodity.into(),
             display_name: display.map(String::from),
+            hidden: false,
             last_reconciled_through: Some(through.into()),
             last_statement_balance: Some(balance.into()),
         }
@@ -421,5 +504,116 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
             unmatched.unwrap().total_in_base,
             Some(Decimal::from_str("-250.00").unwrap())
         );
+    }
+
+    // --- Auto-detected account sets (3.9) -----------------------------------
+
+    /// Mixed-type journal: two Assets, one Liability, plus Expenses/Income
+    /// (which must NOT count as balance-bearing).
+    fn mixed_journal() -> &'static str {
+        "\
+2026-05-01 Groceries
+    Expenses:Food:Groceries        50.00 CAD
+    Assets:Wealthsimple:Cash      -50.00 CAD
+
+2026-05-02 Salary
+    Assets:Wise:CAD              3000.00 CAD
+    Income:Salary               -3000.00 CAD
+
+2026-05-03 Card
+    Liabilities:CIBC:CreditCard   -20.00 CAD
+    Expenses:Food:Coffee           20.00 CAD
+"
+    }
+
+    #[test]
+    fn account_type_takes_top_segment() {
+        assert_eq!(account_type("Assets:Wise:CAD"), "Assets");
+        assert_eq!(account_type("Liabilities:CIBC:CreditCard"), "Liabilities");
+        assert_eq!(account_type("Unmatched"), "Unmatched");
+        assert_eq!(account_type(""), "");
+    }
+
+    #[test]
+    fn auto_roster_includes_only_balance_bearing_seen_accounts() {
+        let roster = auto_roster(mixed_journal(), &[], &[]);
+        // Assets + Liabilities surface; Expenses + Income are dropped.
+        assert_eq!(
+            roster,
+            vec![
+                "Assets:Wealthsimple:Cash".to_string(),
+                "Assets:Wise:CAD".to_string(),
+                "Liabilities:CIBC:CreditCard".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn auto_roster_includes_declared_zero_balance_asset() {
+        // Declared but never posted to — still an Asset, so it belongs.
+        let declared = vec![acct_row("Assets:CIBC:Savings", "CAD", None)];
+        let roster = auto_roster(mixed_journal(), &declared, &[]);
+        assert!(roster.contains(&"Assets:CIBC:Savings".to_string()));
+    }
+
+    #[test]
+    fn auto_roster_excludes_hidden_accounts() {
+        let hidden = vec!["Assets:Wise:CAD".to_string()];
+        let roster = auto_roster(mixed_journal(), &[], &hidden);
+        assert!(!roster.contains(&"Assets:Wise:CAD".to_string()));
+        assert!(roster.contains(&"Assets:Wealthsimple:Cash".to_string()));
+    }
+
+    #[test]
+    fn auto_roster_keeps_unmatched() {
+        let journal = "\
+2026-05-21 WS top-up
+    Assets:Wealthsimple:Cash       250.00 CAD
+    Unmatched                     -250.00 CAD
+";
+        let roster = auto_roster(journal, &[], &[]);
+        assert!(roster.contains(&"Unmatched".to_string()));
+    }
+
+    #[test]
+    fn auto_roster_tolerates_malformed_journal() {
+        // Garbage in → no seen accounts, declared still surface, no panic.
+        let declared = vec![acct_row("Assets:Cash", "CAD", None)];
+        let roster = auto_roster("@@@ not a journal @@@", &declared, &[]);
+        assert_eq!(roster, vec!["Assets:Cash".to_string()]);
+    }
+
+    #[test]
+    fn known_accounts_includes_all_types_with_ancestors() {
+        let known = known_accounts(mixed_journal(), &[]);
+        // Full leaves across every type…
+        for leaf in [
+            "Assets:Wealthsimple:Cash",
+            "Assets:Wise:CAD",
+            "Liabilities:CIBC:CreditCard",
+            "Expenses:Food:Groceries",
+            "Expenses:Food:Coffee",
+            "Income:Salary",
+        ] {
+            assert!(known.contains(&leaf.to_string()), "missing leaf {leaf}");
+        }
+        // …plus the intermediate hierarchy nodes for typeahead.
+        for node in ["Assets", "Assets:Wise", "Expenses", "Expenses:Food", "Income"] {
+            assert!(known.contains(&node.to_string()), "missing node {node}");
+        }
+        // Sorted + deduped (BTreeSet guarantees both).
+        let mut sorted = known.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(known, sorted);
+    }
+
+    #[test]
+    fn known_accounts_unions_declared() {
+        let declared = vec![acct_row("Assets:Brokerage:RRSP", "CAD", None)];
+        let known = known_accounts("", &declared);
+        assert!(known.contains(&"Assets:Brokerage:RRSP".to_string()));
+        assert!(known.contains(&"Assets:Brokerage".to_string()));
+        assert!(known.contains(&"Assets".to_string()));
     }
 }

@@ -66,6 +66,7 @@ impl Projection for BudgetProjection {
              DEFINE TABLE IF NOT EXISTS accounts SCHEMAFULL;
              DEFINE FIELD IF NOT EXISTS commodity ON accounts TYPE string;
              DEFINE FIELD IF NOT EXISTS display_name ON accounts TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS hidden ON accounts TYPE bool DEFAULT false;
              DEFINE FIELD IF NOT EXISTS last_reconciled_through ON accounts TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS last_statement_balance ON accounts TYPE option<string>;
 
@@ -422,18 +423,23 @@ impl BudgetProjection {
             .unwrap_or_default()
             .to_string();
         let display_name = event.payload["display_name"].as_str().map(String::from);
+        let hidden = event.payload["hidden"].as_bool().unwrap_or(false);
 
+        // UPSERT … SET (not CREATE … CONTENT): the same account is now an
+        // idempotent override target — re-declaring, renaming, or hiding an
+        // already-seen account must update in place, not error. SET (vs
+        // CONTENT) leaves `last_reconciled_through` / `last_statement_balance`
+        // untouched so an override doesn't wipe a prior reconcile.
         db.query(
-            "CREATE type::record('accounts', $account) CONTENT {
-                commodity: $commodity,
-                display_name: $display_name,
-                last_reconciled_through: NONE,
-                last_statement_balance: NONE
-            }",
+            "UPSERT type::record('accounts', $account) SET
+                commodity = $commodity,
+                display_name = $display_name,
+                hidden = $hidden",
         )
         .bind(("account", account))
         .bind(("commodity", commodity))
         .bind(("display_name", display_name))
+        .bind(("hidden", hidden))
         .await?;
         Ok(())
     }
@@ -883,6 +889,71 @@ mod tests {
         assert_eq!(display.as_deref(), Some("CIBC Chequing"));
         assert_eq!(through.as_deref(), Some("2026-04-30"));
         assert_eq!(balance.as_deref(), Some("5076.10"));
+    }
+
+    #[tokio::test]
+    async fn account_override_upsert_sets_hidden_and_preserves_reconcile() {
+        // 3.9: re-emitting account_added is now an idempotent override
+        // (rename + hide). It must (a) update display/hidden, (b) NOT wipe a
+        // prior reconcile (SET, not CONTENT), (c) not duplicate the row.
+        let (db, store, runner) = fixture().await;
+        emit(
+            &store,
+            &runner,
+            "account_added",
+            "Assets:Wise:CAD",
+            serde_json::json!({ "account": "Assets:Wise:CAD", "commodity": "CAD" }),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "account_reconciled",
+            "Assets:Wise:CAD",
+            serde_json::json!({
+                "account": "Assets:Wise:CAD",
+                "commodity": "CAD",
+                "statement_balance": "1200.00",
+                "cleared_through": "2026-05-31"
+            }),
+        )
+        .await;
+        // Override: rename + hide.
+        emit(
+            &store,
+            &runner,
+            "account_added",
+            "Assets:Wise:CAD",
+            serde_json::json!({
+                "account": "Assets:Wise:CAD",
+                "commodity": "CAD",
+                "display_name": "Wise (CAD)",
+                "hidden": true
+            }),
+        )
+        .await;
+
+        let mut resp = db
+            .query("SELECT count() AS total FROM accounts GROUP ALL")
+            .await
+            .unwrap();
+        let total: Option<u32> = resp.take("total").unwrap();
+        assert_eq!(total, Some(1), "override must not duplicate the row");
+
+        let mut resp = db
+            .query("SELECT display_name, hidden, last_reconciled_through FROM type::record('accounts', 'Assets:Wise:CAD')")
+            .await
+            .unwrap();
+        let display: Option<String> = resp.take("display_name").unwrap();
+        let hidden: Option<bool> = resp.take("hidden").unwrap();
+        let through: Option<String> = resp.take("last_reconciled_through").unwrap();
+        assert_eq!(display.as_deref(), Some("Wise (CAD)"), "rename applied");
+        assert_eq!(hidden, Some(true), "hidden flag set");
+        assert_eq!(
+            through.as_deref(),
+            Some("2026-05-31"),
+            "reconcile state preserved across override (SET, not CONTENT)"
+        );
     }
 
     #[tokio::test]

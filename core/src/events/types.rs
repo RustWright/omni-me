@@ -475,6 +475,13 @@ pub struct AccountAddedPayload {
     pub commodity: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// 3.9 override: hide an auto-detected account from the Accounts screen /
+    /// net worth. Accounts are auto-included by type, so this is the only
+    /// per-account knob the user sets. `#[serde(default)]` keeps existing
+    /// `account_added` events (which never carried it) deserializing as
+    /// visible.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 /// Mark an account reconciled against a real statement. `statement_balance`

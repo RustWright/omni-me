@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 pub mod event_mapper;
 pub mod gemini;
 pub mod null;
+pub mod openai_compat;
 pub mod verify;
 
 pub use event_mapper::{receipt_extraction_to_drafts, statement_extraction_to_drafts};
@@ -163,6 +164,110 @@ pub fn route(mime: &str, sender: Option<&str>) -> Option<ExtractionHint> {
     sender
         .and_then(route_from_imap_sender)
         .or_else(|| route_from_mime(mime))
+}
+
+// --- Shared prompt / schema / parse ------------------------------------------
+//
+// Hoisted out of `gemini.rs` so every `DocumentExtractor` impl (Gemini,
+// OpenAI-compatible vision, future Veryfi) drives the same per-hint prompts,
+// the same response schema, and the same parse + confidence-clamp. Keeping one
+// copy means the verification pass (`verify`) sees a uniform `ExtractionResult`
+// shape regardless of which model produced it.
+
+/// Per-hint extraction prompt — instructs the model to emit the
+/// `ExtractionResult` JSON shape with string amounts + ISO dates.
+pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
+    let intro = "You are a transaction extractor for a personal-finance journal. \
+        Read the attached document and produce a structured draft. \
+        All amounts MUST be strings (e.g. \"12.34\") not JSON numbers — \
+        precision matters. Use ISO-8601 dates (YYYY-MM-DD). \
+        Confidence is your overall self-assessment, 0.0 to 1.0.";
+
+    let specific = match hint {
+        ExtractionHint::Receipt => {
+            "This is a retail purchase receipt. Set `description` to the merchant \
+             name. For `postings`, emit one entry per line item with the merchant's \
+             category as `account_hint` (e.g. \"Expenses:Groceries\") and the line \
+             total as `amount` (positive). The receipt's grand total should equal \
+             the sum of posting amounts — otherwise lower your confidence."
+        }
+        ExtractionHint::BankStatement => {
+            "This is a bank statement covering a range of dates. Emit one posting \
+             per transaction with `account_hint` set to your best guess of the \
+             category (\"Expenses:Groceries\", \"Income:Salary\", etc.); use \
+             negative `amount` for outflows and positive for inflows. Pick the \
+             statement's closing date as `date`."
+        }
+        ExtractionHint::BrokerageStatement => {
+            "This is a brokerage / investment account statement. Set `description` \
+             to the account holder + institution. For `postings`, emit one entry \
+             per position (Assets:<institution>:<symbol>, amount = current value) \
+             plus dividends/interest received during the period."
+        }
+        ExtractionHint::Paystub => {
+            "This is a payroll paystub. Emit one posting for gross pay \
+             (Income:Salary, negative — it's an inflow accounting-wise), then one \
+             negative posting per deduction (Expenses:Tax, Expenses:Insurance, \
+             etc.), and net should sum to the deposited amount. Set `date` to the \
+             pay period end date."
+        }
+        ExtractionHint::EmailBody => {
+            "This is the body of an email containing one or more transactions \
+             (online purchase confirmation, bank notification, etc.). Extract the \
+             core transaction details — vendor, amount, date — and emit one \
+             posting with your best `account_hint` guess."
+        }
+        ExtractionHint::Generic => {
+            "Extract any transaction-like information you can find. Set fields \
+             when confident and leave them empty when not. Lower confidence \
+             scores reflect partial extraction."
+        }
+    };
+
+    format!("{intro}\n\n{specific}")
+}
+
+/// The JSON Schema every extractor targets — one uniform `ExtractionResult`
+/// shape so the parse + verify paths stay model-agnostic.
+pub(crate) fn response_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "date": { "type": "string", "nullable": true },
+            "description": { "type": "string", "nullable": true },
+            "postings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "account_hint": { "type": "string", "nullable": true },
+                        "commodity": { "type": "string" },
+                        "amount": { "type": "string" },
+                        "line_label": { "type": "string", "nullable": true }
+                    },
+                    "required": ["commodity", "amount"]
+                }
+            },
+            "confidence": { "type": "number" }
+        },
+        "required": ["postings", "confidence"]
+    })
+}
+
+/// Parse a model's raw JSON into an `ExtractionResult`, stamping the producing
+/// `model` and clamping confidence to `[0, 1]` (a poorly calibrated model
+/// shouldn't make the extraction unusable). Shared so every extractor reports
+/// confidence identically.
+pub(crate) fn parse_response(
+    raw: serde_json::Value,
+    model: &str,
+) -> Result<ExtractionResult, ExtractionError> {
+    let mut result: ExtractionResult = serde_json::from_value(raw.clone())
+        .map_err(|e| ExtractionError::Parse(format!("response: {e}")))?;
+    result.model = model.to_string();
+    result.raw_response = raw;
+    result.confidence = result.confidence.clamp(0.0, 1.0);
+    Ok(result)
 }
 
 #[cfg(test)]

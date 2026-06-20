@@ -84,12 +84,16 @@ pub struct TransactionRow {
     pub updated_at: String,
 }
 
-/// A declared account row.
+/// A declared account row (also the override carrier for auto-detected
+/// accounts — `hidden`/`display_name` are set via `account_added` upserts).
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct AccountRow {
     pub id: String,
     pub commodity: String,
     pub display_name: Option<String>,
+    /// 3.9: when true, drop this account from the auto-detected Accounts screen.
+    #[serde(default)]
+    pub hidden: bool,
     pub last_reconciled_through: Option<String>,
     pub last_statement_balance: Option<String>,
 }
@@ -555,7 +559,7 @@ pub async fn list_accounts(db: &Database) -> Result<Vec<AccountRow>, DbError> {
     let mut resp = db
         .query(
             "SELECT meta::id(id) AS id, commodity, display_name,
-                    last_reconciled_through, last_statement_balance
+                    hidden, last_reconciled_through, last_statement_balance
              FROM accounts
              ORDER BY id ASC",
         )

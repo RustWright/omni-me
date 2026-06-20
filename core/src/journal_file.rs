@@ -307,6 +307,7 @@ mod tests {
             account: "Assets:WealthSimple:Cash".into(),
             commodity: "CAD".into(),
             display_name: Some("WS Chequing".into()),
+            hidden: false,
         };
         let rendered = render_account(&a);
         let expected = "\
@@ -323,6 +324,7 @@ account Assets:WealthSimple:Cash  ; commodity:CAD
             account: "Assets:CIBC:Chequing".into(),
             commodity: "CAD".into(),
             display_name: None,
+            hidden: false,
         };
         let rendered = render_account(&a);
         assert_eq!(rendered, "account Assets:CIBC:Chequing  ; commodity:CAD\n\n");

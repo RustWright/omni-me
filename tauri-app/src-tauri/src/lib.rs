@@ -336,6 +336,9 @@ pub fn run() {
             // Budget — accounts, budgets, recurring
             commands::budget::add_account,
             commands::budget::list_accounts,
+            commands::budget::list_known_accounts,
+            commands::budget::list_detected_accounts,
+            commands::budget::set_account_override,
             commands::budget::account_summaries,
             commands::budget::dashboard_summary,
             commands::budget::check_affordability,

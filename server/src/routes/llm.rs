@@ -34,6 +34,8 @@ struct LlmConfigView {
     base_url: Option<String>,
     model: Option<String>,
     has_key: bool,
+    /// 3.8a: also route the document extractor through this endpoint's vision API.
+    vision: bool,
 }
 
 async fn get_llm_config() -> Result<Json<LlmConfigView>, (StatusCode, String)> {
@@ -45,6 +47,7 @@ async fn get_llm_config() -> Result<Json<LlmConfigView>, (StatusCode, String)> {
             base_url: c.base_url,
             model: c.model,
             has_key: c.api_key.is_some_and(|k| !k.is_empty()),
+            vision: c.vision,
         },
         // No [llm] section → the engine's default (Gemini).
         None => LlmConfigView {
@@ -52,6 +55,7 @@ async fn get_llm_config() -> Result<Json<LlmConfigView>, (StatusCode, String)> {
             base_url: None,
             model: None,
             has_key: false,
+            vision: false,
         },
     };
     Ok(Json(view))
@@ -69,6 +73,8 @@ struct LlmConfigUpdate {
     model: Option<String>,
     #[serde(default)]
     api_key: Option<String>,
+    #[serde(default)]
+    vision: bool,
 }
 
 async fn put_llm_config(
@@ -89,6 +95,7 @@ async fn put_llm_config(
         base_url: update.base_url.filter(|s| !s.is_empty()),
         model: update.model.filter(|s| !s.is_empty()),
         api_key,
+        vision: update.vision,
     });
     credentials::save(&path, &creds).map_err(internal_err)?;
     Ok(Json(

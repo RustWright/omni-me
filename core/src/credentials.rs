@@ -80,6 +80,12 @@ pub struct LlmProviderConfig {
     /// Bearer key. Empty/absent is valid for local servers that don't check it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// 3.8a opt-in: also route the *document extractor* (receipts/statements)
+    /// through this OpenAI-compatible endpoint's vision API. Default `false`
+    /// keeps the extractor on Gemini/Null — vision support varies across
+    /// endpoints, so we never silently POST images to one that can't do it.
+    #[serde(default)]
+    pub vision: bool,
 }
 
 /// IMAP poller — host + port + account + app-password (NOT main login).
@@ -269,6 +275,7 @@ mod tests {
                 base_url: Some("http://localhost:11434/v1".into()),
                 model: Some("llama3.1".into()),
                 api_key: Some("sk-local".into()),
+                vision: true,
             }),
             ..Credentials::default()
         };
@@ -278,6 +285,7 @@ mod tests {
         assert_eq!(llm.base_url.as_deref(), Some("http://localhost:11434/v1"));
         assert_eq!(llm.model.as_deref(), Some("llama3.1"));
         assert_eq!(llm.api_key.as_deref(), Some("sk-local"));
+        assert!(llm.vision, "vision opt-in must round-trip");
     }
 
     #[test]

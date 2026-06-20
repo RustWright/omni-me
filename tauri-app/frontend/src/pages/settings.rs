@@ -209,6 +209,9 @@ pub fn SettingsPage() -> Element {
             // --- Auto-Import Sources (Phase 3.9) ---
             AutoImportSection {}
 
+            // --- Accounts (3.9 auto-detected) ---
+            AccountsSection {}
+
             // --- LLM Provider (3.8 bring-your-own-LLM) ---
             LlmProviderSection {}
 
@@ -778,6 +781,132 @@ fn AutoImportSection() -> Element {
     }
 }
 
+/// Accounts section (3.9 auto-detected). The balance-bearing accounts
+/// (Assets / Liabilities / Unmatched) are derived automatically from the ledger
+/// — there's no list to maintain. This section is overrides-only: rename an
+/// account for a friendlier label, or hide one from the Accounts screen + net
+/// worth. Applies live (it emits an `account_added` override event).
+#[component]
+fn AccountsSection() -> Element {
+    let mut accounts = use_signal(Vec::<bridge::DetectedAccountView>::new);
+    let mut loaded = use_signal(|| false);
+
+    use_future(move || async move {
+        if let Ok(list) = bridge::invoke_list_detected_accounts().await {
+            accounts.set(list);
+        }
+        loaded.set(true);
+    });
+
+    rsx! {
+        div { class: "mb-10 space-y-4",
+            div { class: "border-b border-white/5 pb-2 mb-4",
+                h2 { class: "text-lg font-bold text-obsidian-text", "Accounts" }
+            }
+            p { class: "text-sm text-obsidian-text-muted",
+                "Your asset & liability accounts are detected automatically from your ledger — "
+                "nothing to add or maintain. Rename one for a friendlier label, or hide an "
+                "account you don't want counted on the Accounts screen or in net worth."
+            }
+
+            if !*loaded.read() {
+                p { class: "text-xs text-obsidian-text-muted", "Loading…" }
+            } else if accounts.read().is_empty() {
+                p { class: "text-xs text-obsidian-text-muted",
+                    "No accounts yet — they appear here once transactions reference them."
+                }
+            } else {
+                div { class: "space-y-1.5",
+                    for acct in accounts.read().iter().cloned() {
+                        AccountOverrideRow {
+                            key: "{acct.account}",
+                            account: acct.account.clone(),
+                            display_name: acct.display_name.clone(),
+                            hidden: acct.hidden,
+                            on_changed: move |_| {
+                                spawn(async move {
+                                    if let Ok(list) = bridge::invoke_list_detected_accounts().await {
+                                        accounts.set(list);
+                                    }
+                                });
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One detected account row: a rename field + a Hide/Unhide toggle. Saves via
+/// `set_account_override` and asks the parent to reload so the list reflects the
+/// new state. Hidden rows render dimmed with an "Unhide" affordance.
+#[component]
+fn AccountOverrideRow(
+    account: String,
+    display_name: Option<String>,
+    hidden: bool,
+    on_changed: EventHandler<()>,
+) -> Element {
+    let mut name_input = use_signal(|| display_name.clone().unwrap_or_default());
+    let mut saving = use_signal(|| false);
+    let row_dim = if hidden { "opacity-50" } else { "" };
+
+    let inp = "flex-1 min-w-0 px-2 py-1 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-50";
+
+    // Current rename value → Option (empty = clear the override label).
+    let current_name = move || {
+        let v = name_input.read().trim().to_string();
+        if v.is_empty() { None } else { Some(v) }
+    };
+
+    rsx! {
+        div { class: "flex items-center gap-2 p-2 rounded border border-white/5 bg-obsidian-sidebar/40 {row_dim}",
+            div { class: "flex-1 min-w-0",
+                input {
+                    class: inp,
+                    placeholder: "{account}",
+                    value: "{name_input}",
+                    disabled: *saving.read(),
+                    oninput: move |e| name_input.set(e.value()),
+                    onchange: {
+                        let account = account.clone();
+                        move |_| {
+                            let account = account.clone();
+                            let dn = current_name();
+                            saving.set(true);
+                            spawn(async move {
+                                let _ = bridge::invoke_set_account_override(account, dn, hidden).await;
+                                saving.set(false);
+                                on_changed.call(());
+                            });
+                        }
+                    },
+                }
+                div { class: "font-mono text-[10px] text-obsidian-text-muted/70 truncate mt-0.5", "{account}" }
+            }
+            button {
+                class: "shrink-0 px-2.5 py-1 bg-white/5 border border-white/10 text-obsidian-text text-xs font-semibold rounded hover:bg-white/10 transition-colors disabled:opacity-40",
+                disabled: *saving.read(),
+                onclick: {
+                    let account = account.clone();
+                    move |_| {
+                        let account = account.clone();
+                        let dn = current_name();
+                        saving.set(true);
+                        spawn(async move {
+                            let _ = bridge::invoke_set_account_override(account, dn, !hidden).await;
+                            saving.set(false);
+                            on_changed.call(());
+                        });
+                    }
+                },
+                if hidden { "Unhide" } else { "Hide" }
+            }
+        }
+    }
+}
+
 /// LLM provider picker (3.8 bring-your-own-LLM). Gemini by default; pick an
 /// OpenAI-compatible endpoint (Ollama / llama.cpp / vLLM / commercial) to bring
 /// your own. Restart-to-apply — the running client is chosen at boot — unlike
@@ -791,6 +920,7 @@ fn LlmProviderSection() -> Element {
     let mut model = use_signal(String::new);
     let mut api_key = use_signal(String::new); // never prefilled (write-only)
     let mut has_key = use_signal(|| false);
+    let mut vision = use_signal(|| false);
     let mut saving = use_signal(|| false);
     let mut msg = use_signal(|| None::<String>);
 
@@ -800,6 +930,7 @@ fn LlmProviderSection() -> Element {
             base_url.set(cfg.base_url.unwrap_or_default());
             model.set(cfg.model.unwrap_or_default());
             has_key.set(cfg.has_key);
+            vision.set(cfg.vision);
         }
     });
 
@@ -819,6 +950,7 @@ fn LlmProviderSection() -> Element {
             "base_url": base_url.read().trim().to_string(),
             "model": model.read().trim().to_string(),
             "api_key": api_key.read().clone(),
+            "vision": *vision.read(),
         });
         let had_key_input = !api_key.read().trim().is_empty();
         saving.set(true);
@@ -847,7 +979,7 @@ fn LlmProviderSection() -> Element {
                 "Which model processes your notes — tagging, task and expense extraction. The "
                 "default is Google Gemini; point it at any OpenAI-compatible endpoint (Ollama, "
                 "llama.cpp, vLLM, or a commercial API) to bring your own. Document extraction "
-                "still uses Gemini for now."
+                "(receipts & statements) stays on Gemini unless you opt the endpoint in below."
             }
 
             div {
@@ -879,6 +1011,18 @@ fn LlmProviderSection() -> Element {
                             placeholder: key_placeholder,
                             value: "{api_key}",
                             oninput: move |e| api_key.set(e.value()),
+                        }
+                    }
+                    label { class: "flex items-start gap-2 cursor-pointer select-none",
+                        input {
+                            r#type: "checkbox",
+                            class: "mt-0.5",
+                            checked: *vision.read(),
+                            onchange: move |e| vision.set(e.checked()),
+                        }
+                        span { class: "text-xs text-obsidian-text-muted",
+                            "Also use this endpoint to read receipts & statements (vision). "
+                            "Leave off if it has no image support — extraction stays on Gemini."
                         }
                     }
                 }

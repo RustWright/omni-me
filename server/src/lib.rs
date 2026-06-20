@@ -26,7 +26,10 @@ use omni_me_core::auto_import_scheduler::{AutoImportSource, SourceRegistry};
 use omni_me_core::credentials::{self, Credentials};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
-use omni_me_core::extraction::{gemini::GeminiExtractor, null::NullExtractor, DocumentExtractor};
+use omni_me_core::extraction::{
+    gemini::GeminiExtractor, null::NullExtractor, openai_compat::OpenAiCompatExtractor,
+    DocumentExtractor,
+};
 use omni_me_core::llm::{GeminiClient, LlmClient, OpenAiCompatClient};
 
 const DB_PATH: &str = "surreal_data/server.db";
@@ -243,6 +246,28 @@ async fn health() -> Json<serde_json::Value> {
 /// `credentials.gemini`, else `NullExtractor`. Server-side: this is where
 /// `feedback_llm_server_side.md` is honored — Gemini calls originate here.
 fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
+    // 3.8a opt-in: route the document extractor through the OpenAI-compatible
+    // endpoint's vision API. Gated on `[llm] vision = true` (+ provider +
+    // base_url + model) so we never silently send images to an endpoint without
+    // vision; otherwise fall through to the Gemini/Null default below.
+    if let Some(cfg) = &creds.llm
+        && cfg.provider == "openai_compatible"
+        && cfg.vision
+    {
+        match (cfg.base_url.as_deref(), cfg.model.as_deref()) {
+            (Some(base_url), Some(model)) if !base_url.is_empty() && !model.is_empty() => {
+                tracing::info!(model = %model, "Document extractor: OpenAI-compatible vision");
+                return Arc::new(OpenAiCompatExtractor::new(
+                    base_url,
+                    model,
+                    cfg.api_key.clone().unwrap_or_default(),
+                ));
+            }
+            _ => tracing::warn!(
+                "[llm] vision=true but base_url/model missing — falling back to Gemini/Null extractor"
+            ),
+        }
+    }
     match &creds.gemini {
         Some(g) if !g.api_key.is_empty() => {
             tracing::info!("Gemini extractor wired");
@@ -309,4 +334,63 @@ async fn shutdown_signal() {
     }
 
     tracing::info!("shutdown signal received, starting graceful shutdown");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use omni_me_core::credentials::{GeminiCredentials, LlmProviderConfig};
+
+    fn openai_llm(vision: bool) -> LlmProviderConfig {
+        LlmProviderConfig {
+            provider: "openai_compatible".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            model: Some("llava".into()),
+            api_key: Some("k".into()),
+            vision,
+        }
+    }
+
+    #[test]
+    fn build_extractor_uses_vision_only_when_opted_in() {
+        // vision opt-in → OpenAI-compatible vision extractor (name == model).
+        let creds = Credentials {
+            llm: Some(openai_llm(true)),
+            ..Default::default()
+        };
+        assert_eq!(build_extractor(&creds).name(), "llava");
+
+        // Same provider, vision=false, no Gemini key → falls through to Null.
+        let creds = Credentials {
+            llm: Some(openai_llm(false)),
+            ..Default::default()
+        };
+        assert_eq!(build_extractor(&creds).name(), "null");
+
+        // Gemini key present, no vision opt-in → Gemini extractor (unchanged default).
+        let creds = Credentials {
+            gemini: Some(GeminiCredentials {
+                api_key: "g".into(),
+            }),
+            ..Default::default()
+        };
+        assert!(build_extractor(&creds).name().contains("gemini"));
+    }
+
+    #[test]
+    fn build_llm_client_selects_openai_compatible_text() {
+        // Text client swaps independently of the vision flag.
+        let creds = Credentials {
+            llm: Some(openai_llm(false)),
+            ..Default::default()
+        };
+        assert_eq!(build_llm_client(&creds, None).model_name(), "llava");
+
+        // No [llm] → Gemini default keyed by the passed key.
+        let creds = Credentials::default();
+        assert_ne!(
+            build_llm_client(&creds, Some("g".into())).model_name(),
+            "llava"
+        );
+    }
 }

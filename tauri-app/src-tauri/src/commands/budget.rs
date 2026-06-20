@@ -311,6 +311,125 @@ fn summary_to_view(s: AccountSummary) -> AccountSummaryView {
     }
 }
 
+/// True for `Assets` / `Liabilities` / `Unmatched` — the account types that
+/// belong on the Accounts screen. Mirrors `core::balances`' private predicate;
+/// used here only to filter the legacy `ROSTER_FILE` extra-includes so they
+/// can't drag a flow account (Expenses/Income) into net worth.
+fn is_balance_bearing(name: &str) -> bool {
+    matches!(balances::account_type(name), "Assets" | "Liabilities") || name == "Unmatched"
+}
+
+/// The Accounts-screen allowlist (3.9 auto-include-by-type). Auto-derives the
+/// balance-bearing accounts from the journal + declared rows (minus hidden),
+/// then folds in any still-present `ROSTER_FILE` entries that are themselves
+/// balance-bearing (a zero-regression escape hatch; the file is otherwise
+/// redundant now that detection is automatic).
+fn effective_roster(journal: &str, declared: &[AccountRow], file_roster: &[String]) -> Vec<String> {
+    let hidden: Vec<String> = declared
+        .iter()
+        .filter(|a| a.hidden)
+        .map(|a| a.id.clone())
+        .collect();
+    let mut roster = balances::auto_roster(journal, declared, &hidden);
+    for extra in file_roster {
+        if is_balance_bearing(extra) && !hidden.contains(extra) && !roster.contains(extra) {
+            roster.push(extra.clone());
+        }
+    }
+    roster.sort();
+    roster.dedup();
+    roster
+}
+
+/// Read the per-device budget journal; a missing file (fresh install /
+/// never-imported) reads as empty, not an error.
+async fn read_budget_journal(state: &AppState) -> Result<String, String> {
+    let journal_path = state.app_data_dir.join("budget.journal");
+    match tokio::fs::read_to_string(&journal_path).await {
+        Ok(s) => Ok(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("read journal file: {e}")),
+    }
+}
+
+/// One auto-detected balance-bearing account for the Settings → Accounts
+/// section. `display_name`/`hidden` come from an override row (if any); a
+/// purely-auto account (no override yet) reads as visible + unnamed.
+#[derive(Debug, Clone, Serialize)]
+pub struct DetectedAccountView {
+    pub account: String,
+    pub display_name: Option<String>,
+    pub hidden: bool,
+}
+
+/// Full account-name set for autocomplete (3.9 data layer): every account seen
+/// in the journal (all types) ∪ declared ∪ ancestor segments. The shared
+/// `AccountInput` typeahead consumes this so the user never maintains a list.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_known_accounts(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let journal = read_budget_journal(&state).await?;
+    let declared = queries::list_accounts(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(balances::known_accounts(&journal, &declared))
+}
+
+/// The detected balance-bearing accounts + their override state, for the
+/// Settings Accounts section (includes hidden ones so they can be un-hidden).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_detected_accounts(
+    state: State<'_, AppState>,
+) -> Result<Vec<DetectedAccountView>, String> {
+    let journal = read_budget_journal(&state).await?;
+    let declared = queries::list_accounts(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Pass empty `hidden` so the result includes hidden accounts (the Settings
+    // list must show them to offer "unhide").
+    let detected = balances::auto_roster(&journal, &declared, &[]);
+    let by_name: std::collections::HashMap<&str, &AccountRow> =
+        declared.iter().map(|a| (a.id.as_str(), a)).collect();
+    Ok(detected
+        .into_iter()
+        .map(|account| {
+            let row = by_name.get(account.as_str());
+            DetectedAccountView {
+                display_name: row.and_then(|r| r.display_name.clone()),
+                hidden: row.is_some_and(|r| r.hidden),
+                account,
+            }
+        })
+        .collect())
+}
+
+/// Set per-account overrides (3.9): rename + hide an auto-detected account.
+/// Emits an idempotent `AccountAdded` upsert. Commodity is preserved from any
+/// existing declared row (cosmetic for override-only rows), so hiding never
+/// clobbers a real declared commodity.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_account_override(
+    state: State<'_, AppState>,
+    account: String,
+    display_name: Option<String>,
+    hidden: bool,
+) -> Result<(), String> {
+    let commodity = queries::list_accounts(&state.db)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|a| a.id == account)
+        .map(|a| a.commodity)
+        .filter(|c| !c.is_empty())
+        .unwrap_or_default();
+    let payload = serde_json::json!({
+        "account": account,
+        "commodity": commodity,
+        "display_name": display_name,
+        "hidden": hidden,
+    });
+    append_and_apply(&state, EventType::AccountAdded, account.clone(), payload).await
+}
+
 /// Per-account summary for the Accounts screen (Phase 4.4). Reads the
 /// per-device journal file in-process via `core::balances::account_summaries`
 /// + merges declared-account metadata. The journal lives at
@@ -349,7 +468,11 @@ pub async fn account_summaries(
         .await
         .map_err(|e| e.to_string())?;
 
-    let roster = state.roster.read().await.clone();
+    // 3.9: roster is auto-derived (Assets/Liabilities/Unmatched seen + declared
+    // − hidden), with the legacy ROSTER_FILE folded in as a balance-bearing
+    // escape hatch. No hand-maintained allowlist.
+    let file_roster = state.roster.read().await.clone();
+    let roster = effective_roster(&journal_content, &declared, &file_roster);
     let summaries =
         balances::account_summaries(&journal_content, &declared, &base, as_of_date, &roster)
             .map_err(|e| format!("balance computation: {e}"))?;
@@ -467,7 +590,10 @@ pub async fn dashboard_summary(
         .await
         .map_err(|e| e.to_string())?;
 
-    let roster = state.roster.read().await.clone();
+    // 3.9: same auto-derived roster as the Accounts screen (keeps net worth
+    // consistent across both surfaces).
+    let file_roster = state.roster.read().await.clone();
+    let roster = effective_roster(&journal_content, &declared, &file_roster);
     let summary = dashboard::dashboard_summary(
         &journal_content,
         &declared,
