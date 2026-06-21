@@ -94,7 +94,7 @@ enum FinancesView {
     /// W3 recurring confirm/dismiss screen (Phase 5.4). Lists patterns
     /// surfaced by the scanner, each accept/dismiss per row.
     RecurringReview,
-    /// CIBC chequing CSV import screen (Phase 5.5). Each parsed row emits
+    /// Summit chequing CSV import screen (Phase 5.5). Each parsed row emits
     /// a `TransactionRecorded` with one source-account posting + one
     /// `Unmatched` placeholder, awaiting 5.7 reconciliation pairing.
     StatementImport,
@@ -634,7 +634,7 @@ fn HomeView(
                 div {
                     div { class: "text-sm font-semibold text-obsidian-text", "Import statement" }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Drop a CIBC chequing CSV — each row lands in Unmatched, ready to reconcile."
+                        "Drop a Summit chequing CSV — each row lands in Unmatched, ready to reconcile."
                     }
                 }
                 svg { class: "w-5 h-5 text-obsidian-text-muted",
@@ -1074,7 +1074,7 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
                 }
                 textarea {
                     class: "block w-full min-h-[200px] p-3 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted text-sm font-mono outline-none focus:border-obsidian-accent transition-colors resize-y",
-                    placeholder: "Paste a receipt confirmation email, a Wise notification, anything with a charge in it…",
+                    placeholder: "Paste a receipt confirmation email, a Globepay notification, anything with a charge in it…",
                     value: "{body.read()}",
                     oninput: move |e| body.set(e.value().clone()),
                 }
@@ -1552,7 +1552,7 @@ fn render_error(message: &str) -> Element {
 // metadata. Click → BatchReviewView.
 //
 // BatchReviewView: per-row accept toggle; if any row carries a commodity in
-// MANUAL_FX_CURRENCIES (i.e., NGN today), prompts for the manual base→quote
+// MANUAL_FX_CURRENCIES (i.e., AED today), prompts for the manual base→quote
 // rate before Commit. Commit fans out to TransactionRecorded × N + optional
 // ExchangeRateRecorded + AutoImportBatchCommitted via `commit_batch`.
 // =============================================================================
@@ -1561,7 +1561,7 @@ fn render_error(message: &str) -> Element {
 /// cover them. Mirror of `core::fx::MANUAL_FX_CURRENCIES`; kept in sync via
 /// the cross-crate type round-trip test in `core/src/fx.rs`. UI-side dup is
 /// pragmatic — making this WASM-shared would pull `core` into the frontend.
-const MANUAL_FX_CURRENCIES_UI: &[&str] = &["NGN"];
+const MANUAL_FX_CURRENCIES_UI: &[&str] = &["AED"];
 
 fn batch_needs_manual_fx(batch: &PendingBatchView) -> Option<String> {
     for draft in &batch.draft_postings {
@@ -1677,9 +1677,9 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
 
 fn pretty_source(source: &str) -> &str {
     match source {
-        "wise" => "Wise",
-        "wealthsimple" | "wealthsimple-snaptrade" => "WealthSimple",
-        "sc_ngn" | "imap-standardchartered-ngn" => "Standard Chartered (NGN)",
+        "globepay" => "Globepay",
+        "northwind-sync" | "northwind" => "Northwind",
+        "meridian-aed" | "imap-meridian-aed" => "Meridian (AED)",
         "imap_receipts" | "imap-receipts" | "receipts" => "Email receipts",
         other => other,
     }
@@ -4384,17 +4384,17 @@ fn RecurringRowCard(
 }
 
 // -----------------------------------------------------------------------------
-// Statement CSV import (Phase 5.5) — CIBC chequing.
+// Statement CSV import (Phase 5.5) — Summit chequing.
 // -----------------------------------------------------------------------------
 
-/// Default statement_source label for a CIBC chequing import based on
-/// today's calendar year + month. Format `"cibc-chequing-YYYY-MM"`,
+/// Default statement_source label for a Summit chequing import based on
+/// today's calendar year + month. Format `"summit-chequing-YYYY-MM"`,
 /// matching the convention used in the event-validation tests and in
 /// the reconciliation review's expected source-tag shape.
 fn default_statement_source_label() -> String {
     let today = chrono::Utc::now().date_naive();
     format!(
-        "cibc-chequing-{}-{:02}",
+        "summit-chequing-{}-{:02}",
         chrono::Datelike::year(&today),
         chrono::Datelike::month(&today)
     )
@@ -4435,14 +4435,14 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                 Ok(s) => s,
                 Err(_) => {
                     error.set(Some(
-                        "File isn't valid UTF-8 — re-export the CSV from CIBC online banking."
+                        "File isn't valid UTF-8 — re-export the CSV from your bank's online banking."
                             .to_string(),
                     ));
                     importing.set(false);
                     return;
                 }
             };
-            match bridge::invoke_import_cibc_chequing_csv(
+            match bridge::invoke_import_chequing_csv(
                 &csv_text,
                 &src,
                 &label,

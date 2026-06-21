@@ -197,7 +197,7 @@ mod tests {
 
     fn cad(amt: &str) -> Posting {
         Posting {
-            account: "Assets:Checking:WealthSimple".into(),
+            account: "Assets:Checking:Northwind".into(),
             commodity: "CAD".into(),
             amount: Decimal::from_str(amt).unwrap(),
             fx_rate: None,
@@ -229,7 +229,7 @@ mod tests {
         let expected = "\
 2026-05-16 Loblaws grocery run
     ; txn_id:01JKTXN
-    Assets:Checking:WealthSimple  -87.42 CAD
+    Assets:Checking:Northwind  -87.42 CAD
     Expenses:Groceries  87.42 CAD
 
 ";
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn renders_posting_with_fx_rate() {
         let p = Posting {
-            account: "Assets:Wise:USD".into(),
+            account: "Assets:Globepay:USD".into(),
             commodity: "USD".into(),
             amount: Decimal::from_str("-10.00").unwrap(),
             fx_rate: Some(FxRate {
@@ -281,7 +281,7 @@ mod tests {
             }),
             tags: vec![],
         };
-        assert_eq!(render_posting(&p), "    Assets:Wise:USD  -10.00 USD @ 1.37 CAD");
+        assert_eq!(render_posting(&p), "    Assets:Globepay:USD  -10.00 USD @ 1.37 CAD");
     }
 
     #[test]
@@ -304,14 +304,15 @@ mod tests {
     #[test]
     fn renders_account_added_with_display_name() {
         let a = AccountAddedPayload {
-            account: "Assets:WealthSimple:Cash".into(),
+            account: "Assets:Northwind:Cash".into(),
             commodity: "CAD".into(),
             display_name: Some("WS Chequing".into()),
             hidden: false,
+            is_liquid: false,
         };
         let rendered = render_account(&a);
         let expected = "\
-account Assets:WealthSimple:Cash  ; commodity:CAD
+account Assets:Northwind:Cash  ; commodity:CAD
     note WS Chequing
 
 ";
@@ -321,13 +322,14 @@ account Assets:WealthSimple:Cash  ; commodity:CAD
     #[test]
     fn renders_account_added_without_display_name() {
         let a = AccountAddedPayload {
-            account: "Assets:CIBC:Chequing".into(),
+            account: "Assets:Summit:Chequing".into(),
             commodity: "CAD".into(),
             display_name: None,
             hidden: false,
+            is_liquid: false,
         };
         let rendered = render_account(&a);
-        assert_eq!(rendered, "account Assets:CIBC:Chequing  ; commodity:CAD\n\n");
+        assert_eq!(rendered, "account Assets:Summit:Chequing  ; commodity:CAD\n\n");
     }
 
     // --- End-to-end projection: events → file ---

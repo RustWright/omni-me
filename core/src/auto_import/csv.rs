@@ -247,8 +247,9 @@ fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Imp
 }
 
 /// Parse a money cell: tolerates surrounding whitespace, thousands commas, a
-/// `$` sign, and `(123.45)` parenthesised negatives.
-fn parse_amount(raw: &str) -> Option<Decimal> {
+/// `$` sign, and `(123.45)` parenthesised negatives. `pub(crate)` so the REST
+/// source (3.6b) reuses the same money coercion for string amounts.
+pub(crate) fn parse_amount(raw: &str) -> Option<Decimal> {
     let raw = raw.trim();
     if raw.is_empty() {
         return None;
@@ -265,8 +266,9 @@ fn parse_amount(raw: &str) -> Option<Decimal> {
 
 /// Deterministic content hash (SipHash with fixed keys via `DefaultHasher`,
 /// stable across processes) — the row fallback `external_id` and the batch
-/// `dedup_key` both ride this so re-reads dedup.
-fn stable_hash(parts: &[&str]) -> u64 {
+/// `dedup_key` both ride this so re-reads dedup. `pub(crate)` so the REST
+/// source (3.6b) reuses the same dedup hashing.
+pub(crate) fn stable_hash(parts: &[&str]) -> u64 {
     let mut h = DefaultHasher::new();
     for p in parts {
         p.hash(&mut h);

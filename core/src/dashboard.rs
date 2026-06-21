@@ -18,8 +18,8 @@
 //!
 //! Plus one decision-shaped helper:
 //! - [`can_i_afford`] — verdict-from-payload for the "can I afford X?" UX.
-//!   The exact rule is a domain call (naive cash vs. conservative
-//!   after-recurring etc.) — see the fn's TODO(human) comment.
+//!   3.10 makes it liquidity-aware (spendable pool = user-marked liquid
+//!   accounts, falling back to net worth) — see the fn's inline decision note.
 
 use std::collections::BTreeMap;
 
@@ -64,6 +64,13 @@ pub struct DashboardSummary {
     /// passed to `account_summaries`). `None` when no listable account
     /// has any convertible balance — UI renders an em-dash.
     pub net_worth_in_base: Option<Decimal>,
+    /// 3.10: sum of the accounts the user has marked *liquid* (spendable), for
+    /// the liquidity-aware "Can I afford X?" verdict. `None` carries a specific
+    /// meaning — **no account is marked liquid** (opt-in unused), so
+    /// [`can_i_afford`] falls back to net worth. `Some(x)` means the liquid
+    /// policy is active with spendable total `x` (possibly `0` if the marked
+    /// accounts are empty or unconvertible).
+    pub liquid_assets_in_base: Option<Decimal>,
     /// `Unmatched` clearing-account balance in base currency. `None` when
     /// the account has no convertible balance (typically: zero or
     /// unconvertible commodities only). Non-zero values flag pending
@@ -105,6 +112,7 @@ pub fn dashboard_summary(
         balances::account_summaries(journal_content, declared, base_currency, as_of, roster)?;
 
     let net_worth_in_base = sum_listable_net_worth(&summaries);
+    let liquid_assets_in_base = sum_liquid_assets(&summaries);
     let unmatched_balance = summaries
         .iter()
         .find(|s| s.account == "Unmatched")
@@ -123,6 +131,7 @@ pub fn dashboard_summary(
     Ok(DashboardSummary {
         base_currency: base_currency.to_string(),
         net_worth_in_base,
+        liquid_assets_in_base,
         unmatched_balance,
         monthly_buckets,
         recurring,
@@ -138,6 +147,31 @@ fn sum_listable_net_worth(summaries: &[AccountSummary]) -> Option<Decimal> {
         .filter(|s| s.account != "Unmatched")
         .filter_map(|s| s.total_in_base)
         .reduce(|a, b| a + b)
+}
+
+/// Sum of the accounts the user marked *liquid* (3.10), for the afford verdict.
+///
+/// The `None` vs `Some` distinction is load-bearing: `None` means **no account
+/// is marked liquid** (opt-in unused) → [`can_i_afford`] falls back to net
+/// worth. Once ≥1 account is marked liquid we return `Some(total)` even if that
+/// total is `0` (e.g. the marked accounts are empty or unconvertible), so a
+/// deliberate "no spendable cash" reads as "can't afford it", not as a fallback
+/// to full net worth. `Unmatched` is never liquid (it's a clearing account).
+fn sum_liquid_assets(summaries: &[AccountSummary]) -> Option<Decimal> {
+    let liquid: Vec<&AccountSummary> = summaries
+        .iter()
+        .filter(|s| s.is_liquid && s.account != "Unmatched")
+        .collect();
+    if liquid.is_empty() {
+        return None;
+    }
+    // Some(0) when none of the marked accounts have a convertible balance.
+    Some(
+        liquid
+            .iter()
+            .filter_map(|s| s.total_in_base)
+            .fold(Decimal::ZERO, |a, b| a + b),
+    )
 }
 
 fn bucket_postings_by_month(
@@ -297,39 +331,39 @@ fn distill_parsed_recurring(rows: &[(String, serde_json::Value)]) -> Vec<Recurri
 /// Compute the verdict for "can I afford `amount`?" against a dashboard
 /// summary.
 ///
-/// The verdict has to decide what "afford" means. Several reasonable rules:
+/// 3.10 makes this **liquidity-aware**: the spendable pool is the accounts the
+/// user has marked liquid (opt-in), not full net worth. Two pools are in play:
 ///
-/// 1. **Naive cash check.** Can the user's net worth absorb the purchase?
-///    `net_worth_in_base - amount >= 0`. Liberal — ignores upcoming
-///    obligations. Right for big-picture "do I have the money at all?".
+/// - [`DashboardSummary::liquid_assets_in_base`] — `Some(x)` once ≥1 account is
+///   marked liquid; the spendable total (possibly `0`). The primary pool.
+/// - [`DashboardSummary::net_worth_in_base`] — the fallback pool when
+///   **nothing** is marked liquid (`liquid_assets_in_base == None`), preserving
+///   pre-3.10 behavior so the feature degrades gracefully.
 ///
-/// 2. **Conservative after-recurring.** Subtract the next month's worth of
-///    recurring obligations BEFORE the purchase. `net_worth - month_of_recurring
-///    - amount >= 0`. Right for "is there room after my bills?".
-///
-/// 3. **Liquid-only.** Same as 1 or 2 but only counts a subset of accounts
-///    the user marks as "spendable" (excludes savings / locked-in
-///    investments). Requires extra metadata we don't have yet.
-///
-/// `Unmatched` balance is **not** part of net worth (we subtract it out in
-/// `sum_listable_net_worth`), so it doesn't affect the verdict — but it
-/// does mean net-worth is provisional. A future revision could weight that
-/// by surfacing a "your net worth is uncertain by $X" caveat.
+/// Both pools subtract the next month's recurring obligations before the
+/// purchase (the conservative "is there room after my bills?" rule):
+/// `remaining = pool − next_month_recurring − amount`, `can_afford =
+/// remaining > 0`. `Unmatched` is excluded from both pools (clearing account),
+/// so it never inflates a verdict.
 pub fn can_i_afford(amount: Decimal, summary: &DashboardSummary) -> AffordVerdict {
-    if let Some(net_worth) = summary.net_worth_in_base {
-        let balance_after_spend = net_worth - next_month_recurring_total(summary) - amount;
-        AffordVerdict {
-            can_afford: balance_after_spend > Decimal::ZERO,
-            remaining_in_base: balance_after_spend,
-            policy_label: "Net worth − next month's recurring".to_string(),
+    let (pool, policy_label) = match (summary.liquid_assets_in_base, summary.net_worth_in_base) {
+        (Some(liquidity), _) => (liquidity, "Liquid assets − next month's recurring".into()),
+        (None, Some(net_worth)) => (net_worth, "Net worth − next month's recurring".into()),
+        (None, None) => {
+            return AffordVerdict {
+                can_afford: false,
+                remaining_in_base: Decimal::ZERO,
+                policy_label: "Net worth unavailable".into(),
+            };
         }
-    } else {
-        AffordVerdict {
-            can_afford: false,
-            remaining_in_base: Decimal::ZERO,
-            policy_label: "Net worth unavailable — declare an account or record a transaction"
-                .to_string(),
-        }
+    };
+
+    let remaining_in_base = pool - next_month_recurring_total(summary) - amount;
+    let can_afford = remaining_in_base > Decimal::ZERO;
+    AffordVerdict {
+        can_afford,
+        remaining_in_base,
+        policy_label,
     }
 }
 
@@ -372,9 +406,9 @@ mod tests {
     /// Unmatched). Net-worth + unmatched assertions depend on these surfacing.
     fn roster() -> Vec<String> {
         [
-            "Assets:Wealthsimple:Cash",
-            "Assets:Wise:CAD",
-            "Liabilities:CIBC:CreditCard",
+            "Assets:Northwind:Cash",
+            "Assets:Globepay:CAD",
+            "Liabilities:Summit:CreditCard",
             "Unmatched",
         ]
         .iter()
@@ -433,17 +467,26 @@ mod tests {
     fn dashboard_summary_computes_net_worth_excluding_unmatched() {
         let journal = "\
 2026-05-01 Salary
-    Assets:Wealthsimple:Cash      3000.00 CAD
+    Assets:Northwind:Cash      3000.00 CAD
     Income:Salary                -3000.00 CAD
 
 2026-05-15 Auto-import (WS top-up, counter-leg unknown)
-    Assets:Wise:CAD                250.00 CAD
+    Assets:Globepay:CAD                250.00 CAD
     Unmatched                     -250.00 CAD
 ";
-        let summary =
-            dashboard_summary(journal, &[], &[], "CAD", day(2026, 5, 23), &[], 6, &roster()).unwrap();
+        let summary = dashboard_summary(
+            journal,
+            &[],
+            &[],
+            "CAD",
+            day(2026, 5, 23),
+            &[],
+            6,
+            &roster(),
+        )
+        .unwrap();
 
-        // Listable accounts: Assets:Wealthsimple:Cash (+3000) + Assets:Wise:CAD (+250)
+        // Listable accounts: Assets:Northwind:Cash (+3000) + Assets:Globepay:CAD (+250)
         // Unmatched (-250) is explicitly excluded from net worth.
         assert_eq!(summary.net_worth_in_base, Some(d("3250.00")));
         assert_eq!(summary.unmatched_balance, Some(d("-250.00")));
@@ -453,10 +496,20 @@ mod tests {
     fn dashboard_summary_returns_no_unmatched_when_absent() {
         let journal = "\
 2026-05-01 Coffee
-    Assets:Wealthsimple:Cash       -5.25 CAD
+    Assets:Northwind:Cash       -5.25 CAD
     Expenses:Coffee                 5.25 CAD
 ";
-        let s = dashboard_summary(journal, &[], &[], "CAD", day(2026, 5, 23), &[], 6, &roster()).unwrap();
+        let s = dashboard_summary(
+            journal,
+            &[],
+            &[],
+            "CAD",
+            day(2026, 5, 23),
+            &[],
+            6,
+            &roster(),
+        )
+        .unwrap();
         assert_eq!(s.unmatched_balance, None);
     }
 
@@ -466,21 +519,21 @@ mod tests {
             txn(
                 "2026-04-15",
                 &[
-                    ("Assets:Wealthsimple:Cash", "CAD", "2500.00"),
+                    ("Assets:Northwind:Cash", "CAD", "2500.00"),
                     ("Income:Salary", "CAD", "-2500.00"),
                 ],
             ),
             txn(
                 "2026-04-18",
                 &[
-                    ("Assets:Wealthsimple:Cash", "CAD", "-87.42"),
+                    ("Assets:Northwind:Cash", "CAD", "-87.42"),
                     ("Expenses:Groceries", "CAD", "87.42"),
                 ],
             ),
             txn(
                 "2026-05-01",
                 &[
-                    ("Assets:Wealthsimple:Cash", "CAD", "-5.25"),
+                    ("Assets:Northwind:Cash", "CAD", "-5.25"),
                     ("Expenses:Coffee", "CAD", "5.25"),
                 ],
             ),
@@ -505,7 +558,7 @@ mod tests {
         let txns = vec![txn(
             "2026-05-10",
             &[
-                ("Assets:Wise:CAD", "USD", "-50.00"),
+                ("Assets:Globepay:CAD", "USD", "-50.00"),
                 ("Expenses:Travel", "USD", "50.00"),
             ],
         )];
@@ -537,6 +590,7 @@ mod tests {
         let summary = DashboardSummary {
             base_currency: "CAD".into(),
             net_worth_in_base: None,
+            liquid_assets_in_base: None,
             unmatched_balance: None,
             monthly_buckets: vec![],
             recurring: vec![
@@ -567,6 +621,7 @@ mod tests {
         let summary = DashboardSummary {
             base_currency: "CAD".into(),
             net_worth_in_base: None,
+            liquid_assets_in_base: None,
             unmatched_balance: None,
             monthly_buckets: vec![],
             recurring: vec![RecurringObligation {
@@ -581,14 +636,65 @@ mod tests {
 
     // --- can_i_afford (conservative after-recurring policy) -------------
 
-    fn fixture_summary(net_worth: Option<Decimal>, recurring: Vec<RecurringObligation>) -> DashboardSummary {
+    fn fixture_summary(
+        net_worth: Option<Decimal>,
+        recurring: Vec<RecurringObligation>,
+    ) -> DashboardSummary {
+        // No liquid account marked → exercises the fallback path.
         DashboardSummary {
             base_currency: "CAD".into(),
             net_worth_in_base: net_worth,
+            liquid_assets_in_base: None,
             unmatched_balance: None,
             monthly_buckets: vec![],
             recurring,
         }
+    }
+
+    /// Build a bare `AccountSummary` for the `sum_liquid_assets` tests —
+    /// only the fields that fn reads (`account`, `total_in_base`, `is_liquid`).
+    fn summ(account: &str, total: Option<Decimal>, is_liquid: bool) -> AccountSummary {
+        AccountSummary {
+            account: account.into(),
+            display_name: None,
+            last_reconciled_through: None,
+            last_statement_balance: None,
+            balances: vec![],
+            total_in_base: total,
+            is_liquid,
+        }
+    }
+
+    #[test]
+    fn sum_liquid_assets_none_when_nothing_marked() {
+        // Opt-in: with no account flagged liquid, the result is None so the
+        // verdict falls back to net worth (not Some(0), which would read as
+        // "you have no spendable money").
+        let summaries = vec![
+            summ("Assets:Globepay:CAD", Some(d("1000.00")), false),
+            summ("Assets:WS:TFSA", Some(d("9000.00")), false),
+        ];
+        assert_eq!(sum_liquid_assets(&summaries), None);
+    }
+
+    #[test]
+    fn sum_liquid_assets_sums_only_liquid() {
+        let summaries = vec![
+            summ("Assets:Globepay:CAD", Some(d("1000.00")), true),
+            summ("Assets:WS:Cash", Some(d("250.00")), true),
+            summ("Assets:WS:TFSA", Some(d("9000.00")), false), // illiquid: excluded
+            summ("Unmatched", Some(d("500.00")), true),        // clearing account: never liquid
+        ];
+        assert_eq!(sum_liquid_assets(&summaries), Some(d("1250.00")));
+    }
+
+    #[test]
+    fn sum_liquid_assets_some_zero_when_marked_but_unconvertible() {
+        // A marked-liquid account with no convertible balance yields Some(0),
+        // not None — a deliberate "no spendable cash", which must read as
+        // can't-afford, not as a fallback to full net worth.
+        let summaries = vec![summ("Assets:Crypto:BTC", None, true)];
+        assert_eq!(sum_liquid_assets(&summaries), Some(Decimal::ZERO));
     }
 
     fn netflix_monthly() -> RecurringObligation {
@@ -625,7 +731,10 @@ mod tests {
         // confirmed they never want net worth to hit zero on a purchase.
         let summary = fixture_summary(Some(d("100.00")), vec![]);
         let verdict = can_i_afford(d("100.00"), &summary);
-        assert!(!verdict.can_afford, "$0 remaining must read as can't afford");
+        assert!(
+            !verdict.can_afford,
+            "$0 remaining must read as can't afford"
+        );
         assert_eq!(verdict.remaining_in_base, Decimal::ZERO);
     }
 

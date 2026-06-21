@@ -381,7 +381,7 @@ pub struct TransactionRecordedPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment: Option<AttachmentRef>,
     /// Provenance tag for statement-imported transactions (Phase 5.5).
-    /// `None` for capture/auto-import/manual entries; `Some("cibc-chequing-2026-05")`
+    /// `None` for capture/auto-import/manual entries; `Some("summit-chequing-2026-05")`
     /// for rows imported from a bank statement CSV. Used by the unified
     /// reconciliation engine (5.7) to mark the cleared side on merge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -482,6 +482,13 @@ pub struct AccountAddedPayload {
     /// visible.
     #[serde(default)]
     pub hidden: bool,
+    /// 3.10 override (opt-in): mark this account as a *liquid* (spendable)
+    /// asset so it counts toward the "Can I afford X?" verdict. Opt-in — an
+    /// account is liquid only if the user explicitly marks it. `#[serde(default)]`
+    /// keeps pre-3.10 `account_added` events deserializing as not-liquid, so
+    /// the verdict falls back to net worth until the user opts an account in.
+    #[serde(default)]
+    pub is_liquid: bool,
 }
 
 /// Mark an account reconciled against a real statement. `statement_balance`
@@ -563,7 +570,7 @@ pub struct AutoImportBatchProposedPayload {
     /// ULID for the batch. Used as the cross-event correlation key — both
     /// `Committed` and `Dismissed` reference this `batch_id`.
     pub batch_id: String,
-    /// Source identifier (`"wise"`, `"sc_ngn"`, `"imap_receipts"`, etc.).
+    /// Source identifier (`"wise"`, `"meridian-aed"`, `"imap_receipts"`, etc.).
     /// Matches the value `AutoImportSource::name()` returns.
     pub source: String,
     /// Per-source idempotency key — what the scheduler checks to avoid
@@ -574,7 +581,7 @@ pub struct AutoImportBatchProposedPayload {
     pub draft_postings: Vec<DraftTransaction>,
     /// Source-specific metadata kept opaque at the core layer — e.g., IMAP
     /// senders use this to stash `from`/`subject`/`uid` so the review UI can
-    /// surface "from: statement@sc.com · subject: April statement".
+    /// surface "from: statement@meridian.example · subject: April statement".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_metadata: Option<serde_json::Value>,
 }
@@ -809,16 +816,16 @@ mod tests {
     fn auto_import_batch_proposed_payload_roundtrip() {
         let payload = AutoImportBatchProposedPayload {
             batch_id: "01HF2K3M4N5P6Q7R8S9TVWXYZA".into(),
-            source: "sc_ngn".into(),
-            dedup_key: "sc_ngn-uid-42".into(),
+            source: "meridian-aed".into(),
+            dedup_key: "meridian-aed-uid-42".into(),
             fetched_at: chrono::Utc::now(),
             draft_postings: vec![DraftTransaction {
-                external_id: "sc_ngn-uid-42-row-0".into(),
+                external_id: "meridian-aed-uid-42-row-0".into(),
                 date: chrono::NaiveDate::from_ymd_opt(2026, 4, 15).unwrap(),
                 description: "POS Lagos Mall".into(),
                 postings: vec![],
             }],
-            source_metadata: Some(serde_json::json!({"from": "estatements@sc.com"})),
+            source_metadata: Some(serde_json::json!({"from": "estatements@meridian.example"})),
         };
         let json = serde_json::to_value(&payload).unwrap();
         validate_payload(&EventType::AutoImportBatchProposed, &json).unwrap();
@@ -1043,7 +1050,7 @@ mod tests {
             "description": "Loblaws grocery run",
             "postings": [
                 {
-                    "account": "Assets:Checking:WealthSimple",
+                    "account": "Assets:Checking:Northwind",
                     "commodity": "CAD",
                     "amount": "-87.42",
                     "tags": []
@@ -1088,7 +1095,7 @@ mod tests {
             "description": "USD subscription",
             "postings": [
                 {
-                    "account": "Assets:Wise:USD",
+                    "account": "Assets:Globepay:USD",
                     "commodity": "USD",
                     "amount": "-10.00",
                     "fx_rate": { "quote_commodity": "CAD", "rate": "1.37" }
@@ -1136,7 +1143,7 @@ mod tests {
     fn validate_transaction_cleared() {
         let payload = serde_json::json!({
             "txn_id": "01JKTXN0000000000000000000",
-            "statement_source": "cibc-chequing-2026-05",
+            "statement_source": "summit-chequing-2026-05",
             "cleared_date": "2026-05-15"
         });
         assert!(validate_payload(&EventType::TransactionCleared, &payload).is_ok());
@@ -1173,7 +1180,7 @@ mod tests {
             "merged_ids": ["01JKTXN0000000000000000001"],
             "combined_postings": [
                 { "account": "Assets:WS:Cash", "commodity": "CAD", "amount": "-100.00" },
-                { "account": "Assets:Wise:CAD", "commodity": "CAD", "amount": "100.00" }
+                { "account": "Assets:Globepay:CAD", "commodity": "CAD", "amount": "100.00" }
             ],
             "combined_description": "WS → Wise transfer"
         });
@@ -1190,7 +1197,7 @@ mod tests {
             "merged_ids": ["01JKTXN0000000000000000001"],
             "combined_postings": [
                 { "account": "Assets:WS:Cash", "commodity": "CAD", "amount": "-100.00" },
-                { "account": "Assets:Wise:CAD", "commodity": "CAD", "amount": "98.50" }
+                { "account": "Assets:Globepay:CAD", "commodity": "CAD", "amount": "98.50" }
             ],
             "combined_description": "WS → Wise transfer (with fee)",
             "combined_attachment": {
@@ -1236,14 +1243,14 @@ mod tests {
     #[test]
     fn validate_account_added() {
         let with_display = serde_json::json!({
-            "account": "Assets:WealthSimple:Cash",
+            "account": "Assets:Northwind:Cash",
             "commodity": "CAD",
             "display_name": "WS Chequing"
         });
         assert!(validate_payload(&EventType::AccountAdded, &with_display).is_ok());
 
         let minimal = serde_json::json!({
-            "account": "Assets:WealthSimple:Cash",
+            "account": "Assets:Northwind:Cash",
             "commodity": "CAD"
         });
         assert!(validate_payload(&EventType::AccountAdded, &minimal).is_ok());
@@ -1252,7 +1259,7 @@ mod tests {
     #[test]
     fn validate_account_reconciled() {
         let payload = serde_json::json!({
-            "account": "Assets:CIBC:Chequing",
+            "account": "Assets:Summit:Chequing",
             "commodity": "CAD",
             "statement_balance": "5076.10",
             "cleared_through": "2026-04-30"

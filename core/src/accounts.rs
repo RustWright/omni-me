@@ -168,8 +168,8 @@ mod tests {
 
     #[test]
     fn leaves_non_expense_account_untouched() {
-        let (stripped, was_business) = strip_business_prefix("Assets:Checking:WealthSimple");
-        assert_eq!(stripped, "Assets:Checking:WealthSimple");
+        let (stripped, was_business) = strip_business_prefix("Assets:Checking:Northwind");
+        assert_eq!(stripped, "Assets:Checking:Northwind");
         assert!(!was_business);
     }
 
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn validate_foreign_commodity_with_correct_fx_ok() {
         let p = Posting {
-            account: "Assets:Wise:USD".into(),
+            account: "Assets:Globepay:USD".into(),
             commodity: "USD".into(),
             amount: Decimal::from_str("-10.00").unwrap(),
             fx_rate: Some(FxRate {
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn validate_foreign_commodity_with_mismatched_fx_rejected() {
         let p = Posting {
-            account: "Assets:Wise:USD".into(),
+            account: "Assets:Globepay:USD".into(),
             commodity: "USD".into(),
             amount: Decimal::from_str("-10.00").unwrap(),
             fx_rate: Some(FxRate {
@@ -258,7 +258,7 @@ mod tests {
         // FX rate is *optional* per spec — Phase 2.7 Frankfurter fallback fills
         // in `P` directives separately. Validation must not require fx_rate.
         let p = Posting {
-            account: "Assets:Wise:USD".into(),
+            account: "Assets:Globepay:USD".into(),
             commodity: "USD".into(),
             amount: Decimal::from_str("-10.00").unwrap(),
             fx_rate: None,

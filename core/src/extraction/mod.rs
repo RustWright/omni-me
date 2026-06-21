@@ -135,7 +135,7 @@ pub fn route_from_mime(mime: &str) -> Option<ExtractionHint> {
 }
 
 /// Sender-based routing for IMAP-pulled emails. Matched against the email's
-/// `From` header. Higher priority than MIME route — a Standard Chartered
+/// `From` header. Higher priority than MIME route — a Meridian
 /// statement PDF emails as an attachment, but the sender tells us it's a
 /// bank statement before we ever look at the MIME type.
 ///
@@ -143,16 +143,16 @@ pub fn route_from_mime(mime: &str) -> Option<ExtractionHint> {
 /// is a deliberate per-source mapping decision, not a regex catch-all.
 pub fn route_from_imap_sender(sender: &str) -> Option<ExtractionHint> {
     let lower = sender.to_lowercase();
-    // Standard Chartered Nigeria — monthly NGN statement PDFs
-    if lower.ends_with("@sc.com") || lower.contains("@standardchartered") {
+    // Meridian — monthly AED statement PDFs
+    if lower.ends_with("@meridian.example") || lower.contains("@meridian") {
         return Some(ExtractionHint::BankStatement);
     }
-    // CIBC monthly statements (when/if email delivery is configured)
-    if lower.contains("@cibc.com") {
+    // Summit monthly statements (when/if email delivery is configured)
+    if lower.contains("@summit.example") {
         return Some(ExtractionHint::BankStatement);
     }
-    // WealthSimple — invest account statements
-    if lower.contains("@wealthsimple.com") {
+    // Northwind — invest account statements
+    if lower.contains("@northwind.example") {
         return Some(ExtractionHint::BrokerageStatement);
     }
     None
@@ -306,13 +306,13 @@ mod tests {
     }
 
     #[test]
-    fn route_standard_chartered_sender_to_bank_statement() {
+    fn route_meridian_sender_to_bank_statement() {
         assert_eq!(
-            route_from_imap_sender("notifications@sc.com"),
+            route_from_imap_sender("notifications@meridian.example"),
             Some(ExtractionHint::BankStatement)
         );
         assert_eq!(
-            route_from_imap_sender("noreply@standardchartered.com.ng"),
+            route_from_imap_sender("noreply@meridian.example"),
             Some(ExtractionHint::BankStatement)
         );
     }
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn route_sender_match_is_case_insensitive() {
         assert_eq!(
-            route_from_imap_sender("Notifications@SC.com"),
+            route_from_imap_sender("Notifications@Meridian.example"),
             Some(ExtractionHint::BankStatement)
         );
     }
@@ -332,10 +332,10 @@ mod tests {
 
     #[test]
     fn route_sender_beats_mime() {
-        // A WealthSimple-sent PDF — MIME alone would return None, but sender
+        // A Northwind-sent PDF — MIME alone would return None, but sender
         // routes to BrokerageStatement.
         assert_eq!(
-            route("application/pdf", Some("statements@wealthsimple.com")),
+            route("application/pdf", Some("statements@northwind.example")),
             Some(ExtractionHint::BrokerageStatement)
         );
     }

@@ -67,6 +67,7 @@ impl Projection for BudgetProjection {
              DEFINE FIELD IF NOT EXISTS commodity ON accounts TYPE string;
              DEFINE FIELD IF NOT EXISTS display_name ON accounts TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS hidden ON accounts TYPE bool DEFAULT false;
+             DEFINE FIELD IF NOT EXISTS is_liquid ON accounts TYPE bool DEFAULT false;
              DEFINE FIELD IF NOT EXISTS last_reconciled_through ON accounts TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS last_statement_balance ON accounts TYPE option<string>;
 
@@ -424,22 +425,26 @@ impl BudgetProjection {
             .to_string();
         let display_name = event.payload["display_name"].as_str().map(String::from);
         let hidden = event.payload["hidden"].as_bool().unwrap_or(false);
+        let is_liquid = event.payload["is_liquid"].as_bool().unwrap_or(false);
 
         // UPSERT … SET (not CREATE … CONTENT): the same account is now an
-        // idempotent override target — re-declaring, renaming, or hiding an
-        // already-seen account must update in place, not error. SET (vs
-        // CONTENT) leaves `last_reconciled_through` / `last_statement_balance`
-        // untouched so an override doesn't wipe a prior reconcile.
+        // idempotent override target — re-declaring, renaming, hiding, or
+        // marking-liquid an already-seen account must update in place, not
+        // error. SET (vs CONTENT) leaves `last_reconciled_through` /
+        // `last_statement_balance` untouched so an override doesn't wipe a
+        // prior reconcile.
         db.query(
             "UPSERT type::record('accounts', $account) SET
                 commodity = $commodity,
                 display_name = $display_name,
-                hidden = $hidden",
+                hidden = $hidden,
+                is_liquid = $is_liquid",
         )
         .bind(("account", account))
         .bind(("commodity", commodity))
         .bind(("display_name", display_name))
         .bind(("hidden", hidden))
+        .bind(("is_liquid", is_liquid))
         .await?;
         Ok(())
     }

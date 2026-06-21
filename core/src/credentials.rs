@@ -61,6 +61,13 @@ pub struct Credentials {
     /// deferred fast-follow that will read this same section.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm: Option<LlmProviderConfig>,
+    /// Generic name→secret map for config-driven sources that authenticate by
+    /// reference (3.6b REST). A source's `sources.toml` carries only the *name*
+    /// of the secret (non-secret); the value is resolved here at fetch time —
+    /// keeping API keys out of `sources.toml` (the "secrets referenced by name"
+    /// design that `[llm].api_key` and the subprocess helpers already follow).
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub secrets: std::collections::HashMap<String, String>,
 }
 
 /// Text-LLM provider selection + its connection config. Lives in
@@ -209,6 +216,7 @@ mod tests {
                 api_key: "gemini-key".into(),
             }),
             llm: None,
+            secrets: Default::default(),
         };
 
         save(&path, &original).unwrap();
@@ -222,7 +230,7 @@ mod tests {
 
     #[test]
     fn unknown_bank_sections_are_ignored() {
-        // The private overlay writes its own [wise] / [wealthsimple_python]
+        // The private overlay writes its own [globepay] / [northwind_sync]
         // sections into the same file. The public Credentials view must load
         // cleanly past them rather than erroring on unknown keys.
         let toml_str = r#"
@@ -235,7 +243,7 @@ mod tests {
             account = "me@gmail.com"
             app_password = "pw"
 
-            [wise]
+            [globepay]
             api_token = "ignored-by-public"
 
             [[sc_accounts]]

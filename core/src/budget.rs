@@ -467,7 +467,7 @@ mod tests {
             "2026-05-15".to_string(),
             serde_json::json!([
                 posting_json("Expenses:Groceries", "50", "CAD"),
-                posting_json("Assets:Wealthsimple:Cash", "-50", "CAD"),
+                posting_json("Assets:Northwind:Cash", "-50", "CAD"),
             ]),
         )];
         let out = collect_expense_parsed(&rows, "CAD", &Prices::new());
@@ -515,21 +515,21 @@ mod tests {
 
     #[test]
     fn balance_check_zero_discrepancy_is_ok() {
-        let r = balance_check("Assets:CIBC:Chequing", "CAD", Decimal::from(1500), Decimal::from(1500));
+        let r = balance_check("Assets:Summit:Chequing", "CAD", Decimal::from(1500), Decimal::from(1500));
         assert!(r.ok);
         assert_eq!(r.discrepancy, Decimal::ZERO);
     }
 
     #[test]
     fn balance_check_positive_discrepancy_means_cleared_exceeds_statement() {
-        let r = balance_check("Assets:CIBC:Chequing", "CAD", Decimal::from(1525), Decimal::from(1500));
+        let r = balance_check("Assets:Summit:Chequing", "CAD", Decimal::from(1525), Decimal::from(1500));
         assert!(!r.ok);
         assert_eq!(r.discrepancy, Decimal::from(25));
     }
 
     #[test]
     fn balance_check_negative_discrepancy_means_cleared_short_of_statement() {
-        let r = balance_check("Assets:CIBC:Chequing", "CAD", Decimal::from(1480), Decimal::from(1500));
+        let r = balance_check("Assets:Summit:Chequing", "CAD", Decimal::from(1480), Decimal::from(1500));
         assert!(!r.ok);
         assert_eq!(r.discrepancy, Decimal::from(-20));
     }

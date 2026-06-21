@@ -180,7 +180,7 @@ mod tests {
     fn finds_obvious_pair_same_amount_opposite_sign_same_day() {
         let txns = vec![
             u("a", "2026-05-15", "Loblaws Groceries", "42.18", None),
-            u("b", "2026-05-15", "LOBLAWS", "-42.18", Some("cibc-2026-05")),
+            u("b", "2026-05-15", "LOBLAWS", "-42.18", Some("summit-2026-05")),
         ];
         let cands = find_match_candidates(&txns, 5);
         assert_eq!(cands.len(), 1);
@@ -263,12 +263,12 @@ mod tests {
         // about the same charge, which shouldn't merge under 5.7's "one side
         // clears the other" model).
         let both = vec![
-            u("a", "2026-05-15", "Coffee", "5.00", Some("cibc-2026-05")),
-            u("b", "2026-05-15", "Coffee", "-5.00", Some("cibc-2026-05")),
+            u("a", "2026-05-15", "Coffee", "5.00", Some("summit-2026-05")),
+            u("b", "2026-05-15", "Coffee", "-5.00", Some("summit-2026-05")),
         ];
         let only_one = vec![
             u("c", "2026-05-15", "Coffee", "5.00", None),
-            u("d", "2026-05-15", "Coffee", "-5.00", Some("cibc-2026-05")),
+            u("d", "2026-05-15", "Coffee", "-5.00", Some("summit-2026-05")),
         ];
         let neither = vec![
             u("e", "2026-05-15", "Coffee", "5.00", None),

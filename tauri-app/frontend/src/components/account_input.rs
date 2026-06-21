@@ -1,6 +1,6 @@
 //! Shared account-name typeahead (friction-log [M]).
 //!
-//! Every place the user types a ledger account name (`Assets:Wise:CAD`,
+//! Every place the user types a ledger account name (`Assets:Globepay:CAD`,
 //! `Expenses:Food`) used to be a raw `<input>` with no autocomplete. This is the
 //! single component those sites swap to: a controlled text input + a suggestion
 //! dropdown fed by the 3.9 `known_accounts` union (every account seen in the

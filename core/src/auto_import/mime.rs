@@ -156,7 +156,7 @@ mod tests {
         };
         let parsed = parse_eml(&bytes).expect("SC eml parses");
         assert!(
-            parsed.from.contains("@sc.com")
+            parsed.from.contains("@meridian.example")
                 || parsed.from.contains("amazonses")
                 || parsed.from.to_lowercase().contains("standard"),
             "unexpected From: {}",

@@ -814,8 +814,8 @@ pub async fn invoke_get_sync_info() -> Result<SyncInfo, String> {
     #[cfg(feature = "mock")]
     {
         Ok(SyncInfo {
-            server_url: "https://mock-vps.omni-me.com".into(),
-            device_id: "SAMSUNG-GALAXY-S21-MOCK".into(),
+            server_url: "https://demo.example.com".into(),
+            device_id: "DEMO-DEVICE-01".into(),
         })
     }
     #[cfg(not(feature = "mock"))]
@@ -1101,7 +1101,7 @@ pub async fn invoke_extract_document(
                     line_label: Some("Subtotal".into()),
                 },
                 ExtractedPostingView {
-                    account_hint: Some("Assets:Wealthsimple:Cash".into()),
+                    account_hint: Some("Assets:Northwind:Cash".into()),
                     commodity: "CAD".into(),
                     amount: "-42.18".into(),
                     line_label: None,
@@ -1191,7 +1191,7 @@ fn mock_transactions() -> Vec<TransactionView> {
             description: "Loblaws — weekly groceries".into(),
             postings: serde_json::Value::Array(vec![
                 posting("Expenses:Groceries", "42.18", "CAD"),
-                posting("Assets:Wealthsimple:Cash", "-42.18", "CAD"),
+                posting("Assets:Northwind:Cash", "-42.18", "CAD"),
             ]),
             attachment: Some(attachment(
                 "loblaws-2026-05-18.png",
@@ -1216,7 +1216,7 @@ fn mock_transactions() -> Vec<TransactionView> {
             category: Some("groceries".into()),
             tags_top: vec!["food".into()],
             cleared: true,
-            statement_source: Some("cibc_statement".into()),
+            statement_source: Some("summit_statement".into()),
             cleared_date: Some("2026-05-16".into()),
         },
         TransactionView {
@@ -1246,7 +1246,7 @@ fn mock_transactions() -> Vec<TransactionView> {
             category: None,
             tags_top: vec!["recurring".into()],
             cleared: true,
-            statement_source: Some("cibc_statement".into()),
+            statement_source: Some("summit_statement".into()),
             cleared_date: Some("2026-05-11".into()),
         },
     ]
@@ -1537,8 +1537,8 @@ pub async fn invoke_account_summaries(
 fn mock_account_summaries() -> Vec<AccountSummaryView> {
     let base = vec![
         AccountSummaryView {
-            account: "Assets:Wealthsimple:Cash".into(),
-            display_name: Some("Wealthsimple Cash".into()),
+            account: "Assets:Northwind:Cash".into(),
+            display_name: Some("Northwind Cash".into()),
             last_reconciled_through: Some("2026-05-15".into()),
             last_statement_balance: Some("4250.00".into()),
             balances: vec![CommodityBalanceView {
@@ -1549,8 +1549,8 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
             total_in_base: Some("4287.42".into()),
         },
         AccountSummaryView {
-            account: "Assets:Wise:CAD".into(),
-            display_name: Some("Wise multi-currency".into()),
+            account: "Assets:Globepay:CAD".into(),
+            display_name: Some("Globepay multi-currency".into()),
             last_reconciled_through: None,
             last_statement_balance: None,
             balances: vec![
@@ -1573,20 +1573,20 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
             total_in_base: Some("1054.65".into()),
         },
         AccountSummaryView {
-            account: "Assets:StandardChartered:NGN".into(),
-            display_name: Some("Standard Chartered NGN".into()),
+            account: "Assets:Meridian:AED".into(),
+            display_name: Some("Meridian AED".into()),
             last_reconciled_through: None,
             last_statement_balance: None,
             balances: vec![CommodityBalanceView {
-                commodity: "NGN".into(),
+                commodity: "AED".into(),
                 quantity: "52400.00".into(),
                 value_in_base: None,
             }],
             total_in_base: None,
         },
         AccountSummaryView {
-            account: "Liabilities:CIBC:CreditCard".into(),
-            display_name: Some("CIBC Aventura".into()),
+            account: "Liabilities:Summit:CreditCard".into(),
+            display_name: Some("Summit Rewards".into()),
             last_reconciled_through: Some("2026-04-30".into()),
             last_statement_balance: Some("-1182.06".into()),
             balances: vec![CommodityBalanceView {
@@ -1623,13 +1623,20 @@ pub struct DetectedAccountView {
     pub display_name: Option<String>,
     #[serde(default)]
     pub hidden: bool,
+    /// 3.10: the user marked this account a liquid (spendable) asset.
+    #[serde(default)]
+    pub is_liquid: bool,
 }
+
+/// A per-account mock override: (display_name override, hidden, is_liquid).
+#[cfg(feature = "mock")]
+type MockAccountOverride = (Option<String>, bool, bool);
 
 #[cfg(feature = "mock")]
 thread_local! {
-    /// account → (display_name override, hidden). Empty = no overrides yet.
+    /// account → override. Empty = no overrides yet.
     static MOCK_ACCOUNT_OVERRIDES: std::cell::RefCell<
-        std::collections::HashMap<String, (Option<String>, bool)>,
+        std::collections::HashMap<String, MockAccountOverride>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
@@ -1642,8 +1649,8 @@ fn apply_mock_account_overrides(base: Vec<AccountSummaryView>) -> Vec<AccountSum
         let overrides = o.borrow();
         base.into_iter()
             .filter_map(|mut s| match overrides.get(&s.account) {
-                Some((_, true)) => None, // hidden
-                Some((Some(name), false)) => {
+                Some((_, true, _)) => None, // hidden
+                Some((Some(name), false, _)) => {
                     s.display_name = Some(name.clone());
                     Some(s)
                 }
@@ -1660,10 +1667,10 @@ pub async fn invoke_list_known_accounts() -> Result<Vec<String>, String> {
     {
         Ok([
             "Assets",
-            "Assets:Wealthsimple",
-            "Assets:Wealthsimple:Cash",
-            "Assets:Wise",
-            "Assets:Wise:CAD",
+            "Assets:Northwind",
+            "Assets:Northwind:Cash",
+            "Assets:Globepay",
+            "Assets:Globepay:CAD",
             "Expenses",
             "Expenses:Food",
             "Expenses:Food:Groceries",
@@ -1671,8 +1678,8 @@ pub async fn invoke_list_known_accounts() -> Result<Vec<String>, String> {
             "Income",
             "Income:Salary",
             "Liabilities",
-            "Liabilities:CIBC",
-            "Liabilities:CIBC:CreditCard",
+            "Liabilities:Summit",
+            "Liabilities:Summit:CreditCard",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -1694,10 +1701,10 @@ pub async fn invoke_list_detected_accounts() -> Result<Vec<DetectedAccountView>,
         let summaries = {
             // Base set (pre-filter) so hidden accounts still appear in Settings.
             let base_accounts = [
-                "Assets:Wealthsimple:Cash",
-                "Assets:Wise:CAD",
-                "Assets:StandardChartered:NGN",
-                "Liabilities:CIBC:CreditCard",
+                "Assets:Northwind:Cash",
+                "Assets:Globepay:CAD",
+                "Assets:Meridian:AED",
+                "Liabilities:Summit:CreditCard",
                 "Unmatched",
             ];
             MOCK_ACCOUNT_OVERRIDES.with(|o| {
@@ -1708,8 +1715,9 @@ pub async fn invoke_list_detected_accounts() -> Result<Vec<DetectedAccountView>,
                         let ov = overrides.get(*a);
                         DetectedAccountView {
                             account: (*a).to_string(),
-                            display_name: ov.and_then(|(n, _)| n.clone()),
-                            hidden: ov.is_some_and(|(_, h)| *h),
+                            display_name: ov.and_then(|(n, _, _)| n.clone()),
+                            hidden: ov.is_some_and(|(_, h, _)| *h),
+                            is_liquid: ov.is_some_and(|(_, _, l)| *l),
                         }
                     })
                     .collect()
@@ -1725,20 +1733,24 @@ pub async fn invoke_list_detected_accounts() -> Result<Vec<DetectedAccountView>,
     }
 }
 
-/// Set per-account override (rename + hide) on an auto-detected account.
+/// Set per-account override (rename + hide + liquid) on an auto-detected
+/// account. Every knob is resent on each call (the projection SETs all of
+/// them), so callers pass the row's current `hidden`/`is_liquid` when flipping
+/// just one.
 pub async fn invoke_set_account_override(
     account: String,
     display_name: Option<String>,
     hidden: bool,
+    is_liquid: bool,
 ) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
         crate::timer::sleep_ms(200).await;
         MOCK_ACCOUNT_OVERRIDES.with(|o| {
             o.borrow_mut()
-                .insert(account.clone(), (display_name.clone(), hidden));
+                .insert(account.clone(), (display_name.clone(), hidden, is_liquid));
         });
-        let _ = (account, display_name, hidden);
+        let _ = (account, display_name, hidden, is_liquid);
         Ok(())
     }
     #[cfg(not(feature = "mock"))]
@@ -1748,6 +1760,7 @@ pub async fn invoke_set_account_override(
             account: &'a str,
             display_name: Option<&'a str>,
             hidden: bool,
+            is_liquid: bool,
         }
         invoke_unit(
             "set_account_override",
@@ -1755,6 +1768,7 @@ pub async fn invoke_set_account_override(
                 account: &account,
                 display_name: display_name.as_deref(),
                 hidden,
+                is_liquid,
             },
         )
         .await
@@ -1962,10 +1976,10 @@ pub async fn invoke_confirm_recurring(pattern_id: &str) -> Result<(), String> {
 }
 
 // -----------------------------------------------------------------------------
-// Statement CSV import (Phase 5.5) — CIBC chequing today, more formats later.
+// Statement CSV import (Phase 5.5) — Summit chequing today, more formats later.
 // -----------------------------------------------------------------------------
 
-pub async fn invoke_import_cibc_chequing_csv(
+pub async fn invoke_import_chequing_csv(
     csv_text: &str,
     source_account: &str,
     statement_source: &str,
@@ -1989,7 +2003,7 @@ pub async fn invoke_import_cibc_chequing_csv(
             commodity: Option<&'a str>,
         }
         invoke(
-            "import_cibc_chequing_csv",
+            "import_chequing_csv",
             &Args {
                 csv_text,
                 source_account,
@@ -2097,7 +2111,7 @@ fn mock_unmatched_no_candidate() -> Vec<ReconciliationTxnPreview> {
             description: "Costco Wholesale".to_string(),
             unmatched_amount: "-185.42".to_string(),
             unmatched_commodity: "CAD".to_string(),
-            statement_source: Some("cibc-chequing-2026-05".to_string()),
+            statement_source: Some("summit-chequing-2026-05".to_string()),
         },
         ReconciliationTxnPreview {
             txn_id: "01JK100".to_string(),
@@ -2105,7 +2119,7 @@ fn mock_unmatched_no_candidate() -> Vec<ReconciliationTxnPreview> {
             description: "Etransfer to Jane".to_string(),
             unmatched_amount: "-50.00".to_string(),
             unmatched_commodity: "CAD".to_string(),
-            statement_source: Some("cibc-chequing-2026-05".to_string()),
+            statement_source: Some("summit-chequing-2026-05".to_string()),
         },
     ]
 }
@@ -2134,7 +2148,7 @@ fn mock_match_candidates() -> Vec<MatchCandidateView> {
                 description: "LOBLAWS".to_string(),
                 unmatched_amount: "-42.18".to_string(),
                 unmatched_commodity: "CAD".to_string(),
-                statement_source: Some("cibc-chequing-2026-05".to_string()),
+                statement_source: Some("summit-chequing-2026-05".to_string()),
             },
         },
         MatchCandidateView {
@@ -2158,7 +2172,7 @@ fn mock_match_candidates() -> Vec<MatchCandidateView> {
                 description: "Toronto Hydro".to_string(),
                 unmatched_amount: "-87.50".to_string(),
                 unmatched_commodity: "CAD".to_string(),
-                statement_source: Some("cibc-chequing-2026-05".to_string()),
+                statement_source: Some("summit-chequing-2026-05".to_string()),
             },
         },
     ]
@@ -2391,20 +2405,49 @@ fn mock_dashboard_summary() -> DashboardSummaryView {
 
 #[cfg(feature = "mock")]
 fn mock_check_affordability(amount: &str) -> AffordVerdictView {
-    // Mirror the conservative-after-recurring policy in the mock so the UI
-    // feels right without a real backend round-trip. Net worth literal must
-    // match `mock_dashboard_summary`'s `net_worth_in_base` — sum of listable
-    // accounts ex-Unmatched per the dashboard policy.
+    // Mirror the 3.10 liquidity-aware policy in the mock so the UI feels right
+    // without a real backend round-trip. Net worth literal matches
+    // `mock_dashboard_summary`'s `net_worth_in_base` (listable accounts
+    // ex-Unmatched). The liquid pool reads the mock override store, so marking
+    // an account Liquid in Settings visibly changes the verdict here.
     let amt: f64 = amount.parse().unwrap_or(0.0);
     let net_worth = 3891.89_f64;
     // Mock recurring: 16.99 + 55 + 1850 = 1921.99 (all monthly).
     let recurring = 16.99 + 55.0 + 1850.0;
-    let remaining = net_worth - recurring - amt;
+
+    // Convertible mock balances (match `mock_account_summaries`); Meridian:AED is
+    // unconvertible and Unmatched is never liquid, so neither contributes.
+    let balance = |acct: &str| -> Option<f64> {
+        match acct {
+            "Assets:Northwind:Cash" => Some(4287.42),
+            "Assets:Globepay:CAD" => Some(1054.65),
+            "Liabilities:Summit:CreditCard" => Some(-1450.18),
+            _ => None,
+        }
+    };
+
+    // Liquid pool: None when no account is marked liquid (→ fall back to net
+    // worth), else the sum of the marked accounts' convertible balances.
+    let liquid: Option<f64> = MOCK_ACCOUNT_OVERRIDES.with(|o| {
+        let marked: Vec<String> = o
+            .borrow()
+            .iter()
+            .filter(|(acct, (_, _, is_liquid))| *is_liquid && acct.as_str() != "Unmatched")
+            .map(|(acct, _)| acct.clone())
+            .collect();
+        (!marked.is_empty()).then(|| marked.iter().filter_map(|a| balance(a)).sum())
+    });
+
+    let (pool, policy_label) = match liquid {
+        Some(x) => (x, "Liquid assets − next month's recurring"),
+        None => (net_worth, "Net worth − next month's recurring"),
+    };
+    let remaining = pool - recurring - amt;
     AffordVerdictView {
         can_afford: remaining > 0.0,
         remaining_in_base: format!("{remaining:.2}"),
         base_currency: "CAD".into(),
-        policy_label: "Net worth − next month's recurring".into(),
+        policy_label: policy_label.into(),
     }
 }
 
@@ -2446,8 +2489,8 @@ pub async fn invoke_clear_attachment_cache() -> Result<u64, String> {
 pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceView>, String> {
     #[cfg(feature = "mock")]
     {
-        // A plausible four-source picture: healthy Wise, healthy WS, never-run
-        // IMAP receipts, and a degraded SC NGN handler. Covers all four
+        // A plausible four-source picture: healthy Globepay, healthy Northwind, never-run
+        // IMAP receipts, and a degraded Meridian AED handler. Covers all four
         // health states in one snapshot so the UI can be inspected against
         // each badge color without contriving credentials.
         let now = chrono::Utc::now();
@@ -2455,7 +2498,7 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
         let three_hours_ago = now - chrono::Duration::hours(3);
         let mut sources = vec![
             AutoImportSourceView {
-                name: "wise".into(),
+                name: "globepay".into(),
                 last_tick_at: Some(two_min_ago.to_rfc3339()),
                 last_outcome: serde_json::json!({ "kind": "success", "events_appended": 0 }),
                 interval_secs: 1800,
@@ -2463,14 +2506,14 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 auth_state: serde_json::json!({ "kind": "active" }),
                 reauth_capable: false,
             },
-            // The WS subprocess source: session expired → needs_reauth +
+            // The Northwind subprocess source: session expired → needs_reauth +
             // reauth_capable, so the inline Reconnect affordance renders in mock.
             AutoImportSourceView {
-                name: "wealthsimple-python".into(),
+                name: "northwind-sync".into(),
                 last_tick_at: Some(three_hours_ago.to_rfc3339()),
                 last_outcome: serde_json::json!({
                     "kind": "failure",
-                    "error": "needs re-auth: WealthSimple session expired — OTP required",
+                    "error": "needs re-auth: Northwind session expired — OTP required",
                 }),
                 interval_secs: 1800,
                 health: "degraded".into(),
@@ -2490,7 +2533,7 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 reauth_capable: false,
             },
             AutoImportSourceView {
-                name: "imap-standardchartered-ngn".into(),
+                name: "imap-meridian-aed".into(),
                 last_tick_at: Some((now - chrono::Duration::minutes(10)).to_rfc3339()),
                 last_outcome: serde_json::json!({
                     "kind": "failure",
@@ -2566,7 +2609,7 @@ pub async fn invoke_trigger_auto_import_tick(source: &str) -> Result<ManualTickR
 /// Relay a one-time authenticator code to re-auth a source. Returns the
 /// `ReauthOutcome` JSON verbatim (`{ "status": "active" | "invalid_otp" |
 /// "not_supported" | "error", "message"? }`) — the caller dispatches on
-/// `status`. The mock simulates the WS driver's fresh-login verdict so the
+/// `status`. The mock simulates the Northwind driver's fresh-login verdict so the
 /// inline Reconnect flow is fully walkable under `--features mock`:
 /// the all-zeros code is rejected, any other 6-digit code succeeds, and a
 /// malformed code surfaces an error.
@@ -2801,20 +2844,20 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
     #[cfg(feature = "mock")]
     {
         use crate::types::{DraftTransactionView, PostingInput};
-        // One Wise batch (CAD/USD) + one Standard Chartered NGN batch — the
+        // One Globepay batch (CAD/USD) + one Meridian AED batch — the
         // latter has a manual-FX currency so the FX prompt path is exercisable.
         let now = chrono::Utc::now();
         Ok(vec![
             PendingBatchView {
                 batch_id: "01HXMOCKWISE000000000001".into(),
-                source: "wise".into(),
-                dedup_key: "wise-01HXMOCKWISE000000000001".into(),
+                source: "globepay".into(),
+                dedup_key: "globepay-01HXMOCKWISE000000000001".into(),
                 fetched_at: (now - chrono::Duration::minutes(4)).to_rfc3339(),
                 draft_postings: vec![
                     DraftTransactionView {
-                        external_id: "wise-12345".into(),
+                        external_id: "globepay-12345".into(),
                         date: "2026-05-17".into(),
-                        description: "Wise transfer — landlord".into(),
+                        description: "Globepay transfer — landlord".into(),
                         postings: vec![
                             PostingInput {
                                 account: "Expenses:Rent".into(),
@@ -2823,7 +2866,7 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                                 tags: vec![],
                             },
                             PostingInput {
-                                account: "Assets:Wise:CAD".into(),
+                                account: "Assets:Globepay:CAD".into(),
                                 commodity: "CAD".into(),
                                 amount: "-1850.00".into(),
                                 tags: vec![],
@@ -2831,18 +2874,18 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                         ],
                     },
                     DraftTransactionView {
-                        external_id: "wise-12346".into(),
+                        external_id: "globepay-12346".into(),
                         date: "2026-05-18".into(),
-                        description: "Wise FX — USD top-up".into(),
+                        description: "Globepay FX — USD top-up".into(),
                         postings: vec![
                             PostingInput {
-                                account: "Assets:Wise:USD".into(),
+                                account: "Assets:Globepay:USD".into(),
                                 commodity: "USD".into(),
                                 amount: "500.00".into(),
                                 tags: vec![],
                             },
                             PostingInput {
-                                account: "Assets:Wise:CAD".into(),
+                                account: "Assets:Globepay:CAD".into(),
                                 commodity: "CAD".into(),
                                 amount: "-686.42".into(),
                                 tags: vec![],
@@ -2860,24 +2903,24 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                 draft_postings: vec![DraftTransactionView {
                     external_id: "sc-april-statement-row-1".into(),
                     date: "2026-04-29".into(),
-                    description: "Standard Chartered Lagos — POS".into(),
+                    description: "Meridian — POS".into(),
                     postings: vec![
                         PostingInput {
                             account: "Expenses:Groceries".into(),
-                            commodity: "NGN".into(),
+                            commodity: "AED".into(),
                             amount: "32500".into(),
                             tags: vec![],
                         },
                         PostingInput {
-                            account: "Assets:StandardChartered:NGN".into(),
-                            commodity: "NGN".into(),
+                            account: "Assets:Meridian:AED".into(),
+                            commodity: "AED".into(),
                             amount: "-32500".into(),
                             tags: vec![],
                         },
                     ],
                 }],
                 source_metadata: Some(serde_json::json!({
-                    "from": "statements@sc.com",
+                    "from": "statements@meridian.example",
                     "subject": "April statement",
                     "uid": 42,
                 })),

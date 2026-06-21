@@ -161,7 +161,7 @@ mod tests {
     fn statement_mapping_uses_bank_account_for_every_posting() {
         let result = result_with(
             NaiveDate::from_ymd_opt(2026, 5, 1),
-            Some("CIBC May statement"),
+            Some("Summit May statement"),
             vec![
                 posting(None, "USD", "-87.42"),
                 posting(None, "USD", "200.00"),
@@ -170,7 +170,7 @@ mod tests {
         let drafts = statement_extraction_to_drafts(
             &result,
             "ngn-uid-14272",
-            "Assets:CIBC:USD",
+            "Assets:Summit:USD",
             "USD",
         );
         assert_eq!(drafts.len(), 2);
@@ -181,7 +181,7 @@ mod tests {
         // Bank-side posting account = bank_account, mirror = Unmatched
         let p0 = &drafts[0].postings;
         assert_eq!(p0.len(), 2);
-        assert_eq!(p0[0].account, "Assets:CIBC:USD");
+        assert_eq!(p0[0].account, "Assets:Summit:USD");
         assert_eq!(p0[1].account, "Unmatched");
         // Sign inversion on the mirror
         assert_eq!(p0[0].amount, Decimal::from_str("-87.42").unwrap());

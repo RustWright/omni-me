@@ -1,14 +1,14 @@
 //! Bank-statement CSV parsing (Phase 5.5).
 //!
 //! Each parsed row becomes a draft transaction with one real-account
-//! posting (on the source account, e.g., `Assets:CIBC:Chequing`) and a
+//! posting (on the source account, e.g., `Assets:Summit:Chequing`) and a
 //! balancing `Unmatched` placeholder per the `[[project-unmatched-account-pattern]]`
 //! invariant. The Tauri layer wraps these drafts into
 //! `TransactionRecorded` events that the unified matching engine (5.6)
 //! will later pair against capture or auto-import events with the same
 //! amount + opposite-sign `Unmatched` posting.
 //!
-//! Format scope: CIBC chequing exports today; the parser is structured
+//! Format scope: Summit chequing exports today; the parser is structured
 //! so other bank formats can be added as additional `parse_*` entry
 //! points sharing the same `ParsedStatementRow` output shape.
 
@@ -58,21 +58,21 @@ impl std::fmt::Display for CsvParseError {
 
 impl std::error::Error for CsvParseError {}
 
-/// Parse a CIBC chequing-account CSV export.
+/// Parse a Summit chequing-account CSV export.
 ///
-/// CIBC's format (no header row):
+/// Summit's format (no header row):
 ///   `Date(YYYY-MM-DD), Description, Debit?, Credit?`
 ///
 /// Exactly one of Debit / Credit is populated per row. Blank cells render
 /// as empty strings between commas. Description may itself contain
 /// commas if quoted; this parser uses a simple split that breaks on
-/// quoted descriptions — acceptable for MVP since CIBC exports don't
+/// quoted descriptions — acceptable for MVP since Summit exports don't
 /// quote.
 ///
 /// Skips rows that don't have 4 columns (lets header rows in
 /// hand-edited CSVs pass through silently) and rows where both
 /// amount cells are blank.
-pub fn parse_cibc_chequing(csv: &str) -> Result<Vec<ParsedStatementRow>, CsvParseError> {
+pub fn parse_chequing_csv(csv: &str) -> Result<Vec<ParsedStatementRow>, CsvParseError> {
     let mut out = Vec::new();
     for (i, line) in csv.lines().enumerate() {
         let trimmed = line.trim();
@@ -173,12 +173,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_cibc_chequing_basic() {
+    fn parse_chequing_csv_basic() {
         let csv = "\
 2026-05-15,Loblaws Groceries,42.18,
 2026-05-16,Payroll Deposit,,2500.00
 2026-05-17,Hydro Bill,87.50,";
-        let rows = parse_cibc_chequing(csv).unwrap();
+        let rows = parse_chequing_csv(csv).unwrap();
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].date, date("2026-05-15"));
         assert_eq!(rows[0].amount, d("42.18"));
@@ -189,64 +189,64 @@ mod tests {
     }
 
     #[test]
-    fn parse_cibc_chequing_empty_input_errors() {
+    fn parse_chequing_csv_empty_input_errors() {
         assert!(matches!(
-            parse_cibc_chequing(""),
+            parse_chequing_csv(""),
             Err(CsvParseError::EmptyInput)
         ));
         assert!(matches!(
-            parse_cibc_chequing("\n\n\n"),
+            parse_chequing_csv("\n\n\n"),
             Err(CsvParseError::EmptyInput)
         ));
     }
 
     #[test]
-    fn parse_cibc_chequing_skips_header_row() {
+    fn parse_chequing_csv_skips_header_row() {
         // Hand-edited CSVs sometimes have a header row that doesn't parse
         // as a date — silently dropped rather than failing the whole file.
         let csv = "\
 Date,Description,Debit,Credit
 2026-05-15,Loblaws,42.18,";
-        let rows = parse_cibc_chequing(csv).unwrap();
+        let rows = parse_chequing_csv(csv).unwrap();
         assert_eq!(rows.len(), 1);
     }
 
     #[test]
-    fn parse_cibc_chequing_skips_blank_blank_row() {
+    fn parse_chequing_csv_skips_blank_blank_row() {
         // A row with both debit and credit blank (e.g., a closing-balance
         // marker line) is dropped silently rather than treated as an error.
         let csv = "\
 2026-05-15,Closing Balance,,
 2026-05-15,Real Transaction,10.00,";
-        let rows = parse_cibc_chequing(csv).unwrap();
+        let rows = parse_chequing_csv(csv).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].description, "Real Transaction");
     }
 
     #[test]
-    fn parse_cibc_chequing_rejects_both_debit_and_credit_populated() {
+    fn parse_chequing_csv_rejects_both_debit_and_credit_populated() {
         let csv = "2026-05-15,Bad Row,10.00,20.00";
-        let err = parse_cibc_chequing(csv).unwrap_err();
+        let err = parse_chequing_csv(csv).unwrap_err();
         assert!(matches!(err, CsvParseError::BadRow { row: 0, .. }));
     }
 
     #[test]
-    fn parse_cibc_chequing_accepts_legacy_us_date_format() {
-        // CIBC exports occasionally land in MM/DD/YYYY shape — handle as
+    fn parse_chequing_csv_accepts_legacy_us_date_format() {
+        // Summit exports occasionally land in MM/DD/YYYY shape — handle as
         // a fallback so user doesn't have to pre-normalize.
         let csv = "05/15/2026,Loblaws,42.18,";
-        let rows = parse_cibc_chequing(csv).unwrap();
+        let rows = parse_chequing_csv(csv).unwrap();
         assert_eq!(rows[0].date, date("2026-05-15"));
     }
 
     #[test]
-    fn parse_cibc_chequing_handles_zero_amount_as_skip() {
+    fn parse_chequing_csv_handles_zero_amount_as_skip() {
         // A 0.00 debit isn't a real transaction; skip rather than emit a
         // zero-value row that would clutter the unmatched ledger.
         let csv = "\
 2026-05-15,Zero Row,0.00,
 2026-05-16,Real,10.00,";
-        let rows = parse_cibc_chequing(csv).unwrap();
+        let rows = parse_chequing_csv(csv).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].description, "Real");
     }

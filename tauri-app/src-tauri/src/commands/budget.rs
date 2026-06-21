@@ -360,6 +360,8 @@ pub struct DetectedAccountView {
     pub account: String,
     pub display_name: Option<String>,
     pub hidden: bool,
+    /// 3.10: the user marked this account a liquid (spendable) asset.
+    pub is_liquid: bool,
 }
 
 /// Full account-name set for autocomplete (3.9 data layer): every account seen
@@ -396,22 +398,26 @@ pub async fn list_detected_accounts(
             DetectedAccountView {
                 display_name: row.and_then(|r| r.display_name.clone()),
                 hidden: row.is_some_and(|r| r.hidden),
+                is_liquid: row.is_some_and(|r| r.is_liquid),
                 account,
             }
         })
         .collect())
 }
 
-/// Set per-account overrides (3.9): rename + hide an auto-detected account.
-/// Emits an idempotent `AccountAdded` upsert. Commodity is preserved from any
-/// existing declared row (cosmetic for override-only rows), so hiding never
-/// clobbers a real declared commodity.
+/// Set per-account overrides (3.9 rename/hide + 3.10 liquid). Emits an
+/// idempotent `AccountAdded` upsert. Commodity is preserved from any existing
+/// declared row (cosmetic for override-only rows), so overriding never clobbers
+/// a real declared commodity. Every knob is resent on each call (the projection
+/// SETs all of them), so callers pass the row's current `hidden`/`is_liquid`
+/// when flipping just one — same preserve-by-resend the Settings UI already does.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn set_account_override(
     state: State<'_, AppState>,
     account: String,
     display_name: Option<String>,
     hidden: bool,
+    is_liquid: bool,
 ) -> Result<(), String> {
     let commodity = queries::list_accounts(&state.db)
         .await
@@ -426,6 +432,7 @@ pub async fn set_account_override(
         "commodity": commodity,
         "display_name": display_name,
         "hidden": hidden,
+        "is_liquid": is_liquid,
     });
     append_and_apply(&state, EventType::AccountAdded, account.clone(), payload).await
 }
@@ -503,6 +510,10 @@ pub struct RecurringObligationView {
 pub struct DashboardSummaryView {
     pub base_currency: String,
     pub net_worth_in_base: Option<String>,
+    /// 3.10: spendable (liquid) total — `None` means no account marked liquid
+    /// (verdict falls back to net worth). Round-trips so `check_affordability`
+    /// can rebuild the verdict without a second DB read.
+    pub liquid_assets_in_base: Option<String>,
     pub unmatched_balance: Option<String>,
     pub monthly_buckets: Vec<MonthlyTrendBucketView>,
     pub recurring: Vec<RecurringObligationView>,
@@ -538,6 +549,7 @@ fn dashboard_to_view(s: DashboardSummary) -> DashboardSummaryView {
     DashboardSummaryView {
         base_currency: s.base_currency,
         net_worth_in_base: s.net_worth_in_base.map(|d| d.to_string()),
+        liquid_assets_in_base: s.liquid_assets_in_base.map(|d| d.to_string()),
         unmatched_balance: s.unmatched_balance.map(|d| d.to_string()),
         monthly_buckets: s.monthly_buckets.into_iter().map(bucket_to_view).collect(),
         recurring: s.recurring.into_iter().map(recurring_to_view).collect(),
@@ -629,6 +641,10 @@ pub async fn check_affordability(
         base_currency: summary_view.base_currency.clone(),
         net_worth_in_base: summary_view
             .net_worth_in_base
+            .as_deref()
+            .and_then(|s| rust_decimal::Decimal::from_str(s).ok()),
+        liquid_assets_in_base: summary_view
+            .liquid_assets_in_base
             .as_deref()
             .and_then(|s| rust_decimal::Decimal::from_str(s).ok()),
         unmatched_balance: summary_view
@@ -964,14 +980,14 @@ pub async fn scan_recurring(
     })
 }
 
-/// Result of a CIBC chequing CSV import.
+/// Result of a Summit chequing CSV import.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportStatementCsvResult {
     pub imported: usize,
     pub skipped_zero_rows: usize,
 }
 
-/// Import a CIBC chequing CSV export — each parsed row becomes a
+/// Import a Summit chequing CSV export — each parsed row becomes a
 /// `TransactionRecorded` event with one posting on `source_account` and a
 /// balancing `Unmatched` placeholder. `statement_source` tags the events
 /// for the 5.7 reconciliation review (which uses it to mark cleared
@@ -979,9 +995,9 @@ pub struct ImportStatementCsvResult {
 ///
 /// Commodity defaults to CAD; the user picks the source account, which
 /// implicitly fixes the currency for this batch (mixing currencies in a
-/// single statement isn't a CIBC export shape).
+/// single statement isn't a Summit export shape).
 #[tauri::command(rename_all = "snake_case")]
-pub async fn import_cibc_chequing_csv(
+pub async fn import_chequing_csv(
     state: State<'_, AppState>,
     csv_text: String,
     source_account: String,
@@ -989,7 +1005,7 @@ pub async fn import_cibc_chequing_csv(
     commodity: Option<String>,
 ) -> Result<ImportStatementCsvResult, String> {
     let commodity = commodity.unwrap_or_else(|| "CAD".to_string());
-    let parsed = statement_csv::parse_cibc_chequing(&csv_text)
+    let parsed = statement_csv::parse_chequing_csv(&csv_text)
         .map_err(|e| format!("csv parse: {e}"))?;
 
     let mut imported = 0usize;

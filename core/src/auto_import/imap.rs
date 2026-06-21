@@ -236,14 +236,14 @@ mod tests {
         let handlers: Vec<Box<dyn ImapHandler>> = vec![
             Box::new(NeedleHandler {
                 name: "ngn".into(),
-                needle: "@sc.com".into(),
+                needle: "@meridian.example".into(),
             }),
             Box::new(NeedleHandler {
                 name: "receipts".into(),
                 needle: "@amazon.ca".into(),
             }),
         ];
-        let msg = make_message(101, "noreply@sc.com");
+        let msg = make_message(101, "noreply@meridian.example");
         let h = dispatch_to(&msg, &handlers).expect("first handler should match");
         assert_eq!(h.name(), "ngn");
     }
@@ -252,7 +252,7 @@ mod tests {
     fn dispatch_returns_none_when_no_handler_matches() {
         let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(NeedleHandler {
             name: "ngn".into(),
-            needle: "@sc.com".into(),
+            needle: "@meridian.example".into(),
         })];
         let msg = make_message(101, "random@example.com");
         assert!(dispatch_to(&msg, &handlers).is_none());
@@ -263,7 +263,7 @@ mod tests {
         let fetcher = MockFetcher::new("gmail");
         fetcher.push_response(
             vec![
-                make_message(101, "noreply@sc.com"),    // routes to ngn
+                make_message(101, "noreply@meridian.example"),    // routes to ngn
                 make_message(102, "ship@amazon.ca"),    // routes to receipts
                 make_message(103, "random@example.com"), // no handler
             ],
@@ -272,7 +272,7 @@ mod tests {
         let handlers: Vec<Box<dyn ImapHandler>> = vec![
             Box::new(NeedleHandler {
                 name: "ngn".into(),
-                needle: "@sc.com".into(),
+                needle: "@meridian.example".into(),
             }),
             Box::new(NeedleHandler {
                 name: "receipts".into(),

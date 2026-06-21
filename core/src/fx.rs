@@ -1,7 +1,7 @@
 //! Frankfurter FX rate fetcher (Phase 2.7).
 //!
 //! Free ECB-sourced daily rates, no API key. Covers CAD/USD/EUR which are
-//! the user's three Wise/Tangerine currencies. NGN is handled separately as
+//! three common demo currencies. AED is handled separately as
 //! manual entry at import time (Phase 2.13).
 //!
 //! Wire shape: `GET https://api.frankfurter.app/{date|"latest"}?from=X&to=Y`
@@ -28,7 +28,7 @@ const FRANKFURTER_BASE_URL: &str = "https://api.frankfurter.app";
 /// is non-breaking: existing `ExchangeRateRecorded` events stay valid
 /// (user-supplied historical rates remain truthful); future batches
 /// auto-fetch via Frankfurter as soon as the entry is gone.
-pub const MANUAL_FX_CURRENCIES: &[&str] = &["NGN"];
+pub const MANUAL_FX_CURRENCIES: &[&str] = &["AED"];
 
 /// Does this commodity need a user-supplied FX rate at import-review time?
 /// Case-insensitive against `MANUAL_FX_CURRENCIES`.
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn needs_manual_fx_returns_true_for_ngn() {
-        assert!(needs_manual_fx("NGN"));
+        assert!(needs_manual_fx("AED"));
     }
 
     #[test]

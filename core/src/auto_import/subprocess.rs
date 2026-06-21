@@ -362,7 +362,7 @@ mod tests {
         SubprocessSource::new("test-source", command, args, store, projections, "device-1".into())
     }
 
-    const ONE_DRAFT_OK: &str = r#"{"status":"ok","drafts":[{"external_id":"ws-t1","date":"2026-06-15","description":"Loblaws","postings":[{"account":"Assets:Wealthsimple:Cash","commodity":"CAD","amount":"-87.42"},{"account":"Unmatched","commodity":"CAD","amount":"87.42"}]}]}"#;
+    const ONE_DRAFT_OK: &str = r#"{"status":"ok","drafts":[{"external_id":"ws-t1","date":"2026-06-15","description":"Loblaws","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42"},{"account":"Unmatched","commodity":"CAD","amount":"87.42"}]}]}"#;
 
     #[tokio::test]
     async fn pull_projects_drafts_from_helper() {
@@ -388,7 +388,7 @@ mod tests {
         let drafts = draft_postings[0].as_array().unwrap();
         assert_eq!(drafts.len(), 1);
         let postings = drafts[0]["postings"].as_array().unwrap();
-        assert_eq!(postings[0]["account"], "Assets:Wealthsimple:Cash");
+        assert_eq!(postings[0]["account"], "Assets:Northwind:Cash");
         assert_eq!(postings[1]["account"], "Unmatched");
     }
 

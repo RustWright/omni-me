@@ -56,6 +56,10 @@ pub struct AccountSummary {
     /// Sum of `value_in_base` across all balances where conversion succeeded.
     /// `None` when no balance was convertible — caller renders a "—" badge.
     pub total_in_base: Option<Decimal>,
+    /// 3.10: the user has marked this account a liquid (spendable) asset
+    /// (opt-in; default `false`). The dashboard sums these for the
+    /// liquidity-aware "Can I afford X?" verdict.
+    pub is_liquid: bool,
 }
 
 // Account-set policy is now the `roster` argument to `account_summaries` (a
@@ -148,6 +152,7 @@ pub fn account_summaries(
             last_statement_balance: declared_meta.and_then(|m| m.last_statement_balance.clone()),
             balances,
             total_in_base,
+            is_liquid: declared_meta.is_some_and(|m| m.is_liquid),
         });
     }
 
@@ -175,7 +180,7 @@ fn convert_to_base(
 // `known_accounts` derives the full autocomplete set (all types + hierarchy).
 
 /// The top-level hledger account type — the segment before the first `:`
-/// (e.g. `Assets:Wealthsimple:Cash` → `Assets`). A name with no `:` is its own
+/// (e.g. `Assets:Northwind:Cash` → `Assets`). A name with no `:` is its own
 /// type (e.g. `Unmatched`).
 pub fn account_type(name: &str) -> &str {
     name.split_once(':').map_or(name, |(top, _)| top)
@@ -260,6 +265,7 @@ mod tests {
             commodity: commodity.into(),
             display_name: display.map(String::from),
             hidden: false,
+            is_liquid: false,
             last_reconciled_through: None,
             last_statement_balance: None,
         }
@@ -277,6 +283,7 @@ mod tests {
             commodity: commodity.into(),
             display_name: display.map(String::from),
             hidden: false,
+            is_liquid: false,
             last_reconciled_through: Some(through.into()),
             last_statement_balance: Some(balance.into()),
         }
@@ -289,9 +296,9 @@ mod tests {
     /// The user-style roster the existing fixtures were written against.
     fn roster() -> Vec<String> {
         [
-            "Assets:Wealthsimple:Cash",
-            "Assets:Wise:CAD",
-            "Liabilities:CIBC:CreditCard",
+            "Assets:Northwind:Cash",
+            "Assets:Globepay:CAD",
+            "Liabilities:Summit:CreditCard",
             "Unmatched",
         ]
         .iter()
@@ -303,10 +310,10 @@ mod tests {
     fn account_summaries_filters_to_roster_drop_by_default() {
         let journal = "\
 2026-05-20 Coffee
-    Assets:Wealthsimple:Cash       -5.25 CAD
+    Assets:Northwind:Cash       -5.25 CAD
     Expenses:Coffee                 5.25 CAD
 ";
-        // Roster omits Assets:Wealthsimple:Cash on purpose → nothing surfaces,
+        // Roster omits Assets:Northwind:Cash on purpose → nothing surfaces,
         // proving membership (not mere presence in postings) is required.
         let narrow = vec!["Unmatched".to_string()];
         let summaries = account_summaries(journal, &[], "CAD", as_of(), &narrow).unwrap();
@@ -316,28 +323,28 @@ mod tests {
         // roster) is still dropped.
         let summaries = account_summaries(journal, &[], "CAD", as_of(), &roster()).unwrap();
         assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].account, "Assets:Wealthsimple:Cash");
+        assert_eq!(summaries[0].account, "Assets:Northwind:Cash");
     }
 
     #[test]
     fn account_summaries_aggregates_cad_passthrough() {
         let journal = "\
 2026-05-20 Coffee
-    Assets:Wealthsimple:Cash       -5.25 CAD
+    Assets:Northwind:Cash       -5.25 CAD
     Expenses:Coffee                 5.25 CAD
 
 2026-05-20 Groceries
-    Assets:Wealthsimple:Cash      -42.18 CAD
+    Assets:Northwind:Cash      -42.18 CAD
     Expenses:Groceries             42.18 CAD
 ";
         let summaries =
             account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
 
-        // Only Assets:Wealthsimple:Cash survives the filter; Expenses:* are
+        // Only Assets:Northwind:Cash survives the filter; Expenses:* are
         // dropped.
         assert_eq!(summaries.len(), 1);
         let ws = &summaries[0];
-        assert_eq!(ws.account, "Assets:Wealthsimple:Cash");
+        assert_eq!(ws.account, "Assets:Northwind:Cash");
         assert_eq!(ws.balances.len(), 1);
         assert_eq!(ws.balances[0].commodity, "CAD");
         assert_eq!(ws.balances[0].quantity, Decimal::from_str("-47.43").unwrap());
@@ -359,11 +366,11 @@ mod tests {
 P 2026-05-20 00:00:00 USD 1.37 CAD
 
 2026-05-21 Top-up
-    Assets:Wise:CAD                100.00 USD
+    Assets:Globepay:CAD                100.00 USD
     Income:External               -100.00 USD
 
 2026-05-21 Coffee
-    Assets:Wise:CAD                 10.00 CAD
+    Assets:Globepay:CAD                 10.00 CAD
     Expenses:Coffee                -10.00 CAD
 ";
         let summaries =
@@ -371,7 +378,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
 
         let wise = summaries
             .iter()
-            .find(|s| s.account == "Assets:Wise:CAD")
+            .find(|s| s.account == "Assets:Globepay:CAD")
             .expect("Wise account present");
 
         // Two commodity rows — alphabetical sort means CAD before USD.
@@ -402,18 +409,18 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         // a 2-posting different-commodity txn) doesn't infer any rate.
         let journal = "\
 2026-05-21 BTC airdrop
-    Assets:Wealthsimple:Cash         0.003 BTC
+    Assets:Northwind:Cash         0.003 BTC
     Income:Crypto                   -0.003 BTC
 
 2026-05-21 CAD spending
-    Assets:Wealthsimple:Cash       -100.00 CAD
+    Assets:Northwind:Cash       -100.00 CAD
     Expenses:Random                 100.00 CAD
 ";
         let summaries =
             account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
 
         let ws = &summaries[0];
-        assert_eq!(ws.account, "Assets:Wealthsimple:Cash");
+        assert_eq!(ws.account, "Assets:Northwind:Cash");
 
         let btc = ws
             .balances
@@ -434,13 +441,13 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     fn account_summaries_splices_declared_metadata() {
         let journal = "\
 2026-05-20 Open
-    Assets:Wealthsimple:Cash       1000.00 CAD
+    Assets:Northwind:Cash       1000.00 CAD
     Equity:OpeningBalances        -1000.00 CAD
 ";
         let declared = vec![acct_row_reconciled(
-            "Assets:Wealthsimple:Cash",
+            "Assets:Northwind:Cash",
             "CAD",
-            Some("Wealthsimple Cash"),
+            Some("Northwind Cash"),
             "2026-05-15",
             "1000.00",
         )];
@@ -448,32 +455,32 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
 
         let ws = summaries
             .iter()
-            .find(|s| s.account == "Assets:Wealthsimple:Cash")
+            .find(|s| s.account == "Assets:Northwind:Cash")
             .unwrap();
-        assert_eq!(ws.display_name.as_deref(), Some("Wealthsimple Cash"));
+        assert_eq!(ws.display_name.as_deref(), Some("Northwind Cash"));
         assert_eq!(ws.last_reconciled_through.as_deref(), Some("2026-05-15"));
         assert_eq!(ws.last_statement_balance.as_deref(), Some("1000.00"));
     }
 
     #[test]
     fn account_summaries_includes_declared_account_with_zero_balance() {
-        // No postings touch Liabilities:CIBC:CreditCard but it's declared —
+        // No postings touch Liabilities:Summit:CreditCard but it's declared —
         // it should still show on the screen so the user can see "yep, zero".
         let journal = "\
 2026-05-20 Coffee
-    Assets:Wealthsimple:Cash       -5.25 CAD
+    Assets:Northwind:Cash       -5.25 CAD
     Expenses:Coffee                 5.25 CAD
 ";
         let declared = vec![acct_row(
-            "Liabilities:CIBC:CreditCard",
+            "Liabilities:Summit:CreditCard",
             "CAD",
-            Some("CIBC Aventura"),
+            Some("Summit Rewards"),
         )];
         let summaries = account_summaries(journal, &declared, "CAD", as_of(), &roster()).unwrap();
 
         let cibc = summaries
             .iter()
-            .find(|s| s.account == "Liabilities:CIBC:CreditCard");
+            .find(|s| s.account == "Liabilities:Summit:CreditCard");
         assert!(cibc.is_some(), "declared listable account must appear even with zero balance");
         let cibc = cibc.unwrap();
         assert!(cibc.balances.is_empty());
@@ -494,7 +501,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         // the reconciliation-pending signal. Must surface on the list.
         let journal = "\
 2026-05-21 WS top-up (auto-import; counter-leg unknown)
-    Assets:Wealthsimple:Cash       250.00 CAD
+    Assets:Northwind:Cash       250.00 CAD
     Unmatched                     -250.00 CAD
 ";
         let summaries = account_summaries(journal, &[], "CAD", as_of(), &roster()).unwrap();
@@ -514,22 +521,22 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         "\
 2026-05-01 Groceries
     Expenses:Food:Groceries        50.00 CAD
-    Assets:Wealthsimple:Cash      -50.00 CAD
+    Assets:Northwind:Cash      -50.00 CAD
 
 2026-05-02 Salary
-    Assets:Wise:CAD              3000.00 CAD
+    Assets:Globepay:CAD              3000.00 CAD
     Income:Salary               -3000.00 CAD
 
 2026-05-03 Card
-    Liabilities:CIBC:CreditCard   -20.00 CAD
+    Liabilities:Summit:CreditCard   -20.00 CAD
     Expenses:Food:Coffee           20.00 CAD
 "
     }
 
     #[test]
     fn account_type_takes_top_segment() {
-        assert_eq!(account_type("Assets:Wise:CAD"), "Assets");
-        assert_eq!(account_type("Liabilities:CIBC:CreditCard"), "Liabilities");
+        assert_eq!(account_type("Assets:Globepay:CAD"), "Assets");
+        assert_eq!(account_type("Liabilities:Summit:CreditCard"), "Liabilities");
         assert_eq!(account_type("Unmatched"), "Unmatched");
         assert_eq!(account_type(""), "");
     }
@@ -541,9 +548,9 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         assert_eq!(
             roster,
             vec![
-                "Assets:Wealthsimple:Cash".to_string(),
-                "Assets:Wise:CAD".to_string(),
-                "Liabilities:CIBC:CreditCard".to_string(),
+                "Assets:Northwind:Cash".to_string(),
+                "Assets:Globepay:CAD".to_string(),
+                "Liabilities:Summit:CreditCard".to_string(),
             ]
         );
     }
@@ -551,24 +558,24 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     #[test]
     fn auto_roster_includes_declared_zero_balance_asset() {
         // Declared but never posted to — still an Asset, so it belongs.
-        let declared = vec![acct_row("Assets:CIBC:Savings", "CAD", None)];
+        let declared = vec![acct_row("Assets:Summit:Savings", "CAD", None)];
         let roster = auto_roster(mixed_journal(), &declared, &[]);
-        assert!(roster.contains(&"Assets:CIBC:Savings".to_string()));
+        assert!(roster.contains(&"Assets:Summit:Savings".to_string()));
     }
 
     #[test]
     fn auto_roster_excludes_hidden_accounts() {
-        let hidden = vec!["Assets:Wise:CAD".to_string()];
+        let hidden = vec!["Assets:Globepay:CAD".to_string()];
         let roster = auto_roster(mixed_journal(), &[], &hidden);
-        assert!(!roster.contains(&"Assets:Wise:CAD".to_string()));
-        assert!(roster.contains(&"Assets:Wealthsimple:Cash".to_string()));
+        assert!(!roster.contains(&"Assets:Globepay:CAD".to_string()));
+        assert!(roster.contains(&"Assets:Northwind:Cash".to_string()));
     }
 
     #[test]
     fn auto_roster_keeps_unmatched() {
         let journal = "\
 2026-05-21 WS top-up
-    Assets:Wealthsimple:Cash       250.00 CAD
+    Assets:Northwind:Cash       250.00 CAD
     Unmatched                     -250.00 CAD
 ";
         let roster = auto_roster(journal, &[], &[]);
@@ -588,9 +595,9 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         let known = known_accounts(mixed_journal(), &[]);
         // Full leaves across every type…
         for leaf in [
-            "Assets:Wealthsimple:Cash",
-            "Assets:Wise:CAD",
-            "Liabilities:CIBC:CreditCard",
+            "Assets:Northwind:Cash",
+            "Assets:Globepay:CAD",
+            "Liabilities:Summit:CreditCard",
             "Expenses:Food:Groceries",
             "Expenses:Food:Coffee",
             "Income:Salary",
@@ -598,7 +605,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
             assert!(known.contains(&leaf.to_string()), "missing leaf {leaf}");
         }
         // …plus the intermediate hierarchy nodes for typeahead.
-        for node in ["Assets", "Assets:Wise", "Expenses", "Expenses:Food", "Income"] {
+        for node in ["Assets", "Assets:Globepay", "Expenses", "Expenses:Food", "Income"] {
             assert!(known.contains(&node.to_string()), "missing node {node}");
         }
         // Sorted + deduped (BTreeSet guarantees both).

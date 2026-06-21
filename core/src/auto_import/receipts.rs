@@ -236,13 +236,13 @@ mod tests {
 
     #[test]
     fn rejects_excluded_senders_even_when_pattern_matches() {
-        // A catch-all `.com` handler that excludes `@sc.com` (since SC has
+        // A catch-all `.com` handler that excludes `@meridian.example` (since SC has
         // a dedicated handler upstream).
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
         let handler = ReceiptHandler::new("catchall", vec![".com".into()], "device-test", extractor)
-            .with_excluded(vec!["@sc.com".into()]);
+            .with_excluded(vec!["@meridian.example".into()]);
         assert!(handler.accepts(&imap_msg_from("any@anywhere.com", Vec::new())));
-        assert!(!handler.accepts(&imap_msg_from("notifications@sc.com", Vec::new())));
+        assert!(!handler.accepts(&imap_msg_from("notifications@meridian.example", Vec::new())));
     }
 
     #[tokio::test]

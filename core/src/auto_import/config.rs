@@ -42,6 +42,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::csv::{CsvColumns, CsvSource, DEFAULT_DATE_FORMAT};
+use super::rest::{RestFields, RestSource};
 use super::subprocess::SubprocessSource;
 use crate::auto_import_scheduler::AutoImportSource;
 use crate::events::{EventStore, ProjectionRunner};
@@ -69,6 +70,16 @@ pub struct SourcesConfig {
 /// CSV column → field mapping, as it appears in config (an inline table).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CsvColumnsConfig {
+    pub date: String,
+    pub amount: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+/// REST dotted-path field mapping, as it appears in config (an inline table).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestFieldsConfig {
     pub date: String,
     pub amount: String,
     pub description: String,
@@ -112,6 +123,27 @@ pub struct SourceDef {
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub args: Option<Vec<String>>,
+
+    // --- rest fields (account / commodity / date_format reuse the csv fields above) ---
+    /// REST endpoint URL (the GET target).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Dotted path to the array of records in the response. Empty/absent = the
+    /// response body is itself the array.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub records_path: Option<String>,
+    /// Dotted-path field map (date / amount / description / id) into each record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<RestFieldsConfig>,
+    /// Optional auth header name, e.g. `"Authorization"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_header: Option<String>,
+    /// Value prefix prepended to the resolved secret, e.g. `"Bearer "`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_prefix: Option<String>,
+    /// Name of the secret (in `credentials.toml` `[secrets]`) used as the auth value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_ref: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -185,8 +217,20 @@ pub fn validate(def: &SourceDef) -> Result<(), String> {
             }
             Ok(())
         }
+        "rest" => {
+            if def.url.as_deref().unwrap_or("").trim().is_empty() {
+                return Err("rest source requires 'url'".into());
+            }
+            if def.account.as_deref().unwrap_or("").trim().is_empty() {
+                return Err("rest source requires 'account'".into());
+            }
+            if def.fields.is_none() {
+                return Err("rest source requires a 'fields' mapping".into());
+            }
+            Ok(())
+        }
         other => Err(format!(
-            "unknown source type '{other}' (expected 'csv' or 'subprocess')"
+            "unknown source type '{other}' (expected 'csv', 'rest', or 'subprocess')"
         )),
     }
 }
@@ -249,6 +293,37 @@ pub fn build_one(
             )
             .with_schedule_secs(def.schedule_secs),
         ),
+        "rest" => {
+            // unwraps are validate()-guarded above.
+            let f = def.fields.clone().unwrap();
+            Arc::new(
+                RestSource::new(
+                    def.name.clone(),
+                    def.url.clone().unwrap(),
+                    def.account.clone().unwrap(),
+                    def.commodity.clone().unwrap_or_else(|| "CAD".to_string()),
+                    def.records_path.clone().unwrap_or_default(),
+                    RestFields {
+                        date: f.date,
+                        amount: f.amount,
+                        description: f.description,
+                        id: f.id,
+                    },
+                    def.date_format
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_DATE_FORMAT.to_string()),
+                    store.clone(),
+                    projections.clone(),
+                    device_id.to_string(),
+                )
+                .with_auth(
+                    def.auth_header.clone(),
+                    def.auth_prefix.clone(),
+                    def.secret_ref.clone(),
+                )
+                .with_schedule_secs(def.schedule_secs),
+            )
+        }
         // validate() already rejected unknown types.
         _ => return None,
     };
@@ -295,6 +370,12 @@ mod tests {
             }),
             command: None,
             args: None,
+            url: None,
+            records_path: None,
+            fields: None,
+            auth_header: None,
+            auth_prefix: None,
+            secret_ref: None,
         }
     }
 
@@ -321,6 +402,45 @@ mod tests {
         assert_eq!(cfg.sources[0].columns.as_ref().unwrap().date, "Date");
         assert!(cfg.sources[0].enabled, "enabled defaults to true");
         assert_eq!(cfg.sources[1].command.as_deref(), Some("/opt/helper"));
+    }
+
+    #[test]
+    fn parses_and_validates_rest_source() {
+        let toml_str = r#"
+            [[source]]
+            name = "mybank-api"
+            type = "rest"
+            url = "https://api.bank.com/v1/transactions"
+            account = "Assets:Bank:Chequing"
+            records_path = "data.transactions"
+            fields = { date = "posted", amount = "amount", description = "memo", id = "id" }
+            auth_header = "Authorization"
+            auth_prefix = "Bearer "
+            secret_ref = "mybank_key"
+        "#;
+        let cfg: SourcesConfig = toml::from_str(toml_str).unwrap();
+        let s = &cfg.sources[0];
+        assert_eq!(s.kind, "rest");
+        assert_eq!(
+            s.url.as_deref(),
+            Some("https://api.bank.com/v1/transactions")
+        );
+        assert_eq!(s.fields.as_ref().unwrap().amount, "amount");
+        assert_eq!(s.secret_ref.as_deref(), Some("mybank_key"));
+        assert!(validate(s).is_ok());
+    }
+
+    #[test]
+    fn validate_rest_requires_url() {
+        let toml_str = r#"
+            [[source]]
+            name = "no-url"
+            type = "rest"
+            account = "Assets:Bank:Chequing"
+            fields = { date = "d", amount = "a", description = "m" }
+        "#;
+        let cfg: SourcesConfig = toml::from_str(toml_str).unwrap();
+        assert!(validate(&cfg.sources[0]).unwrap_err().contains("url"));
     }
 
     #[test]
@@ -377,6 +497,12 @@ mod tests {
             columns: None,
             command: None,
             args: None,
+            url: None,
+            records_path: None,
+            fields: None,
+            auth_header: None,
+            auth_prefix: None,
+            secret_ref: None,
         };
         assert!(validate(&d).unwrap_err().contains("command"));
     }

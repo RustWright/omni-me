@@ -225,7 +225,7 @@ mod tests {
                 aggregate_id: "B1".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
-                payload: proposed_payload("B1", "sc_ngn", "sc_ngn-uid-42"),
+                payload: proposed_payload("B1", "meridian-aed", "meridian-aed-uid-42"),
             })
             .await
             .unwrap();
@@ -239,7 +239,7 @@ mod tests {
 
     #[tokio::test]
     async fn same_dedup_key_proposed_twice_yields_single_row() {
-        // sc_ngn re-fetches the same email UID → two Proposed events with
+        // meridian-aed re-fetches the same email UID → two Proposed events with
         // the same source+dedup_key but different batch_ids. The UPSERT
         // collapses them into one pending row.
         let (db, store, runner) = test_db_and_runner().await;
@@ -251,7 +251,7 @@ mod tests {
                     aggregate_id: batch_id.into(),
                     timestamp: Utc::now(),
                     device_id: "d1".into(),
-                    payload: proposed_payload(batch_id, "sc_ngn", "sc_ngn-uid-42"),
+                    payload: proposed_payload(batch_id, "meridian-aed", "meridian-aed-uid-42"),
                 })
                 .await
                 .unwrap();
@@ -310,7 +310,7 @@ mod tests {
                 aggregate_id: "B1".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
-                payload: proposed_payload("B1", "sc_ngn", "sc_ngn-uid-99"),
+                payload: proposed_payload("B1", "meridian-aed", "meridian-aed-uid-99"),
             })
             .await
             .unwrap();
@@ -342,7 +342,7 @@ mod tests {
                 aggregate_id: "B2".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
-                payload: proposed_payload("B2", "sc_ngn", "sc_ngn-uid-99"),
+                payload: proposed_payload("B2", "meridian-aed", "meridian-aed-uid-99"),
             })
             .await
             .unwrap();
@@ -383,7 +383,7 @@ mod tests {
                 aggregate_id: "P2".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
-                payload: proposed_payload("P2", "sc_ngn", "sc_ngn-uid-200"),
+                payload: proposed_payload("P2", "meridian-aed", "meridian-aed-uid-200"),
             })
             .await
             .unwrap();

@@ -94,6 +94,10 @@ pub struct AccountRow {
     /// 3.9: when true, drop this account from the auto-detected Accounts screen.
     #[serde(default)]
     pub hidden: bool,
+    /// 3.10: when true, this account is a liquid (spendable) asset that counts
+    /// toward the "Can I afford X?" verdict. Opt-in — default not-liquid.
+    #[serde(default)]
+    pub is_liquid: bool,
     pub last_reconciled_through: Option<String>,
     pub last_statement_balance: Option<String>,
 }
@@ -559,7 +563,7 @@ pub async fn list_accounts(db: &Database) -> Result<Vec<AccountRow>, DbError> {
     let mut resp = db
         .query(
             "SELECT meta::id(id) AS id, commodity, display_name,
-                    hidden, last_reconciled_through, last_statement_balance
+                    hidden, is_liquid, last_reconciled_through, last_statement_balance
              FROM accounts
              ORDER BY id ASC",
         )

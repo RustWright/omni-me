@@ -514,7 +514,7 @@ pub struct ScanRecurringResult {
     pub already_tracked: usize,
 }
 
-/// Result of a CIBC chequing CSV import. Mirrors
+/// Result of a Summit chequing CSV import. Mirrors
 /// `commands::budget::ImportStatementCsvResult`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImportStatementCsvResult {

@@ -243,7 +243,7 @@ fn format_bytes(bytes: u64) -> String {
 /// ISO-4217 codes offered by the picker — the user's actual account currencies
 /// first, then a few common ones. The backend accepts any 3-letter code, so this
 /// list is just the convenient menu, not a hard constraint.
-const CURRENCY_CODES: &[&str] = &["CAD", "USD", "EUR", "GBP", "NGN", "AUD", "JPY", "CHF"];
+const CURRENCY_CODES: &[&str] = &["CAD", "USD", "EUR", "GBP", "AED", "AUD", "JPY", "CHF"];
 
 /// Base-currency picker (Phase 7.3). The selection persists server-side and is
 /// read by the dashboard / accounts / budget aggregation as the FX base.
@@ -577,6 +577,11 @@ fn config_summary(def: &serde_json::Value) -> String {
             let cmd = def.get("command").and_then(|v| v.as_str()).unwrap_or("");
             format!("Subprocess · {cmd}")
         }
+        "rest" => {
+            let url = def.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let account = def.get("account").and_then(|v| v.as_str()).unwrap_or("");
+            format!("REST · {url} → {account}")
+        }
         other => other.to_string(),
     }
 }
@@ -805,8 +810,11 @@ fn AccountsSection() -> Element {
             }
             p { class: "text-sm text-obsidian-text-muted",
                 "Your asset & liability accounts are detected automatically from your ledger — "
-                "nothing to add or maintain. Rename one for a friendlier label, or hide an "
-                "account you don't want counted on the Accounts screen or in net worth."
+                "nothing to add or maintain. Rename one for a friendlier label, hide an account "
+                "you don't want counted on the Accounts screen or in net worth, or mark the "
+                "accounts you'd actually spend from as "
+                span { class: "text-obsidian-text", "Liquid" }
+                " so \"Can I afford…\" answers against spendable money."
             }
 
             if !*loaded.read() {
@@ -823,6 +831,7 @@ fn AccountsSection() -> Element {
                             account: acct.account.clone(),
                             display_name: acct.display_name.clone(),
                             hidden: acct.hidden,
+                            is_liquid: acct.is_liquid,
                             on_changed: move |_| {
                                 spawn(async move {
                                     if let Ok(list) = bridge::invoke_list_detected_accounts().await {
@@ -838,14 +847,17 @@ fn AccountsSection() -> Element {
     }
 }
 
-/// One detected account row: a rename field + a Hide/Unhide toggle. Saves via
-/// `set_account_override` and asks the parent to reload so the list reflects the
-/// new state. Hidden rows render dimmed with an "Unhide" affordance.
+/// One detected account row: a rename field + a Liquid toggle + a Hide/Unhide
+/// toggle. Saves via `set_account_override` and asks the parent to reload so the
+/// list reflects the new state. Each save resends all three knobs (rename /
+/// hidden / liquid) so flipping one preserves the others. Hidden rows render
+/// dimmed; liquid rows carry a small "Liquid" badge.
 #[component]
 fn AccountOverrideRow(
     account: String,
     display_name: Option<String>,
     hidden: bool,
+    is_liquid: bool,
     on_changed: EventHandler<()>,
 ) -> Element {
     let mut name_input = use_signal(|| display_name.clone().unwrap_or_default());
@@ -858,6 +870,13 @@ fn AccountOverrideRow(
     let current_name = move || {
         let v = name_input.read().trim().to_string();
         if v.is_empty() { None } else { Some(v) }
+    };
+
+    // Liquid toggle styling: active (emerald) when marked, muted otherwise.
+    let liquid_btn = if is_liquid {
+        "shrink-0 px-2.5 py-1 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-semibold rounded hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
+    } else {
+        "shrink-0 px-2.5 py-1 bg-white/5 border border-white/10 text-obsidian-text-muted text-xs font-semibold rounded hover:bg-white/10 transition-colors disabled:opacity-40"
     };
 
     rsx! {
@@ -876,14 +895,40 @@ fn AccountOverrideRow(
                             let dn = current_name();
                             saving.set(true);
                             spawn(async move {
-                                let _ = bridge::invoke_set_account_override(account, dn, hidden).await;
+                                let _ = bridge::invoke_set_account_override(account, dn, hidden, is_liquid).await;
                                 saving.set(false);
                                 on_changed.call(());
                             });
                         }
                     },
                 }
-                div { class: "font-mono text-[10px] text-obsidian-text-muted/70 truncate mt-0.5", "{account}" }
+                div { class: "flex items-center gap-1.5 mt-0.5",
+                    span { class: "font-mono text-[10px] text-obsidian-text-muted/70 truncate", "{account}" }
+                    if is_liquid {
+                        span { class: "shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide bg-emerald-500/15 text-emerald-300",
+                            "Liquid"
+                        }
+                    }
+                }
+            }
+            button {
+                class: "{liquid_btn}",
+                disabled: *saving.read(),
+                title: "Count this account as spendable money in \"Can I afford…\"",
+                onclick: {
+                    let account = account.clone();
+                    move |_| {
+                        let account = account.clone();
+                        let dn = current_name();
+                        saving.set(true);
+                        spawn(async move {
+                            let _ = bridge::invoke_set_account_override(account, dn, hidden, !is_liquid).await;
+                            saving.set(false);
+                            on_changed.call(());
+                        });
+                    }
+                },
+                if is_liquid { "Liquid" } else { "Mark Liquid" }
             }
             button {
                 class: "shrink-0 px-2.5 py-1 bg-white/5 border border-white/10 text-obsidian-text text-xs font-semibold rounded hover:bg-white/10 transition-colors disabled:opacity-40",
@@ -895,7 +940,7 @@ fn AccountOverrideRow(
                         let dn = current_name();
                         saving.set(true);
                         spawn(async move {
-                            let _ = bridge::invoke_set_account_override(account, dn, !hidden).await;
+                            let _ = bridge::invoke_set_account_override(account, dn, !hidden, is_liquid).await;
                             saving.set(false);
                             on_changed.call(());
                         });
@@ -1344,6 +1389,13 @@ fn AddSourceForm(
             .unwrap_or("")
             .to_string()
     };
+    let gfield = |k: &str| {
+        init.get("fields")
+            .and_then(|c| c.get(k))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     let or = |s: String, dflt: &str| if s.is_empty() { dflt.to_string() } else { s };
 
     let mut name = use_signal(|| g("name"));
@@ -1372,6 +1424,16 @@ fn AddSourceForm(
             })
             .unwrap_or_default()
     });
+    // rest fields (account / commodity / date_format reuse the csv signals above)
+    let mut rest_url = use_signal(|| g("url"));
+    let mut rest_records_path = use_signal(|| g("records_path"));
+    let mut rest_date = use_signal(|| or(gfield("date"), "date"));
+    let mut rest_amount = use_signal(|| or(gfield("amount"), "amount"));
+    let mut rest_desc = use_signal(|| or(gfield("description"), "description"));
+    let mut rest_id = use_signal(|| gfield("id"));
+    let mut auth_header = use_signal(|| g("auth_header"));
+    let mut auth_prefix = use_signal(|| or(g("auth_prefix"), "Bearer "));
+    let mut secret_ref = use_signal(|| g("secret_ref"));
 
     let mut saving = use_signal(|| false);
     let mut err = use_signal(|| None::<String>);
@@ -1426,6 +1488,47 @@ fn AddSourceForm(
                 "date_format": or(date_format.read().trim().to_string(), "%Y-%m-%d"),
                 "columns": cols,
             })
+        } else if kind.read().as_str() == "rest" {
+            let url_v = rest_url.read().trim().to_string();
+            let account_v = account.read().trim().to_string();
+            if url_v.is_empty() {
+                err.set(Some("URL is required.".into()));
+                return;
+            }
+            if account_v.is_empty() {
+                err.set(Some("Account is required.".into()));
+                return;
+            }
+            let mut fields = serde_json::json!({
+                "date": rest_date.read().trim(),
+                "amount": rest_amount.read().trim(),
+                "description": rest_desc.read().trim(),
+            });
+            let id_v = rest_id.read().trim().to_string();
+            if !id_v.is_empty() {
+                fields["id"] = serde_json::json!(id_v);
+            }
+            let mut src = serde_json::json!({
+                "name": nm,
+                "type": "rest",
+                "enabled": true,
+                "url": url_v,
+                "account": account_v,
+                "commodity": or(commodity.read().trim().to_string(), "CAD"),
+                "date_format": or(date_format.read().trim().to_string(), "%Y-%m-%d"),
+                "records_path": rest_records_path.read().trim(),
+                "fields": fields,
+            });
+            // Auth is optional: only attach when both a header and a secret name
+            // are given (mirrors RestSource::with_auth's blank-skips guard).
+            let header_v = auth_header.read().trim().to_string();
+            let secret_v = secret_ref.read().trim().to_string();
+            if !header_v.is_empty() && !secret_v.is_empty() {
+                src["auth_header"] = serde_json::json!(header_v);
+                src["auth_prefix"] = serde_json::json!(auth_prefix.read().trim());
+                src["secret_ref"] = serde_json::json!(secret_v);
+            }
+            src
         } else {
             let command_v = command.read().trim().to_string();
             if command_v.is_empty() {
@@ -1481,6 +1584,7 @@ fn AddSourceForm(
                         value: "{kind}",
                         onchange: move |e| kind.set(e.value()),
                         option { value: "csv", "CSV file" }
+                        option { value: "rest", "REST API" }
                         option { value: "subprocess", "Subprocess helper" }
                     }
                 }
@@ -1533,6 +1637,65 @@ fn AddSourceForm(
                             onchange: move |e| has_header.set(e.value() == "true"),
                         }
                         "File has a header row"
+                    }
+                }
+            } else if kind.read().as_str() == "rest" {
+                div { class: "space-y-3",
+                    div {
+                        label { class: lbl, "Endpoint URL" }
+                        input { class: inp, placeholder: "https://api.bank.com/v1/transactions", value: "{rest_url}", oninput: move |e| rest_url.set(e.value()) }
+                    }
+                    div { class: "grid grid-cols-2 gap-3",
+                        div {
+                            label { class: lbl, "Account" }
+                            input { class: inp, placeholder: "Assets:Bank:Chequing", value: "{account}", oninput: move |e| account.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Commodity" }
+                            input { class: inp, placeholder: "CAD", value: "{commodity}", oninput: move |e| commodity.set(e.value()) }
+                        }
+                    }
+                    div {
+                        label { class: lbl, "Records path (dotted; blank = the response is the array)" }
+                        input { class: inp, placeholder: "data.transactions", value: "{rest_records_path}", oninput: move |e| rest_records_path.set(e.value()) }
+                    }
+                    div { class: "grid grid-cols-3 gap-3",
+                        div {
+                            label { class: lbl, "Date path" }
+                            input { class: inp, value: "{rest_date}", oninput: move |e| rest_date.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Amount path" }
+                            input { class: inp, value: "{rest_amount}", oninput: move |e| rest_amount.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Description path" }
+                            input { class: inp, value: "{rest_desc}", oninput: move |e| rest_desc.set(e.value()) }
+                        }
+                    }
+                    div { class: "grid grid-cols-2 gap-3",
+                        div {
+                            label { class: lbl, "Id path (optional)" }
+                            input { class: inp, placeholder: "id", value: "{rest_id}", oninput: move |e| rest_id.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Date format" }
+                            input { class: inp, placeholder: "%Y-%m-%d", value: "{date_format}", oninput: move |e| date_format.set(e.value()) }
+                        }
+                    }
+                    div { class: "grid grid-cols-3 gap-3",
+                        div {
+                            label { class: lbl, "Auth header (optional)" }
+                            input { class: inp, placeholder: "Authorization", value: "{auth_header}", oninput: move |e| auth_header.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Value prefix" }
+                            input { class: inp, placeholder: "Bearer ", value: "{auth_prefix}", oninput: move |e| auth_prefix.set(e.value()) }
+                        }
+                        div {
+                            label { class: lbl, "Secret name (in [secrets])" }
+                            input { class: inp, placeholder: "mybank_key", value: "{secret_ref}", oninput: move |e| secret_ref.set(e.value()) }
+                        }
                     }
                 }
             } else {
