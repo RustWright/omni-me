@@ -527,7 +527,7 @@ pub struct RecurringTransactionDismissedPayload {
 }
 
 /// Daily FX rate, sourced from Frankfurter (or, post-Cycle-4, ExchangeRate-API
-/// for non-Frankfurter currencies like NGN). The journal-file projection
+/// for non-Frankfurter currencies like AED). The journal-file projection
 /// emits this as an hledger `P` directive so ledger-utils balance computation
 /// can value foreign-commodity postings in the base currency.
 #[serde_as]
@@ -539,7 +539,7 @@ pub struct ExchangeRateRecordedPayload {
     #[serde_as(as = "DisplayFromStr")]
     pub rate: Decimal,
     /// Where the rate came from — for audit when a user spots a wrong rate.
-    /// Examples: "frankfurter", "manual:standard-chartered-may-2026".
+    /// Examples: "frankfurter", "manual:meridian-may-2026".
     pub source: String,
 }
 
@@ -551,8 +551,8 @@ pub struct ExchangeRateRecordedPayload {
 /// can render the upstream's stable identifier alongside the row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftTransaction {
-    /// Upstream's stable id — used for dedup at the row level (Wise transfer
-    /// id, WS internal txn id, IMAP message-uid + line offset, etc.). Distinct
+    /// Upstream's stable id — used for dedup at the row level (Globepay transfer
+    /// id, Northwind internal txn id, IMAP message-uid + line offset, etc.). Distinct
     /// from `batch_id` (which scopes the whole batch).
     pub external_id: String,
     pub date: chrono::NaiveDate,
@@ -570,12 +570,12 @@ pub struct AutoImportBatchProposedPayload {
     /// ULID for the batch. Used as the cross-event correlation key — both
     /// `Committed` and `Dismissed` reference this `batch_id`.
     pub batch_id: String,
-    /// Source identifier (`"wise"`, `"meridian-aed"`, `"imap_receipts"`, etc.).
+    /// Source identifier (`"globepay"`, `"meridian-aed"`, `"imap_receipts"`, etc.).
     /// Matches the value `AutoImportSource::name()` returns.
     pub source: String,
     /// Per-source idempotency key — what the scheduler checks to avoid
     /// re-proposing a batch it has already produced. Shape is source-defined
-    /// (e.g., SC NGN uses `format!("{source}-uid-{message_uid}")`).
+    /// (e.g., Meridian AED uses `format!("{source}-uid-{message_uid}")`).
     pub dedup_key: String,
     pub fetched_at: chrono::DateTime<chrono::Utc>,
     pub draft_postings: Vec<DraftTransaction>,
@@ -602,7 +602,7 @@ pub struct AutoImportBatchCommittedPayload {
     #[serde_as(as = "Option<DisplayFromStr>")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fx_rate: Option<Decimal>,
-    /// Commodity the `fx_rate` quotes (e.g., "NGN"). The base is implicit —
+    /// Commodity the `fx_rate` quotes (e.g., "AED"). The base is implicit —
     /// the user's configured base currency at commit time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fx_commodity: Option<String>,
@@ -842,19 +842,19 @@ mod tests {
             batch_id: "01HF...".into(),
             accepted_indices: vec![0, 2, 3],
             fx_rate: Some(Decimal::new(84, 5)), // 0.00084
-            fx_commodity: Some("NGN".into()),
+            fx_commodity: Some("AED".into()),
         };
         let json = serde_json::to_value(&payload).unwrap();
         validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
         let back: AutoImportBatchCommittedPayload = serde_json::from_value(json).unwrap();
         assert_eq!(back.fx_rate, payload.fx_rate);
-        assert_eq!(back.fx_commodity.as_deref(), Some("NGN"));
+        assert_eq!(back.fx_commodity.as_deref(), Some("AED"));
         assert_eq!(back.accepted_indices, vec![0, 2, 3]);
     }
 
     #[test]
     fn auto_import_batch_committed_payload_roundtrip_without_fx() {
-        // Wise batch — all CAD/USD/EUR, no manual FX needed.
+        // Globepay batch — all CAD/USD/EUR, no manual FX needed.
         let payload = AutoImportBatchCommittedPayload {
             batch_id: "01HG...".into(),
             accepted_indices: vec![0, 1, 2, 3, 4],
@@ -1179,10 +1179,10 @@ mod tests {
             "primary_id": "01JKTXN0000000000000000000",
             "merged_ids": ["01JKTXN0000000000000000001"],
             "combined_postings": [
-                { "account": "Assets:WS:Cash", "commodity": "CAD", "amount": "-100.00" },
+                { "account": "Assets:Northwind:Cash", "commodity": "CAD", "amount": "-100.00" },
                 { "account": "Assets:Globepay:CAD", "commodity": "CAD", "amount": "100.00" }
             ],
-            "combined_description": "WS → Wise transfer"
+            "combined_description": "Northwind → Globepay transfer"
         });
         assert!(validate_payload(&EventType::TransactionsMerged, &payload).is_ok());
     }
@@ -1190,19 +1190,19 @@ mod tests {
     #[test]
     fn validate_transactions_merged_with_balancing_posting() {
         // Hidden-fee resolution: the merged pair sums to non-zero on Unmatched
-        // because Wise took a $1.50 wire fee; user adds a balancing posting to
+        // because Globepay took a $1.50 wire fee; user adds a balancing posting to
         // close the gap. All optional fields populated.
         let payload = serde_json::json!({
             "primary_id": "01JKTXN0000000000000000000",
             "merged_ids": ["01JKTXN0000000000000000001"],
             "combined_postings": [
-                { "account": "Assets:WS:Cash", "commodity": "CAD", "amount": "-100.00" },
+                { "account": "Assets:Northwind:Cash", "commodity": "CAD", "amount": "-100.00" },
                 { "account": "Assets:Globepay:CAD", "commodity": "CAD", "amount": "98.50" }
             ],
-            "combined_description": "WS → Wise transfer (with fee)",
+            "combined_description": "Northwind → Globepay transfer (with fee)",
             "combined_attachment": {
                 "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                "filename": "wise-confirmation.pdf",
+                "filename": "globepay-confirmation.pdf",
                 "mime_type": "application/pdf",
                 "size": 2048
             },
@@ -1245,7 +1245,7 @@ mod tests {
         let with_display = serde_json::json!({
             "account": "Assets:Northwind:Cash",
             "commodity": "CAD",
-            "display_name": "WS Chequing"
+            "display_name": "Northwind Chequing"
         });
         assert!(validate_payload(&EventType::AccountAdded, &with_display).is_ok());
 

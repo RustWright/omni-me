@@ -11,7 +11,7 @@
 //!
 //! The journal's `P` directives come from two converging paths:
 //! - Frankfurter daily-rate fetcher writes CAD/USD/EUR (Phase 2.7).
-//! - Auto-import batch commit writes manual NGN rates entered at review
+//! - Auto-import batch commit writes manual AED rates entered at review
 //!   time (Phase 3.10.5).
 //!
 //! Both paths land as the same hledger `P` directive shape, so this module
@@ -319,7 +319,7 @@ mod tests {
         let summaries = account_summaries(journal, &[], "CAD", as_of(), &narrow).unwrap();
         assert!(summaries.is_empty(), "no roster account touched → empty list");
 
-        // Full roster → the WS account surfaces; Expenses:Coffee (never in the
+        // Full roster → the Northwind account surfaces; Expenses:Coffee (never in the
         // roster) is still dropped.
         let summaries = account_summaries(journal, &[], "CAD", as_of(), &roster()).unwrap();
         assert_eq!(summaries.len(), 1);
@@ -343,22 +343,22 @@ mod tests {
         // Only Assets:Northwind:Cash survives the filter; Expenses:* are
         // dropped.
         assert_eq!(summaries.len(), 1);
-        let ws = &summaries[0];
-        assert_eq!(ws.account, "Assets:Northwind:Cash");
-        assert_eq!(ws.balances.len(), 1);
-        assert_eq!(ws.balances[0].commodity, "CAD");
-        assert_eq!(ws.balances[0].quantity, Decimal::from_str("-47.43").unwrap());
+        let northwind = &summaries[0];
+        assert_eq!(northwind.account, "Assets:Northwind:Cash");
+        assert_eq!(northwind.balances.len(), 1);
+        assert_eq!(northwind.balances[0].commodity, "CAD");
+        assert_eq!(northwind.balances[0].quantity, Decimal::from_str("-47.43").unwrap());
         // CAD == base → value_in_base passes through.
         assert_eq!(
-            ws.balances[0].value_in_base,
+            northwind.balances[0].value_in_base,
             Some(Decimal::from_str("-47.43").unwrap())
         );
-        assert_eq!(ws.total_in_base, Some(Decimal::from_str("-47.43").unwrap()));
+        assert_eq!(northwind.total_in_base, Some(Decimal::from_str("-47.43").unwrap()));
     }
 
     #[test]
     fn account_summaries_converts_foreign_commodity_via_p_directive() {
-        // Wise CAD account holds CAD + USD; P directive supplies the rate.
+        // Globepay CAD account holds CAD + USD; P directive supplies the rate.
         // P-directive format is `P date time base rate quote` — the time
         // component is required by ledger-parser even for daily rates (see
         // render_exchange_rate doc-comment for the why).
@@ -376,30 +376,30 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         let summaries =
             account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
 
-        let wise = summaries
+        let globepay = summaries
             .iter()
             .find(|s| s.account == "Assets:Globepay:CAD")
-            .expect("Wise account present");
+            .expect("Globepay account present");
 
         // Two commodity rows — alphabetical sort means CAD before USD.
-        assert_eq!(wise.balances.len(), 2);
-        assert_eq!(wise.balances[0].commodity, "CAD");
-        assert_eq!(wise.balances[0].quantity, Decimal::from_str("10.00").unwrap());
+        assert_eq!(globepay.balances.len(), 2);
+        assert_eq!(globepay.balances[0].commodity, "CAD");
+        assert_eq!(globepay.balances[0].quantity, Decimal::from_str("10.00").unwrap());
         assert_eq!(
-            wise.balances[0].value_in_base,
+            globepay.balances[0].value_in_base,
             Some(Decimal::from_str("10.00").unwrap())
         );
 
-        assert_eq!(wise.balances[1].commodity, "USD");
-        assert_eq!(wise.balances[1].quantity, Decimal::from_str("100.00").unwrap());
+        assert_eq!(globepay.balances[1].commodity, "USD");
+        assert_eq!(globepay.balances[1].quantity, Decimal::from_str("100.00").unwrap());
         // 100 USD * 1.37 CAD/USD = 137.00 CAD
         assert_eq!(
-            wise.balances[1].value_in_base,
+            globepay.balances[1].value_in_base,
             Some(Decimal::from_str("137.00").unwrap())
         );
 
         // Total = 10 + 137 = 147 CAD
-        assert_eq!(wise.total_in_base, Some(Decimal::from_str("147.00").unwrap()));
+        assert_eq!(globepay.total_in_base, Some(Decimal::from_str("147.00").unwrap()));
     }
 
     #[test]
@@ -419,10 +419,10 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         let summaries =
             account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
 
-        let ws = &summaries[0];
-        assert_eq!(ws.account, "Assets:Northwind:Cash");
+        let northwind = &summaries[0];
+        assert_eq!(northwind.account, "Assets:Northwind:Cash");
 
-        let btc = ws
+        let btc = northwind
             .balances
             .iter()
             .find(|b| b.commodity == "BTC")
@@ -430,11 +430,11 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         assert_eq!(btc.quantity, Decimal::from_str("0.003").unwrap());
         assert_eq!(btc.value_in_base, None);
 
-        let cad = ws.balances.iter().find(|b| b.commodity == "CAD").unwrap();
+        let cad = northwind.balances.iter().find(|b| b.commodity == "CAD").unwrap();
         assert_eq!(cad.value_in_base, Some(Decimal::from_str("-100.00").unwrap()));
 
         // Total reflects only the convertible CAD leg.
-        assert_eq!(ws.total_in_base, Some(Decimal::from_str("-100.00").unwrap()));
+        assert_eq!(northwind.total_in_base, Some(Decimal::from_str("-100.00").unwrap()));
     }
 
     #[test]
@@ -453,13 +453,13 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         )];
         let summaries = account_summaries(journal, &declared, "CAD", as_of(), &roster()).unwrap();
 
-        let ws = summaries
+        let northwind = summaries
             .iter()
             .find(|s| s.account == "Assets:Northwind:Cash")
             .unwrap();
-        assert_eq!(ws.display_name.as_deref(), Some("Northwind Cash"));
-        assert_eq!(ws.last_reconciled_through.as_deref(), Some("2026-05-15"));
-        assert_eq!(ws.last_statement_balance.as_deref(), Some("1000.00"));
+        assert_eq!(northwind.display_name.as_deref(), Some("Northwind Cash"));
+        assert_eq!(northwind.last_reconciled_through.as_deref(), Some("2026-05-15"));
+        assert_eq!(northwind.last_statement_balance.as_deref(), Some("1000.00"));
     }
 
     #[test]
@@ -478,13 +478,13 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         )];
         let summaries = account_summaries(journal, &declared, "CAD", as_of(), &roster()).unwrap();
 
-        let cibc = summaries
+        let summit = summaries
             .iter()
             .find(|s| s.account == "Liabilities:Summit:CreditCard");
-        assert!(cibc.is_some(), "declared listable account must appear even with zero balance");
-        let cibc = cibc.unwrap();
-        assert!(cibc.balances.is_empty());
-        assert_eq!(cibc.total_in_base, None);
+        assert!(summit.is_some(), "declared listable account must appear even with zero balance");
+        let summit = summit.unwrap();
+        assert!(summit.balances.is_empty());
+        assert_eq!(summit.total_in_base, None);
     }
 
     #[test]
@@ -500,7 +500,7 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         // From project_unmatched_account_pattern.md: non-zero Unmatched is
         // the reconciliation-pending signal. Must surface on the list.
         let journal = "\
-2026-05-21 WS top-up (auto-import; counter-leg unknown)
+2026-05-21 Northwind top-up (auto-import; counter-leg unknown)
     Assets:Northwind:Cash       250.00 CAD
     Unmatched                     -250.00 CAD
 ";
@@ -548,8 +548,8 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         assert_eq!(
             roster,
             vec![
-                "Assets:Northwind:Cash".to_string(),
                 "Assets:Globepay:CAD".to_string(),
+                "Assets:Northwind:Cash".to_string(),
                 "Liabilities:Summit:CreditCard".to_string(),
             ]
         );

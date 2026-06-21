@@ -12,7 +12,7 @@
 //!   waits for a real cred + label flow).
 //! - `ImapHandler` — per-source extractor. Declares which messages it claims
 //!   via `accepts(envelope)` and produces zero-or-more events via `handle()`.
-//!   Real handlers land in Phase 2.12 (NGN) + 2.13 (online receipts).
+//!   Real handlers land in Phase 2.12 (AED) + 2.13 (online receipts).
 //! - `dispatch(message, handlers)` — pure routing helper: matches the message
 //!   against each handler's `accepts` filter, calls the first match.
 //!
@@ -38,7 +38,7 @@ use crate::events::NewEvent;
 
 /// One IMAP message's metadata + body bytes. Body is the raw RFC 5322 message
 /// — MIME-parsing is the handler's responsibility (different handlers care
-/// about different parts: PDF attachment for NGN statement, HTML body for
+/// about different parts: PDF attachment for AED statement, HTML body for
 /// online receipts, etc.).
 #[derive(Debug, Clone)]
 pub struct ImapMessage {
@@ -73,7 +73,7 @@ pub trait ImapFetcher: Send + Sync {
     ) -> Result<(Vec<ImapMessage>, Option<u32>), ImportError>;
 }
 
-/// Per-source handler — receipts, NGN statements, etc. Each handler claims
+/// Per-source handler — receipts, AED statements, etc. Each handler claims
 /// the messages it understands and produces events.
 #[async_trait]
 pub trait ImapHandler: Send + Sync {
@@ -235,7 +235,7 @@ mod tests {
     fn dispatch_picks_first_matching_handler() {
         let handlers: Vec<Box<dyn ImapHandler>> = vec![
             Box::new(NeedleHandler {
-                name: "ngn".into(),
+                name: "meridian".into(),
                 needle: "@meridian.example".into(),
             }),
             Box::new(NeedleHandler {
@@ -245,13 +245,13 @@ mod tests {
         ];
         let msg = make_message(101, "noreply@meridian.example");
         let h = dispatch_to(&msg, &handlers).expect("first handler should match");
-        assert_eq!(h.name(), "ngn");
+        assert_eq!(h.name(), "meridian");
     }
 
     #[test]
     fn dispatch_returns_none_when_no_handler_matches() {
         let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(NeedleHandler {
-            name: "ngn".into(),
+            name: "meridian".into(),
             needle: "@meridian.example".into(),
         })];
         let msg = make_message(101, "random@example.com");
@@ -263,7 +263,7 @@ mod tests {
         let fetcher = MockFetcher::new("gmail");
         fetcher.push_response(
             vec![
-                make_message(101, "noreply@meridian.example"),    // routes to ngn
+                make_message(101, "noreply@meridian.example"),    // routes to meridian
                 make_message(102, "ship@amazon.ca"),    // routes to receipts
                 make_message(103, "random@example.com"), // no handler
             ],
@@ -271,7 +271,7 @@ mod tests {
         );
         let handlers: Vec<Box<dyn ImapHandler>> = vec![
             Box::new(NeedleHandler {
-                name: "ngn".into(),
+                name: "meridian".into(),
                 needle: "@meridian.example".into(),
             }),
             Box::new(NeedleHandler {

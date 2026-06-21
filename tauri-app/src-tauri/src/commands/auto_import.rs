@@ -5,7 +5,7 @@
 //! on the sync server — the scheduler lives server-side
 //! (per [[feedback-llm-server-side]]), so the Tauri client has no in-process
 //! registry to query. Server errors surface inline on the Settings panel
-//! ("server returned 502: wise upstream error").
+//! ("server returned 502: globepay upstream error").
 //!
 //! **Batch-review half** is fully local — the `AutoImportProjection` runs on
 //! the client (not the server, per `core/src/events/mod.rs` wiring), so
@@ -51,7 +51,7 @@ pub struct AutoImportSourceView {
     #[serde(default)]
     pub auth_state: serde_json::Value,
     /// Whether this source supports interactive re-auth at all (only the
-    /// subprocess-backed WS source does today; Wise/IMAP are `false`).
+    /// subprocess-backed Northwind source does today; Globepay/IMAP are `false`).
     #[serde(default)]
     pub reauth_capable: bool,
 }
@@ -492,7 +492,7 @@ pub async fn dismiss_batch(
 fn pick_fx_event_date(accepted_dates: &[NaiveDate], fetched_at: DateTime<Utc>) -> NaiveDate {
     // Latest accepted date — closest to "today's spot rate" semantics for the
     // batch. Earlier rows fall back to whatever prior `P` directives are in
-    // scope. For NGN today (no automatic feed) that means earlier rows in the
+    // scope. For AED today (no automatic feed) that means earlier rows in the
     // batch won't be auto-valued at the manual rate; if the user wants
     // multi-date coverage they can dismiss + re-review per-day, or Cycle 4
     // can add a "rate effective for whole batch" mode.

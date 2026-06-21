@@ -21,7 +21,7 @@ use crate::events::{FxRate, Posting};
 pub const BUSINESS_HIERARCHY_PREFIX: &str = "Expenses:Business:";
 
 /// Top-level clearing account for auto-imported transactions where only one
-/// side is known (e.g., a WS withdrawal where the destination Wise deposit
+/// side is known (e.g., a Northwind withdrawal where the destination Globepay deposit
 /// hasn't been imported yet). Steady-state invariant: `Unmatched.balance == 0`
 /// — non-zero balance signals reconciliation pending OR a hidden fee that
 /// needs a balancing posting (wire fee, FX spread). See
@@ -124,7 +124,7 @@ pub fn unmatched_posting(amount: Decimal, commodity: &str) -> Posting {
 
 /// Stable predicate so query / projection code reads `is_unmatched(p)` instead
 /// of repeating the string comparison. Centralizes "what counts as Unmatched"
-/// — important if we ever sub-namespace (`Unmatched:WS`, `Unmatched:Wise`, etc).
+/// — important if we ever sub-namespace (`Unmatched:Northwind`, `Unmatched:Globepay`, etc).
 pub fn is_unmatched(account: &str) -> bool {
     account == UNMATCHED_ACCOUNT
 }
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn unmatched_mirror_inverts_amount_and_keeps_commodity() {
         let real = Posting {
-            account: "Assets:WS:Cash".into(),
+            account: "Assets:Northwind:Cash".into(),
             commodity: "CAD".into(),
             amount: Decimal::from_str("-100.00").unwrap(),
             fx_rate: None,
@@ -294,10 +294,10 @@ mod tests {
 
     #[test]
     fn unmatched_mirror_preserves_fx_rate() {
-        // A USD WS withdrawal mirror must keep the @CAD rate so the projection
-        // can later reconcile against a Wise USD deposit at the same rate.
+        // A USD Northwind withdrawal mirror must keep the @CAD rate so the projection
+        // can later reconcile against a Globepay USD deposit at the same rate.
         let real = Posting {
-            account: "Assets:WS:USD".into(),
+            account: "Assets:Northwind:USD".into(),
             commodity: "USD".into(),
             amount: Decimal::from_str("-10.00").unwrap(),
             fx_rate: Some(FxRate {
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn is_unmatched_recognizes_exact_account_only() {
         assert!(is_unmatched("Unmatched"));
-        assert!(!is_unmatched("Unmatched:WS")); // future sub-namespace, intentionally false today
+        assert!(!is_unmatched("Unmatched:Northwind")); // future sub-namespace, intentionally false today
         assert!(!is_unmatched("unmatched")); // case-sensitive
         assert!(!is_unmatched("Assets:Unmatched"));
     }

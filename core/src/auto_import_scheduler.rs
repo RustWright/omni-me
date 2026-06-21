@@ -1,4 +1,4 @@
-//! Background scheduler for auto-import sources (WS, Wise, IMAP).
+//! Background scheduler for auto-import sources (Northwind, Globepay, IMAP).
 //!
 //! One tokio task per source — independent intervals, independent backoff.
 //! Mirrors the autonomous-tick pattern from `auto_close_scheduler` but lives
@@ -91,7 +91,7 @@ pub enum ReauthOutcome {
 #[async_trait]
 pub trait AutoImportSource: Send + Sync {
     /// Human-readable name shown in tracing + status reports.
-    /// (`"wealthsimple-snaptrade"`, `"wise"`, `"imap-standardchartered"`, etc.)
+    /// (`"northwind-sync"`, `"globepay"`, `"imap-meridian"`, etc.)
     fn name(&self) -> &str;
 
     /// Run one import pass. Implementations should be idempotent — re-running
@@ -849,12 +849,12 @@ mod tests {
     #[tokio::test]
     async fn needs_reauth_tick_sets_auth_state() {
         let registry = SourceRegistry::new();
-        let src = Arc::new(null::NullSource::new("ws").with_script(vec![Err(
+        let src = Arc::new(null::NullSource::new("northwind").with_script(vec![Err(
             ImportError::NeedsReauth("session expired".into()),
         )]));
         registry.register(src, Duration::from_secs(60)).await;
 
-        let _ = registry.trigger_manual("ws").await; // returns the Err; we read state
+        let _ = registry.trigger_manual("northwind").await; // returns the Err; we read state
         let snap = registry.snapshot().await;
         // The needs-reauth signal surfaces as actionable state, AND as a
         // (degraded) tick outcome — both, by design.
@@ -872,19 +872,19 @@ mod tests {
         let registry = SourceRegistry::new();
         // First tick needs reauth; second tick succeeds (as if reauth happened
         // out of band / a local re-prime).
-        let src = Arc::new(null::NullSource::new("ws").with_script(vec![
+        let src = Arc::new(null::NullSource::new("northwind").with_script(vec![
             Err(ImportError::NeedsReauth("expired".into())),
             Ok(ImportSummary { events_appended: 3 }),
         ]));
         registry.register(src, Duration::from_secs(60)).await;
 
-        let _ = registry.trigger_manual("ws").await;
+        let _ = registry.trigger_manual("northwind").await;
         assert!(matches!(
             registry.snapshot().await[0].auth_state,
             AuthState::NeedsReauth { .. }
         ));
 
-        registry.trigger_manual("ws").await.unwrap();
+        registry.trigger_manual("northwind").await.unwrap();
         assert_eq!(registry.snapshot().await[0].auth_state, AuthState::Active);
     }
 
@@ -893,14 +893,14 @@ mod tests {
         let registry = SourceRegistry::new();
         // Needs reauth, then a *transient* upstream blip. The blip must not
         // clear the reconnect requirement (still NeedsReauth).
-        let src = Arc::new(null::NullSource::new("ws").with_script(vec![
+        let src = Arc::new(null::NullSource::new("northwind").with_script(vec![
             Err(ImportError::NeedsReauth("expired".into())),
             Err(ImportError::Upstream("502 from upstream".into())),
         ]));
         registry.register(src, Duration::from_secs(60)).await;
 
-        let _ = registry.trigger_manual("ws").await;
-        let _ = registry.trigger_manual("ws").await;
+        let _ = registry.trigger_manual("northwind").await;
+        let _ = registry.trigger_manual("northwind").await;
         assert!(
             matches!(
                 registry.snapshot().await[0].auth_state,
@@ -915,19 +915,19 @@ mod tests {
         let registry = SourceRegistry::new();
         // Source goes NeedsReauth on its tick, then its scripted reauth succeeds.
         let src = Arc::new(
-            null::NullSource::new("ws")
+            null::NullSource::new("northwind")
                 .with_script(vec![Err(ImportError::NeedsReauth("expired".into()))])
                 .with_reauth(ReauthOutcome::Active),
         );
         registry.register(src, Duration::from_secs(60)).await;
 
-        let _ = registry.trigger_manual("ws").await;
+        let _ = registry.trigger_manual("northwind").await;
         assert!(matches!(
             registry.snapshot().await[0].auth_state,
             AuthState::NeedsReauth { .. }
         ));
 
-        let outcome = registry.reauth("ws", "123456").await.unwrap();
+        let outcome = registry.reauth("northwind", "123456").await.unwrap();
         assert_eq!(outcome, ReauthOutcome::Active);
         // A successful reauth flips state back without waiting for the next tick.
         assert_eq!(registry.snapshot().await[0].auth_state, AuthState::Active);
@@ -937,14 +937,14 @@ mod tests {
     async fn registry_reauth_invalid_otp_keeps_state() {
         let registry = SourceRegistry::new();
         let src = Arc::new(
-            null::NullSource::new("ws")
+            null::NullSource::new("northwind")
                 .with_script(vec![Err(ImportError::NeedsReauth("expired".into()))])
                 .with_reauth(ReauthOutcome::InvalidOtp),
         );
         registry.register(src, Duration::from_secs(60)).await;
 
-        let _ = registry.trigger_manual("ws").await;
-        let outcome = registry.reauth("ws", "000000").await.unwrap();
+        let _ = registry.trigger_manual("northwind").await;
+        let outcome = registry.reauth("northwind", "000000").await.unwrap();
         assert_eq!(outcome, ReauthOutcome::InvalidOtp);
         // A rejected code leaves the source still needing reconnect.
         assert!(matches!(
@@ -964,10 +964,10 @@ mod tests {
     async fn registry_reauth_non_capable_source_is_not_supported() {
         let registry = SourceRegistry::new();
         // Plain NullSource (no scripted reauth) is not reauth-capable.
-        let src = Arc::new(null::NullSource::new("wise"));
+        let src = Arc::new(null::NullSource::new("globepay"));
         registry.register(src, Duration::from_secs(60)).await;
 
-        let outcome = registry.reauth("wise", "123456").await.unwrap();
+        let outcome = registry.reauth("globepay", "123456").await.unwrap();
         assert_eq!(outcome, ReauthOutcome::NotSupported);
     }
 
@@ -976,24 +976,24 @@ mod tests {
         let registry = SourceRegistry::new();
         registry
             .register(
-                Arc::new(null::NullSource::new("wise")),
+                Arc::new(null::NullSource::new("globepay")),
                 Duration::from_secs(60),
             )
             .await;
         registry
             .register(
                 Arc::new(
-                    null::NullSource::new("ws").with_reauth(ReauthOutcome::Active),
+                    null::NullSource::new("northwind").with_reauth(ReauthOutcome::Active),
                 ),
                 Duration::from_secs(60),
             )
             .await;
 
         let snap = registry.snapshot().await;
-        let wise = snap.iter().find(|s| s.name == "wise").unwrap();
-        let ws = snap.iter().find(|s| s.name == "ws").unwrap();
-        assert!(!wise.reauth_capable, "wise has no interactive reauth");
-        assert!(ws.reauth_capable, "ws is reauth-capable");
+        let globepay = snap.iter().find(|s| s.name == "globepay").unwrap();
+        let northwind = snap.iter().find(|s| s.name == "northwind").unwrap();
+        assert!(!globepay.reauth_capable, "globepay has no interactive reauth");
+        assert!(northwind.reauth_capable, "northwind is reauth-capable");
     }
 
     #[tokio::test(start_paused = true)]

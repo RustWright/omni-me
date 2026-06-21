@@ -17,7 +17,7 @@
 //!   mirror; user assigns the real payment account during batch review.
 //!
 //! Both flavors emit deterministic external ids derived from a caller-provided
-//! prefix (e.g. `"ngn-uid-14272"`) so re-processing the same source event
+//! prefix (e.g. `"meridian-aed-uid-14272"`) so re-processing the same source event
 //! never duplicates rows — `AutoImportProjection`'s UPSERT collapses on the
 //! `{source}-{dedup_key}` composite, and the per-draft `external_id` keeps
 //! committed `TransactionRecorded` events deterministic via the same prefix.
@@ -169,14 +169,14 @@ mod tests {
         );
         let drafts = statement_extraction_to_drafts(
             &result,
-            "ngn-uid-14272",
+            "meridian-aed-uid-14272",
             "Assets:Summit:USD",
             "USD",
         );
         assert_eq!(drafts.len(), 2);
         // Both external ids follow the prefix-index convention
-        assert_eq!(drafts[0].external_id, "ngn-uid-14272-0");
-        assert_eq!(drafts[1].external_id, "ngn-uid-14272-1");
+        assert_eq!(drafts[0].external_id, "meridian-aed-uid-14272-0");
+        assert_eq!(drafts[1].external_id, "meridian-aed-uid-14272-1");
 
         // Bank-side posting account = bank_account, mirror = Unmatched
         let p0 = &drafts[0].postings;

@@ -768,7 +768,7 @@ mod tests {
             "t1",
             serde_json::json!({
                 "txn_id": "t1",
-                "statement_source": "cibc-chequing-2026-05",
+                "statement_source": "summit-chequing-2026-05",
                 "cleared_date": "2026-05-15"
             }),
         )
@@ -782,7 +782,7 @@ mod tests {
         let source: Option<String> = resp.take("statement_source").unwrap();
         let date: Option<String> = resp.take("cleared_date").unwrap();
         assert_eq!(cleared, Some(true));
-        assert_eq!(source.as_deref(), Some("cibc-chequing-2026-05"));
+        assert_eq!(source.as_deref(), Some("summit-chequing-2026-05"));
         assert_eq!(date.as_deref(), Some("2026-05-15"));
     }
 
@@ -794,7 +794,7 @@ mod tests {
             &runner,
             "transaction_recorded",
             "t1",
-            simple_txn_payload("t1", "WS leg", "100.00"),
+            simple_txn_payload("t1", "Northwind leg", "100.00"),
         )
         .await;
         emit(
@@ -802,7 +802,7 @@ mod tests {
             &runner,
             "transaction_recorded",
             "t2",
-            simple_txn_payload("t2", "Wise leg", "100.00"),
+            simple_txn_payload("t2", "Globepay leg", "100.00"),
         )
         .await;
 
@@ -815,10 +815,10 @@ mod tests {
                 "primary_id": "t1",
                 "merged_ids": ["t2"],
                 "combined_postings": [
-                    { "account": "Assets:WS:Cash", "commodity": "CAD", "amount": "-100.00" },
-                    { "account": "Assets:Wise:CAD", "commodity": "CAD", "amount": "98.50" }
+                    { "account": "Assets:Northwind:Cash", "commodity": "CAD", "amount": "-100.00" },
+                    { "account": "Assets:Globepay:CAD", "commodity": "CAD", "amount": "98.50" }
                 ],
-                "combined_description": "WS → Wise transfer",
+                "combined_description": "Northwind → Globepay transfer",
                 "balancing_posting": {
                     "account": "Expenses:Bank-Fees", "commodity": "CAD", "amount": "1.50"
                 }
@@ -832,7 +832,7 @@ mod tests {
             .await
             .unwrap();
         let desc: Option<String> = resp.take("description").unwrap();
-        assert_eq!(desc.as_deref(), Some("WS → Wise transfer"));
+        assert_eq!(desc.as_deref(), Some("Northwind → Globepay transfer"));
 
         // Merged-id row carries superseded_by pointing at primary
         let mut resp = db
@@ -862,11 +862,11 @@ mod tests {
             &store,
             &runner,
             "account_added",
-            "Assets:CIBC:Chequing",
+            "Assets:Summit:Chequing",
             serde_json::json!({
-                "account": "Assets:CIBC:Chequing",
+                "account": "Assets:Summit:Chequing",
                 "commodity": "CAD",
-                "display_name": "CIBC Chequing"
+                "display_name": "Summit Chequing"
             }),
         )
         .await;
@@ -874,9 +874,9 @@ mod tests {
             &store,
             &runner,
             "account_reconciled",
-            "Assets:CIBC:Chequing",
+            "Assets:Summit:Chequing",
             serde_json::json!({
-                "account": "Assets:CIBC:Chequing",
+                "account": "Assets:Summit:Chequing",
                 "commodity": "CAD",
                 "statement_balance": "5076.10",
                 "cleared_through": "2026-04-30"
@@ -885,13 +885,13 @@ mod tests {
         .await;
 
         let mut resp = db
-            .query("SELECT display_name, last_reconciled_through, last_statement_balance FROM type::record('accounts', 'Assets:CIBC:Chequing')")
+            .query("SELECT display_name, last_reconciled_through, last_statement_balance FROM type::record('accounts', 'Assets:Summit:Chequing')")
             .await
             .unwrap();
         let display: Option<String> = resp.take("display_name").unwrap();
         let through: Option<String> = resp.take("last_reconciled_through").unwrap();
         let balance: Option<String> = resp.take("last_statement_balance").unwrap();
-        assert_eq!(display.as_deref(), Some("CIBC Chequing"));
+        assert_eq!(display.as_deref(), Some("Summit Chequing"));
         assert_eq!(through.as_deref(), Some("2026-04-30"));
         assert_eq!(balance.as_deref(), Some("5076.10"));
     }
@@ -906,17 +906,17 @@ mod tests {
             &store,
             &runner,
             "account_added",
-            "Assets:Wise:CAD",
-            serde_json::json!({ "account": "Assets:Wise:CAD", "commodity": "CAD" }),
+            "Assets:Globepay:CAD",
+            serde_json::json!({ "account": "Assets:Globepay:CAD", "commodity": "CAD" }),
         )
         .await;
         emit(
             &store,
             &runner,
             "account_reconciled",
-            "Assets:Wise:CAD",
+            "Assets:Globepay:CAD",
             serde_json::json!({
-                "account": "Assets:Wise:CAD",
+                "account": "Assets:Globepay:CAD",
                 "commodity": "CAD",
                 "statement_balance": "1200.00",
                 "cleared_through": "2026-05-31"
@@ -928,11 +928,11 @@ mod tests {
             &store,
             &runner,
             "account_added",
-            "Assets:Wise:CAD",
+            "Assets:Globepay:CAD",
             serde_json::json!({
-                "account": "Assets:Wise:CAD",
+                "account": "Assets:Globepay:CAD",
                 "commodity": "CAD",
-                "display_name": "Wise (CAD)",
+                "display_name": "Globepay (CAD)",
                 "hidden": true
             }),
         )
@@ -946,13 +946,13 @@ mod tests {
         assert_eq!(total, Some(1), "override must not duplicate the row");
 
         let mut resp = db
-            .query("SELECT display_name, hidden, last_reconciled_through FROM type::record('accounts', 'Assets:Wise:CAD')")
+            .query("SELECT display_name, hidden, last_reconciled_through FROM type::record('accounts', 'Assets:Globepay:CAD')")
             .await
             .unwrap();
         let display: Option<String> = resp.take("display_name").unwrap();
         let hidden: Option<bool> = resp.take("hidden").unwrap();
         let through: Option<String> = resp.take("last_reconciled_through").unwrap();
-        assert_eq!(display.as_deref(), Some("Wise (CAD)"), "rename applied");
+        assert_eq!(display.as_deref(), Some("Globepay (CAD)"), "rename applied");
         assert_eq!(hidden, Some(true), "hidden flag set");
         assert_eq!(
             through.as_deref(),
@@ -1138,20 +1138,20 @@ mod tests {
         emit(&store, &runner, "transaction_cleared", "t1",
              serde_json::json!({
                  "txn_id": "t1",
-                 "statement_source": "cibc-2026-05",
+                 "statement_source": "summit-2026-05",
                  "cleared_date": "2026-05-15"
              })).await;
 
         // Account lifecycle
-        emit(&store, &runner, "account_added", "Assets:CIBC:Chequing",
+        emit(&store, &runner, "account_added", "Assets:Summit:Chequing",
              serde_json::json!({
-                 "account": "Assets:CIBC:Chequing",
+                 "account": "Assets:Summit:Chequing",
                  "commodity": "CAD",
-                 "display_name": "CIBC Chequing"
+                 "display_name": "Summit Chequing"
              })).await;
-        emit(&store, &runner, "account_reconciled", "Assets:CIBC:Chequing",
+        emit(&store, &runner, "account_reconciled", "Assets:Summit:Chequing",
              serde_json::json!({
-                 "account": "Assets:CIBC:Chequing",
+                 "account": "Assets:Summit:Chequing",
                  "commodity": "CAD",
                  "statement_balance": "5076.10",
                  "cleared_through": "2026-04-30"
@@ -1187,18 +1187,18 @@ mod tests {
         let (db, store, runner) = fixture().await;
 
         emit(&store, &runner, "transaction_recorded", "t1",
-             simple_txn_payload("t1", "WS leg", "100.00")).await;
+             simple_txn_payload("t1", "Northwind leg", "100.00")).await;
         emit(&store, &runner, "transaction_recorded", "t2",
-             simple_txn_payload("t2", "Wise leg", "100.00")).await;
+             simple_txn_payload("t2", "Globepay leg", "100.00")).await;
         emit(&store, &runner, "transactions_merged", "merge-1",
              serde_json::json!({
                  "primary_id": "t1",
                  "merged_ids": ["t2"],
                  "combined_postings": [
-                     { "account": "Assets:WS:Cash", "commodity": "CAD", "amount": "-100.00" },
-                     { "account": "Assets:Wise:CAD", "commodity": "CAD", "amount": "100.00" }
+                     { "account": "Assets:Northwind:Cash", "commodity": "CAD", "amount": "-100.00" },
+                     { "account": "Assets:Globepay:CAD", "commodity": "CAD", "amount": "100.00" }
                  ],
-                 "combined_description": "WS → Wise transfer"
+                 "combined_description": "Northwind → Globepay transfer"
              })).await;
 
         let _ = store;

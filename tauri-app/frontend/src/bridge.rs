@@ -2849,9 +2849,9 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
         let now = chrono::Utc::now();
         Ok(vec![
             PendingBatchView {
-                batch_id: "01HXMOCKWISE000000000001".into(),
+                batch_id: "01HXMOCKGPAY000000000001".into(),
                 source: "globepay".into(),
-                dedup_key: "globepay-01HXMOCKWISE000000000001".into(),
+                dedup_key: "globepay-01HXMOCKGPAY000000000001".into(),
                 fetched_at: (now - chrono::Duration::minutes(4)).to_rfc3339(),
                 draft_postings: vec![
                     DraftTransactionView {
@@ -2896,12 +2896,12 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                 source_metadata: None,
             },
             PendingBatchView {
-                batch_id: "01HXMOCKSCNG000000000001".into(),
-                source: "sc_ngn".into(),
-                dedup_key: "sc_ngn-uid-42".into(),
+                batch_id: "01HXMOCKMRDN000000000001".into(),
+                source: "meridian-aed".into(),
+                dedup_key: "meridian-aed-uid-42".into(),
                 fetched_at: (now - chrono::Duration::minutes(11)).to_rfc3339(),
                 draft_postings: vec![DraftTransactionView {
-                    external_id: "sc-april-statement-row-1".into(),
+                    external_id: "meridian-april-statement-row-1".into(),
                     date: "2026-04-29".into(),
                     description: "Meridian — POS".into(),
                     postings: vec![

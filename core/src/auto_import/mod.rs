@@ -1,7 +1,7 @@
 //! Auto-import source implementations (Phase 2B + 3.10).
 //!
 //! Each submodule implements `auto_import_scheduler::AutoImportSource` for a
-//! specific upstream — WealthSimple via Python subprocess, Wise via REST API,
+//! specific upstream — Northwind via Python subprocess, Globepay via REST API,
 //! IMAP poller for emailed statements / receipts.
 //!
 //! All sources share two invariants:
@@ -11,7 +11,7 @@
 //!   posting + one mirror posting to `Unmatched` (per the unmatched-account
 //!   pattern — the matching engine in Phase 5.6/5.7 collapses pairs later).
 //! - Dedup happens via the `dedup_key` field on the proposed event, derived
-//!   from each upstream's stable external id (e.g. SC NGN message UID, Wise
+//!   from each upstream's stable external id (e.g. Meridian AED message UID, Globepay
 //!   transfer-id watermark, etc.).
 
 use crate::events::{AutoImportBatchProposedPayload, DraftTransaction, EventType, NewEvent};
@@ -36,11 +36,11 @@ pub mod subprocess;
 ///
 /// `dedup_key` is the source's natural idempotency token — what the scheduler
 /// checks to avoid re-proposing the same upstream data. Shape is source-defined:
-/// - SC NGN / receipts → `format!("{source}-uid-{message_uid}")` (per-email)
-/// - Wise / WS → `format!("{source}-watermark-{max_external_id}")` (or similar)
+/// - Meridian AED / receipts → `format!("{source}-uid-{message_uid}")` (per-email)
+/// - Globepay / Northwind → `format!("{source}-watermark-{max_external_id}")` (or similar)
 ///
 /// `source_metadata` is opaque JSON the review UI can render (e.g. IMAP
-/// `from`/`subject` for context, Wise statement window dates, etc.).
+/// `from`/`subject` for context, Globepay statement window dates, etc.).
 pub fn to_proposed_event(
     source: &str,
     dedup_key: String,

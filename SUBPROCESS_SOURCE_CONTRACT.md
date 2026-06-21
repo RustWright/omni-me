@@ -63,7 +63,7 @@ One line of JSON on the helper's **stdout**:
 {
   "status": "ok",
   "drafts": [ /* DraftTransaction objects — see below */ ],
-  "dedup_key": "wise-watermark-8841",   // optional
+  "dedup_key": "globepay-watermark-8841",   // optional
   "source_metadata": { "...": "..." },   // optional, opaque
   "message": "human-readable detail"     // optional; required when status = "error"
 }
@@ -86,7 +86,7 @@ a *handled* outcome, not a crash. A **non-zero** exit means the helper crashed o
 JSON; the engine treats that as a transient error and backs off. This keeps structured outcomes in the
 `status` field rather than overloading numeric exit codes.
 
-> A helper may wrap an inner tool with its own exit-code scheme (the WealthSimple helper wraps a Python
+> A helper may wrap an inner tool with its own exit-code scheme (the Northwind helper wraps a Python
 > driver whose codes `2`–`6` distinguish malformed-input / missing-library / login-failed / OTP-required
 > / transient). Those inner codes are an implementation detail **below** this contract — the helper
 > translates them into a `status` and exits `0`. The same inner code can read differently per verb: a
@@ -100,11 +100,11 @@ Each element is a `DraftTransaction` (the same type the review screen already st
 
 ```json
 {
-  "external_id": "ws-txn-abc-123",
+  "external_id": "northwind-txn-abc-123",
   "date": "2026-06-15",
   "description": "Loblaws",
   "postings": [
-    {"account":"Assets:Wealthsimple:Cash","commodity":"CAD","amount":"-87.42","fx_rate":null,"tags":[]},
+    {"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42","fx_rate":null,"tags":[]},
     {"account":"Unmatched","commodity":"CAD","amount":"87.42","fx_rate":null,"tags":[]}
   ]
 }
@@ -132,7 +132,7 @@ emailed source, etc.). The engine stores it but never interprets it.
 
 ## What is NOT a subprocess source (scope boundary)
 
-Email-handler sources (Standard Chartered statements, receipts) attach to the engine's **generic IMAP
+Email-handler sources (Meridian statements, receipts) attach to the engine's **generic IMAP
 source** and depend on the **server-side document extractor** (the LLM key stays engine-side). They are a
 *different* extension point — an already-fetched email handed to a handler — not a self-contained
 "go fetch from upstream" pull. They are intentionally **out of scope** for this contract and remain

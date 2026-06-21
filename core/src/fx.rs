@@ -177,14 +177,14 @@ mod tests {
     }
 
     #[test]
-    fn needs_manual_fx_returns_true_for_ngn() {
+    fn needs_manual_fx_returns_true_for_aed() {
         assert!(needs_manual_fx("AED"));
     }
 
     #[test]
     fn needs_manual_fx_is_case_insensitive() {
-        assert!(needs_manual_fx("ngn"));
-        assert!(needs_manual_fx("Ngn"));
+        assert!(needs_manual_fx("aed"));
+        assert!(needs_manual_fx("Aed"));
     }
 
     #[test]

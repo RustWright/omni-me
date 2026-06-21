@@ -272,7 +272,7 @@ mod tests {
                 aggregate_id: "B1".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
-                payload: proposed_payload("B1", "wise", "wise-12345"),
+                payload: proposed_payload("B1", "globepay", "globepay-12345"),
             })
             .await
             .unwrap();
@@ -369,7 +369,7 @@ mod tests {
                 aggregate_id: "P1".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
-                payload: proposed_payload("P1", "wise", "wise-001"),
+                payload: proposed_payload("P1", "globepay", "globepay-001"),
             })
             .await
             .unwrap();
@@ -404,7 +404,7 @@ mod tests {
         let pending = list_pending_batches(&db).await.unwrap();
         assert_eq!(pending.len(), 1, "only P1 is pending");
         assert_eq!(pending[0].batch_id, "P1");
-        assert_eq!(pending[0].source, "wise");
+        assert_eq!(pending[0].source, "globepay");
         assert_eq!(pending[0].status, "pending");
 
         let count = count_pending_batches(&db).await.unwrap();

@@ -402,7 +402,7 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
-    /// Roster the dashboard fixtures were written against (WS / Wise / CIBC /
+    /// Roster the dashboard fixtures were written against (Northwind / Globepay / Summit /
     /// Unmatched). Net-worth + unmatched assertions depend on these surfacing.
     fn roster() -> Vec<String> {
         [
@@ -470,7 +470,7 @@ mod tests {
     Assets:Northwind:Cash      3000.00 CAD
     Income:Salary                -3000.00 CAD
 
-2026-05-15 Auto-import (WS top-up, counter-leg unknown)
+2026-05-15 Auto-import (Northwind top-up, counter-leg unknown)
     Assets:Globepay:CAD                250.00 CAD
     Unmatched                     -250.00 CAD
 ";
@@ -672,7 +672,7 @@ mod tests {
         // "you have no spendable money").
         let summaries = vec![
             summ("Assets:Globepay:CAD", Some(d("1000.00")), false),
-            summ("Assets:WS:TFSA", Some(d("9000.00")), false),
+            summ("Assets:Northwind:TFSA", Some(d("9000.00")), false),
         ];
         assert_eq!(sum_liquid_assets(&summaries), None);
     }
@@ -681,8 +681,8 @@ mod tests {
     fn sum_liquid_assets_sums_only_liquid() {
         let summaries = vec![
             summ("Assets:Globepay:CAD", Some(d("1000.00")), true),
-            summ("Assets:WS:Cash", Some(d("250.00")), true),
-            summ("Assets:WS:TFSA", Some(d("9000.00")), false), // illiquid: excluded
+            summ("Assets:Northwind:Cash", Some(d("250.00")), true),
+            summ("Assets:Northwind:TFSA", Some(d("9000.00")), false), // illiquid: excluded
             summ("Unmatched", Some(d("500.00")), true),        // clearing account: never liquid
         ];
         assert_eq!(sum_liquid_assets(&summaries), Some(d("1250.00")));

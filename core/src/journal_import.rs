@@ -900,7 +900,7 @@ mod tests {
     fn apply_plan_drops_transactions_touching_dropped_accounts() {
         let body = "\
 2026-05-01 Test Account One
-    Assets:Test:Wise   100.00 CAD
+    Assets:Test:Globepay   100.00 CAD
     Equity:OpeningBalance
 
 2026-05-02 Keep Me
@@ -911,7 +911,7 @@ mod tests {
         let path = write(dir.path(), "main.ledger", body);
         let imported = parse_journal(&path).unwrap();
         let mut plan = ImportPlan::default();
-        plan.accounts_to_drop.insert("Assets:Test:Wise".into());
+        plan.accounts_to_drop.insert("Assets:Test:Globepay".into());
         let kept = apply_plan(imported.transactions, &plan);
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].description, "Keep Me");
