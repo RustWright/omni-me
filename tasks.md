@@ -226,7 +226,21 @@ vision toggle reveals + saves (0 console errors); PNGs in `logbook/_assets/{acco
 - [x] **3.12** mylearnbase follow-up: re-shoot Accounts screenshot generic + update alt text. [S] — **DONE 2026-06-21**, superseded by the full public-identity sanitization (all 7 omni-me logbook posts re-shot from the sanitized mock + prose/alt/citation cleanup; see `project.md` session log).
 - [x] **3.13** Verify: clean clone builds + runs zero-config; overlay build pulls real sources; BYO-LLM points at an alternate endpoint and works. [S] — **DONE 2026-06-20 (residuals accepted by user).** (1) **Public zero-config boot live-verified:** empty `XDG_CONFIG_HOME` + no key → `/health` ok, `/auto_import/status` `[]`, `sources=0`, NullExtractor fallback, no panic. (2) **Overlay `cargo check` clean against the post-3.10 engine** — proves 3.10's additive (`#[serde(default)]`) changes didn't break the composition root. (3) **BYO-LLM via this session's green tests** — 7 `OpenAiCompatClient` wiremock tests (mock `/chat/completions`: complete/json/tool-calls/error/rate-limit/key-not-leaked) + `build_llm_client_selects_openai_compatible_text` boot-selection. **Residuals (accepted, address if they bite):** overlay pulling *real* bank sources at runtime = user-owned (live-verified earlier in 3.5/3.5a); no single full server↔mock-LLM e2e boot (client+selection tests cover the logic, same as 3.8a's note). **Also:** removed stale pre-split public-server data (`surreal_data/`+`blobs/` at repo root).
 
-## Phase 4 — Real-data go-live import (Cycle-3 6.5) *(after Phase 3)*
+## Phase 4 — Real-data go-live import (Cycle-3 6.5) *(PULLED AHEAD OF Phase 2 — 2026-06-21)*
+
+**Sequencing (2026-06-21):** done **before** Phase 2 deploy — real data needs to be in hand to push
+while testing the deployment.
+
+**Placement (2026-06-21) — Phase 4 needs no repo changes:** the import path
+(`core::journal_import` + the projections + R2 query + base-currency setting) is generic and already
+**public**; it imports *any* hledger journal. The real journal, the resulting SurrealDB, and
+`credentials.toml` are **gitignored — they live only on the work machine, in neither repo** (no leak).
+So Phase 4 is a **local operation** run on the machine that holds the cleaned journal (the
+data-cleanup machine), not a code change. Only if cleanup surfaced *roster-specific* import/rewrite
+rules would a small piece land in the private overlay; the generic A2 rewriter stays public.
+**Phase 2's split is already homed** (see the Phase 2 note): the "deploy to my box" pipeline + the
+go-live image (which runs the *private* overlay binary) live private; the public repo keeps
+build/test/publish of the bank-free image.
 
 - [ ] **4.1** Import the cleaned hledger journal end-to-end — event emission → SurrealDB + journal-file projection round-trip (the part 6.4 stopped short of). Ends the cheap-breaking-changes window. [M]
 - [ ] **4.2** Validate projected balances vs the source journal; dashboard/accounts reflect real data. [S]
