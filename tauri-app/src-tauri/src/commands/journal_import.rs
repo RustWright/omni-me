@@ -348,6 +348,7 @@ async fn emit_transaction_event(
         date,
         description,
         postings,
+        top_tags,
         ..
     } = draft;
 
@@ -356,6 +357,7 @@ async fn emit_transaction_event(
         date,
         description,
         postings,
+        tags: top_tags,
         attachment: None,
         statement_source: None,
     };

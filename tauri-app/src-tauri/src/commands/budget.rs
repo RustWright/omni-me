@@ -53,6 +53,7 @@ pub async fn record_transaction(
         date: draft.date,
         description: draft.description,
         postings: draft.postings,
+        tags: Vec::new(),
         attachment: draft.attachment,
         statement_source: None,
     };
@@ -1033,6 +1034,7 @@ pub async fn import_chequing_csv(
             date: row.date,
             description: row.description.clone(),
             postings: vec![source_posting, unmatched_posting],
+            tags: Vec::new(),
             attachment: None,
             statement_source: Some(statement_source.clone()),
         };

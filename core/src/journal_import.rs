@@ -10,9 +10,11 @@
 //! Elided posting amounts are filled in by an in-house per-commodity sum-and-
 //! negate pass (`infer_elided_postings`). Single-currency transactions yield one
 //! synthesized balancing posting; multi-currency transactions expand into one
-//! balancing posting per commodity. `@` and `@@` prices on explicit postings
-//! are preserved as `FxRate` on the resulting `Posting`. Transactions with
-//! more than one elided posting are skipped with a `balance_failures` entry.
+//! balancing posting per commodity. `@`/`@@` prices drive the *cost* of the
+//! elided leg (so balances are ledger-faithful) but are not carried onto
+//! postings — the cost is fully captured by the explicit balancing legs.
+//! Transactions with more than one elided posting are skipped with a
+//! `balance_failures` entry.
 //!
 //! Phase 6.6 (A2 rewriter) lives at the bottom of this module: `apply_a2_rewriter`
 //! walks draft postings, calls `accounts::strip_business_prefix`, and appends the
@@ -25,13 +27,13 @@ use std::path::{Path, PathBuf};
 
 use chrono::NaiveDate;
 use ledger_parser::{
-    Amount as ParserAmount, Ledger as ParserLedger, LedgerItem, Posting as ParserPosting,
-    Price as ParserPrice, Transaction as ParserTxn,
+    Ledger as ParserLedger, LedgerItem, Posting as ParserPosting, Price as ParserPrice,
+    Tag as ParserTag, Transaction as ParserTxn,
 };
 use rust_decimal::Decimal;
 
 use crate::accounts::strip_business_prefix;
-use crate::events::{FxRate, Posting, Tag};
+use crate::events::{Posting, Tag};
 
 /// One draft transaction the user will review, edit, accept, or skip. Becomes
 /// one `TransactionRecorded` event on commit (Phase 6.3) unless dropped or
@@ -47,6 +49,11 @@ pub struct DraftImportedTransaction {
     pub date: NaiveDate,
     pub description: String,
     pub postings: Vec<Posting>,
+    /// Transaction-level (header) tags — ledger inline `; key: value` on the
+    /// date line, e.g. `; ref: 1234567890`. Posting-level tags (institution,
+    /// product, employer, …) live on each [`Posting`]; these are the ones that
+    /// belong to the whole entry. Carried into the projection's `tags_top`.
+    pub top_tags: Vec<Tag>,
     /// 16-char lowercase hex FNV-1a over `(date, description, postings_canonical)`.
     /// Stable across platforms and Rust versions (FNV-1a is spec-defined). Used
     /// to mint `txn_id` and surface near-duplicates in the preview UI.
@@ -326,11 +333,56 @@ fn consume_items(ledger: ParserLedger, parent: &Path, source: &Path, state: &mut
 fn prep_content(raw: &str) -> String {
     let mut out = raw
         .lines()
-        .map(|line| line.trim_end())
+        .filter(|line| !is_price_directive(line))
+        .map(|line| normalize_status_marker(line.trim_end()))
         .collect::<Vec<_>>()
         .join("\n");
     out.push_str("\n\n");
     out
+}
+
+/// ledger `P DATE COMMODITY PRICE` market-price directives are valuation hints
+/// only — irrelevant to cost-based balances and unsupported by `ledger-parser`
+/// v6 (they abort the whole-file parse). Column-0 `P ` is unambiguous: postings
+/// are indented, transactions start with a date, comments with `;`.
+fn is_price_directive(line: &str) -> bool {
+    line.starts_with("P ")
+}
+
+/// ledger lets a transaction's status marker abut the payee
+/// (`2019/10/21 **SAMPLE PAYEE**` parses as status `*` + payee `*SAMPLE PAYEE**`).
+/// `ledger-parser` v6 requires whitespace after the marker and otherwise aborts
+/// the whole-file parse. Insert that space when a date-led line has
+/// `<date> <*|!><non-space>`, reproducing ledger's own interpretation exactly
+/// (the second `*` stays in the description). No-ops on every other line.
+fn normalize_status_marker(line: &str) -> String {
+    if !starts_with_date(line) {
+        return line.to_string();
+    }
+    // Split into `<date>` and the remainder after the run of spaces.
+    let Some(sep) = line.find(' ') else {
+        return line.to_string();
+    };
+    let (date, rest_with_ws) = line.split_at(sep);
+    let rest = rest_with_ws.trim_start();
+    let mut chars = rest.chars();
+    match (chars.next(), chars.next()) {
+        (Some(marker @ ('*' | '!')), Some(next)) if !next.is_whitespace() => {
+            format!("{date} {marker} {}", &rest[marker.len_utf8()..])
+        }
+        _ => line.to_string(),
+    }
+}
+
+/// True when the line begins `YYYY/MM/DD` or `YYYY-MM-DD` (a transaction header).
+fn starts_with_date(line: &str) -> bool {
+    let b = line.as_bytes();
+    b.len() >= 10
+        && b[0..4].iter().all(u8::is_ascii_digit)
+        && (b[4] == b'/' || b[4] == b'-')
+        && b[5..7].iter().all(u8::is_ascii_digit)
+        && (b[7] == b'/' || b[7] == b'-')
+        && b[8..10].iter().all(u8::is_ascii_digit)
 }
 
 fn convert_transaction(
@@ -339,11 +391,18 @@ fn convert_transaction(
     hash_occurrence: &mut BTreeMap<String, usize>,
 ) -> Result<DraftImportedTransaction, String> {
     let mut explicit: Vec<Posting> = Vec::with_capacity(t.postings.len());
+    // Original parser postings for the explicit legs, kept in parallel so the
+    // elided leg can be balanced by *exact* cost (the `@@ TOTAL` price), not the
+    // lossy per-unit `fx_rate` we derive for display.
+    let mut explicit_parser: Vec<&ParserPosting> = Vec::with_capacity(t.postings.len());
     let mut elided: Vec<&ParserPosting> = Vec::new();
     for p in &t.postings {
         if p.amount.is_some() {
             match convert_explicit_posting(p) {
-                Some(post) => explicit.push(post),
+                Some(post) => {
+                    explicit.push(post);
+                    explicit_parser.push(p);
+                }
                 None => {
                     return Err(format!("posting '{}' has empty commodity", p.account));
                 }
@@ -356,13 +415,16 @@ fn convert_transaction(
     match elided.len() {
         0 => {}
         1 => {
-            let inferred = infer_elided_postings(elided[0], &explicit);
-            if inferred.is_empty() {
+            if explicit_parser.is_empty() {
                 return Err(format!(
                     "elided posting '{}' could not be balanced (no explicit postings)",
                     elided[0].account
                 ));
             }
+            // May be empty when the explicit postings already balance at cost
+            // (e.g. a crypto sell whose proceeds round to `@@ 0.00 CAD`): the
+            // priced leg stands alone, no balancing posting is needed.
+            let inferred = infer_elided_postings(elided[0], &explicit_parser);
             explicit.extend(inferred);
         }
         n => {
@@ -376,7 +438,30 @@ fn convert_transaction(
         return Err("transaction has no postings with amounts".into());
     }
 
-    let description = t.description.trim().to_string();
+    // Header (transaction-level) tags: inline `; key: value` on the date line
+    // land in `posting_metadata.tags`; any free-form header comment is scanned
+    // for hledger-style inline tags too.
+    let mut top_tags = convert_parser_tags(&t.posting_metadata.tags);
+    if let Some(comment) = t.comment.as_deref() {
+        for tag in parse_tags_from_comment(comment) {
+            if !top_tags.contains(&tag) {
+                top_tags.push(tag);
+            }
+        }
+    }
+
+    // A description must not begin with `*`/`!`: ledger-parser always reads a
+    // leading marker as the cleared/pending status, so a payee starting with
+    // one cannot round-trip through the JournalFile renderer (it would fail to
+    // re-parse). The only such cases come from `**PAYEE` source artifacts whose
+    // first `*` we already consumed as status in `normalize_status_marker`;
+    // dropping the residual leading marker matches ledger's own semantics.
+    let description = t
+        .description
+        .trim()
+        .trim_start_matches(['*', '!'])
+        .trim_start()
+        .to_string();
     let hash = content_hash(t.date, &description, &explicit);
     let occurrence = {
         let entry = hash_occurrence.entry(hash.clone()).or_insert(0);
@@ -390,6 +475,7 @@ fn convert_transaction(
         date: t.date,
         description,
         postings: explicit,
+        top_tags,
         content_hash: hash,
     })
 }
@@ -400,42 +486,67 @@ fn convert_explicit_posting(p: &ParserPosting) -> Option<Posting> {
     if commodity.is_empty() {
         return None;
     }
-    let fx_rate = pa
-        .price
-        .as_ref()
-        .and_then(|price| convert_price(price, &pa.amount));
-    let tags = p
-        .comment
-        .as_deref()
-        .map(parse_tags_from_comment)
-        .unwrap_or_default();
+    // We deliberately do NOT carry the source `@`/`@@` price onto the posting.
+    // It is fully redundant with the (now-explicit) balancing legs — the cash
+    // leg *is* the cost — and no balance/valuation path reads per-posting
+    // `fx_rate` (base-currency conversion uses P-directive prices). Rendering a
+    // price would also make `core::ledger`/ledger-utils enforce cost-balance on
+    // the regenerated journal, where the lossy per-unit rate (`total ÷ qty`)
+    // can't reproduce the exact `@@ TOTAL` and the transaction fails to balance.
+    // The exact cost still drives elision via the original parser price in
+    // `infer_elided_postings`.
     Some(Posting {
         account: p.account.clone(),
         commodity,
         amount: pa.amount.quantity,
-        fx_rate,
-        tags,
+        fx_rate: None,
+        tags: tags_from_posting(p),
     })
 }
 
-/// One elided posting balances each commodity that appears in the explicit
-/// postings. For single-commodity transactions this yields one balancing
-/// posting; for multi-commodity (e.g., an opening-balance entry recording
-/// VUN + Cash + Equity), it expands into one Equity posting per commodity.
+/// One elided posting balances each commodity in the explicit postings **at
+/// cost** — exactly as ledger does. A priced leg contributes its cost in the
+/// quote commodity (`@ unit` → `qty × unit`; `@@ total` → the total, signed by
+/// the posting's direction); an unpriced leg contributes its own amount. For a
+/// single-commodity transaction this yields one balancing posting; for a
+/// multi-commodity entry (e.g. an opening balance recording VUN + Cash + Equity)
+/// it expands into one posting per commodity.
 ///
-/// FX rates from explicit postings are not inherited — the elided side is
-/// the cost basis itself, not a re-quoted leg.
-fn infer_elided_postings(p: &ParserPosting, explicit: &[Posting]) -> Vec<Posting> {
-    use std::collections::BTreeMap;
+/// Costs are computed from the original parser postings so `@@ TOTAL` is exact —
+/// the per-unit `fx_rate` we derive for display would reintroduce rounding.
+/// FX rates are not inherited onto the elided side; it is the cost basis itself.
+fn infer_elided_postings(p: &ParserPosting, explicit: &[&ParserPosting]) -> Vec<Posting> {
     let mut sums: BTreeMap<String, Decimal> = BTreeMap::new();
     for ep in explicit {
-        *sums.entry(ep.commodity.clone()).or_insert(Decimal::ZERO) += ep.amount;
+        let Some(pa) = ep.amount.as_ref() else {
+            continue;
+        };
+        let qty = pa.amount.quantity;
+        match &pa.price {
+            Some(ParserPrice::Unit(unit)) => {
+                *sums.entry(unit.commodity.name.clone()).or_insert(Decimal::ZERO) +=
+                    qty * unit.quantity;
+            }
+            Some(ParserPrice::Total(total)) => {
+                // `@@ TOTAL` is a positive magnitude; the cost's sign follows the
+                // posting direction (buy spends, sell receives).
+                let signed = if qty.is_sign_negative() {
+                    -total.quantity.abs()
+                } else {
+                    total.quantity.abs()
+                };
+                *sums
+                    .entry(total.commodity.name.clone())
+                    .or_insert(Decimal::ZERO) += signed;
+            }
+            None => {
+                *sums
+                    .entry(pa.amount.commodity.name.clone())
+                    .or_insert(Decimal::ZERO) += qty;
+            }
+        }
     }
-    let tags = p
-        .comment
-        .as_deref()
-        .map(parse_tags_from_comment)
-        .unwrap_or_default();
+    let tags = tags_from_posting(p);
     sums.into_iter()
         .filter(|(_, total)| !total.is_zero())
         .map(|(commodity, total)| Posting {
@@ -448,26 +559,36 @@ fn infer_elided_postings(p: &ParserPosting, explicit: &[Posting]) -> Vec<Posting
         .collect()
 }
 
-fn convert_price(price: &ParserPrice, posting_amount: &ParserAmount) -> Option<FxRate> {
-    match price {
-        ParserPrice::Unit(amt) => Some(FxRate {
-            quote_commodity: amt.commodity.name.clone(),
-            rate: amt.quantity,
-        }),
-        ParserPrice::Total(amt) => {
-            // `@@ TOTAL` means the explicit posting's whole quantity converts
-            // to `TOTAL`. We normalize to per-unit by dividing by |quantity|.
-            // Zero-quantity postings can't yield a per-unit price.
-            let q = posting_amount.quantity.abs();
-            if q.is_zero() {
-                return None;
+/// Tags for a posting: the parser's structured `metadata.tags` (ledger
+/// one-per-line `key: value`, the bulk of our data) plus any hledger-style
+/// inline tags left in the free-form `comment`. De-duplicated.
+fn tags_from_posting(p: &ParserPosting) -> Vec<Tag> {
+    let mut out = convert_parser_tags(&p.metadata.tags);
+    if let Some(comment) = p.comment.as_deref() {
+        for tag in parse_tags_from_comment(comment) {
+            if !out.contains(&tag) {
+                out.push(tag);
             }
-            Some(FxRate {
-                quote_commodity: amt.commodity.name.clone(),
-                rate: amt.quantity.abs() / q,
-            })
         }
     }
+    out
+}
+
+/// Convert `ledger-parser` tags to our [`Tag`] enum. Skips our own internal
+/// metadata (`txn_id`, `attachment`) so it doesn't round-trip as a user tag.
+/// Typed values (int/float/date) render via their `Display`; our corpus uses
+/// single-colon string tags, so values come through verbatim.
+fn convert_parser_tags(tags: &[ParserTag]) -> Vec<Tag> {
+    tags.iter()
+        .filter(|t| t.name != "txn_id" && t.name != "attachment")
+        .map(|t| match &t.value {
+            None => Tag::Bare(t.name.clone()),
+            Some(value) => Tag::KeyValue {
+                key: t.name.clone(),
+                value: value.to_string(),
+            },
+        })
+        .collect()
 }
 
 /// Parse hledger inline tag syntax from a posting/transaction comment.
@@ -632,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_at_price_as_fx_rate() {
+    fn unit_price_drives_cost_without_storing_fx_rate() {
         let dir = TempDir::new().unwrap();
         let body = "\
 2026-02-01 Opening Balance
@@ -643,22 +764,151 @@ mod tests {
         let imported = parse_journal(&path).unwrap();
         assert_eq!(imported.transactions.len(), 1);
         let txn = &imported.transactions[0];
+
+        // The priced holding leg carries no `fx_rate`: the cost lives entirely in
+        // the balancing leg, and a posting price would break the rendered journal.
         let vun_leg = txn
             .postings
             .iter()
             .find(|p| p.account == "Assets:RRSP:VUN")
             .unwrap();
-        let fx = vun_leg.fx_rate.as_ref().expect("fx_rate must be captured");
-        assert_eq!(fx.quote_commodity, "CAD");
-        assert_eq!(fx.rate, dec("80.081166709"));
+        assert!(vun_leg.fx_rate.is_none());
+        assert_eq!(vun_leg.amount, dec("16.0657"));
 
+        // The elided leg still balances *at cost* (`qty × unit`) in the quote
+        // commodity — not the raw VUN quantity.
         let equity = txn
             .postings
             .iter()
             .find(|p| p.account == "Equity:OpeningBalance")
             .unwrap();
-        assert_eq!(equity.commodity, "VUN");
-        assert_eq!(equity.amount, dec("-16.0657"));
+        assert_eq!(equity.commodity, "CAD");
+        assert_eq!(equity.amount, -(dec("16.0657") * dec("80.081166709")));
+    }
+
+    #[test]
+    fn elided_leg_balances_at_total_cost() {
+        // `@@ TOTAL` (the dominant form in real data): the elided cash leg is the
+        // exact total cost in the quote commodity, signed by the posting's
+        // direction — never the raw share quantity.
+        let dir = TempDir::new().unwrap();
+        let body = "\
+2021/03/03 Buy QST
+    Assets:NonRegistered:QST   23 QST @@ 50.14 CAD
+    Assets:NonRegistered:CAD
+
+2021/03/10 Sell QST
+    Assets:NonRegistered:QST  -10 QST @@ 22.50 CAD
+    Assets:NonRegistered:CAD
+";
+        let path = write(dir.path(), "main.ledger", body);
+        let imported = parse_journal(&path).unwrap();
+
+        let buy = &imported.transactions[0];
+        let buy_share = buy
+            .postings
+            .iter()
+            .find(|p| p.account == "Assets:NonRegistered:QST")
+            .unwrap();
+        assert_eq!(buy_share.commodity, "QST");
+        assert_eq!(buy_share.amount, dec("23"));
+        let buy_cash = buy
+            .postings
+            .iter()
+            .find(|p| p.account == "Assets:NonRegistered:CAD")
+            .unwrap();
+        assert_eq!(buy_cash.commodity, "CAD");
+        assert_eq!(buy_cash.amount, dec("-50.14"));
+
+        // A sell receives cash: the cost flips sign with the share quantity.
+        let sell_cash = imported.transactions[1]
+            .postings
+            .iter()
+            .find(|p| p.account == "Assets:NonRegistered:CAD")
+            .unwrap();
+        assert_eq!(sell_cash.amount, dec("22.50"));
+    }
+
+    #[test]
+    fn captures_ledger_metadata_tags_one_per_line() {
+        // ledger one-tag-per-line `key: value` continuation comments land in the
+        // parser's structured `metadata.tags`, not the free-form comment.
+        let dir = TempDir::new().unwrap();
+        let body = "\
+2019/09/20 Salary
+    Assets:NonRegistered:CAD   100.00 CAD
+        ; institution: Globepay
+        ; product: chequing
+    Income:Employment:Salary
+        ; employer: acme
+";
+        let path = write(dir.path(), "main.ledger", body);
+        let imported = parse_journal(&path).unwrap();
+        let txn = &imported.transactions[0];
+
+        let asset = txn
+            .postings
+            .iter()
+            .find(|p| p.account == "Assets:NonRegistered:CAD")
+            .unwrap();
+        assert!(asset.tags.contains(&Tag::KeyValue {
+            key: "institution".into(),
+            value: "Globepay".into(),
+        }));
+        assert!(asset.tags.contains(&Tag::KeyValue {
+            key: "product".into(),
+            value: "chequing".into(),
+        }));
+
+        // The employer tag rides on the elided Income leg and must survive
+        // elision.
+        let income = txn
+            .postings
+            .iter()
+            .find(|p| p.account == "Income:Employment:Salary")
+            .unwrap();
+        assert!(income.tags.contains(&Tag::KeyValue {
+            key: "employer".into(),
+            value: "acme".into(),
+        }));
+    }
+
+    #[test]
+    fn captures_inline_header_tags_as_top_tags() {
+        let dir = TempDir::new().unwrap();
+        let body = "\
+2019/08/26 FX conversion  ; ref: 1234567890
+    Assets:NonRegistered:CAD   100.00 CAD
+    Assets:NonRegistered:USD   -77.22 USD
+";
+        let path = write(dir.path(), "main.ledger", body);
+        let imported = parse_journal(&path).unwrap();
+        let txn = &imported.transactions[0];
+        assert_eq!(txn.description, "FX conversion");
+        assert!(txn.top_tags.contains(&Tag::KeyValue {
+            key: "ref".into(),
+            value: "1234567890".into(),
+        }));
+    }
+
+    #[test]
+    fn status_marker_abutting_payee_is_normalized() {
+        // `**SAMPLE PAYEE**` = cleared status `*` + payee `*SAMPLE PAYEE**`.
+        let dir = TempDir::new().unwrap();
+        let body = "\
+2019/10/21 **SAMPLE PAYEE - GENERIC MEMO**
+    Liabilities:Credit Card:CAD   -20.00 CAD
+    Assets:NonRegistered:CAD
+";
+        let path = write(dir.path(), "main.ledger", body);
+        let imported = parse_journal(&path).unwrap();
+        assert_eq!(imported.transactions.len(), 1, "file must not fail to parse");
+        // The first `*` is the status marker; the residual leading `*` is
+        // stripped so the description re-parses through the renderer.
+        assert_eq!(
+            imported.transactions[0].description,
+            "SAMPLE PAYEE - GENERIC MEMO**"
+        );
     }
 
     #[test]

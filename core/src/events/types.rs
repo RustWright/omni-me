@@ -322,7 +322,7 @@ pub struct FxRate {
     pub rate: Decimal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tag {
     Bare(String),
     KeyValue { key: String, value: String },
@@ -372,12 +372,20 @@ pub struct Posting {
     pub tags: Vec<Tag>,
 }
 
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionRecordedPayload {
     pub txn_id: String,
     pub date: chrono::NaiveDate,
     pub description: String,
     pub postings: Vec<Posting>,
+    /// Transaction-level (header) tags — ledger inline `; key: value` on the
+    /// date line. Posting-level tags live on each [`Posting`]; these belong to
+    /// the whole entry and land in the projection's `tags_top`. Defaulted +
+    /// skipped-when-empty so existing event payloads deserialize unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde_as(as = "Vec<DisplayFromStr>")]
+    pub tags: Vec<Tag>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment: Option<AttachmentRef>,
     /// Provenance tag for statement-imported transactions (Phase 5.5).

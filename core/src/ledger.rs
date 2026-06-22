@@ -15,7 +15,7 @@
 //! Scope deliberately stays *read-side*. Writes go through the event store +
 //! journal-file projection.
 
-use ledger_parser::Ledger;
+use ledger_parser::{Ledger, LedgerItem};
 use ledger_utils::balance::Balance;
 use ledger_utils::simplified_ledger::Ledger as SimplifiedLedger;
 
@@ -58,9 +58,46 @@ pub fn parse(content: &str) -> Result<Ledger, LedgerError> {
 /// two-step conversion lives inside `ledger-utils`.
 pub fn balances(content: &str) -> Result<Balance, LedgerError> {
     let ledger = parse(content)?;
-    let simplified = SimplifiedLedger::try_from(ledger)
-        .map_err(|e| LedgerError::Balance(format!("simplified ledger: {e}")))?;
-    Ok(Balance::from(&simplified))
+    // `SimplifiedLedger` enforces per-transaction balance by *raw* amount — it
+    // ignores `@`/`@@` cost and only tolerates a single 2-commodity exchange.
+    // Real `ledger` cost-balances, so legitimate cost-annotated entries it
+    // accepts — notably zero-cost crypto acquisitions (`0.000088 ETH @@ 0.00
+    // CAD`, where the cash leg is 0) — make `SimplifiedLedger` reject the whole
+    // journal as unbalanced. `ledger bal` itself is just a per-account,
+    // per-commodity sum of posting amounts, so when the strict path rejects we
+    // fall back to that: identical results for ordinary journals, correct
+    // (ledger-faithful) results for the cost-balanced ones. The rendered journal
+    // always has explicit amounts, so no elision is needed here.
+    match SimplifiedLedger::try_from(ledger.clone()) {
+        Ok(simplified) => Ok(Balance::from(&simplified)),
+        Err(_) => Ok(raw_balances(&ledger)),
+    }
+}
+
+/// Per-account, per-commodity sum of explicit posting amounts — exactly what
+/// `ledger bal` reports. Amount-less postings are ignored (the JournalFile
+/// projection always renders explicit amounts, so they never occur here).
+fn raw_balances(ledger: &Ledger) -> Balance {
+    let mut balance = Balance::new();
+    for item in &ledger.items {
+        if let LedgerItem::Transaction(t) = item {
+            for posting in &t.postings {
+                if let Some(pa) = &posting.amount {
+                    // `AddAssign<&Amount>` accumulates per commodity and drops
+                    // entries that net to zero.
+                    *balance
+                        .account_balances
+                        .entry(posting.account.clone())
+                        .or_default() += &pa.amount;
+                }
+            }
+        }
+    }
+    // Drop accounts whose every commodity netted to zero, matching `ledger bal`.
+    balance
+        .account_balances
+        .retain(|_, ab| !ab.amounts.is_empty());
+    balance
 }
 
 fn prep_content(content: &str) -> String {
@@ -173,6 +210,36 @@ mod tests {
     }
 
     #[test]
+    fn zero_cost_single_commodity_falls_back_to_raw_sum() {
+        // A zero-cost crypto acquisition: the cash leg is 0, so the entry has a
+        // single non-zero commodity. ledger-utils' strict balancer rejects it,
+        // but `ledger bal` sums it fine — the fallback must reproduce that.
+        let journal = "\
+2022-08-01 ETH buy
+    Assets:NonRegistered:ETH   0.000088 ETH
+
+2022-09-01 Coffee
+    Assets:Cash    -5.25 CAD
+    Expenses:Coffee 5.25 CAD
+";
+        let bal = balances(journal).unwrap();
+        let eth = bal
+            .account_balances
+            .get("Assets:NonRegistered:ETH")
+            .expect("ETH account present via raw-sum fallback");
+        assert_eq!(
+            eth.amounts.get("ETH").unwrap().quantity,
+            Decimal::from_str("0.000088").unwrap()
+        );
+        // The ordinary transaction in the same journal still sums correctly.
+        let cash = bal.account_balances.get("Assets:Cash").unwrap();
+        assert_eq!(
+            cash.amounts.get("CAD").unwrap().quantity,
+            Decimal::from_str("-5.25").unwrap()
+        );
+    }
+
+    #[test]
     fn round_trips_through_journal_file_renderer() {
         // Reads back what `journal_file::render_transaction` produces. If the
         // renderer ever drifts from a format ledger-parser accepts, this test
@@ -200,6 +267,7 @@ mod tests {
                     tags: vec![],
                 },
             ],
+            tags: vec![],
             attachment: None,
             statement_source: None,
         };

@@ -145,6 +145,15 @@ impl BudgetProjection {
             .get("statement_source")
             .and_then(|v| v.as_str())
             .map(String::from);
+        // Transaction-level (header) tags travel as JSON strings (Tag's wire
+        // form); store them verbatim so the projection stays format-agnostic.
+        let empty = Vec::new();
+        let tags_top: Vec<String> = event.payload["tags"]
+            .as_array()
+            .unwrap_or(&empty)
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
@@ -154,7 +163,7 @@ impl BudgetProjection {
                 postings: $postings,
                 attachment: $attachment,
                 category: NONE,
-                tags_top: [],
+                tags_top: $tags_top,
                 removed: false,
                 superseded_by: NONE,
                 merged_ids: [],
@@ -171,6 +180,7 @@ impl BudgetProjection {
         .bind(("description", description))
         .bind(("postings", postings))
         .bind(("attachment", attachment))
+        .bind(("tags_top", tags_top))
         .bind(("statement_source", statement_source))
         .bind(("ts", ts))
         .await?;

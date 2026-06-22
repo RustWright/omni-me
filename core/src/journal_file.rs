@@ -138,7 +138,12 @@ pub fn render_transaction(t: &TransactionRecordedPayload) -> String {
 /// Render a single posting line — 4-space indent + account + two-space gap +
 /// amount/commodity + optional FX + optional trailing tag comment.
 pub fn render_posting(p: &Posting) -> String {
-    let mut line = format!("    {}  {} {}", p.account, p.amount, p.commodity);
+    let mut line = format!(
+        "    {}  {} {}",
+        p.account,
+        p.amount,
+        render_commodity(&p.commodity)
+    );
     if let Some(fx) = &p.fx_rate {
         line.push_str(&render_fx(fx));
     }
@@ -149,7 +154,24 @@ pub fn render_posting(p: &Posting) -> String {
 }
 
 fn render_fx(fx: &FxRate) -> String {
-    format!(" @ {} {}", fx.rate, fx.quote_commodity)
+    format!(" @ {} {}", fx.rate, render_commodity(&fx.quote_commodity))
+}
+
+/// Render a commodity symbol, quoting it when it contains characters that
+/// `ledger-parser` won't accept bare (digits, spaces, punctuation) — e.g.
+/// `CIB210` → `"CIB210"`. Mirrors the crate's `is_commodity_char` rule so the
+/// rendered journal always re-parses. (ledger-parser's own serializer omits
+/// this, so we must do it here or the round-trip through `core::ledger` fails.)
+fn render_commodity(name: &str) -> String {
+    if name.is_empty() || name.chars().any(|c| !is_bare_commodity_char(c)) {
+        format!("\"{name}\"")
+    } else {
+        name.to_string()
+    }
+}
+
+fn is_bare_commodity_char(c: char) -> bool {
+    !"0123456789{}[]()~`!@#%^&*-=+\\'\",./? ;\t\r\n".contains(c)
 }
 
 fn render_tag_comment(tags: &[Tag]) -> Option<String> {
@@ -222,6 +244,7 @@ mod tests {
             date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
             description: "Loblaws grocery run".into(),
             postings: vec![cad("-87.42"), expense_posting("Expenses:Groceries", "87.42", vec![])],
+            tags: vec![],
             attachment: None,
             statement_source: None,
         };
@@ -243,6 +266,7 @@ mod tests {
             date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
             description: "Loblaws".into(),
             postings: vec![cad("-5.00"), expense_posting("Expenses:Snacks", "5.00", vec![])],
+            tags: vec![],
             attachment: Some(AttachmentRef {
                 sha256: "abc123".into(),
                 filename: "receipt.jpg".into(),

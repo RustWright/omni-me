@@ -357,6 +357,7 @@ pub async fn commit_batch(
             date: draft.date,
             description: draft.description.clone(),
             postings: draft.postings.clone(),
+            tags: Vec::new(),
             attachment: None,
             statement_source: None,
         };
