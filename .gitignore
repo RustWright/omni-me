@@ -23,3 +23,8 @@ tauri-app/frontend/assets/tailwind.css
 .env
 .env.*
 !.env.example
+secrets/*
+!secrets/*.example
+
+# Local privacy guard: real bank/personal tokens for the pre-commit scan.
+.private-identity-denylist

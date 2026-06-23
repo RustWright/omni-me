@@ -246,9 +246,9 @@ mod tests {
             [globepay]
             api_token = "ignored-by-public"
 
-            [[sc_accounts]]
+            [[northwind_sync]]
             account_number = "0001"
-            hledger_account = "Assets:SC:USD"
+            hledger_account = "Assets:Northwind:USD"
             commodity = "USD"
         "#;
         let creds: Credentials = toml::from_str(toml_str).unwrap();

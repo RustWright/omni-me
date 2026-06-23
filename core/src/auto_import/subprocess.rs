@@ -508,7 +508,7 @@ mod tests {
     async fn missing_command_is_not_configured() {
         let (_db, store, projections) = test_db_and_runner().await;
         let source = source_with(
-            Path::new("/nonexistent/dir/ws-helper").to_path_buf(),
+            Path::new("/nonexistent/dir/helper").to_path_buf(),
             vec![],
             store,
             projections,

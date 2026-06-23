@@ -1,0 +1,40 @@
+# Keep the build context small + secret-free. The image builds ONLY
+# `-p omni-me-server`, but `cargo` must still PARSE every workspace member's
+# manifest — so we drop tauri-app/frontend/ (excluded from the workspace; wasm;
+# huge node_modules) but KEEP tauri-app/src-tauri/ so the workspace resolves.
+
+# Build artifacts — the big one. Root workspace target + any sibling targets.
+target/
+**/target/
+
+# Runtime state — never belongs in an image.
+surreal_data/
+blobs/
+*.db
+*.db-*
+
+# Secrets + local env (the example template is the only thing that ships, and it
+# isn't needed in the build context anyway).
+secrets/
+.env
+.env.*
+
+# VCS + session/work scratch.
+.git/
+.gitignore
+.log/
+.curiosities/
+reviews/
+.claude/
+.playwright-mcp/
+.tmp/
+.reference/
+
+# Frontend wasm crate (excluded from the cargo workspace) + its build output.
+tauri-app/frontend/
+tauri-app/src-tauri/gen/
+
+# Docker/deploy files themselves don't need to enter the build context.
+docker-compose.yml
+.dockerignore
+DEPLOY.md

@@ -1,0 +1,57 @@
+# Canonical local runtime composition for the public, bank-free omni-me-server
+# (Phase 2 task 2.1). `sudo docker compose up -d` builds the image from
+# server/Dockerfile and runs it with a persistent named volume + a read-only
+# credentials mount.
+#
+# Production (the deploy-pipeline session) reuses this exact shape but: binds the
+# port to the tailnet interface only (nothing public), points `image:` at the
+# GHCR tag instead of building locally, and runs the PRIVATE overlay binary.
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: omni-me-server:dev
+    container_name: omni-me-server
+    restart: unless-stopped
+
+    # Local test exposes the port on the host. In production this becomes
+    # "<tailnet-ip>:3000:3000" so the server is reachable only over Tailscale.
+    ports:
+      - "3000:3000"
+
+    # GEMINI_API_KEY (and optional RUST_LOG) come from .env if present. The
+    # server boots fine with none of them set — zero-config is a guarantee — so
+    # the file is optional (long-form `required: false`).
+    env_file:
+      - path: .env
+        required: false
+
+    volumes:
+      # One named volume holds everything stateful: the embedded SurrealDB
+      # (/data/surreal_data) and uploaded blobs (/data/blobs). WORKDIR is /data,
+      # so the DB's relative path lands here automatically and survives restarts.
+      - omni_data:/data
+      # Read-only credentials secret. Copy secrets/credentials.toml.example to
+      # secrets/credentials.toml first — the file must exist before `up` (Docker
+      # would otherwise create a directory at this path). The container reads it
+      # as uid 10001; see DEPLOY.md for the production chown/chmod that keeps it
+      # 0600 yet container-readable.
+      - ./secrets/credentials.toml:/config/omni-me/credentials.toml:ro
+
+    # Mirrors the Dockerfile HEALTHCHECK so `docker compose ps` shows health and
+    # the deploy pipeline can gate on it.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    # The server traps SIGTERM and flushes the embedded DB on shutdown; give it
+    # room before Docker escalates to SIGKILL.
+    stop_grace_period: 30s
+
+volumes:
+  omni_data:
