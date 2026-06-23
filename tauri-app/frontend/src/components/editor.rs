@@ -55,8 +55,14 @@ pub fn Editor(
 ) -> Element {
     let mut editor_ready = use_signal(|| false);
 
-    // --- Dev-Only: Custom JS loading and polling for dx serve quirks ---
-    #[cfg(debug_assertions)]
+    // Load the CodeMirror bundle, then POLL for `window.createEditor` rather than
+    // awaiting `script.onload`. The old release-only onload path could hang
+    // forever in an embedded Tauri webview (the script loads, but the awaited
+    // onload never resolved), stranding the editor on "Initializing…". Polling is
+    // robust across dx serve, embedded release builds, and Android, and dedupes
+    // the injected script so repeated mounts don't stack copies. One path for all
+    // build modes — the previous `cfg(debug_assertions)` split meant the release
+    // path was never exercised until a real desktop webview ran it.
     use_effect(move || {
         let initial = initial_content.clone();
 
@@ -142,71 +148,6 @@ pub fn Editor(
             if setup_script_and_poll_editor().await.is_some() {
                 editor_ready.set(true);
             }
-        });
-    });
-
-    // --- Production: Original, stable Tauri environment loading ---
-    #[cfg(not(debug_assertions))]
-    use_effect(move || {
-        let initial = initial_content.clone();
-
-        spawn(async move {
-            let window = web_sys::window().expect("no window");
-            let document = window.document().expect("no document");
-
-            // Create <script> element for the editor bundle (original logic)
-            let script = document
-                .create_element("script")
-                .expect("failed to create script element");
-            script
-                .set_attribute("src", "/assets/js/editor.bundle.js")
-                .expect("failed to set script src");
-
-            // Wait for the script to load via a Promise (original logic)
-            let promise = js_sys::Promise::new(&mut |resolve, _reject| {
-                let resolve_clone = resolve.clone();
-                let onload = Closure::once_into_js(move || {
-                    resolve_clone.call0(&JsValue::NULL).unwrap();
-                });
-                script
-                    .dyn_ref::<web_sys::HtmlElement>()
-                    .expect("script is not HtmlElement")
-                    .set_onload(Some(onload.unchecked_ref()));
-            });
-
-            let body = document.body().expect("no body");
-            body.append_child(&script).expect("failed to append script");
-
-            // Await script load (original logic)
-            wasm_bindgen_futures::JsFuture::from(promise)
-                .await
-                .expect("script load failed");
-
-            // Create a JS callback for onChange (original logic)
-            let on_change_closure = Closure::wrap(Box::new(move |content: String| {
-                on_change.call(content);
-            }) as Box<dyn Fn(String)>);
-
-            let on_change_fn = on_change_closure
-                .as_ref()
-                .dyn_ref::<js_sys::Function>()
-                .expect("closure is not a Function")
-                .clone();
-
-            // Leak the closure (original logic)
-            on_change_closure.forget();
-
-            // Initialize the editor (original logic)
-            let opts = editor_options(journal_mode, read_only, initial_cursor);
-            attach_cursor_cb(&opts, on_cursor);
-            js_create_editor(
-                EDITOR_CONTAINER_ID,
-                &initial,
-                Some(&on_change_fn),
-                opts.into(),
-            );
-
-            editor_ready.set(true);
         });
     });
 

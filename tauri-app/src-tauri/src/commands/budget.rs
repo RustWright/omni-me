@@ -293,11 +293,19 @@ pub struct AccountSummaryView {
     pub total_in_base: Option<String>,
 }
 
+/// Base-currency (money) values display to 2 decimal places — net worth and the
+/// `≈ … CAD` conversions come from implied-price ratios and otherwise carry many
+/// decimals. Native commodity *quantities* keep full precision (crypto needs it);
+/// only the converted/base figures round. `round_dp(2)` = nearest, ties-to-even.
+fn base_money(d: Decimal) -> String {
+    d.round_dp(2).to_string()
+}
+
 fn balance_to_view(b: CommodityBalance) -> CommodityBalanceView {
     CommodityBalanceView {
         commodity: b.commodity,
         quantity: b.quantity.to_string(),
-        value_in_base: b.value_in_base.map(|d| d.to_string()),
+        value_in_base: b.value_in_base.map(base_money),
     }
 }
 
@@ -308,7 +316,7 @@ fn summary_to_view(s: AccountSummary) -> AccountSummaryView {
         last_reconciled_through: s.last_reconciled_through,
         last_statement_balance: s.last_statement_balance,
         balances: s.balances.into_iter().map(balance_to_view).collect(),
-        total_in_base: s.total_in_base.map(|d| d.to_string()),
+        total_in_base: s.total_in_base.map(base_money),
     }
 }
 
@@ -549,9 +557,9 @@ fn recurring_to_view(r: RecurringObligation) -> RecurringObligationView {
 fn dashboard_to_view(s: DashboardSummary) -> DashboardSummaryView {
     DashboardSummaryView {
         base_currency: s.base_currency,
-        net_worth_in_base: s.net_worth_in_base.map(|d| d.to_string()),
-        liquid_assets_in_base: s.liquid_assets_in_base.map(|d| d.to_string()),
-        unmatched_balance: s.unmatched_balance.map(|d| d.to_string()),
+        net_worth_in_base: s.net_worth_in_base.map(base_money),
+        liquid_assets_in_base: s.liquid_assets_in_base.map(base_money),
+        unmatched_balance: s.unmatched_balance.map(base_money),
         monthly_buckets: s.monthly_buckets.into_iter().map(bucket_to_view).collect(),
         recurring: s.recurring.into_iter().map(recurring_to_view).collect(),
     }
@@ -667,7 +675,7 @@ pub async fn check_affordability(
     let verdict: AffordVerdict = dashboard::can_i_afford(amt, &summary);
     Ok(AffordVerdictView {
         can_afford: verdict.can_afford,
-        remaining_in_base: verdict.remaining_in_base.to_string(),
+        remaining_in_base: base_money(verdict.remaining_in_base),
         base_currency: summary_view.base_currency,
         policy_label: verdict.policy_label,
     })

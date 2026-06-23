@@ -101,11 +101,32 @@ fn raw_balances(ledger: &Ledger) -> Balance {
 }
 
 fn prep_content(content: &str) -> String {
-    let mut out = content
-        .lines()
-        .map(|line| line.trim_end())
-        .collect::<Vec<_>>()
-        .join("\n");
+    // `ledger-utils` (ledger_parser) parses transactions but errors on `account`
+    // directives. The JournalFile projection appends an
+    // `account <name>  ; commodity:<c>` block (plus an optional indented
+    // `note <label>` sub-directive) for every per-account override
+    // (rename / hide / liquid). Those carry no balance information — overrides
+    // live in the DB — so strip each `account` block before parsing. Otherwise a
+    // single override makes the whole journal unparseable and collapses every
+    // balance view (net worth, the Accounts screen, the detected-account list).
+    let mut kept: Vec<&str> = Vec::new();
+    let mut in_account_block = false;
+    for line in content.lines() {
+        if in_account_block {
+            // Sub-directives of an `account` block are indented; the block ends
+            // at the first non-indented line (blank, a new directive, or a txn).
+            if line.starts_with(char::is_whitespace) && !line.trim().is_empty() {
+                continue;
+            }
+            in_account_block = false;
+        }
+        if line.starts_with("account ") {
+            in_account_block = true;
+            continue;
+        }
+        kept.push(line.trim_end());
+    }
+    let mut out = kept.join("\n");
     out.push_str("\n\n");
     out
 }
@@ -157,6 +178,35 @@ mod tests {
             .expect("Expenses:Groceries balance present");
         let cad = groceries.amounts.get("CAD").unwrap();
         assert_eq!(cad.quantity, Decimal::from_str("87.42").unwrap());
+    }
+
+    #[test]
+    fn balances_skips_account_directives() {
+        // The JournalFile projection appends `account <name>  ; commodity:<c>`
+        // blocks (with an optional indented `note`) for per-account overrides
+        // (rename / hide / liquid). ledger-utils can't parse them, so prep_content
+        // strips them — otherwise one override makes the whole journal
+        // unparseable and collapses every balance view. Synthetic data only.
+        let journal = "\
+2026-05-16 Coffee
+    Assets:Cash             -5.25 CAD
+    Expenses:Coffee          5.25 CAD
+
+account Assets:Cash  ; commodity:CAD
+    note Spending cash
+
+account Assets:Cash  ; commodity:CAD
+";
+        let bal = balances(journal).unwrap();
+        let cash = bal
+            .account_balances
+            .get("Assets:Cash")
+            .expect("Assets:Cash balance present despite account directives");
+        assert_eq!(
+            cash.amounts.get("CAD").unwrap().quantity,
+            Decimal::from_str("-5.25").unwrap()
+        );
+        assert!(bal.account_balances.contains_key("Expenses:Coffee"));
     }
 
     #[test]
