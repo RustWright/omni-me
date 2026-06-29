@@ -9,7 +9,7 @@ axum = "0.8"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ulid = { version = "1", features = ["serde"] }

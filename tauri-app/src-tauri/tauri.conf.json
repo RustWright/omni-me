@@ -20,5 +20,8 @@
     "security": {
       "csp": null
     }
+  },
+  "bundle": {
+    "createUpdaterArtifacts": true
   }
 }

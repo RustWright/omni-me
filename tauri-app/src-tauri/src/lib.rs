@@ -143,7 +143,17 @@ pub fn run() {
         )
         .init();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // Desktop self-update via the Tauri updater plugin (pubkey + endpoint are
+    // injected at build time by the private CI's --config; absent in local/dev
+    // builds, where `app.updater()` simply errors at call time). Mobile uses the
+    // custom OTA in `commands::update` instead — the plugin doesn't support it.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    builder
         .setup(|app| {
             // Store DB in the OS app data dir (e.g. ~/.local/share/com.omni-me.app/)
             // instead of inside src-tauri/ where Tauri's file watcher would trigger
@@ -379,6 +389,13 @@ pub fn run() {
             commands::auto_import::dismiss_batch,
             // Android share-target intake (Phase 3.3)
             commands::share_intent::take_pending_share_intent,
+            // In-app updater — Android OTA (custom) + desktop (Tauri updater plugin).
+            commands::update::app_platform,
+            commands::update::check_for_app_update,
+            commands::update::download_android_update,
+            commands::update::request_android_install,
+            commands::update::check_desktop_update,
+            commands::update::install_desktop_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -70,6 +70,52 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
+/// Boot the *full* production router (via `omni_me_server::build_app`) on a random
+/// port, with an optional `/updates` static dir. Returns (server_url, handle).
+/// Used by the updates-route test; `start_server` above stays minimal (sync only).
+pub async fn start_full_server(
+    updates_dir: Option<std::path::PathBuf>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("server.db");
+    let server_db = db::connect(path.to_str().unwrap()).await.unwrap();
+    std::mem::forget(dir);
+
+    let blob_dir = tempfile::tempdir().unwrap();
+    let blob_path = blob_dir.path().to_path_buf();
+    std::mem::forget(blob_dir);
+
+    let db_arc = Arc::new(server_db);
+    let event_store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new((*db_arc).clone()));
+    let projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+
+    let state = AppState {
+        db: db_arc.clone(),
+        llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
+        blob_dir: Arc::new(blob_path),
+        extractor: Arc::new(NullExtractor),
+        auto_import_registry: Default::default(),
+        store: event_store,
+        projections,
+        device_id: "test-device".to_string(),
+        default_interval: std::time::Duration::from_secs(1800),
+    };
+
+    let app = omni_me_server::build_app(state, updates_dir);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind");
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}");
+
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (url, handle)
+}
+
 /// Create a temp SurrealDB instance — simulates a device's local DB.
 pub async fn device_db() -> db::Database {
     let dir = tempfile::tempdir().unwrap();

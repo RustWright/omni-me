@@ -19,6 +19,7 @@ use std::time::Duration;
 use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
 use tokio::signal;
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 use omni_me_core::auto_import::setup::{spawn_sources, DEFAULT_INTERVAL};
@@ -213,18 +214,21 @@ pub async fn run(cfg: RunConfig) {
         "auto-import scheduler initialized"
     );
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .merge(routes::sync_routes())
-        .merge(routes::notes_routes())
-        .layer(DefaultBodyLimit::max(256 * 1024))
-        .merge(routes::blob_routes())
-        .merge(routes::documents_routes())
-        .merge(routes::auto_import_routes())
-        .merge(routes::llm_routes())
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
+    // App-update hosting (optional, generic): when UPDATES_DIR is set the server
+    // serves that directory read-only under /updates so a self-hosted box can
+    // hand out signed app artifacts + per-platform manifests to its own devices
+    // over the tailnet. Unset → the route is absent (404). Bank-free: any
+    // self-hoster can point UPDATES_DIR at their own release dir.
+    let updates_dir = std::env::var("UPDATES_DIR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    match &updates_dir {
+        Some(d) => tracing::info!("updates dir: {} (serving /updates)", d.display()),
+        None => tracing::info!("UPDATES_DIR unset — /updates route disabled"),
+    }
+
+    let app = build_app(state, updates_dir);
 
     let listener = tokio::net::TcpListener::bind(LISTEN_ADDR)
         .await
@@ -236,6 +240,33 @@ pub async fn run(cfg: RunConfig) {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("server error");
+}
+
+/// Assemble the HTTP router. Split out of [`run`] so tests can build the exact
+/// production route set against a test [`AppState`]. `updates_dir`, when `Some`,
+/// mounts a read-only static file service at `/updates` (app-update hosting);
+/// `None` leaves the route absent.
+pub fn build_app(state: AppState, updates_dir: Option<PathBuf>) -> Router {
+    let mut app = Router::new()
+        .route("/health", get(health))
+        .merge(routes::sync_routes())
+        .merge(routes::notes_routes())
+        .layer(DefaultBodyLimit::max(256 * 1024))
+        .merge(routes::blob_routes())
+        .merge(routes::documents_routes())
+        .merge(routes::auto_import_routes())
+        .merge(routes::llm_routes());
+
+    if let Some(dir) = updates_dir {
+        // ServeDir maps /updates/<rel> -> <dir>/<rel>; missing files → 404. GETs
+        // carry no request body, so the 256 KiB DefaultBodyLimit above is
+        // irrelevant to serving large artifacts (APK / AppImage).
+        app = app.nest_service("/updates", ServeDir::new(dir));
+    }
+
+    app.layer(CorsLayer::permissive())
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
 }
 
 async fn health() -> Json<serde_json::Value> {

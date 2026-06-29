@@ -3,8 +3,11 @@ package com.omni_me.app
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.FileProvider
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -46,6 +49,63 @@ class MainActivity : TauriActivity() {
         handleSendIntent(intent)
     }
 
+    // --- OTA install bridge (app-delivery) ---
+    //
+    // The in-app updater downloads + sha256-verifies a new APK (Rust
+    // `download_android_update`) into the cache dir, then `request_android_install`
+    // writes the APK path to a `filesDir/install_request` side-file. We poll that
+    // file while foregrounded and, when it appears, launch the system package
+    // installer for it. Side-file (not a JS interface) keeps the Kotlin↔Rust
+    // contract dirt-simple and dodges the "injected object needs a page reload"
+    // trap — same rationale as the share handler above.
+    //
+    // Installing OVER the existing app requires the new APK be signed with the
+    // SAME release key (the keystore CI signs with); a debug-keystore build is
+    // rejected by the installer. Android prompts once for "install unknown apps".
+
+    private val installHandler = Handler(Looper.getMainLooper())
+    private val installPoll = object : Runnable {
+        override fun run() {
+            checkInstallRequest()
+            installHandler.postDelayed(this, INSTALL_POLL_MS)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        installHandler.removeCallbacks(installPoll)
+        installHandler.postDelayed(installPoll, INSTALL_POLL_MS)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        installHandler.removeCallbacks(installPoll)
+    }
+
+    private fun checkInstallRequest() {
+        val req = File(filesDir, INSTALL_REQUEST_FILE)
+        if (!req.exists()) return
+        val apkPath = try {
+            req.readText().trim()
+        } catch (e: Exception) {
+            req.delete()
+            return
+        }
+        req.delete()
+        if (apkPath.isEmpty()) return
+        try {
+            val uri: Uri =
+                FileProvider.getUriForFile(this, "$packageName.fileprovider", File(apkPath))
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            android.util.Log.w("OmniMe", "install intent failed for $apkPath", e)
+        }
+    }
+
     private fun handleSendIntent(intent: Intent) {
         if (intent.action != Intent.ACTION_SEND) return
         val uri: Uri = intent.getParcelableExtra(Intent.EXTRA_STREAM) ?: return
@@ -83,5 +143,8 @@ class MainActivity : TauriActivity() {
     companion object {
         const val SHARE_BYTES_FILE = "share_intent.bin"
         const val SHARE_META_FILE = "share_intent.json"
+        // Must match `INSTALL_REQUEST_FILE` in commands/update.rs.
+        const val INSTALL_REQUEST_FILE = "install_request"
+        const val INSTALL_POLL_MS = 1500L
     }
 }

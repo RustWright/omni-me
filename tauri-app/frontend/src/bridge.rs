@@ -3118,3 +3118,135 @@ pub async fn invoke_commit_journal_import(
         invoke("commit_journal_import", &Args { path, plan: &plan }).await
     }
 }
+
+// -----------------------------------------------------------------------------
+// In-app self-update (Settings → Updates)
+// -----------------------------------------------------------------------------
+//
+// One wasm frontend ships to both targets, so it asks `app_platform` once on
+// mount and then drives the matching flow: Android pulls the manifest, downloads
+// + sha256-verifies the APK, and hands it to the native installer; desktop uses
+// the Tauri updater plugin (download + signature-verify + relaunch in one call).
+
+/// Mirrors the backend `commands::update::UpdateCheck`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct UpdateCheckView {
+    pub available: bool,
+    pub current_version: String,
+    pub latest_version: String,
+    /// APK download URL (Android only; empty on desktop — the plugin owns it).
+    pub url: String,
+    pub sha256: String,
+    pub notes: String,
+}
+
+/// `"desktop"` (Tauri updater plugin) or `"android"` (custom OTA). Mock builds
+/// run in the browser, so report `desktop` to exercise the plugin-path UI.
+pub async fn invoke_app_platform() -> Result<String, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok("desktop".to_string())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("app_platform", &Args {}).await
+    }
+}
+
+/// Android: fetch `<server_url>/updates/android/latest.json` and compare to the
+/// running version.
+pub async fn invoke_check_for_app_update() -> Result<UpdateCheckView, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(UpdateCheckView {
+            available: true,
+            current_version: "0.1.0".into(),
+            latest_version: "0.2.0".into(),
+            url: "http://mock-box:3000/updates/android/omni-me-0.2.0.apk".into(),
+            sha256: "0".repeat(64),
+            notes: "Mock release — faster sync, fewer bugs.".into(),
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("check_for_app_update", &Args {}).await
+    }
+}
+
+/// Android: download the APK to the cache dir, verify its sha256, return the path.
+pub async fn invoke_download_android_update(url: &str, sha256: &str) -> Result<String, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (url, sha256);
+        crate::timer::sleep_ms(600).await;
+        Ok("/data/user/0/com.omni-me.app/cache/omni-me-update.apk".to_string())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            url: &'a str,
+            sha256: &'a str,
+        }
+        invoke("download_android_update", &Args { url, sha256 }).await
+    }
+}
+
+/// Android: hand the downloaded APK path to the native installer (side-file the
+/// `MainActivity` poller picks up → system package-installer prompt).
+pub async fn invoke_request_android_install(apk_path: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = apk_path;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            apk_path: &'a str,
+        }
+        invoke_unit("request_android_install", &Args { apk_path }).await
+    }
+}
+
+/// Desktop: check the Tauri updater endpoint (configured at build time).
+pub async fn invoke_check_desktop_update() -> Result<UpdateCheckView, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(UpdateCheckView {
+            available: false,
+            current_version: "0.1.0".into(),
+            latest_version: "0.1.0".into(),
+            url: String::new(),
+            sha256: String::new(),
+            notes: String::new(),
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("check_desktop_update", &Args {}).await
+    }
+}
+
+/// Desktop: download + signature-verify + install the update, then relaunch.
+/// On success the app restarts, so the returned future never actually resolves.
+pub async fn invoke_install_desktop_update() -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        crate::timer::sleep_ms(600).await;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke_unit("install_desktop_update", &Args {}).await
+    }
+}

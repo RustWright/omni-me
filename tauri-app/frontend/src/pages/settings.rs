@@ -197,6 +197,9 @@ pub fn SettingsPage() -> Element {
                 }
             }
 
+            // --- App Updates (app delivery / OTA) ---
+            UpdatesSection {}
+
             // --- Base Currency (Phase 7.3) ---
             BaseCurrencySection {}
 
@@ -292,6 +295,149 @@ fn BaseCurrencySection() -> Element {
                     "Foreign-currency holdings are converted to this currency on the dashboard and accounts screens using your latest recorded FX rates."
                 }
             }
+            if let Some(s) = &*status.read() {
+                div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
+                    "{s}"
+                }
+            }
+        }
+    }
+}
+
+/// App self-update (app delivery / OTA). One wasm build ships to both targets,
+/// so we ask `app_platform` on mount and drive the matching flow: Android pulls
+/// the manifest → downloads + sha256-verifies the APK → hands it to the system
+/// installer; desktop uses the Tauri updater plugin (download + signature-verify
+/// + relaunch). Both derive their host from the configured sync server URL — the
+/// box over the tailnet — so there's no separate endpoint to set up.
+#[component]
+fn UpdatesSection() -> Element {
+    let mut platform = use_signal(|| None::<String>);
+    let mut checking = use_signal(|| false);
+    let mut working = use_signal(|| false);
+    let mut check = use_signal(|| None::<bridge::UpdateCheckView>);
+    let mut status = use_signal(|| None::<String>);
+
+    use_future(move || async move {
+        if let Ok(p) = bridge::invoke_app_platform().await {
+            platform.set(Some(p));
+        }
+    });
+
+    let is_android = platform.read().as_deref() == Some("android");
+    let platform_label = match platform.read().as_deref() {
+        Some("android") => "Android · over-the-air install",
+        Some("desktop") => "Desktop · automatic self-update",
+        _ => "Detecting platform…",
+    };
+
+    let run_check = move |_| {
+        checking.set(true);
+        status.set(None);
+        check.set(None);
+        spawn(async move {
+            let res = if platform.read().as_deref() == Some("android") {
+                bridge::invoke_check_for_app_update().await
+            } else {
+                bridge::invoke_check_desktop_update().await
+            };
+            match res {
+                Ok(c) => check.set(Some(c)),
+                Err(e) => status.set(Some(format!("Update check failed: {e}"))),
+            }
+            checking.set(false);
+        });
+    };
+
+    let run_install = move |_| {
+        let Some(c) = check.read().clone() else {
+            return;
+        };
+        working.set(true);
+        status.set(None);
+        spawn(async move {
+            if platform.read().as_deref() == Some("android") {
+                status.set(Some("Downloading update…".into()));
+                match bridge::invoke_download_android_update(&c.url, &c.sha256).await {
+                    Ok(path) => {
+                        status.set(Some("Verified. Opening installer…".into()));
+                        match bridge::invoke_request_android_install(&path).await {
+                            Ok(()) => status.set(Some(
+                                "Follow the system prompt to finish installing.".into(),
+                            )),
+                            Err(e) => status.set(Some(format!("Couldn't start install: {e}"))),
+                        }
+                    }
+                    Err(e) => status.set(Some(format!("Download failed: {e}"))),
+                }
+            } else {
+                status.set(Some("Downloading & installing…".into()));
+                match bridge::invoke_install_desktop_update().await {
+                    // On success the app relaunches before this resolves; if it
+                    // does return, the update completed without a restart.
+                    Ok(()) => status.set(Some("Update installed — relaunching.".into())),
+                    Err(e) => status.set(Some(format!("Install failed: {e}"))),
+                }
+            }
+            working.set(false);
+        });
+    };
+
+    rsx! {
+        div { class: "mb-10 space-y-4",
+            div { class: "border-b border-white/5 pb-2 mb-4",
+                h2 { class: "text-lg font-bold text-obsidian-text", "App Updates" }
+            }
+
+            p { class: "text-sm text-obsidian-text-muted",
+                "Check for and install a newer build of the app. Updates are served by your "
+                "sync server over your private network — no app store, no cable. "
+                span { class: "text-obsidian-text", "{platform_label}" }
+                "."
+            }
+
+            div { class: "flex items-center gap-3",
+                button {
+                    class: "px-4 py-2 bg-white/5 border border-white/10 text-obsidian-text font-semibold rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                    disabled: *checking.read() || *working.read() || platform.read().is_none(),
+                    onclick: run_check,
+                    if *checking.read() { "Checking…" } else { "Check for updates" }
+                }
+            }
+
+            if let Some(c) = &*check.read() {
+                if c.available {
+                    div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg space-y-2 animate-in zoom-in-95 duration-200",
+                        div { class: "flex items-center gap-2 text-sm text-obsidian-text",
+                            span { class: "font-mono", "{c.current_version}" }
+                            span { class: "text-obsidian-text-muted", "→" }
+                            span { class: "font-mono font-bold text-obsidian-accent", "{c.latest_version}" }
+                        }
+                        if !c.notes.is_empty() {
+                            p { class: "text-xs text-obsidian-text-muted whitespace-pre-line", "{c.notes}" }
+                        }
+                        button {
+                            class: "px-4 py-2 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed",
+                            disabled: *working.read(),
+                            onclick: run_install,
+                            if *working.read() {
+                                "Working…"
+                            } else if is_android {
+                                "Download & install"
+                            } else {
+                                "Update & restart"
+                            }
+                        }
+                    }
+                } else {
+                    div { class: "p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-lg text-sm text-emerald-400",
+                        "You're on the latest version ("
+                        span { class: "font-mono", "{c.current_version}" }
+                        ")."
+                    }
+                }
+            }
+
             if let Some(s) = &*status.read() {
                 div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
                     "{s}"
