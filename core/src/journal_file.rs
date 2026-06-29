@@ -51,6 +51,13 @@ impl JournalFile {
         file.write_all(content.as_bytes())
             .await
             .map_err(|e| EventError::Validation(format!("write journal file: {e}")))?;
+        // tokio::fs::File schedules the write on a blocking thread and drop does
+        // not await it; flush here so the bytes reach the OS before this returns
+        // (otherwise a reopen+read can race ahead of the in-flight write and miss
+        // the just-appended entry).
+        file.flush()
+            .await
+            .map_err(|e| EventError::Validation(format!("flush journal file: {e}")))?;
         Ok(())
     }
 
