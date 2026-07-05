@@ -407,6 +407,10 @@ pub async fn invoke_search_generic_notes(query: &str) -> Result<Vec<GenericNoteI
 // LLM processing (routes via aggregate_id — works for either journal or generic)
 // -----------------------------------------------------------------------------
 
+// Retained intentionally: the "AI Analyze" button UI was removed (user, 2026-07-04)
+// but the backend `process_note_llm` effect is kept for a future non-button
+// analysis trigger. `allow(dead_code)` until that new surface calls it.
+#[allow(dead_code)]
 pub async fn invoke_process_note_llm(aggregate_id: &str) -> Result<LlmResult, String> {
     #[cfg(feature = "mock")]
     {

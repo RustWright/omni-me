@@ -308,7 +308,7 @@ build/test/publish of the bank-free image.
 
 **Quick / mobile:**
 - [ ] **Mobile Notes: Save button fully offscreen** (layout overflow on the notes section, mobile). [S]
-- [ ] **Remove the "AI Analyze" button** (user decision, 2026-07-04). [XS]
+- [x] **Remove the "AI Analyze" button** (user decision, 2026-07-04). **DONE 2026-07-05** — removed the visible UI (button + `LlmResultsDisplay` results/error panels + orphaned `processing`/`llm_result`/`llm_error` signals in `journal.rs`). Per user clarification, the backend `process_note_llm` effect + the `invoke_process_note_llm` bridge wrapper + `LlmResult` type are **retained** (`#[allow(dead_code)]`) for a future non-button analysis trigger. Frontend clippy clean on both mock + default configs. [XS]
 - [ ] **Account suggestions don't auto-load on mobile** (typeahead doesn't populate automatically on the phone). [S]
 - [ ] **...more to come** — user's list was still going ("and it goes on"); collect the rest before finalizing priorities.
 

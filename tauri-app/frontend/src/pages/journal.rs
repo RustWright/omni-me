@@ -226,14 +226,11 @@ fn DayView(
     let mut entry = use_signal(|| None::<JournalEntryItem>);
     let mut loading = use_signal(|| true);
     let mut saving = use_signal(|| false);
-    let mut processing = use_signal(|| false);
     let mut error_msg = use_signal(|| None::<String>);
     let mut save_status = use_signal(|| None::<String>);
     // True once an auto-save exhausts its retries (1.7). Drives the `Failed`
     // save-state pill; cleared when the next save starts or succeeds.
     let mut save_failed = use_signal(|| false);
-    let mut llm_result = use_signal(|| None::<crate::types::LlmResult>);
-    let mut llm_error = use_signal(|| None::<String>);
     let mut content = use_signal(String::new);
     // Mirrors what's currently persisted to the backend. Auto-save compares
     // `content` against this to decide whether a save is needed; it's also
@@ -526,31 +523,6 @@ fn DayView(
                         let have_entry = entry.read().is_some();
 
                         rsx! {
-                            if have_entry && !is_closed {
-                                button {
-                                    class: "flex items-center gap-2 px-3 py-1.5 bg-purple-600/20 text-purple-400 border border-purple-600/30 font-medium rounded-md hover:bg-purple-600/30 transition-colors disabled:opacity-50",
-                                    disabled: *processing.read(),
-                                    onclick: {
-                                        let jid = journal_id.clone();
-                                        move |_| {
-                                            let jid = jid.clone();
-                                            processing.set(true);
-                                            llm_error.set(None);
-                                            spawn(async move {
-                                                if let Some(id) = jid {
-                                                    match bridge::invoke_process_note_llm(&id).await {
-                                                        Ok(r) => llm_result.set(Some(r)),
-                                                        Err(e) => llm_error.set(Some(e)),
-                                                    }
-                                                }
-                                                processing.set(false);
-                                            });
-                                        }
-                                    },
-                                    if *processing.read() { "..." } else { "AI Analyze" }
-                                }
-                            }
-
                             if is_closed {
                                 button {
                                     class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
@@ -705,74 +677,6 @@ fn DayView(
                 }
             }
 
-            if let Some(err) = &*llm_error.read() {
-                div { class: "mt-4 p-3 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-sm",
-                    "{err}"
-                }
-            }
-
-            if let Some(result) = &*llm_result.read() {
-                LlmResultsDisplay { result: result.clone() }
-            }
-        }
-    }
-}
-
-#[component]
-fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
-    rsx! {
-        div { class: "mt-6 p-4 bg-obsidian-sidebar/60 border border-obsidian-accent/30 rounded-lg shadow-inner animate-in zoom-in-95 duration-200",
-
-            h3 { class: "text-xs font-bold text-obsidian-accent uppercase tracking-widest mb-4",
-                "AI Analysis"
-            }
-
-            if !result.warnings.is_empty() {
-                div { class: "mb-4 p-3 bg-yellow-900/20 text-yellow-400 rounded border border-yellow-900/50 text-sm",
-                    for warning in &result.warnings {
-                        p { "{warning}" }
-                    }
-                }
-            }
-
-            if !result.tags.is_empty() {
-                div { class: "mb-4",
-                    span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase mb-1 block", "Tags" }
-                    div { class: "flex flex-wrap gap-1.5",
-                        for tag in &result.tags {
-                            span { class: "px-2 py-0.5 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-xs",
-                                "#{tag}"
-                            }
-                        }
-                    }
-                }
-            }
-
-            if !result.tasks.is_empty() {
-                div { class: "mb-4",
-                    span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase mb-2 block", "Derived Tasks" }
-                    div { class: "space-y-1.5",
-                        for task in &result.tasks {
-                            div { class: "flex items-start gap-2 text-sm text-obsidian-text",
-                                span { class: "mt-1 shrink-0",
-                                    match task.priority.as_str() {
-                                        "high" => rsx! { span { class: "text-red-500", "●" } },
-                                        "medium" => rsx! { span { class: "text-yellow-500", "●" } },
-                                        _ => rsx! { span { class: "text-green-500", "●" } },
-                                    }
-                                }
-                                "{task.description}"
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(summary) = &result.summary {
-                div { class: "mt-4 pt-4 border-t border-white/5 text-sm text-obsidian-text-muted italic leading-relaxed",
-                    "{summary}"
-                }
-            }
         }
     }
 }
