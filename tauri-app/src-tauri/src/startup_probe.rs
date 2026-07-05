@@ -41,7 +41,10 @@ pub fn checkpoint(app_data: &Path, label: &str) {
     let start = *START.get_or_init(Instant::now);
     let ms = start.elapsed().as_millis();
 
-    tracing::info!(target: "startup_probe", elapsed_ms = ms as u64, label, "cold-open checkpoint");
+    // No custom `target:` — use the module path (`omni_me_app::startup_probe`) so
+    // the default `omni_me_app=debug` env filter actually lets it reach stdout on
+    // desktop (a custom target like "startup_probe" is filtered out).
+    tracing::info!(elapsed_ms = ms as u64, label, "cold-open checkpoint");
 
     let path = app_data.join(TIMING_FILE);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
