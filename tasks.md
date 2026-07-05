@@ -250,14 +250,37 @@ build/test/publish of the bank-free image.
 
 ## Phase 5 — Editor feel + properties *(partly dogfooding-driven)* `(logbook)`
 
-- [ ] **5.1** Inline properties panel (decision B) above the body; typed widgets for date / tags / 3 reflection keys; raw escape hatch for legacy props (`legacy_properties` / `has_legacy_properties` already exist). [L]
-- [ ] **5.2** YAML↔form model kept in sync with the editor; the form emits parser-safe YAML. [M]
-- [ ] **5.3** Harden `is_complete` (`core/src/events/notes_projection.rs:282`) to accept block lists / reordering / blank lines (also helps Obsidian-import compat). [S]
+- [x] **5.1** Inline properties panel (decision B) above the body; typed widgets for date / tags / 3 reflection keys; raw escape hatch for legacy props. **DONE 2026-07-03 (journal)** — see the "Typed properties panel" friction-log entry for the full write-up; generic-notes panel split off as its own item. [L]
+- [x] **5.2** YAML↔form model kept in sync with the editor; the form emits parser-safe YAML. **DONE 2026-07-03** — `note_frontmatter::{split_journal, serialize_journal}`, pure-client + safe-by-construction (a strict subset of what `is_complete`/`parse_markdown` accept); 6 round-trip/shape unit tests. [M]
+- [x] **5.3** Harden `is_complete` (`core/src/events/notes_projection.rs:282`) to accept block lists / reordering / blank lines (also helps Obsidian-import compat). **DONE 2026-07-03** — see the "Harden `is_complete`" friction-log entry for the write-up. [S]
 - [ ] **5.4** Typing-feel polish — open bucket, populated from the friction log as daily use surfaces it. [—]
 
 ## Phase 6 — Release polish
 
-- [ ] **6.1** App logo (desktop + Android assets; replace default Tauri). [S]
+> **Sequencing (user, 2026-07-04):** 6.2 / 6.3 / 6.4 are the closing "bow" — do them
+> **last**, only after *every other task tied to the currently-available features* (the
+> rest of Phase 6, the carried backlog, and the Android / Linux-desktop / Windows
+> build-and-test track) is complete. Don't branch-gate, tag v1, or archive the tracker
+> until the actual feature work is finished.
+>
+> **Path to the gate — don't pre-lock the enhancement list (user, 2026-07-04).** The pre-gate
+> polish/enhancement list is deliberately **not committed**: the user won't lock a curated set
+> of middle-tier items until dogfooding the *updated* app on real devices — "I'll still demand
+> more once the friction hits, and I don't want to be releasing patches immediately after I've
+> locked everything in with the release." So the order is: **(1)** finish the obviously-
+> incomplete current-feature code (the **edit-a-committed-ledger-transaction** [M] friction item
+> below); **(2)** data/private track — wire per-source account maps + the **one final DB reset &
+> re-import** (real data on-device; also verifies the drill-down / balance-cache / dedup built
+> against synthetic tests); **(3)** cross-platform **build & test** to get the updated app onto
+> mobile + desktop — the pivotal event; then **on-device dogfooding drives** which items get done,
+> by real daily impact, until complaint-free; **(4)** standard **code review**; **(5)** 6.2/6.3/6.4.
+> A "curate by daily impact" pass was done 2026-07-04 (keep: recurring inline-edit, credit-card
+> CSV variant, balancing-posting affordance, Daily Flow redesign, FlushFailed indicator; defer:
+> FX-spanning reconciliation, seconds-on-routines unless wanted at the reset, FORCE_GENERIC_DIRS,
+> event_store Arc parity, tauri-build PR) — but it's a **hypothesis to re-rank against friction**,
+> not a locked plan. Firm post-reset deferrals = the "Post-v1 / when-demanded" + Cycle-5 buckets.
+
+- [x] **6.1** App logo — **DONE 2026-07-04.** Multi-round collaborative design (25-candidate parallel-subagent brainstorm across wordmark/greek/abstract → converged on an **"enso" open-brush ring** in accent `#448aff` on charcoal `#1e1e1e` with a small off-white "me" core). Identity system: the enso **"o" alone = app icon**; **"om" = compact wordmark** (o + a clean gateway "m"). Locked the **light** weight (rounded brush terminals + fattened thin end so it survives 32px/24px/circle-crop). Canonical source in `tauri-app/branding/` (`omni-me-icon.svg` full-bleed, `omni-me-fg.svg` transparent mark, `omni-me-bg.svg` charcoal, `omni-me-om.svg` wordmark, `generate-logo.py`, `logo-manifest.json`). Regenerated the whole cross-platform set via `cargo tauri icon .../branding/logo-manifest.json` — desktop (icns/ico/pngs), iOS AppIcons, Android legacy + **adaptive** (charcoal-bg PNG + transparent-mark fg, fixing the default `#fff` halo). Verified desktop 128px + both Android adaptive layers. Exploration history archived (now tracked) at `.archive/logo-design/`. Optional follow-up: full horizontal `omni·me` lockup. [S]
 - [ ] **6.2** Branch-gate workflow: feature branches + merge gates to protect stable. [S]
 - [ ] **6.3** v1 semver stamp + git tag. [XS]
 - [ ] **6.4** Archive + reset `project.md` (session log + status history → `.archive/`, leaving a lean current-state doc) once stable-v1 ships — it's grown unwieldy carrying every session's detail. Consider the same for `tasks.md`. Tie to the v1 tag so the archived snapshot is a clean cut point. [S]
@@ -265,6 +288,165 @@ build/test/publish of the bank-free image.
 ---
 
 ## Running friction log *(fill during dogfooding; triage into the live phase)*
+
+- [x] **No easy way to edit a committed ledger transaction** (dogfooding 2026-07-04, user flagged
+  — "we'll need to tackle that eventually"; scope confirmed = **ledger/budget transactions**, not
+  daily notes). **DONE 2026-07-04.** The friction note was stale: a `TransactionUpdated` event +
+  `TransactionUpdatedPayload` (schema-flexible `changes` bag) + `on_transaction_updated` projection
+  fold + a registered `update_transaction` command **already existed** (used internally by the 5.7
+  reconciliation `resolve_unmatched` path) — the SurrealDB projection already amended
+  date/description/postings. The real gaps were (1) the **journal file went stale on modification** —
+  `JournalFile` only rendered Recorded/AccountAdded/ExchangeRate, so after any edit/delete
+  journal-derived balances (Accounts + dashboard, which read `journal_artifacts()`) were wrong (even
+  a full `rebuild()` replayed only the originals); and (2) **no frontend edit UI**. Fix, journal
+  side: `journal_file.rs` now edits the entry **in place by its existing `; txn_id:<id>` anchor**
+  (reuses the account-dedup block-splice primitive) — `TransactionUpdated`/`TransactionsMerged`
+  re-render the one entry from the already-updated projection row; `TransactionDeleted` splices it
+  out; prices + account directives are untouched and no whole-file regenerate/DB-scan is paid
+  (chosen for on-device speed after weighing month-sharding — see the sequencing note above).
+  Categorized/Tagged/Cleared stay no-ops (not part of the rendered entry). Fix, UI: new
+  `TransactionEditForm` on the detail view (Edit button) for date/description/postings
+  (account/amount/commodity, add/remove rows; each posting carries its original JSON so fx-rate/tags
+  survive), Save → `update_transaction`; plus a two-step **Delete** affordance → `delete_transaction`
+  → back to list. Bridge: `invoke_update_transaction` / `invoke_delete_transaction` (mock + real).
+  Verified: 474 core lib tests (8 new — 6 pure block helpers incl. exact-id-boundary + directive
+  preservation, 2 DB-backed edit/delete integration) + core clippy `-D warnings`; frontend clippy
+  clean mock+default (wasm); app crate compiles; Playwright mock at 1280 + 390 — Edit seeds all
+  fields, Cancel/Save/Delete-confirm wired, mobile layout wraps cleanly, 0 console errors. [M]
+- [x] **Editor feel: space + typography** (dogfooding 2026-07-03, on-device vs Obsidian; ref
+  shots `~/Pictures/editor_reference/`). The journal/notes editor uses space poorly vs Obsidian:
+  (1) prose renders in **monospace 14px** (code-like, wide glyphs, early wrap) — should be a
+  proportional font ~16px with airy line-height; (2) **triple-nested padding** (page wrapper card
+  `rounded-lg border shadow-2xl` + `Editor`'s own `border rounded-xl p-4` + inner `p-4` + column
+  `p-4`) wastes horizontal width — Obsidian hugs the width with one small gutter; (3) fixed
+  `min-h-[400px]` **island with dead space** — the writing surface should fill the screen height;
+  (4) a **per-line underline** artifact (CM default markdown heading/link highlight). **DONE
+  2026-07-03** — CodeMirror `EditorView.theme` in `assets/js/editor.js` (proportional system-sans
+  16px / line-height 1.65, no underline, `flex 1 0 auto` fill); flattened the triple-nested cards
+  in `editor.rs`/`journal.rs`/`notes.rs` (full-bleed, one gutter); full-height via a `min-h-full flex
+  flex-col` page-root chain + `flex-1` editor region (kept the page column as the single scroll
+  parent so 1.10 caret-above-keyboard is untouched). Verified: journal + notes (mobile + desktop),
+  proportional/roomy/full-height/no-underline, 0 console errors; frontend clippy clean mock+default.
+  Plan: `~/.claude/plans/binary-puzzling-lerdorf.md`. [M]
+- [x] **Nav drawer: swipe-to-close** (dogfooding 2026-07-03). Swiping the open drawer back toward
+  the edge did nothing — only a scrim tap closed it. **DONE 2026-07-03** — added the inverse of the
+  edge-swipe-open in `main.rs` (`EDGE_SWIPE_CLOSE_PX`; track any touch while open, leftward travel
+  past the threshold → close). Verified: leftward swipe closes; vertical/sub-threshold gestures + a
+  scrim tap behave correctly. [XS]
+- [x] **Calendar = right-swipe sidebar widget, not a separate tab** (dogfooding 2026-07-03, user
+  flagged — don't lose). In Obsidian the calendar is a compact month-grid **widget in a right
+  sidebar that swipes in from the right edge and overlays the current note** (quick day-jump without
+  leaving the note), with **per-day activity dots** (`••`/`•` = entries that day) + a **day-complete
+  check** + note word/char stats. omni-me buried it behind a full-screen `Today | Calendar` tab
+  toggle with big empty cells. **DONE 2026-07-03** — retired the `Today | Calendar` sub-tab
+  (`JournalSubTab`/`JournalSubNav` deleted) and rebuilt the month grid as a right-edge `CalendarDrawer`
+  (mirror of the left `NavDrawer`: always-mounted, class-toggled slide, scrim + inverse-swipe close)
+  overlaying the day view. Opened by a **right-edge swipe** (mirror of the nav swipe-to-open, anchored
+  to the right edge via `viewport_width()`; swipe-left opens, swipe-right closes) **and** a toolbar
+  **Calendar button** (desktop's opener — no swipe there; drawer is no longer `md:hidden`). Selecting a
+  day jumps `selected_date` + closes, staying in the note. **Activity marker per day:** filled accent
+  dot = has entry, check ✓ = `complete`; backed by a new `list_journal_day_stats(from,to) -> [{date,
+  complete}]` (core query + Tauri command + bridge + type; replaced the date-only `list_journal_dates`).
+  SVG chevrons replaced the emoji ◀/▶. Verified (390px + 1280px, mock): drawer slide + scrim-close +
+  day-jump-and-close; synthetic-touch swipe open/close pass with negatives (sub-threshold + non-edge
+  no-op); 0 console errors; clippy clean ×4 (core, app, frontend mock+default). **Synergy realized:**
+  the two drawers stay conflict-free by touch-origin (left strip vs right edge), no coordination flag.
+  Deferred: note word/char stats footer (needs the day's live content plumbed up) → new item below. [M]
+- [x] **Calendar footer: note word/char stats** (Obsidian parity; split from the calendar-widget
+  item 2026-07-03). Obsidian's calendar sidebar shows the *active note's* word/char count in a footer.
+  Deferred from the drawer rework because it needs the viewed day's live editor content lifted from
+  the keyed `DayView` up to `JournalPage` (where the drawer lives). Small, but crosses the
+  keyed-component boundary — do when touching journal continuity next. **DONE 2026-07-04** — crossed
+  the keyed boundary with an **up-channel signal**: `JournalPage` owns a `viewed_body: Signal<String>`
+  passed *down* into `DayView`, which mirrors its live `body` up via a post-hydrate `use_effect`
+  (gated so the empty pre-load body can't flash "0 words"). `JournalPage` computes counts through a
+  pure `body_stats(&str) -> (words, chars)` helper (whitespace-delimited words, Unicode-scalar chars;
+  frontmatter excluded by construction since Phase 5 lifted it into the panel — `body` is already the
+  prose) and passes them to a new `CalendarDrawer` footer (`mt-auto`, pinned to the drawer bottom,
+  singular/plural labels). Because signals carry their own subscription graph, a keystroke re-renders
+  the parent + drawer *without* a `key` remount (the key only changes on day-jump). Verified: **1 new
+  unit test** (`body_stats_counts_words_and_chars`: empty/whitespace-only → 0 words, prose, collapsed
+  whitespace runs, `café`=1 word/4 chars) → **71 frontend tests pass**; clippy clean ×2 (mock+default,
+  wasm, `-D warnings`); **Playwright 390px & 1280px** — footer shows the viewed note's stats, word
+  count matches the real body exactly, **updates live on edit** (append " zzq" → 11→12 words / 64→68
+  chars), autosave (**SAVED** pill) + day markers unregressed, 0 console errors. [S]
+- [x] **Typed properties panel** (Phase 5.1/5.2; dogfooding-confirmed by the Obsidian Properties
+  card in the ref shots). Model A (Obsidian-style, user-decided 2026-07-03): lift the `---`
+  frontmatter **out of the editor body** into a typed card above it — date (read-only in journal) /
+  tags chip input / the 3 reflection widgets (`homework_for_life`/`grateful_for`/`learnt_today`) +
+  a raw legacy escape hatch. **DONE 2026-07-03 (journal only; generic-notes panel split off below
+  per user scope decision).** New **frontend-only** module `note_frontmatter.rs`: `JournalProps` +
+  `split_journal` + `serialize_journal`. Key finding that reshaped the plan: **the frontend crate
+  has no `core` dep and no YAML lib** — so instead of reusing `core::import::map_frontmatter`/
+  `parse_markdown` (the plan's assumption), the split/serialize are **pure-client, safe by
+  construction**: emit empty reflection → bare `key:`, non-empty → double-quoted single-line
+  `key: "…"`, tags inline `[a, b]`, reflections before any legacy block. That output is a strict
+  subset of what `core::is_complete` + `core::import::parse_markdown` already accept → **no core
+  changes, no new Tauri commands, no async in the edit loop.** `content` stays the single source of
+  truth (autosave/continuity/1.2/1.7/1.8 untouched): the panel + a body-only editor are two inputs
+  that `recombine()` into `content`, and **hydrate never recombines** so an untouched entry can't
+  phantom-save. `JournalPropertiesPanel` (+ `ReflectionField`, `field-sizing:content` auto-grow;
+  Dioxus gotcha: a component param literally named `props` collides with the `#[component]` macro →
+  renamed `model`). Verified: **6 unit tests** (round-trip byte-identical on the template render;
+  `is_complete`-shape for empty vs filled; special chars `:`/`"`/newline; legacy preserved after
+  reflections; block-list tags read; no-fence) + clippy clean ×2 (mock+default, `-D warnings`) +
+  Playwright 390px & 1280px: fresh template splits to date `2026-07-10`/tag `daily_note`/empty
+  reflections/`## What happened` body with **no `---` in the editor**; opening an entry shows
+  **SAVED** (no phantom save); tag add/remove, reflection edit, raw-hatch expand; body edit
+  recombines + autosaves and keeps the panel state (no `---` leak, editor not reset); 0 console
+  errors. **Deferred to on-device dogfooding** (mock can't drive them): the Complete-pill flip on a
+  real backend (covered by the `is_complete`-shape unit test) and the closed-day read-only panel
+  (the `read_only` prop is wired). Plan: `~/.claude/plans/binary-puzzling-lerdorf.md`. [L+M]
+- [x] **Calendar day-jump left the previous day's content on screen** (latent bug in the
+  uncommitted calendar-widget rework, surfaced 2026-07-03 while verifying the properties panel — an
+  empty past day showed today's entry). Root cause: the widget rework replaced the old
+  `Today | Calendar` sub-tab (which unmounted `DayView`) with a drawer that keeps `DayView` mounted,
+  so day selection relied solely on `key: "{selected_date}"` — but **a bare `key` on a directly-
+  rendered Dioxus component is a no-op; keys only force remount inside a list.** The `date` prop
+  updated (header + Save state) while the entry/body/props signals kept the prior day. **DONE
+  2026-07-03** — render `DayView` through a one-element `for day in std::iter::once(selected_date)`
+  so it gets list semantics and the key actually remounts it on jump. Verified: jumping to an empty
+  day now loads its template (fresh entry, no AI-Analyze button, template body). [XS]
+- [x] **Generic-notes properties panel** (the smaller half of 5.1/5.2, split from the journal panel
+  2026-07-03 per user scope). Notes have raw `---` frontmatter but **no in-app tags editor today** —
+  add a `NotePropertiesPanel` (tags chip editor + raw escape hatch; title is already a separate
+  field, no date). Reuse `note_frontmatter`'s split/serialize pattern generalized for notes (no
+  reflection keys). `pages/notes.rs` `NoteEditor` mirrors `DayView`'s content flow. **DONE
+  2026-07-03.** `note_frontmatter` gained `NoteProps` + `split_note`/`serialize_note` (tags-only
+  known key; everything else → `legacy_raw`). Key divergence from the journal serializer: a generic
+  note may have **no frontmatter at all**, so `serialize_note` emits a `---` block *only* when there
+  are tags or legacy props — editing a fence-less note never injects a spurious fence (covered by
+  `note_with_no_frontmatter_stays_fence_free` + `note_removing_last_tag_drops_the_empty_fence`). Same
+  pure-client, `content`-is-source-of-truth, **never-recombine-on-hydrate** invariant as the journal;
+  autosave/continuity (1.3/1.7/1.8) untouched. Extracted the shared **`components/tag_editor::TagChipEditor`**
+  (both panels now use it) and moved the serialization-safety `sanitize_tag` next to the serializer.
+  Caveat (matches journal): the projection's `tags` column is **LLM-derived** (`on_llm_processed`),
+  so frontmatter tags edited here persist in the note but don't populate the note-card tag list — a
+  backend-side follow-up if wanted. Verified: **11 frontend unit tests** (6 journal + 5 note/sanitize,
+  incl. round-trip, add-tag-creates-fence, remove-last-tag-drops-fence, block-list read, sanitize) +
+  clippy clean ×2 (mock+default, `-D warnings`) + Playwright 390px & 1280px: existing-note panel
+  (Tags + raw hatch, body-only editor, SAVED-on-load no phantom save), add tag (`sanitize_tag` strips
+  `#`/space/`!`), body edit recombines + preserves the tag + autosaves with no `---` leak, remove tag
+  drops the fence, raw-hatch edit recombines (legacy never leaks to the editor), continuity round-trip
+  re-hydrates the stored full-raw content (raw hatch auto-expands when legacy present), New-Note blank
+  draft (empty panel, adding a tag creates frontmatter without leaking `---`); **journal panel
+  regression-checked** (tag add/remove still work via the shared `TagChipEditor`); 0 app-level console
+  errors. [M]
+- [x] **Harden `is_complete`** (Phase 5.3; `core/src/events/notes_projection.rs:282`). The scanner
+  terminated on the first non-`key: value` line after any kv, so block-list YAML (`tags:\n  - x`),
+  blank lines mid-frontmatter, or reordering silently broke journal auto-close (the template
+  worked around it with inline `tags: [daily_note]`). **DONE 2026-07-03** — rewrote the scanner to
+  be **fence-aware**: it peeks the first non-blank line, and when it opens a `---` fence it scans
+  the *entire* block to the closing fence — blank lines, indented continuation lines, and block-list
+  items (`- x`) are skipped as YAML continuations, never terminators. **Key reordering, block-list
+  `tags`, and stray blank lines can no longer hide a later reflection key** (the exact Obsidian-import
+  shapes). The fence-less mobile shape keeps its forgiving leading-run behavior (stops at the first
+  blank/non-kv line after a kv = the body). Pure backend logic, no UI. Verified: **11 `is_complete`
+  unit tests** (5 original + 6 new: block-list tags, reordered keys, blank-lines-in-fence,
+  fence-less block list, body-prose-stays-false, block-list-reflection-stays-false-since-empty-scalar)
+  + full `notes_projection` module (16) + full core lib suite (**450 passed**) + `cargo clippy
+  -p omni-me-core --all-targets` clean. Pairs with the Phase-5.1/5.2 panel serializer (whose output
+  was already `is_complete`-safe; this widens the *acceptance* side for imports). [S]
 
 - [x] **Account-field autocomplete + unknown-account affordance** (dogfooding 2026-06-17). **DONE
   2026-06-20 (public-repo / frontend-only).** Shared `AccountInput` (`components/account_input.rs`):
@@ -318,9 +500,9 @@ build/test/publish of the bank-free image.
 ## Carried backlog (slot into a phase or pull from the friction log)
 
 **Post-launch fix cycle (from Phase 4 GUI validation, 2026-06-22):**
-- [ ] Per-institution (tag) breakdown drill-down on the Accounts view — group an account's postings by `institution`/`product` tag via the existing `core::query` tag layer (the payoff of institutions-in-tags; `probe_realdb` already resolves the splits exactly). [M]
-- [ ] Balance-cache perf — `account_summaries` / `dashboard_summary` / `list_detected_accounts` each re-read + re-parse the full `budget.journal` per call; cache parsed balances (invalidate on new budget events). [M]
-- [ ] JournalFile `account`-directive append-dedup — the projection appends a fresh `account …` line per override toggle (DB upsert is idempotent, but the rendered file accretes duplicates; harmless now that `prep_content` strips them, but it bloats the file). [S]
+- [x] Per-institution (tag) breakdown drill-down on the Accounts view — group an account's postings by `institution`/`product` tag via the existing `core::query` tag layer (the payoff of institutions-in-tags; `probe_realdb` already resolves the splits exactly). [M] — **DONE 2026-07-04.** Marquee item: a balance-bearing account (e.g. `Assets:NonRegistered:CAD`) pools money across institutions, so this tag-grouping is the *only* per-bank view. Pure core helper `query::group::group_account_by_tag` (sum per (tag-value, commodity), `(unassigned)` fallback, zero-net filter, UNASSIGNED-last sort) + `balances::account_tag_breakdown` (builds `Prices` in-core → base conversion; kept `convert_to_base` private, no `ledger_utils` dep in app). Tauri `account_tag_breakdown(account, group_by∈{institution,product}, base, as_of)` command; frontend `AccountSummaryCard` gains an expand chevron (path-swap, not a purge-dropped `rotate-90`) → on expand fetches the breakdown via a `use_effect` keyed on `expanded`+`group_by` signals, renders per-group sub-rows + a small `Institution | Product` toggle (`TagGroupRow`; single-CAD groups collapse to a total, multi-commodity groups show the per-commodity split w/ base ≈). **Verified:** 8 core tests (6 group + 2 breakdown); frontend clippy wasm mock+default `-D warnings` clean; Playwright mock 390+1280 (expand → institution groups → product toggle → back, 0 console errors). **Leak-check PASS** — added lines carry only fictional names (Globepay/Northwind/Summit/Meridian), 0 denylisted identifiers; pre-commit privacy guard present. Backend built against synthetic tests; real-data verify rides the queued DB re-import.
+- [x] Balance-cache perf — `account_summaries` / `dashboard_summary` / `list_detected_accounts` each re-read + re-parse the full `budget.journal` per call; cache parsed balances (invalidate on new budget events). [M] — **DONE 2026-07-04.** Parse-once cache in `AppState`: `journal_cache: RwLock<Option<JournalCacheEntry>>` holding `Arc<JournalArtifacts>` (balance + prices). **Invalidation = the file's own `(mtime, len)` stamp, NOT a hand-bumped counter** — the plan's `journal_version: AtomicU64` would have to be poked at *every* `apply_events` path (single-event, batch import, journal import, sync-pull, auto-import, rebuild — 8 sites, plan named 2) or it silently serves stale balances; a `stat` can't drift out of sync with contents, costs the same as the atomic, and covers future write paths for free. Stamp sampled *before* the read → a mid-rebuild write caches fresher content under the older stamp and the next call re-parses (extra parse, never a stale read). New `AppState::journal_artifacts()` (fast path = read-lock cache hit, no parse; slow path = read+`ledger::parse_artifacts` once) + `journal_artifacts_or_empty()` (degrades a malformed journal to empty artifacts, preserving `auto_roster`/`known_accounts`' old declared-only fallback). Core refactor: `ledger::parse_artifacts` (one parse → both `Balance` via new `balances_from(&Ledger)` + `Prices`; `account_summaries` alone used to parse ~3×/call) + `JournalArtifacts{balance,prices}`/`::empty()`; parsed-input `*_from` variants of `account_summaries`/`auto_roster`/`known_accounts`/`account_tag_breakdown`/`dashboard_summary` (content-taking fns kept as thin wrappers for tests). All 5 read commands + `effective_roster` now consume the shared cache (threaded as `&JournalArtifacts` — no `ledger_utils` dep in the app crate); dead `read_budget_journal` removed. **Verified:** 459 core tests (new `parsed_input_variants_match_content_path` locks cached == content-path across summaries/roster/known_accounts w/ a P-directive FX journal); clippy clean on core + app (`-D warnings`), app `cargo check` clean. No frontend change (drill-down UI unchanged). **Leak-check PASS** — denylist + word-boundary scan of all core/ + tauri-app/ diffs and new `.rs` files clean; only fictional names in fixtures. Cache exercises real data on the queued DB re-import (mock bridge bypasses these commands, so Playwright can't reach the cache).
+- [x] JournalFile `account`-directive append-dedup — the projection appends a fresh `account …` line per override toggle (DB upsert is idempotent, but the rendered file accretes duplicates; harmless now that `prep_content` strips them, but it bloats the file). [S] — **DONE 2026-07-04.** The `account_added` arm now calls a new `JournalFile::upsert_account` instead of `append`: under the existing `write_lock` it reads the whole file and splices via the pure, unit-tested `upsert_account_block` — **replace an existing `account <name>` block in place (latest wins) or append when absent**. Block boundary (`find_account_block`) = the directive line + its indented continuation sub-directives (`note`) + one trailing blank-line separator, so the replacement's own trailing blank doesn't double up; EOF-without-trailing-blank handled. `is_account_directive` matches the name on an exact whitespace/EOL boundary → `Assets:Cash` never clobbers `Assets:Cash:USD`, and names with spaces (`Liabilities:Credit Card:CAD`) match. Transactions/P-directives keep the cheap append path (only the rare `set_account_override` pays the full read-rewrite; journal is a regenerable cache so a full rewrite is safe). **Verified:** 466 core tests (6 new: absent→append, in-place replace, longer-name safety, EOF-no-trailing-blank, spaced name, + 2 projection e2e — re-add collapses to one block latest-wins, and re-add leaves interleaved transactions intact); `replay_after_clear_produces_identical_file` still byte-identical (empty-file add is a pure append). Clippy clean on core `--all-targets -D warnings`. Core-only change — no app/frontend wiring, so no app rebuild/Playwright needed. **Leak-check PASS** — denylist + real-identifier word-boundary scan clean on the tracked diff and all untracked source; fixtures use only fictional/generic names (Northwind, Assets:Cash, Liabilities:Credit Card:CAD, "Wallet"/"Visa").
 
 **App delivery + CI/CD (done 2026-06-29):**
 - [x] App delivery pipeline for **all targets** (desktop + Android) + a **low-friction wireless update path** (no cable/adb loop). **DONE 2026-06-29 (AUTHORED + CI-build-PROVEN; device round-trip deferred to polish).** Public bank-free engine: generic `/updates` static route (`UPDATES_DIR`, off→404; `ServeDir`), Tauri v2 desktop updater + `createUpdaterArtifacts` + `bundle.icon` set (AppImage self-replace), custom Android OTA (`check_for_app_update`/`download_android_update` → sha256-verified APK → `InstallBridge.kt` FileProvider intent), Settings App Updates section. Private overlay: `app-release.yml` builds+signs APK (release keystore; un-throttled via opt-in `OMNI_BUILD_MEM_SAFE`) + AppImage (minisign; pubkey/endpoint via `--config` from private vars) → tailnet → `publish-update.sh` (atomic place + per-platform `latest.json` + retention `OMNI_UPDATES_KEEP`=3, prune older+`.sig`). [USER] made keystore+minisign keypair, set GH secrets/vars, prepped `/var/omni-updates`, redeployed server w/ `/updates` mount; a real run went **all green** + **verified over the tailnet** (android APK 36.7 MB 200; desktop AppImage 89 MB 200 w/ valid sig). New idempotent `deploy/provision-box.sh` (state dirs owned by `deploy` — closes a latent fresh-box gap); **DigitalOcean removed from all 3 workflows** (netcup=future backup); Tailscale on laptop + **Hetzner Cloud Firewall** (SSH-only; app server already tailnet-only). **Deferred → polish:** device-present round-trip (download → system install-over → relaunch); proper logo; full tailnet-only SSH + Tailscale-SSH ACL → netcup/HA. [L]
@@ -341,6 +523,11 @@ build/test/publish of the bank-free image.
 - [ ] `auto_close_scheduler::AppState.event_store` → `Arc<dyn EventStore>` parity. [XS]
 - [ ] Seconds duration unit on routine items (breaking event-schema change, 16 touch points). [M]
 - [ ] `cargo:rerun-if-env-changed=TAURI_DEV_HOST` upstream contribution to `tauri-build`. [XS]
+
+**Deferred from Cycle 5**
+- [ ] Create mdbooks docs, copy the pattern from ../mylearnbase in how it is created and deployed
+- [ ] There will be a lot of features added to omni-me, not everyone might want to use every feature, add ability to toggle them off so there is no trace of them
+- [ ] The next major thing would be adding chat functionality, so I can chat with an LLM and it can execute commands to do things instead of me needing to go find a way to do it myself
 
 **Post-v1 / when-demanded:**
 - [ ] PWA fallback (deferred Cycles 1-3).
