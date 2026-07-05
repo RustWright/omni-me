@@ -15,6 +15,14 @@ body {
  * evaluateJavascript. The env() fallback in var() keeps iOS/desktop working
  * — env() resolves correctly there. */
 :root {
+    /* Render native form controls (the currency + LLM-provider <select>s and
+     * their dropdown popups, the vision <checkbox>, scrollbars) in DARK mode.
+     * Without this, Linux webkit2gtk paints them with the light GTK system
+     * theme over the app's dark background → unreadable contrast
+     * (friction 2026-07-05). Same class of native-control problem the date
+     * picker hit; fixes contrast app-wide without replacing the controls. */
+    color-scheme: dark;
+
     --safe-area-inset-top: env(safe-area-inset-top, 0px);
     --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
     --safe-area-inset-left: env(safe-area-inset-left, 0px);
