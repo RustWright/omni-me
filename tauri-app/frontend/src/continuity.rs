@@ -304,6 +304,12 @@ pub fn use_continuity_provider() -> ContinuityStore {
     // *and* is read by pages to gate first hydration (1.8b). It lives on the
     // struct so descendants can consult it via `loaded_peek`.
     let mut loaded = use_signal(|| false);
+    // Separate from `loaded`: true only once the boot read actually *succeeded*.
+    // `loaded` means "boot read finished, pages may hydrate" (set even on failure
+    // so a transient early-invoke error can't strand every `loaded_peek` waiter on
+    // "Loading…" forever); `load_succeeded` gates the write-back so a failed read
+    // still can't clobber a good on-disk file with an empty snapshot.
+    let mut load_succeeded = use_signal(|| false);
     let store = ContinuityStore {
         sessions,
         captures,
@@ -317,14 +323,38 @@ pub fn use_continuity_provider() -> ContinuityStore {
     // read *error* we leave the writer disabled so a transient failure can't
     // overwrite a good file with an empty one.
     use_future(move || async move {
-        if let Ok(json) = crate::bridge::invoke_get_workspace().await {
-            if !json.is_empty()
-                && let Ok(w) = serde_json::from_str::<PersistedWorkspace>(&json)
-            {
-                store.load_from_persist(w);
+        // Boot read with retry (cold-start readiness race). On a fresh/empty DB
+        // the backend `setup` runs a slow `init_all()` *before* it `manage`s
+        // AppState, so a very early `get_workspace` invoke can hit unmanaged state
+        // and return Err. The previous code set `loaded` only on the Ok arm, so
+        // one early Err left `loaded` false forever — permanently hanging every
+        // `loaded_peek` waiter (journal fetch, `main.rs` tab-restore) on
+        // "Loading…". Poll until the backend answers (same idiom as the editor
+        // bundle / store-load waits); fail open after the cap so a genuinely
+        // broken backend degrades to an empty session instead of a dead UI.
+        const MAX_ATTEMPTS: u32 = 100; // ~10s at 100ms — setup finishes well within
+        let mut attempts = 0u32;
+        loop {
+            match crate::bridge::invoke_get_workspace().await {
+                Ok(json) => {
+                    if !json.is_empty()
+                        && let Ok(w) = serde_json::from_str::<PersistedWorkspace>(&json)
+                    {
+                        store.load_from_persist(w);
+                    }
+                    load_succeeded.set(true);
+                    break;
+                }
+                Err(_) => {
+                    attempts += 1;
+                    if attempts >= MAX_ATTEMPTS {
+                        break;
+                    }
+                    crate::timer::sleep_ms(100).await;
+                }
             }
-            loaded.set(true);
         }
+        loaded.set(true);
     });
 
     // Debounced write-back: any post-load change flushes to disk after a quiet
@@ -332,7 +362,9 @@ pub fn use_continuity_provider() -> ContinuityStore {
     // cancel pattern the editors use for auto-save.
     let mut persist_gen = use_signal(|| 0u64);
     use_effect(move || {
-        if !*loaded.read() {
+        // Gate on load *success*, not merely load *finished*: if the boot read
+        // failed we must not flush an empty snapshot over a good on-disk file.
+        if !*load_succeeded.read() {
             return;
         }
         let snapshot = store.snapshot_for_persist();
