@@ -3,6 +3,60 @@ import { markdown } from "@codemirror/lang-markdown";
 import { EditorState, RangeSetBuilder } from "@codemirror/state";
 import { Decoration, ViewPlugin, WidgetType, keymap } from "@codemirror/view";
 
+// ---------------------------------------------------------------------------
+// Editor typography theme (Phase 5 "editor feel")
+// ---------------------------------------------------------------------------
+//
+// The notes/journal are *prose*, but CodeMirror's default `.cm-content` is
+// `monospace` and minimalSetup's default markdown highlight style underlines
+// headings/links. That read like code and used space poorly vs Obsidian. This
+// theme makes the writing surface proportional, larger, and airy, kills the
+// syntax underline, and lets the editor grow to fill its (flex) parent so the
+// page — not a fixed 400px island — is the writing area.
+//
+// The editor deliberately does NOT own its scroll (`.cm-scroller` stays
+// overflow-visible): the page content column remains the single scroll parent,
+// which is what the keyboard-inset caret logic below (1.10) relies on. `flex`
+// on `&` lets a short note stretch to fill while a long note grows past the
+// viewport and the page column scrolls — same scroll model as before.
+const SANS_STACK =
+  'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+
+const omniEditorTheme = EditorView.theme({
+  "&": {
+    flex: "1 0 auto",
+    fontSize: "16px",
+    color: "#dcddde",
+  },
+  ".cm-scroller": {
+    fontFamily: SANS_STACK,
+    lineHeight: "1.65",
+  },
+  ".cm-content": {
+    fontFamily: SANS_STACK,
+    // Minimal horizontal inset — the page column supplies the gutter. Some
+    // bottom breathing room so the last line isn't glued to the edge.
+    padding: "10px 2px 48px",
+    caretColor: "#dcddde",
+  },
+  ".cm-line": {
+    padding: "0 4px",
+  },
+  "&.cm-focused": {
+    outline: "none",
+  },
+  // Kill CM's default markdown heading/link underline (source of the per-line
+  // underline artifact). Higher specificity than the generated token class, so
+  // no !important needed.
+  ".cm-content .cm-line span": {
+    textDecoration: "none",
+  },
+  ".cm-cursor, .cm-dropCursor": {
+    borderLeftColor: "#448aff",
+    borderLeftWidth: "2px",
+  },
+});
+
 let editorView = null;
 let isDirty = false;
 let suppressDirty = false;
@@ -425,6 +479,7 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
     minimalSetup,
     markdown(),
     EditorView.lineWrapping,
+    omniEditorTheme,
     autoWrapFilter,
     checkboxPlugin,
   ];

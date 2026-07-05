@@ -25027,6 +25027,41 @@
   });
 
   // assets/js/editor.js
+  var SANS_STACK = 'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  var omniEditorTheme = EditorView.theme({
+    "&": {
+      flex: "1 0 auto",
+      fontSize: "16px",
+      color: "#dcddde"
+    },
+    ".cm-scroller": {
+      fontFamily: SANS_STACK,
+      lineHeight: "1.65"
+    },
+    ".cm-content": {
+      fontFamily: SANS_STACK,
+      // Minimal horizontal inset — the page column supplies the gutter. Some
+      // bottom breathing room so the last line isn't glued to the edge.
+      padding: "10px 2px 48px",
+      caretColor: "#dcddde"
+    },
+    ".cm-line": {
+      padding: "0 4px"
+    },
+    "&.cm-focused": {
+      outline: "none"
+    },
+    // Kill CM's default markdown heading/link underline (source of the per-line
+    // underline artifact). Higher specificity than the generated token class, so
+    // no !important needed.
+    ".cm-content .cm-line span": {
+      textDecoration: "none"
+    },
+    ".cm-cursor, .cm-dropCursor": {
+      borderLeftColor: "#448aff",
+      borderLeftWidth: "2px"
+    }
+  });
   var editorView = null;
   var isDirty = false;
   var suppressDirty = false;
@@ -25327,6 +25362,7 @@
       minimalSetup,
       markdown(),
       EditorView.lineWrapping,
+      omniEditorTheme,
       autoWrapFilter,
       checkboxPlugin
     ];

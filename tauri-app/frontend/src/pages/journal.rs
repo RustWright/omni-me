@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use chrono::{Datelike, NaiveDate};
 use chrono_tz::Tz;
@@ -7,27 +7,45 @@ use dioxus::prelude::*;
 use crate::autosave::{self, SaveIndicator, SaveState};
 use crate::bridge;
 use crate::components::editor::Editor;
+use crate::components::tag_editor::TagChipEditor;
 use crate::continuity::{use_continuity, ContinuityKey, EditSession};
 use crate::journal_template;
+use crate::note_frontmatter::{serialize_journal, split_journal, JournalProps};
 use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
 use crate::types::JournalEntryItem;
 use crate::user_date::UserDate;
 
-/// Second-level tabs inside the Journal feature.
-///
-/// `Today` shows the entry for whichever date is currently `selected_date`
-/// (defaults to today; calendar clicks can redirect it). `Calendar` renders
-/// the month grid with per-day entry dots.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum JournalSubTab {
-    Today,
-    Calendar,
+/// Start strip / travel thresholds (CSS px) for the calendar drawer's right-edge
+/// swipe. Mirror of the app-shell nav swipe in `main.rs`, but anchored to the
+/// *right* edge: swipe left from the edge to open, swipe right to close.
+const CAL_EDGE_START_PX: f64 = 24.0;
+const CAL_SWIPE_OPEN_PX: f64 = 48.0;
+const CAL_SWIPE_CLOSE_PX: f64 = 48.0;
+
+/// Current viewport width in CSS px (for right-edge swipe detection). Falls back
+/// to 0 — which makes the "near the right edge" test never fire — if the window
+/// is somehow unavailable, so the toolbar button always remains as the opener.
+fn viewport_width() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.inner_width().ok())
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0)
+}
+
+/// Word + character count for a note body (the calendar drawer's footer stats,
+/// Obsidian parity). Words are whitespace-delimited tokens (runs of whitespace
+/// collapse); characters are Unicode scalar values, so a multi-byte glyph counts
+/// once. Frontmatter is excluded by construction — `body` is already the prose
+/// with the properties lifted into the panel (Phase 5).
+fn body_stats(body: &str) -> (usize, usize) {
+    let words = body.split_whitespace().count();
+    let chars = body.chars().count();
+    (words, chars)
 }
 
 #[component]
 pub fn JournalPage() -> Element {
     let store = use_continuity();
-    let mut sub_tab = use_signal(|| JournalSubTab::Today);
     let tz_signal: Signal<Tz> = use_context();
     // `&*signal.read()` is explicit on purpose: makes it clear we're
     // borrowing through a signal guard, not coercing the guard itself.
@@ -35,12 +53,26 @@ pub fn JournalPage() -> Element {
     let today = UserDate::today(&*tz_signal.read()).to_date_string();
 
     let mut selected_date = use_signal(|| today.clone());
+    // The calendar is a right-edge drawer overlaying the day view (opened by a
+    // right-edge swipe or the toolbar button), not a separate sub-tab.
+    let mut calendar_open = use_signal(|| false);
+    // Right-edge swipe tracking for the calendar drawer (mirror of the app-shell
+    // left-edge nav swipe): `Some(start_x)` once a tracked touch begins — near
+    // the right edge when closed (candidate open-swipe), or anywhere when open
+    // (candidate close-swipe). `peek` everywhere; the gesture mutates state but
+    // nothing renders off this signal.
+    let mut cal_swipe_start_x = use_signal(|| None::<f64>);
 
-    // 1.8b nav restoration: re-open the day + sub-tab the user last had here.
-    // Gated on `is_loaded` so it picks up the disk snapshot even when this page
-    // mounts before the boot read finishes; also re-applies on every remount,
-    // giving within-session continuity (tab away to Notes and back keeps the
-    // viewed day). One-shot per mount via `restored`.
+    // The viewed day's live editor body, mirrored up out of the keyed `DayView`
+    // so the calendar drawer's footer (which lives here in the parent) can show
+    // the note's word/char count. Written by `DayView`, read only here.
+    let viewed_body = use_signal(String::new);
+
+    // 1.8b nav restoration: re-open the day the user last had here. Gated on
+    // `is_loaded` so it picks up the disk snapshot even when this page mounts
+    // before the boot read finishes; re-applies on every remount for within-
+    // session continuity (tab away to Notes and back keeps the viewed day).
+    // One-shot per mount via `restored`.
     let mut restored = use_signal(|| false);
     use_effect(move || {
         if *restored.peek() || !store.is_loaded() {
@@ -50,83 +82,110 @@ pub fn JournalPage() -> Element {
         if let Some(d) = saved.journal_date {
             selected_date.set(d);
         }
-        sub_tab.set(match saved.journal_subtab.as_deref() {
-            Some("calendar") => JournalSubTab::Calendar,
-            _ => JournalSubTab::Today,
-        });
         restored.set(true);
     });
 
-    // Write-through: mirror the sub-position into nav (and persist to disk).
-    // Gated on `restored` so the empty-default values can't clobber the saved
-    // nav before the restore above applies it.
+    // Write-through: mirror the viewed day into nav (and persist to disk). Gated
+    // on `restored` so the empty default can't clobber the saved nav before the
+    // restore above applies it.
     use_effect(move || {
         if !*restored.read() {
             return;
         }
         let date = selected_date.read().clone();
-        let sub = match *sub_tab.read() {
-            JournalSubTab::Today => "today",
-            JournalSubTab::Calendar => "calendar",
-        };
-        store.update_nav(|n| {
-            n.journal_date = Some(date);
-            n.journal_subtab = Some(sub.to_string());
-        });
+        store.update_nav(|n| n.journal_date = Some(date));
     });
 
     rsx! {
-        div { class: "max-w-3xl mx-auto w-full",
-            JournalSubNav { active: *sub_tab.read(), on_switch: move |t| sub_tab.set(t) }
-
-            match *sub_tab.read() {
-                JournalSubTab::Today => rsx! {
-                    DayView {
-                        key: "{selected_date.read()}",
-                        date: selected_date.read().clone(),
-                        today: today.clone(),
-                        on_back_to_today: {
-                            let today = today.clone();
-                            move |_| selected_date.set(today.clone())
-                        },
+        // `min-h-full flex flex-col` establishes the height chain so DayView's
+        // editor region (flex-1) can fill the screen (Phase 5). `max-w-3xl` keeps
+        // a readable column on desktop; it's full-width below 768px.
+        div {
+            class: "max-w-3xl mx-auto w-full min-h-full flex flex-col",
+            // Right-edge swipe to open the calendar drawer (mirror of the app-
+            // shell left-edge nav swipe). No preventDefault — scroll/typing/
+            // selection stay intact; we only act on a touch that starts near the
+            // right edge while closed, or any touch while open (to swipe shut).
+            ontouchstart: move |e| {
+                let start = e.touches().first().map(|t| t.client_coordinates().x);
+                if *calendar_open.peek() {
+                    cal_swipe_start_x.set(start);
+                } else {
+                    let w = viewport_width();
+                    cal_swipe_start_x.set(start.filter(|x| w - *x <= CAL_EDGE_START_PX));
+                }
+            },
+            ontouchmove: move |e| {
+                let Some(start) = *cal_swipe_start_x.peek() else {
+                    return;
+                };
+                let Some(x) = e.touches().first().map(|t| t.client_coordinates().x) else {
+                    return;
+                };
+                if *calendar_open.peek() {
+                    // Open drawer: rightward travel past the threshold closes it.
+                    if x - start >= CAL_SWIPE_CLOSE_PX {
+                        calendar_open.set(false);
+                        cal_swipe_start_x.set(None);
                     }
-                },
-                JournalSubTab::Calendar => rsx! {
-                    CalendarView {
+                } else if start - x >= CAL_SWIPE_OPEN_PX {
+                    // Closed drawer: leftward travel from the right edge opens it.
+                    calendar_open.set(true);
+                    cal_swipe_start_x.set(None);
+                }
+            },
+            ontouchend: move |_| cal_swipe_start_x.set(None),
+
+            // Slim toolbar: the calendar opener (the button is desktop's opener,
+            // since edge-swipe is touch-only).
+            div { class: "flex justify-end mb-4",
+                button {
+                    class: "flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-obsidian-sidebar/40 border border-white/5 text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5 transition-colors",
+                    "aria-label": "Open calendar",
+                    onclick: move |_| calendar_open.set(true),
+                    svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" }
+                    }
+                    "Calendar"
+                }
+            }
+
+            // DayView is keyed by date so a day-jump remounts it (fresh entry
+            // load + its own continuity slot). A bare `key` on a directly-
+            // rendered component is a no-op in Dioxus — keys only drive
+            // remounting inside a list — so we render it through a one-element
+            // `for` to get list semantics. Without this the calendar drawer
+            // (which, unlike the old sub-tab, never unmounts DayView) would just
+            // swap the `date` prop and leave the previous day's content on screen.
+            for day in std::iter::once(selected_date.read().clone()) {
+                DayView {
+                    key: "{day}",
+                    date: day.clone(),
+                    today: today.clone(),
+                    viewed_body,
+                    on_back_to_today: {
+                        let today = today.clone();
+                        move |_| selected_date.set(today.clone())
+                    },
+                }
+            }
+
+            {
+                let (words, chars) = body_stats(&viewed_body.read());
+                rsx! {
+                    CalendarDrawer {
+                        open: calendar_open,
                         today: today.clone(),
                         selected: selected_date.read().clone(),
+                        words,
+                        chars,
                         on_select: move |d: String| {
                             selected_date.set(d);
-                            sub_tab.set(JournalSubTab::Today);
+                            calendar_open.set(false);
                         },
+                        on_close: move |_| calendar_open.set(false),
                     }
-                },
-            }
-        }
-    }
-}
-
-#[component]
-fn JournalSubNav(active: JournalSubTab, on_switch: EventHandler<JournalSubTab>) -> Element {
-    let tab_class = move |tab: JournalSubTab| -> &'static str {
-        if tab == active {
-            "px-4 py-1.5 text-sm font-semibold rounded-md bg-obsidian-sidebar text-obsidian-accent transition-colors"
-        } else {
-            "px-4 py-1.5 text-sm font-medium rounded-md bg-transparent text-obsidian-text-muted hover:text-obsidian-text transition-colors"
-        }
-    };
-
-    rsx! {
-        div { class: "flex gap-1 mb-6 p-1 bg-obsidian-sidebar/40 border border-white/5 rounded-lg w-fit",
-            button {
-                class: "{tab_class(JournalSubTab::Today)}",
-                onclick: move |_| on_switch.call(JournalSubTab::Today),
-                "Today"
-            }
-            button {
-                class: "{tab_class(JournalSubTab::Calendar)}",
-                onclick: move |_| on_switch.call(JournalSubTab::Calendar),
-                "Calendar"
+                }
             }
         }
     }
@@ -136,10 +195,34 @@ fn JournalSubNav(active: JournalSubTab, on_switch: EventHandler<JournalSubTab>) 
 // DayView — shows the entry for a specific date. Used for today + past days.
 // ---------------------------------------------------------------------------
 
+/// Split a raw journal note into the properties panel's typed `props` + the
+/// editor `body`. Called wherever raw text is loaded into the day (hydrate,
+/// reopen, close). Never touches `content` — that stays the source of truth.
+fn apply_raw(mut props: Signal<JournalProps>, mut body: Signal<String>, raw: &str) {
+    let (p, b) = split_journal(raw);
+    props.set(p);
+    body.set(b);
+}
+
+/// Recombine the panel's `props` + the editor `body` back into the full note
+/// `content` (the single source of truth for autosave / continuity / the
+/// backend `is_complete`). Called from user edits only, so an untouched entry
+/// never diverges from its loaded raw.
+fn recombine(props: Signal<JournalProps>, body: Signal<String>, mut content: Signal<String>) {
+    let p = props.read();
+    let b = body.read();
+    content.set(serialize_journal(&p, b.as_str()));
+}
+
 /// Day entry view, parameterized on date. Parent keys by `date`, so navigating
 /// between days remounts this component and resets its load state cleanly.
 #[component]
-fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> Element {
+fn DayView(
+    date: String,
+    today: String,
+    viewed_body: Signal<String>,
+    on_back_to_today: EventHandler<()>,
+) -> Element {
     let mut entry = use_signal(|| None::<JournalEntryItem>);
     let mut loading = use_signal(|| true);
     let mut saving = use_signal(|| false);
@@ -165,6 +248,14 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
     // mirrored into the session, and fed back as `initial_cursor` on remount so
     // returning to this day restores the caret + viewport.
     let mut cursor = use_signal(|| 0usize);
+    // Properties panel (5.1/5.2): the typed frontmatter + the editor body are
+    // derived views of `content` — populated from it on load via `apply_raw` and
+    // recombined back into it on any user edit via `recombine`. `content` remains
+    // the single source of truth, so autosave / continuity / persistence are
+    // untouched. `body` is mutated in the editor's `on_change`, so it needs `mut`;
+    // `props` is only ever mutated inside the panel (by value), so it does not.
+    let props = use_signal(JournalProps::default);
+    let mut body = use_signal(String::new);
 
     // Continuity store (1.2): this day's editing session is held at the app
     // root, so switching tabs (which unmounts DayView) no longer drops typed
@@ -198,6 +289,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
             match bridge::invoke_get_journal_by_date(&d).await {
                 Ok(Some(e)) => {
                     if let Some(s) = stored {
+                        apply_raw(props, body, &s.content);
                         content.set(s.content);
                         last_saved_content.set(s.last_saved_content);
                         save_generation.set(s.save_generation);
@@ -205,6 +297,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                     } else {
                         let raw = e.raw_text.clone();
                         last_saved_content.set(raw.clone());
+                        apply_raw(props, body, &raw);
                         content.set(raw);
                     }
                     entry.set(Some(e));
@@ -213,6 +306,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                 }
                 Ok(None) => {
                     if let Some(s) = stored {
+                        apply_raw(props, body, &s.content);
                         content.set(s.content);
                         last_saved_content.set(s.last_saved_content);
                         save_generation.set(s.save_generation);
@@ -224,6 +318,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                         // template-vs-empty diff as user input.
                         let template = journal_template::render(&d);
                         last_saved_content.set(template.clone());
+                        apply_raw(props, body, &template);
                         content.set(template);
                     }
                     entry.set(None);
@@ -258,6 +353,18 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
             store.put(key_for_mirror.clone(), session);
         });
     }
+
+    // Mirror the live body up to `JournalPage` so the calendar drawer's footer
+    // can show this note's word/char count. The drawer lives in the parent, but
+    // the body lives here in the keyed `DayView`. Post-hydrate only, so the empty
+    // pre-load body doesn't briefly flash "0 words".
+    use_effect(move || {
+        if !*hydrated.read() {
+            return;
+        }
+        let mut viewed_body = viewed_body;
+        viewed_body.set(body.read().clone());
+    });
 
     // Auto-save: any divergence between `content` and `last_saved_content`
     // schedules a debounced save. The generation counter cancels older
@@ -351,7 +458,9 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
     }
 
     rsx! {
-        div { class: "animate-in fade-in duration-200",
+        // Fill-height flex column so the editor region (flex-1) can grow to fill
+        // the screen instead of sitting as a fixed island (Phase 5 "editor feel").
+        div { class: "animate-in fade-in duration-200 flex flex-col flex-1 min-h-0",
             if !is_today_view {
                 div { class: "mb-3",
                     button {
@@ -459,6 +568,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                                 {
                                                     let raw = refreshed.raw_text.clone();
                                                     last_saved_content.set(raw.clone());
+                                                    apply_raw(props, body, &raw);
                                                     content.set(raw);
                                                     entry.set(Some(refreshed));
                                                 }
@@ -484,6 +594,7 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
                                                 {
                                                     let raw = refreshed.raw_text.clone();
                                                     last_saved_content.set(raw.clone());
+                                                    apply_raw(props, body, &raw);
                                                     content.set(raw);
                                                     entry.set(Some(refreshed));
                                                 }
@@ -550,22 +661,34 @@ fn DayView(date: String, today: String, on_back_to_today: EventHandler<()>) -> E
             } else {
                 {
                     let is_closed = entry.read().as_ref().map(|e| e.closed).unwrap_or(false);
-                    // Seed CodeMirror from the hydrated session content (store-
-                    // restored on remount, else backend/template from the load
-                    // future). `peek` so DayView doesn't re-subscribe to every
-                    // keystroke — content changes shouldn't re-render the page.
-                    let initial = content.peek().clone();
+                    // Seed CodeMirror from the hydrated *body* (frontmatter now
+                    // lives in the properties panel above). `peek` so DayView
+                    // doesn't re-subscribe here; the editor seeds once on mount
+                    // and ignores later `initial_content` prop changes.
+                    let initial = body.peek().clone();
+                    // Full-bleed, fill-height writing surface (Phase 5): no card
+                    // chrome — the editor blends into the page and fills the
+                    // remaining column height. `opacity-60` keeps the closed-day
+                    // read-only signal.
                     let editor_class = if is_closed {
-                        "rounded-lg border border-white/10 overflow-hidden shadow-2xl opacity-60"
+                        "flex-1 flex flex-col min-h-0 opacity-60"
                     } else {
-                        "rounded-lg border border-white/10 overflow-hidden shadow-2xl"
+                        "flex-1 flex flex-col min-h-0"
                     };
 
                     rsx! {
+                        JournalPropertiesPanel {
+                            model: props,
+                            read_only: is_closed,
+                            on_change: move |_| recombine(props, body, content),
+                        }
                         div { class: "{editor_class}",
                             Editor {
                                 initial_content: initial,
-                                on_change: move |new_content: String| content.set(new_content),
+                                on_change: move |new_body: String| {
+                                    body.set(new_body);
+                                    recombine(props, body, content);
+                                },
                                 read_only: is_closed,
                                 journal_mode: true,
                                 initial_cursor: *cursor.peek(),
@@ -655,7 +778,148 @@ fn LlmResultsDisplay(result: crate::types::LlmResult) -> Element {
 }
 
 // ---------------------------------------------------------------------------
-// CalendarView — month grid with per-day dots for dates that have entries.
+// JournalPropertiesPanel — Obsidian-style typed frontmatter card shown above the
+// editor body. Edits mutate the `props` signal and fire `on_change` so DayView
+// recombines props + body back into the note `content`. See `note_frontmatter`.
+// ---------------------------------------------------------------------------
+
+#[component]
+fn JournalPropertiesPanel(
+    model: Signal<JournalProps>,
+    #[props(default = false)] read_only: bool,
+    on_change: EventHandler<()>,
+) -> Element {
+    // `model` is renamed to `props` locally — a component param literally named
+    // `props` collides with the `#[component]` macro's generated binding.
+    let mut props = model;
+    // Expand the raw escape hatch by default only when it already holds content.
+    let mut show_raw = use_signal(|| !props.peek().legacy_raw.is_empty());
+
+    let date = props.read().date.clone();
+    let tags = props.read().tags.clone();
+    let has_legacy = !props.read().legacy_raw.is_empty();
+
+    rsx! {
+        div { class: "mb-4 rounded-lg border border-white/5 bg-obsidian-sidebar/30 divide-y divide-white/5 text-sm",
+            // Date — read-only (it's the entry key).
+            div { class: "flex items-center gap-3 px-3 py-2",
+                span { class: "w-24 shrink-0 text-xs font-medium text-obsidian-text-muted", "Date" }
+                span { class: "font-mono text-obsidian-text", "{date}" }
+            }
+
+            // Tags — chip editor.
+            div { class: "flex items-start gap-3 px-3 py-2",
+                span { class: "w-24 shrink-0 pt-1 text-xs font-medium text-obsidian-text-muted", "Tags" }
+                TagChipEditor {
+                    tags,
+                    read_only,
+                    on_add: move |t: String| {
+                        props.write().tags.push(t);
+                        on_change.call(());
+                    },
+                    on_remove: move |idx: usize| {
+                        if idx < props.read().tags.len() {
+                            props.write().tags.remove(idx);
+                            on_change.call(());
+                        }
+                    },
+                }
+            }
+
+            ReflectionField {
+                label: "Homework for life",
+                value: props.read().homework_for_life.clone(),
+                read_only,
+                on_input: move |v: String| {
+                    props.write().homework_for_life = v;
+                    on_change.call(());
+                },
+            }
+            ReflectionField {
+                label: "Grateful for",
+                value: props.read().grateful_for.clone(),
+                read_only,
+                on_input: move |v: String| {
+                    props.write().grateful_for = v;
+                    on_change.call(());
+                },
+            }
+            ReflectionField {
+                label: "Learnt today",
+                value: props.read().learnt_today.clone(),
+                read_only,
+                on_input: move |v: String| {
+                    props.write().learnt_today = v;
+                    on_change.call(());
+                },
+            }
+
+            // Raw escape hatch for other / imported frontmatter.
+            div { class: "px-3 py-2",
+                button {
+                    r#type: "button",
+                    class: "flex items-center gap-1.5 text-xs font-medium text-obsidian-text-muted hover:text-obsidian-text transition-colors",
+                    onclick: move |_| {
+                        let v = *show_raw.peek();
+                        show_raw.set(!v);
+                    },
+                    span { class: "text-[10px] w-2", if *show_raw.read() { "▾" } else { "▸" } }
+                    "Raw properties"
+                    if has_legacy {
+                        span { class: "w-1 h-1 rounded-full bg-obsidian-accent" }
+                    }
+                }
+                if *show_raw.read() {
+                    textarea {
+                        class: "mt-2 w-full bg-obsidian-bg/50 border border-white/5 rounded p-2 text-xs font-mono text-obsidian-text resize-y focus:outline-none focus:border-obsidian-accent/40",
+                        rows: "3",
+                        readonly: read_only,
+                        placeholder: "Other frontmatter, preserved verbatim",
+                        value: "{props.read().legacy_raw}",
+                        oninput: move |e| {
+                            props.write().legacy_raw = e.value();
+                            on_change.call(());
+                        },
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One labeled reflection field in the properties panel. A borderless,
+/// vertically-resizable textarea that reads as prose, not a form input.
+#[component]
+fn ReflectionField(
+    label: String,
+    value: String,
+    #[props(default = false)] read_only: bool,
+    on_input: EventHandler<String>,
+) -> Element {
+    rsx! {
+        div { class: "flex items-start gap-3 px-3 py-2",
+            span { class: "w-24 shrink-0 pt-1 text-xs font-medium text-obsidian-text-muted", "{label}" }
+            textarea {
+                // `field-sizing: content` auto-grows the textarea to fit its
+                // text (Chromium/webview) so reflections read as prose and never
+                // clip; `resize-y` still lets the user drag taller.
+                class: "flex-1 bg-transparent text-obsidian-text placeholder:text-obsidian-text-muted/40 resize-y focus:outline-none leading-snug py-0.5",
+                style: "field-sizing: content;",
+                rows: "1",
+                readonly: read_only,
+                placeholder: if read_only { "" } else { "…" },
+                value: "{value}",
+                oninput: move |e| on_input.call(e.value()),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CalendarDrawer — right-edge slide-in month grid overlaying the day view, with
+// a per-day activity dot (has-entry) + a day-complete check. Mirrors the left
+// nav drawer: always mounted, class-toggled so it animates; scrim tap or the
+// inverse swipe closes it. Selecting a day jumps the viewed date + closes.
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
@@ -689,18 +953,32 @@ fn build_month_cells(anchor: NaiveDate) -> Vec<MonthCell> {
 }
 
 #[component]
-fn CalendarView(today: String, selected: String, on_select: EventHandler<String>) -> Element {
+fn CalendarDrawer(
+    open: Signal<bool>,
+    today: String,
+    selected: String,
+    words: usize,
+    chars: usize,
+    on_select: EventHandler<String>,
+    on_close: EventHandler<()>,
+) -> Element {
     let today_date = NaiveDate::parse_from_str(&today, "%Y-%m-%d")
         .unwrap_or_else(|_| NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
     let today_month_first =
         NaiveDate::from_ymd_opt(today_date.year(), today_date.month(), 1).unwrap();
 
     let mut anchor = use_signal(|| today_month_first);
-    let mut dates_with_entries = use_signal(HashSet::<String>::new);
-    let mut loading_dates = use_signal(|| true);
+    // date -> `complete`. Presence in the map = the day has an entry.
+    let mut day_stats = use_signal(HashMap::<String, bool>::new);
     let mut fetch_error = use_signal(|| None::<String>);
 
+    // Fetch the visible month's stats whenever the drawer is open (fresh data on
+    // each open) or the user pages to another month. Reads `open` + `anchor` so
+    // it re-runs on either; gated on `open` so a never-opened drawer does no work.
     use_effect(move || {
+        if !*open.read() {
+            return;
+        }
         let a = *anchor.read();
         let first = NaiveDate::from_ymd_opt(a.year(), a.month(), 1).unwrap();
         let last_day = days_in_month(a.year(), a.month());
@@ -708,99 +986,180 @@ fn CalendarView(today: String, selected: String, on_select: EventHandler<String>
         let from_s = first.format("%Y-%m-%d").to_string();
         let to_s = last.format("%Y-%m-%d").to_string();
 
-        loading_dates.set(true);
         fetch_error.set(None);
         spawn(async move {
-            match bridge::invoke_list_journal_dates(&from_s, &to_s).await {
-                Ok(dates) => dates_with_entries.set(dates.into_iter().collect()),
+            match bridge::invoke_list_journal_day_stats(&from_s, &to_s).await {
+                Ok(stats) => {
+                    day_stats.set(stats.into_iter().map(|s| (s.date, s.complete)).collect());
+                }
                 Err(e) => fetch_error.set(Some(e)),
             }
-            loading_dates.set(false);
         });
     });
 
+    let is_open = *open.read();
     let month_label = anchor.read().format("%B %Y").to_string();
     let cells = build_month_cells(*anchor.read());
+    let word_label = if words == 1 { "word" } else { "words" };
+    let char_label = if chars == 1 { "character" } else { "characters" };
+
+    // Scrim + panel are always rendered (class-toggled) so the slide animates.
+    let scrim_class = if is_open {
+        "fixed inset-0 z-[140] bg-black/50 transition-opacity duration-200 opacity-100"
+    } else {
+        "fixed inset-0 z-[140] bg-black/50 transition-opacity duration-200 opacity-0 pointer-events-none"
+    };
+    let panel_base = "fixed inset-y-0 right-0 z-[150] w-72 max-w-[85vw] bg-obsidian-sidebar border-l border-white/5 flex flex-col overflow-y-auto transition-transform duration-200 ease-out";
+    let panel_class = if is_open {
+        format!("{panel_base} translate-x-0")
+    } else {
+        format!("{panel_base} translate-x-full")
+    };
 
     rsx! {
-        div { class: "py-2 animate-in fade-in duration-200",
-            // Month navigation header
-            div { class: "flex items-center justify-between mb-4",
-                button {
-                    class: "p-2 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
-                    onclick: move |_| {
-                        let a = *anchor.read();
-                        let (y, m) = if a.month() == 1 {
-                            (a.year() - 1, 12)
-                        } else {
-                            (a.year(), a.month() - 1)
-                        };
-                        anchor.set(NaiveDate::from_ymd_opt(y, m, 1).unwrap());
-                    },
-                    "◀"
-                }
-                h2 { class: "text-lg font-semibold text-obsidian-text", "{month_label}" }
-                button {
-                    class: "p-2 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
-                    onclick: move |_| {
-                        let a = *anchor.read();
-                        let (y, m) = if a.month() == 12 {
-                            (a.year() + 1, 1)
-                        } else {
-                            (a.year(), a.month() + 1)
-                        };
-                        anchor.set(NaiveDate::from_ymd_opt(y, m, 1).unwrap());
-                    },
-                    "▶"
-                }
-            }
+        div {
+            class: "{scrim_class}",
+            "aria-hidden": "true",
+            onclick: move |_| on_close.call(()),
+        }
+        aside {
+            class: "{panel_class}",
+            // Clear the status bar / gesture bar on Android via the inset vars.
+            style: "padding-top: calc(1rem + var(--safe-area-inset-top)); padding-bottom: calc(1rem + var(--safe-area-inset-bottom));",
 
-            // Weekday header (Mon-first)
-            div { class: "grid grid-cols-7 gap-1 mb-2",
-                for label in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
-                    div { class: "text-center text-[10px] font-semibold uppercase tracking-wider text-obsidian-text-muted py-1",
-                        "{label}"
+            // Drawer header: title + close
+            div { class: "flex items-center justify-between px-4 pb-3 mb-1 border-b border-white/5",
+                h2 { class: "text-sm font-bold text-obsidian-accent uppercase tracking-wider", "Calendar" }
+                button {
+                    class: "p-1 -mr-1 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
+                    "aria-label": "Close calendar",
+                    onclick: move |_| on_close.call(()),
+                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M6 18L18 6M6 6l12 12" }
                     }
                 }
             }
 
-            // Day grid
-            div { class: "grid grid-cols-7 gap-1",
-                for cell in cells {
-                    {
-                        let date_str = cell.date.format("%Y-%m-%d").to_string();
-                        let has_entry = dates_with_entries.read().contains(&date_str);
-                        let is_today = date_str == today;
-                        let is_selected = date_str == selected;
-                        let classes =
-                            day_cell_class(is_today, is_selected, has_entry, cell.in_current_month);
-                        let day_num = cell.date.day();
-                        rsx! {
-                            button {
-                                class: "{classes}",
-                                onclick: {
-                                    let d = date_str.clone();
-                                    move |_| on_select.call(d.clone())
-                                },
-                                div { class: "text-sm leading-none", "{day_num}" }
-                                div {
-                                    class: if has_entry {
-                                        "w-1 h-1 rounded-full bg-obsidian-accent mt-1"
-                                    } else {
-                                        "w-1 h-1 mt-1"
-                                    }
+            div { class: "px-3 py-2",
+                // Month navigation header
+                div { class: "flex items-center justify-between mb-3",
+                    button {
+                        class: "p-1.5 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
+                        "aria-label": "Previous month",
+                        onclick: move |_| {
+                            let a = *anchor.read();
+                            let (y, m) = if a.month() == 1 {
+                                (a.year() - 1, 12)
+                            } else {
+                                (a.year(), a.month() - 1)
+                            };
+                            anchor.set(NaiveDate::from_ymd_opt(y, m, 1).unwrap());
+                        },
+                        svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M15 19l-7-7 7-7" }
+                        }
+                    }
+                    h3 { class: "text-sm font-semibold text-obsidian-text", "{month_label}" }
+                    button {
+                        class: "p-1.5 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
+                        "aria-label": "Next month",
+                        onclick: move |_| {
+                            let a = *anchor.read();
+                            let (y, m) = if a.month() == 12 {
+                                (a.year() + 1, 1)
+                            } else {
+                                (a.year(), a.month() + 1)
+                            };
+                            anchor.set(NaiveDate::from_ymd_opt(y, m, 1).unwrap());
+                        },
+                        svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M9 5l7 7-7 7" }
+                        }
+                    }
+                }
+
+                // Weekday header (Mon-first). Single letters keep the columns
+                // legible in the narrow drawer.
+                div { class: "grid grid-cols-7 gap-1 mb-1",
+                    for (i , label) in ["M", "T", "W", "T", "F", "S", "S"].iter().enumerate() {
+                        div {
+                            key: "{i}",
+                            class: "text-center text-[10px] font-semibold uppercase tracking-wider text-obsidian-text-muted py-1",
+                            "{label}"
+                        }
+                    }
+                }
+
+                // Day grid
+                div { class: "grid grid-cols-7 gap-1",
+                    for cell in cells {
+                        {
+                            let date_str = cell.date.format("%Y-%m-%d").to_string();
+                            let stats = day_stats.read();
+                            let has_entry = stats.contains_key(&date_str);
+                            let is_complete = stats.get(&date_str).copied().unwrap_or(false);
+                            let is_today = date_str == today;
+                            let is_selected = date_str == selected;
+                            let classes = day_cell_class(
+                                is_today,
+                                is_selected,
+                                has_entry,
+                                cell.in_current_month,
+                            );
+                            let day_num = cell.date.day();
+                            rsx! {
+                                button {
+                                    class: "{classes}",
+                                    onclick: {
+                                        let d = date_str.clone();
+                                        move |_| on_select.call(d.clone())
+                                    },
+                                    div { class: "text-xs leading-none", "{day_num}" }
+                                    {day_marker(has_entry, is_complete)}
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            if let Some(err) = &*fetch_error.read() {
-                div { class: "mt-4 p-3 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-sm",
-                    "{err}"
+                if let Some(err) = &*fetch_error.read() {
+                    div { class: "mt-3 p-2 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-xs",
+                        "{err}"
+                    }
                 }
             }
+
+            // Footer: the viewed note's word/char count (Obsidian calendar
+            // parity). `mt-auto` pins it to the bottom of the drawer column.
+            div { class: "mt-auto px-4 pt-3 border-t border-white/5 flex items-center justify-between text-[11px] text-obsidian-text-muted",
+                span { "{words} {word_label}" }
+                span { "{chars} {char_label}" }
+            }
+        }
+    }
+}
+
+/// The per-day activity marker under the day number: a check when the entry is
+/// complete, a filled dot when there's an entry, else an empty spacer (keeps
+/// every cell the same height so the grid doesn't jitter).
+fn day_marker(has_entry: bool, is_complete: bool) -> Element {
+    if is_complete {
+        rsx! {
+            svg {
+                class: "w-2.5 h-2.5 mt-0.5 text-obsidian-accent",
+                fill: "none",
+                stroke: "currentColor",
+                view_box: "0 0 24 24",
+                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "3", d: "M5 13l4 4L19 7" }
+            }
+        }
+    } else if has_entry {
+        rsx! {
+            div { class: "w-1 h-1 rounded-full bg-obsidian-accent mt-1" }
+        }
+    } else {
+        rsx! {
+            div { class: "w-1 h-1 mt-1" }
         }
     }
 }
@@ -864,5 +1223,18 @@ mod tests {
         // Feb 1 (Sunday) should be cell index 6.
         assert_eq!(cells[6].date, anchor);
         assert!(cells[6].in_current_month);
+    }
+
+    #[test]
+    fn body_stats_counts_words_and_chars() {
+        // Empty and whitespace-only bodies have zero words.
+        assert_eq!(body_stats(""), (0, 0));
+        assert_eq!(body_stats("   \n\t "), (0, 6));
+        // Plain prose: whitespace-delimited words, all chars counted.
+        assert_eq!(body_stats("hello world"), (2, 11));
+        // Runs of whitespace between words collapse to one separator.
+        assert_eq!(body_stats("one   two\nthree"), (3, 15));
+        // Characters are Unicode scalar values, not bytes ("é" is one char).
+        assert_eq!(body_stats("café"), (1, 4));
     }
 }

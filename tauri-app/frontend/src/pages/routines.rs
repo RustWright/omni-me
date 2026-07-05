@@ -152,7 +152,7 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
                 }
             } else {
                 div { class: "space-y-3",
-                    for group in ordered.iter().cloned().collect::<Vec<_>>() {
+                    for group in &ordered {
                         {
                             let id_start = group.id.clone();
                             let id_over = group.id.clone();

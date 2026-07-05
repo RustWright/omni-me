@@ -264,57 +264,93 @@ impl NotesProjection {
     }
 }
 
-/// A journal entry is "complete" when all three manual properties have
-/// non-empty values in a YAML-style frontmatter block at the top of the note.
+/// A journal entry is "complete" when all three manual reflection properties
+/// have non-empty values in the YAML frontmatter at the top of the note.
 ///
-/// The parse is deliberately forgiving — any `key: value` line is accepted
-/// regardless of whether it sits inside `---` fences, matching how users
-/// actually type notes on a phone.
+/// **Fenced frontmatter is scanned in full.** When the note opens with a `---`
+/// fence (what the journal template and the property panel always emit), every
+/// line up to the closing `---` counts as frontmatter. Blank lines, indented
+/// continuation lines, and block-list items (`tags:\n  - daily_note`) are
+/// skipped rather than terminating the scan — so **key reordering, block-list
+/// values, and stray blank lines can't hide a later reflection key**. This is
+/// the shape that previously broke auto-close (the template worked around it by
+/// keeping `tags` inline; imported Obsidian notes routinely use block lists).
+///
+/// **Fence-less notes stay forgiving.** For the mobile-entry shape with no
+/// leading `---`, the scan reads the leading run of `key: value` lines and
+/// stops at the first blank or non-kv line once a kv has been seen (that line
+/// is the body). Indented continuation lines still don't terminate it.
 ///
 /// **Duplicate-key semantics:** YAML 1.2 says duplicate keys are undefined.
-/// We use "any-non-empty wins" via `.any()` — if a property key appears more
-/// than once and *any* occurrence has a non-empty value, the property counts
-/// as filled. This differs from Python yaml / Obsidian (which are last-wins)
-/// but is safe in practice because (1) duplicate keys essentially never
-/// occur via normal user edits or property-panel UIs, and (2) the forgiving
-/// rule favors "user typed it once, accidentally added a blank line later"
-/// which is the realistic mistake mode.
+/// We use "any-non-empty wins" via the running found-set — if a property key
+/// appears more than once and *any* occurrence has a non-empty value, the
+/// property counts as filled. This differs from Python yaml / Obsidian
+/// (last-wins) but is safe: duplicate keys essentially never occur via normal
+/// edits, and the rule favors the realistic "typed it once, added a blank line
+/// later" mistake mode.
 fn is_complete(raw_text: &str) -> bool {
     // Single-pass scan over `&str` slices — no allocation. We track which of
-    // the required properties have been seen with a non-empty value, and
-    // short-circuit as soon as all three are satisfied. Stays cheap when this
-    // runs on every keystroke-triggered auto-save.
-    //
-    // Termination is the same as the previous parser: `---` fences are
-    // skipped; a blank line ends the scan only after at least one kv has
-    // been consumed; a line without a colon ends the scan only after at
-    // least one kv has been consumed.
+    // the required properties have been seen with a non-empty value and
+    // short-circuit as soon as all three are satisfied, so this stays cheap on
+    // every keystroke-triggered auto-save.
     let mut found = [false; COMPLETE_PROPERTIES.len()];
-    let mut seen_kv = false;
 
-    for line in raw_text.lines() {
-        let trimmed = line.trim();
-        if trimmed == "---" {
+    let mut lines = raw_text.lines();
+
+    // Peek the first non-blank line: a `---` there opens fenced frontmatter
+    // (scanned to the closing fence). Anything else is the fence-less shape, so
+    // that line is the first content line and must still be processed below.
+    let mut fenced = false;
+    let mut first_content: Option<&str> = None;
+    for line in lines.by_ref() {
+        if line.trim().is_empty() {
             continue;
         }
+        if line.trim() == "---" {
+            fenced = true;
+        } else {
+            first_content = Some(line);
+        }
+        break;
+    }
+
+    let mut seen_kv = false;
+    for line in first_content.into_iter().chain(lines) {
+        let trimmed = line.trim();
+
+        if fenced && trimmed == "---" {
+            break; // closing fence ends the frontmatter
+        }
+        if trimmed == "---" {
+            continue; // a stray fence line in the fence-less shape
+        }
         if trimmed.is_empty() {
-            if seen_kv {
+            // A blank line never ends a fenced block; in the fence-less shape it
+            // ends the frontmatter once we've consumed a kv (it's the body gap).
+            if !fenced && seen_kv {
                 break;
             }
             continue;
         }
+        // Indented lines and block-list items are YAML continuations of the
+        // preceding key — never a terminator, never a new key.
+        if line.starts_with(char::is_whitespace) || trimmed.starts_with('-') {
+            continue;
+        }
+
         let Some((key, value)) = trimmed.split_once(':') else {
-            if seen_kv {
+            // A non-kv line at column 0 is the body in the fence-less shape;
+            // inside a fence we keep scanning to the closing `---`.
+            if !fenced && seen_kv {
                 break;
             }
             continue;
         };
         seen_kv = true;
 
-        let value = value.trim();
-        if value.is_empty() {
+        if value.trim().is_empty() {
             // Empty value can never satisfy a required property, but the line
-            // still counts as kv for the termination heuristic above.
+            // still counts as a kv for the fence-less termination heuristic.
             continue;
         }
         let key = key.trim();
@@ -396,6 +432,91 @@ mod tests {
             is_complete(filled),
             "filled-in journal template must register as complete"
         );
+    }
+
+    #[test]
+    fn is_complete_accepts_block_list_tags() {
+        // The bug this hardening targets: a `tags:` block list (empty scalar
+        // value + indented `- item` lines) used to terminate the scan before
+        // the reflection keys below it were seen. Obsidian imports write tags
+        // this way by default.
+        let text = "---\n\
+            tags:\n\
+            \x20 - daily_note\n\
+            \x20 - work\n\
+            homework_for_life: shipped the parser\n\
+            grateful_for: block lists\n\
+            learnt_today: fence-aware scanning\n\
+            ---\n\
+            body";
+        assert!(is_complete(text), "block-list tags must not hide the reflections");
+    }
+
+    #[test]
+    fn is_complete_accepts_reordered_keys() {
+        // Reflections first, other keys (incl. a block list) after — the scan
+        // must cover the whole fence regardless of order.
+        let text = "---\n\
+            learnt_today: order independence\n\
+            grateful_for: coffee\n\
+            homework_for_life: notice ordering assumptions\n\
+            tags:\n\
+            \x20 - daily_note\n\
+            date: 2026-07-03\n\
+            ---\n\
+            body";
+        assert!(is_complete(text), "reordered keys must still register complete");
+    }
+
+    #[test]
+    fn is_complete_accepts_blank_lines_in_frontmatter() {
+        // A stray blank line between properties used to end the scan after the
+        // first kv. Inside a fence it must be skipped, not treated as the body.
+        let text = "---\n\
+            homework_for_life: a\n\
+            \n\
+            grateful_for: b\n\
+            \n\
+            learnt_today: c\n\
+            ---";
+        assert!(is_complete(text), "blank lines inside the fence must not terminate the scan");
+    }
+
+    #[test]
+    fn is_complete_accepts_block_list_without_fence() {
+        // Fence-less mobile shape can also carry a block list; indented
+        // continuation lines still must not terminate the leading run.
+        let text = "tags:\n\
+            \x20 - daily_note\n\
+            homework_for_life: a\n\
+            grateful_for: b\n\
+            learnt_today: c\n\
+            \n\
+            body";
+        assert!(is_complete(text), "fence-less block list must not hide the reflections");
+    }
+
+    #[test]
+    fn is_complete_false_for_body_prose_only() {
+        // Regression: prose that merely contains a colon must not read as a
+        // complete frontmatter. The first non-kv line ends the fence-less run.
+        let text = "Meeting notes: discussed the roadmap\nAction items follow.\nMore body.";
+        assert!(!is_complete(text));
+    }
+
+    #[test]
+    fn is_complete_false_when_block_list_property_is_a_reflection() {
+        // A reflection expressed as a block list has an empty scalar value, so
+        // it is *not* filled — the value lives on the indented items, which we
+        // skip. This is fine: the property panel never emits reflections as
+        // block lists, and a truly empty reflection should stay incomplete.
+        let text = "---\n\
+            homework_for_life:\n\
+            \x20 - a\n\
+            grateful_for: b\n\
+            learnt_today: c\n\
+            ---";
+        assert!(!is_complete(text));
     }
 
     #[tokio::test]

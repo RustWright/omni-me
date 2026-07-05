@@ -4,6 +4,7 @@ mod components;
 mod continuity;
 mod duration;
 mod journal_template;
+mod note_frontmatter;
 mod pages;
 mod reorder;
 mod timer;
@@ -62,6 +63,10 @@ impl Tab {
 const EDGE_SWIPE_START_PX: f64 = 24.0;
 /// Rightward travel (CSS px) before an edge-swipe commits to opening the drawer.
 const EDGE_SWIPE_OPEN_PX: f64 = 48.0;
+/// Leftward travel (CSS px) before a swipe on the *open* drawer commits to
+/// closing it — the inverse gesture. Mirrors the scrim-tap close (which stays as
+/// the guaranteed fallback).
+const EDGE_SWIPE_CLOSE_PX: f64 = 48.0;
 
 fn main() {
     dioxus::launch(App);
@@ -73,9 +78,11 @@ fn App() -> Element {
     // Mobile nav drawer open/close (1.11). Desktop uses the persistent SideNav,
     // so this only drives the small-screen slide-in.
     let mut drawer_open = use_signal(|| false);
-    // Left-edge swipe tracking (1.12): `Some(start_x)` once a touch begins in the
-    // edge strip with the drawer closed; cleared on open/end. `peek` everywhere —
-    // the gesture mutates state but nothing renders off this signal.
+    // Drawer swipe tracking (1.12): `Some(start_x)` once a tracked touch begins —
+    // in the left edge strip when the drawer is *closed* (candidate open-swipe),
+    // or anywhere when it's *open* (candidate close-swipe). Cleared on
+    // open/close/end. `peek` everywhere — the gesture mutates state but nothing
+    // renders off this signal.
     let mut swipe_start_x = use_signal(|| None::<f64>);
 
     // Continuity store (Phase 1.1): root-held per-page editing state that
@@ -139,12 +146,14 @@ fn App() -> Element {
             // so normal scrolling/typing is untouched; we only act on a touch
             // that *starts* in the edge strip while the drawer is closed.
             ontouchstart: move |e| {
-                if *drawer_open.peek() {
-                    swipe_start_x.set(None);
-                    return;
-                }
                 let start = e.touches().first().map(|t| t.client_coordinates().x);
-                swipe_start_x.set(start.filter(|x| *x <= EDGE_SWIPE_START_PX));
+                if *drawer_open.peek() {
+                    // Open: track any touch so a leftward swipe can close it.
+                    swipe_start_x.set(start);
+                } else {
+                    // Closed: only track touches starting in the left edge strip.
+                    swipe_start_x.set(start.filter(|x| *x <= EDGE_SWIPE_START_PX));
+                }
             },
             ontouchmove: move |e| {
                 // Copy the start out first so the `peek` guard is released before
@@ -152,9 +161,19 @@ fn App() -> Element {
                 let Some(start) = *swipe_start_x.peek() else {
                     return;
                 };
-                if let Some(t) = e.touches().first()
-                    && t.client_coordinates().x - start >= EDGE_SWIPE_OPEN_PX
-                {
+                // Extract the x in the same statement so the temporary touch
+                // list doesn't outlive the borrow (the open path did this inline).
+                let Some(x) = e.touches().first().map(|t| t.client_coordinates().x) else {
+                    return;
+                };
+                if *drawer_open.peek() {
+                    // Open drawer: leftward travel past the threshold closes it.
+                    if start - x >= EDGE_SWIPE_CLOSE_PX {
+                        drawer_open.set(false);
+                        swipe_start_x.set(None);
+                    }
+                } else if x - start >= EDGE_SWIPE_OPEN_PX {
+                    // Closed drawer: rightward travel from the edge opens it.
                     drawer_open.set(true);
                     swipe_start_x.set(None);
                 }

@@ -157,8 +157,14 @@ pub fn Editor(
     });
 
     rsx! {
+        // Full-bleed, fill-height writing surface (Phase 5 "editor feel"): no
+        // card border/shadow/padding here — the CM theme owns the typography +
+        // inset, and the page column supplies the gutter. `flex-1 min-h-0` lets
+        // the editor grow to fill the page's flex column so a short note still
+        // occupies the whole screen (no fixed 400px island), while a long note
+        // grows past the viewport and the page column scrolls.
         div {
-            class: "w-full min-h-[400px] border border-white/10 rounded-xl overflow-hidden bg-obsidian-sidebar/20 shadow-inner flex flex-col",
+            class: "flex-1 flex flex-col w-full min-h-0",
 
             if !*editor_ready.read() {
                 div {
@@ -169,7 +175,7 @@ pub fn Editor(
 
             div {
                 id: EDITOR_CONTAINER_ID,
-                class: "flex-1 w-full outline-none p-4 font-mono text-[14px] text-obsidian-text leading-relaxed",
+                class: "flex-1 w-full flex flex-col min-h-0 outline-none text-obsidian-text",
             }
         }
     }

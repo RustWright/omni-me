@@ -3,7 +3,9 @@ use dioxus::prelude::*;
 use crate::autosave::{self, SaveIndicator, SaveState};
 use crate::bridge;
 use crate::components::editor::Editor;
+use crate::components::tag_editor::TagChipEditor;
 use crate::continuity::{use_continuity, ContinuityKey, EditSession};
+use crate::note_frontmatter::{serialize_note, split_note, NoteProps};
 use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
 use crate::types::GenericNoteItem;
 
@@ -78,7 +80,9 @@ pub fn NotesPage() -> Element {
     });
 
     rsx! {
-        div { class: "max-w-3xl mx-auto w-full",
+        // `min-h-full flex flex-col` establishes the height chain so an open
+        // note's editor (flex-1) fills the screen (Phase 5).
+        div { class: "max-w-3xl mx-auto w-full min-h-full flex flex-col",
             {
                 let current_view = view.read().clone();
 
@@ -343,6 +347,32 @@ fn NoteCard(note: GenericNoteItem, on_click: EventHandler<String>) -> Element {
     }
 }
 
+/// Split a raw note into typed properties + body and seed the editor from the
+/// body. Called on every hydrate path — but **never** writes `content`, which
+/// stays the full-text source of truth (so an untouched note can't phantom-save).
+fn apply_raw_note(
+    mut props: Signal<NoteProps>,
+    mut body: Signal<String>,
+    mut initial: Signal<String>,
+    raw: &str,
+) {
+    let (p, b) = split_note(raw);
+    props.set(p);
+    initial.set(b.clone());
+    body.set(b);
+}
+
+/// Recombine the typed properties + body back into `content` (the full raw text
+/// that autosave/save persist). Called only from user edits — the panel's
+/// `on_change` and the editor's `on_change` — never on hydrate.
+fn recombine_note(
+    props: Signal<NoteProps>,
+    body: Signal<String>,
+    mut content: Signal<String>,
+) {
+    content.set(serialize_note(&props.read(), body.read().as_str()));
+}
+
 #[component]
 fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
     // Continuity store (1.3): the notes editing session is held at the app root
@@ -353,8 +383,15 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
 
     let mut loading = use_signal(|| true);
     let mut title = use_signal(String::new);
+    // `content` is the full raw text (frontmatter + body) — the single source of
+    // truth for autosave/save. The typed properties panel + a body-only editor
+    // are two inputs that recombine into it (Phase 5.1/5.2, mirroring the
+    // journal). `props`/`body` are derived from `content` on load and only feed
+    // back into it on a user edit.
     let mut content = use_signal(String::new);
-    let mut initial_content = use_signal(String::new);
+    let props = use_signal(NoteProps::default);
+    let mut body = use_signal(String::new);
+    let initial_content = use_signal(String::new);
     let mut saving = use_signal(|| false);
     let mut save_status = use_signal(|| None::<String>);
     // True once an auto-save exhausts its retries (1.7); drives the `Failed`
@@ -404,7 +441,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                 title.set(s.title);
                 last_saved_content.set(s.last_saved_content);
                 content.set(s.content.clone());
-                initial_content.set(s.content);
+                apply_raw_note(props, body, initial_content, &s.content);
                 save_generation.set(s.save_generation);
                 cursor.set(s.cursor);
             } else if let Some(id) = id {
@@ -415,7 +452,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                         let raw = n.raw_text.clone();
                         last_saved_content.set(raw.clone());
                         content.set(raw.clone());
-                        initial_content.set(raw);
+                        apply_raw_note(props, body, initial_content, &raw);
                     }
                     Err(e) => fetch_error.set(Some(e)),
                 }
@@ -505,7 +542,8 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
     });
 
     rsx! {
-        div { class: "animate-in fade-in slide-in-from-bottom-4 duration-300",
+        // Fill-height flex column so the editor grows to fill the screen (Phase 5).
+        div { class: "animate-in fade-in slide-in-from-bottom-4 duration-300 flex flex-col flex-1 min-h-0",
             div { class: "flex justify-between items-center mb-6 gap-3",
                 button {
                     class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors shrink-0",
@@ -597,10 +635,17 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
             if *loading.read() {
                 div { class: "py-20 text-center text-obsidian-text-muted", "Loading..." }
             } else {
-                div { class: "rounded-lg border border-white/10 overflow-hidden shadow-2xl",
+                NotePropertiesPanel {
+                    model: props,
+                    on_change: move |_| recombine_note(props, body, content),
+                }
+                div { class: "flex-1 flex flex-col min-h-0",
                     Editor {
                         initial_content: initial_content.read().clone(),
-                        on_change: move |new_content: String| content.set(new_content),
+                        on_change: move |new_body: String| {
+                            body.set(new_body);
+                            recombine_note(props, body, content);
+                        },
                         initial_cursor: *cursor.peek(),
                         on_cursor: move |p: usize| cursor.set(p),
                     }
@@ -610,6 +655,73 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
             if let Some(status) = &*save_status.read() {
                 div { class: "mt-4 p-3 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
                     "{status}"
+                }
+            }
+        }
+    }
+}
+
+/// Typed properties card above a generic note's editor (Phase 5.1/5.2). The
+/// note's `title` is a separate field and notes carry no date/reflections, so
+/// this is just the tags chip editor + the raw escape hatch for any other
+/// (imported/legacy) frontmatter. Mirrors `journal::JournalPropertiesPanel`.
+#[component]
+fn NotePropertiesPanel(model: Signal<NoteProps>, on_change: EventHandler<()>) -> Element {
+    // `model` renamed to `props` locally — a component param literally named
+    // `props` collides with the `#[component]` macro's generated binding.
+    let mut props = model;
+    // Expand the raw escape hatch by default only when it already holds content.
+    let mut show_raw = use_signal(|| !props.peek().legacy_raw.is_empty());
+
+    let tags = props.read().tags.clone();
+    let has_legacy = !props.read().legacy_raw.is_empty();
+
+    rsx! {
+        div { class: "mb-4 rounded-lg border border-white/5 bg-obsidian-sidebar/30 divide-y divide-white/5 text-sm",
+            // Tags — chip editor.
+            div { class: "flex items-start gap-3 px-3 py-2",
+                span { class: "w-24 shrink-0 pt-1 text-xs font-medium text-obsidian-text-muted", "Tags" }
+                TagChipEditor {
+                    tags,
+                    on_add: move |t: String| {
+                        props.write().tags.push(t);
+                        on_change.call(());
+                    },
+                    on_remove: move |idx: usize| {
+                        if idx < props.read().tags.len() {
+                            props.write().tags.remove(idx);
+                            on_change.call(());
+                        }
+                    },
+                }
+            }
+
+            // Raw escape hatch for other / imported frontmatter.
+            div { class: "px-3 py-2",
+                button {
+                    r#type: "button",
+                    class: "flex items-center gap-1.5 text-xs font-medium text-obsidian-text-muted hover:text-obsidian-text transition-colors",
+                    onclick: move |_| {
+                        let v = *show_raw.peek();
+                        show_raw.set(!v);
+                    },
+                    span { class: "text-[10px] w-2", if *show_raw.read() { "▾" } else { "▸" } }
+                    "Raw properties"
+                    if has_legacy {
+                        span { class: "w-1 h-1 rounded-full bg-obsidian-accent" }
+                    }
+                }
+                if *show_raw.read() {
+                    textarea {
+                        class: "mt-2 w-full bg-obsidian-bg/50 border border-white/5 rounded p-2 text-xs font-mono text-obsidian-text resize-y focus:outline-none focus:border-obsidian-accent/40",
+                        rows: "3",
+                        placeholder: "Other frontmatter, preserved verbatim",
+                        value: "{props.read().legacy_raw}",
+                        oninput: move |e| {
+                            props.write().legacy_raw = e.value();
+                            on_change.call(());
+                        },
+                    }
                 }
             }
         }

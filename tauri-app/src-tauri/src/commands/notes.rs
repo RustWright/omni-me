@@ -1,6 +1,6 @@
 use tauri::State;
 
-use omni_me_core::db::queries::{self, GenericNoteRow, JournalEntryRow};
+use omni_me_core::db::queries::{self, GenericNoteRow, JournalDayStat, JournalEntryRow};
 use omni_me_core::events::EventType;
 
 use super::shared::append_and_apply;
@@ -114,12 +114,12 @@ pub async fn list_journal_entries(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn list_journal_dates(
+pub async fn list_journal_day_stats(
     state: State<'_, AppState>,
     from_date: String,
     to_date: String,
-) -> Result<Vec<String>, String> {
-    queries::list_journal_dates(&state.db, &from_date, &to_date)
+) -> Result<Vec<JournalDayStat>, String> {
+    queries::list_journal_day_stats(&state.db, &from_date, &to_date)
         .await
         .map_err(|e| e.to_string())
 }
