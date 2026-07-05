@@ -18,7 +18,12 @@ pub async fn create_journal_entry(
     legacy_properties: Option<serde_json::Value>,
 ) -> Result<JournalEntryRow, String> {
     tracing::info!(date = %date, len = raw_text.len(), "create_journal_entry");
-    let journal_id = ulid::Ulid::new().to_string();
+    // The journal aggregate identity IS the date. A journal entry is inherently
+    // one-per-day, so the date is the natural, device-independent key — both
+    // devices mint the same `aggregate_id` for the same day, so an entry created
+    // on one device and an edit from the other converge on a single row instead
+    // of diverging under two random per-device ULIDs (the old sync-blank bug).
+    let journal_id = date.clone();
 
     let mut payload = serde_json::json!({
         "journal_id": journal_id,
@@ -302,17 +307,13 @@ async fn sync_back_after_llm(
 
     if !result.pulled_events.is_empty() {
         tracing::info!(pulled = result.pulled, "applying pulled events to projections");
-        state
+        let failed = state
             .projections
-            .apply_events(&result.pulled_events)
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "projection apply after sync failed");
-                format!(
-                    "Projection apply after sync failed, retry syncing manually - original error: {}",
-                    e
-                )
-            })?;
+            .apply_events_resilient(&result.pulled_events)
+            .await;
+        if failed > 0 {
+            tracing::warn!(failed, pulled = result.pulled, "some pulled events failed to project after llm sync");
+        }
     }
 
     tracing::info!(pulled = result.pulled, pushed = result.pushed, "sync complete");

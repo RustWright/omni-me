@@ -97,10 +97,11 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
+    /// Seed a journal entry for `date`. The journal aggregate identity IS the
+    /// date (deterministic, device-independent), so that's the aggregate_id.
     async fn seed_journal(
         store: &SurrealEventStore,
         runner: &ProjectionRunner,
-        journal_id: &str,
         date: &str,
         raw_text: &str,
     ) {
@@ -108,11 +109,11 @@ mod tests {
             .append(NewEvent {
                 id: None,
                 event_type: "journal_entry_created".into(),
-                aggregate_id: journal_id.into(),
+                aggregate_id: date.into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
                 payload: serde_json::json!({
-                    "journal_id": journal_id,
+                    "journal_id": date,
                     "date": date,
                     "raw_text": raw_text
                 }),
@@ -132,14 +133,14 @@ mod tests {
         let complete_body = "homework_for_life: a\ngrateful_for: b\nlearnt_today: c";
 
         // Two complete past-day journals — should both close.
-        seed_journal(&store, &runner, "j-apr17", "2026-04-17", complete_body).await;
-        seed_journal(&store, &runner, "j-apr18", "2026-04-18", complete_body).await;
+        seed_journal(&store, &runner, "2026-04-17", complete_body).await;
+        seed_journal(&store, &runner, "2026-04-18", complete_body).await;
 
         // Today's journal is complete too — must NOT close.
-        seed_journal(&store, &runner, "j-apr19", "2026-04-19", complete_body).await;
+        seed_journal(&store, &runner, "2026-04-19", complete_body).await;
 
         // Incomplete past-day journal — must NOT close.
-        seed_journal(&store, &runner, "j-apr16", "2026-04-16", "just a note").await;
+        seed_journal(&store, &runner, "2026-04-16", "just a note").await;
 
         let closed = auto_close_stale_journals(&db, &store, &runner, "d1", ymd(2026, 4, 19))
             .await
@@ -165,7 +166,7 @@ mod tests {
         runner.init_all().await.unwrap();
 
         let body = "homework_for_life: a\ngrateful_for: b\nlearnt_today: c";
-        seed_journal(&store, &runner, "j1", "2026-04-17", body).await;
+        seed_journal(&store, &runner, "2026-04-17", body).await;
 
         let first = auto_close_stale_journals(&db, &store, &runner, "d1", ymd(2026, 4, 19))
             .await
@@ -189,23 +190,23 @@ mod tests {
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
         runner.init_all().await.unwrap();
 
-        seed_journal(&store, &runner, "j1", "2026-04-18", "just body, no properties").await;
+        seed_journal(&store, &runner, "2026-04-18", "just body, no properties").await;
 
         let first = auto_close_stale_journals(&db, &store, &runner, "d1", ymd(2026, 4, 19))
             .await
             .unwrap();
         assert_eq!(first, 0, "incomplete past-day entry skipped");
 
-        // User fills properties the next morning.
+        // User fills properties the next morning (update routes by date).
         let e = store
             .append(NewEvent {
                 id: None,
                 event_type: "journal_entry_updated".into(),
-                aggregate_id: "j1".into(),
+                aggregate_id: "2026-04-18".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
                 payload: serde_json::json!({
-                    "journal_id": "j1",
+                    "journal_id": "2026-04-18",
                     "raw_text": "homework_for_life: a\ngrateful_for: b\nlearnt_today: c\n\nbody"
                 }),
             })

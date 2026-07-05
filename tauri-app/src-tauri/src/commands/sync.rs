@@ -20,13 +20,18 @@ pub async fn trigger_sync(state: State<'_, AppState>) -> Result<SyncCommandResul
         e.to_string()
     })?;
 
-    // Apply pulled events through projections so they become visible in the UI
+    // Apply pulled events through projections so they become visible in the UI.
+    // Best-effort: a single bad remote event is logged and skipped, never aborts
+    // the batch (the events are durably stored, so a rebuild always recovers).
     if !result.pulled_events.is_empty() {
         tracing::info!(pulled = result.pulled, "applying pulled events to projections");
-        state.projections.apply_events(&result.pulled_events).await.map_err(|e| {
-            tracing::warn!(error = %e, "projection apply after sync failed");
-            e.to_string()
-        })?;
+        let failed = state
+            .projections
+            .apply_events_resilient(&result.pulled_events)
+            .await;
+        if failed > 0 {
+            tracing::warn!(failed, pulled = result.pulled, "some pulled events failed to project");
+        }
     }
 
     tracing::info!(pulled = result.pulled, pushed = result.pushed, "sync complete");

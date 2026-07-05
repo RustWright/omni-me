@@ -78,7 +78,15 @@ impl ProjectionRunner {
         Ok(())
     }
 
-    /// Apply a batch of events through all matching projections.
+    /// Apply a batch of events through all matching projections, **fail-fast**:
+    /// the first projection error aborts the batch and propagates.
+    ///
+    /// This is the right semantics for **local single-event commands** (via
+    /// `commands::shared::append_and_apply`): the caller is the user whose
+    /// action just failed, so surfacing the error — and refusing to advance —
+    /// is correct. For the **sync-pull path** use [`apply_events_resilient`]
+    /// instead: there, one malformed/colliding *remote* event must not strand
+    /// every later event in the batch.
     pub async fn apply_events(&self, events: &[Event]) -> Result<(), EventError> {
         for event in events {
             for proj in self.projections.iter() {
@@ -88,21 +96,77 @@ impl ProjectionRunner {
 
         // Update last_event_id once after all events are applied
         if let Some(last) = events.last() {
-            let event_id = last.id.clone();
+            self.advance_last_event_id(&last.id).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Apply a batch **best-effort**: a single failing event is logged and
+    /// skipped rather than aborting the batch. Returns the count of events that
+    /// failed to apply (`0` = all clean).
+    ///
+    /// This is the sync-pull apply path. Two properties make it safe:
+    /// - The pulled events are already **durably appended** to the event store
+    ///   before this runs, so a skipped event is never *lost* — a `rebuild()`
+    ///   (full replay) always recovers it, and with idempotent projections a
+    ///   replay is a no-op for the events that did apply.
+    /// - Not aborting means the pull cursor (already advanced past this batch)
+    ///   stays consistent with "we applied everything we could," instead of the
+    ///   old fail-fast behaviour where one bad event silently dropped every
+    ///   later event in the batch **and** they were never re-pulled.
+    pub async fn apply_events_resilient(&self, events: &[Event]) -> usize {
+        let mut failed = 0usize;
+        let mut last_applied: Option<&str> = None;
+
+        for event in events {
+            let mut event_ok = true;
             for proj in self.projections.iter() {
-                let name = proj.name().to_string();
-                self.db
-                    .query(
-                        "UPDATE projection_versions SET last_event_id = $event_id
-                         WHERE name = $name",
-                    )
-                    .bind(("event_id", event_id.clone()))
-                    .bind(("name", name))
-                    .await
-        ?;
+                if let Err(e) = proj.apply(event, &self.db).await {
+                    tracing::warn!(
+                        event_id = %event.id,
+                        event_type = %event.event_type,
+                        aggregate_id = %event.aggregate_id,
+                        projection = proj.name(),
+                        error = %e,
+                        "projection apply failed during sync; skipping event (best-effort)"
+                    );
+                    event_ok = false;
+                    // Keep going — sibling projections are independent and may
+                    // still apply this event cleanly.
+                }
+            }
+            if event_ok {
+                last_applied = Some(&event.id);
+            } else {
+                failed += 1;
             }
         }
 
+        // Bookkeeping only (not the sync cursor): point at the last fully-applied
+        // event. Best-effort — a failure here shouldn't fail the whole apply.
+        if let Some(id) = last_applied
+            && let Err(e) = self.advance_last_event_id(id).await
+        {
+            tracing::warn!(error = %e, "failed to advance projection last_event_id after sync apply");
+        }
+
+        failed
+    }
+
+    /// Point every projection's `last_event_id` bookmark at `event_id`.
+    async fn advance_last_event_id(&self, event_id: &str) -> Result<(), EventError> {
+        for proj in self.projections.iter() {
+            let name = proj.name().to_string();
+            self.db
+                .query(
+                    "UPDATE projection_versions SET last_event_id = $event_id
+                     WHERE name = $name",
+                )
+                .bind(("event_id", event_id.to_string()))
+                .bind(("name", name))
+                .await?;
+        }
         Ok(())
     }
 
@@ -165,12 +229,53 @@ mod tests {
         }
     }
 
+    /// Counts good applies but returns an error for any event whose
+    /// `event_type` is `"boom"` — models a single malformed/colliding event in
+    /// a pulled batch.
+    struct FlakyProjection {
+        applied: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl Projection for FlakyProjection {
+        fn name(&self) -> &str {
+            "flaky"
+        }
+        fn version(&self) -> u32 {
+            1
+        }
+        async fn apply(&self, event: &Event, _db: &Database) -> Result<(), EventError> {
+            if event.event_type == "boom" {
+                return Err(EventError::Validation("boom".into()));
+            }
+            self.applied.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn init_schema(&self, _db: &Database) -> Result<(), EventError> {
+            Ok(())
+        }
+        async fn clear_tables(&self, _db: &Database) -> Result<(), EventError> {
+            Ok(())
+        }
+    }
+
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         std::mem::forget(dir);
         db
+    }
+
+    fn ev(id: &str, event_type: &str) -> Event {
+        Event {
+            id: id.into(),
+            event_type: event_type.into(),
+            aggregate_id: "agg".into(),
+            timestamp: Utc::now(),
+            device_id: "d1".into(),
+            payload: serde_json::json!({}),
+        }
     }
 
     #[tokio::test]
@@ -239,5 +344,33 @@ mod tests {
             .unwrap();
         let last_id: Option<String> = resp.take("last_event_id").unwrap();
         assert_eq!(last_id.as_deref(), Some("e2"));
+    }
+
+    #[tokio::test]
+    async fn resilient_apply_skips_bad_event_and_continues() {
+        let db = test_db().await;
+        let applied = Arc::new(AtomicU32::new(0));
+        let runner = ProjectionRunner::new(
+            db.clone(),
+            vec![Box::new(FlakyProjection {
+                applied: applied.clone(),
+            })],
+        );
+        runner.init_all().await.unwrap();
+
+        // Middle event errors; the two good ones on either side must still apply.
+        let events = vec![ev("g1", "note_created"), ev("bad", "boom"), ev("g2", "note_updated")];
+        let failed = runner.apply_events_resilient(&events).await;
+
+        assert_eq!(failed, 1, "one event should fail");
+        assert_eq!(applied.load(Ordering::SeqCst), 2, "both good events apply despite the bad one");
+
+        // last_event_id parks on the last *successfully* applied event, not the failing tail-1.
+        let mut resp = db
+            .query("SELECT last_event_id FROM projection_versions WHERE name = 'flaky'")
+            .await
+            .unwrap();
+        let last_id: Option<String> = resp.take("last_event_id").unwrap();
+        assert_eq!(last_id.as_deref(), Some("g2"));
     }
 }

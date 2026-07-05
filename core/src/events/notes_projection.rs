@@ -82,29 +82,32 @@ impl Projection for NotesProjection {
 
 impl NotesProjection {
     async fn on_journal_created(&self, event: &Event, db: &Database) -> Result<(), EventError> {
-        let journal_id = event.aggregate_id.clone();
-        let date = event.payload["date"].as_str().unwrap_or_default().to_string();
+        // The journal record id IS the date (== aggregate_id, now deterministic).
+        // UPSERT — not CREATE — so a second "created" for the same day (the other
+        // device's create, pulled in) CONVERGES on the one row instead of erroring
+        // on a duplicate key, and so a rebuild (which replays creates) is
+        // idempotent. `?? existing` guards preserve any further-along state
+        // (closed/tags/summary/created_at) an earlier-applied event already set.
+        let date = event.aggregate_id.clone();
         let raw_text = event.payload["raw_text"].as_str().unwrap_or_default().to_string();
         let legacy_properties = event.payload.get("legacy_properties").cloned();
         let complete = is_complete(&raw_text);
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
-            "CREATE type::record('journal_entries', $date) CONTENT {
-                journal_id: $journal_id,
-                date: $date,
-                raw_text: $raw_text,
-                tags: [],
-                summary: NONE,
-                closed: false,
-                complete: $complete,
-                legacy_properties: $legacy_properties,
-                created_at: type::datetime($ts),
-                updated_at: type::datetime($ts)
-            }",
+            "UPSERT type::record('journal_entries', $date) SET
+                journal_id = $date,
+                date = $date,
+                raw_text = $raw_text,
+                complete = $complete,
+                tags = tags ?? [],
+                summary = summary ?? NONE,
+                closed = closed ?? false,
+                legacy_properties = $legacy_properties ?? legacy_properties ?? NONE,
+                created_at = created_at ?? type::datetime($ts),
+                updated_at = type::datetime($ts)",
         )
         .bind(("date", date))
-        .bind(("journal_id", journal_id))
         .bind(("raw_text", raw_text))
         .bind(("complete", complete))
         .bind(("legacy_properties", legacy_properties))
@@ -115,19 +118,30 @@ impl NotesProjection {
     }
 
     async fn on_journal_updated(&self, event: &Event, db: &Database) -> Result<(), EventError> {
-        let journal_id = event.aggregate_id.clone();
+        // Route by the date-keyed record id (== aggregate_id), and UPSERT (not a
+        // bare `UPDATE ... WHERE journal_id`) so a body edit still MATERIALIZES a
+        // full valid row when this device never saw the create — the "content
+        // edits don't materialize on sync" bug, where an incoming update matched
+        // no row (the other device minted a different journal_id) or the create
+        // was lost to the old fail-fast batch abort. Preserve closed/tags/summary.
+        let date = event.aggregate_id.clone();
         let raw_text = event.payload["raw_text"].as_str().unwrap_or_default().to_string();
         let complete = is_complete(&raw_text);
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
-            "UPDATE journal_entries SET
+            "UPSERT type::record('journal_entries', $date) SET
                 raw_text = $raw_text,
                 complete = $complete,
-                updated_at = type::datetime($ts)
-             WHERE journal_id = $journal_id",
+                updated_at = type::datetime($ts),
+                journal_id = journal_id ?? $date,
+                date = date ?? $date,
+                tags = tags ?? [],
+                summary = summary ?? NONE,
+                closed = closed ?? false,
+                created_at = created_at ?? type::datetime($ts)",
         )
-        .bind(("journal_id", journal_id))
+        .bind(("date", date))
         .bind(("raw_text", raw_text))
         .bind(("complete", complete))
         .bind(("ts", ts))
@@ -142,16 +156,22 @@ impl NotesProjection {
         db: &Database,
         closed: bool,
     ) -> Result<(), EventError> {
-        let journal_id = event.aggregate_id.clone();
+        let date = event.aggregate_id.clone();
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
-            "UPDATE journal_entries SET
+            "UPSERT type::record('journal_entries', $date) SET
                 closed = $closed,
-                updated_at = type::datetime($ts)
-             WHERE journal_id = $journal_id",
+                updated_at = type::datetime($ts),
+                journal_id = journal_id ?? $date,
+                date = date ?? $date,
+                raw_text = raw_text ?? '',
+                complete = complete ?? false,
+                tags = tags ?? [],
+                summary = summary ?? NONE,
+                created_at = created_at ?? type::datetime($ts)",
         )
-        .bind(("journal_id", journal_id))
+        .bind(("date", date))
         .bind(("closed", closed))
         .bind(("ts", ts))
         .await?;
@@ -166,16 +186,19 @@ impl NotesProjection {
         let legacy_properties = event.payload.get("legacy_properties").cloned();
         let ts = event.timestamp.to_rfc3339();
 
+        // UPSERT so a rebuild (replays creates) is idempotent instead of erroring
+        // on a duplicate record id. Note ids are per-creation ULIDs, so two
+        // devices never collide here; the create always precedes its edits in the
+        // (timestamp-ordered) pull, so setting raw_text is safe.
         db.query(
-            "CREATE type::record('generic_notes', $note_id) CONTENT {
-                title: $title,
-                raw_text: $raw_text,
-                tags: [],
-                summary: NONE,
-                legacy_properties: $legacy_properties,
-                created_at: type::datetime($ts),
-                updated_at: type::datetime($ts)
-            }",
+            "UPSERT type::record('generic_notes', $note_id) SET
+                title = $title,
+                raw_text = $raw_text,
+                tags = tags ?? [],
+                summary = summary ?? NONE,
+                legacy_properties = $legacy_properties ?? legacy_properties ?? NONE,
+                created_at = created_at ?? type::datetime($ts),
+                updated_at = type::datetime($ts)",
         )
         .bind(("note_id", note_id))
         .bind(("title", title))
@@ -188,14 +211,22 @@ impl NotesProjection {
     }
 
     async fn on_generic_updated(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+        // UPSERT (not a bare UPDATE) so a body edit MATERIALIZES the row even if
+        // this device never saw the create (lost to the old fail-fast batch abort)
+        // — the note-body half of "content edits don't materialize on sync".
+        // `title ?? ''` supplies the SCHEMAFULL-required title when materializing.
         let note_id = event.aggregate_id.clone();
         let raw_text = event.payload["raw_text"].as_str().unwrap_or_default().to_string();
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
-            "UPDATE type::record('generic_notes', $note_id) SET
+            "UPSERT type::record('generic_notes', $note_id) SET
                 raw_text = $raw_text,
-                updated_at = type::datetime($ts)",
+                updated_at = type::datetime($ts),
+                title = title ?? '',
+                tags = tags ?? [],
+                summary = summary ?? NONE,
+                created_at = created_at ?? type::datetime($ts)",
         )
         .bind(("note_id", note_id))
         .bind(("raw_text", raw_text))
@@ -211,9 +242,13 @@ impl NotesProjection {
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
-            "UPDATE type::record('generic_notes', $note_id) SET
+            "UPSERT type::record('generic_notes', $note_id) SET
                 title = $title,
-                updated_at = type::datetime($ts)",
+                updated_at = type::datetime($ts),
+                raw_text = raw_text ?? '',
+                tags = tags ?? [],
+                summary = summary ?? NONE,
+                created_at = created_at ?? type::datetime($ts)",
         )
         .bind(("note_id", note_id))
         .bind(("title", title))
@@ -240,14 +275,16 @@ impl NotesProjection {
         let summary = derived["summary"].as_str().map(String::from);
         let ts = event.timestamp.to_rfc3339();
 
-        // aggregate_id matches journal_entries.journal_id OR generic_notes record id.
-        // Update both — only one will match, the other no-ops.
+        // aggregate_id is EITHER a journal date (record id of journal_entries) OR
+        // a generic-note ULID (record id of generic_notes). Address both by record
+        // id — exactly one exists, the other UPDATE no-ops. Both are non-creating
+        // UPDATEs (not UPSERTs) so an llm event for a note can't spawn a phantom
+        // journal row keyed by the note's ULID (and vice versa).
         db.query(
-            "UPDATE journal_entries SET
+            "UPDATE type::record('journal_entries', $aggregate_id) SET
                 tags = $tags,
                 summary = $summary,
-                updated_at = type::datetime($ts)
-             WHERE journal_id = $aggregate_id;
+                updated_at = type::datetime($ts);
 
              UPDATE type::record('generic_notes', $aggregate_id) SET
                 tags = $tags,
@@ -526,15 +563,16 @@ mod tests {
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
         runner.init_all().await.unwrap();
 
+        // aggregate_id IS the date under the current model.
         let event = store
             .append(NewEvent {
                 id: None,
                 event_type: "journal_entry_created".into(),
-                aggregate_id: "01JKJ0000000000000000000AA".into(),
+                aggregate_id: "2026-04-19".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
                 payload: serde_json::json!({
-                    "journal_id": "01JKJ0000000000000000000AA",
+                    "journal_id": "2026-04-19",
                     "date": "2026-04-19",
                     "raw_text": "Opening entry."
                 }),
@@ -552,6 +590,113 @@ mod tests {
         assert_eq!(raw_text.as_deref(), Some("Opening entry."));
         let complete: Option<bool> = resp.take("complete").unwrap();
         assert_eq!(complete, Some(false));
+        // journal_id mirrors the date (deterministic identity).
+        let journal_id: Option<String> = resp.take("journal_id").unwrap();
+        assert_eq!(journal_id.as_deref(), Some("2026-04-19"));
+    }
+
+    #[tokio::test]
+    async fn journal_two_device_creates_converge_no_collision() {
+        // The headline sync bug: two devices each "create" the same day. With
+        // the date-keyed identity + UPSERT this converges on ONE row (no
+        // duplicate-key error), and a cross-device edit lands on it.
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let created_a = store
+            .append(NewEvent {
+                id: None,
+                event_type: "journal_entry_created".into(),
+                aggregate_id: "2026-04-19".into(),
+                timestamp: Utc::now(),
+                device_id: "device-a".into(),
+                payload: serde_json::json!({ "journal_id": "2026-04-19", "date": "2026-04-19", "raw_text": "from A" }),
+            })
+            .await
+            .unwrap();
+        // Device B's create for the same day arrives (would be a CREATE collision
+        // under the old code, aborting the whole pulled batch).
+        let created_b = store
+            .append(NewEvent {
+                id: None,
+                event_type: "journal_entry_created".into(),
+                aggregate_id: "2026-04-19".into(),
+                timestamp: Utc::now(),
+                device_id: "device-b".into(),
+                payload: serde_json::json!({ "journal_id": "2026-04-19", "date": "2026-04-19", "raw_text": "from B" }),
+            })
+            .await
+            .unwrap();
+        // A body edit from device B routes by date and lands on the shared row.
+        let updated_b = store
+            .append(NewEvent {
+                id: None,
+                event_type: "journal_entry_updated".into(),
+                aggregate_id: "2026-04-19".into(),
+                timestamp: Utc::now(),
+                device_id: "device-b".into(),
+                payload: serde_json::json!({ "journal_id": "2026-04-19", "raw_text": "merged body" }),
+            })
+            .await
+            .unwrap();
+
+        // Best-effort apply reports ZERO failures — no collision.
+        let failed = runner
+            .apply_events_resilient(&[created_a, created_b, updated_b])
+            .await;
+        assert_eq!(failed, 0, "no duplicate-key error across two devices' creates");
+
+        // Exactly one row for the day, carrying the cross-device edit.
+        let mut resp = db
+            .query("SELECT count() AS n FROM journal_entries GROUP ALL")
+            .await
+            .unwrap();
+        let n: Option<i64> = resp.take("n").unwrap();
+        assert_eq!(n, Some(1), "one converged row per day");
+
+        let mut resp = db
+            .query("SELECT raw_text FROM type::record('journal_entries', '2026-04-19')")
+            .await
+            .unwrap();
+        let raw: Option<String> = resp.take("raw_text").unwrap();
+        assert_eq!(raw.as_deref(), Some("merged body"), "cross-device edit lands");
+    }
+
+    #[tokio::test]
+    async fn journal_update_materializes_row_when_create_missing() {
+        // The "content edits don't materialize on sync" bug: an update whose
+        // create this device never saw must still produce a visible entry.
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let update_only = store
+            .append(NewEvent {
+                id: None,
+                event_type: "journal_entry_updated".into(),
+                aggregate_id: "2026-05-01".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({ "journal_id": "2026-05-01", "raw_text": "orphan edit" }),
+            })
+            .await
+            .unwrap();
+
+        runner.apply_events(&[update_only]).await.unwrap();
+
+        let mut resp = db
+            .query("SELECT raw_text, date, closed FROM type::record('journal_entries', '2026-05-01')")
+            .await
+            .unwrap();
+        let raw: Option<String> = resp.take("raw_text").unwrap();
+        assert_eq!(raw.as_deref(), Some("orphan edit"), "update upserts a full valid row");
+        let date: Option<String> = resp.take("date").unwrap();
+        assert_eq!(date.as_deref(), Some("2026-05-01"), "date backfilled from aggregate_id");
+        let closed: Option<bool> = resp.take("closed").unwrap();
+        assert_eq!(closed, Some(false), "required fields defaulted");
     }
 
     #[tokio::test]
@@ -565,11 +710,11 @@ mod tests {
             .append(NewEvent {
                 id: None,
                 event_type: "journal_entry_created".into(),
-                aggregate_id: "01JKJ1111111111111111111AA".into(),
+                aggregate_id: "2026-04-19".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
                 payload: serde_json::json!({
-                    "journal_id": "01JKJ1111111111111111111AA",
+                    "journal_id": "2026-04-19",
                     "date": "2026-04-19",
                     "raw_text": "empty"
                 }),
@@ -581,11 +726,11 @@ mod tests {
             .append(NewEvent {
                 id: None,
                 event_type: "journal_entry_updated".into(),
-                aggregate_id: "01JKJ1111111111111111111AA".into(),
+                aggregate_id: "2026-04-19".into(),
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
                 payload: serde_json::json!({
-                    "journal_id": "01JKJ1111111111111111111AA",
+                    "journal_id": "2026-04-19",
                     "raw_text": "homework_for_life: a\ngrateful_for: b\nlearnt_today: c"
                 }),
             })
@@ -609,7 +754,7 @@ mod tests {
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
         runner.init_all().await.unwrap();
 
-        let jid = "01JKJCLOSE00000000000000AA";
+        let jid = "2026-04-19"; // aggregate_id == date
         let e1 = store
             .append(NewEvent {
                 id: None,
@@ -706,13 +851,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn llm_processed_routes_to_journal_by_journal_id() {
+    async fn llm_processed_routes_to_journal_by_date() {
         let db = test_db().await;
         let store = SurrealEventStore::new(db.clone());
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
         runner.init_all().await.unwrap();
 
-        let jid = "01JKJLLM000000000000000000";
+        let jid = "2026-04-19"; // journal aggregate_id == date; llm routes by it
         let e1 = store
             .append(NewEvent {
                 id: None,
