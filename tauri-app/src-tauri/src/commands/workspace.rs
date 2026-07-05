@@ -13,13 +13,16 @@ use crate::AppState;
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_workspace(state: State<'_, AppState>) -> Result<String, String> {
+    crate::startup_probe::checkpoint(&state.app_data_dir, "cmd:get_workspace:begin");
     let path = state.app_data_dir.join(crate::WORKSPACE_FILE);
-    match std::fs::read_to_string(&path) {
+    let out = match std::fs::read_to_string(&path) {
         Ok(contents) => Ok(contents),
         // No file yet = nothing persisted; hand back an empty blob.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e.to_string()),
-    }
+    };
+    crate::startup_probe::checkpoint(&state.app_data_dir, "cmd:get_workspace:end");
+    out
 }
 
 #[tauri::command(rename_all = "snake_case")]

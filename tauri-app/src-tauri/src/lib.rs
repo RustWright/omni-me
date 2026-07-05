@@ -1,6 +1,7 @@
 mod auto_close_scheduler;
 mod commands;
 mod recurring_scanner;
+mod startup_probe;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -263,11 +264,14 @@ pub fn run() {
             let db_path_str = db_path.to_string_lossy().to_string();
             let handle = app.handle().clone();
 
+            startup_probe::checkpoint(&app_data, "setup:begin");
+
             // Run async initialization on the Tauri runtime
             tauri::async_runtime::block_on(async move {
                 let db = db::connect(&db_path_str)
                     .await
                     .expect("failed to connect to SurrealDB");
+                startup_probe::checkpoint(&app_data, "setup:db_connected");
 
                 let event_store = SurrealEventStore::new(db.clone());
 
@@ -290,6 +294,7 @@ pub fn run() {
                     .init_all()
                     .await
                     .expect("failed to initialize projections");
+                startup_probe::checkpoint(&app_data, "setup:projections_init_all");
 
                 let device_id = load_or_create(&app_data, DEVICE_ID_FILE, || {
                     ulid::Ulid::new().to_string()
@@ -305,6 +310,7 @@ pub fn run() {
                 let roster = load_roster(&app_data);
 
                 tracing::info!(device_id = %device_id, server_url = %server_url, timezone = %timezone, roster_len = roster.len(), "App initialized");
+                startup_probe::checkpoint(&app_data, "setup:config_loaded");
 
                 let timezone_shared = Arc::new(tokio::sync::RwLock::new(timezone));
 
@@ -372,9 +378,12 @@ pub fn run() {
                     });
                 }
 
+                startup_probe::checkpoint(&app_data, "setup:engines_spawned");
+
                 let attachment_cache_dir = app_data.join("attachments");
                 std::fs::create_dir_all(&attachment_cache_dir).ok();
 
+                startup_probe::checkpoint(&app_data, "setup:managed (block_on end)");
                 handle.manage(AppState {
                     db,
                     event_store,
