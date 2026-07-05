@@ -4,7 +4,8 @@ use crate::bridge;
 use crate::components::account_input::{AccountInput, AccountMode, AccountSuggestions};
 use crate::continuity::{use_continuity, CaptureDraft, ContinuityKey, ListState, PostingDraft};
 use crate::types::{
-    AccountSummaryView, AffordVerdictView, AttachmentRef, BalanceCheckView, BudgetProgress,
+    AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AffordVerdictView,
+    AttachmentRef, BalanceCheckView, BudgetProgress,
     BudgetRow, DashboardSummaryView, DraftTransactionView, ExtractedDraft, JournalImportPlan,
     JournalImportPreview, JournalImportResult, MatchCandidateView, MonthlyTrendBucketView,
     PendingBatchView, PendingShareCapture, PostingInput, ReconciliationTxnPreview,
@@ -3044,17 +3045,20 @@ fn TransactionDetailView(txn_id: String, on_back: EventHandler<()>) -> Element {
         },
         Some(Ok(t)) => rsx! {
             {header}
-            TransactionDetailBody { txn: t }
+            TransactionDetailBody { txn: t, on_back }
         },
     }
 }
 
 #[component]
-fn TransactionDetailBody(txn: TransactionView) -> Element {
+fn TransactionDetailBody(txn: TransactionView, on_back: EventHandler<()>) -> Element {
     // Local mirror of the prop for optimistic-edit updates. Same pattern as
     // TransactionListRow — backend writes succeed before the projection
     // refresh would otherwise re-render us.
-    let local = use_signal(|| txn.clone());
+    let mut local = use_signal(|| txn.clone());
+    let mut editing = use_signal(|| false);
+    let mut confirm_delete = use_signal(|| false);
+    let mut deleting = use_signal(|| false);
     let snapshot = local.read().clone();
     let postings = posting_views(&snapshot.postings);
     let attachment_meta = snapshot.attachment.as_ref().and_then(extract_attachment_meta);
@@ -3095,16 +3099,56 @@ fn TransactionDetailBody(txn: TransactionView) -> Element {
         }
     };
 
+    // Edit mode swaps the read-only body for the editor form. An early return
+    // keeps the two layouts from tangling; the form owns Save/Cancel.
+    if *editing.read() {
+        return rsx! {
+            TransactionEditForm {
+                txn: snapshot.clone(),
+                on_cancel: move |_| editing.set(false),
+                on_saved: move |updated: TransactionView| {
+                    local.set(updated);
+                    editing.set(false);
+                },
+            }
+        };
+    }
+
+    let on_delete = move |_| {
+        if *deleting.read() {
+            return;
+        }
+        deleting.set(true);
+        let id = txn_id.clone();
+        spawn(async move {
+            match bridge::invoke_delete_transaction(&id).await {
+                Ok(()) => on_back.call(()),
+                Err(e) => {
+                    web_sys::console::error_1(&format!("delete failed: {e}").into());
+                    deleting.set(false);
+                    confirm_delete.set(false);
+                }
+            }
+        });
+    };
+
     rsx! {
         div { class: "space-y-6",
             // --- Metadata block ---
             div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
-                div { class: "flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-3",
-                    span { class: "text-sm text-obsidian-text-muted font-mono",
-                        "{snapshot.date}"
+                div { class: "flex items-start justify-between gap-3 mb-3",
+                    div { class: "flex flex-wrap items-baseline gap-x-3 gap-y-1",
+                        span { class: "text-sm text-obsidian-text-muted font-mono",
+                            "{snapshot.date}"
+                        }
+                        h2 { class: "text-lg font-semibold text-obsidian-text",
+                            "{snapshot.description}"
+                        }
                     }
-                    h2 { class: "text-lg font-semibold text-obsidian-text",
-                        "{snapshot.description}"
+                    button {
+                        class: "shrink-0 text-xs px-2.5 py-1 rounded-md border border-white/10 text-obsidian-text-muted hover:text-obsidian-text hover:border-white/20",
+                        onclick: move |_| editing.set(true),
+                        "Edit"
                     }
                 }
                 div { class: "flex flex-wrap gap-2 items-center",
@@ -3156,8 +3200,320 @@ fn TransactionDetailBody(txn: TransactionView) -> Element {
             if let Some(meta) = attachment_meta {
                 AttachmentViewer { meta: meta }
             }
+
+            // --- Danger zone: delete ---
+            div { class: "flex justify-end items-center gap-2 pt-2",
+                if *confirm_delete.read() {
+                    span { class: "text-xs text-obsidian-text-muted mr-1",
+                        "Delete this transaction?"
+                    }
+                    button {
+                        class: "text-xs px-2.5 py-1 rounded-md border border-white/10 text-obsidian-text-muted hover:text-obsidian-text disabled:opacity-40",
+                        disabled: *deleting.read(),
+                        onclick: move |_| confirm_delete.set(false),
+                        "Cancel"
+                    }
+                    button {
+                        class: "text-xs px-2.5 py-1 rounded-md bg-red-500/15 border border-red-500/30 text-red-300 hover:bg-red-500/25 disabled:opacity-40",
+                        disabled: *deleting.read(),
+                        onclick: on_delete,
+                        if *deleting.read() { "Deleting…" } else { "Confirm delete" }
+                    }
+                } else {
+                    button {
+                        class: "text-xs px-2.5 py-1 rounded-md border border-red-500/20 text-red-300/80 hover:text-red-300 hover:border-red-500/40",
+                        onclick: move |_| confirm_delete.set(true),
+                        "Delete transaction"
+                    }
+                }
+            }
         }
     }
+}
+
+/// Edit form for a committed transaction — date, description, and postings
+/// (account / amount / commodity), reachable from the detail view's Edit button.
+/// Save emits `TransactionUpdated` via `update_transaction`; the backend
+/// re-renders the entry in `budget.journal` in place so journal-derived balances
+/// stay correct. Each posting carries its original JSON so an edit to
+/// account/amount/commodity doesn't drop fx-rate or posting-tag metadata.
+#[component]
+fn TransactionEditForm(
+    txn: TransactionView,
+    on_saved: EventHandler<TransactionView>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    let account_suggestions = use_context::<AccountSuggestions>();
+    let txn_id = txn.id.clone();
+
+    let mut date = use_signal(|| txn.date.clone());
+    let mut description = use_signal(|| txn.description.clone());
+    let mut postings = use_signal(|| seed_edit_postings(&txn.postings));
+    let mut saving = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    let on_save = move |_| {
+        if *saving.read() {
+            return;
+        }
+        let date_v = date.read().trim().to_string();
+        let desc_v = description.read().trim().to_string();
+        let rows = postings.read().clone();
+
+        if date_v.is_empty() {
+            error.set(Some("Date is required.".into()));
+            return;
+        }
+        if desc_v.is_empty() {
+            error.set(Some("Description is required.".into()));
+            return;
+        }
+        let mut postings_out: Vec<serde_json::Value> = Vec::with_capacity(rows.len());
+        for (i, r) in rows.iter().enumerate() {
+            if r.account.trim().is_empty() && r.amount.trim().is_empty() {
+                continue;
+            }
+            if r.account.trim().is_empty() {
+                error.set(Some(format!("Row {} needs an account.", i + 1)));
+                return;
+            }
+            if r.amount.trim().is_empty() {
+                error.set(Some(format!("Row {} needs an amount.", i + 1)));
+                return;
+            }
+            if r.amount.trim().parse::<f64>().is_err() {
+                error.set(Some(format!("Row {}: '{}' is not a number.", i + 1, r.amount)));
+                return;
+            }
+            postings_out.push(r.to_posting_json());
+        }
+        if postings_out.len() < 2 {
+            error.set(Some("At least two postings required (debit + credit).".into()));
+            return;
+        }
+
+        error.set(None);
+        saving.set(true);
+        let changes = serde_json::json!({
+            "date": date_v,
+            "description": desc_v,
+            "postings": postings_out,
+        });
+        // Optimistic view for the detail body: same fields the backend applied.
+        let mut updated = txn.clone();
+        updated.date = date_v;
+        updated.description = desc_v;
+        updated.postings = serde_json::Value::Array(postings_out);
+
+        let id = txn_id.clone();
+        spawn(async move {
+            match bridge::invoke_update_transaction(&id, changes).await {
+                Ok(()) => {
+                    saving.set(false);
+                    account_suggestions.refresh();
+                    on_saved.call(updated);
+                }
+                Err(e) => {
+                    saving.set(false);
+                    error.set(Some(format!("Save failed: {e}")));
+                }
+            }
+        });
+    };
+
+    rsx! {
+        div { class: "flex flex-col gap-6",
+            // Date
+            div {
+                label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                    "Date"
+                }
+                input {
+                    class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent",
+                    r#type: "date",
+                    value: "{date.read()}",
+                    oninput: move |e| date.set(e.value().clone()),
+                }
+            }
+
+            // Description
+            div {
+                label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                    "Description"
+                }
+                input {
+                    class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent",
+                    r#type: "text",
+                    value: "{description.read()}",
+                    oninput: move |e| description.set(e.value().clone()),
+                }
+            }
+
+            // Postings
+            div { class: "flex flex-col gap-2",
+                div { class: "flex items-center justify-between",
+                    span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                        "Postings"
+                    }
+                    button {
+                        class: "text-xs text-obsidian-accent hover:opacity-80",
+                        r#type: "button",
+                        onclick: move |_| {
+                            let mut rows = postings.read().clone();
+                            rows.push(EditPosting::empty());
+                            postings.set(rows);
+                        },
+                        "+ Add posting"
+                    }
+                }
+
+                {
+                    let rows = postings.read().clone();
+                    rsx! {
+                        for (idx, row) in rows.into_iter().enumerate() {
+                            div { key: "{idx}", class: "flex flex-wrap gap-2 items-center",
+                                AccountInput {
+                                    wrapper_class: "flex-1 min-w-[200px]".to_string(),
+                                    input_class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent".to_string(),
+                                    placeholder: "Account (e.g. Expenses:Groceries)".to_string(),
+                                    mode: AccountMode::Add,
+                                    value: row.account.clone(),
+                                    on_input: move |v: String| {
+                                        let mut rows = postings.read().clone();
+                                        if let Some(r) = rows.get_mut(idx) {
+                                            r.account = v;
+                                        }
+                                        postings.set(rows);
+                                    },
+                                }
+                                input {
+                                    class: "w-28 px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent",
+                                    r#type: "text",
+                                    placeholder: "0.00",
+                                    value: "{row.amount}",
+                                    oninput: move |e| {
+                                        let mut rows = postings.read().clone();
+                                        if let Some(r) = rows.get_mut(idx) {
+                                            r.amount = e.value().clone();
+                                        }
+                                        postings.set(rows);
+                                    },
+                                }
+                                input {
+                                    class: "w-20 px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent uppercase",
+                                    r#type: "text",
+                                    placeholder: "CAD",
+                                    value: "{row.commodity}",
+                                    oninput: move |e| {
+                                        let mut rows = postings.read().clone();
+                                        if let Some(r) = rows.get_mut(idx) {
+                                            r.commodity = e.value().clone();
+                                        }
+                                        postings.set(rows);
+                                    },
+                                }
+                                button {
+                                    class: "text-xs text-obsidian-text-muted hover:text-red-300 px-2 py-1 disabled:opacity-30",
+                                    r#type: "button",
+                                    disabled: postings.read().len() <= 2,
+                                    onclick: move |_| {
+                                        let mut rows = postings.read().clone();
+                                        if rows.len() > 2 {
+                                            rows.remove(idx);
+                                            postings.set(rows);
+                                        }
+                                    },
+                                    "Remove"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Error
+            if let Some(msg) = error.read().clone() {
+                div { class: "p-3 bg-red-950/30 border border-red-500/30 rounded-md text-sm text-red-300",
+                    "{msg}"
+                }
+            }
+
+            // Actions
+            div { class: "flex justify-end gap-2",
+                button {
+                    class: "px-4 py-2 text-sm text-obsidian-text-muted hover:text-obsidian-text rounded-md",
+                    r#type: "button",
+                    disabled: *saving.read(),
+                    onclick: move |_| on_cancel.call(()),
+                    "Cancel"
+                }
+                button {
+                    class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed",
+                    r#type: "button",
+                    disabled: *saving.read(),
+                    onclick: on_save,
+                    if *saving.read() { "Saving…" } else { "Save changes" }
+                }
+            }
+        }
+    }
+}
+
+/// One editable posting in [`TransactionEditForm`]. `original` preserves the
+/// row's source JSON (fx-rate, posting tags) so editing account/amount/commodity
+/// doesn't silently drop metadata the form doesn't surface; added rows start empty.
+#[derive(Clone, PartialEq)]
+struct EditPosting {
+    account: String,
+    commodity: String,
+    amount: String,
+    original: serde_json::Value,
+}
+
+impl EditPosting {
+    fn empty() -> Self {
+        Self {
+            account: String::new(),
+            commodity: DEFAULT_COMMODITY.to_string(),
+            amount: String::new(),
+            original: serde_json::Value::Object(Default::default()),
+        }
+    }
+
+    /// Rebuild the posting JSON: start from the original object (keeping fx_rate /
+    /// tags) and overwrite the three user-editable fields.
+    fn to_posting_json(&self) -> serde_json::Value {
+        let mut obj = self
+            .original
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        obj.insert("account".into(), serde_json::Value::String(self.account.trim().to_string()));
+        obj.insert("commodity".into(), serde_json::Value::String(self.commodity.trim().to_string()));
+        obj.insert("amount".into(), serde_json::Value::String(self.amount.trim().to_string()));
+        serde_json::Value::Object(obj)
+    }
+}
+
+/// Seed editable rows from `TransactionView.postings` (FLEXIBLE JSON). Rows
+/// missing account/amount/commodity are dropped — the projection guarantees
+/// them, so this is defensive only.
+fn seed_edit_postings(value: &serde_json::Value) -> Vec<EditPosting> {
+    value
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    Some(EditPosting {
+                        account: p.get("account")?.as_str()?.to_string(),
+                        amount: p.get("amount")?.as_str()?.to_string(),
+                        commodity: p.get("commodity")?.as_str()?.to_string(),
+                        original: p.clone(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[component]
@@ -3357,15 +3713,71 @@ fn AccountSummaryCard(summary: AccountSummaryView) -> Element {
         None
     };
 
+    // Drill-down state. A single balance-bearing account (e.g.
+    // Assets:NonRegistered:CAD) deliberately pools money across every
+    // institution/product, so grouping its postings by the `institution`
+    // (or `product`) tag is the only way to see a per-bank split.
+    let account = summary.account.clone();
+    let mut expanded = use_signal(|| false);
+    let mut group_by = use_signal(|| "institution".to_string());
+    let mut breakdown = use_signal(|| None::<AccountTagBreakdownView>);
+    let mut bd_loading = use_signal(|| false);
+    let mut bd_error = use_signal(|| None::<String>);
+
+    // Fetch (or re-fetch) whenever the card is open and the grouping changes.
+    // Reading both signals up front registers them as effect dependencies.
+    use_effect(move || {
+        let is_open = expanded();
+        let gb = group_by();
+        if !is_open {
+            return;
+        }
+        let account = account.clone();
+        spawn(async move {
+            bd_loading.set(true);
+            bd_error.set(None);
+            match bridge::invoke_account_tag_breakdown(&account, &gb, None).await {
+                Ok(view) => breakdown.set(Some(view)),
+                Err(err) => {
+                    breakdown.set(None);
+                    bd_error.set(Some(err));
+                }
+            }
+            bd_loading.set(false);
+        });
+    });
+
+    let is_open = expanded();
+    let active_group = group_by();
+
     rsx! {
         div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
             div { class: "flex items-baseline justify-between gap-3 mb-3",
-                div { class: "min-w-0",
-                    div { class: "text-sm font-semibold text-obsidian-text truncate",
-                        "{header_label}"
+                button {
+                    class: "flex items-baseline gap-2 min-w-0 text-left",
+                    onclick: move |_| {
+                        let now = !expanded();
+                        expanded.set(now);
+                    },
+                    svg {
+                        class: "w-3.5 h-3.5 text-obsidian-text-muted shrink-0 self-center",
+                        fill: "none",
+                        stroke: "currentColor",
+                        view_box: "0 0 24 24",
+                        path {
+                            stroke_linecap: "round",
+                            stroke_linejoin: "round",
+                            stroke_width: "2",
+                            d: if is_open { "M19 9l-7 7-7-7" } else { "M9 5l7 7-7 7" },
+                        }
                     }
-                    if let Some(sub) = sub_label {
-                        div { class: "text-xs text-obsidian-text-muted truncate", "{sub}" }
+                    div { class: "min-w-0",
+                        div { class: "text-sm font-semibold text-obsidian-text truncate",
+                            "{header_label}"
+                        }
+                        if let Some(sub) = sub_label {
+                            div { class: "text-xs text-obsidian-text-muted truncate", "{sub}" }
+                        }
                     }
                 }
                 match summary.total_in_base.as_deref() {
@@ -3398,11 +3810,92 @@ fn AccountSummaryCard(summary: AccountSummaryView) -> Element {
                 }
             }
 
+            if is_open {
+                div { class: "mt-3 border-t border-white/5 pt-3",
+                    // Institution | Product toggle.
+                    div { class: "flex items-center gap-1 mb-2",
+                        for (key , label) in [("institution" , "Institution") , ("product" , "Product")] {
+                            button {
+                                class: if active_group == key {
+                                    "px-2 py-0.5 text-xs rounded bg-obsidian-accent/20 text-obsidian-text"
+                                } else {
+                                    "px-2 py-0.5 text-xs rounded text-obsidian-text-muted hover:text-obsidian-text"
+                                },
+                                onclick: move |_| group_by.set(key.to_string()),
+                                "{label}"
+                            }
+                        }
+                    }
+
+                    if bd_loading() {
+                        div { class: "text-xs text-obsidian-text-muted", "Loading…" }
+                    } else if let Some(err) = bd_error() {
+                        div { class: "text-xs text-red-400", "Couldn't load breakdown: {err}" }
+                    } else if let Some(view) = breakdown() {
+                        if view.groups.is_empty() {
+                            div { class: "text-xs text-obsidian-text-muted",
+                                "No {active_group} tags on this account's postings yet."
+                            }
+                        } else {
+                            div { class: "space-y-2",
+                                for grp in view.groups.iter() {
+                                    TagGroupRow { key: "{grp.value}", group: grp.clone() }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if let Some(date) = summary.last_reconciled_through.as_deref() {
                 div { class: "mt-3 text-xs text-obsidian-text-muted",
                     "Last reconciled through {date}"
                     if let Some(bal) = summary.last_statement_balance.as_deref() {
                         " · statement {format_money(bal, \"CAD\")}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One institution/product group inside an expanded [`AccountSummaryCard`].
+/// Shows the group's base-currency subtotal, and — only when the group holds
+/// more than a single CAD balance — the per-commodity split beneath it.
+#[component]
+fn TagGroupRow(group: AccountTagGroupView) -> Element {
+    let show_commodities =
+        group.balances.len() > 1 || group.balances.iter().any(|b| b.commodity != "CAD");
+
+    rsx! {
+        div { class: "rounded bg-obsidian-bg/40 px-2 py-1.5",
+            div { class: "flex items-baseline justify-between gap-2",
+                span { class: "text-xs font-medium text-obsidian-text truncate", "{group.value}" }
+                match group.total_in_base.as_deref() {
+                    Some(total) => rsx! {
+                        span { class: "text-xs font-mono text-obsidian-text shrink-0",
+                            "{format_money(total, \"CAD\")}"
+                        }
+                    },
+                    None => rsx! {
+                        span { class: "text-xs font-mono text-obsidian-text-muted shrink-0", "—" }
+                    },
+                }
+            }
+            if show_commodities {
+                div { class: "mt-1 space-y-0.5",
+                    for bal in group.balances.iter() {
+                        div { class: "flex items-baseline justify-between text-[11px] text-obsidian-text-muted font-mono",
+                            span { "{format_money(&bal.quantity, &bal.commodity)}" }
+                            match bal.value_in_base.as_deref() {
+                                Some(v) if bal.commodity != "CAD" => rsx! {
+                                    span { class: "text-obsidian-text-muted/70",
+                                        "≈ {format_money(v, \"CAD\")}"
+                                    }
+                                },
+                                _ => rsx! { span {} },
+                            }
+                        }
                     }
                 }
             }

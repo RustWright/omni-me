@@ -2,13 +2,15 @@ use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "mock")]
 use crate::types::{
-    AttachmentRef, CommodityBalanceView, ExtractedPostingView, MonthlyTrendBucketView,
-    RecurringObligationView, TaskResult,
+    AccountTagGroupView, AttachmentRef, CommodityBalanceView, ExtractedPostingView,
+    MonthlyTrendBucketView, RecurringObligationView, TaskResult,
 };
 use crate::types::{
-    AccountSummaryView, AffordVerdictView, AutoImportSourceView, BalanceCheckView, BudgetProgress,
+    AccountSummaryView, AccountTagBreakdownView, AffordVerdictView,
+    AutoImportSourceView, BalanceCheckView, BudgetProgress,
     BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft,
-    GenericNoteItem, ImportStatementCsvResult, JournalEntryItem, LlmResult, MatchCandidateView,
+    GenericNoteItem, ImportStatementCsvResult, JournalDayStat, JournalEntryItem, LlmResult,
+    MatchCandidateView,
     PendingBatchView, PendingShareCapture, ReconciliationTxnPreview, RecurringPattern,
     RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot,
     TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
@@ -209,15 +211,27 @@ pub async fn invoke_get_journal_by_date(date: &str) -> Result<Option<JournalEntr
     }
 }
 
-pub async fn invoke_list_journal_dates(
+pub async fn invoke_list_journal_day_stats(
     from_date: &str,
     to_date: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<JournalDayStat>, String> {
     #[cfg(feature = "mock")]
     {
         let _ = (from_date, to_date);
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        Ok(vec![today])
+        // Two recent days so the mock calendar shows both states: today has an
+        // entry (incomplete dot), yesterday is complete (check).
+        let today = chrono::Utc::now().date_naive();
+        let yesterday = today - chrono::Days::new(1);
+        Ok(vec![
+            JournalDayStat {
+                date: today.format("%Y-%m-%d").to_string(),
+                complete: false,
+            },
+            JournalDayStat {
+                date: yesterday.format("%Y-%m-%d").to_string(),
+                complete: true,
+            },
+        ])
     }
     #[cfg(not(feature = "mock"))]
     {
@@ -226,7 +240,7 @@ pub async fn invoke_list_journal_dates(
             from_date: &'a str,
             to_date: &'a str,
         }
-        invoke("list_journal_dates", &Args { from_date, to_date }).await
+        invoke("list_journal_day_stats", &Args { from_date, to_date }).await
     }
 }
 
@@ -1438,6 +1452,48 @@ pub async fn invoke_categorize_transaction(txn_id: &str, category: &str) -> Resu
     }
 }
 
+/// Amend a committed transaction. `changes` is a partial object of fields to
+/// overwrite — `{ date, description, postings }` from the edit form. The backend
+/// `TransactionUpdated` event re-renders the entry in `budget.journal` in place,
+/// so journal-derived balances stay correct after the edit.
+pub async fn invoke_update_transaction(
+    txn_id: &str,
+    changes: serde_json::Value,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (txn_id, changes);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            txn_id: &'a str,
+            changes: serde_json::Value,
+        }
+        invoke_unit("update_transaction", &Args { txn_id, changes }).await
+    }
+}
+
+/// Soft-delete a committed transaction. The `TransactionDeleted` event marks the
+/// projection row `removed` and drops the entry from `budget.journal`.
+pub async fn invoke_delete_transaction(txn_id: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = txn_id;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            txn_id: &'a str,
+        }
+        invoke_unit("delete_transaction", &Args { txn_id }).await
+    }
+}
+
 /// Replace the top-level tag set for a transaction. The full vector is the
 /// new state — to add a tag, send `current_tags + [new]`; to remove, send
 /// the filtered vector. Backend's `on_transaction_tagged` projection sets
@@ -1610,6 +1666,81 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
         },
     ];
     apply_mock_account_overrides(base)
+}
+
+/// Drill one account down by a posting tag (`institution` default, or
+/// `product`), returning per-tag-value balance groups valued in base currency.
+/// Backend runs `commands::budget::account_tag_breakdown`.
+pub async fn invoke_account_tag_breakdown(
+    account: &str,
+    group_by: &str,
+    base_currency: Option<&str>,
+) -> Result<AccountTagBreakdownView, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = base_currency;
+        Ok(mock_account_tag_breakdown(account, group_by))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            account: &'a str,
+            group_by: &'a str,
+            base_currency: Option<&'a str>,
+            as_of: Option<&'a str>,
+        }
+        invoke(
+            "account_tag_breakdown",
+            &Args {
+                account,
+                group_by,
+                base_currency,
+                as_of: None,
+            },
+        )
+        .await
+    }
+}
+
+#[cfg(feature = "mock")]
+fn mock_account_tag_breakdown(account: &str, group_by: &str) -> AccountTagBreakdownView {
+    fn bal(commodity: &str, quantity: &str, base: Option<&str>) -> CommodityBalanceView {
+        CommodityBalanceView {
+            commodity: commodity.into(),
+            quantity: quantity.into(),
+            value_in_base: base.map(str::to_string),
+        }
+    }
+    fn group(value: &str, total: Option<&str>, balances: Vec<CommodityBalanceView>) -> AccountTagGroupView {
+        AccountTagGroupView {
+            value: value.into(),
+            balances,
+            total_in_base: total.map(str::to_string),
+        }
+    }
+    // Fictional institutions/products for the drill-down demo (privacy discipline).
+    let groups = if group_by == "product" {
+        vec![
+            group("chequing", Some("3000.00"), vec![bal("CAD", "3000.00", Some("3000.00"))]),
+            group("savings", Some("1287.42"), vec![bal("CAD", "1287.42", Some("1287.42"))]),
+        ]
+    } else {
+        vec![
+            group(
+                "Globepay",
+                Some("1561.65"),
+                vec![bal("CAD", "1500.00", Some("1500.00")), bal("USD", "45.00", Some("61.65"))],
+            ),
+            group("Summit", Some("2500.00"), vec![bal("CAD", "2500.00", Some("2500.00"))]),
+            group("(unassigned)", Some("287.42"), vec![bal("CAD", "287.42", Some("287.42"))]),
+        ]
+    };
+    AccountTagBreakdownView {
+        account: account.into(),
+        group_by: group_by.into(),
+        groups,
+    }
 }
 
 // --- Auto-detected accounts (3.9) -------------------------------------------

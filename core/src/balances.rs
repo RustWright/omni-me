@@ -25,12 +25,14 @@
 use std::collections::BTreeMap;
 
 use chrono::NaiveDate;
+use ledger_utils::balance::Balance;
 use ledger_utils::prices::Prices;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::db::queries::AccountRow;
 use crate::ledger::{self, LedgerError};
+use crate::query::{QueryTxn, group_account_by_tag};
 
 /// One commodity balance on an account, optionally with its base-currency value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,12 +89,29 @@ pub fn account_summaries(
     as_of: NaiveDate,
     roster: &[String],
 ) -> Result<Vec<AccountSummary>, LedgerError> {
-    let parsed = ledger::parse(journal_content)?;
-    let mut prices = Prices::new();
-    prices.insert_from(&parsed);
+    let artifacts = ledger::parse_artifacts(journal_content)?;
+    Ok(account_summaries_from(
+        &artifacts.balance,
+        &artifacts.prices,
+        declared,
+        base_currency,
+        as_of,
+        roster,
+    ))
+}
 
-    let balance = ledger::balances(journal_content)?;
-
+/// Parsed-input variant of [`account_summaries`]: works off pre-computed
+/// `balance` + `prices` (e.g. the Tauri-side journal cache) so a batch of read
+/// commands sharing one journal parse it only once. Infallible — all parsing
+/// (the only failure source) happened upstream.
+pub fn account_summaries_from(
+    balance: &Balance,
+    prices: &Prices,
+    declared: &[AccountRow],
+    base_currency: &str,
+    as_of: NaiveDate,
+    roster: &[String],
+) -> Vec<AccountSummary> {
     // Index declared accounts by name so we can splice metadata in.
     let declared_by_name: BTreeMap<&str, &AccountRow> =
         declared.iter().map(|a| (a.id.as_str(), a)).collect();
@@ -129,7 +148,7 @@ pub fn account_summaries(
             .iter()
             .map(|(commodity, amount)| {
                 let value_in_base =
-                    convert_to_base(&prices, amount.quantity, commodity, base_currency, as_of);
+                    convert_to_base(prices, amount.quantity, commodity, base_currency, as_of);
                 CommodityBalance {
                     commodity: commodity.clone(),
                     quantity: amount.quantity,
@@ -156,7 +175,7 @@ pub fn account_summaries(
         });
     }
 
-    Ok(summaries)
+    summaries
 }
 
 fn convert_to_base(
@@ -218,14 +237,21 @@ fn insert_with_ancestors(set: &mut std::collections::BTreeSet<String>, name: &st
 /// accounts (declared ones still surface) and [`account_summaries`] reports the
 /// real parse error.
 pub fn auto_roster(journal_content: &str, declared: &[AccountRow], hidden: &[String]) -> Vec<String> {
+    // Tolerant of a malformed journal: fall back to an empty balance (so only
+    // declared accounts surface), matching the pre-cache `if let Ok(balance)`.
+    let balance = ledger::balances(journal_content).unwrap_or_else(|_| Balance::new());
+    auto_roster_from(&balance, declared, hidden)
+}
+
+/// Parsed-input variant of [`auto_roster`] — works off a pre-computed
+/// `balance` (the Tauri-side journal cache) instead of re-parsing.
+pub fn auto_roster_from(balance: &Balance, declared: &[AccountRow], hidden: &[String]) -> Vec<String> {
     let hidden: std::collections::HashSet<&str> = hidden.iter().map(String::as_str).collect();
     let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
-    if let Ok(balance) = ledger::balances(journal_content) {
-        for name in balance.account_balances.keys() {
-            if is_balance_bearing(name) && !hidden.contains(name.as_str()) {
-                set.insert(name.clone());
-            }
+    for name in balance.account_balances.keys() {
+        if is_balance_bearing(name) && !hidden.contains(name.as_str()) {
+            set.insert(name.clone());
         }
     }
     for row in declared {
@@ -241,11 +267,16 @@ pub fn auto_roster(journal_content: &str, declared: &[AccountRow], hidden: &[Str
 /// ancestor segments, sorted + deduped. Powers the shared `AccountInput`
 /// typeahead so the user never maintains an account list by hand.
 pub fn known_accounts(journal_content: &str, declared: &[AccountRow]) -> Vec<String> {
+    let balance = ledger::balances(journal_content).unwrap_or_else(|_| Balance::new());
+    known_accounts_from(&balance, declared)
+}
+
+/// Parsed-input variant of [`known_accounts`] — works off a pre-computed
+/// `balance` (the Tauri-side journal cache) instead of re-parsing.
+pub fn known_accounts_from(balance: &Balance, declared: &[AccountRow]) -> Vec<String> {
     let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    if let Ok(balance) = ledger::balances(journal_content) {
-        for name in balance.account_balances.keys() {
-            insert_with_ancestors(&mut set, name);
-        }
+    for name in balance.account_balances.keys() {
+        insert_with_ancestors(&mut set, name);
     }
     for row in declared {
         insert_with_ancestors(&mut set, &row.id);
@@ -253,9 +284,96 @@ pub fn known_accounts(journal_content: &str, declared: &[AccountRow]) -> Vec<Str
     set.into_iter().collect()
 }
 
+// --- Per-account tag breakdown (Accounts drill-down) ------------------------
+//
+// Under the MECE account grammar a balance-bearing account (e.g.
+// `Assets:NonRegistered:CAD`) pools money across institutions/products, which
+// live as posting tags rather than account segments. This slices one account
+// by a chosen posting tag so the user can see the per-institution / per-product
+// split that the account name deliberately hides.
+
+/// One tag-value slice of a single account's holdings: the tag value
+/// (institution / product / `(unassigned)`) with its per-commodity balances and
+/// base-currency total. Mirrors [`AccountSummary`]'s money shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccountTagBreakdown {
+    pub value: String,
+    pub balances: Vec<CommodityBalance>,
+    pub total_in_base: Option<Decimal>,
+}
+
+/// Break one account's holdings down by a posting tag (`tag_key`, e.g.
+/// `"institution"`). Sums the account's postings per (tag value, commodity) via
+/// [`crate::query::group_account_by_tag`], then values each commodity in
+/// `base_currency` using the journal's `P` directives — the same `Prices` path
+/// [`account_summaries`] uses, so the slices reconcile to the account's own
+/// base total. Postings come from the caller's projection-derived `txns`; the
+/// journal is read only for FX rates, so an empty/rate-free journal still
+/// returns native quantities (with `value_in_base = None`).
+pub fn account_tag_breakdown(
+    journal_content: &str,
+    txns: &[QueryTxn],
+    account: &str,
+    tag_key: &str,
+    base_currency: &str,
+    as_of: NaiveDate,
+) -> Result<Vec<AccountTagBreakdown>, LedgerError> {
+    let artifacts = ledger::parse_artifacts(journal_content)?;
+    Ok(account_tag_breakdown_from(
+        &artifacts.prices,
+        txns,
+        account,
+        tag_key,
+        base_currency,
+        as_of,
+    ))
+}
+
+/// Parsed-input variant of [`account_tag_breakdown`] — takes a pre-built
+/// `prices` table (the Tauri-side journal cache) instead of re-parsing the
+/// journal just to read its `P` directives.
+pub fn account_tag_breakdown_from(
+    prices: &Prices,
+    txns: &[QueryTxn],
+    account: &str,
+    tag_key: &str,
+    base_currency: &str,
+    as_of: NaiveDate,
+) -> Vec<AccountTagBreakdown> {
+    group_account_by_tag(txns, account, tag_key)
+        .into_iter()
+        .map(|group| {
+            let balances: Vec<CommodityBalance> = group
+                .amounts
+                .into_iter()
+                .map(|(commodity, quantity)| {
+                    let value_in_base =
+                        convert_to_base(prices, quantity, &commodity, base_currency, as_of);
+                    CommodityBalance {
+                        commodity,
+                        quantity,
+                        value_in_base,
+                    }
+                })
+                .collect();
+            let total_in_base = balances
+                .iter()
+                .filter_map(|b| b.value_in_base)
+                .reduce(|a, b| a + b);
+            AccountTagBreakdown {
+                value: group.value,
+                balances,
+                total_in_base,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::Tag;
+    use crate::query::QueryPosting;
     use rust_decimal::Decimal;
     use std::str::FromStr;
 
@@ -304,6 +422,51 @@ mod tests {
         .iter()
         .map(|s| s.to_string())
         .collect()
+    }
+
+    #[test]
+    fn parsed_input_variants_match_content_path() {
+        // The Tauri journal cache hands the parsed-input variants a Balance +
+        // Prices built once via `parse_artifacts`; routing reads through that
+        // cache must be byte-identical to the content-taking functions parsing
+        // the journal themselves. A journal with a foreign commodity + a P
+        // directive exercises both the balance table and the price table.
+        let journal = "\
+P 2026-05-20 00:00:00 USD 1.37 CAD
+
+2026-05-21 Top-up
+    Assets:Globepay:CAD               100.00 USD
+    Income:External                  -100.00 USD
+
+2026-05-21 Coffee
+    Assets:Northwind:Cash             -10.00 CAD
+    Expenses:Coffee                    10.00 CAD
+";
+        let declared = vec![acct_row("Assets:Globepay:CAD", "CAD", Some("Globepay"))];
+        let artifacts = crate::ledger::parse_artifacts(journal).expect("parse artifacts");
+
+        assert_eq!(
+            account_summaries(journal, &declared, "CAD", as_of(), &roster()).unwrap(),
+            account_summaries_from(
+                &artifacts.balance,
+                &artifacts.prices,
+                &declared,
+                "CAD",
+                as_of(),
+                &roster()
+            ),
+            "account_summaries: cached artifacts must match the content path",
+        );
+        assert_eq!(
+            auto_roster(journal, &declared, &[]),
+            auto_roster_from(&artifacts.balance, &declared, &[]),
+            "auto_roster: cached balance must match the content path",
+        );
+        assert_eq!(
+            known_accounts(journal, &declared),
+            known_accounts_from(&artifacts.balance, &declared),
+            "known_accounts: cached balance must match the content path",
+        );
     }
 
     #[test]
@@ -622,5 +785,76 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         assert!(known.contains(&"Assets:Brokerage:RRSP".to_string()));
         assert!(known.contains(&"Assets:Brokerage".to_string()));
         assert!(known.contains(&"Assets".to_string()));
+    }
+
+    // --- Per-account tag breakdown (drill-down) -----------------------------
+
+    fn breakdown_posting(commodity: &str, amount: &str, institution: &str) -> QueryPosting {
+        QueryPosting {
+            account: "Assets:NonRegistered:CAD".into(),
+            commodity: commodity.into(),
+            amount: Decimal::from_str(amount).unwrap(),
+            tags: vec![Tag::KeyValue {
+                key: "institution".into(),
+                value: institution.into(),
+            }],
+        }
+    }
+
+    fn breakdown_txn(posting: QueryPosting) -> QueryTxn {
+        QueryTxn {
+            date: "2026-05-21".into(),
+            description: "t".into(),
+            top_tags: vec![],
+            postings: vec![posting],
+        }
+    }
+
+    #[test]
+    fn account_tag_breakdown_groups_and_values_in_base() {
+        // Journal supplies only the FX rate; postings come from `txns`.
+        let journal = "P 2026-05-20 00:00:00 USD 1.37 CAD\n";
+        let txns = vec![
+            breakdown_txn(breakdown_posting("CAD", "300.00", "Summit")),
+            breakdown_txn(breakdown_posting("USD", "100.00", "Globepay")),
+        ];
+        let out = account_tag_breakdown(
+            journal,
+            &txns,
+            "Assets:NonRegistered:CAD",
+            "institution",
+            "CAD",
+            as_of(),
+        )
+        .unwrap();
+
+        assert_eq!(out.len(), 2);
+        // Globepay: 100 USD @ 1.37 → 137.00 CAD base value.
+        assert_eq!(out[0].value, "Globepay");
+        assert_eq!(out[0].balances[0].commodity, "USD");
+        assert_eq!(out[0].balances[0].quantity, Decimal::from_str("100.00").unwrap());
+        assert_eq!(out[0].total_in_base, Some(Decimal::from_str("137.00").unwrap()));
+        // Summit: 300 CAD passes through (== base).
+        assert_eq!(out[1].value, "Summit");
+        assert_eq!(out[1].total_in_base, Some(Decimal::from_str("300.00").unwrap()));
+    }
+
+    #[test]
+    fn account_tag_breakdown_marks_unconvertible_commodity_none() {
+        // No P directive for AED → its group has no base total.
+        let txns = vec![breakdown_txn(breakdown_posting("AED", "500.00", "Meridian"))];
+        let out = account_tag_breakdown(
+            "",
+            &txns,
+            "Assets:NonRegistered:CAD",
+            "institution",
+            "CAD",
+            as_of(),
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].value, "Meridian");
+        assert_eq!(out[0].balances[0].value_in_base, None);
+        assert_eq!(out[0].total_in_base, None);
     }
 }

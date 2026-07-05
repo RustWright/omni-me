@@ -5,10 +5,18 @@
 //! as `notes_projection` / `routines_projection`, but the side effect is a
 //! file write instead of a SurrealDB row.
 //!
-//! Scope for 1.6: append-on-event for `TransactionRecorded` + `AccountAdded`.
-//! Modification events (Updated, Deleted, Tagged, Merged, Cleared) will land
-//! in a follow-up — they require either in-place parse-and-edit or a full
-//! regenerate path, both of which sit on top of this append baseline.
+//! Writes are event-shaped:
+//! - `TransactionRecorded` / `ExchangeRateRecorded` — cheap append (order matters,
+//!   files never shrink on the hot capture/import path).
+//! - `AccountAdded` — in-place upsert of the one `account` directive (declarations,
+//!   only latest state matters).
+//! - `TransactionUpdated` / `TransactionDeleted` / `TransactionsMerged` — in-place
+//!   edit of the one entry, anchored on its `; txn_id:<id>` marker: re-render the
+//!   changed entry from its (already-updated) projection row, or splice it out.
+//!   Only the affected entry's bytes move, so account and `P` price directives are
+//!   preserved untouched and no whole-file regenerate or projection re-scan is paid.
+//! - `TransactionCategorized` / `TransactionTagged` / `TransactionCleared` — no-ops:
+//!   category, header tags, and cleared-state aren't part of the rendered entry.
 
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -17,9 +25,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 use crate::db::Database;
+use crate::db::queries::{self, TransactionRow};
 use crate::events::{
-    AccountAddedPayload, Event, EventError, ExchangeRateRecordedPayload, FxRate, Posting,
-    Projection, Tag, TransactionRecordedPayload,
+    AccountAddedPayload, AttachmentRef, Event, EventError, ExchangeRateRecordedPayload, FxRate,
+    Posting, Projection, Tag, TransactionRecordedPayload,
 };
 
 pub struct JournalFile {
@@ -61,6 +70,87 @@ impl JournalFile {
         Ok(())
     }
 
+    /// Read the current journal, ensuring the parent dir exists and treating a
+    /// missing file as empty. Callers must already hold `write_lock`; this is the
+    /// read half of the read-modify-rewrite paths (`upsert_account`,
+    /// `rewrite_transaction`, `remove_transaction`).
+    async fn read_existing(&self) -> Result<String, EventError> {
+        if let Some(parent) = self.path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| EventError::Validation(format!("create journal dir: {e}")))?;
+        }
+        match tokio::fs::read_to_string(&self.path).await {
+            Ok(s) => Ok(s),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(e) => Err(EventError::Validation(format!("read journal file: {e}"))),
+        }
+    }
+
+    /// Replace the whole file with `content`. Callers must already hold
+    /// `write_lock`. `tokio::fs::write` truncates + writes in one call.
+    async fn overwrite(&self, content: &str) -> Result<(), EventError> {
+        tokio::fs::write(&self.path, content.as_bytes())
+            .await
+            .map_err(|e| EventError::Validation(format!("write journal file: {e}")))
+    }
+
+    /// Idempotent write for `account` directives: replace an existing block for
+    /// the same account name in place (latest wins), or append when absent.
+    /// Unlike [`append`], this reads and rewrites the whole file under the lock
+    /// so re-emitted `AccountAdded` events (every `set_account_override`) don't
+    /// accrete duplicate directives. The journal is a regenerable cache, so a
+    /// full rewrite here is safe; account adds are rare relative to transactions.
+    async fn upsert_account(&self, account: &str, block: &str) -> Result<(), EventError> {
+        let _guard = self.write_lock.lock().await;
+        let existing = self.read_existing().await?;
+        let updated = upsert_account_block(&existing, account, block);
+        self.overwrite(&updated).await
+    }
+
+    /// Splice a freshly-rendered transaction entry into the file in place,
+    /// anchored on its `; txn_id:<id>` marker — the edit path for
+    /// `TransactionUpdated` / the survivor of `TransactionsMerged`. Only the one
+    /// entry's bytes change; account and `P` price directives (and every other
+    /// transaction) are left untouched, so no projection re-scan is needed and
+    /// prices — which have no projection table — are preserved for free. If the
+    /// id isn't present the block is appended, making the file correct either way.
+    async fn rewrite_transaction(&self, txn_id: &str, block: &str) -> Result<(), EventError> {
+        let _guard = self.write_lock.lock().await;
+        let existing = self.read_existing().await?;
+        let updated = replace_transaction_block(&existing, txn_id, block);
+        self.overwrite(&updated).await
+    }
+
+    /// Drop a transaction entry from the file by its `; txn_id:<id>` anchor — the
+    /// `TransactionDeleted` path and the merged-away originals of
+    /// `TransactionsMerged`. A no-op (unchanged file) when the id is absent.
+    async fn remove_transaction(&self, txn_id: &str) -> Result<(), EventError> {
+        let _guard = self.write_lock.lock().await;
+        let existing = self.read_existing().await?;
+        let updated = remove_transaction_block(&existing, txn_id);
+        self.overwrite(&updated).await
+    }
+
+    /// Re-render a modified transaction from its (already-updated) projection
+    /// row. `TransactionUpdated` carries only a partial change bag, so the full
+    /// post-change entry has to come from the `transactions` table — the
+    /// `BudgetProjection` applies before this projection for the same event
+    /// (registration order), so the row already reflects the change here.
+    async fn rerender_transaction(&self, txn_id: &str, db: &Database) -> Result<(), EventError> {
+        match queries::get_transaction(db, txn_id)
+            .await
+            .map_err(|e| EventError::Validation(format!("load txn {txn_id}: {e}")))?
+        {
+            Some(row) => {
+                let block = render_transaction_from_row(&row)?;
+                self.rewrite_transaction(txn_id, &block).await
+            }
+            // Row gone (e.g. deleted in the same batch) — nothing to re-render.
+            None => Ok(()),
+        }
+    }
+
     async fn truncate(&self) -> Result<(), EventError> {
         let _guard = self.write_lock.lock().await;
         if !self.path.exists() {
@@ -91,7 +181,7 @@ impl Projection for JournalFile {
         self.truncate().await
     }
 
-    async fn apply(&self, event: &Event, _db: &Database) -> Result<(), EventError> {
+    async fn apply(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         match event.event_type.as_str() {
             "transaction_recorded" => {
                 let payload: TransactionRecordedPayload =
@@ -105,7 +195,8 @@ impl Projection for JournalFile {
                     serde_json::from_value(event.payload.clone()).map_err(|e| {
                         EventError::Validation(format!("bad account_added payload: {e}"))
                     })?;
-                self.append(&render_account(&payload)).await
+                self.upsert_account(&payload.account, &render_account(&payload))
+                    .await
             }
             "exchange_rate_recorded" => {
                 let payload: ExchangeRateRecordedPayload =
@@ -114,6 +205,36 @@ impl Projection for JournalFile {
                     })?;
                 self.append(&render_exchange_rate(&payload)).await
             }
+            "transaction_updated" => {
+                let txn_id = event.payload["txn_id"]
+                    .as_str()
+                    .unwrap_or(&event.aggregate_id)
+                    .to_string();
+                self.rerender_transaction(&txn_id, db).await
+            }
+            "transaction_deleted" => {
+                let txn_id = event.payload["txn_id"]
+                    .as_str()
+                    .unwrap_or(&event.aggregate_id);
+                self.remove_transaction(txn_id).await
+            }
+            "transactions_merged" => {
+                // Drop the merged-away originals, then re-render the survivor with
+                // its combined postings/description (already on the primary row).
+                if let Some(ids) = event.payload["merged_ids"].as_array() {
+                    for id in ids.iter().filter_map(|v| v.as_str()) {
+                        self.remove_transaction(id).await?;
+                    }
+                }
+                let primary_id = event.payload["primary_id"]
+                    .as_str()
+                    .unwrap_or(&event.aggregate_id)
+                    .to_string();
+                self.rerender_transaction(&primary_id, db).await
+            }
+            // transaction_categorized / _tagged / _cleared don't change the
+            // rendered entry — category, header tags, and cleared-state aren't
+            // part of the hledger output — so they fall through to this no-op.
             _ => Ok(()),
         }
     }
@@ -216,10 +337,188 @@ pub fn render_account(a: &AccountAddedPayload) -> String {
     out
 }
 
+/// Splice a rendered `account` block into existing journal content: replace an
+/// existing directive for the same account name in place (latest wins), or
+/// append when the account isn't present yet. Keeps the file free of the
+/// duplicate `account` directives that would otherwise accrete on every
+/// `set_account_override`.
+fn upsert_account_block(existing: &str, account: &str, block: &str) -> String {
+    match find_account_block(existing, account) {
+        Some(range) => {
+            let mut out = String::with_capacity(existing.len() + block.len());
+            out.push_str(&existing[..range.start]);
+            out.push_str(block);
+            out.push_str(&existing[range.end..]);
+            out
+        }
+        // Absent: append, matching the historical append-mode write.
+        None => format!("{existing}{block}"),
+    }
+}
+
+/// Byte range of the `account <name>` directive block within `content`: the
+/// directive line, any indented continuation sub-directives (e.g. `note`), and
+/// the single trailing blank-line separator. Returns `None` when the account is
+/// not declared. Matching is exact on the account name (a two-space / newline
+/// boundary follows it), so `Assets:Cash` never matches `Assets:Cash:USD`.
+fn find_account_block(content: &str, account: &str) -> Option<std::ops::Range<usize>> {
+    let mut lines: Vec<(usize, &str)> = Vec::new();
+    let mut offset = 0;
+    for line in content.split_inclusive('\n') {
+        lines.push((offset, line));
+        offset += line.len();
+    }
+
+    let start_idx = lines
+        .iter()
+        .position(|(_, l)| is_account_directive(l.strip_suffix('\n').unwrap_or(l), account))?;
+    let start = lines[start_idx].0;
+
+    let mut end_idx = start_idx + 1;
+    // Indented continuation lines belong to the directive.
+    while end_idx < lines.len() {
+        let text = lines[end_idx].1.strip_suffix('\n').unwrap_or(lines[end_idx].1);
+        if text.starts_with(' ') || text.starts_with('\t') {
+            end_idx += 1;
+        } else {
+            break;
+        }
+    }
+    // Absorb one trailing blank-line separator so the replacement's own trailing
+    // blank line doesn't double up.
+    if end_idx < lines.len() {
+        let text = lines[end_idx].1.strip_suffix('\n').unwrap_or(lines[end_idx].1);
+        if text.trim().is_empty() {
+            end_idx += 1;
+        }
+    }
+
+    let end = lines.get(end_idx).map_or(content.len(), |(o, _)| *o);
+    Some(start..end)
+}
+
+/// True when `line` is an `account` directive for exactly `account` — the name
+/// must be followed by whitespace or end-of-line so a shorter name can't match a
+/// longer account (`Assets:Cash` vs `Assets:Cash:USD`).
+fn is_account_directive(line: &str, account: &str) -> bool {
+    match line.strip_prefix("account ").and_then(|r| r.strip_prefix(account)) {
+        Some(after) => after.is_empty() || after.starts_with(char::is_whitespace),
+        None => false,
+    }
+}
+
+/// Re-render a transaction entry from its current projection row. Used by the
+/// modification arms, whose events carry only a partial change set — the full
+/// post-change entry is reconstructed from the (already-updated) `transactions`
+/// row so the rendered block matches what an append of the same final state
+/// would produce.
+fn render_transaction_from_row(row: &TransactionRow) -> Result<String, EventError> {
+    let postings: Vec<Posting> = serde_json::from_value(row.postings.clone().into_json_value())
+        .map_err(|e| EventError::Validation(format!("bad postings for {}: {e}", row.id)))?;
+    let date = chrono::NaiveDate::parse_from_str(&row.date, "%Y-%m-%d")
+        .map_err(|e| EventError::Validation(format!("bad date {:?} for {}: {e}", row.date, row.id)))?;
+    let attachment: Option<AttachmentRef> = row
+        .attachment
+        .as_ref()
+        .and_then(|v| serde_json::from_value(v.clone().into_json_value()).ok());
+    let payload = TransactionRecordedPayload {
+        txn_id: row.id.clone(),
+        date,
+        description: row.description.clone(),
+        postings,
+        // Header tags aren't part of the rendered entry (see the module doc), so
+        // an empty set reproduces the append output exactly.
+        tags: Vec::new(),
+        attachment,
+        statement_source: row.statement_source.clone(),
+    };
+    Ok(render_transaction(&payload))
+}
+
+/// Replace the transaction entry anchored by `txn_id` with `block`, or append
+/// `block` when the id isn't present (making the file correct either way).
+fn replace_transaction_block(existing: &str, txn_id: &str, block: &str) -> String {
+    match find_transaction_block(existing, txn_id) {
+        Some(range) => {
+            let mut out = String::with_capacity(existing.len() + block.len());
+            out.push_str(&existing[..range.start]);
+            out.push_str(block);
+            out.push_str(&existing[range.end..]);
+            out
+        }
+        None => format!("{existing}{block}"),
+    }
+}
+
+/// Drop the transaction entry anchored by `txn_id`; returns the content
+/// unchanged when the id isn't present.
+fn remove_transaction_block(existing: &str, txn_id: &str) -> String {
+    match find_transaction_block(existing, txn_id) {
+        Some(range) => {
+            let mut out = String::with_capacity(existing.len());
+            out.push_str(&existing[..range.start]);
+            out.push_str(&existing[range.end..]);
+            out
+        }
+        None => existing.to_string(),
+    }
+}
+
+/// Byte range of the transaction entry carrying `; txn_id:<id>` — the whole
+/// blank-line-delimited paragraph (header line, indented meta + postings) plus
+/// the single trailing blank-line separator. Entries are paragraphs, so the
+/// bound is found by walking out to the surrounding blank lines from the anchor
+/// line; the header format itself is never parsed. `None` when the id is absent.
+fn find_transaction_block(content: &str, txn_id: &str) -> Option<std::ops::Range<usize>> {
+    let mut lines: Vec<(usize, &str)> = Vec::new();
+    let mut offset = 0;
+    for line in content.split_inclusive('\n') {
+        lines.push((offset, line));
+        offset += line.len();
+    }
+
+    let hit = lines.iter().position(|(_, l)| line_has_txn_id(l, txn_id))?;
+
+    // Back up to the paragraph start (the first line after the preceding blank).
+    let mut start_idx = hit;
+    while start_idx > 0 && !lines[start_idx - 1].1.trim().is_empty() {
+        start_idx -= 1;
+    }
+    // Forward to the paragraph end (the blank separator line).
+    let mut end_idx = hit + 1;
+    while end_idx < lines.len() && !lines[end_idx].1.trim().is_empty() {
+        end_idx += 1;
+    }
+    // Absorb one trailing blank so a replacement's own trailing blank can't double.
+    if end_idx < lines.len() && lines[end_idx].1.trim().is_empty() {
+        end_idx += 1;
+    }
+
+    let start = lines[start_idx].0;
+    let end = lines.get(end_idx).map_or(content.len(), |(o, _)| *o);
+    Some(start..end)
+}
+
+/// True when `line` carries the `txn_id:<id>` metadata tag for exactly `id` —
+/// the id must end on a non-alphanumeric boundary so one id can't prefix-match
+/// another (ULIDs are Crockford base32, i.e. ASCII alphanumeric).
+fn line_has_txn_id(line: &str, txn_id: &str) -> bool {
+    let needle = format!("txn_id:{txn_id}");
+    let mut rest = line;
+    while let Some(pos) = rest.find(&needle) {
+        let after = &rest[pos + needle.len()..];
+        if after.chars().next().is_none_or(|c| !c.is_ascii_alphanumeric()) {
+            return true;
+        }
+        rest = &rest[pos + 1..];
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{AttachmentRef, EventType};
+    use crate::events::{AttachmentRef, BudgetProjection, EventType};
     use chrono::NaiveDate;
     use rust_decimal::Decimal;
     use std::str::FromStr;
@@ -363,6 +662,218 @@ account Assets:Northwind:Cash  ; commodity:CAD
         assert_eq!(rendered, "account Assets:Summit:Chequing  ; commodity:CAD\n\n");
     }
 
+    // --- account-directive upsert (dedup) ---
+
+    #[test]
+    fn upsert_appends_when_account_absent() {
+        let existing = "account Assets:Cash  ; commodity:CAD\n\n";
+        let block = "account Assets:Bank  ; commodity:CAD\n\n";
+        let out = upsert_account_block(existing, "Assets:Bank", block);
+        assert_eq!(
+            out,
+            "account Assets:Cash  ; commodity:CAD\n\naccount Assets:Bank  ; commodity:CAD\n\n"
+        );
+    }
+
+    #[test]
+    fn upsert_replaces_existing_block_in_place() {
+        let existing = "\
+account Assets:Cash  ; commodity:CAD
+    note Old
+
+account Assets:Bank  ; commodity:CAD
+
+";
+        let block = "account Assets:Cash  ; commodity:USD\n    note New\n\n";
+        let out = upsert_account_block(existing, "Assets:Cash", block);
+        assert_eq!(
+            out,
+            "\
+account Assets:Cash  ; commodity:USD
+    note New
+
+account Assets:Bank  ; commodity:CAD
+
+"
+        );
+    }
+
+    #[test]
+    fn upsert_does_not_match_a_longer_account_name() {
+        // Assets:Cash must not clobber Assets:Cash:USD.
+        let existing = "account Assets:Cash:USD  ; commodity:USD\n\n";
+        let block = "account Assets:Cash  ; commodity:CAD\n\n";
+        let out = upsert_account_block(existing, "Assets:Cash", block);
+        assert_eq!(
+            out,
+            "account Assets:Cash:USD  ; commodity:USD\n\naccount Assets:Cash  ; commodity:CAD\n\n"
+        );
+    }
+
+    #[test]
+    fn upsert_replaces_block_at_eof_without_trailing_blank() {
+        let existing = "account Assets:Cash  ; commodity:CAD\n    note Old";
+        let block = "account Assets:Cash  ; commodity:USD\n    note New\n\n";
+        let out = upsert_account_block(existing, "Assets:Cash", block);
+        assert_eq!(out, block);
+    }
+
+    #[test]
+    fn upsert_handles_account_name_with_spaces() {
+        let existing = "account Liabilities:Credit Card:CAD  ; commodity:CAD\n\n";
+        let block = "account Liabilities:Credit Card:CAD  ; commodity:CAD\n    note Visa\n\n";
+        let out = upsert_account_block(existing, "Liabilities:Credit Card:CAD", block);
+        assert_eq!(out, block);
+    }
+
+    #[tokio::test]
+    async fn re_added_account_collapses_to_a_single_block_latest_wins() {
+        let (proj, _dir) = make_projection().await;
+        let db = fake_db().await;
+        for name in ["Old Name", "New Name"] {
+            let event = make_event(
+                EventType::AccountAdded,
+                serde_json::json!({
+                    "account": "Assets:Northwind:Cash",
+                    "commodity": "CAD",
+                    "display_name": name
+                }),
+            );
+            proj.apply(&event, &db).await.unwrap();
+        }
+        let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
+        assert_eq!(
+            contents.matches("account Assets:Northwind:Cash").count(),
+            1,
+            "re-emitted AccountAdded must not accrete duplicate directives"
+        );
+        assert!(contents.contains("note New Name"), "latest override wins");
+        assert!(!contents.contains("note Old Name"), "stale override replaced");
+    }
+
+    #[tokio::test]
+    async fn re_adding_account_leaves_interleaved_transactions_intact() {
+        let (proj, _dir) = make_projection().await;
+        let db = fake_db().await;
+        proj.apply(
+            &make_event(
+                EventType::AccountAdded,
+                serde_json::json!({ "account": "Assets:Cash", "commodity": "CAD" }),
+            ),
+            &db,
+        )
+        .await
+        .unwrap();
+        proj.apply(
+            &make_event(
+                EventType::TransactionRecorded,
+                serde_json::json!({
+                    "txn_id": "t1", "date": "2026-05-16", "description": "Coffee",
+                    "postings": [
+                        { "account": "Assets:Cash", "commodity": "CAD", "amount": "-5.25" },
+                        { "account": "Expenses:Coffee", "commodity": "CAD", "amount": "5.25" }
+                    ]
+                }),
+            ),
+            &db,
+        )
+        .await
+        .unwrap();
+        // Re-emit the account override after the transaction is on disk.
+        proj.apply(
+            &make_event(
+                EventType::AccountAdded,
+                serde_json::json!({
+                    "account": "Assets:Cash", "commodity": "CAD", "display_name": "Wallet"
+                }),
+            ),
+            &db,
+        )
+        .await
+        .unwrap();
+        let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
+        assert_eq!(contents.matches("account Assets:Cash  ").count(), 1);
+        assert!(contents.contains("note Wallet"));
+        assert!(contents.contains("2026-05-16 Coffee"), "transaction survives the upsert");
+    }
+
+    // --- Transaction in-place edit (pure block helpers) ---
+
+    fn recorded_block(txn_id: &str, desc: &str, amount: &str) -> String {
+        let positive = amount.trim_start_matches('-');
+        render_transaction(&TransactionRecordedPayload {
+            txn_id: txn_id.into(),
+            date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
+            description: desc.into(),
+            postings: vec![cad(amount), expense_posting("Expenses:Groceries", positive, vec![])],
+            tags: vec![],
+            attachment: None,
+            statement_source: None,
+        })
+    }
+
+    #[test]
+    fn replace_updates_entry_in_place_leaving_siblings() {
+        let journal = format!(
+            "{}{}",
+            recorded_block("01AAA", "Coffee", "-5.25"),
+            recorded_block("01BBB", "Bagel", "-3.00")
+        );
+        let updated = recorded_block("01AAA", "Coffee (large)", "-6.00");
+        let out = replace_transaction_block(&journal, "01AAA", &updated);
+        assert!(out.contains("Coffee (large)"), "new render spliced in:\n{out}");
+        assert!(!out.contains("2026-05-16 Coffee\n"), "old header replaced");
+        assert!(out.contains("-6.00 CAD") && !out.contains("-5.25 CAD"), "amount swapped");
+        assert!(out.contains("Bagel"), "sibling entry untouched");
+        assert_eq!(out.matches("txn_id:01AAA").count(), 1);
+        assert!(out.find("01AAA").unwrap() < out.find("01BBB").unwrap(), "order preserved");
+    }
+
+    #[test]
+    fn replace_appends_when_txn_id_absent() {
+        let existing = recorded_block("01AAA", "Coffee", "-5.25");
+        let block = recorded_block("01ZZZ", "New entry", "-1.00");
+        let out = replace_transaction_block(&existing, "01ZZZ", &block);
+        assert!(out.starts_with(&existing), "existing content preserved verbatim");
+        assert!(out.ends_with(&block), "new block appended");
+        assert_eq!(out.matches("txn_id:").count(), 2);
+    }
+
+    #[test]
+    fn remove_drops_entry_and_keeps_siblings() {
+        let bagel = recorded_block("01BBB", "Bagel", "-3.00");
+        let journal = format!("{}{}", recorded_block("01AAA", "Coffee", "-5.25"), bagel);
+        let out = remove_transaction_block(&journal, "01AAA");
+        assert!(!out.contains("txn_id:01AAA") && !out.contains("Coffee"));
+        assert_eq!(out, bagel, "removing the first entry leaves exactly the survivor");
+    }
+
+    #[test]
+    fn remove_absent_id_is_unchanged() {
+        let existing = recorded_block("01AAA", "Coffee", "-5.25");
+        assert_eq!(remove_transaction_block(&existing, "01NOPE"), existing);
+    }
+
+    #[test]
+    fn find_matches_exact_id_not_a_longer_one() {
+        // A journal whose only entry is 01AAAB must not match a search for 01AAA.
+        let journal = recorded_block("01AAAB", "Coffee", "-5.25");
+        assert!(find_transaction_block(&journal, "01AAA").is_none());
+        assert!(find_transaction_block(&journal, "01AAAB").is_some());
+    }
+
+    #[test]
+    fn replace_preserves_surrounding_account_and_price_directives() {
+        let txn = recorded_block("01AAA", "Coffee", "-5.25");
+        let journal =
+            format!("account Assets:Cash\n\nP 2026-05-16 00:00:00 CAD 1.37 USD\n\n{txn}");
+        let out =
+            replace_transaction_block(&journal, "01AAA", &recorded_block("01AAA", "Coffee v2", "-6.00"));
+        assert!(out.contains("account Assets:Cash"), "account directive survives");
+        assert!(out.contains("P 2026-05-16 00:00:00 CAD 1.37 USD"), "price directive survives");
+        assert!(out.contains("Coffee v2") && !out.contains("2026-05-16 Coffee\n"));
+    }
+
     // --- End-to-end projection: events → file ---
 
     async fn make_projection() -> (JournalFile, tempfile::TempDir) {
@@ -436,6 +947,89 @@ account Assets:Northwind:Cash  ; commodity:CAD
         let first = contents.find("First").unwrap();
         let second = contents.find("Second").unwrap();
         assert!(first < second, "transactions must append in event order");
+    }
+
+    /// Record a transaction, then edit its description + amount. The journal must
+    /// end with a single entry reflecting the new values — the edit re-renders
+    /// from the projection row the `BudgetProjection` just updated.
+    #[tokio::test]
+    async fn transaction_updated_rewrites_entry_in_place() {
+        let (proj, _dir) = make_projection().await;
+        let db = fake_db().await;
+        let bud = BudgetProjection;
+        bud.init_schema(&db).await.unwrap();
+
+        let recorded = make_event(
+            EventType::TransactionRecorded,
+            serde_json::json!({
+                "txn_id": "01TXNAAA", "date": "2026-05-16", "description": "Coffee",
+                "postings": [
+                    { "account": "Assets:Cash", "commodity": "CAD", "amount": "-5.25" },
+                    { "account": "Expenses:Coffee", "commodity": "CAD", "amount": "5.25" }
+                ]
+            }),
+        );
+        bud.apply(&recorded, &db).await.unwrap();
+        proj.apply(&recorded, &db).await.unwrap();
+
+        let updated = make_event(
+            EventType::TransactionUpdated,
+            serde_json::json!({
+                "txn_id": "01TXNAAA",
+                "changes": {
+                    "description": "Coffee (large)",
+                    "postings": [
+                        { "account": "Assets:Cash", "commodity": "CAD", "amount": "-6.00" },
+                        { "account": "Expenses:Coffee", "commodity": "CAD", "amount": "6.00" }
+                    ]
+                }
+            }),
+        );
+        bud.apply(&updated, &db).await.unwrap();
+        proj.apply(&updated, &db).await.unwrap();
+
+        let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
+        assert!(contents.contains("Coffee (large)"), "new description:\n{contents}");
+        assert!(!contents.contains("2026-05-16 Coffee\n"), "old header gone:\n{contents}");
+        assert!(contents.contains("-6.00 CAD") && !contents.contains("-5.25 CAD"), "amount edited");
+        assert_eq!(contents.matches("txn_id:01TXNAAA").count(), 1, "single entry:\n{contents}");
+    }
+
+    /// Deleting a transaction drops its entry from the journal file entirely.
+    #[tokio::test]
+    async fn transaction_deleted_removes_entry() {
+        let (proj, _dir) = make_projection().await;
+        let db = fake_db().await;
+        let bud = BudgetProjection;
+        bud.init_schema(&db).await.unwrap();
+
+        let recorded = make_event(
+            EventType::TransactionRecorded,
+            serde_json::json!({
+                "txn_id": "01TXNDEL", "date": "2026-05-16", "description": "Mistake",
+                "postings": [
+                    { "account": "Assets:Cash", "commodity": "CAD", "amount": "-9.99" },
+                    { "account": "Expenses:Oops", "commodity": "CAD", "amount": "9.99" }
+                ]
+            }),
+        );
+        bud.apply(&recorded, &db).await.unwrap();
+        proj.apply(&recorded, &db).await.unwrap();
+        assert!(
+            tokio::fs::read_to_string(&proj.path).await.unwrap().contains("txn_id:01TXNDEL"),
+            "precondition: entry present after record"
+        );
+
+        let deleted = make_event(
+            EventType::TransactionDeleted,
+            serde_json::json!({ "txn_id": "01TXNDEL" }),
+        );
+        bud.apply(&deleted, &db).await.unwrap();
+        proj.apply(&deleted, &db).await.unwrap();
+
+        let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
+        assert!(!contents.contains("txn_id:01TXNDEL"), "entry removed:\n{contents}");
+        assert!(!contents.contains("Mistake"), "description gone:\n{contents}");
     }
 
     #[test]

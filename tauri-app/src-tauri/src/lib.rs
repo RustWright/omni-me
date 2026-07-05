@@ -13,6 +13,7 @@ use omni_me_core::events::{
     SurrealEventStore,
 };
 use omni_me_core::journal_file::JournalFile;
+use omni_me_core::ledger::{self, JournalArtifacts};
 use omni_me_core::sync::{
     NetworkMonitor, PushDebouncer, RetryEngine, StatusReporter, SyncBuffer, SyncClient,
     wire_accelerator,
@@ -100,6 +101,88 @@ pub struct AppState {
     /// that doesn't match this path — mirrors the `last_import_root` shape
     /// but pointed at a file instead of a directory.
     pub last_journal_import_path: tokio::sync::Mutex<Option<PathBuf>>,
+    /// Parse-once cache of `budget.journal`'s balance + FX price tables, shared
+    /// by every read command that would otherwise re-read and re-parse the
+    /// ~5.8k-txn journal on each call (accounts, dashboard, detected/known
+    /// accounts, the drill-down). Keyed on the file's `(mtime, len)` stamp —
+    /// see [`AppState::journal_artifacts`] for why that's the invalidation
+    /// signal rather than a hand-bumped counter.
+    pub journal_cache: tokio::sync::RwLock<Option<JournalCacheEntry>>,
+}
+
+/// A cached journal parse, tagged with the file stamp it was derived from.
+/// `stamp` is `(modified_time, len)` of `budget.journal`, or `None` when the
+/// file was absent at parse time (fresh install) — a later-appearing file has a
+/// `Some` stamp, so the mismatch forces a rebuild.
+pub struct JournalCacheEntry {
+    stamp: Option<(std::time::SystemTime, u64)>,
+    artifacts: Arc<JournalArtifacts>,
+}
+
+impl AppState {
+    /// Return the journal's balance + price tables, parsing at most once per
+    /// file change. The read path `stat`s `budget.journal` for its
+    /// `(mtime, len)` stamp: on a cache hit (stamp unchanged) it hands back the
+    /// cached `Arc` with no parse; on a miss it reads, parses once via
+    /// [`ledger::parse_artifacts`], and repopulates the cache.
+    ///
+    /// **Why a file stamp, not a bumped `journal_version` counter:** the journal
+    /// is rewritten by the `JournalFile` projection inside *every*
+    /// `apply_events` path — single-event commands, batch import, journal
+    /// import, sync-pull, auto-import, and full rebuild. A hand-bumped counter
+    /// would have to be poked at all of those (and every future one) or it
+    /// silently serves stale balances. The file's own `(mtime, len)` can't drift
+    /// out of sync with its contents, so any write — from any path, now or
+    /// later — invalidates the cache for free. A `stat` is as cheap as the
+    /// atomic increment it replaces, and far cheaper than the parse it guards.
+    ///
+    /// The stamp is sampled *before* the read, so if a write lands mid-rebuild
+    /// the fresher content is merely cached under the older stamp and the next
+    /// call re-parses — an extra parse, never a stale read.
+    pub async fn journal_artifacts(&self) -> Result<Arc<JournalArtifacts>, String> {
+        let path = self.app_data_dir.join("budget.journal");
+        let stamp = tokio::fs::metadata(&path)
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok().map(|mtime| (mtime, m.len())));
+
+        // Fast path: cache hit under a read lock, no parse.
+        {
+            let guard = self.journal_cache.read().await;
+            if let Some(entry) = guard.as_ref()
+                && entry.stamp == stamp
+            {
+                return Ok(entry.artifacts.clone());
+            }
+        }
+
+        // Slow path: read + parse once, then repopulate. A missing file (fresh
+        // install / never-imported) parses as empty, matching the read commands'
+        // prior `NotFound => String::new()` handling.
+        let content = match tokio::fs::read_to_string(&path).await {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("read journal file: {e}")),
+        };
+        let artifacts = Arc::new(ledger::parse_artifacts(&content).map_err(|e| e.to_string())?);
+
+        let mut guard = self.journal_cache.write().await;
+        *guard = Some(JournalCacheEntry {
+            stamp,
+            artifacts: artifacts.clone(),
+        });
+        Ok(artifacts)
+    }
+
+    /// Like [`journal_artifacts`](Self::journal_artifacts) but degrades a
+    /// malformed/unparseable journal to empty artifacts instead of erroring —
+    /// for the read paths (`auto_roster` / `known_accounts` consumers) that
+    /// historically fell back to declared-accounts-only rather than failing.
+    pub async fn journal_artifacts_or_empty(&self) -> Arc<JournalArtifacts> {
+        self.journal_artifacts()
+            .await
+            .unwrap_or_else(|_| Arc::new(JournalArtifacts::empty()))
+    }
 }
 
 /// Derive a TCP probe target (`host:port`) from the sync server URL. Used by
@@ -272,6 +355,7 @@ pub fn run() {
                     status_reporter,
                     last_import_root: tokio::sync::Mutex::new(None),
                     last_journal_import_path: tokio::sync::Mutex::new(None),
+                    journal_cache: tokio::sync::RwLock::new(None),
                 });
             });
 
@@ -285,7 +369,7 @@ pub fn run() {
             commands::notes::reopen_journal_entry,
             commands::notes::get_journal_by_date,
             commands::notes::list_journal_entries,
-            commands::notes::list_journal_dates,
+            commands::notes::list_journal_day_stats,
             // Generic notes (id-keyed)
             commands::notes::create_generic_note,
             commands::notes::update_generic_note,
@@ -350,6 +434,7 @@ pub fn run() {
             commands::budget::list_detected_accounts,
             commands::budget::set_account_override,
             commands::budget::account_summaries,
+            commands::budget::account_tag_breakdown,
             commands::budget::dashboard_summary,
             commands::budget::check_affordability,
             commands::budget::set_budget,

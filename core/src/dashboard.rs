@@ -24,6 +24,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{Datelike, NaiveDate};
+use ledger_utils::balance::Balance;
 use ledger_utils::prices::Prices;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -108,8 +109,38 @@ pub fn dashboard_summary(
     months_back: u32,
     roster: &[String],
 ) -> Result<DashboardSummary, LedgerError> {
+    let artifacts = ledger::parse_artifacts(journal_content)?;
+    Ok(dashboard_summary_from(
+        &artifacts.balance,
+        &artifacts.prices,
+        declared,
+        recurring,
+        base_currency,
+        as_of,
+        monthly_txns,
+        months_back,
+        roster,
+    ))
+}
+
+/// Parsed-input variant of [`dashboard_summary`]: works off a pre-computed
+/// `balance` + `prices` (the Tauri-side journal cache) so the dashboard shares
+/// the single journal parse with the Accounts screen rather than re-parsing.
+/// Infallible — the only failure source (parsing) happened upstream.
+#[allow(clippy::too_many_arguments)]
+pub fn dashboard_summary_from(
+    balance: &Balance,
+    prices: &Prices,
+    declared: &[AccountRow],
+    recurring: &[RecurringPatternRow],
+    base_currency: &str,
+    as_of: NaiveDate,
+    monthly_txns: &[TxnPostingsRow],
+    months_back: u32,
+    roster: &[String],
+) -> DashboardSummary {
     let summaries =
-        balances::account_summaries(journal_content, declared, base_currency, as_of, roster)?;
+        balances::account_summaries_from(balance, prices, declared, base_currency, as_of, roster);
 
     let net_worth_in_base = sum_listable_net_worth(&summaries);
     let liquid_assets_in_base = sum_liquid_assets(&summaries);
@@ -118,24 +149,18 @@ pub fn dashboard_summary(
         .find(|s| s.account == "Unmatched")
         .and_then(|s| s.total_in_base);
 
-    // Same Prices ingestion that `balances` uses — keeps the trend's FX
-    // conversion consistent with the per-account aggregation.
-    let parsed = ledger::parse(journal_content)?;
-    let mut prices = Prices::new();
-    prices.insert_from(&parsed);
-
     let monthly_buckets =
-        bucket_postings_by_month(monthly_txns, base_currency, &prices, as_of, months_back);
+        bucket_postings_by_month(monthly_txns, base_currency, prices, as_of, months_back);
     let recurring = distill_recurring(recurring);
 
-    Ok(DashboardSummary {
+    DashboardSummary {
         base_currency: base_currency.to_string(),
         net_worth_in_base,
         liquid_assets_in_base,
         unmatched_balance,
         monthly_buckets,
         recurring,
-    })
+    }
 }
 
 fn sum_listable_net_worth(summaries: &[AccountSummary]) -> Option<Decimal> {

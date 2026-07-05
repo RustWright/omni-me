@@ -17,6 +17,7 @@
 
 use ledger_parser::{Ledger, LedgerItem};
 use ledger_utils::balance::Balance;
+use ledger_utils::prices::Prices;
 use ledger_utils::simplified_ledger::Ledger as SimplifiedLedger;
 
 #[derive(Debug, thiserror::Error)]
@@ -57,21 +58,63 @@ pub fn parse(content: &str) -> Result<Ledger, LedgerError> {
 /// Wraps `SimplifiedLedger` + `Balance` so callers don't have to know the
 /// two-step conversion lives inside `ledger-utils`.
 pub fn balances(content: &str) -> Result<Balance, LedgerError> {
-    let ledger = parse(content)?;
-    // `SimplifiedLedger` enforces per-transaction balance by *raw* amount — it
-    // ignores `@`/`@@` cost and only tolerates a single 2-commodity exchange.
-    // Real `ledger` cost-balances, so legitimate cost-annotated entries it
-    // accepts — notably zero-cost crypto acquisitions (`0.000088 ETH @@ 0.00
-    // CAD`, where the cash leg is 0) — make `SimplifiedLedger` reject the whole
-    // journal as unbalanced. `ledger bal` itself is just a per-account,
-    // per-commodity sum of posting amounts, so when the strict path rejects we
-    // fall back to that: identical results for ordinary journals, correct
-    // (ledger-faithful) results for the cost-balanced ones. The rendered journal
-    // always has explicit amounts, so no elision is needed here.
+    Ok(balances_from(&parse(content)?))
+}
+
+/// Compute balances from an already-parsed [`Ledger`] — the parse-once path
+/// behind [`balances`] and [`parse_artifacts`], so a caller that needs both
+/// balances and prices doesn't re-parse the journal for each.
+///
+/// `SimplifiedLedger` enforces per-transaction balance by *raw* amount — it
+/// ignores `@`/`@@` cost and only tolerates a single 2-commodity exchange.
+/// Real `ledger` cost-balances, so legitimate cost-annotated entries it
+/// accepts — notably zero-cost crypto acquisitions (`0.000088 ETH @@ 0.00
+/// CAD`, where the cash leg is 0) — make `SimplifiedLedger` reject the whole
+/// journal as unbalanced. `ledger bal` itself is just a per-account,
+/// per-commodity sum of posting amounts, so when the strict path rejects we
+/// fall back to that: identical results for ordinary journals, correct
+/// (ledger-faithful) results for the cost-balanced ones. The rendered journal
+/// always has explicit amounts, so no elision is needed here.
+pub fn balances_from(ledger: &Ledger) -> Balance {
     match SimplifiedLedger::try_from(ledger.clone()) {
-        Ok(simplified) => Ok(Balance::from(&simplified)),
-        Err(_) => Ok(raw_balances(&ledger)),
+        Ok(simplified) => Balance::from(&simplified),
+        Err(_) => raw_balances(ledger),
     }
+}
+
+/// The parse-derived read-side artifacts of a journal: per-account balances +
+/// the `P`-directive FX price table. Both come from a **single** [`parse`], so
+/// the Tauri layer can cache them together and hand `&balance` / `&prices` to
+/// the parsed-input variants (`*_from`) of the balance/dashboard aggregators
+/// instead of re-reading and re-parsing the journal on every read command.
+pub struct JournalArtifacts {
+    pub balance: Balance,
+    pub prices: Prices,
+}
+
+impl JournalArtifacts {
+    /// The empty artifacts — no accounts, no FX rates. The graceful-degradation
+    /// fallback for read paths that prefer a partial (declared-only) result over
+    /// an error on a malformed/absent journal (matches the pre-cache
+    /// `if let Ok(balance)` behaviour of `auto_roster` / `known_accounts`).
+    pub fn empty() -> Self {
+        Self {
+            balance: Balance::new(),
+            prices: Prices::new(),
+        }
+    }
+}
+
+/// Parse a journal **once** and derive both the balance table and the price
+/// table from that single parse. Equivalent to calling [`balances`] and
+/// building [`Prices`] separately, but at a third of the parsing cost — the
+/// basis of the Tauri-side journal cache.
+pub fn parse_artifacts(content: &str) -> Result<JournalArtifacts, LedgerError> {
+    let ledger = parse(content)?;
+    let balance = balances_from(&ledger);
+    let mut prices = Prices::new();
+    prices.insert_from(&ledger);
+    Ok(JournalArtifacts { balance, prices })
 }
 
 /// Per-account, per-commodity sum of explicit posting amounts — exactly what

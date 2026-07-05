@@ -17,6 +17,7 @@ use omni_me_core::db::queries::{
 use omni_me_core::events::{
     AttachmentRef, EventType, Posting, TransactionRecordedPayload,
 };
+use omni_me_core::ledger::JournalArtifacts;
 use omni_me_core::query::{self, QueryPosting, QueryTxn};
 use omni_me_core::recurring;
 use omni_me_core::reconciliation::{self, UnmatchedTxn};
@@ -333,13 +334,17 @@ fn is_balance_bearing(name: &str) -> bool {
 /// then folds in any still-present `ROSTER_FILE` entries that are themselves
 /// balance-bearing (a zero-regression escape hatch; the file is otherwise
 /// redundant now that detection is automatic).
-fn effective_roster(journal: &str, declared: &[AccountRow], file_roster: &[String]) -> Vec<String> {
+fn effective_roster(
+    artifacts: &JournalArtifacts,
+    declared: &[AccountRow],
+    file_roster: &[String],
+) -> Vec<String> {
     let hidden: Vec<String> = declared
         .iter()
         .filter(|a| a.hidden)
         .map(|a| a.id.clone())
         .collect();
-    let mut roster = balances::auto_roster(journal, declared, &hidden);
+    let mut roster = balances::auto_roster_from(&artifacts.balance, declared, &hidden);
     for extra in file_roster {
         if is_balance_bearing(extra) && !hidden.contains(extra) && !roster.contains(extra) {
             roster.push(extra.clone());
@@ -348,17 +353,6 @@ fn effective_roster(journal: &str, declared: &[AccountRow], file_roster: &[Strin
     roster.sort();
     roster.dedup();
     roster
-}
-
-/// Read the per-device budget journal; a missing file (fresh install /
-/// never-imported) reads as empty, not an error.
-async fn read_budget_journal(state: &AppState) -> Result<String, String> {
-    let journal_path = state.app_data_dir.join("budget.journal");
-    match tokio::fs::read_to_string(&journal_path).await {
-        Ok(s) => Ok(s),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(format!("read journal file: {e}")),
-    }
 }
 
 /// One auto-detected balance-bearing account for the Settings → Accounts
@@ -378,11 +372,11 @@ pub struct DetectedAccountView {
 /// `AccountInput` typeahead consumes this so the user never maintains a list.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_known_accounts(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let journal = read_budget_journal(&state).await?;
+    let artifacts = state.journal_artifacts_or_empty().await;
     let declared = queries::list_accounts(&state.db)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(balances::known_accounts(&journal, &declared))
+    Ok(balances::known_accounts_from(&artifacts.balance, &declared))
 }
 
 /// The detected balance-bearing accounts + their override state, for the
@@ -391,13 +385,13 @@ pub async fn list_known_accounts(state: State<'_, AppState>) -> Result<Vec<Strin
 pub async fn list_detected_accounts(
     state: State<'_, AppState>,
 ) -> Result<Vec<DetectedAccountView>, String> {
-    let journal = read_budget_journal(&state).await?;
+    let artifacts = state.journal_artifacts_or_empty().await;
     let declared = queries::list_accounts(&state.db)
         .await
         .map_err(|e| e.to_string())?;
     // Pass empty `hidden` so the result includes hidden accounts (the Settings
     // list must show them to offer "unhide").
-    let detected = balances::auto_roster(&journal, &declared, &[]);
+    let detected = balances::auto_roster_from(&artifacts.balance, &declared, &[]);
     let by_name: std::collections::HashMap<&str, &AccountRow> =
         declared.iter().map(|a| (a.id.as_str(), a)).collect();
     Ok(detected
@@ -470,15 +464,12 @@ pub async fn account_summaries(
         None => chrono::Utc::now().date_naive(),
     };
 
-    let journal_path = state.app_data_dir.join("budget.journal");
-    let journal_content = match tokio::fs::read_to_string(&journal_path).await {
-        Ok(s) => s,
-        // Missing file = fresh install or never-imported state. Return
-        // declared accounts only (which may also be empty); the screen
-        // renders a "no accounts yet" empty state.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("read journal file: {e}")),
-    };
+    // Parsed balance + prices, shared across every read command via the
+    // journal cache (parses at most once per file change). A missing journal
+    // (fresh install / never-imported) yields empty artifacts → the screen
+    // renders its "no accounts yet" empty state; a malformed one surfaces the
+    // parse error, as before.
+    let artifacts = state.journal_artifacts().await?;
 
     let declared = queries::list_accounts(&state.db)
         .await
@@ -488,11 +479,101 @@ pub async fn account_summaries(
     // − hidden), with the legacy ROSTER_FILE folded in as a balance-bearing
     // escape hatch. No hand-maintained allowlist.
     let file_roster = state.roster.read().await.clone();
-    let roster = effective_roster(&journal_content, &declared, &file_roster);
-    let summaries =
-        balances::account_summaries(&journal_content, &declared, &base, as_of_date, &roster)
-            .map_err(|e| format!("balance computation: {e}"))?;
+    let roster = effective_roster(&artifacts, &declared, &file_roster);
+    let summaries = balances::account_summaries_from(
+        &artifacts.balance,
+        &artifacts.prices,
+        &declared,
+        &base,
+        as_of_date,
+        &roster,
+    );
     Ok(summaries.into_iter().map(summary_to_view).collect())
+}
+
+/// Wire shape for one tag-value slice of the Accounts drill-down. Mirrors
+/// `core::balances::AccountTagBreakdown` with Decimals stringified.
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountTagGroupView {
+    pub value: String,
+    pub balances: Vec<CommodityBalanceView>,
+    pub total_in_base: Option<String>,
+}
+
+/// Wire shape for the full per-account tag breakdown (drill-down).
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountTagBreakdownView {
+    pub account: String,
+    /// The tag key actually grouped by (normalized: `institution` or `product`).
+    pub group_by: String,
+    pub groups: Vec<AccountTagGroupView>,
+}
+
+/// Per-account drill-down: slice one account's holdings by a posting tag so the
+/// user can see the per-institution (default) or per-product split that the MECE
+/// account name deliberately pools. Postings come from the tag-bearing
+/// `transactions` projection (same path R2 uses); base-currency conversion
+/// reuses the journal's `P` directives via `balances::account_tag_breakdown`.
+///
+/// `group_by` accepts `"institution"` (default) or `"product"`; anything else
+/// falls back to `institution`. `base_currency` / `as_of` default like
+/// `account_summaries`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn account_tag_breakdown(
+    state: State<'_, AppState>,
+    account: String,
+    group_by: Option<String>,
+    base_currency: Option<String>,
+    as_of: Option<String>,
+) -> Result<AccountTagBreakdownView, String> {
+    let base = match base_currency {
+        Some(b) => b,
+        None => state.base_currency.read().await.clone(),
+    };
+    let as_of_date = match as_of {
+        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            .map_err(|e| format!("bad as_of date: {e}"))?,
+        None => chrono::Utc::now().date_naive(),
+    };
+    let tag_key = match group_by.as_deref() {
+        Some("product") => "product",
+        _ => "institution",
+    };
+
+    // Only the FX price table is needed here (postings come from the DB
+    // projection below); the cache hands it over without re-parsing.
+    let artifacts = state.journal_artifacts().await?;
+
+    let rows = queries::query_candidate_transactions(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let txns: Vec<QueryTxn> = rows
+        .into_iter()
+        .map(row_to_view)
+        .map(|v| view_to_querytxn(&v))
+        .collect();
+
+    let groups = balances::account_tag_breakdown_from(
+        &artifacts.prices,
+        &txns,
+        &account,
+        tag_key,
+        &base,
+        as_of_date,
+    );
+
+    Ok(AccountTagBreakdownView {
+        account,
+        group_by: tag_key.to_string(),
+        groups: groups
+            .into_iter()
+            .map(|g| AccountTagGroupView {
+                value: g.value,
+                balances: g.balances.into_iter().map(balance_to_view).collect(),
+                total_in_base: g.total_in_base.map(base_money),
+            })
+            .collect(),
+    })
 }
 
 // --- Dashboard (Phase 4.5 + 4.6) --------------------------------------------
@@ -590,12 +671,9 @@ pub async fn dashboard_summary(
         None => chrono::Utc::now().date_naive(),
     };
 
-    let journal_path = state.app_data_dir.join("budget.journal");
-    let journal_content = match tokio::fs::read_to_string(&journal_path).await {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("read journal file: {e}")),
-    };
+    // Shared cached balance + prices (same parse the Accounts screen uses, so
+    // net worth reconciles across both surfaces).
+    let artifacts = state.journal_artifacts().await?;
 
     let declared = queries::list_accounts(&state.db)
         .await
@@ -614,9 +692,10 @@ pub async fn dashboard_summary(
     // 3.9: same auto-derived roster as the Accounts screen (keeps net worth
     // consistent across both surfaces).
     let file_roster = state.roster.read().await.clone();
-    let roster = effective_roster(&journal_content, &declared, &file_roster);
-    let summary = dashboard::dashboard_summary(
-        &journal_content,
+    let roster = effective_roster(&artifacts, &declared, &file_roster);
+    let summary = dashboard::dashboard_summary_from(
+        &artifacts.balance,
+        &artifacts.prices,
         &declared,
         &recurring,
         &base,
@@ -624,8 +703,7 @@ pub async fn dashboard_summary(
         &monthly_txns,
         months,
         &roster,
-    )
-    .map_err(|e| format!("dashboard computation: {e}"))?;
+    );
     Ok(dashboard_to_view(summary))
 }
 

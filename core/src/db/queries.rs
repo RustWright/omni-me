@@ -208,14 +208,23 @@ pub async fn list_journal_entries(
     Ok(rows)
 }
 
-pub async fn list_journal_dates(
+/// One day's calendar-widget stats: the entry exists (it's in the result set)
+/// and whether it's `complete`. Drives the calendar's per-day activity dot +
+/// day-complete check.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct JournalDayStat {
+    pub date: String,
+    pub complete: bool,
+}
+
+pub async fn list_journal_day_stats(
     db: &Database,
     from_date: &str,
     to_date: &str,
-) -> Result<Vec<String>, DbError> {
+) -> Result<Vec<JournalDayStat>, DbError> {
     let mut resp = db
         .query(
-            "SELECT date FROM journal_entries
+            "SELECT date, complete FROM journal_entries
              WHERE date >= $from_date AND date <= $to_date
              ORDER BY date ASC",
         )
@@ -223,12 +232,8 @@ pub async fn list_journal_dates(
         .bind(("to_date", to_date.to_string()))
         .await?;
 
-    #[derive(SurrealValue)]
-    struct DateOnly {
-        date: String,
-    }
-    let rows: Vec<DateOnly> = resp.take(0)?;
-    Ok(rows.into_iter().map(|r| r.date).collect())
+    let rows: Vec<JournalDayStat> = resp.take(0)?;
+    Ok(rows)
 }
 
 // --- Generic notes ---

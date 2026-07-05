@@ -16,6 +16,14 @@ pub struct JournalEntryItem {
     pub updated_at: String,
 }
 
+/// One day's calendar-widget stats. Mirrors `JournalDayStat` from the backend:
+/// the day has an entry (it's in the result set) and whether it's `complete`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JournalDayStat {
+    pub date: String,
+    pub complete: bool,
+}
+
 /// A free-form (generic) note. Mirrors `GenericNoteRow` from the backend.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenericNoteItem {
@@ -421,6 +429,23 @@ pub struct AccountSummaryView {
     pub last_statement_balance: Option<String>,
     pub balances: Vec<CommodityBalanceView>,
     pub total_in_base: Option<String>,
+}
+
+/// One tag-value slice of the Accounts drill-down (per institution / product).
+/// Mirrors `commands::budget::AccountTagGroupView`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccountTagGroupView {
+    pub value: String,
+    pub balances: Vec<CommodityBalanceView>,
+    pub total_in_base: Option<String>,
+}
+
+/// Full per-account tag breakdown returned by `account_tag_breakdown`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccountTagBreakdownView {
+    pub account: String,
+    pub group_by: String,
+    pub groups: Vec<AccountTagGroupView>,
 }
 
 /// One month's income / spending bucket. Mirrors
