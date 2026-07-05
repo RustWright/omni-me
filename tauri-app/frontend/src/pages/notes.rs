@@ -553,7 +553,11 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                     }
                 }
                 input {
-                    class: "flex-1 px-3 py-2 bg-transparent border-b border-white/10 text-lg font-bold text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                    // `min-w-0`: without it the `flex-1` input keeps its
+                    // intrinsic (auto) min-width, so on a narrow (mobile) header
+                    // the row overflows and shoves the Save button off-screen.
+                    // min-w-0 lets flex actually shrink the field. (friction 2026-07-04)
+                    class: "flex-1 min-w-0 px-3 py-2 bg-transparent border-b border-white/10 text-lg font-bold text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
                     r#type: "text",
                     placeholder: if local_note_id.read().is_none() { "Untitled note" } else { "Title" },
                     value: "{title}",

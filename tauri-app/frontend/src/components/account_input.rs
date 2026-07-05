@@ -75,7 +75,12 @@ pub enum AccountMode {
 fn rank_suggestions(all: &[String], query: &str) -> Vec<String> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
-        return Vec::new();
+        // Empty query = the field was just focused with nothing typed. Show the
+        // top few known accounts so the dropdown populates *on focus* — otherwise
+        // the user must type a character before anything appears, which reads as
+        // "suggestions don't auto-load" (especially on mobile, where typing is
+        // costly). (friction 2026-07-04)
+        return all.iter().take(MAX_SUGGESTIONS).cloned().collect();
     }
 
     all.iter()
