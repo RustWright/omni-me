@@ -93,9 +93,17 @@ pub fn Editor(
                     document.body()?.append_child(&script).ok()?;
                 }
 
-                // 2. Poll for window.createEditor to be defined, with a timeout
+                // 2. Poll for window.createEditor to be defined. The window must
+                // be GENEROUS: on a cold first launch (empty webview cache, the
+                // ~1 MB bundle parsed for the first time while the wasm frontend
+                // and DB init compete for the main thread) the embedded webkit
+                // webview can take well over 5s to define createEditor. The old
+                // 5s cap stranded the editor on "Initializing…" on first launch,
+                // yet worked on relaunch once webkit had cached the bundle. ~20s
+                // covers the cold case; a remount (navigate away + back) re-runs
+                // this effect as a backstop.
                 let mut attempts = 0;
-                const MAX_ATTEMPTS: u8 = 50;
+                const MAX_ATTEMPTS: u8 = 200;
                 const POLL_INTERVAL_MS: u32 = 100;
 
                 while attempts < MAX_ATTEMPTS {
@@ -116,7 +124,7 @@ pub fn Editor(
                 }
 
                 if attempts == MAX_ATTEMPTS {
-                    web_sys::console::error_1(&JsValue::from_str("CodeMirror editor: createEditor not available after polling."));
+                    web_sys::console::error_1(&JsValue::from_str("CodeMirror editor: createEditor still undefined after ~20s — editor.bundle.js likely failed to load (check the Network tab for a 404 or MIME error)."));
                     return None;
                 }
 
