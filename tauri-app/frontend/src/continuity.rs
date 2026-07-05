@@ -323,19 +323,27 @@ pub fn use_continuity_provider() -> ContinuityStore {
     // read *error* we leave the writer disabled so a transient failure can't
     // overwrite a good file with an empty one.
     use_future(move || async move {
-        // Boot read with retry (cold-start readiness race). On a fresh/empty DB
-        // the backend `setup` runs a slow `init_all()` *before* it `manage`s
-        // AppState, so a very early `get_workspace` invoke can hit unmanaged state
-        // and return Err. The previous code set `loaded` only on the Ok arm, so
-        // one early Err left `loaded` false forever — permanently hanging every
-        // `loaded_peek` waiter (journal fetch, `main.rs` tab-restore) on
-        // "Loading…". Poll until the backend answers (same idiom as the editor
-        // bundle / store-load waits); fail open after the cap so a genuinely
-        // broken backend degrades to an empty session instead of a dead UI.
-        const MAX_ATTEMPTS: u32 = 100; // ~10s at 100ms — setup finishes well within
-        let mut attempts = 0u32;
+        // Boot read with *timeout-bounded* retry (cold-start readiness race). On a
+        // fresh/empty DB the backend `setup` runs a slow `init_all()` *before* it
+        // `manage`s AppState. A very early `get_workspace` invoke can hit unmanaged
+        // state and return Err — but on genuine first-open (Android) it can also be
+        // **dropped** by the not-yet-ready IPC so its promise NEVER settles. The
+        // previous retry-on-Err loop awaited the invoke directly, so a dropped
+        // invoke parked here forever: `loaded` never flipped and every
+        // `loaded_peek` waiter (journal fetch, `main.rs` tab-restore) hung on
+        // "Loading…" indefinitely (the fresh-install cold-open hang, root-caused
+        // on-device 2026-07-05 — the shell + wasm actually render in ~85ms; only
+        // this boot read stalled). `invoke_get_workspace_timed` races each attempt
+        // against a `setTimeout`, so a hung attempt fails like an Err and we retry.
+        // Deadline is a wall-clock fail-open cap covering both failure modes (fast
+        // Err spin and silent hang) so a broken backend degrades to an empty
+        // session instead of a dead UI.
+        const ATTEMPT_TIMEOUT_MS: i32 = 500;
+        const RETRY_GAP_MS: i32 = 100;
+        const DEADLINE_MS: i32 = 15_000; // setup finishes in <1s; generous fail-open
+        let mut spent = 0i32;
         loop {
-            match crate::bridge::invoke_get_workspace().await {
+            match crate::bridge::invoke_get_workspace_timed(ATTEMPT_TIMEOUT_MS).await {
                 Ok(json) => {
                     if !json.is_empty()
                         && let Ok(w) = serde_json::from_str::<PersistedWorkspace>(&json)
@@ -346,11 +354,14 @@ pub fn use_continuity_provider() -> ContinuityStore {
                     break;
                 }
                 Err(_) => {
-                    attempts += 1;
-                    if attempts >= MAX_ATTEMPTS {
+                    // Upper-bound this attempt's cost (a hung attempt burns the full
+                    // timeout; a fast Err burns ~0 but we still count it so the
+                    // deadline stays conservative), then gap before retrying.
+                    spent += ATTEMPT_TIMEOUT_MS + RETRY_GAP_MS;
+                    if spent >= DEADLINE_MS {
                         break;
                     }
-                    crate::timer::sleep_ms(100).await;
+                    crate::timer::sleep_ms(RETRY_GAP_MS).await;
                 }
             }
         }

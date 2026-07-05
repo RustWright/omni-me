@@ -929,17 +929,51 @@ pub async fn invoke_update_timezone(timezone: &str) -> Result<(), String> {
 }
 
 /// Read the persisted continuity-store blob from disk (1.8a). Empty string =
-/// nothing persisted yet. Mock has no backend, so it returns empty.
-pub async fn invoke_get_workspace() -> Result<String, String> {
+/// nothing persisted yet; mock has no backend so it returns empty. Resolves to
+/// `Err` if the invoke's promise hasn't settled within `timeout_ms`: on a cold
+/// first-open (Android), an invoke fired before Tauri's native IPC handler is
+/// ready can be **dropped** — its
+/// promise then never resolves *and* never rejects. Awaiting it directly parks
+/// the caller forever, which was the fresh-install "Loading…" hang: the
+/// continuity boot read (continuity.rs) stalled on the first `get_workspace`
+/// await, so `loaded` never flipped and every `loaded_peek` waiter (journal
+/// fetch, tab-restore) hung indefinitely (root-caused on-device 2026-07-05).
+/// Racing the invoke against a `setTimeout` bounds each attempt so the boot loop
+/// can retry / fail open instead of hanging.
+pub async fn invoke_get_workspace_timed(timeout_ms: i32) -> Result<String, String> {
     #[cfg(feature = "mock")]
     {
+        let _ = timeout_ms;
         Ok(String::new())
     }
     #[cfg(not(feature = "mock"))]
     {
         #[derive(serde::Serialize)]
         struct Args {}
-        invoke("get_workspace", &Args {}).await
+        let args_js =
+            serde_wasm_bindgen::to_value(&Args {}).map_err(|e| format!("serialize args: {e}"))?;
+        let invoke_promise = tauri_invoke("get_workspace", args_js);
+
+        // A promise that rejects once `timeout_ms` elapses. `once_into_js` keeps
+        // the callback alive until it fires exactly once (no `forget` leak).
+        let timeout_promise = js_sys::Promise::new(&mut |_resolve, reject| {
+            let cb = Closure::once_into_js(move || {
+                let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("__ipc_timeout__"));
+            });
+            if let Some(win) = web_sys::window() {
+                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    cb.unchecked_ref(),
+                    timeout_ms,
+                );
+            }
+        });
+
+        // Whichever settles first wins; a never-settling invoke loses to the timeout.
+        let race = js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
+        let result = wasm_bindgen_futures::JsFuture::from(race)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
     }
 }
 

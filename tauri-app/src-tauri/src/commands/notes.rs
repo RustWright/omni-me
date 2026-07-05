@@ -104,15 +104,9 @@ pub async fn get_journal_by_date(
     state: State<'_, AppState>,
     date: String,
 ) -> Result<Option<JournalEntryRow>, String> {
-    // Diagnostic (cold-open hang): time the FIRST journal DB read, then quiet the
-    // probe so normal date-navigation doesn't append to the timing file.
-    crate::startup_probe::checkpoint(&state.app_data_dir, "cmd:get_journal_by_date:begin");
-    let out = queries::get_journal_by_date(&state.db, &date)
+    queries::get_journal_by_date(&state.db, &date)
         .await
-        .map_err(|e| e.to_string());
-    crate::startup_probe::checkpoint(&state.app_data_dir, "cmd:get_journal_by_date:end");
-    crate::startup_probe::deactivate();
-    out
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(rename_all = "snake_case")]
