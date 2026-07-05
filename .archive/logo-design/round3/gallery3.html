@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#0d0d0d;color:#dcddde;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{padding:24px 30px 44px}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:#a3a3a3;font-size:12.5px;margin:0 0 6px;max-width:820px;line-height:1.5}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:#448aff;margin:30px 0 4px}
+  .grid{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+  .card{width:210px;background:#141414;border:1px solid #1f1f1f;border-radius:10px;padding:12px}
+  .card.icon{background:#101014;border-color:#26314a}
+  .big{width:170px;height:170px;display:block;margin:2px auto 10px;border:1px solid #2a2a2a;border-radius:22px}
+  .mini{display:flex;gap:14px;justify-content:center;align-items:center;margin-bottom:9px}
+  .mini img{border:1px solid #2a2a2a;border-radius:6px}
+  .cc{display:inline-block;border-radius:50%;overflow:hidden;line-height:0;border:1px solid #2a2a2a}
+  .nm{font-size:13px;font-weight:600;color:#fff}
+  .cn{font-size:11px;color:#8a8a8a;line-height:1.4;margin-top:2px}
+  .lbl{font-size:9px;color:#5a5a5a;text-align:center}
+</style></head>
+<body><div class="wrap">
+  <h1>omni-me — round 3 (v3): ligature &amp; omega-m</h1>
+  <p class="sub">Core shrunk, enso opens top-right. Now exploring: <b>ligature</b> (a swash flows the o into the m) and <b>omega-m</b> (flared feet + curved legs so the m reads as Ω — omni/omega). The leftmost card each row is the settled <b>app icon</b> (o alone); the rest are <b>om</b> wordmark variants at large + 32px.</p>
+
+  <h2>Open-ring</h2>
+  <div class="grid" id="ring"></div>
+
+  <h2>Enso</h2>
+  <div class="grid" id="enso"></div>
+</div>
+<script>
+const V="?v=3";
+function iconCard(f){return `<div class="card icon">
+  <img class="big" src="${f}.svg${V}">
+  <div class="mini">
+    <div><img src="${f}.svg${V}" width="32" height="32"><div class="lbl">32px</div></div>
+    <div><span class="cc"><img src="${f}.svg${V}" width="70" height="70"></span><div class="lbl">crop</div></div>
+  </div>
+  <div class="nm">app icon</div><div class="cn">the 'o' alone — settled</div></div>`;}
+function lockCard(f,nm,cn){return `<div class="card">
+  <img class="big" src="${f}.svg${V}">
+  <div class="mini"><div><img src="${f}.svg${V}" width="36" height="36"><div class="lbl">32px</div></div></div>
+  <div class="nm">${nm}</div><div class="cn">${cn}</div></div>`;}
+document.getElementById("ring").innerHTML =
+  iconCard("icon-ring")
+  + lockCard("om-ring","baseline","gateway m, no ligature")
+  + lockCard("om-ring-lig","+ ligature","swash flows o into m")
+  + lockCard("om-ring-omega","+ omega-m","m has feet + curve (Ω)")
+  + lockCard("om-ring-omega-lig","+ both","ligature and omega-m");
+document.getElementById("enso").innerHTML =
+  iconCard("icon-enso")
+  + lockCard("om-enso","baseline","gateway m, no ligature")
+  + lockCard("om-enso-lig","+ ligature","swash flows o into m")
+  + lockCard("om-enso-omega","+ omega-m","m has feet + curve (Ω)");
+</script>
+</body></html>

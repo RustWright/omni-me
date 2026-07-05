@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html,body { margin:0; background:#0d0d0d; color:#dcddde;
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { padding:24px 30px 40px; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .sub { color:#a3a3a3; font-size:12.5px; margin:0 0 18px; }
+  h2 { font-size:14px; text-transform:uppercase; letter-spacing:.08em; color:#448aff;
+    margin:26px 0 12px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .grid { display:flex; flex-wrap:wrap; gap:16px; }
+  .card { width:188px; background:#141414; border:1px solid #1f1f1f; border-radius:10px;
+    padding:12px; box-sizing:border-box; }
+  .big { width:150px; height:150px; display:block; margin:0 auto 10px;
+    border:1px solid #2a2a2a; border-radius:20px; }
+  .mini { display:flex; align-items:center; gap:12px; justify-content:center; margin-bottom:9px; }
+  .mini img { border:1px solid #2a2a2a; border-radius:5px; }
+  .cc { display:inline-block; width:60px; height:60px; border-radius:50%; overflow:hidden;
+    line-height:0; border:1px solid #2a2a2a; }
+  .fn { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:#dcddde; }
+  .cn { font-size:11px; color:#8a8a8a; line-height:1.35; margin-top:2px; }
+  .lbl { font-size:9px; color:#555; text-align:center; margin-top:-4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>omni-me — logo brainstorm (round 2, 25 candidates)</h1>
+  <p class="sub">#448aff on charcoal #1e1e1e. Each card: large tile · 32px (favicon) · circle-crop (Android adaptive icon).</p>
+  <div id="sheet"></div>
+</div>
+<script>
+const data = {
+  "Wordmark & lettermark": [
+    ["wm-01-lockup-dot","omni·me lockup; dot = self (lockup only)"],
+    ["wm-02-o-counter","'o' monogram; counter holds white me-dot"],
+    ["wm-03-om-ligature","path 'om' ligature; o-counter self-dot"],
+    ["wm-04-stack-dot","stacked omni/me; dot as pivot"],
+    ["wm-05-dot-hero","hero self-dot inside thin omni ring"],
+    ["wm-06-m-mono","geometric 'm'; off-white stem = you"],
+    ["wm-07-neg-o-aperture","negative-space 'o'; dot enters aperture"],
+    ["wm-08-i-tittle","lowercase 'i'; blue tittle = me"],
+  ],
+  "Greek & symbolic": [
+    ["gk-01-omega-vessel","Ω arch cupping a white me-dot"],
+    ["gk-02-ouroboros","near-closed ouroboros; meaningful gap"],
+    ["gk-03-alpha-omega","α · me · ω — beginning & end"],
+    ["gk-04-monad-gap","point-in-circle monad with a gap"],
+    ["gk-05-enso-brush","enso brush circle, open lower-right"],
+    ["gk-06-omega-glyph","weighty Ω glyph + white dot"],
+    ["gk-07-vesica","two circles; vesica lens; self at meet"],
+    ["gk-08-omega-gate","Ω as a gateway sheltering the self"],
+  ],
+  "Abstract & conceptual": [
+    ["ab-01-open-ring","open ring (gap) + white me-core"],
+    ["ab-02-open-spiral","one-stroke spiral out from a seed"],
+    ["ab-03-vessel","cup/vessel cradling a large core"],
+    ["ab-04-strata","concentric gapped rings (tree-rings)"],
+    ["ab-05-interlock","3 Borromean rings + shared core"],
+    ["ab-06-seed","filled seed with a charcoal crack"],
+    ["ab-07-facet-gem","faceted hexagon (mandala of domains)"],
+    ["ab-08-negative-tile","tile; 'me' carved void + edge bite"],
+    ["ab-09-open-triangle","one-stroke triangle, open at apex"],
+  ],
+};
+const folder = { "Wordmark & lettermark":"wordmark", "Greek & symbolic":"greek", "Abstract & conceptual":"abstract" };
+const ids = { "Wordmark & lettermark":"lane-wordmark", "Greek & symbolic":"lane-greek", "Abstract & conceptual":"lane-abstract" };
+let html = "";
+for (const [lane, items] of Object.entries(data)) {
+  html += `<section id="${ids[lane]}"><h2>${lane}</h2><div class="grid">`;
+  for (const [file, concept] of items) {
+    const src = `${folder[lane]}/${file}.svg`;
+    html += `<div class="card">
+      <img class="big" src="${src}">
+      <div class="mini">
+        <div><img src="${src}" width="32" height="32"><div class="lbl">32px</div></div>
+        <div><span class="cc"><img src="${src}" width="60" height="60"></span><div class="lbl">crop</div></div>
+      </div>
+      <div class="fn">${file}</div>
+      <div class="cn">${concept}</div>
+    </div>`;
+  }
+  html += `</div></section>`;
+}
+document.getElementById("sheet").innerHTML = html;
+</script>
+</body>
+</html>

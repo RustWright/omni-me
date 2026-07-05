@@ -1,0 +1,7 @@
+{
+  "default": "omni-me-icon.svg",
+  "bg_color": "#1e1e1e",
+  "android_bg": "omni-me-bg.svg",
+  "android_fg": "omni-me-fg.svg",
+  "android_fg_scale": 100
+}
