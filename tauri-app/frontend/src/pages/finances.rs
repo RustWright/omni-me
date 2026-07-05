@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::account_input::{AccountInput, AccountMode, AccountSuggestions};
+use crate::components::date_field::DateField;
 use crate::continuity::{use_continuity, CaptureDraft, ContinuityKey, ListState, PostingDraft};
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AffordVerdictView,
@@ -1375,11 +1376,9 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                 label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
                     "Date"
                 }
-                input {
-                    class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent",
-                    r#type: "date",
-                    value: "{date.read()}",
-                    oninput: move |e| date.set(e.value().clone()),
+                DateField {
+                    value: date.read().clone(),
+                    on_input: move |v| date.set(v),
                 }
             }
 
@@ -2715,12 +2714,11 @@ fn FilterBar(
             div { class: "flex flex-wrap items-end gap-2",
                 label { class: "flex flex-col gap-1",
                     span { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest", "From" }
-                    input {
-                        r#type: "date",
-                        class: "{input_class}",
-                        value: "{date_val_from}",
-                        oninput: move |e| {
-                            let v = e.value();
+                    DateField {
+                        value: date_val_from.clone(),
+                        class: input_class.to_string(),
+                        compact: true,
+                        on_input: move |v: String| {
                             let mut next = draft.read().clone();
                             next.date_from = if v.is_empty() { None } else { Some(v) };
                             draft.clone().set(next);
@@ -2729,12 +2727,11 @@ fn FilterBar(
                 }
                 label { class: "flex flex-col gap-1",
                     span { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest", "To" }
-                    input {
-                        r#type: "date",
-                        class: "{input_class}",
-                        value: "{date_val_to}",
-                        oninput: move |e| {
-                            let v = e.value();
+                    DateField {
+                        value: date_val_to.clone(),
+                        class: input_class.to_string(),
+                        compact: true,
+                        on_input: move |v: String| {
                             let mut next = draft.read().clone();
                             next.date_to = if v.is_empty() { None } else { Some(v) };
                             draft.clone().set(next);
@@ -3328,11 +3325,9 @@ fn TransactionEditForm(
                 label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
                     "Date"
                 }
-                input {
-                    class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent",
-                    r#type: "date",
-                    value: "{date.read()}",
-                    oninput: move |e| date.set(e.value().clone()),
+                DateField {
+                    value: date.read().clone(),
+                    on_input: move |v| date.set(v),
                 }
             }
 
@@ -5440,11 +5435,10 @@ fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
                 }
                 div {
                     label { class: "block text-xs text-obsidian-text-muted mb-1", "As of" }
-                    input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
-                        r#type: "date",
-                        value: "{as_of.read()}",
-                        oninput: move |e| as_of.set(e.value()),
+                    DateField {
+                        value: as_of.read().clone(),
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                        on_input: move |v| as_of.set(v),
                     }
                 }
             }
