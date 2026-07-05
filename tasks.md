@@ -289,7 +289,30 @@ build/test/publish of the bank-free image.
 
 ## Running friction log *(fill during dogfooding; triage into the live phase)*
 
-- [x] **No easy way to edit a committed ledger transaction** (dogfooding 2026-07-04, user flagged
+### 2026-07-04 — cross-platform dogfooding (phone + laptop, both on the Hetzner box) — NEW, list incomplete ("...and it goes on")
+
+**CRITICAL — sync / data integrity:**
+- [ ] **Auto-sync never fires.** Edits save locally but don't propagate until the **Sync** button is pressed manually, despite both devices connected to the Hetzner server. Applies to journal, notes, tasks — everything. (dogfooding 2026-07-04) [?]
+- [ ] **Content/body edits don't materialize on the receiving device.** Manual sync of a journal entry shows **"1 up"** on the sender and **"1 down"** on the receiver, but the received entry stays **BLANK**. Same for **note bodies** — a note's *creation* syncs (the empty note appears on the other device) but typed **text** does not. So *creation* events and *task create/complete* propagate, but **text-content updates don't apply**. Likely a projection/event-apply gap for body-content events (journal continuity / note body), not the transport (counts move). **Headline bug — breaks the multi-device premise.** [L?]
+- [ ] **Imported journal + note data absent on mobile.** None of the pre-existing imported journal/notes are on the phone — only (partially) newly-created items sync. No initial/bulk backfill to a fresh device. [?]
+- [ ] **Ledger transaction edits don't update on sync / across devices.** This session's in-app txn edit isn't reflected after sync. (may share the content-apply root cause) [?]
+
+**ROOT CAUSE (triaged 2026-07-04, code-confirmed) — three intertwined event-sourcing bugs; fix in a dedicated session:**
+1. **Journal aggregate-identity mismatch.** `journal_entries` rows are keyed by **date** (`type::record('journal_entries', $date)`), but `journal_id` is a **per-device ULID** stored as a field. `on_journal_updated` updates `WHERE journal_id = $journal_id`. Two devices each mint their own `journal_id` for the same day → an incoming `journal_entry_updated` from device A matches **no row** on device B (whose row carries B's id) → the entry stays **BLANK**. And an incoming `journal_entry_created` for a date that already exists locally → SurrealDB `CREATE` **errors** (record exists). (`core/src/events/notes_projection.rs`)
+2. **Fail-fast apply + pre-advanced sync cursor = silent permanent data loss.** `pull_only` (`core/src/sync/client.rs`) appends pulled events **and advances `last_sync_timestamp`** *before* projections run; then `trigger_sync` calls `apply_events`, which is **fail-fast** (`projection.rs:85` `?`). So one failing/colliding event (e.g. the bug-1 `CREATE` collision) **aborts the rest of the pulled batch** — and because the cursor already advanced, those events are **never re-pulled or re-projected** (only a full `rebuild()` recovers them). Explains "imported data absent on mobile" + inconsistent "some things sync, some don't".
+3. **Non-upserting body updates.** `on_generic_updated` / `on_journal_updated` are `UPDATE … SET` — they **no-op** if the create hasn't landed yet (ordering, or a prior batch-abort). Should be idempotent upserts.
+- Auto-sync-not-firing is a **separate subsystem** (pusher/scheduler in `core/src/sync/{pusher,accelerator}.rs`), fold into the same session. Read-side UI reactivity (does the receiver refetch after a pull?) is a secondary follow-up.
+
+**SEVERE UX:**
+- [ ] **Date-picker bricks the desktop app.** Setting the date freezes the whole app until you click out to a different app (focus/modal trap). [M?]
+
+**Quick / mobile:**
+- [ ] **Mobile Notes: Save button fully offscreen** (layout overflow on the notes section, mobile). [S]
+- [ ] **Remove the "AI Analyze" button** (user decision, 2026-07-04). [XS]
+- [ ] **Account suggestions don't auto-load on mobile** (typeahead doesn't populate automatically on the phone). [S]
+- [ ] **...more to come** — user's list was still going ("and it goes on"); collect the rest before finalizing priorities.
+
+ (dogfooding 2026-07-04, user flagged
   — "we'll need to tackle that eventually"; scope confirmed = **ledger/budget transactions**, not
   daily notes). **DONE 2026-07-04.** The friction note was stale: a `TransactionUpdated` event +
   `TransactionUpdatedPayload` (schema-flexible `changes` bag) + `on_transaction_updated` projection
