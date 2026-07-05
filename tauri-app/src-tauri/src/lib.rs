@@ -226,14 +226,23 @@ pub fn run() {
         )
         .init();
 
+    // Bake the (possibly CI-`--config`-merged) config now so we can inspect it
+    // before registering config-driven plugins.
+    let context = tauri::generate_context!();
+
     let mut builder = tauri::Builder::default();
-    // Desktop self-update via the Tauri updater plugin (pubkey + endpoint are
-    // injected at build time by the private CI's --config; absent in local/dev
-    // builds, where `app.updater()` simply errors at call time). Mobile uses the
-    // custom OTA in `commands::update` instead — the plugin doesn't support it.
+    // Desktop self-update via the Tauri updater plugin. pubkey + endpoint are
+    // injected at build time by the private CI's --config; local/dev builds omit
+    // `plugins.updater`. The plugin's init FAILS on a missing/null config (it
+    // does NOT defer the failure to call time as an earlier comment assumed), so
+    // register it only when the config is actually present — otherwise the
+    // `app.updater()` calls in `commands::update` return an error gracefully.
+    // Mobile uses the custom OTA in `commands::update` instead.
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        if context.config().plugins.0.contains_key("updater") {
+            builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        }
     }
 
     builder
@@ -482,7 +491,7 @@ pub fn run() {
             commands::update::check_desktop_update,
             commands::update::install_desktop_update,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 
