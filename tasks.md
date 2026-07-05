@@ -310,6 +310,17 @@ build/test/publish of the bank-free image.
 - [ ] **Mobile Notes: Save button fully offscreen** (layout overflow on the notes section, mobile). [S]
 - [x] **Remove the "AI Analyze" button** (user decision, 2026-07-04). **DONE 2026-07-05** — removed the visible UI (button + `LlmResultsDisplay` results/error panels + orphaned `processing`/`llm_result`/`llm_error` signals in `journal.rs`). Per user clarification, the backend `process_note_llm` effect + the `invoke_process_note_llm` bridge wrapper + `LlmResult` type are **retained** (`#[allow(dead_code)]`) for a future non-button analysis trigger. Frontend clippy clean on both mock + default configs. [XS]
 - [ ] **Account suggestions don't auto-load on mobile** (typeahead doesn't populate automatically on the phone). [S]
+
+**FEATURE — journal line timestamps, redesign (design-first → own session, user 2026-07-05):**
+- [ ] **Reveal-on-select line completion timestamps** (Teams-style). Supersedes the current inline-timestamp feature. [M/L]
+  - **Today's behavior** (`tauri-app/assets/js/editor.js:319-351`, "1.3 journal-mode line timestamp on Enter"): journal mode has an Enter keymap (`timestampEnterHandler`) that, on Enter at end of line, inserts `"\n" + HH:MM + " "` — i.e. it prepends the **start time** of the *next* line as **literal inline text** in `raw_text`.
+  - **Bug the user hit:** the timestamp only engages **on the first carriage return**, so the very first line of a fresh entry is un-timestamped — you must remember to press Enter first before typing. Can't just open a journal and start writing. (This bug is **not worth patching** on its own — the redesign below replaces the whole mechanism.)
+  - **User's redesign vision:** record the timestamp when a line is **finished** (not started); **don't** clutter the surface with inline times; **reveal** a line's completion time only when that (already-completed) line is **selected** — like MS Teams chat, where message timestamps stay hidden until you tap a message.
+  - **Hard design questions for the dedicated session** (render real candidates per the design-render habit):
+    1. **When is a line "finished"?** caret leaves the line (Enter to next / click away / blur)? debounced idle? This defines when the timestamp is stamped and frozen.
+    2. **Where do per-line timestamps persist?** They must move **out of `raw_text`** into side metadata, but lines get edited/reordered/deleted in a plaintext, event-sourced journal — keying by line index is fragile; by content-hash breaks on edit. Needs a real model (CodeMirror line-mapped metadata + a stored map, folded into the journal event/projection). Interacts with the sync/event model.
+    3. **Reveal UX candidates:** right-aligned muted time on the active line · gutter marker · hover/tap tooltip · status-bar "line completed at …". Mobile (tap) vs desktop (caret/hover) both need to feel right.
+  - Deferred to its own planning-first session (cross-cutting: editor JS + frontend + journal event/projection model). Relates to the typing-feel bucket (5.4).
 - [ ] **...more to come** — user's list was still going ("and it goes on"); collect the rest before finalizing priorities.
 
  (dogfooding 2026-07-04, user flagged
