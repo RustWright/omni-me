@@ -33,5 +33,13 @@ pub(crate) async fn append_and_apply(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Auto-sync (push half): nudge the debounced pusher so this edit propagates
+    // without a manual Sync. Previously nothing woke the pusher — the SyncBuffer
+    // it subscribes to was never fed — so local edits sat until the user pressed
+    // Sync. `trigger()` is a non-blocking notify; the debouncer coalesces a burst
+    // of edits into one push after its quiet window. Inbound events arrive via the
+    // separate pull scheduler (`sync::PullScheduler`).
+    state.push_debouncer.trigger();
+
     Ok(())
 }

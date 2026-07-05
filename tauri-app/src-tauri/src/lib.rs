@@ -5,7 +5,7 @@ mod recurring_scanner;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
@@ -15,8 +15,8 @@ use omni_me_core::events::{
 use omni_me_core::journal_file::JournalFile;
 use omni_me_core::ledger::{self, JournalArtifacts};
 use omni_me_core::sync::{
-    NetworkMonitor, PushDebouncer, RetryEngine, StatusReporter, SyncBuffer, SyncClient,
-    wire_accelerator,
+    NetworkMonitor, PullEvent, PullScheduler, PushDebouncer, RetryEngine, StatusReporter,
+    SyncBuffer, SyncClient, wire_accelerator, wire_puller_network,
 };
 
 const DB_NAME: &str = "local.db";
@@ -88,6 +88,9 @@ pub struct AppState {
     pub push_debouncer: PushDebouncer,
     /// Retry engine — exponential backoff 1s → 60s.
     pub retry_engine: RetryEngine,
+    /// Background pull scheduler — startup backfill + interval + online-nudge
+    /// pulls so inbound edits arrive without a manual Sync.
+    pub pull_scheduler: PullScheduler,
     /// OS network event monitor — edge-triggered Online/Offline hints.
     pub network_monitor: NetworkMonitor,
     /// Aggregated sync status reporter.
@@ -342,6 +345,33 @@ pub fn run() {
                 let (status_reporter, _sr_push_task, _sr_retry_task) =
                     StatusReporter::spawn(&push_debouncer, &retry_engine);
 
+                // Auto-pull (inbound half of auto-sync): startup backfill +
+                // interval + network-online pulls, applied best-effort. Nothing
+                // pulled automatically before, so remote edits only appeared on a
+                // manual Sync. When a pull actually lands new events, emit
+                // `sync:applied` so the open page refetches (it has no other way to
+                // learn inbound data arrived). Task detaches; handle kept in state.
+                let (pull_scheduler, _pull_task) =
+                    PullScheduler::spawn(sync_client.clone(), db.clone(), projections.clone());
+                let _pull_net_task = wire_puller_network(&network_monitor, pull_scheduler.clone());
+                {
+                    let mut pull_rx = pull_scheduler.subscribe();
+                    let emit_handle = handle.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            match pull_rx.recv().await {
+                                Ok(PullEvent::Applied { pulled, failed }) => {
+                                    tracing::info!(pulled, failed, "auto-pull applied; nudging UI refetch");
+                                    let _ = emit_handle.emit("sync:applied", pulled);
+                                }
+                                Ok(_) => {}
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            }
+                        }
+                    });
+                }
+
                 let attachment_cache_dir = app_data.join("attachments");
                 std::fs::create_dir_all(&attachment_cache_dir).ok();
 
@@ -360,6 +390,7 @@ pub fn run() {
                     sync_buffer,
                     push_debouncer,
                     retry_engine,
+                    pull_scheduler,
                     network_monitor,
                     status_reporter,
                     last_import_root: tokio::sync::Mutex::new(None),
