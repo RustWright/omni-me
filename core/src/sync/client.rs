@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 use crate::db::Database;
 use crate::events::{Event, EventStore, NewEvent, SurrealEventStore};
 
+/// The server caps `/sync/push` at 100 events AND a 256 KiB request body
+/// (`DefaultBodyLimit`). Chunk pushes to stay under BOTH: a fixed count of 100
+/// large transaction events overflows the byte limit (413 Payload Too Large),
+/// which silently stranded a bulk re-import mid-stream. Budget well under
+/// 256 KiB to leave headroom for the JSON envelope.
+const MAX_EVENTS_PER_PUSH: usize = 100;
+const MAX_PUSH_BYTES: usize = 200 * 1024;
+
 /// Error type for sync operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
@@ -256,38 +264,43 @@ impl SyncClient {
     async fn push_events(&self, events: &[Event]) -> Result<usize, SyncError> {
         let url = format!("{}/sync/push", self.server_url);
         let mut total = 0;
+        for chunk in chunk_for_push(events) {
+            total += self.post_push_chunk(&url, chunk).await?;
+        }
+        Ok(total)
+    }
 
-        for chunk in events.chunks(100) {
-            let new_events: Vec<NewEvent> = chunk.iter().map(NewEvent::from).collect();
+    /// POST one already-sized batch of events to `/sync/push`.
+    async fn post_push_chunk(
+        &self,
+        url: &str,
+        new_events: Vec<NewEvent>,
+    ) -> Result<usize, SyncError> {
+        let body = PushRequest {
+            device_id: self.device_id.clone(),
+            events: new_events,
+        };
 
-            let body = PushRequest {
-                device_id: self.device_id.clone(),
-                events: new_events,
-            };
+        let resp = self
+            .http
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| SyncError::Network(e.to_string()))?;
 
-            let resp = self
-                .http
-                .post(&url)
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| SyncError::Network(e.to_string()))?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(SyncError::Server(format!("push failed ({status}): {body}")));
-            }
-
-            let push_resp: PushResponse = resp
-                .json()
-                .await
-                .map_err(|e| SyncError::Network(format!("failed to parse push response: {e}")))?;
-
-            total += push_resp.count;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(SyncError::Server(format!("push failed ({status}): {body}")));
         }
 
-        Ok(total)
+        let push_resp: PushResponse = resp
+            .json()
+            .await
+            .map_err(|e| SyncError::Network(format!("failed to parse push response: {e}")))?;
+
+        Ok(push_resp.count)
     }
 
     async fn get_local_events_since(
@@ -300,5 +313,80 @@ impl SyncClient {
             .get_since_by_device(*since, &self.device_id)
             .await
             .map_err(|e| SyncError::Local(e.to_string()))
+    }
+}
+
+/// Pack events into push requests that respect BOTH caps the server enforces on
+/// `/sync/push`: at most `MAX_EVENTS_PER_PUSH` events and at most `MAX_PUSH_BYTES`
+/// serialized bytes per request. Pure (no I/O) so it is unit-testable. An event
+/// larger than the byte budget is still emitted alone (best effort) rather than
+/// dropped.
+fn chunk_for_push(events: &[Event]) -> Vec<Vec<NewEvent>> {
+    let mut chunks: Vec<Vec<NewEvent>> = Vec::new();
+    let mut batch: Vec<NewEvent> = Vec::new();
+    let mut bytes = 0usize;
+    for ev in events {
+        let ne = NewEvent::from(ev);
+        let sz = serde_json::to_vec(&ne).map(|v| v.len()).unwrap_or(0);
+        if !batch.is_empty()
+            && (batch.len() >= MAX_EVENTS_PER_PUSH || bytes + sz > MAX_PUSH_BYTES)
+        {
+            chunks.push(std::mem::take(&mut batch));
+            bytes = 0;
+        }
+        batch.push(ne);
+        bytes += sz;
+    }
+    if !batch.is_empty() {
+        chunks.push(batch);
+    }
+    chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ev(id: &str, payload_len: usize) -> Event {
+        Event {
+            id: id.to_string(),
+            event_type: "transaction_recorded".to_string(),
+            aggregate_id: id.to_string(),
+            timestamp: Utc::now(),
+            device_id: "test-device".to_string(),
+            payload: serde_json::json!({ "blob": "x".repeat(payload_len) }),
+        }
+    }
+
+    fn chunk_bytes(c: &[NewEvent]) -> usize {
+        c.iter().map(|ne| serde_json::to_vec(ne).unwrap().len()).sum()
+    }
+
+    #[test]
+    fn respects_event_count_cap() {
+        let events: Vec<Event> = (0..250).map(|i| ev(&format!("e{i}"), 10)).collect();
+        let chunks = chunk_for_push(&events);
+        assert!(chunks.iter().all(|c| c.len() <= MAX_EVENTS_PER_PUSH));
+        assert_eq!(chunks.iter().map(|c| c.len()).sum::<usize>(), 250);
+    }
+
+    #[test]
+    fn respects_byte_cap() {
+        // ~50 KiB each; five of them (~250 KiB) must split into >1 chunk.
+        let events: Vec<Event> = (0..5).map(|i| ev(&format!("e{i}"), 50 * 1024)).collect();
+        let chunks = chunk_for_push(&events);
+        assert!(chunks.len() > 1, "expected split, got {} chunk(s)", chunks.len());
+        for c in &chunks {
+            assert!(chunk_bytes(c) <= MAX_PUSH_BYTES || c.len() == 1);
+        }
+        assert_eq!(chunks.iter().map(|c| c.len()).sum::<usize>(), 5);
+    }
+
+    #[test]
+    fn oversized_single_event_emitted_alone() {
+        let events = vec![ev("big", MAX_PUSH_BYTES * 2)];
+        let chunks = chunk_for_push(&events);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), 1);
     }
 }
