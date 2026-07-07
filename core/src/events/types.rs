@@ -396,6 +396,55 @@ pub struct TransactionRecordedPayload {
     pub statement_source: Option<String>,
 }
 
+impl TransactionRecordedPayload {
+    /// The single canonical constructor for a transaction payload. Every path
+    /// that records a transaction — the interactive command, the in-app journal
+    /// import, auto-import accept, and the headless importer — MUST build the
+    /// payload through here so the field shape and its defaults live in exactly
+    /// one place. Two hand-rolled builders drifting is precisely what produced
+    /// the sync-stranding bug this guards against.
+    ///
+    /// `tags` / `attachment` / `statement_source` default to empty/None; layer
+    /// them on with the `with_*` builders.
+    pub fn new(
+        txn_id: String,
+        date: chrono::NaiveDate,
+        description: String,
+        postings: Vec<Posting>,
+    ) -> Self {
+        Self {
+            txn_id,
+            date,
+            description,
+            postings,
+            tags: Vec::new(),
+            attachment: None,
+            statement_source: None,
+        }
+    }
+
+    /// Attach transaction-level (header) tags.
+    #[must_use]
+    pub fn with_tags(mut self, tags: Vec<Tag>) -> Self {
+        self.tags = tags;
+        self
+    }
+
+    /// Attach a content-addressed file reference.
+    #[must_use]
+    pub fn with_attachment(mut self, attachment: Option<AttachmentRef>) -> Self {
+        self.attachment = attachment;
+        self
+    }
+
+    /// Mark the statement-import provenance (Phase 5.5).
+    #[must_use]
+    pub fn with_statement_source(mut self, statement_source: Option<String>) -> Self {
+        self.statement_source = statement_source;
+        self
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionCategorizedPayload {
     pub txn_id: String,
@@ -1303,5 +1352,39 @@ mod tests {
             "device_id": "device-a"
         });
         assert!(validate_payload(&EventType::DataWiped, &payload).is_ok());
+    }
+
+    #[test]
+    fn transaction_payload_new_defaults_optional_fields() {
+        let p = TransactionRecordedPayload::new(
+            "t1".into(),
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 4).unwrap(),
+            "Coffee".into(),
+            vec![],
+        );
+        assert!(p.tags.is_empty());
+        assert!(p.attachment.is_none());
+        assert!(p.statement_source.is_none());
+        // Round-trips through the same schema the projection validates.
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(validate_payload(&EventType::TransactionRecorded, &json).is_ok());
+    }
+
+    #[test]
+    fn transaction_payload_with_builders_layer_on() {
+        let p = TransactionRecordedPayload::new(
+            "t1".into(),
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 4).unwrap(),
+            "Salary".into(),
+            vec![],
+        )
+        .with_tags(vec![Tag::KeyValue {
+            key: "ref".into(),
+            value: "abc".into(),
+        }])
+        .with_statement_source(Some("summit-2026-01".into()));
+        assert_eq!(p.tags.len(), 1);
+        assert_eq!(p.statement_source.as_deref(), Some("summit-2026-01"));
+        assert!(p.attachment.is_none());
     }
 }

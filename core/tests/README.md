@@ -31,6 +31,18 @@ tests already covered every path it touched. Validating the parser against the
 real journal at scale before go-live is a deliberate one-off run, not a parked
 `#[test]`.)
 
+## Golden-reconcile guardrail (`tests/golden_reconcile.rs`)
+
+`tests/golden_reconcile.rs` imports the synthetic `tests/fixtures/golden/main.ledger`
+through the **full production reconcile path** — `journal_import::parse_journal`
+→ the canonical `TransactionRecordedPayload::new` builder →
+`journal_file::render_transaction` → `ledger::balances` — and asserts the
+per-account/per-commodity balances against a **frozen expected table**, so any
+parser/grammar/renderer/balance-engine drift that silently moves a balance fails
+CI. It rides the existing `cargo test -p omni-me-core` step (no external `ledger`
+binary in CI). The frozen table was cross-checked once against `ledger 3.3.2`
+locally; a fixture edit means re-freezing it against `ledger -f … bal`.
+
 ## Where data lives
 
 | Kind | Location | Committed? |

@@ -19,12 +19,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use chrono::{NaiveDate, Utc};
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use omni_me_core::db::queries;
-use omni_me_core::events::{EventStore, EventType, NewEvent, TransactionRecordedPayload};
+use omni_me_core::events::{EventStore, NewEvent, TransactionRecordedPayload};
 use omni_me_core::journal_import::{
     DraftImportedTransaction, ImportPlan, apply_a2_rewriter, apply_plan, parse_journal,
 };
@@ -352,26 +352,13 @@ async fn emit_transaction_event(
         ..
     } = draft;
 
-    let payload = TransactionRecordedPayload {
-        txn_id: txn_id.clone(),
-        date,
-        description,
-        postings,
-        tags: top_tags,
-        attachment: None,
-        statement_source: None,
-    };
-    let payload_json = serde_json::to_value(&payload).map_err(|e| e.to_string())?;
+    let payload = TransactionRecordedPayload::new(txn_id.clone(), date, description, postings)
+        .with_tags(top_tags);
+    let new_event = NewEvent::transaction_recorded(state.device_id.clone(), &payload)
+        .map_err(|e| e.to_string())?;
     let event = state
         .event_store
-        .append(NewEvent {
-            id: None,
-            event_type: EventType::TransactionRecorded.to_string(),
-            aggregate_id: txn_id.clone(),
-            timestamp: Utc::now(),
-            device_id: state.device_id.clone(),
-            payload: payload_json,
-        })
+        .append(new_event)
         .await
         .map_err(|e| e.to_string())?;
     state

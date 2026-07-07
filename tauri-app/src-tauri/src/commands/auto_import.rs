@@ -352,23 +352,16 @@ pub async fn commit_batch(
         let draft = &drafts[idx];
         accepted_dates.push(draft.date);
         let txn_id = ulid::Ulid::new().to_string();
-        let payload = TransactionRecordedPayload {
-            txn_id: txn_id.clone(),
-            date: draft.date,
-            description: draft.description.clone(),
-            postings: draft.postings.clone(),
-            tags: Vec::new(),
-            attachment: None,
-            statement_source: None,
-        };
-        new_events.push(NewEvent {
-            id: None,
-            event_type: EventType::TransactionRecorded.to_string(),
-            aggregate_id: txn_id,
-            timestamp: Utc::now(),
-            device_id: state.device_id.clone(),
-            payload: serde_json::to_value(&payload).map_err(|e| e.to_string())?,
-        });
+        let payload = TransactionRecordedPayload::new(
+            txn_id,
+            draft.date,
+            draft.description.clone(),
+            draft.postings.clone(),
+        );
+        new_events.push(
+            NewEvent::transaction_recorded(state.device_id.clone(), &payload)
+                .map_err(|e| e.to_string())?,
+        );
     }
 
     let mut fx_recorded = false;

@@ -15,7 +15,7 @@ use omni_me_core::db::queries::{
     self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow, TxnFilter,
 };
 use omni_me_core::events::{
-    AttachmentRef, EventType, Posting, TransactionRecordedPayload,
+    AttachmentRef, EventType, NewEvent, Posting, TransactionRecordedPayload,
 };
 use omni_me_core::ledger::JournalArtifacts;
 use omni_me_core::query::{self, QueryPosting, QueryTxn};
@@ -25,7 +25,7 @@ use omni_me_core::statement_csv::{self, MoneyDirection};
 use omni_me_core::accounts;
 use rust_decimal::Decimal;
 
-use super::shared::append_and_apply;
+use super::shared::{append_and_apply, append_new_and_apply};
 use crate::AppState;
 
 // --- Transactions (1.8) ---
@@ -49,24 +49,16 @@ pub async fn record_transaction(
     let txn_id = ulid::Ulid::new().to_string();
     tracing::info!(txn_id = %txn_id, "record_transaction");
 
-    let payload = TransactionRecordedPayload {
-        txn_id: txn_id.clone(),
-        date: draft.date,
-        description: draft.description,
-        postings: draft.postings,
-        tags: Vec::new(),
-        attachment: draft.attachment,
-        statement_source: None,
-    };
-    let payload_json = serde_json::to_value(&payload).map_err(|e| e.to_string())?;
-
-    append_and_apply(
-        &state,
-        EventType::TransactionRecorded,
+    let payload = TransactionRecordedPayload::new(
         txn_id.clone(),
-        payload_json,
+        draft.date,
+        draft.description,
+        draft.postings,
     )
-    .await?;
+    .with_attachment(draft.attachment);
+    let event = NewEvent::transaction_recorded(state.device_id.clone(), &payload)
+        .map_err(|e| e.to_string())?;
+    append_new_and_apply(&state, event).await?;
 
     queries::get_transaction(&state.db, &txn_id)
         .await
@@ -1115,23 +1107,16 @@ pub async fn import_chequing_csv(
         let unmatched_posting = accounts::make_unmatched_mirror(&source_posting);
 
         let txn_id = ulid::Ulid::new().to_string();
-        let payload = TransactionRecordedPayload {
-            txn_id: txn_id.clone(),
-            date: row.date,
-            description: row.description.clone(),
-            postings: vec![source_posting, unmatched_posting],
-            tags: Vec::new(),
-            attachment: None,
-            statement_source: Some(statement_source.clone()),
-        };
-        let payload_json = serde_json::to_value(&payload).map_err(|e| e.to_string())?;
-        append_and_apply(
-            &state,
-            EventType::TransactionRecorded,
+        let payload = TransactionRecordedPayload::new(
             txn_id,
-            payload_json,
+            row.date,
+            row.description.clone(),
+            vec![source_posting, unmatched_posting],
         )
-        .await?;
+        .with_statement_source(Some(statement_source.clone()));
+        let event = NewEvent::transaction_recorded(state.device_id.clone(), &payload)
+            .map_err(|e| e.to_string())?;
+        append_new_and_apply(&state, event).await?;
         imported += 1;
     }
 

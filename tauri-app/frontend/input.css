@@ -15,12 +15,12 @@ body {
  * evaluateJavascript. The env() fallback in var() keeps iOS/desktop working
  * — env() resolves correctly there. */
 :root {
-    /* Render native form controls (the currency + LLM-provider <select>s and
-     * their dropdown popups, the vision <checkbox>, scrollbars) in DARK mode.
-     * Without this, Linux webkit2gtk paints them with the light GTK system
-     * theme over the app's dark background → unreadable contrast
-     * (friction 2026-07-05). Same class of native-control problem the date
-     * picker hit; fixes contrast app-wide without replacing the controls. */
+    /* Render native form controls (date picker, the vision <checkbox>,
+     * scrollbars) in DARK mode. NOTE: on Linux webkit2gtk this alone is NOT
+     * enough for native <select>s — the CLOSED picker box stayed painted by the
+     * light GTK theme regardless (friction 2026-07-06, confirmed on-device; the
+     * 2026-07-05 color-scheme fix only worked in Chromium/Playwright). Selects
+     * are fixed explicitly below via appearance:none. Keep this for the rest. */
     color-scheme: dark;
 
     --safe-area-inset-top: env(safe-area-inset-top, 0px);
@@ -31,6 +31,30 @@ body {
      * from the Android IME inset; stays 0px on desktop/iOS where the keyboard
      * either doesn't occlude a fixed WebView or is handled by the OS. */
     --keyboard-inset-bottom: 0px;
+}
+
+/* Native <select> dark styling. webkit2gtk ignores CSS background/color on a
+ * native <select> unless the native appearance is cleared, so color-scheme:dark
+ * alone left the CLOSED picker box unreadable on the Linux desktop (friction
+ * 2026-07-06). Clearing appearance makes the WebView honor the app's Tailwind
+ * bg/text classes; we re-add a chevron since the native arrow goes away with it.
+ * Colors here are fallbacks — per-<select> utility classes (bg-obsidian-*,
+ * text-*) override them. Chromium already dark-rendered these, so this is a
+ * webkit2gtk-only fix that must be verified on the desktop, not in Playwright. */
+select {
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: #161616;
+    color: #dcddde;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23a3a3a3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    background-size: 0.9rem;
+    /* Reserve room for the chevron. !important so it beats per-<select> utility
+     * px-* right-padding (a bare element rule loses to a utility class on
+     * specificity) — otherwise a narrow/auto-width select's value slides under
+     * the arrow (e.g. the auto-width currency picker). */
+    padding-right: 2rem !important;
 }
 
 /* Mobile content bottom padding. Since the bottom tab bar was replaced by the

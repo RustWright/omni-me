@@ -306,6 +306,28 @@ pub fn run() {
 
                 tracing::info!(device_id = %device_id, server_url = %server_url, timezone = %timezone, roster_len = roster.len(), "App initialized");
 
+                // Durability guardrail 3: audit the local event log's device_id
+                // distribution. Always logged (so any future sync investigation has
+                // it), and loudly warns on the orphan signature — every local event
+                // authored under a non-bound id with no successful pull, i.e. data
+                // that can never be pushed (the stranding bug). Read-only, non-fatal.
+                match omni_me_core::sync::audit_device_ids(&db, &device_id).await {
+                    Ok(audit) => {
+                        tracing::info!("{}", audit.summary());
+                        if audit.orphan_signature() {
+                            tracing::warn!(
+                                "SYNC ORPHAN: {} local event(s) exist under foreign device id(s) \
+                                 with none authored by this device ({}) and no successful pull — \
+                                 they can never be pushed. A wrong-id import or restore is the \
+                                 likely cause; re-import under this device id or reset local data.",
+                                audit.total(),
+                                device_id,
+                            );
+                        }
+                    }
+                    Err(e) => tracing::warn!("device_id audit failed: {e}"),
+                }
+
                 let timezone_shared = Arc::new(tokio::sync::RwLock::new(timezone));
 
                 auto_close_scheduler::spawn(

@@ -1,0 +1,58 @@
+; Synthetic golden-reconcile fixture — durability guardrail 1.
+;
+; Fictional institutions / products only (Northwind / Globepay / Summit /
+; Meridian) — NEVER a real bank. Deliberately exercises the drift-prone grammar:
+; an elided balancing posting, a multi-commodity FX conversion, @@ TOTAL-cost
+; priced legs (a buy and a partial sell), posting-level institution/product tags,
+; and an inline header tag. The golden_reconcile test parses this, rebuilds each
+; transaction through the canonical event-builder, renders it, and reconciles the
+; projected per-account/per-commodity balances against a frozen table — so any
+; parser / renderer / balance-engine drift fails core's CI automatically.
+
+2026-01-01 Opening Balance
+    Assets:NonRegistered:CAD   1000.00 CAD
+        ; institution: Globepay
+        ; product: chequing
+    Equity:OpeningBalance
+
+2026-01-15 Salary  ; ref: PAY-0001
+    Assets:NonRegistered:CAD   3000.00 CAD
+        ; institution: Globepay
+        ; product: chequing
+    Income:Employment:Salary
+        ; employer: northwind
+
+2026-01-16 Groceries
+    Expenses:Groceries   42.10 CAD
+    Assets:NonRegistered:CAD
+        ; institution: Globepay
+        ; product: chequing
+
+2026-01-17 Coffee
+    Expenses:Coffee   5.25 CAD
+        ; institution: Summit
+    Liabilities:Credit Card:CAD
+        ; institution: Globepay
+        ; product: rewards-card
+
+2026-01-20 FX conversion  ; ref: FX-0009
+    Assets:NonRegistered:USD    100.00 USD
+        ; institution: Meridian
+    Assets:NonRegistered:CAD   -137.00 CAD
+        ; institution: Meridian
+
+2026-02-03 Buy NWG
+    Assets:NonRegistered:NWG   10 NWG @@ 500.00 CAD
+        ; institution: Summit
+        ; product: brokerage
+    Assets:NonRegistered:CAD
+        ; institution: Summit
+        ; product: brokerage
+
+2026-02-10 Sell NWG
+    Assets:NonRegistered:NWG   -4 NWG @@ 260.00 CAD
+        ; institution: Summit
+        ; product: brokerage
+    Assets:NonRegistered:CAD
+        ; institution: Summit
+        ; product: brokerage

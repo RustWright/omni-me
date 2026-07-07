@@ -1,9 +1,9 @@
 use tauri::State;
 
 use omni_me_core::db::queries::{self, GenericNoteRow, JournalDayStat, JournalEntryRow};
-use omni_me_core::events::EventType;
+use omni_me_core::events::{EventType, NewEvent};
 
-use super::shared::append_and_apply;
+use super::shared::{append_and_apply, append_new_and_apply};
 use crate::AppState;
 
 // -----------------------------------------------------------------------------
@@ -23,24 +23,11 @@ pub async fn create_journal_entry(
     // devices mint the same `aggregate_id` for the same day, so an entry created
     // on one device and an edit from the other converge on a single row instead
     // of diverging under two random per-device ULIDs (the old sync-blank bug).
-    let journal_id = date.clone();
-
-    let mut payload = serde_json::json!({
-        "journal_id": journal_id,
-        "date": date,
-        "raw_text": raw_text,
-    });
-    if let Some(props) = legacy_properties {
-        payload["legacy_properties"] = props;
-    }
-
-    append_and_apply(
-        &state,
-        EventType::JournalEntryCreated,
-        journal_id.clone(),
-        payload,
-    )
-    .await?;
+    // The canonical `journal_created` factory keys journal_id == date ==
+    // aggregate_id structurally, matching the headless importer verbatim.
+    let event =
+        NewEvent::journal_created(state.device_id.clone(), &date, &raw_text, legacy_properties);
+    append_new_and_apply(&state, event).await?;
 
     queries::get_journal_by_date(&state.db, &date)
         .await
@@ -143,22 +130,14 @@ pub async fn create_generic_note(
     tracing::info!(title = %title, len = raw_text.len(), "create_generic_note");
     let note_id = ulid::Ulid::new().to_string();
 
-    let mut payload = serde_json::json!({
-        "note_id": note_id,
-        "title": title,
-        "raw_text": raw_text,
-    });
-    if let Some(props) = legacy_properties {
-        payload["legacy_properties"] = props;
-    }
-
-    append_and_apply(
-        &state,
-        EventType::GenericNoteCreated,
-        note_id.clone(),
-        payload,
-    )
-    .await?;
+    let event = NewEvent::generic_note_created(
+        state.device_id.clone(),
+        &note_id,
+        &title,
+        &raw_text,
+        legacy_properties,
+    );
+    append_new_and_apply(&state, event).await?;
 
     queries::get_generic_note(&state.db, &note_id)
         .await

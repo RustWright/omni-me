@@ -1,6 +1,7 @@
 mod accelerator;
 mod buffer;
 mod client;
+mod diagnostics;
 mod network;
 mod puller;
 mod pusher;
@@ -19,6 +20,7 @@ pub use client::{
     PullOutcome, PullRequest, PullResponse, PushOutcome, PushRequest, PushResponse, SyncClient,
     SyncError, SyncResult,
 };
+pub use diagnostics::{audit_device_ids, DeviceIdAudit};
 pub use network::{
     DEFAULT_PROBE_INTERVAL, DEFAULT_PROBE_TIMEOUT, NetworkEvent, NetworkMonitor, NetworkState,
 };

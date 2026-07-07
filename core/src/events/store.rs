@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
 use crate::db::Database;
+use super::types::{EventType, TransactionRecordedPayload};
 
 /// Error type for event store and projection operations.
 #[derive(Debug, thiserror::Error)]
@@ -49,6 +50,87 @@ impl From<&Event> for NewEvent {
             timestamp: event.timestamp,
             device_id: event.device_id.clone(),
             payload: event.payload.clone(),
+        }
+    }
+}
+
+/// Canonical envelope factories. These are the single place the grammar-bearing
+/// *create* events are shaped: the `aggregate_id` is **derived** from the
+/// payload's own identity field (never hand-typed alongside it), the `event_type`
+/// is fixed, and the timestamp is stamped now — so a call site can't diverge the
+/// record key from the payload id (the journal-blank/date-key bug) or forget a
+/// field. `device_id` is the one knob the caller supplies (the installation's
+/// bound id); the sync orphan self-check backstops a wrong value.
+impl NewEvent {
+    /// Envelope for a `TransactionRecorded` event. `aggregate_id == payload.txn_id`
+    /// structurally. Build `payload` via [`TransactionRecordedPayload::new`].
+    pub fn transaction_recorded(
+        device_id: impl Into<String>,
+        payload: &TransactionRecordedPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::TransactionRecorded.to_string(),
+            aggregate_id: payload.txn_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `JournalEntryCreated` event. The journal aggregate identity
+    /// IS the date: `journal_id`, the payload `date`, and `aggregate_id` are all
+    /// set to `date` here, so two devices editing the same day converge on one row
+    /// (minting a ULID instead was the old sync-blank bug).
+    pub fn journal_created(
+        device_id: impl Into<String>,
+        date: &str,
+        raw_text: &str,
+        legacy_properties: Option<serde_json::Value>,
+    ) -> NewEvent {
+        let mut payload = serde_json::json!({
+            "journal_id": date,
+            "date": date,
+            "raw_text": raw_text,
+        });
+        if let Some(legacy) = legacy_properties {
+            payload["legacy_properties"] = legacy;
+        }
+        NewEvent {
+            id: None,
+            event_type: EventType::JournalEntryCreated.to_string(),
+            aggregate_id: date.to_string(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload,
+        }
+    }
+
+    /// Envelope for a `GenericNoteCreated` event. `aggregate_id == note_id` —
+    /// mirrors the journal factory's discipline for the other create site shared
+    /// by the notes command and the importer.
+    pub fn generic_note_created(
+        device_id: impl Into<String>,
+        note_id: &str,
+        title: &str,
+        raw_text: &str,
+        legacy_properties: Option<serde_json::Value>,
+    ) -> NewEvent {
+        let mut payload = serde_json::json!({
+            "note_id": note_id,
+            "title": title,
+            "raw_text": raw_text,
+        });
+        if let Some(legacy) = legacy_properties {
+            payload["legacy_properties"] = legacy;
+        }
+        NewEvent {
+            id: None,
+            event_type: EventType::GenericNoteCreated.to_string(),
+            aggregate_id: note_id.to_string(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload,
         }
     }
 }
@@ -545,5 +627,60 @@ mod tests {
             events[0].payload["raw_text"], "original",
             "original payload must be preserved — duplicate must NOT overwrite"
         );
+    }
+
+    // --- canonical envelope factories (durability guardrail 2) ---
+
+    #[test]
+    fn transaction_recorded_derives_aggregate_from_txn_id() {
+        use crate::events::{Posting, TransactionRecordedPayload};
+        let payload = TransactionRecordedPayload::new(
+            "import-abc123-1".into(),
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 4).unwrap(),
+            "Coffee".into(),
+            vec![Posting {
+                account: "Expenses:Coffee".into(),
+                commodity: "CAD".into(),
+                amount: rust_decimal::Decimal::new(525, 2),
+                fx_rate: None,
+                tags: vec![],
+            }],
+        );
+        let ev = NewEvent::transaction_recorded("device-x", &payload).unwrap();
+        assert_eq!(ev.event_type, "transaction_recorded");
+        assert_eq!(ev.device_id, "device-x");
+        // The record key and the payload id can never diverge — same source.
+        assert_eq!(ev.aggregate_id, "import-abc123-1");
+        assert_eq!(ev.payload["txn_id"], "import-abc123-1");
+        assert!(ev.id.is_none());
+    }
+
+    #[test]
+    fn journal_created_keys_everything_on_the_date() {
+        let ev = NewEvent::journal_created("device-x", "2026-04-19", "hello", None);
+        assert_eq!(ev.event_type, "journal_entry_created");
+        // journal_id == payload date == aggregate_id — the ULID-vs-date drift is
+        // structurally impossible.
+        assert_eq!(ev.aggregate_id, "2026-04-19");
+        assert_eq!(ev.payload["journal_id"], "2026-04-19");
+        assert_eq!(ev.payload["date"], "2026-04-19");
+        assert_eq!(ev.payload["raw_text"], "hello");
+        assert!(ev.payload.get("legacy_properties").is_none());
+    }
+
+    #[test]
+    fn journal_created_threads_legacy_properties() {
+        let legacy = serde_json::json!({ "mood": "good" });
+        let ev = NewEvent::journal_created("d", "2026-04-19", "x", Some(legacy.clone()));
+        assert_eq!(ev.payload["legacy_properties"], legacy);
+    }
+
+    #[test]
+    fn generic_note_created_keys_on_note_id() {
+        let ev = NewEvent::generic_note_created("d", "note-1", "Title", "body", None);
+        assert_eq!(ev.event_type, "generic_note_created");
+        assert_eq!(ev.aggregate_id, "note-1");
+        assert_eq!(ev.payload["note_id"], "note-1");
+        assert_eq!(ev.payload["title"], "Title");
     }
 }
