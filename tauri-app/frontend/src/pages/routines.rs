@@ -21,11 +21,20 @@ pub fn RoutinesPage() -> Element {
     let mut groups = use_signal(Vec::<RoutineGroup>::new);
     let mut error_msg = use_signal(|| None::<String>);
 
-    let _load = use_future(move || async move {
-        match bridge::invoke_list_routine_groups().await {
-            Ok(list) => groups.set(list),
-            Err(e) => error_msg.set(Some(e)),
-        }
+    // Load on mount, and re-load whenever a background pull lands (sync_refresh)
+    // so groups synced from another device appear without a manual navigation.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
+    use_effect(move || {
+        let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
+        spawn(async move {
+            match bridge::invoke_list_routine_groups().await {
+                Ok(list) => {
+                    groups.set(list);
+                    error_msg.set(None);
+                }
+                Err(e) => error_msg.set(Some(e)),
+            }
+        });
     });
 
     let refresh_groups = move || {
@@ -793,54 +802,60 @@ fn GroupDetailView(
 
             div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-xl space-y-4",
                 h4 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest", "Add New Step" }
-                div { class: "flex gap-2",
+                div { class: "space-y-2",
+                    // Name gets its own full-width row; the numeric duration, unit
+                    // select, and Add button share a second row below. One shared
+                    // flex row made the name field unusably narrow on mobile once it
+                    // had to compete with three fixed-width siblings for the width.
                     input {
-                        class: "flex-1 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
                         r#type: "text",
                         placeholder: "Step name...",
                         value: "{new_item_name}",
                         oninput: move |e| new_item_name.set(e.value()),
                     }
-                    input {
-                        class: "w-16 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
-                        r#type: "number",
-                        min: "0",
-                        value: "{new_item_duration}",
-                        oninput: move |e| new_item_duration.set(e.value()),
-                    }
-                    select {
-                        class: "w-20 px-2 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
-                        value: "{new_item_unit}",
-                        onchange: move |e| new_item_unit.set(e.value()),
-                        option { value: "{duration::UNIT_MIN}", "min" }
-                        option { value: "{duration::UNIT_HOUR}", "hour" }
-                    }
-                    button {
-                        class: "px-4 py-2 bg-obsidian-accent text-white font-bold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50",
-                        disabled: *adding.read() || new_item_name.read().trim().is_empty(),
-                        onclick: {
-                            let gid = group_id.clone();
-                            move |_| {
-                                let gid = gid.clone();
-                                adding.set(true);
-                                spawn(async move {
-                                    let name = new_item_name.read().clone();
-                                    let val: u32 = new_item_duration.read().parse().unwrap_or(5);
-                                    let minutes = duration::to_minutes(val, &new_item_unit.read());
-                                    let order = items.read().len() as u32;
-                                    if bridge::invoke_add_routine_item(&gid, &name, minutes, order).await.is_ok() {
-                                        new_item_name.set(String::new());
-                                        new_item_duration.set("5".to_string());
-                                        new_item_unit.set(duration::UNIT_MIN.to_string());
-                                        if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
-                                            items.set(list.into_iter().filter(|i| !i.removed).collect());
+                    div { class: "flex gap-2",
+                        input {
+                            class: "w-16 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
+                            r#type: "number",
+                            min: "0",
+                            value: "{new_item_duration}",
+                            oninput: move |e| new_item_duration.set(e.value()),
+                        }
+                        select {
+                            class: "w-20 px-2 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                            value: "{new_item_unit}",
+                            onchange: move |e| new_item_unit.set(e.value()),
+                            option { value: "{duration::UNIT_MIN}", "min" }
+                            option { value: "{duration::UNIT_HOUR}", "hour" }
+                        }
+                        button {
+                            class: "flex-1 px-4 py-2 bg-obsidian-accent text-white font-bold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50",
+                            disabled: *adding.read() || new_item_name.read().trim().is_empty(),
+                            onclick: {
+                                let gid = group_id.clone();
+                                move |_| {
+                                    let gid = gid.clone();
+                                    adding.set(true);
+                                    spawn(async move {
+                                        let name = new_item_name.read().clone();
+                                        let val: u32 = new_item_duration.read().parse().unwrap_or(5);
+                                        let minutes = duration::to_minutes(val, &new_item_unit.read());
+                                        let order = items.read().len() as u32;
+                                        if bridge::invoke_add_routine_item(&gid, &name, minutes, order).await.is_ok() {
+                                            new_item_name.set(String::new());
+                                            new_item_duration.set("5".to_string());
+                                            new_item_unit.set(duration::UNIT_MIN.to_string());
+                                            if let Ok(list) = bridge::invoke_list_routine_items(&gid).await {
+                                                items.set(list.into_iter().filter(|i| !i.removed).collect());
+                                            }
                                         }
-                                    }
-                                    adding.set(false);
-                                });
-                            }
-                        },
-                        "Add"
+                                        adding.set(false);
+                                    });
+                                }
+                            },
+                            "Add"
+                        }
                     }
                 }
             }

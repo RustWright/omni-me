@@ -2193,8 +2193,12 @@ fn TransactionListView(
 
     // Load (or re-load) the first page whenever active_filter changes — except
     // on the first run after a store-restore, where re-fetching would discard
-    // the rehydrated rows and scroll position.
+    // the rehydrated rows and scroll position. Also reads `sync_epoch` so a
+    // background pull (sync_refresh) — e.g. transactions imported on another
+    // device — refreshes the list without a manual navigation or Sync.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
+        let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
         let filter = active_filter.read().clone();
         // peek (not read) so flipping the flag doesn't re-trigger this effect.
         if *restored_pending.peek() {
@@ -3640,7 +3644,11 @@ fn AccountListView(on_back: EventHandler<()>) -> Element {
     let mut loading: Signal<bool> = use_signal(|| true);
     let mut error: Signal<Option<String>> = use_signal(|| None);
 
+    // Re-run on mount and whenever a background pull lands (sync_refresh) so
+    // balances shift with transactions synced from another device.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
+        let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
         spawn(async move {
             loading.set(true);
             error.set(None);
@@ -3953,7 +3961,11 @@ fn DashboardView(
     let mut loading: Signal<bool> = use_signal(|| true);
     let mut error: Signal<Option<String>> = use_signal(|| None);
 
+    // Re-run on mount and whenever a background pull lands (sync_refresh) so the
+    // dashboard reflects data synced from another device without a manual Sync.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
+        let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
         spawn(async move {
             loading.set(true);
             error.set(None);

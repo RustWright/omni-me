@@ -59,6 +59,13 @@ const omniEditorTheme = EditorView.theme({
 
 let editorView = null;
 let isDirty = false;
+// Sticky "the user has edited this editor instance at least once". Unlike
+// `isDirty`, this is NOT cleared by markClean()/autosave — only reset when a
+// fresh editor is created (createEditor). It exists so live sync-refresh can
+// tell "the user has been working in here this session" from "clean right now
+// because autosave just ran": the latter would otherwise let an incoming remote
+// edit clobber text the user is actively typing between autosaves.
+let everDirty = false;
 let suppressDirty = false;
 const dirtyListeners = [];
 const cleanListeners = [];
@@ -68,6 +75,10 @@ const cleanListeners = [];
 // ---------------------------------------------------------------------------
 
 function emitDirty() {
+  // Only ever reached on a genuine USER edit: the update listener gates this
+  // behind `!suppressDirty`, and setEditorContent (programmatic writes) sets
+  // suppressDirty. So this is the right place to latch the sticky flag.
+  everDirty = true;
   if (isDirty) return;
   isDirty = true;
   for (const cb of dirtyListeners) {
@@ -100,6 +111,10 @@ window.editorEvents = {
   },
   isDirty() {
     return isDirty;
+  },
+  // Sticky across autosave; reset only on createEditor. See `everDirty` decl.
+  everDirty() {
+    return everDirty;
   },
 };
 
@@ -456,8 +471,11 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
     editorView = null;
   }
 
-  // Reset dirty state on fresh editor creation.
+  // Reset dirty state on fresh editor creation. A remount (navigate away + back)
+  // makes a fresh editor, so `everDirty` clears too — the load path re-seeds from
+  // the backend there, so live-refresh is allowed to resume for the new session.
   isDirty = false;
+  everDirty = false;
 
   const parent = document.getElementById(elementId);
   if (!parent) {

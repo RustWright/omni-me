@@ -7,14 +7,17 @@ mod journal_template;
 mod note_frontmatter;
 mod pages;
 mod reorder;
+mod sync_refresh;
 mod timer;
 mod types;
 pub mod user_date;
 
 use chrono_tz::Tz;
 use dioxus::prelude::*;
+use futures::StreamExt;
 
 use components::nav::{NavDrawer, SideNav};
+use sync_refresh::SyncRefresh;
 use pages::finances::FinancesPage;
 use pages::journal::JournalPage;
 use pages::notes::NotesPage;
@@ -92,6 +95,32 @@ fn App() -> Element {
     // Known-account suggestions: one fetch of the `known_accounts` union, shared
     // by every `AccountInput` typeahead. Consumers read it via `use_context`.
     components::account_input::use_account_suggestions_provider();
+
+    // Live-refresh on inbound sync (see `sync_refresh`). The backend applies
+    // auto-pulled remote events into the local DB and emits `sync:applied`, but
+    // the WASM frontend has no event-listen binding, so the open page never
+    // re-queried — remote edits only showed after a manual navigation or Sync.
+    // Bridge each emit into an epoch bump that read views subscribe to via
+    // `use_sync_epoch`, so they re-fetch automatically when a pull lands.
+    let mut sync_epoch = use_signal(|| 0u64);
+    use_context_provider(|| SyncRefresh(sync_epoch));
+    use_hook(move || {
+        // The JS event callback fires outside any Dioxus scope, where writing a
+        // signal directly would panic — so it only nudges an unbounded channel.
+        // The drain loop runs inside the runtime (via `spawn`), where the actual
+        // signal bump is safe.
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+        bridge::listen_backend_event("sync:applied", move || {
+            let _ = tx.unbounded_send(());
+        });
+        spawn(async move {
+            while rx.next().await.is_some() {
+                // Wrapping bump — consumers only care that the value changed.
+                let next = sync_epoch.peek().wrapping_add(1);
+                sync_epoch.set(next);
+            }
+        });
+    });
 
     // 1.8b: restore the last-open tab once the store's disk snapshot has loaded.
     // Runs before any user interaction. The pending-share intake below still

@@ -1070,6 +1070,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dioxus",
+ "futures",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",

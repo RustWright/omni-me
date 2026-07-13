@@ -418,6 +418,14 @@ pub async fn commit_batch(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Wake the pusher so the committed transactions propagate, exactly like the
+    // manual `record_transaction` path (see `append_new_and_apply`). This
+    // hand-rolled `append_batch` path replicated store + project but dropped the
+    // push nudge, so committed auto-import suggestions stored + projected locally
+    // (visible on this device) yet never synced until some *other* edit happened
+    // to trigger a push.
+    state.push_debouncer.trigger();
+
     Ok(CommitBatchResult {
         events_appended,
         txns_recorded: indices.len(),
@@ -466,6 +474,9 @@ pub async fn dismiss_batch(
         .apply_events(&[event])
         .await
         .map_err(|e| e.to_string())?;
+
+    // Wake the pusher so the dismissal propagates (same reason as `commit_batch`).
+    state.push_debouncer.trigger();
 
     Ok(())
 }

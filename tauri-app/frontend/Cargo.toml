@@ -28,6 +28,9 @@ serde_json = "1"
 serde-wasm-bindgen = "0.6"
 chrono = { version = "0.4", features = ["serde", "wasmbind"] }
 chrono-tz = "0.10"
+# mpsc channel + StreamExt: bridges the JS `sync:applied` event callback (which
+# fires outside any Dioxus scope) into the reactive runtime — see sync_refresh.rs.
+futures = "0.3"
 
 [profile.release]
 opt-level = "s"

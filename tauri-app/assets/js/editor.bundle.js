@@ -25064,10 +25064,12 @@
   });
   var editorView = null;
   var isDirty = false;
+  var everDirty = false;
   var suppressDirty = false;
   var dirtyListeners = [];
   var cleanListeners = [];
   function emitDirty() {
+    everDirty = true;
     if (isDirty) return;
     isDirty = true;
     for (const cb of dirtyListeners) {
@@ -25098,6 +25100,10 @@
     },
     isDirty() {
       return isDirty;
+    },
+    // Sticky across autosave; reset only on createEditor. See `everDirty` decl.
+    everDirty() {
+      return everDirty;
     }
   };
   window.markClean = function() {
@@ -25349,6 +25355,7 @@
       editorView = null;
     }
     isDirty = false;
+    everDirty = false;
     const parent = document.getElementById(elementId);
     if (!parent) {
       console.error("Editor container not found:", elementId);

@@ -282,7 +282,15 @@ fn DayView(
             // Prefer an in-flight session (content the user left mid-edit when
             // they navigated away) over the persisted copy. Entry metadata
             // (id / closed / complete) always comes fresh from the backend.
-            let stored = store.get(&key);
+            //
+            // ...but ONLY when that session is DIRTY (holds unsaved edits). A
+            // clean session (content == last_saved_content) has nothing to
+            // preserve, so it must yield to the fresh backend copy — otherwise a
+            // clean session persisted at first open permanently shadows edits
+            // that synced in from another device (the "nothing syncs to desktop"
+            // bug). The continuity guarantee (never lose typed-but-unsaved text)
+            // is untouched: only clean sessions defer.
+            let stored = store.get(&key).filter(|s| s.content != s.last_saved_content);
             match bridge::invoke_get_journal_by_date(&d).await {
                 Ok(Some(e)) => {
                     if let Some(s) = stored {
@@ -449,6 +457,70 @@ fn DayView(
                         save_failed.set(true);
                         save_status.set(Some(format!("Auto-save failed: {e}")));
                     }
+                }
+            });
+        });
+    }
+
+    // Live inbound refresh: when an auto-pull lands new events (`sync_epoch`
+    // bumps) and this day is open and UNTOUCHED this session, adopt the fresh
+    // backend copy and push it into the already-seeded editor. Only ONE DayView
+    // is mounted at a time, so the editor targeted by `js_set_editor_content` is
+    // this day's. The editor seeds once on mount and ignores `initial_content`
+    // changes, so a live update must go through `js_set_editor_content`, not a
+    // prop; a remount instead re-seeds from the (dirty-filtered) load future.
+    //
+    // Freeze guard: `js_editor_ever_dirty()` is a STICKY "the user typed in this
+    // editor at least once this session" flag. We can't use `content ==
+    // last_saved_content` alone — autosave sets them equal within ~1s of every
+    // keystroke, so between autosaves the editor looks clean and an incoming
+    // remote edit would clobber text the user is actively typing (the "clobbered
+    // constantly" bug). Once the user has edited here, live-refresh is frozen
+    // until they navigate away and back (which remounts → clears the flag).
+    {
+        let sync_epoch = crate::sync_refresh::use_sync_epoch();
+        let date_for_sync = date.clone();
+        use_effect(move || {
+            // Subscribe to the sync epoch; `peek` the rest so we re-run only on
+            // an applied pull, not on our own signal writes.
+            let _ = sync_epoch.read();
+            if !*hydrated.peek() {
+                return;
+            }
+            if bridge::js_editor_ever_dirty().unwrap_or(false)
+                || *content.peek() != *last_saved_content.peek()
+            {
+                return;
+            }
+            let d = date_for_sync.clone();
+            spawn(async move {
+                let Ok(Some(e)) = bridge::invoke_get_journal_by_date(&d).await else {
+                    return;
+                };
+                // Re-check after the await: the user may have started typing while
+                // the fetch was in flight.
+                if bridge::js_editor_ever_dirty().unwrap_or(false)
+                    || *content.peek() != *last_saved_content.peek()
+                {
+                    return;
+                }
+                let raw = e.raw_text.clone();
+                let changed = raw != *content.peek();
+                // Refresh metadata (closed/complete) regardless; only touch the
+                // editor when the body actually changed.
+                entry.set(Some(e));
+                if changed {
+                    last_saved_content.set(raw.clone());
+                    // `apply_raw` splits the full raw (frontmatter + body) into the
+                    // properties panel (`props`) + the editor `body`. The editor
+                    // only ever holds the BODY — the frontmatter renders in the
+                    // panel above — so push the split body, NOT the full raw, or
+                    // the frontmatter gets dumped as plain text under the panel.
+                    apply_raw(props, body, &raw);
+                    content.set(raw.clone());
+                    let editor_body = body.peek().clone();
+                    bridge::js_set_editor_content(&editor_body);
+                    bridge::js_mark_editor_clean();
                 }
             });
         });
@@ -879,7 +951,12 @@ fn CalendarDrawer(
     // Fetch the visible month's stats whenever the drawer is open (fresh data on
     // each open) or the user pages to another month. Reads `open` + `anchor` so
     // it re-runs on either; gated on `open` so a never-opened drawer does no work.
+    // Also reads `sync_epoch` so an open drawer refreshes its dots when a
+    // background pull lands (sync_refresh) — e.g. a journal entry synced from
+    // another device flips a day to complete without reopening the calendar.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
+        let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
         if !*open.read() {
             return;
         }

@@ -180,15 +180,21 @@ fn RecentView(on_edit: EventHandler<String>, on_new: EventHandler<()>) -> Elemen
     let mut error_msg = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
 
-    let _load = use_future(move || async move {
-        match bridge::invoke_list_generic_notes().await {
-            Ok(list) => {
-                notes.set(list);
-                error_msg.set(None);
+    // Load on mount, and re-load whenever a background pull lands (sync_refresh)
+    // so notes synced from another device appear without a manual navigation.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
+    use_effect(move || {
+        let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
+        spawn(async move {
+            match bridge::invoke_list_generic_notes().await {
+                Ok(list) => {
+                    notes.set(list);
+                    error_msg.set(None);
+                }
+                Err(e) => error_msg.set(Some(e)),
             }
-            Err(e) => error_msg.set(Some(e)),
-        }
-        loading.set(false);
+            loading.set(false);
+        });
     });
 
     rsx! {
@@ -432,7 +438,11 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                 Some(id) => ContinuityKey::Note(id.clone()),
                 None => ContinuityKey::NewNote,
             };
-            let stored = store.get(&key);
+            // Only a DIRTY session (unsaved edits) may shadow the backend copy;
+            // a clean one must yield so edits that synced in from another device
+            // surface instead of being permanently masked (the "nothing syncs to
+            // desktop" bug). Continuity of typed-but-unsaved text is preserved.
+            let stored = store.get(&key).filter(|s| s.content != s.last_saved_content);
 
             if let Some(s) = stored {
                 // Restore an in-flight session: a saved note re-opened mid-edit,
@@ -540,6 +550,59 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
             }
         });
     });
+
+    // Live inbound refresh: mirror of the journal `DayView` effect. On an applied
+    // pull (`sync_epoch` bump), if this note is open with no unsaved BODY edits,
+    // adopt the fresh backend body and push it into the already-seeded editor.
+    // Only saved notes (id present) have a backend copy; drafts are skipped.
+    // BODY only — the title is a separate signal with no last-saved mirror to
+    // diff against, so live-syncing it could clobber an unsaved title edit; the
+    // title reconciles on the next remount via the (dirty-filtered) load future.
+    {
+        let sync_epoch = crate::sync_refresh::use_sync_epoch();
+        use_effect(move || {
+            let _ = sync_epoch.read();
+            if !*hydrated.peek() {
+                return;
+            }
+            // Freeze once the user has typed in this editor this session — see the
+            // journal `DayView` effect for why `content == last_saved_content`
+            // alone is insufficient (autosave clears it between keystrokes).
+            if bridge::js_editor_ever_dirty().unwrap_or(false)
+                || *content.peek() != *last_saved_content.peek()
+            {
+                return;
+            }
+            let Some(nid) = local_note_id.peek().clone() else {
+                return;
+            };
+            spawn(async move {
+                let Ok(n) = bridge::invoke_get_generic_note(&nid).await else {
+                    return;
+                };
+                // Re-check after the await — the user may have begun typing.
+                if bridge::js_editor_ever_dirty().unwrap_or(false)
+                    || *content.peek() != *last_saved_content.peek()
+                {
+                    return;
+                }
+                let raw = n.raw_text.clone();
+                if raw == *content.peek() {
+                    return;
+                }
+                last_saved_content.set(raw.clone());
+                // `apply_raw_note` splits the full raw (frontmatter + body) into the
+                // properties panel + the editor body. The editor only holds the
+                // BODY, so push the split body — pushing the full raw would dump the
+                // frontmatter as plain text under the rendered properties.
+                apply_raw_note(props, body, initial_content, &raw);
+                content.set(raw.clone());
+                let editor_body = body.peek().clone();
+                bridge::js_set_editor_content(&editor_body);
+                bridge::js_mark_editor_clean();
+            });
+        });
+    }
 
     rsx! {
         // Fill-height flex column so the editor grows to fill the screen (Phase 5).

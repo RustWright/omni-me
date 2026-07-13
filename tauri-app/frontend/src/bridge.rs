@@ -21,6 +21,33 @@ use crate::types::{
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
     pub fn tauri_invoke(cmd: &str, args: JsValue) -> js_sys::Promise;
+
+    // Subscribe to a backend-emitted Tauri event. Resolves to an unlisten fn we
+    // deliberately drop (see `listen_backend_event`).
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], js_name = listen)]
+    fn tauri_listen(event: &str, handler: &js_sys::Function) -> js_sys::Promise;
+}
+
+/// Subscribe to a backend-emitted Tauri event (e.g. `sync:applied`), invoking
+/// `on_event` once per emit. Fire-and-forget: the JS `listen` promise resolves
+/// to an unlisten fn we don't keep, and the Rust closure is leaked with
+/// `forget`, because this listener lives for the whole app session — there's
+/// exactly one, registered at the app root. No-op under `mock` (no Tauri host).
+///
+/// The payload is ignored on purpose: callers use the event only as a "something
+/// changed, re-read" nudge, so a bare `impl FnMut()` keeps the call sites clean.
+pub fn listen_backend_event(event: &str, on_event: impl FnMut() + 'static) {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (event, on_event);
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        let mut on_event = on_event;
+        let cb = Closure::wrap(Box::new(move |_evt: JsValue| on_event()) as Box<dyn FnMut(JsValue)>);
+        let _ = tauri_listen(event, cb.as_ref().unchecked_ref());
+        cb.forget();
+    }
 }
 
 // CodeMirror interop
@@ -43,6 +70,12 @@ extern "C" {
     pub fn js_destroy_editor();
     #[wasm_bindgen(js_name = markClean)]
     pub fn js_mark_editor_clean();
+    // Sticky "user has edited this editor instance" — survives autosave's
+    // markClean, unlike `isDirty`. `catch` so a call before the editor bundle
+    // has defined `window.editorEvents` returns Err (→ treated as false) instead
+    // of throwing. Used to freeze live sync-refresh once the user starts editing.
+    #[wasm_bindgen(js_namespace = ["window", "editorEvents"], js_name = everDirty, catch)]
+    pub fn js_editor_ever_dirty() -> Result<bool, JsValue>;
 }
 
 // --- Internal Invoke Helpers ---
