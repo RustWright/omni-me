@@ -1,6 +1,9 @@
 use std::path::Path;
 
 fn main() {
+    // `DEFAULT_SERVER_URL` reads this via `option_env!`; cargo doesn't track
+    // env vars used by `option_env!`, so declare it here for local rebuilds.
+    println!("cargo:rerun-if-env-changed=OMNI_DEFAULT_SERVER_URL");
     apply_android_overrides();
     tauri_build::build();
 }

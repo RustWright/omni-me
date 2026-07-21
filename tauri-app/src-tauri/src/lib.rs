@@ -22,7 +22,15 @@ use omni_me_core::sync::{
 const DB_NAME: &str = "local.db";
 const DEVICE_ID_FILE: &str = "device_id";
 const SERVER_URL_FILE: &str = "server_url";
-const DEFAULT_SERVER_URL: &str = "http://localhost:3000";
+/// Fresh-install default sync server. Overridable at BUILD time via the
+/// `OMNI_DEFAULT_SERVER_URL` env (the private overlay's CI sets it to the box
+/// address); unset → localhost so the public zero-config build is unchanged.
+/// A runtime `OMNI_SERVER_URL` env still wins over this (see the `server_url`
+/// load below), and a persisted `server_url` file wins over both.
+const DEFAULT_SERVER_URL: &str = match option_env!("OMNI_DEFAULT_SERVER_URL") {
+    Some(url) => url,
+    None => "http://localhost:3000",
+};
 const TIMEZONE_FILE: &str = "timezone";
 const BASE_CURRENCY_FILE: &str = "base_currency";
 const WORKSPACE_FILE: &str = "workspace.json";
