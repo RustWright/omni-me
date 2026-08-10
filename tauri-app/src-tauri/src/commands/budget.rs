@@ -10,7 +10,9 @@ use tauri::State;
 
 use omni_me_core::balances::{self, AccountSummary, CommodityBalance};
 use omni_me_core::budget::{self, BalanceCheckResult, BudgetProgress};
-use omni_me_core::dashboard::{self, AffordVerdict, DashboardSummary, MonthlyTrendBucket, RecurringObligation};
+use omni_me_core::dashboard::{
+    self, AffordVerdict, DashboardSummary, MonthlyTrendBucket, NetWorthSeries, RecurringObligation,
+};
 use omni_me_core::db::queries::{
     self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow, TxnFilter,
 };
@@ -735,6 +737,83 @@ pub async fn dashboard_summary(
         &roster,
     );
     Ok(dashboard_to_view(summary))
+}
+
+/// Wire shape for one net-worth-history point (decimals stringified at the
+/// boundary, like every other money field here).
+#[derive(Debug, Clone, Serialize)]
+pub struct NetWorthPointView {
+    pub date: String,
+    pub net_worth_in_base: Option<String>,
+}
+
+/// Wire shape for the net-worth-history series feeding the Overview hero chart.
+#[derive(Debug, Clone, Serialize)]
+pub struct NetWorthSeriesView {
+    pub base_currency: String,
+    pub range: String,
+    pub points: Vec<NetWorthPointView>,
+}
+
+fn series_to_view(s: NetWorthSeries) -> NetWorthSeriesView {
+    NetWorthSeriesView {
+        base_currency: s.base_currency,
+        range: s.range,
+        points: s
+            .points
+            .into_iter()
+            .map(|p| NetWorthPointView {
+                date: p.date,
+                net_worth_in_base: p.net_worth_in_base.map(base_money),
+            })
+            .collect(),
+    }
+}
+
+/// Net-worth-over-time for the Overview hero chart. Reads the journal, walks it
+/// in date order, and samples net worth at each boundary for `range`
+/// (`1m`/`3m`/`6m`/`1y`/`ytd`/`all`, default `6m`). The final point equals the
+/// live net-worth number — both derive from the same journal + roster/Unmatched
+/// policy. `base_currency` defaults to the app base; `as_of` defaults to today.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn net_worth_history(
+    state: State<'_, AppState>,
+    range: Option<String>,
+    base_currency: Option<String>,
+    as_of: Option<String>,
+) -> Result<NetWorthSeriesView, String> {
+    let _t = CmdTimer::new("net_worth_history");
+    let base = match base_currency {
+        Some(b) => b,
+        None => state.base_currency.read().await.clone(),
+    };
+    let as_of_date = match as_of {
+        Some(s) => {
+            NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|e| format!("bad as_of date: {e}"))?
+        }
+        None => chrono::Utc::now().date_naive(),
+    };
+    let range = dashboard::NetWorthRange::from_key(range.as_deref().unwrap_or("6m"));
+
+    // Roster derivation shares the cached balance (no parse); the series needs
+    // the *dated* transactions, so it re-parses the journal content below (the
+    // cache holds only balance + prices). Same journal source as the hero number.
+    let artifacts = state.journal_artifacts().await?;
+    let declared = queries::list_accounts(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let file_roster = state.roster.read().await.clone();
+    let roster = effective_roster(&artifacts, &declared, &file_roster);
+
+    let path = state.app_data_dir.join("budget.journal");
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("read journal file: {e}")),
+    };
+    let series = dashboard::net_worth_series(&content, &base, as_of_date, &roster, range)
+        .map_err(|e| e.to_string())?;
+    Ok(series_to_view(series))
 }
 
 /// Test-the-policy command for the Can-I-Afford widget. Calls

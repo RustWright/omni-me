@@ -178,7 +178,7 @@ pub fn account_summaries_from(
     summaries
 }
 
-fn convert_to_base(
+pub(crate) fn convert_to_base(
     prices: &Prices,
     quantity: Decimal,
     commodity: &str,

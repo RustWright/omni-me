@@ -3,12 +3,13 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "mock")]
 use crate::types::{
     AccountTagGroupView, AttachmentRef, CommodityBalanceView, ExtractedPostingView,
-    MonthlyTrendBucketView, RecurringObligationView, TaskResult,
+    MonthlyTrendBucketView, NetWorthPointView, RecurringObligationView, TaskResult,
 };
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AffordVerdictView,
     AutoImportSourceView, BalanceCheckView, BudgetProgress,
     BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft,
+    NetWorthSeriesView,
     GenericNoteItem, ImportStatementCsvResult, JournalDayStat, JournalEntryItem, LlmResult,
     MatchCandidateView,
     PendingBatchView, PendingShareCapture, ReconciliationTxnPreview, RecurringPattern,
@@ -2009,6 +2010,38 @@ pub async fn invoke_dashboard_summary(
     }
 }
 
+// Consumed by the Overview hero chart (Stage C4); lands with C1's backend so the
+// data path is verifiable end-to-end. Drop the allow when Overview wires it in.
+#[allow(dead_code)]
+pub async fn invoke_net_worth_history(
+    range: &str,
+    base_currency: Option<&str>,
+) -> Result<NetWorthSeriesView, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = base_currency;
+        Ok(mock_net_worth_series(range))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            range: &'a str,
+            base_currency: Option<&'a str>,
+            as_of: Option<&'a str>,
+        }
+        invoke(
+            "net_worth_history",
+            &Args {
+                range,
+                base_currency,
+                as_of: None,
+            },
+        )
+        .await
+    }
+}
+
 pub async fn invoke_check_affordability(
     amount: &str,
     base_currency: Option<&str>,
@@ -2538,6 +2571,48 @@ fn mock_budgets() -> Vec<BudgetRow> {
             removed: false,
         },
     ]
+}
+
+/// A fictional net-worth-history series for the Overview hero chart. Endpoint =
+/// the mock net worth (`3891.89`) so the hero number and the chart's last point
+/// agree in screenshots; a gentle deterministic climb with a wiggle that flattens
+/// to zero at the endpoint. Fictional data only (public-repo privacy discipline).
+#[cfg(feature = "mock")]
+#[allow(dead_code)]
+fn mock_net_worth_series(range: &str) -> NetWorthSeriesView {
+    use chrono::{Duration, NaiveDate};
+    let (n, step_days): (usize, i64) = match range {
+        "1m" => (31, 1),
+        "3m" => (30, 3),
+        "1y" => (13, 30),
+        "ytd" => (6, 30),
+        "all" => (18, 45),
+        _ => (26, 7), // 6m default
+    };
+    let end = NaiveDate::from_ymd_opt(2026, 5, 23).unwrap();
+    let start_val = 2600.0_f64;
+    let end_val = 3891.89_f64;
+    let denom = (n - 1).max(1) as f64;
+    let points = (0..n)
+        .map(|i| {
+            let t = i as f64 / denom;
+            let date = end - Duration::days(step_days * (n - 1 - i) as i64);
+            let base = start_val + (end_val - start_val) * t;
+            // Deterministic wiggle, tapered to 0 at the endpoint so the last
+            // point lands exactly on end_val.
+            let wiggle = ((i as f64) * 1.7).sin() * 90.0 * (1.0 - t);
+            let val = if i == n - 1 { end_val } else { base + wiggle };
+            NetWorthPointView {
+                date: date.format("%Y-%m-%d").to_string(),
+                net_worth_in_base: Some(format!("{val:.2}")),
+            }
+        })
+        .collect();
+    NetWorthSeriesView {
+        base_currency: "CAD".into(),
+        range: range.to_string(),
+        points,
+    }
 }
 
 #[cfg(feature = "mock")]

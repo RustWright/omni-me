@@ -23,7 +23,8 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, Months, NaiveDate};
+use ledger_parser::{Ledger, LedgerItem};
 use ledger_utils::balance::Balance;
 use ledger_utils::prices::Prices;
 use rust_decimal::Decimal;
@@ -320,6 +321,262 @@ fn month_range(as_of: NaiveDate, months_back: u32) -> Vec<String> {
     out
 }
 
+// ── Net-worth history (Overview hero trend) ──────────────────────────────────
+
+/// The time window + sampling granularity for the net-worth-history chart.
+/// Each variant fixes both how far back the series reaches and how densely it
+/// samples, so ~30–60 points render cleanly at any range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetWorthRange {
+    /// Last month, one point per day.
+    Month1,
+    /// Last 3 months, one point every 3 days.
+    Month3,
+    /// Last 6 months, one point per week.
+    Month6,
+    /// Last 12 months, one point per month-end.
+    Year1,
+    /// Jan 1 of the current year → today, one point per month-end.
+    Ytd,
+    /// Earliest transaction → today, monthly (down-sampled to ≤ ~60 points
+    /// when the history spans more than five years).
+    All,
+}
+
+impl NetWorthRange {
+    /// Parse the frontend's range key. Unknown keys fall back to `Month6`.
+    pub fn from_key(s: &str) -> Self {
+        match s {
+            "1m" => Self::Month1,
+            "3m" => Self::Month3,
+            "1y" => Self::Year1,
+            "ytd" => Self::Ytd,
+            "all" => Self::All,
+            _ => Self::Month6,
+        }
+    }
+
+    /// Stable key echoed back to the frontend.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Month1 => "1m",
+            Self::Month3 => "3m",
+            Self::Month6 => "6m",
+            Self::Year1 => "1y",
+            Self::Ytd => "ytd",
+            Self::All => "all",
+        }
+    }
+}
+
+/// One sampled point on the net-worth-history line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NetWorthPoint {
+    /// `YYYY-MM-DD` — the "as of end of this date" sample boundary.
+    pub date: String,
+    /// Net worth in base currency at that boundary. `None` when nothing was
+    /// convertible yet (e.g. before the first base-currency posting).
+    pub net_worth_in_base: Option<Decimal>,
+}
+
+/// Net-worth-over-time payload for the Overview hero chart.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NetWorthSeries {
+    pub base_currency: String,
+    /// Echo of the requested range key (`1m`/`3m`/`6m`/`1y`/`ytd`/`all`).
+    pub range: String,
+    /// Ascending by date; the final point is `as_of`, so its value equals the
+    /// live net-worth number on the Overview hero.
+    pub points: Vec<NetWorthPoint>,
+}
+
+/// Parse `journal_content` once and compute the net-worth history for `range`.
+/// The convenience wrapper behind the Tauri command; the pure work is in
+/// [`net_worth_series_from`].
+pub fn net_worth_series(
+    journal_content: &str,
+    base_currency: &str,
+    as_of: NaiveDate,
+    roster: &[String],
+    range: NetWorthRange,
+) -> Result<NetWorthSeries, LedgerError> {
+    let parsed = ledger::parse(journal_content)?;
+    let mut prices = Prices::new();
+    prices.insert_from(&parsed);
+    Ok(net_worth_series_from(
+        &parsed,
+        &prices,
+        base_currency,
+        as_of,
+        roster,
+        range,
+    ))
+}
+
+/// Build the net-worth history from an already-parsed [`Ledger`] + price table.
+///
+/// Walks the transactions **in date order**, accumulating a running [`Balance`]
+/// of the roster's balance-bearing accounts (excluding `Unmatched`, matching
+/// [`sum_listable_net_worth`]), and samples net worth at each boundary date for
+/// the requested `range`. One pass over the postings; FX conversion at each
+/// boundary uses that boundary's own date, so historical points reflect the rate
+/// in effect then. The last point is `as_of`, so it equals the live net-worth
+/// hero number (same journal source, same roster/Unmatched policy).
+pub fn net_worth_series_from(
+    ledger: &Ledger,
+    prices: &Prices,
+    base_currency: &str,
+    as_of: NaiveDate,
+    roster: &[String],
+    range: NetWorthRange,
+) -> NetWorthSeries {
+    // Roster minus the Unmatched clearing account — the net-worth constituents.
+    let constituents: std::collections::HashSet<&str> = roster
+        .iter()
+        .map(String::as_str)
+        .filter(|a| *a != "Unmatched")
+        .collect();
+
+    // Transactions ascending by date (the journal isn't guaranteed sorted).
+    let mut txns: Vec<&ledger_parser::Transaction> = ledger
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            LedgerItem::Transaction(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    txns.sort_by_key(|t| t.date);
+
+    let earliest = txns.first().map(|t| t.date).unwrap_or(as_of);
+    let boundaries = sample_boundaries(range, as_of, earliest);
+
+    let mut running = Balance::new();
+    let mut cursor = 0usize;
+    let mut points = Vec::with_capacity(boundaries.len());
+    for boundary in boundaries {
+        // Fold in every transaction dated on or before this boundary.
+        while cursor < txns.len() && txns[cursor].date <= boundary {
+            for posting in &txns[cursor].postings {
+                if let Some(pa) = &posting.amount
+                    && constituents.contains(posting.account.as_str())
+                {
+                    running.add_amount(&posting.account, &pa.amount);
+                }
+            }
+            cursor += 1;
+        }
+        points.push(NetWorthPoint {
+            date: boundary.format("%Y-%m-%d").to_string(),
+            net_worth_in_base: net_worth_at(&running, prices, base_currency, boundary),
+        });
+    }
+
+    NetWorthSeries {
+        base_currency: base_currency.to_string(),
+        range: range.key().to_string(),
+        points,
+    }
+}
+
+/// Collapse a running balance to a single base-currency net-worth figure at
+/// `as_of`, mirroring the `account_summaries` → [`sum_listable_net_worth`]
+/// pipeline: each account contributes the sum of its convertible legs, and the
+/// total is `None` only when nothing anywhere converts.
+fn net_worth_at(
+    balance: &Balance,
+    prices: &Prices,
+    base_currency: &str,
+    as_of: NaiveDate,
+) -> Option<Decimal> {
+    balance
+        .account_balances
+        .values()
+        .filter_map(|ab| {
+            ab.amounts
+                .iter()
+                .filter_map(|(commodity, amount)| {
+                    balances::convert_to_base(
+                        prices,
+                        amount.quantity,
+                        commodity,
+                        base_currency,
+                        as_of,
+                    )
+                })
+                .reduce(|a, b| a + b)
+        })
+        .reduce(|a, b| a + b)
+}
+
+/// The ascending list of sample boundary dates for `range`. Always ends at
+/// `as_of` so the series' last point is the live net worth. Day-stepped for the
+/// short ranges, month-end-stepped for the long ones, down-sampled so `All`
+/// never exceeds ~60 points.
+fn sample_boundaries(range: NetWorthRange, as_of: NaiveDate, earliest: NaiveDate) -> Vec<NaiveDate> {
+    let months_back = |n: u32| as_of.checked_sub_months(Months::new(n)).unwrap_or(as_of);
+    match range {
+        NetWorthRange::Month1 => day_stepped(months_back(1), as_of, 1),
+        NetWorthRange::Month3 => day_stepped(months_back(3), as_of, 3),
+        NetWorthRange::Month6 => day_stepped(months_back(6), as_of, 7),
+        NetWorthRange::Year1 => month_stepped(months_back(12), as_of, 1),
+        NetWorthRange::Ytd => {
+            let start = NaiveDate::from_ymd_opt(as_of.year(), 1, 1).unwrap_or(as_of);
+            month_stepped(start, as_of, 1)
+        }
+        NetWorthRange::All => {
+            // Month-stride tuned so a long history stays ≤ ~60 points.
+            let months = months_between(earliest, as_of).max(1);
+            let stride = (months.saturating_add(59) / 60).max(1);
+            month_stepped(earliest, as_of, stride)
+        }
+    }
+}
+
+/// Boundaries `start, start+step_days, …, as_of` — always inclusive of `as_of`.
+fn day_stepped(start: NaiveDate, as_of: NaiveDate, step_days: i64) -> Vec<NaiveDate> {
+    let mut out = Vec::new();
+    let mut d = start;
+    while d < as_of {
+        out.push(d);
+        d += chrono::Duration::days(step_days);
+    }
+    out.push(as_of);
+    out
+}
+
+/// Month-end boundaries every `stride` months from `start`'s month up to
+/// `as_of`, with `as_of` itself as the final (partial-month) point.
+fn month_stepped(start: NaiveDate, as_of: NaiveDate, stride: u32) -> Vec<NaiveDate> {
+    let mut out = Vec::new();
+    let mut month = NaiveDate::from_ymd_opt(start.year(), start.month(), 1).unwrap_or(start);
+    while let Some(end) = month_end(month) {
+        if end >= as_of {
+            break;
+        }
+        out.push(end);
+        month = match month.checked_add_months(Months::new(stride)) {
+            Some(m) => m,
+            None => break,
+        };
+    }
+    out.push(as_of);
+    out
+}
+
+/// Last day of the month containing `first_of_month` (which must be day 1).
+fn month_end(first_of_month: NaiveDate) -> Option<NaiveDate> {
+    first_of_month.checked_add_months(Months::new(1))?.pred_opt()
+}
+
+/// Whole calendar months from `a` to `b` (0 if `b <= a`).
+fn months_between(a: NaiveDate, b: NaiveDate) -> u32 {
+    if b <= a {
+        return 0;
+    }
+    (((b.year() - a.year()) * 12) + (b.month() as i32 - a.month() as i32)).max(0) as u32
+}
+
 fn distill_recurring(rows: &[RecurringPatternRow]) -> Vec<RecurringObligation> {
     // Same DbValue → serde_json detour pattern as `bucket_postings_by_month`
     // — keeps the pure logic separately testable.
@@ -536,6 +793,89 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s.unmatched_balance, None);
+    }
+
+    #[test]
+    fn net_worth_series_endpoint_matches_hero_and_excludes_unmatched() {
+        // Same fixture as the hero-number test above; the series' final point
+        // must reconcile to the same 3250.00 (Unmatched −250 excluded).
+        let journal = "\
+2026-05-01 Salary
+    Assets:Northwind:Cash      3000.00 CAD
+    Income:Salary                -3000.00 CAD
+
+2026-05-15 Auto-import (counter-leg unknown)
+    Assets:Globepay:CAD                250.00 CAD
+    Unmatched                     -250.00 CAD
+";
+        let series =
+            net_worth_series(journal, "CAD", day(2026, 5, 23), &roster(), NetWorthRange::All)
+                .unwrap();
+        let last = series.points.last().expect("at least one point");
+        assert_eq!(last.date, "2026-05-23");
+        assert_eq!(last.net_worth_in_base, Some(d("3250.00")));
+    }
+
+    #[test]
+    fn net_worth_series_accumulates_in_date_order() {
+        let journal = "\
+2026-01-10 Salary
+    Assets:Northwind:Cash      1000.00 CAD
+    Income:Salary                -1000.00 CAD
+
+2026-03-10 Salary
+    Assets:Northwind:Cash       500.00 CAD
+    Income:Salary                 -500.00 CAD
+";
+        let series =
+            net_worth_series(journal, "CAD", day(2026, 5, 23), &roster(), NetWorthRange::All)
+                .unwrap();
+        let at = |date: &str| {
+            series
+                .points
+                .iter()
+                .find(|p| p.date == date)
+                .and_then(|p| p.net_worth_in_base)
+        };
+        // Only the January posting has landed by end of February.
+        assert_eq!(at("2026-02-28"), Some(d("1000.00")));
+        // Both by end of March, and it holds through to today.
+        assert_eq!(at("2026-03-31"), Some(d("1500.00")));
+        assert_eq!(
+            series.points.last().unwrap().net_worth_in_base,
+            Some(d("1500.00"))
+        );
+        // Dates strictly ascending.
+        assert!(series.points.windows(2).all(|w| w[0].date < w[1].date));
+    }
+
+    #[test]
+    fn net_worth_series_one_month_is_daily_and_ends_today() {
+        let journal = "\
+2026-04-01 Salary
+    Assets:Northwind:Cash      2000.00 CAD
+    Income:Salary                -2000.00 CAD
+";
+        let series = net_worth_series(
+            journal,
+            "CAD",
+            day(2026, 5, 23),
+            &roster(),
+            NetWorthRange::Month1,
+        )
+        .unwrap();
+        assert_eq!(series.range, "1m");
+        // Apr 23 … May 23 inclusive, one point per day.
+        assert_eq!(series.points.first().unwrap().date, "2026-04-23");
+        assert_eq!(series.points.last().unwrap().date, "2026-05-23");
+        assert_eq!(series.points.len(), 31);
+        // The April salary is already in by the window start → every point 2000.
+        assert!(
+            series
+                .points
+                .iter()
+                .all(|p| p.net_worth_in_base == Some(d("2000.00")))
+        );
     }
 
     #[test]

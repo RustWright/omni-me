@@ -478,6 +478,30 @@ pub struct DashboardSummaryView {
     pub recurring: Vec<RecurringObligationView>,
 }
 
+/// One net-worth-history point. Mirrors `commands::budget::NetWorthPointView`.
+/// Consumed by the Overview hero chart (Stage C4); drop the allow when wired.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NetWorthPointView {
+    /// `YYYY-MM-DD` boundary date.
+    pub date: String,
+    /// Net worth in base currency at that boundary; `None` when nothing was
+    /// convertible yet.
+    pub net_worth_in_base: Option<String>,
+}
+
+/// Net-worth-over-time series for the Overview hero chart. Mirrors
+/// `commands::budget::NetWorthSeriesView`. The last point equals the live
+/// net-worth number (same journal + roster/Unmatched policy).
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NetWorthSeriesView {
+    pub base_currency: String,
+    /// Echoed range key (`1m`/`3m`/`6m`/`1y`/`ytd`/`all`).
+    pub range: String,
+    pub points: Vec<NetWorthPointView>,
+}
+
 /// Verdict for a "Can I afford X?" query. Mirrors
 /// `core::dashboard::AffordVerdict` plus the base currency.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

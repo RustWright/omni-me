@@ -513,6 +513,7 @@ pub fn run() {
             commands::budget::account_summaries,
             commands::budget::account_tag_breakdown,
             commands::budget::dashboard_summary,
+            commands::budget::net_worth_history,
             commands::budget::check_affordability,
             commands::budget::set_budget,
             commands::budget::list_budgets,
