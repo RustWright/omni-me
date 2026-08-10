@@ -170,6 +170,13 @@ pub struct ContinuityStore {
     /// first hydration on this so the initially-open page sees a disk-restored
     /// session instead of racing the load and falling back to the backend copy.
     loaded: Signal<bool>,
+    /// Ephemeral read-cache for finances surfaces (Stage C3). Keyed by a caller
+    /// string (e.g. `"ov:dash"`, `"nw:6m"`); holds the last-fetched payload as
+    /// JSON so a revisit renders instantly (stale-while-revalidate) instead of
+    /// flashing a loader while it re-queries. Deliberately **not** persisted —
+    /// it's always re-derivable from the backend, so it stays out of
+    /// `PersistedWorkspace` to keep the on-disk workspace lean.
+    reads: Signal<HashMap<String, serde_json::Value>>,
 }
 
 impl ContinuityStore {
@@ -257,6 +264,25 @@ impl ContinuityStore {
         f(&mut guard);
     }
 
+    /// Non-subscribing read of a cached finances payload (Stage C3), deserialized
+    /// to `T`. `peek` — a surface hydrates its signal from this at init without
+    /// subscribing (the fetch effect, not the cache, drives re-renders).
+    pub fn cache_get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.reads
+            .peek()
+            .get(key)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    /// Write a freshly-fetched finances payload into the read-cache (Stage C3).
+    /// Called after each successful fetch so the next revisit renders instantly.
+    pub fn cache_put<T: serde::Serialize>(&self, key: &str, val: &T) {
+        if let Ok(v) = serde_json::to_value(val) {
+            let mut reads = self.reads;
+            reads.write().insert(key.to_string(), v);
+        }
+    }
+
     /// Snapshot all three maps for on-disk persistence (1.8a). Reads — and thus
     /// subscribes — so the debounced persist effect re-runs on any change.
     pub fn snapshot_for_persist(&self) -> PersistedWorkspace {
@@ -303,6 +329,7 @@ pub fn use_continuity_provider() -> ContinuityStore {
     let captures = use_signal(HashMap::<ContinuityKey, CaptureDraft>::new);
     let lists = use_signal(HashMap::<ContinuityKey, ListState>::new);
     let nav = use_signal(NavState::default);
+    let reads = use_signal(HashMap::<String, serde_json::Value>::new);
     // `loaded` gates the persistence writer until the boot read finishes (1.8a)
     // *and* is read by pages to gate first hydration (1.8b). It lives on the
     // struct so descendants can consult it via `loaded_peek`.
@@ -319,6 +346,7 @@ pub fn use_continuity_provider() -> ContinuityStore {
         lists,
         nav,
         loaded,
+        reads,
     };
     use_context_provider(|| store);
 

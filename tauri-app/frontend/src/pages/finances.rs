@@ -1054,37 +1054,52 @@ fn OverviewView(
     on_open_accounts: EventHandler<()>,
     on_open_reconciliation: EventHandler<()>,
 ) -> Element {
-    let mut summary: Signal<Option<DashboardSummaryView>> = use_signal(|| None);
-    let mut loading: Signal<bool> = use_signal(|| true);
+    // Read-cache (C3): seed each signal from the last-fetched payload so a
+    // revisit renders instantly (stale-while-revalidate); the effects below
+    // refetch in the background and write the fresh result back.
+    let store = use_continuity();
+    let cached_dash = store.cache_get::<DashboardSummaryView>("ov:dash");
+    let mut summary: Signal<Option<DashboardSummaryView>> = use_signal(|| cached_dash.clone());
+    let mut loading: Signal<bool> = use_signal(|| cached_dash.is_none());
     let mut error: Signal<Option<String>> = use_signal(|| None);
     // Net-worth history feeding the hero chart (C4); re-fetched on range change.
     let mut range: Signal<String> = use_signal(|| "6m".to_string());
-    let mut series: Signal<Option<NetWorthSeriesView>> = use_signal(|| None);
+    let mut series: Signal<Option<NetWorthSeriesView>> =
+        use_signal(|| store.cache_get::<NetWorthSeriesView>("nw:6m"));
     // 2×2 grid data: per-institution breakdown + the most recent transactions.
-    let mut breakdown: Signal<Option<AccountTagBreakdownView>> = use_signal(|| None);
-    let mut recent: Signal<Vec<TransactionView>> = use_signal(Vec::new);
+    let mut breakdown: Signal<Option<AccountTagBreakdownView>> =
+        use_signal(|| store.cache_get::<AccountTagBreakdownView>("ov:inst"));
+    let mut recent: Signal<Vec<TransactionView>> =
+        use_signal(|| store.cache_get::<Vec<TransactionView>>("ov:recent").unwrap_or_default());
 
     // Re-run on mount and whenever a background pull lands (sync_refresh).
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
         let _ = sync_epoch.read();
         spawn(async move {
-            loading.set(true);
             error.set(None);
             match bridge::invoke_dashboard_summary(None).await {
-                Ok(s) => summary.set(Some(s)),
+                Ok(s) => {
+                    store.cache_put("ov:dash", &s);
+                    summary.set(Some(s));
+                }
                 Err(e) => error.set(Some(e)),
             }
             loading.set(false);
         });
     });
 
-    // Net-worth series — reacts to the range switcher + inbound sync.
+    // Net-worth series — reacts to the range switcher + inbound sync. Shows the
+    // cached slice for the new range instantly, then refreshes it.
     use_effect(move || {
         let _ = sync_epoch.read();
         let r = range.read().clone();
+        if let Some(cached) = store.cache_get::<NetWorthSeriesView>(&format!("nw:{r}")) {
+            series.set(Some(cached));
+        }
         spawn(async move {
             if let Ok(s) = bridge::invoke_net_worth_history(&r, None).await {
+                store.cache_put(&format!("nw:{r}"), &s);
                 series.set(Some(s));
             }
         });
@@ -1095,9 +1110,11 @@ fn OverviewView(
         let _ = sync_epoch.read();
         spawn(async move {
             if let Ok(b) = bridge::invoke_account_tag_breakdown("Assets", "institution", None).await {
+                store.cache_put("ov:inst", &b);
                 breakdown.set(Some(b));
             }
             if let Ok(rows) = bridge::invoke_list_transactions(TxnFilter::default(), 5, 0).await {
+                store.cache_put("ov:recent", &rows);
                 recent.set(rows);
             }
         });
@@ -1158,26 +1175,38 @@ fn OverviewView(
         }
 
         // The calm 2×2 grid — institutions · review · cash flow · recent activity.
-        div { class: "mt-3 grid grid-cols-1 md:grid-cols-2 gap-3",
-            InstitutionsCard {
-                breakdown: breakdown_snap,
-                base_currency: base_currency.clone(),
-                on_open: move |_| on_open_accounts.call(()),
+        // Skeletons on genuine first load; a cached revisit renders instantly.
+        if is_loading && snapshot.is_none() {
+            div { class: "mt-3 grid grid-cols-1 md:grid-cols-2 gap-3",
+                for i in 0..4 {
+                    div {
+                        key: "{i}",
+                        class: "h-32 rounded-card bg-obsidian-surface border border-obsidian-border/10 animate-pulse",
+                    }
+                }
             }
-            ReviewInboxCard {
-                pending_count,
-                unmatched,
-                base_currency: base_currency.clone(),
-                on_open_batches: move |_| on_open_batches.call(()),
-                on_open_reconciliation: move |_| on_open_reconciliation.call(()),
-            }
-            CashFlowCard {
-                buckets: cash_buckets,
-                base_currency: base_currency.clone(),
-            }
-            RecentActivityCard {
-                recent: recent_snap,
-                on_open: move |_| on_open_transactions.call(()),
+        } else {
+            div { class: "mt-3 grid grid-cols-1 md:grid-cols-2 gap-3",
+                InstitutionsCard {
+                    breakdown: breakdown_snap,
+                    base_currency: base_currency.clone(),
+                    on_open: move |_| on_open_accounts.call(()),
+                }
+                ReviewInboxCard {
+                    pending_count,
+                    unmatched,
+                    base_currency: base_currency.clone(),
+                    on_open_batches: move |_| on_open_batches.call(()),
+                    on_open_reconciliation: move |_| on_open_reconciliation.call(()),
+                }
+                CashFlowCard {
+                    buckets: cash_buckets,
+                    base_currency: base_currency.clone(),
+                }
+                RecentActivityCard {
+                    recent: recent_snap,
+                    on_open: move |_| on_open_transactions.call(()),
+                }
             }
         }
     }
@@ -4260,8 +4289,15 @@ fn group_thousands(int_part: &str) -> String {
 
 #[component]
 fn AccountListView(on_back: EventHandler<()>) -> Element {
-    let mut summaries: Signal<Vec<AccountSummaryView>> = use_signal(Vec::new);
-    let mut loading: Signal<bool> = use_signal(|| true);
+    // Read-cache (C3): seed from the last-fetched accounts so a revisit renders
+    // instantly, then refresh in the background.
+    let store = use_continuity();
+    let cached = store
+        .cache_get::<Vec<AccountSummaryView>>("fin:accts")
+        .unwrap_or_default();
+    let had_cache = !cached.is_empty();
+    let mut summaries: Signal<Vec<AccountSummaryView>> = use_signal(|| cached);
+    let mut loading: Signal<bool> = use_signal(|| !had_cache);
     let mut error: Signal<Option<String>> = use_signal(|| None);
 
     // Re-run on mount and whenever a background pull lands (sync_refresh) so
@@ -4270,10 +4306,12 @@ fn AccountListView(on_back: EventHandler<()>) -> Element {
     use_effect(move || {
         let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
         spawn(async move {
-            loading.set(true);
             error.set(None);
             match bridge::invoke_account_summaries(None).await {
-                Ok(rows) => summaries.set(rows),
+                Ok(rows) => {
+                    store.cache_put("fin:accts", &rows);
+                    summaries.set(rows);
+                }
                 Err(e) => error.set(Some(e)),
             }
             loading.set(false);
@@ -4304,8 +4342,13 @@ fn AccountListView(on_back: EventHandler<()>) -> Element {
         }
 
         if is_loading {
-            div { class: "p-6 text-center text-obsidian-text-muted text-sm",
-                "Loading…"
+            div { class: "space-y-3",
+                for i in 0..3 {
+                    div {
+                        key: "{i}",
+                        class: "h-20 rounded-card bg-obsidian-surface border border-obsidian-border/10 animate-pulse",
+                    }
+                }
             }
         } else if show_empty {
             div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
@@ -4577,8 +4620,12 @@ fn DashboardView(
     on_back: EventHandler<()>,
     on_open_unmatched: EventHandler<()>,
 ) -> Element {
-    let mut summary: Signal<Option<DashboardSummaryView>> = use_signal(|| None);
-    let mut loading: Signal<bool> = use_signal(|| true);
+    // Shares the Overview's cached dashboard payload (`ov:dash`) so opening the
+    // Dashboard right after the Overview renders instantly (C3).
+    let store = use_continuity();
+    let cached = store.cache_get::<DashboardSummaryView>("ov:dash");
+    let mut summary: Signal<Option<DashboardSummaryView>> = use_signal(|| cached.clone());
+    let mut loading: Signal<bool> = use_signal(|| cached.is_none());
     let mut error: Signal<Option<String>> = use_signal(|| None);
 
     // Re-run on mount and whenever a background pull lands (sync_refresh) so the
@@ -4587,10 +4634,12 @@ fn DashboardView(
     use_effect(move || {
         let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
         spawn(async move {
-            loading.set(true);
             error.set(None);
             match bridge::invoke_dashboard_summary(None).await {
-                Ok(s) => summary.set(Some(s)),
+                Ok(s) => {
+                    store.cache_put("ov:dash", &s);
+                    summary.set(Some(s));
+                }
                 Err(e) => error.set(Some(e)),
             }
             loading.set(false);
@@ -4620,7 +4669,13 @@ fn DashboardView(
         }
 
         if is_loading && snapshot.is_none() {
-            div { class: "p-6 text-center text-obsidian-text-muted text-sm", "Loading…" }
+            div { class: "space-y-3",
+                div { class: "grid grid-cols-1 md:grid-cols-2 gap-3",
+                    div { class: "h-24 rounded-card bg-obsidian-surface border border-obsidian-border/10 animate-pulse" }
+                    div { class: "h-24 rounded-card bg-obsidian-surface border border-obsidian-border/10 animate-pulse" }
+                }
+                div { class: "h-40 rounded-card bg-obsidian-surface border border-obsidian-border/10 animate-pulse" }
+            }
         } else if let Some(s) = snapshot {
             div { class: "grid grid-cols-1 md:grid-cols-2 gap-3",
                 NetWorthCard {
