@@ -199,10 +199,6 @@ pub fn FinancesPage() -> Element {
     let mut pending_draft: Signal<Option<ExtractedDraft>> = use_signal(|| None);
     let mut selected_batch_id: Signal<Option<String>> = use_signal(|| None);
     let mut selected_txn_id: Signal<Option<String>> = use_signal(|| None);
-    // Widget click-through can seed the next TransactionList render with a
-    // pre-applied filter (e.g. account: "Unmatched"). One-shot — the list reads
-    // + clears it on mount.
-    let mut pending_txn_filter: Signal<Option<TxnFilter>> = use_signal(|| None);
     // Pending-batch count for the Overview review inbox, refreshed whenever the
     // user is on the Overview root. A separate signal (not derived from listing
     // the batches inline) keeps the tile cheap — one COUNT query, not a full
@@ -451,17 +447,8 @@ pub fn FinancesPage() -> Element {
                         },
                     }
                 }
-                FinancesView::TransactionList => {
-                    // Drain the one-shot filter seed (set by dashboard
-                    // widget click-throughs). Snapshot + clear before render
-                    // so a back-and-forth doesn't re-apply it.
-                    let seed = pending_txn_filter.read().clone();
-                    if seed.is_some() {
-                        pending_txn_filter.set(None);
-                    }
-                    rsx! {
-                        LedgerView { initial_filter: seed }
-                    }
+                FinancesView::TransactionList => rsx! {
+                    LedgerView {}
                 },
                 FinancesView::TransactionDetail => {
                     let tid = selected_txn_id.read().clone();
