@@ -2010,9 +2010,8 @@ pub async fn invoke_dashboard_summary(
     }
 }
 
-// Consumed by the Overview hero chart (Stage C4); lands with C1's backend so the
-// data path is verifiable end-to-end. Drop the allow when Overview wires it in.
-#[allow(dead_code)]
+/// Net-worth history for the Overview hero chart. `range` is one of
+/// `1m`/`3m`/`6m`/`1y`/`ytd`/`all`.
 pub async fn invoke_net_worth_history(
     range: &str,
     base_currency: Option<&str>,
@@ -2578,7 +2577,6 @@ fn mock_budgets() -> Vec<BudgetRow> {
 /// agree in screenshots; a gentle deterministic climb with a wiggle that flattens
 /// to zero at the endpoint. Fictional data only (public-repo privacy discipline).
 #[cfg(feature = "mock")]
-#[allow(dead_code)]
 fn mock_net_worth_series(range: &str) -> NetWorthSeriesView {
     use chrono::{Duration, NaiveDate};
     let (n, step_days): (usize, i64) = match range {

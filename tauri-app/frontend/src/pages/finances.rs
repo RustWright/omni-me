@@ -11,7 +11,8 @@ use crate::types::{
     AttachmentRef, BalanceCheckView, BudgetProgress,
     BudgetRow, DashboardSummaryView, DraftTransactionView, ExtractedDraft, JournalImportPlan,
     JournalImportPreview, JournalImportResult, MatchCandidateView, MonthlyTrendBucketView,
-    PendingBatchView, PendingShareCapture, PostingInput, ReconciliationTxnPreview,
+    NetWorthPointView, NetWorthSeriesView, PendingBatchView, PendingShareCapture, PostingInput,
+    ReconciliationTxnPreview,
     RecurringObligationView, RecurringPattern, ScanRecurringResult, TransactionFormDraft,
     TransactionView, TxnFilter,
 };
@@ -581,13 +582,467 @@ fn HubLinkRow(
     }
 }
 
-/// Overview surface root (Stage C). The daily glance: a review inbox for
-/// auto-imported batches, a resume-capture affordance, the financial-health
-/// cards, and quick links into the ledger + accounts.
+/// The finances net-worth-history range keys + labels for the hero's switcher.
+const NET_WORTH_RANGES: &[(&str, &str)] = &[
+    ("1m", "1M"),
+    ("3m", "3M"),
+    ("6m", "6M"),
+    ("1y", "1Y"),
+    ("ytd", "YTD"),
+    ("all", "All"),
+];
+
+/// Short label for the delta line ("over 6 months").
+fn range_phrase(key: &str) -> &'static str {
+    match key {
+        "1m" => "past month",
+        "3m" => "past 3 months",
+        "6m" => "past 6 months",
+        "1y" => "past year",
+        "ytd" => "year to date",
+        "all" => "all time",
+        _ => "range",
+    }
+}
+
+/// Net-worth-over-time area chart (Stage C4). A single-accent-hue area + line
+/// with an emphasized endpoint, faint gridlines, and a hover crosshair +
+/// tooltip. The SVG scales to its container width; strokes stay crisp via
+/// `non-scaling-stroke`. Per the `dataviz` skill: one hue, recessive grid,
+/// emphasized endpoint, hover layer, text in ink tokens (never the series hue).
+#[component]
+fn NetWorthChart(points: Vec<NetWorthPointView>, base_currency: String) -> Element {
+    const W: f64 = 800.0;
+    const H: f64 = 240.0;
+    const PAD_L: f64 = 6.0;
+    const PAD_R: f64 = 6.0;
+    const PAD_T: f64 = 12.0;
+    const PAD_B: f64 = 10.0;
+
+    let mut hover_idx = use_signal(|| None::<usize>);
+
+    let n = points.len();
+    let vals: Vec<Option<f64>> = points
+        .iter()
+        .map(|p| {
+            p.net_worth_in_base
+                .as_deref()
+                .and_then(|s| s.parse::<f64>().ok())
+        })
+        .collect();
+    let valid: Vec<(usize, f64)> = vals
+        .iter()
+        .enumerate()
+        .filter_map(|(i, v)| v.map(|v| (i, v)))
+        .collect();
+
+    if valid.len() < 2 {
+        return rsx! {
+            div { class: "h-40 flex items-center justify-center text-sm text-obsidian-text-muted",
+                "Not enough history to chart yet."
+            }
+        };
+    }
+
+    let plot_w = W - PAD_L - PAD_R;
+    let plot_h = H - PAD_T - PAD_B;
+    let baseline = H - PAD_B;
+
+    let (mut y_min, mut y_max) = (f64::INFINITY, f64::NEG_INFINITY);
+    for (_, v) in &valid {
+        y_min = y_min.min(*v);
+        y_max = y_max.max(*v);
+    }
+    let headroom = (y_max - y_min).max(1.0) * 0.10;
+    y_min -= headroom;
+    y_max += headroom;
+    let y_range = (y_max - y_min).max(1.0);
+
+    let x_of = |i: usize| PAD_L + (i as f64 / (n as f64 - 1.0).max(1.0)) * plot_w;
+    let y_of = |v: f64| PAD_T + (y_max - v) / y_range * plot_h;
+
+    // Line + area paths over the valid points.
+    let mut line_d = String::new();
+    let mut area_d = format!("M{:.2} {:.2} ", x_of(valid[0].0), baseline);
+    for (k, (i, v)) in valid.iter().enumerate() {
+        let (x, y) = (x_of(*i), y_of(*v));
+        line_d.push_str(&format!("{}{x:.2} {y:.2} ", if k == 0 { "M" } else { "L" }));
+        area_d.push_str(&format!("L{x:.2} {y:.2} "));
+    }
+    area_d.push_str(&format!("L{:.2} {:.2} Z", x_of(valid.last().unwrap().0), baseline));
+
+    let (end_i, end_v) = *valid.last().unwrap();
+    let (end_x, end_y) = (x_of(end_i), y_of(end_v));
+
+    // Three recessive gridlines (no labels — the hero + tooltip carry values).
+    let grid_ys = [PAD_T, PAD_T + plot_h / 2.0, PAD_T + plot_h];
+
+    let first_date = points[valid[0].0].date.clone();
+    let last_date = points[end_i].date.clone();
+
+    let hovered = *hover_idx.read();
+    let half = plot_w / (n as f64 - 1.0).max(1.0) / 2.0 + 0.5;
+
+    rsx! {
+        div { class: "relative w-full",
+            svg {
+                class: "w-full h-auto block",
+                view_box: "0 0 {W} {H}",
+                preserve_aspect_ratio: "none",
+                onmouseleave: move |_| hover_idx.set(None),
+
+                for gy in grid_ys.iter().copied() {
+                    line {
+                        x1: "{PAD_L}",
+                        y1: "{gy}",
+                        x2: "{W - PAD_R}",
+                        y2: "{gy}",
+                        stroke: "rgb(255 255 255 / 0.06)",
+                        stroke_width: "1",
+                        vector_effect: "non-scaling-stroke",
+                    }
+                }
+
+                path { d: "{area_d}", fill: "rgb(var(--color-accent) / 0.14)" }
+                path {
+                    d: "{line_d}",
+                    fill: "none",
+                    stroke: "rgb(var(--color-accent) / 1)",
+                    stroke_width: "2",
+                    stroke_linecap: "round",
+                    stroke_linejoin: "round",
+                    vector_effect: "non-scaling-stroke",
+                }
+
+                // Emphasized endpoint.
+                circle { cx: "{end_x}", cy: "{end_y}", r: "8", fill: "rgb(var(--color-accent) / 0.18)" }
+                circle { cx: "{end_x}", cy: "{end_y}", r: "4", fill: "rgb(var(--color-accent) / 1)" }
+
+                // Hover crosshair + highlighted point.
+                if let Some(i) = hovered {
+                    if let Some(v) = vals[i] {
+                        line {
+                            x1: "{x_of(i)}",
+                            y1: "{PAD_T}",
+                            x2: "{x_of(i)}",
+                            y2: "{baseline}",
+                            stroke: "rgb(255 255 255 / 0.28)",
+                            stroke_width: "1",
+                            vector_effect: "non-scaling-stroke",
+                        }
+                        circle {
+                            cx: "{x_of(i)}",
+                            cy: "{y_of(v)}",
+                            r: "4",
+                            fill: "rgb(var(--color-accent) / 1)",
+                            stroke: "rgb(var(--color-surface) / 1)",
+                            stroke_width: "1.5",
+                        }
+                    }
+                }
+
+                // Transparent per-point hover targets.
+                for i in 0..n {
+                    rect {
+                        x: "{x_of(i) - half}",
+                        y: "{PAD_T}",
+                        width: "{2.0 * half}",
+                        height: "{plot_h}",
+                        fill: "transparent",
+                        onmouseenter: move |_| hover_idx.set(Some(i)),
+                    }
+                }
+            }
+
+            // HTML tooltip overlay, positioned as a % of the scaled SVG.
+            {
+                hovered.and_then(|i| {
+                    vals[i].map(|v| {
+                        let val_str = format_money(&format!("{v:.2}"), &base_currency);
+                        let date = points[i].date.clone();
+                        let left = x_of(i) / W * 100.0;
+                        let top = y_of(v) / H * 100.0;
+                        rsx! {
+                            div {
+                                class: "absolute pointer-events-none z-10 px-2 py-1 rounded-md bg-obsidian-sidebar border border-obsidian-border/10 shadow-pop text-xs whitespace-nowrap",
+                                style: "left: {left}%; top: {top}%; transform: translate(-50%, calc(-100% - 10px));",
+                                div { class: "text-obsidian-text-muted", "{date}" }
+                                div { class: "text-obsidian-text font-semibold tabular-nums", "{val_str}" }
+                            }
+                        }
+                    })
+                })
+            }
+        }
+        div { class: "mt-1 flex items-center justify-between text-[11px] text-obsidian-text-muted tabular-nums",
+            span { "{first_date}" }
+            span { "{last_date}" }
+        }
+    }
+}
+
+/// The Overview hero (Stage C4) — net-worth headline + delta over the visible
+/// window, a range switcher, and the [`NetWorthChart`].
+#[component]
+fn NetWorthHero(
+    series: NetWorthSeriesView,
+    range: String,
+    on_range: EventHandler<String>,
+) -> Element {
+    let base = series.base_currency.clone();
+    let last_v = series
+        .points
+        .last()
+        .and_then(|p| p.net_worth_in_base.as_deref())
+        .and_then(|s| s.parse::<f64>().ok());
+    let first_v = series
+        .points
+        .iter()
+        .find_map(|p| p.net_worth_in_base.as_deref().map(str::to_string))
+        .and_then(|s| s.parse::<f64>().ok());
+
+    let delta = match (first_v, last_v) {
+        (Some(a), Some(b)) => Some(b - a),
+        _ => None,
+    };
+    let (delta_class, arrow) = match delta {
+        Some(d) if d > 0.0 => ("text-success", "\u{25B2}"),
+        Some(d) if d < 0.0 => ("text-error", "\u{25BC}"),
+        _ => ("text-obsidian-text-muted", "\u{2192}"),
+    };
+    // Precompute display strings — Dioxus rsx can't parse a nested `format!`
+    // with its own `{:.2}` spec inside an interpolation segment.
+    let value_str = last_v
+        .map(|v| format_money(&format!("{v:.2}"), &base))
+        .unwrap_or_else(|| "—".to_string());
+    let delta_str = delta.map(|d| format_money(&format!("{:.2}", d.abs()), &base));
+    let phrase = range_phrase(&range);
+    let range_items: Vec<(String, String)> = NET_WORTH_RANGES
+        .iter()
+        .map(|(k, l)| (k.to_string(), l.to_string()))
+        .collect();
+
+    rsx! {
+        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-5",
+            div { class: "flex items-start justify-between gap-3 flex-wrap",
+                div {
+                    p { class: "text-xs font-medium uppercase tracking-wide text-obsidian-text-muted", "Net worth" }
+                    p { class: "mt-1 text-3xl font-bold text-obsidian-text tabular-nums", "{value_str}" }
+                    if let Some(ds) = delta_str {
+                        p { class: "mt-1 text-xs font-medium {delta_class}",
+                            "{arrow} {ds} · {phrase}"
+                        }
+                    }
+                }
+                SegmentedNav {
+                    items: range_items,
+                    active: range.clone(),
+                    on_select: move |k: String| on_range.call(k),
+                }
+            }
+            div { class: "mt-4",
+                NetWorthChart { points: series.points.clone(), base_currency: base.clone() }
+            }
+        }
+    }
+}
+
+/// Per-institution balances (Overview 2×2 grid). Single-hue magnitude bars
+/// (dataviz sequential) scaled to the largest holding; taps into the Accounts
+/// drill-down. Reuses `account_tag_breakdown` grouped by institution.
+#[component]
+fn InstitutionsCard(
+    breakdown: Option<AccountTagBreakdownView>,
+    base_currency: String,
+    on_open: EventHandler<()>,
+) -> Element {
+    let groups = breakdown.map(|b| b.groups).unwrap_or_default();
+    let rows: Vec<(String, f64)> = groups
+        .iter()
+        .filter_map(|g| {
+            g.total_in_base
+                .as_deref()
+                .and_then(|s| s.parse::<f64>().ok())
+                .map(|v| (g.value.clone(), v))
+        })
+        .collect();
+    let max = rows.iter().map(|(_, v)| v.abs()).fold(0.0_f64, f64::max).max(1.0);
+
+    rsx! {
+        button {
+            class: "w-full text-left bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4 transition-shadow hover:shadow-card-hover",
+            onclick: move |_| on_open.call(()),
+            div { class: "flex items-center justify-between mb-3",
+                h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Institutions" }
+                Icon { name: IconName::ChevronRight, class: "w-4 h-4 text-obsidian-text-muted" }
+            }
+            if rows.is_empty() {
+                div { class: "text-sm text-obsidian-text-muted", "No institution balances yet." }
+            } else {
+                div { class: "space-y-2.5",
+                    for (name , v) in rows.iter() {
+                        {
+                            let pct = (v.abs() / max * 100.0).clamp(3.0, 100.0);
+                            let amt = format_money(&format!("{v:.2}"), &base_currency);
+                            rsx! {
+                                div {
+                                    div { class: "flex items-baseline justify-between text-sm mb-1",
+                                        span { class: "text-obsidian-text truncate", "{name}" }
+                                        span { class: "text-obsidian-text-muted tabular-nums shrink-0 ml-2 text-xs", "{amt}" }
+                                    }
+                                    div { class: "h-1.5 rounded-full bg-obsidian-bg overflow-hidden",
+                                        div { class: "h-full rounded-full bg-obsidian-accent", style: "width: {pct}%" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Review inbox (Overview 2×2 grid) — the daily triage surface: auto-imported
+/// batches awaiting review + the Unmatched balance to reconcile, each a tap into
+/// its flow. Accent/warn-tinted counts when there's something to act on.
+#[component]
+fn ReviewInboxCard(
+    pending_count: u64,
+    unmatched: Option<String>,
+    base_currency: String,
+    on_open_batches: EventHandler<()>,
+    on_open_reconciliation: EventHandler<()>,
+) -> Element {
+    let unmatched_pending = unmatched
+        .as_deref()
+        .and_then(|s| s.parse::<f64>().ok())
+        .is_some_and(|v| v.abs() > 0.005);
+    let unmatched_str = unmatched
+        .as_deref()
+        .map(|s| format_money(s, &base_currency))
+        .unwrap_or_else(|| "—".to_string());
+    let batch_tone = if pending_count > 0 {
+        "text-obsidian-accent"
+    } else {
+        "text-obsidian-text-muted"
+    };
+    let unmatched_tone = if unmatched_pending {
+        "text-warn"
+    } else {
+        "text-obsidian-text-muted"
+    };
+
+    rsx! {
+        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4",
+            div { class: "flex items-center gap-2 mb-3",
+                Icon { name: IconName::Inbox, class: "w-4 h-4 text-obsidian-text-muted" }
+                h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Review inbox" }
+            }
+            div { class: "space-y-1",
+                button {
+                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-white/5 transition-colors",
+                    onclick: move |_| on_open_batches.call(()),
+                    span { class: "text-obsidian-text", "Auto-imported batches" }
+                    span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
+                }
+                button {
+                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-white/5 transition-colors",
+                    onclick: move |_| on_open_reconciliation.call(()),
+                    span { class: "text-obsidian-text", "Unmatched to reconcile" }
+                    span { class: "tabular-nums font-semibold text-xs {unmatched_tone}", "{unmatched_str}" }
+                }
+            }
+        }
+    }
+}
+
+/// Cash-flow card (Overview 2×2 grid) — the latest month's income vs spending +
+/// net, with status colors (income good / spending critical). The full trend
+/// lives one level deeper in Analyze.
+#[component]
+fn CashFlowCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String) -> Element {
+    let latest = buckets.last().cloned();
+    let computed = latest.as_ref().and_then(|b| {
+        let inc = b.income.parse::<f64>().ok()?;
+        let spend = b.spending.parse::<f64>().ok()?;
+        let net = inc - spend;
+        Some((
+            b.month.clone(),
+            format_money(&format!("{inc:.2}"), &base_currency),
+            format_money(&format!("{spend:.2}"), &base_currency),
+            format_money(&format!("{net:.2}"), &base_currency),
+            if net >= 0.0 { "text-success" } else { "text-error" },
+        ))
+    });
+
+    rsx! {
+        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4",
+            div { class: "flex items-center justify-between mb-3",
+                h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Cash flow" }
+                if let Some((month , _ , _ , _ , _)) = &computed {
+                    span { class: "text-xs text-obsidian-text-muted tabular-nums", "{month}" }
+                }
+            }
+            match computed {
+                Some((_, inc, spend, net, net_class)) => rsx! {
+                    div { class: "space-y-1.5 text-sm",
+                        div { class: "flex items-center justify-between",
+                            span { class: "text-obsidian-text-muted", "Income" }
+                            span { class: "tabular-nums text-success", "{inc}" }
+                        }
+                        div { class: "flex items-center justify-between",
+                            span { class: "text-obsidian-text-muted", "Spending" }
+                            span { class: "tabular-nums text-error", "{spend}" }
+                        }
+                        div { class: "flex items-center justify-between pt-1.5 border-t border-obsidian-border/10",
+                            span { class: "text-obsidian-text font-medium", "Net" }
+                            span { class: "tabular-nums font-semibold {net_class}", "{net}" }
+                        }
+                    }
+                },
+                None => rsx! {
+                    div { class: "text-sm text-obsidian-text-muted", "No activity this month." }
+                },
+            }
+        }
+    }
+}
+
+/// Recent activity (Overview 2×2 grid) — the last handful of transactions; taps
+/// into the full Ledger.
+#[component]
+fn RecentActivityCard(recent: Vec<TransactionView>, on_open: EventHandler<()>) -> Element {
+    rsx! {
+        button {
+            class: "w-full text-left bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4 transition-shadow hover:shadow-card-hover",
+            onclick: move |_| on_open.call(()),
+            div { class: "flex items-center justify-between mb-3",
+                h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Recent activity" }
+                Icon { name: IconName::ChevronRight, class: "w-4 h-4 text-obsidian-text-muted" }
+            }
+            if recent.is_empty() {
+                div { class: "text-sm text-obsidian-text-muted", "No transactions yet." }
+            } else {
+                div { class: "space-y-2",
+                    for t in recent.iter().take(5) {
+                        div { class: "flex items-baseline justify-between gap-2 text-sm",
+                            span { class: "text-obsidian-text truncate", "{t.description}" }
+                            span { class: "text-xs text-obsidian-text-muted tabular-nums shrink-0", "{t.date}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Overview surface root (Stage C4 — C·Balanced). Net-worth hero + a
+/// range-switchable history chart, then a calm 2×2 grid: institutions, review
+/// inbox, cash flow, and recent activity. A resume-capture affordance surfaces
+/// when a half-finished capture is stashed.
 ///
-/// C2 interim: reuses the existing dashboard cards. **C4 replaces this with the
-/// C-Balanced layout** — net-worth hero + range-switchable history chart + a 2×2
-/// card grid (institutions / review / cash-flow / recent activity).
+/// The frontend read-cache (instant revisits) lands in C3.
 #[component]
 fn OverviewView(
     pending_count: u64,
@@ -602,6 +1057,12 @@ fn OverviewView(
     let mut summary: Signal<Option<DashboardSummaryView>> = use_signal(|| None);
     let mut loading: Signal<bool> = use_signal(|| true);
     let mut error: Signal<Option<String>> = use_signal(|| None);
+    // Net-worth history feeding the hero chart (C4); re-fetched on range change.
+    let mut range: Signal<String> = use_signal(|| "6m".to_string());
+    let mut series: Signal<Option<NetWorthSeriesView>> = use_signal(|| None);
+    // 2×2 grid data: per-institution breakdown + the most recent transactions.
+    let mut breakdown: Signal<Option<AccountTagBreakdownView>> = use_signal(|| None);
+    let mut recent: Signal<Vec<TransactionView>> = use_signal(Vec::new);
 
     // Re-run on mount and whenever a background pull lands (sync_refresh).
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
@@ -618,35 +1079,48 @@ fn OverviewView(
         });
     });
 
+    // Net-worth series — reacts to the range switcher + inbound sync.
+    use_effect(move || {
+        let _ = sync_epoch.read();
+        let r = range.read().clone();
+        spawn(async move {
+            if let Ok(s) = bridge::invoke_net_worth_history(&r, None).await {
+                series.set(Some(s));
+            }
+        });
+    });
+
+    // Institutions breakdown + recent activity for the 2×2 grid.
+    use_effect(move || {
+        let _ = sync_epoch.read();
+        spawn(async move {
+            if let Ok(b) = bridge::invoke_account_tag_breakdown("Assets", "institution", None).await {
+                breakdown.set(Some(b));
+            }
+            if let Ok(rows) = bridge::invoke_list_transactions(TxnFilter::default(), 5, 0).await {
+                recent.set(rows);
+            }
+        });
+    });
+
     let snapshot = summary.read().clone();
     let is_loading = *loading.read();
     let err_msg = error.read().clone();
+    let series_snap = series.read().clone();
+    let active_range = range.read().clone();
+    let breakdown_snap = breakdown.read().clone();
+    let recent_snap = recent.read().clone();
+    let unmatched = snapshot.as_ref().and_then(|s| s.unmatched_balance.clone());
+    let base_currency = snapshot
+        .as_ref()
+        .map(|s| s.base_currency.clone())
+        .unwrap_or_else(|| "CAD".to_string());
+    let cash_buckets = snapshot
+        .as_ref()
+        .map(|s| s.monthly_buckets.clone())
+        .unwrap_or_default();
 
     rsx! {
-        // Review inbox — auto-imported batches awaiting triage (the daily job).
-        if pending_count > 0 {
-            button {
-                class: "w-full mb-4 px-4 py-3 bg-obsidian-accent/10 border border-obsidian-accent/40 rounded-card flex items-center justify-between hover:bg-obsidian-accent/15 transition-colors",
-                onclick: move |_| on_open_batches.call(()),
-                div { class: "flex items-center gap-3",
-                    span { class: "inline-flex items-center justify-center w-8 h-8 bg-obsidian-accent text-white rounded-full text-sm font-bold",
-                        "{pending_count}"
-                    }
-                    div { class: "text-left",
-                        div { class: "text-sm font-semibold text-obsidian-text",
-                            if pending_count == 1 {
-                                "1 auto-imported batch to review"
-                            } else {
-                                "{pending_count} auto-imported batches to review"
-                            }
-                        }
-                        div { class: "text-xs text-obsidian-text-muted", "Accept, skip, or dismiss each." }
-                    }
-                }
-                Icon { name: IconName::ChevronRight, class: "w-5 h-5 text-obsidian-text-muted" }
-            }
-        }
-
         if has_pending_capture {
             button {
                 class: "w-full mb-4 px-4 py-3 bg-warn/10 border border-warn/40 rounded-card flex items-center justify-between hover:bg-warn/15 transition-colors",
@@ -672,40 +1146,38 @@ fn OverviewView(
             }
         }
 
-        if is_loading && snapshot.is_none() {
-            div { class: "p-6 text-center text-obsidian-text-muted text-sm", "Loading…" }
-        } else if let Some(s) = snapshot {
-            div { class: "grid grid-cols-1 md:grid-cols-2 gap-3",
-                NetWorthCard {
-                    net_worth: s.net_worth_in_base.clone(),
-                    base_currency: s.base_currency.clone(),
-                }
-                UnmatchedCard {
-                    unmatched: s.unmatched_balance.clone(),
-                    base_currency: s.base_currency.clone(),
-                    on_click: move |_| on_open_reconciliation.call(()),
-                }
+        // Net-worth hero + range-switchable history chart (the C·Balanced marquee).
+        if let Some(s) = series_snap {
+            NetWorthHero {
+                series: s,
+                range: active_range,
+                on_range: move |k: String| range.set(k),
             }
-            MonthlyTrendCard {
-                buckets: s.monthly_buckets.clone(),
-                base_currency: s.base_currency.clone(),
-            }
-            RecurringCard {
-                recurring: s.recurring.clone(),
-                base_currency: s.base_currency.clone(),
-            }
+        } else if is_loading {
+            div { class: "h-64 rounded-card bg-obsidian-surface border border-obsidian-border/10 animate-pulse" }
         }
 
-        div { class: "mt-4 space-y-3",
-            HubLinkRow {
-                title: "All transactions",
-                subtitle: "Browse and search everything you've recorded.",
-                on_click: move |_| on_open_transactions.call(()),
+        // The calm 2×2 grid — institutions · review · cash flow · recent activity.
+        div { class: "mt-3 grid grid-cols-1 md:grid-cols-2 gap-3",
+            InstitutionsCard {
+                breakdown: breakdown_snap,
+                base_currency: base_currency.clone(),
+                on_open: move |_| on_open_accounts.call(()),
             }
-            HubLinkRow {
-                title: "Accounts",
-                subtitle: "Per-institution balances, aggregated to your base currency.",
-                on_click: move |_| on_open_accounts.call(()),
+            ReviewInboxCard {
+                pending_count,
+                unmatched,
+                base_currency: base_currency.clone(),
+                on_open_batches: move |_| on_open_batches.call(()),
+                on_open_reconciliation: move |_| on_open_reconciliation.call(()),
+            }
+            CashFlowCard {
+                buckets: cash_buckets,
+                base_currency: base_currency.clone(),
+            }
+            RecentActivityCard {
+                recent: recent_snap,
+                on_open: move |_| on_open_transactions.call(()),
             }
         }
     }

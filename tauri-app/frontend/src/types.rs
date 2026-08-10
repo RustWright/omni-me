@@ -479,8 +479,6 @@ pub struct DashboardSummaryView {
 }
 
 /// One net-worth-history point. Mirrors `commands::budget::NetWorthPointView`.
-/// Consumed by the Overview hero chart (Stage C4); drop the allow when wired.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NetWorthPointView {
     /// `YYYY-MM-DD` boundary date.
@@ -493,7 +491,6 @@ pub struct NetWorthPointView {
 /// Net-worth-over-time series for the Overview hero chart. Mirrors
 /// `commands::budget::NetWorthSeriesView`. The last point equals the live
 /// net-worth number (same journal + roster/Unmatched policy).
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NetWorthSeriesView {
     pub base_currency: String,
