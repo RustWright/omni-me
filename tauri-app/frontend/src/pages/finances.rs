@@ -301,9 +301,16 @@ pub fn FinancesPage() -> Element {
     let current = *view.read();
     let show_subnav = is_surface_root(current);
     let active_surface = surface_of(current).key().to_string();
+    // The Ledger surface uses the full width for its master-detail layout;
+    // every other surface stays in the comfortable reading column.
+    let container_w = if matches!(surface_of(current), FinancesSurface::Ledger) {
+        "max-w-6xl"
+    } else {
+        "max-w-3xl"
+    };
 
     rsx! {
-        div { class: "max-w-3xl mx-auto w-full animate-in fade-in duration-300",
+        div { class: "{container_w} mx-auto w-full animate-in fade-in duration-300",
 
             // Persistent finances sub-nav (Stage C) — shown only at the surface
             // roots; deeper/modal sub-routes carry their own back navigation.
@@ -453,15 +460,7 @@ pub fn FinancesPage() -> Element {
                         pending_txn_filter.set(None);
                     }
                     rsx! {
-                        TransactionListView {
-                            embedded: true,
-                            on_back: move |_| view.set(FinancesView::Overview),
-                            on_open_txn: move |txn_id: String| {
-                                selected_txn_id.set(Some(txn_id));
-                                view.set(FinancesView::TransactionDetail);
-                            },
-                            initial_filter: seed,
-                        }
+                        LedgerView { initial_filter: seed }
                     }
                 },
                 FinancesView::TransactionDetail => {
@@ -2784,6 +2783,56 @@ fn posting_views(value: &serde_json::Value) -> Vec<PostingRowView> {
         .unwrap_or_default()
 }
 
+/// Ledger surface root (Stage C5) — a responsive **master-detail**. Desktop puts
+/// the transaction list and the selected transaction's detail side-by-side (uses
+/// the widened container); mobile shows the list, and tapping a row slides the
+/// detail over it. Selection lives here so the list can highlight the open row;
+/// the detail is keyed by id so switching rows refetches.
+///
+/// Wraps the existing [`TransactionListView`] + [`TransactionDetailView`] rather
+/// than reimplementing them — filtering, pagination, inline edit, and the
+/// attachment viewer all come along unchanged.
+#[component]
+fn LedgerView(#[props(default = None)] initial_filter: Option<TxnFilter>) -> Element {
+    let mut selected: Signal<Option<String>> = use_signal(|| None);
+    let sel = selected.read().clone();
+
+    rsx! {
+        div { class: "md:flex md:gap-4 md:items-start",
+            // List column — full width on mobile, flexes beside the detail on desktop.
+            div { class: "md:flex-1 md:min-w-0",
+                TransactionListView {
+                    embedded: true,
+                    on_back: move |_| {},
+                    on_open_txn: move |id: String| selected.set(Some(id)),
+                    initial_filter,
+                    selected_id: sel.clone(),
+                }
+            }
+
+            // Detail — desktop: an inline column with an empty-state placeholder
+            // until a row is picked; mobile: a full-screen slide-over shown only
+            // while a row is selected (one responsive element, repositioned).
+            match sel {
+                None => rsx! {
+                    div { class: "hidden md:flex md:w-[440px] md:shrink-0 h-72 items-center justify-center rounded-card border border-dashed border-obsidian-border/15 text-sm text-obsidian-text-muted",
+                        "Select a transaction to see its details."
+                    }
+                },
+                Some(id) => rsx! {
+                    div { class: "fixed inset-0 z-40 bg-obsidian-bg overflow-y-auto p-4 pb-mobile-nav md:relative md:inset-auto md:z-auto md:w-[440px] md:shrink-0 md:p-0 md:pb-0 md:bg-transparent md:overflow-visible",
+                        TransactionDetailView {
+                            key: "{id}",
+                            txn_id: id,
+                            on_back: move |_| selected.set(None),
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
 #[component]
 fn TransactionListView(
     on_back: EventHandler<()>,
@@ -2797,6 +2846,10 @@ fn TransactionListView(
     /// the persistent sub-nav is the navigation, so the own "← Back" is hidden.
     #[props(default = false)]
     embedded: bool,
+    /// The transaction id currently open in the master-detail pane, so the
+    /// matching row can render selected (Ledger surface). `None` = no highlight.
+    #[props(default = None)]
+    selected_id: Option<String>,
 ) -> Element {
     let store = use_continuity();
     let list_key = ContinuityKey::TxnList("main".to_string());
@@ -2956,6 +3009,7 @@ fn TransactionListView(
                     TransactionListRow {
                         key: "{txn.id}",
                         txn: txn.clone(),
+                        selected: selected_id.as_deref() == Some(txn.id.as_str()),
                         on_click: {
                             let id = txn.id.clone();
                             let handler = on_open_txn;
@@ -3464,7 +3518,15 @@ fn FilterBar(
 /// never truncates. Clicking anywhere on the row routes to the detail view;
 /// category / tag chips are interactive (inline edit, stop_propagation).
 #[component]
-fn TransactionListRow(txn: TransactionView, on_click: EventHandler<()>) -> Element {
+fn TransactionListRow(
+    txn: TransactionView,
+    on_click: EventHandler<()>,
+    /// True when this row's transaction is the one open in the master-detail
+    /// pane (Ledger surface) — gives it an accent frame so the desktop
+    /// list makes the current selection obvious.
+    #[props(default = false)]
+    selected: bool,
+) -> Element {
     // Local mutable mirror of the prop so inline edits render optimistically
     // without waiting for a parent refetch. Backend errors revert the change
     // via the error toast on the chip itself.
@@ -3509,10 +3571,15 @@ fn TransactionListRow(txn: TransactionView, on_click: EventHandler<()>) -> Eleme
         }
     };
 
+    let frame = if selected {
+        "border-obsidian-accent/70 bg-obsidian-accent/5"
+    } else {
+        "border-white/5 hover:border-obsidian-accent/40"
+    };
     rsx! {
         button {
             r#type: "button",
-            class: "block w-full text-left p-3 bg-obsidian-sidebar/60 border border-white/5 rounded-lg hover:border-obsidian-accent/40 transition-colors",
+            class: "block w-full text-left p-3 bg-obsidian-sidebar/60 border rounded-lg transition-colors {frame}",
             onclick: move |_| on_click.call(()),
             // Header — flex-wrap so trailing chips/icons spill to a second
             // line on mobile rather than pushing description off-screen.
