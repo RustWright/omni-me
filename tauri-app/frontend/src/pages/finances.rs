@@ -1211,8 +1211,64 @@ fn OverviewView(
     }
 }
 
-/// Analyze surface root (Stage C) — the hub for periodic deep views. C2 interim:
-/// link rows into the existing screens. **C6 replaces this with real charts.**
+/// Budgets snapshot for the Analyze landing (Stage C6) — the top few category
+/// progress bars inline, tapping into the full Budgets screen. Reuses the
+/// existing [`BudgetProgressBar`] (status-colored per the dataviz reserved
+/// palette: over → red, near → amber, on-track → green).
+#[component]
+fn BudgetSnapshotCard(rows: Vec<BudgetProgress>, on_open: EventHandler<()>) -> Element {
+    rsx! {
+        button {
+            class: "w-full text-left bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4 transition-shadow hover:shadow-card-hover",
+            onclick: move |_| on_open.call(()),
+            div { class: "flex items-center justify-between mb-3",
+                h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Budgets" }
+                Icon { name: IconName::ChevronRight, class: "w-4 h-4 text-obsidian-text-muted" }
+            }
+            if rows.is_empty() {
+                div { class: "text-sm text-obsidian-text-muted",
+                    "No budgets set yet — tap to add per-category targets."
+                }
+            } else {
+                div { class: "space-y-3",
+                    for p in rows.iter().take(4) {
+                        div {
+                            div { class: "text-sm text-obsidian-text mb-1", "{normalize_category(&p.category).unwrap_or_else(|| p.category.clone())}" }
+                            BudgetProgressBar { progress: p.clone() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The reserved LLM entry point (Stage C6) — a placeholder card for the coming
+/// natural-language finances interface ([[project-llm-primary-interface-next-push]]).
+/// No backend yet; it just holds the spot in the IA so the surface is designed
+/// for its full future scope.
+#[component]
+fn AskFinancesCard() -> Element {
+    rsx! {
+        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4",
+            div { class: "flex items-center gap-2 mb-2",
+                Icon { name: IconName::DocumentText, class: "w-4 h-4 text-obsidian-accent" }
+                h3 { class: "text-sm font-semibold text-obsidian-text", "Ask your finances" }
+                span { class: "ml-auto text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-obsidian-accent/15 text-obsidian-accent",
+                    "Soon"
+                }
+            }
+            div { class: "flex items-center gap-2 px-3 py-2 rounded-md bg-obsidian-sidebar border border-obsidian-border/10 text-sm text-obsidian-text-muted",
+                "e.g. \u{201c}How much did I spend on groceries last month?\u{201d}"
+            }
+        }
+    }
+}
+
+/// Analyze surface root (Stage C6) — the periodic-analysis landing. Real charts
+/// up top (cash-flow trend + budgets snapshot, from the shared cached payloads),
+/// the reserved LLM entry, then organized links into the deep tools. Every deep
+/// tool stays one tap away — no functionality was removed, only surfaced better.
 #[component]
 fn AnalyzeHubView(
     on_open_dashboard: EventHandler<()>,
@@ -1223,11 +1279,57 @@ fn AnalyzeHubView(
     on_open_balance_check: EventHandler<()>,
     on_open_query: EventHandler<()>,
 ) -> Element {
+    // Shares the Overview's cached dashboard payload for the trend chart (C3),
+    // plus its own cached budget-progress rows.
+    let store = use_continuity();
+    let mut summary: Signal<Option<DashboardSummaryView>> =
+        use_signal(|| store.cache_get::<DashboardSummaryView>("ov:dash"));
+    let mut budgets: Signal<Vec<BudgetProgress>> =
+        use_signal(|| store.cache_get::<Vec<BudgetProgress>>("an:budgets").unwrap_or_default());
+
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
+    use_effect(move || {
+        let _ = sync_epoch.read();
+        spawn(async move {
+            if let Ok(s) = bridge::invoke_dashboard_summary(None).await {
+                store.cache_put("ov:dash", &s);
+                summary.set(Some(s));
+            }
+            if let Ok(rows) = bridge::invoke_budget_progress(None).await {
+                store.cache_put("an:budgets", &rows);
+                budgets.set(rows);
+            }
+        });
+    });
+
+    let summary_snap = summary.read().clone();
+    let budget_rows = budgets.read().clone();
+
     rsx! {
         div { class: "space-y-3",
+            // Real charts — cash-flow trend + budgets, in a responsive pair.
+            div { class: "grid grid-cols-1 md:grid-cols-2 gap-3",
+                if let Some(s) = summary_snap.clone() {
+                    MonthlyTrendCard {
+                        buckets: s.monthly_buckets.clone(),
+                        base_currency: s.base_currency.clone(),
+                    }
+                } else {
+                    div { class: "h-48 rounded-card bg-obsidian-surface border border-obsidian-border/10 animate-pulse" }
+                }
+                BudgetSnapshotCard {
+                    rows: budget_rows,
+                    on_open: move |_| on_open_budgets.call(()),
+                }
+            }
+
+            AskFinancesCard {}
+
+            // Deep tools — every existing analysis screen, one tap away.
+            h2 { class: "pt-2 text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Tools" }
             HubLinkRow {
                 title: "Dashboard",
-                subtitle: "Net worth, trend, recurring, and can-I-afford.",
+                subtitle: "Net worth, recurring, and can-I-afford.",
                 accent: true,
                 on_click: move |_| on_open_dashboard.call(()),
             }
@@ -1235,11 +1337,6 @@ fn AnalyzeHubView(
                 title: "Accounts",
                 subtitle: "Balances per account, drilled down per institution.",
                 on_click: move |_| on_open_accounts.call(()),
-            }
-            HubLinkRow {
-                title: "Budgets",
-                subtitle: "Per-category targets; weekly, biweekly, or monthly.",
-                on_click: move |_| on_open_budgets.call(()),
             }
             HubLinkRow {
                 title: "Recurring",
