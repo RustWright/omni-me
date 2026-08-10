@@ -135,6 +135,9 @@ pub struct NavState {
     pub notes_edit_id: Option<String>,
     /// Notes sub-tab: "recent" | "search".
     pub notes_subtab: Option<String>,
+    /// Finances surface: "overview" | "ledger" | "analyze" (Stage C sub-nav).
+    #[serde(default)]
+    pub finances_view: Option<String>,
 }
 
 /// Debounce before flushing the store to disk (1.8a). A touch longer than the

@@ -3,6 +3,8 @@ use dioxus::prelude::*;
 use crate::bridge;
 use crate::components::account_input::{AccountInput, AccountMode, AccountSuggestions};
 use crate::components::date_field::DateField;
+use crate::components::icon::{Icon, IconName};
+use crate::components::primitives::{Button, ButtonSize, ButtonVariant, SegmentedNav};
 use crate::continuity::{use_continuity, CaptureDraft, ContinuityKey, ListState, PostingDraft};
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AffordVerdictView,
@@ -66,7 +68,16 @@ fn classify_share_mime(mime: &str, filename: &str) -> Option<DocumentKind> {
 /// separate signal alongside this enum.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FinancesView {
-    Home,
+    /// Overview surface root (Stage C) — the daily glance: net-worth hero +
+    /// history chart, per-institution balances, review inbox, recent activity.
+    /// Replaces the old data-less `Home` table-of-contents.
+    Overview,
+    /// Analyze surface root (Stage C) — the hub for periodic deep views
+    /// (dashboard, budgets, recurring, reconcile, balance-check, accounts).
+    Analyze,
+    /// Add / Import action sheet (Stage C) — the launch point for the capture
+    /// flows (photo/pdf/email/manual) and the statement / journal imports.
+    AddMenu,
     Capture(DocumentKind),
     Email,
     /// Editable confirm-draft / manual-entry form. The initial state comes
@@ -117,33 +128,128 @@ enum FinancesView {
     Query,
 }
 
+/// The three persistent finances surfaces (Stage C IA). The `SegmentedNav`
+/// sub-nav switches between them; every `FinancesView` belongs to exactly one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FinancesSurface {
+    Overview,
+    Ledger,
+    Analyze,
+}
+
+impl FinancesSurface {
+    /// Stable persistence/segment key.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Overview => "overview",
+            Self::Ledger => "ledger",
+            Self::Analyze => "analyze",
+        }
+    }
+
+    fn from_key(s: &str) -> Option<Self> {
+        match s {
+            "overview" => Some(Self::Overview),
+            "ledger" => Some(Self::Ledger),
+            "analyze" => Some(Self::Analyze),
+            _ => None,
+        }
+    }
+
+    /// The root view shown when this surface is selected from the sub-nav.
+    fn home_view(self) -> FinancesView {
+        match self {
+            Self::Overview => FinancesView::Overview,
+            Self::Ledger => FinancesView::TransactionList,
+            Self::Analyze => FinancesView::Analyze,
+        }
+    }
+}
+
+/// Which surface a view lives under — drives the sub-nav highlight so a deep
+/// sub-route (a transaction detail, a budget screen) still shows its parent tab
+/// active. Capture / import flows hang off Overview's Add action.
+fn surface_of(view: FinancesView) -> FinancesSurface {
+    use FinancesView::*;
+    match view {
+        Overview | AddMenu | Capture(_) | Email | TransactionForm | BatchList | BatchReview
+        | StatementImport | JournalImport => FinancesSurface::Overview,
+        TransactionList | TransactionDetail | Query => FinancesSurface::Ledger,
+        Analyze | Dashboard | AccountList | BudgetList | RecurringReview | Reconciliation
+        | BalanceCheck => FinancesSurface::Analyze,
+    }
+}
+
+/// True for the three surface roots — the only views that show the persistent
+/// sub-nav header. Deeper/modal sub-routes carry their own back navigation.
+fn is_surface_root(view: FinancesView) -> bool {
+    matches!(
+        view,
+        FinancesView::Overview | FinancesView::TransactionList | FinancesView::Analyze
+    )
+}
+
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
 /// surface (Phase 4), workflows (Phase 5), and import (Phase 6).
 #[component]
 pub fn FinancesPage() -> Element {
     let store = use_continuity();
-    let mut view = use_signal(|| FinancesView::Home);
+    let mut view = use_signal(|| FinancesView::Overview);
     let mut pending_draft: Signal<Option<ExtractedDraft>> = use_signal(|| None);
     let mut selected_batch_id: Signal<Option<String>> = use_signal(|| None);
     let mut selected_txn_id: Signal<Option<String>> = use_signal(|| None);
-    // Dashboard widget click-through can seed the next TransactionList
-    // render with a pre-applied filter (e.g. account: "Unmatched"). One-shot
-    // — the list reads + clears it on mount.
+    // Widget click-through can seed the next TransactionList render with a
+    // pre-applied filter (e.g. account: "Unmatched"). One-shot — the list reads
+    // + clears it on mount.
     let mut pending_txn_filter: Signal<Option<TxnFilter>> = use_signal(|| None);
-    // Pending-batch count, refreshed every time the user lands on Home. A
-    // separate signal (not derived from listing the batches inline) keeps the
-    // Home banner cheap — one COUNT query instead of a full SELECT every
-    // navigation.
+    // Pending-batch count for the Overview review inbox, refreshed whenever the
+    // user is on the Overview root. A separate signal (not derived from listing
+    // the batches inline) keeps the tile cheap — one COUNT query, not a full
+    // SELECT per navigation.
     let mut pending_batch_count: Signal<u64> = use_signal(|| 0);
     let _refresh_count_resource = use_resource(move || {
-        let in_home = matches!(*view.read(), FinancesView::Home);
+        let on_overview = matches!(*view.read(), FinancesView::Overview);
         async move {
-            if !in_home {
+            if !on_overview {
                 return;
             }
             if let Ok(batches) = bridge::invoke_list_pending_batches().await {
                 pending_batch_count.set(batches.len() as u64);
             }
+        }
+    });
+
+    // Stage C: restore the last-open surface (overview/ledger/analyze) so a tab
+    // switch or app-kill returns here instead of snapping to Overview. Mirrors
+    // the notes/journal nav-restore — gated on `is_loaded` for the boot race,
+    // one-shot per mount via `restored`.
+    let mut restored = use_signal(|| false);
+    use_effect(move || {
+        if *restored.peek() || !store.is_loaded() {
+            return;
+        }
+        if let Some(surface) = store
+            .nav_peek()
+            .finances_view
+            .as_deref()
+            .and_then(FinancesSurface::from_key)
+        {
+            view.set(surface.home_view());
+        }
+        restored.set(true);
+    });
+
+    // Write-through: persist the active surface whenever we're at a root. Gated
+    // on `restored` so the default Overview can't clobber a saved surface before
+    // restore runs; only roots write (sub-routes don't move the surface).
+    use_effect(move || {
+        if !*restored.read() {
+            return;
+        }
+        let current = *view.read();
+        if is_surface_root(current) {
+            let key = surface_of(current).key();
+            store.update_nav(|n| n.finances_view = Some(key.to_string()));
         }
     });
 
@@ -163,19 +269,19 @@ pub fn FinancesPage() -> Element {
             Some(kind) => view.set(FinancesView::Capture(kind)),
             None => {
                 // Unsupported MIME (e.g., text/html share) — drop the bytes;
-                // user lands on Home and can pick a flow manually.
+                // user stays on the Overview root and can pick a flow manually.
                 pending_share.set(None);
             }
         }
     });
 
     // In-flight capture (1.4): if a half-finished TransactionForm draft is
-    // stashed in the store, surface a "resume" affordance on Home. Only read
-    // (and thus subscribe to) the capture store while actually on Home — this
-    // keeps form keystrokes, which write the store on every change, from
+    // stashed in the store, surface a "resume" affordance on the Overview root.
+    // Only read (and thus subscribe to) the capture store while on Overview —
+    // this keeps form keystrokes, which write the store on every change, from
     // re-rendering the whole FinancesPage. `filter(is_empty)` is
     // belt-and-suspenders; the form's mirror already drops empty drafts.
-    let pending_capture = if matches!(*view.read(), FinancesView::Home) {
+    let pending_capture = if matches!(*view.read(), FinancesView::Overview) {
         store
             .get_capture(&active_capture_key())
             .filter(|d| !d.is_empty())
@@ -191,16 +297,67 @@ pub fn FinancesPage() -> Element {
         }
     });
 
+    let current = *view.read();
+    let show_subnav = is_surface_root(current);
+    let active_surface = surface_of(current).key().to_string();
+
     rsx! {
         div { class: "max-w-3xl mx-auto w-full animate-in fade-in duration-300",
 
+            // Persistent finances sub-nav (Stage C) — shown only at the surface
+            // roots; deeper/modal sub-routes carry their own back navigation.
+            if show_subnav {
+                div { class: "flex items-center justify-between gap-3 mb-4",
+                    SegmentedNav {
+                        items: vec![
+                            ("overview".to_string(), "Overview".to_string()),
+                            ("ledger".to_string(), "Ledger".to_string()),
+                            ("analyze".to_string(), "Analyze".to_string()),
+                        ],
+                        active: active_surface.clone(),
+                        on_select: move |k: String| {
+                            if let Some(surface) = FinancesSurface::from_key(&k) {
+                                view.set(surface.home_view());
+                            }
+                        },
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        size: ButtonSize::Sm,
+                        onclick: move |_| view.set(FinancesView::AddMenu),
+                        Icon { name: IconName::Plus, class: "w-4 h-4" }
+                        "Add"
+                    }
+                }
+            }
+
             match *view.read() {
-                FinancesView::Home => rsx! {
-                    HomeView {
+                FinancesView::Overview => rsx! {
+                    OverviewView {
                         pending_count: *pending_batch_count.read(),
                         has_pending_capture: pending_capture.is_some(),
                         pending_capture_label: pending_capture_label.clone(),
                         on_resume_capture: move |_| view.set(FinancesView::TransactionForm),
+                        on_open_batches: move |_| view.set(FinancesView::BatchList),
+                        on_open_transactions: move |_| view.set(FinancesView::TransactionList),
+                        on_open_accounts: move |_| view.set(FinancesView::AccountList),
+                        on_open_reconciliation: move |_| view.set(FinancesView::Reconciliation),
+                    }
+                },
+                FinancesView::Analyze => rsx! {
+                    AnalyzeHubView {
+                        on_open_dashboard: move |_| view.set(FinancesView::Dashboard),
+                        on_open_accounts: move |_| view.set(FinancesView::AccountList),
+                        on_open_budgets: move |_| view.set(FinancesView::BudgetList),
+                        on_open_recurring: move |_| view.set(FinancesView::RecurringReview),
+                        on_open_reconciliation: move |_| view.set(FinancesView::Reconciliation),
+                        on_open_balance_check: move |_| view.set(FinancesView::BalanceCheck),
+                        on_open_query: move |_| view.set(FinancesView::Query),
+                    }
+                },
+                FinancesView::AddMenu => rsx! {
+                    AddMenuView {
+                        on_back: move |_| view.set(FinancesView::Overview),
                         on_open_photo: move |_| view.set(FinancesView::Capture(DocumentKind::Photo)),
                         on_open_pdf: move |_| view.set(FinancesView::Capture(DocumentKind::Pdf)),
                         on_open_email: move |_| view.set(FinancesView::Email),
@@ -212,17 +369,8 @@ pub fn FinancesPage() -> Element {
                             pending_draft.set(None);
                             view.set(FinancesView::TransactionForm);
                         },
-                        on_open_batches: move |_| view.set(FinancesView::BatchList),
-                        on_open_transactions: move |_| view.set(FinancesView::TransactionList),
-                        on_open_accounts: move |_| view.set(FinancesView::AccountList),
-                        on_open_dashboard: move |_| view.set(FinancesView::Dashboard),
-                        on_open_budgets: move |_| view.set(FinancesView::BudgetList),
-                        on_open_recurring: move |_| view.set(FinancesView::RecurringReview),
                         on_open_statement_import: move |_| view.set(FinancesView::StatementImport),
-                        on_open_reconciliation: move |_| view.set(FinancesView::Reconciliation),
-                        on_open_balance_check: move |_| view.set(FinancesView::BalanceCheck),
                         on_open_journal_import: move |_| view.set(FinancesView::JournalImport),
-                        on_open_query: move |_| view.set(FinancesView::Query),
                     }
                 },
                 FinancesView::Capture(kind) => rsx! {
@@ -231,7 +379,7 @@ pub fn FinancesPage() -> Element {
                         preloaded: pending_share.read().clone(),
                         on_done: move |_| {
                             pending_share.set(None);
-                            view.set(FinancesView::Home);
+                            view.set(FinancesView::Overview);
                         },
                         on_extracted: move |draft: ExtractedDraft| {
                             pending_share.set(None);
@@ -242,7 +390,7 @@ pub fn FinancesPage() -> Element {
                 },
                 FinancesView::Email => rsx! {
                     EmailCapture {
-                        on_done: move |_| view.set(FinancesView::Home),
+                        on_done: move |_| view.set(FinancesView::Overview),
                         on_extracted: move |draft: ExtractedDraft| {
                             pending_draft.set(Some(draft));
                             view.set(FinancesView::TransactionForm);
@@ -254,13 +402,13 @@ pub fn FinancesPage() -> Element {
                         initial: pending_draft.read().clone(),
                         on_done: move |_| {
                             pending_draft.set(None);
-                            view.set(FinancesView::Home);
+                            view.set(FinancesView::Overview);
                         },
                     }
                 },
                 FinancesView::BatchList => rsx! {
                     BatchListView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Overview),
                         on_open_batch: move |batch_id: String| {
                             selected_batch_id.set(Some(batch_id));
                             view.set(FinancesView::BatchReview);
@@ -305,7 +453,8 @@ pub fn FinancesPage() -> Element {
                     }
                     rsx! {
                         TransactionListView {
-                            on_back: move |_| view.set(FinancesView::Home),
+                            embedded: true,
+                            on_back: move |_| view.set(FinancesView::Overview),
                             on_open_txn: move |txn_id: String| {
                                 selected_txn_id.set(Some(txn_id));
                                 view.set(FinancesView::TransactionDetail);
@@ -341,12 +490,12 @@ pub fn FinancesPage() -> Element {
                 }
                 FinancesView::AccountList => rsx! {
                     AccountListView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Analyze),
                     }
                 },
                 FinancesView::Dashboard => rsx! {
                     DashboardView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Analyze),
                         on_open_unmatched: move |_| {
                             // Per 4.5 spec — Unmatched widget click-through
                             // lands the user in 5.7's reconciliation review
@@ -357,37 +506,37 @@ pub fn FinancesPage() -> Element {
                 },
                 FinancesView::BudgetList => rsx! {
                     BudgetListView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Analyze),
                     }
                 },
                 FinancesView::RecurringReview => rsx! {
                     RecurringReviewView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Analyze),
                     }
                 },
                 FinancesView::StatementImport => rsx! {
                     StatementImportView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Overview),
                     }
                 },
                 FinancesView::Reconciliation => rsx! {
                     ReconciliationReviewView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Analyze),
                     }
                 },
                 FinancesView::BalanceCheck => rsx! {
                     BalanceCheckFormView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Analyze),
                     }
                 },
                 FinancesView::JournalImport => rsx! {
                     JournalImportView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Overview),
                     }
                 },
                 FinancesView::Query => rsx! {
                     QueryBuilderView {
-                        on_back: move |_| view.set(FinancesView::Home),
+                        on_back: move |_| view.set(FinancesView::Analyze),
                         on_open_txn: move |txn_id: String| {
                             selected_txn_id.set(Some(txn_id));
                             view.set(FinancesView::TransactionDetail);
@@ -399,73 +548,112 @@ pub fn FinancesPage() -> Element {
     }
 }
 
+/// A tappable navigation row — title + subtitle + chevron. The shared building
+/// block of the Analyze hub and the Add/Import menu (Stage C), replacing the
+/// copy-pasted link buttons of the old finances Home.
 #[component]
-fn HomeView(
+fn HubLinkRow(
+    title: &'static str,
+    subtitle: &'static str,
+    #[props(default = false)] accent: bool,
+    on_click: EventHandler<()>,
+) -> Element {
+    let tone = if accent {
+        "bg-obsidian-accent/10 border-obsidian-accent/30 hover:bg-obsidian-accent/15 hover:border-obsidian-accent/50"
+    } else {
+        "bg-obsidian-surface border-obsidian-border/10 hover:border-obsidian-accent/40"
+    };
+    let title_tone = if accent {
+        "text-obsidian-accent"
+    } else {
+        "text-obsidian-text"
+    };
+    rsx! {
+        button {
+            class: "w-full p-4 border rounded-card flex items-center justify-between transition-colors text-left {tone}",
+            onclick: move |_| on_click.call(()),
+            div {
+                div { class: "text-sm font-semibold {title_tone}", "{title}" }
+                div { class: "text-xs text-obsidian-text-muted mt-1", "{subtitle}" }
+            }
+            Icon { name: IconName::ChevronRight, class: "w-5 h-5 text-obsidian-text-muted shrink-0 ml-3" }
+        }
+    }
+}
+
+/// Overview surface root (Stage C). The daily glance: a review inbox for
+/// auto-imported batches, a resume-capture affordance, the financial-health
+/// cards, and quick links into the ledger + accounts.
+///
+/// C2 interim: reuses the existing dashboard cards. **C4 replaces this with the
+/// C-Balanced layout** — net-worth hero + range-switchable history chart + a 2×2
+/// card grid (institutions / review / cash-flow / recent activity).
+#[component]
+fn OverviewView(
     pending_count: u64,
     has_pending_capture: bool,
     pending_capture_label: Option<String>,
     on_resume_capture: EventHandler<()>,
-    on_open_photo: EventHandler<()>,
-    on_open_pdf: EventHandler<()>,
-    on_open_email: EventHandler<()>,
-    on_open_manual: EventHandler<()>,
     on_open_batches: EventHandler<()>,
     on_open_transactions: EventHandler<()>,
     on_open_accounts: EventHandler<()>,
-    on_open_dashboard: EventHandler<()>,
-    on_open_budgets: EventHandler<()>,
-    on_open_recurring: EventHandler<()>,
-    on_open_statement_import: EventHandler<()>,
     on_open_reconciliation: EventHandler<()>,
-    on_open_balance_check: EventHandler<()>,
-    on_open_journal_import: EventHandler<()>,
-    on_open_query: EventHandler<()>,
 ) -> Element {
-    rsx! {
-        h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Finances" }
+    let mut summary: Signal<Option<DashboardSummaryView>> = use_signal(|| None);
+    let mut loading: Signal<bool> = use_signal(|| true);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
 
+    // Re-run on mount and whenever a background pull lands (sync_refresh).
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
+    use_effect(move || {
+        let _ = sync_epoch.read();
+        spawn(async move {
+            loading.set(true);
+            error.set(None);
+            match bridge::invoke_dashboard_summary(None).await {
+                Ok(s) => summary.set(Some(s)),
+                Err(e) => error.set(Some(e)),
+            }
+            loading.set(false);
+        });
+    });
+
+    let snapshot = summary.read().clone();
+    let is_loading = *loading.read();
+    let err_msg = error.read().clone();
+
+    rsx! {
+        // Review inbox — auto-imported batches awaiting triage (the daily job).
         if pending_count > 0 {
             button {
-                class: "w-full mb-6 px-4 py-3 bg-obsidian-accent/10 border border-obsidian-accent/40 rounded-lg flex items-center justify-between hover:bg-obsidian-accent/15 transition-colors",
+                class: "w-full mb-4 px-4 py-3 bg-obsidian-accent/10 border border-obsidian-accent/40 rounded-card flex items-center justify-between hover:bg-obsidian-accent/15 transition-colors",
                 onclick: move |_| on_open_batches.call(()),
                 div { class: "flex items-center gap-3",
-                    span { class: "inline-flex items-center justify-center w-8 h-8 bg-obsidian-accent text-black rounded-full text-sm font-bold",
+                    span { class: "inline-flex items-center justify-center w-8 h-8 bg-obsidian-accent text-white rounded-full text-sm font-bold",
                         "{pending_count}"
                     }
                     div { class: "text-left",
                         div { class: "text-sm font-semibold text-obsidian-text",
                             if pending_count == 1 {
-                                "1 auto-imported batch awaiting review"
+                                "1 auto-imported batch to review"
                             } else {
-                                "{pending_count} auto-imported batches awaiting review"
+                                "{pending_count} auto-imported batches to review"
                             }
                         }
-                        div { class: "text-xs text-obsidian-text-muted",
-                            "Tap to accept, skip, or dismiss."
-                        }
+                        div { class: "text-xs text-obsidian-text-muted", "Accept, skip, or dismiss each." }
                     }
                 }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
+                Icon { name: IconName::ChevronRight, class: "w-5 h-5 text-obsidian-text-muted" }
             }
         }
 
-        // --- Resume in-flight capture (1.4) ---
         if has_pending_capture {
             button {
-                class: "w-full mb-6 px-4 py-3 bg-amber-500/10 border border-amber-500/40 rounded-lg flex items-center justify-between hover:bg-amber-500/15 transition-colors",
+                class: "w-full mb-4 px-4 py-3 bg-warn/10 border border-warn/40 rounded-card flex items-center justify-between hover:bg-warn/15 transition-colors",
                 onclick: move |_| on_resume_capture.call(()),
                 div { class: "flex items-center gap-3 min-w-0",
-                    span { class: "inline-flex items-center justify-center w-8 h-8 bg-amber-500/20 text-amber-400 rounded-full shrink-0",
-                        svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                                d: "M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                            }
-                        }
+                    span { class: "inline-flex items-center justify-center w-8 h-8 bg-warn/20 text-warn rounded-full shrink-0",
+                        Icon { name: IconName::Pencil, class: "w-4 h-4" }
                     }
                     div { class: "text-left min-w-0",
                         div { class: "text-sm font-semibold text-obsidian-text", "Resume capture in progress" }
@@ -474,24 +662,136 @@ fn HomeView(
                         }
                     }
                 }
-                svg { class: "w-5 h-5 text-obsidian-text-muted shrink-0",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
+                Icon { name: IconName::ChevronRight, class: "w-5 h-5 text-obsidian-text-muted shrink-0" }
             }
         }
 
-        // --- Capture Section ---
-        div { class: "mb-10 space-y-4",
-            div { class: "border-b border-white/5 pb-2 mb-4",
-                h2 { class: "text-lg font-bold text-obsidian-text", "Capture a Transaction" }
-                p { class: "text-xs text-obsidian-text-muted mt-1",
-                    "Snap a receipt, drop a statement, paste an email, or enter manually."
+        if let Some(msg) = err_msg {
+            div { class: "mb-4 p-4 bg-error/10 border border-error/25 rounded-card text-sm text-error",
+                "Couldn't load your glance: {msg}"
+            }
+        }
+
+        if is_loading && snapshot.is_none() {
+            div { class: "p-6 text-center text-obsidian-text-muted text-sm", "Loading…" }
+        } else if let Some(s) = snapshot {
+            div { class: "grid grid-cols-1 md:grid-cols-2 gap-3",
+                NetWorthCard {
+                    net_worth: s.net_worth_in_base.clone(),
+                    base_currency: s.base_currency.clone(),
+                }
+                UnmatchedCard {
+                    unmatched: s.unmatched_balance.clone(),
+                    base_currency: s.base_currency.clone(),
+                    on_click: move |_| on_open_reconciliation.call(()),
                 }
             }
+            MonthlyTrendCard {
+                buckets: s.monthly_buckets.clone(),
+                base_currency: s.base_currency.clone(),
+            }
+            RecurringCard {
+                recurring: s.recurring.clone(),
+                base_currency: s.base_currency.clone(),
+            }
+        }
 
+        div { class: "mt-4 space-y-3",
+            HubLinkRow {
+                title: "All transactions",
+                subtitle: "Browse and search everything you've recorded.",
+                on_click: move |_| on_open_transactions.call(()),
+            }
+            HubLinkRow {
+                title: "Accounts",
+                subtitle: "Per-institution balances, aggregated to your base currency.",
+                on_click: move |_| on_open_accounts.call(()),
+            }
+        }
+    }
+}
+
+/// Analyze surface root (Stage C) — the hub for periodic deep views. C2 interim:
+/// link rows into the existing screens. **C6 replaces this with real charts.**
+#[component]
+fn AnalyzeHubView(
+    on_open_dashboard: EventHandler<()>,
+    on_open_accounts: EventHandler<()>,
+    on_open_budgets: EventHandler<()>,
+    on_open_recurring: EventHandler<()>,
+    on_open_reconciliation: EventHandler<()>,
+    on_open_balance_check: EventHandler<()>,
+    on_open_query: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div { class: "space-y-3",
+            HubLinkRow {
+                title: "Dashboard",
+                subtitle: "Net worth, trend, recurring, and can-I-afford.",
+                accent: true,
+                on_click: move |_| on_open_dashboard.call(()),
+            }
+            HubLinkRow {
+                title: "Accounts",
+                subtitle: "Balances per account, drilled down per institution.",
+                on_click: move |_| on_open_accounts.call(()),
+            }
+            HubLinkRow {
+                title: "Budgets",
+                subtitle: "Per-category targets; weekly, biweekly, or monthly.",
+                on_click: move |_| on_open_budgets.call(()),
+            }
+            HubLinkRow {
+                title: "Recurring",
+                subtitle: "Review detected subscription patterns; accept or dismiss each.",
+                on_click: move |_| on_open_recurring.call(()),
+            }
+            HubLinkRow {
+                title: "Reconcile",
+                subtitle: "Pair Unmatched-touching transactions across sources.",
+                accent: true,
+                on_click: move |_| on_open_reconciliation.call(()),
+            }
+            HubLinkRow {
+                title: "Balance check",
+                subtitle: "Verify a cleared-transaction total against a statement closing balance.",
+                on_click: move |_| on_open_balance_check.call(()),
+            }
+            HubLinkRow {
+                title: "Query",
+                subtitle: "Build a filter — account, tag, date, amount — and run it.",
+                on_click: move |_| on_open_query.call(()),
+            }
+        }
+    }
+}
+
+/// Add / Import action sheet (Stage C) — the launch point for the capture flows
+/// and the statement / journal imports, reached from the sub-nav's Add button.
+#[component]
+fn AddMenuView(
+    on_back: EventHandler<()>,
+    on_open_photo: EventHandler<()>,
+    on_open_pdf: EventHandler<()>,
+    on_open_email: EventHandler<()>,
+    on_open_manual: EventHandler<()>,
+    on_open_statement_import: EventHandler<()>,
+    on_open_journal_import: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div { class: "flex items-center justify-between mb-4",
+            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Add" }
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        div { class: "mb-8",
+            h2 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted mb-3",
+                "Capture a transaction"
+            }
             div { class: "grid grid-cols-2 md:grid-cols-4 gap-3",
                 CaptureTile {
                     label: "Photo",
@@ -520,178 +820,20 @@ fn HomeView(
             }
         }
 
-        // --- Recent / glance section ---
-        div { class: "border-b border-white/5 pb-2 mb-4",
-            h2 { class: "text-lg font-bold text-obsidian-text", "Glance + browse" }
-        }
-        div { class: "space-y-3",
-            button {
-                class: "w-full p-4 bg-obsidian-accent/10 border border-obsidian-accent/30 rounded-lg flex items-center justify-between hover:bg-obsidian-accent/15 hover:border-obsidian-accent/50 transition-colors text-left",
-                onclick: move |_| on_open_dashboard.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-accent", "Dashboard" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Net worth, trend, recurring, and can-I-afford."
-                    }
-                }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
+        div {
+            h2 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted mb-3",
+                "Import"
             }
-            button {
-                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
-                onclick: move |_| on_open_transactions.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-text", "View transactions" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Browse everything you've recorded."
-                    }
+            div { class: "space-y-3",
+                HubLinkRow {
+                    title: "Import statement",
+                    subtitle: "Drop a Summit chequing CSV — each row lands in Unmatched, ready to reconcile.",
+                    on_click: move |_| on_open_statement_import.call(()),
                 }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
-            }
-            button {
-                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
-                onclick: move |_| on_open_query.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-text", "Query transactions" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Build a filter — account, tag, date, amount — and run it."
-                    }
-                }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
-            }
-            button {
-                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
-                onclick: move |_| on_open_accounts.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-text", "Accounts" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Balances per account, aggregated to your base currency."
-                    }
-                }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
-            }
-        }
-
-        // --- Plan + reconcile section (Phase 5). 5.4 confirm-recurring +
-        // 5.7 reconciliation review will add their own cards alongside Budgets
-        // as those screens land.
-        div { class: "border-b border-white/5 pb-2 mt-10 mb-4",
-            h2 { class: "text-lg font-bold text-obsidian-text", "Plan + reconcile" }
-        }
-        div { class: "space-y-3",
-            button {
-                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
-                onclick: move |_| on_open_budgets.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-text", "Budgets" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Set per-category targets; weekly, biweekly, or monthly."
-                    }
-                }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
-            }
-            button {
-                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
-                onclick: move |_| on_open_recurring.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-text", "Recurring" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Review detected subscription patterns; accept or dismiss each."
-                    }
-                }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
-            }
-            button {
-                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
-                onclick: move |_| on_open_statement_import.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-text", "Import statement" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Drop a Summit chequing CSV — each row lands in Unmatched, ready to reconcile."
-                    }
-                }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
-            }
-            button {
-                class: "w-full p-4 bg-obsidian-accent/10 border border-obsidian-accent/30 rounded-lg flex items-center justify-between hover:bg-obsidian-accent/15 hover:border-obsidian-accent/50 transition-colors text-left",
-                onclick: move |_| on_open_reconciliation.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-accent", "Reconcile" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Pair Unmatched-touching transactions across sources — merge confirmed matches."
-                    }
-                }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
-            }
-            button {
-                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
-                onclick: move |_| on_open_balance_check.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-text", "Balance check" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Verify a cleared-transaction total against a statement closing balance."
-                    }
-                }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
-                }
-            }
-            button {
-                class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
-                onclick: move |_| on_open_journal_import.call(()),
-                div {
-                    div { class: "text-sm font-semibold text-obsidian-text", "Import journal" }
-                    div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "Bring in an existing hledger journal. Preview accounts, drop or rename, then commit."
-                    }
-                }
-                svg { class: "w-5 h-5 text-obsidian-text-muted",
-                    fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                    path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                        d: "M9 5l7 7-7 7"
-                    }
+                HubLinkRow {
+                    title: "Import journal",
+                    subtitle: "Bring in an existing hledger journal. Preview accounts, drop or rename, then commit.",
+                    on_click: move |_| on_open_journal_import.call(()),
                 }
             }
         }
@@ -2150,6 +2292,10 @@ fn TransactionListView(
     /// filtered to `account: "Unmatched"`). None = blank filter.
     #[props(default = None)]
     initial_filter: Option<TxnFilter>,
+    /// True when this is the Ledger surface root under the Stage-C sub-nav —
+    /// the persistent sub-nav is the navigation, so the own "← Back" is hidden.
+    #[props(default = false)]
+    embedded: bool,
 ) -> Element {
     let store = use_continuity();
     let list_key = ContinuityKey::TxnList("main".to_string());
@@ -2268,10 +2414,12 @@ fn TransactionListView(
             h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
                 "Transactions"
             }
-            button {
-                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
-                onclick: move |_| on_back.call(()),
-                "← Back"
+            if !embedded {
+                button {
+                    class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                    onclick: move |_| on_back.call(()),
+                    "← Back"
+                }
             }
         }
 
