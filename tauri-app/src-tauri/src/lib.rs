@@ -175,7 +175,14 @@ impl AppState {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(format!("read journal file: {e}")),
         };
+        let parse_start = std::time::Instant::now();
         let artifacts = Arc::new(ledger::parse_artifacts(&content).map_err(|e| e.to_string())?);
+        tracing::debug!(
+            target: "omni::perf",
+            bytes = content.len(),
+            elapsed_ms = parse_start.elapsed().as_millis() as u64,
+            "journal parse (cold)"
+        );
 
         let mut guard = self.journal_cache.write().await;
         *guard = Some(JournalCacheEntry {

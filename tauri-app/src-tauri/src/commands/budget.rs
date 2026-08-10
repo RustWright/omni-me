@@ -28,6 +28,37 @@ use rust_decimal::Decimal;
 use super::shared::{append_and_apply, append_new_and_apply};
 use crate::AppState;
 
+/// Lightweight latency probe for the finances read commands. Logs the elapsed
+/// wall-clock time on drop — so it covers every early-return `?` path without
+/// per-return boilerplate — under the `omni::perf` target. Profiling a
+/// real-data run is then just enabling `RUST_LOG=omni::perf=debug`; the guard is
+/// silent unless that target is on. Stage A instrumentation (finances perf
+/// overhaul): measure before touching indexes / the unbounded scan / cache.
+struct CmdTimer {
+    label: &'static str,
+    start: std::time::Instant,
+}
+
+impl CmdTimer {
+    fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            start: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for CmdTimer {
+    fn drop(&mut self) {
+        tracing::debug!(
+            target: "omni::perf",
+            cmd = self.label,
+            elapsed_ms = self.start.elapsed().as_millis() as u64,
+            "finances read"
+        );
+    }
+}
+
 // --- Transactions (1.8) ---
 
 /// Frontend-supplied draft for a new transaction. `txn_id` is minted
@@ -151,6 +182,7 @@ pub async fn get_transaction(
     state: State<'_, AppState>,
     txn_id: String,
 ) -> Result<Option<TransactionView>, String> {
+    let _t = CmdTimer::new("get_transaction");
     let row = queries::get_transaction(&state.db, &txn_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -164,6 +196,7 @@ pub async fn list_transactions(
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> Result<Vec<TransactionView>, String> {
+    let _t = CmdTimer::new("list_transactions");
     let rows = queries::list_transactions(
         &state.db,
         filter.unwrap_or_default(),
@@ -187,6 +220,7 @@ pub async fn run_transaction_query(
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> Result<Vec<TransactionView>, String> {
+    let _t = CmdTimer::new("run_transaction_query");
     let query = query::parse(&dsl).map_err(|e| e.to_string())?;
     let rows = queries::query_candidate_transactions(&state.db)
         .await
@@ -377,6 +411,7 @@ pub async fn list_known_accounts(state: State<'_, AppState>) -> Result<Vec<Strin
 pub async fn list_detected_accounts(
     state: State<'_, AppState>,
 ) -> Result<Vec<DetectedAccountView>, String> {
+    let _t = CmdTimer::new("list_detected_accounts");
     let artifacts = state.journal_artifacts_or_empty().await;
     let declared = queries::list_accounts(&state.db)
         .await
@@ -446,6 +481,7 @@ pub async fn account_summaries(
     base_currency: Option<String>,
     as_of: Option<String>,
 ) -> Result<Vec<AccountSummaryView>, String> {
+    let _t = CmdTimer::new("account_summaries");
     let base = match base_currency {
         Some(b) => b,
         None => state.base_currency.read().await.clone(),
@@ -518,6 +554,7 @@ pub async fn account_tag_breakdown(
     base_currency: Option<String>,
     as_of: Option<String>,
 ) -> Result<AccountTagBreakdownView, String> {
+    let _t = CmdTimer::new("account_tag_breakdown");
     let base = match base_currency {
         Some(b) => b,
         None => state.base_currency.read().await.clone(),
@@ -652,6 +689,7 @@ pub async fn dashboard_summary(
     as_of: Option<String>,
     months_back: Option<u32>,
 ) -> Result<DashboardSummaryView, String> {
+    let _t = CmdTimer::new("dashboard_summary");
     let base = match base_currency {
         Some(b) => b,
         None => state.base_currency.read().await.clone(),
