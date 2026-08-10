@@ -71,11 +71,15 @@ impl IconName {
 }
 
 /// Render a stroked outline icon. `class` carries the size + color (default
-/// `w-5 h-5`, inherits `currentColor` from the parent's text color).
+/// `w-5 h-5`, inherits `currentColor` from the parent's text color). `stroke`
+/// tunes the path weight (default `"2"`) — the app's large empty-state glyphs
+/// use `"1"` and its emphasis check/minus marks use `"3"`, so faithful
+/// conversions can preserve those.
 #[component]
 pub fn Icon(
     name: IconName,
     #[props(default = "w-5 h-5".to_string())] class: String,
+    #[props(default = "2".to_string())] stroke: String,
 ) -> Element {
     rsx! {
         svg {
@@ -87,7 +91,7 @@ pub fn Icon(
             path {
                 stroke_linecap: "round",
                 stroke_linejoin: "round",
-                stroke_width: "2",
+                stroke_width: "{stroke}",
                 d: name.path(),
             }
         }

@@ -2,6 +2,8 @@ use chrono_tz::Tz;
 use dioxus::prelude::*;
 
 use crate::bridge;
+use crate::components::icon::{Icon, IconName};
+use crate::components::primitives::{Banner, BannerKind, Button, ButtonSize, ButtonVariant};
 use crate::duration;
 use crate::reorder;
 use crate::types::{CompletionEntry, RoutineGroup, RoutineItem};
@@ -53,9 +55,7 @@ pub fn RoutinesPage() -> Element {
         div { class: "max-w-3xl mx-auto w-full",
 
             if let Some(err) = &*error_msg.read() {
-                div { class: "bg-red-900/20 text-red-400 px-3 py-2 rounded border border-red-900/50 mb-4 text-sm",
-                    "{err}"
-                }
+                Banner { kind: BannerKind::Error, class: "mb-4", "{err}" }
             }
 
             {
@@ -144,8 +144,9 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
         div { class: "animate-in fade-in duration-300",
             div { class: "flex justify-between items-center mb-6",
                 h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Daily Flow" }
-                button {
-                    class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    size: ButtonSize::Sm,
                     onclick: move |_| on_manage.call(()),
                     "Manage"
                 }
@@ -153,9 +154,7 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
 
             if ordered.is_empty() {
                 div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
-                    svg { class: "w-16 h-16 mb-4 opacity-20", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" }
-                    }
+                    Icon { name: IconName::ClipboardCheck, class: "w-16 h-16 mb-4 opacity-20", stroke: "1" }
                     p { class: "text-lg font-medium", "No routines defined" }
                     p { class: "text-sm", "Tap \"Manage\" to build your flow" }
                 }
@@ -326,9 +325,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                                 });
                                             }
                                         },
-                                        svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "3", d: "M5 13l4 4L19 7" }
-                                        }
+                                        Icon { name: IconName::Check, class: "w-4 h-4", stroke: "3" }
                                     }
                                     span { class: "flex-1 text-sm text-obsidian-text-muted line-through opacity-50", "{item.name}" }
                                 } else if is_skipped {
@@ -350,9 +347,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                                 });
                                             }
                                         },
-                                        svg { class: "w-3 h-3", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "3", d: "M20 12H4" }
-                                        }
+                                        Icon { name: IconName::Minus, class: "w-3 h-3", stroke: "3" }
                                     }
                                     span { class: "flex-1 text-sm text-obsidian-text-muted/40 italic", "{item.name} (skipped)" }
                                 } else {
@@ -432,19 +427,15 @@ fn GroupListView(
                 div { class: "flex items-center gap-3",
                     button {
                         class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
+                        "aria-label": "Back",
                         onclick: move |_| on_back.call(()),
-                        svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M10 19l-7-7m0 0l7-7m-7 7h18" }
-                        }
+                        Icon { name: IconName::ArrowLeft, class: "w-5 h-5" }
                     }
                     h1 { class: "text-2xl font-bold tracking-tight text-obsidian-text", "Routine Library" }
                 }
-                button {
-                    class: "flex items-center gap-2 px-4 py-2 bg-obsidian-accent text-white font-semibold rounded-md hover:opacity-90 transition-opacity shadow-lg shadow-obsidian-accent/20",
+                Button {
                     onclick: move |_| on_add.call(()),
-                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M12 4v16m8-8H4" }
-                    }
+                    Icon { name: IconName::Plus, class: "w-5 h-5" }
                     span { "New Group" }
                 }
             }
@@ -473,7 +464,7 @@ fn GroupListView(
                                         }
                                         if is_pending {
                                             button {
-                                                class: "px-2 py-1 bg-red-600 text-white border border-red-700 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-500 transition-colors",
+                                                class: "px-2 py-1 bg-error text-obsidian-bg border border-error/60 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-error/90 transition-colors",
                                                 onclick: move |_| {
                                                     on_remove.call(id_confirm.clone());
                                                     pending_remove.set(None);
@@ -487,7 +478,7 @@ fn GroupListView(
                                             }
                                         } else {
                                             button {
-                                                class: "px-2 py-1 bg-red-900/20 text-red-400 border border-red-900/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-900/30 transition-colors",
+                                                class: "px-2 py-1 bg-error/10 text-error border border-error/25 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-error/20 transition-colors",
                                                 onclick: move |_| pending_remove.set(Some(id_arm.clone())),
                                                 "Remove"
                                             }
@@ -519,14 +510,12 @@ fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHand
             div { class: "flex justify-between items-center mb-6",
                 button {
                     class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
+                    "aria-label": "Cancel",
                     onclick: move |_| on_cancel.call(()),
-                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M6 18L18 6M6 6l12 12" }
-                    }
+                    Icon { name: IconName::Close, class: "w-5 h-5" }
                 }
                 h2 { class: "text-lg font-bold text-obsidian-text", "New Group" }
-                button {
-                    class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50",
+                Button {
                     disabled: *saving.read() || name.read().trim().is_empty(),
                     onclick: move |_| {
                         saving.set(true);
@@ -551,9 +540,7 @@ fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHand
             }
 
             if let Some(err) = &*save_error.read() {
-                div { class: "mb-4 p-3 bg-red-900/20 text-red-400 rounded border border-red-900/50 text-sm",
-                    "{err}"
-                }
+                Banner { kind: BannerKind::Error, class: "mb-4", "{err}" }
             }
 
             div { class: "space-y-6",
@@ -655,10 +642,9 @@ fn GroupDetailView(
                 div { class: "flex items-center gap-3",
                     button {
                         class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
+                        "aria-label": "Back",
                         onclick: move |_| on_back.call(()),
-                        svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M10 19l-7-7m0 0l7-7m-7 7h18" }
-                        }
+                        Icon { name: IconName::ArrowLeft, class: "w-5 h-5" }
                     }
                     h1 { class: "text-xl font-bold text-obsidian-text", "{group_name}" }
                 }
@@ -750,7 +736,7 @@ fn GroupDetailView(
                                             span { class: "text-[10px] font-mono text-obsidian-text-muted", "{item.estimated_duration_min}m" }
                                             if is_pending {
                                                 button {
-                                                    class: "px-2 py-1 bg-red-600 text-white border border-red-700 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-500 transition-colors",
+                                                    class: "px-2 py-1 bg-error text-obsidian-bg border border-error/60 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-error/90 transition-colors",
                                                     onclick: move |_| {
                                                         let iid = id_confirm.clone();
                                                         let gid = group_for_reload.clone();
@@ -783,7 +769,7 @@ fn GroupDetailView(
                                                     "Edit"
                                                 }
                                                 button {
-                                                    class: "px-2 py-1 bg-red-900/20 text-red-400 border border-red-900/30 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-900/30 transition-colors",
+                                                    class: "px-2 py-1 bg-error/10 text-error border border-error/25 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-error/20 transition-colors",
                                                     onclick: move |_| {
                                                         editing_id.set(None);
                                                         pending_remove.set(Some(id_arm.clone()));
@@ -901,7 +887,7 @@ fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Elemen
                                 let bg_class = if is_skipped {
                                     "bg-white/5 border-white/5 text-obsidian-text-muted/40"
                                 } else if is_done {
-                                    "bg-green-500/20 border-green-500/30 text-green-500"
+                                    "bg-success/20 border-success/30 text-success"
                                 } else {
                                     "bg-obsidian-sidebar border-white/5 text-transparent"
                                 };

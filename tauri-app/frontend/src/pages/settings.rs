@@ -1,6 +1,8 @@
 use chrono_tz::Tz;
 use dioxus::prelude::*;
 
+use crate::components::icon::{Icon, IconName};
+use crate::components::primitives::Button;
 use crate::{
     bridge,
     types::{AutoImportSourceView, SyncStatus},
@@ -65,8 +67,7 @@ pub fn SettingsPage() -> Element {
                             },
                         }
                         if *url_dirty.read() {
-                            button {
-                                class: "px-4 py-2 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity",
+                            Button {
                                 onclick: move |_| {
                                     let url = server_url.read().clone();
                                     spawn(async move {
@@ -100,9 +101,7 @@ pub fn SettingsPage() -> Element {
                                             }
                                         });
                         },
-                        svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                            path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" }
-                        }
+                        Icon { name: IconName::Refresh, class: "w-5 h-5" }
                         "Sync Now"
                     }
                 }
@@ -138,8 +137,7 @@ pub fn SettingsPage() -> Element {
                             },
                         }
                         if *tz_dirty.read() {
-                            button {
-                                class: "px-4 py-2 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity",
+                            Button {
                                 onclick: move |_| {
                                     let input = tz_input.read().clone();
                                     spawn(async move {
@@ -430,7 +428,7 @@ fn UpdatesSection() -> Element {
                         }
                     }
                 } else {
-                    div { class: "p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-lg text-sm text-emerald-400",
+                    div { class: "p-4 bg-success/5 border border-success/20 rounded-lg text-sm text-success",
                         "You're on the latest version ("
                         span { class: "font-mono", "{c.current_version}" }
                         ")."
@@ -550,8 +548,8 @@ fn DangerZone() -> Element {
 
     rsx! {
         div { class: "mb-10 space-y-4",
-            div { class: "border-b border-red-900/40 pb-2 mb-4",
-                h2 { class: "text-lg font-bold text-red-400", "Danger Zone" }
+            div { class: "border-b border-error/40 pb-2 mb-4",
+                h2 { class: "text-lg font-bold text-error", "Danger Zone" }
             }
 
             p { class: "text-sm text-obsidian-text-muted",
@@ -564,7 +562,7 @@ fn DangerZone() -> Element {
 
             if !*armed.read() {
                 button {
-                    class: "px-4 py-2 bg-red-900/20 text-red-400 border border-red-900/40 rounded-lg font-bold hover:bg-red-900/30 transition-colors",
+                    class: "px-4 py-2 bg-error/15 text-error border border-error/40 rounded-lg font-bold hover:bg-error/25 transition-colors",
                     onclick: move |_| {
                         armed.set(true);
                         wipe_status.set(None);
@@ -572,14 +570,14 @@ fn DangerZone() -> Element {
                     "Wipe all data…"
                 }
             } else {
-                div { class: "space-y-3 p-4 bg-red-900/10 border border-red-900/40 rounded-lg animate-in fade-in duration-200",
-                    p { class: "text-sm text-red-300",
+                div { class: "space-y-3 p-4 bg-error/10 border border-error/40 rounded-lg animate-in fade-in duration-200",
+                    p { class: "text-sm text-error",
                         "Type "
-                        span { class: "font-mono px-1.5 py-0.5 bg-red-900/30 rounded", "{WIPE_CONFIRM_PHRASE}" }
+                        span { class: "font-mono px-1.5 py-0.5 bg-error/20 rounded", "{WIPE_CONFIRM_PHRASE}" }
                         " to confirm."
                     }
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-red-900/40 rounded-lg text-obsidian-text outline-none focus:border-red-500 transition-colors font-mono text-sm",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-error/40 rounded-lg text-obsidian-text outline-none focus:border-error transition-colors font-mono text-sm",
                         r#type: "text",
                         value: "{confirm_input}",
                         autocomplete: "off",
@@ -594,7 +592,7 @@ fn DangerZone() -> Element {
                     }
                     div { class: "flex gap-2",
                         button {
-                            class: "px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-500 transition-colors disabled:opacity-40 disabled:hover:bg-red-600 disabled:cursor-not-allowed",
+                            class: "px-4 py-2 bg-error text-obsidian-bg font-bold rounded-lg hover:bg-error/90 transition-colors disabled:opacity-40 disabled:hover:bg-error disabled:cursor-not-allowed",
                             disabled: !can_commit || *wiping.read(),
                             onclick: move |_| {
                                 wiping.set(true);
@@ -627,7 +625,7 @@ fn DangerZone() -> Element {
             }
 
             if let Some(status) = &*wipe_status.read() {
-                div { class: "p-4 bg-red-900/10 border border-red-900/30 rounded-lg text-sm text-red-300",
+                div { class: "p-4 bg-error/10 border border-error/25 rounded-lg text-sm text-error",
                     "{status}"
                 }
             }
@@ -670,15 +668,15 @@ fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
     match wire_health {
         "healthy" => (
             "Healthy",
-            "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+            "bg-success/15 text-success border-success/30",
         ),
         "stale" => (
             "Stale",
-            "bg-amber-500/15 text-amber-400 border-amber-500/30",
+            "bg-warn/15 text-warn border-warn/30",
         ),
         "degraded" => (
             "Degraded",
-            "bg-red-500/15 text-red-400 border-red-500/30",
+            "bg-error/15 text-error border-error/30",
         ),
         _ => (
             "Unknown",
@@ -1020,7 +1018,7 @@ fn AccountOverrideRow(
 
     // Liquid toggle styling: active (emerald) when marked, muted otherwise.
     let liquid_btn = if is_liquid {
-        "shrink-0 px-2.5 py-1 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-semibold rounded hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
+        "shrink-0 px-2.5 py-1 bg-success/15 border border-success/40 text-success text-xs font-semibold rounded hover:bg-success/25 transition-colors disabled:opacity-40"
     } else {
         "shrink-0 px-2.5 py-1 bg-white/5 border border-white/10 text-obsidian-text-muted text-xs font-semibold rounded hover:bg-white/10 transition-colors disabled:opacity-40"
     };
@@ -1051,7 +1049,7 @@ fn AccountOverrideRow(
                 div { class: "flex items-center gap-1.5 mt-0.5",
                     span { class: "font-mono text-[10px] text-obsidian-text-muted/70 truncate", "{account}" }
                     if is_liquid {
-                        span { class: "shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide bg-emerald-500/15 text-emerald-300",
+                        span { class: "shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide bg-success/15 text-success",
                             "Liquid"
                         }
                     }
@@ -1221,7 +1219,7 @@ fn LlmProviderSection() -> Element {
 
             div { class: "flex items-center gap-3",
                 button {
-                    class: "px-3 py-1.5 rounded bg-obsidian-accent text-obsidian-bg text-sm font-medium disabled:opacity-60",
+                    class: "px-3 py-1.5 rounded bg-obsidian-accent text-white text-sm font-medium disabled:opacity-60",
                     disabled: *saving.read(),
                     onclick: submit,
                     if *saving.read() { "Saving…" } else { "Save" }
@@ -1295,17 +1293,17 @@ fn AutoImportRow(
             }
 
             if needs_reauth {
-                div { class: "mt-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 space-y-2",
+                div { class: "mt-2 p-3 rounded-lg bg-warn/10 border border-warn/30 space-y-2",
                     div { class: "flex items-start justify-between gap-3",
                         div { class: "min-w-0",
-                            div { class: "text-[10px] font-bold uppercase tracking-widest text-amber-400 mb-0.5",
+                            div { class: "text-[10px] font-bold uppercase tracking-widest text-warn mb-0.5",
                                 "Reconnect needed"
                             }
                             div { class: "text-xs text-obsidian-text-muted", "{reauth_reason}" }
                         }
                         if can_reauth && !*show_otp.read() {
                             button {
-                                class: "shrink-0 px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-semibold rounded hover:bg-amber-500/30 transition-colors",
+                                class: "shrink-0 px-3 py-1.5 bg-warn/20 border border-warn/40 text-warn text-xs font-semibold rounded hover:bg-warn/30 transition-colors",
                                 onclick: move |_| {
                                     show_otp.set(true);
                                     msg.set(None);
@@ -1417,7 +1415,7 @@ fn AutoImportRow(
 
                     if let Some((is_err, text)) = &*msg.read() {
                         div {
-                            class: if *is_err { "text-[11px] text-red-400" } else { "text-[11px] text-emerald-400" },
+                            class: if *is_err { "text-[11px] text-error" } else { "text-[11px] text-success" },
                             "{text}"
                         }
                     }
@@ -1480,7 +1478,7 @@ fn ConfiguredSourceRow(
                         "Edit"
                     }
                     button {
-                        class: "text-xs px-2 py-1 rounded hover:bg-red-500/10 text-obsidian-text-muted hover:text-red-300 transition-colors disabled:opacity-50",
+                        class: "text-xs px-2 py-1 rounded hover:bg-error/10 text-obsidian-text-muted hover:text-error transition-colors disabled:opacity-50",
                         disabled: *removing.read(),
                         onclick: {
                             let name = name.clone();
@@ -1504,7 +1502,7 @@ fn ConfiguredSourceRow(
                 }
             }
             if let Some(e) = &*err.read() {
-                div { class: "text-xs text-red-300 mt-1", "{e}" }
+                div { class: "text-xs text-error mt-1", "{e}" }
             }
         }
     }
@@ -1864,12 +1862,12 @@ fn AddSourceForm(
             }
 
             if let Some(e) = &*err.read() {
-                div { class: "text-xs text-red-300", "{e}" }
+                div { class: "text-xs text-error", "{e}" }
             }
 
             div { class: "flex items-center gap-2",
                 button {
-                    class: "px-3 py-1.5 rounded bg-obsidian-accent text-obsidian-bg text-sm font-medium disabled:opacity-60",
+                    class: "px-3 py-1.5 rounded bg-obsidian-accent text-white text-sm font-medium disabled:opacity-60",
                     disabled: *saving.read(),
                     onclick: submit,
                     if *saving.read() { "Saving…" } else { "Save" }

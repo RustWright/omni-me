@@ -3,6 +3,8 @@ use dioxus::prelude::*;
 use crate::autosave::{self, SaveIndicator, SaveState};
 use crate::bridge;
 use crate::components::editor::Editor;
+use crate::components::icon::{Icon, IconName};
+use crate::components::primitives::{Banner, BannerKind, Button};
 use crate::components::tag_editor::TagChipEditor;
 use crate::continuity::{use_continuity, ContinuityKey, EditSession};
 use crate::note_frontmatter::{serialize_note, split_note, NoteProps};
@@ -201,29 +203,22 @@ fn RecentView(on_edit: EventHandler<String>, on_new: EventHandler<()>) -> Elemen
         div { class: "animate-in fade-in duration-200",
             div { class: "flex justify-between items-center mb-6",
                 h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Notes" }
-                button {
-                    class: "flex items-center gap-2 px-4 py-2 bg-obsidian-accent text-white font-semibold rounded-md hover:opacity-90 transition-opacity shadow-lg shadow-obsidian-accent/20",
+                Button {
                     onclick: move |_| on_new.call(()),
-                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M12 4v16m8-8H4" }
-                    }
+                    Icon { name: IconName::Plus, class: "w-5 h-5" }
                     span { "New Note" }
                 }
             }
 
             if let Some(err) = &*error_msg.read() {
-                div { class: "bg-red-900/20 text-red-400 px-3 py-2 rounded border border-red-900/50 mb-4 text-sm",
-                    "{err}"
-                }
+                Banner { kind: BannerKind::Error, class: "mb-4", "{err}" }
             }
 
             if *loading.read() {
                 div { class: "py-20 text-center text-obsidian-text-muted", "Loading..." }
             } else if notes.read().is_empty() {
                 div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted",
-                    svg { class: "w-16 h-16 mb-4 opacity-20", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" }
-                    }
+                    Icon { name: IconName::DocumentText, class: "w-16 h-16 mb-4 opacity-20", stroke: "1" }
                     p { class: "text-lg font-medium", "No notes yet" }
                     p { class: "text-sm", "Tap \"New Note\" to capture a thought" }
                 }
@@ -248,9 +243,7 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
         div { class: "animate-in fade-in duration-200",
             div { class: "flex items-center gap-3 mb-6",
                 div { class: "flex-1 relative",
-                    svg { class: "absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-obsidian-text-muted", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" }
-                    }
+                    Icon { name: IconName::Search, class: "absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-obsidian-text-muted" }
                     input {
                         class: "w-full pl-10 pr-10 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
                         r#type: "text",
@@ -294,9 +287,7 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
                                 results.set(vec![]);
                                 loading.set(false);
                             },
-                            svg { class: "w-4 h-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                                path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M6 18L18 6M6 6l12 12" }
-                            }
+                            Icon { name: IconName::Close, class: "w-4 h-4" }
                         }
                     }
                 }
@@ -304,9 +295,7 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
 
             if query.read().trim().is_empty() {
                 div { class: "flex flex-col items-center justify-center py-20 text-obsidian-text-muted opacity-40",
-                    svg { class: "w-16 h-16 mb-4", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "1", d: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" }
-                    }
+                    Icon { name: IconName::Search, class: "w-16 h-16 mb-4", stroke: "1" }
                     p { "Type to search your notes" }
                 }
             } else if *loading.read() {
@@ -610,10 +599,9 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
             div { class: "flex justify-between items-center mb-6 gap-3",
                 button {
                     class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors shrink-0",
+                    "aria-label": "Back",
                     onclick: move |_| on_back.call(()),
-                    svg { class: "w-5 h-5", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M10 19l-7-7m0 0l7-7m-7 7h18" }
-                    }
+                    Icon { name: IconName::ArrowLeft, class: "w-5 h-5" }
                 }
                 input {
                     // `min-w-0`: without it the `flex-1` input keeps its
@@ -694,9 +682,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
             }
 
             if let Some(err) = &*fetch_error.read() {
-                div { class: "bg-red-900/20 text-red-400 px-3 py-2 rounded border border-red-900/50 mb-4 text-sm",
-                    "{err}"
-                }
+                Banner { kind: BannerKind::Error, class: "mb-4", "{err}" }
             }
 
             if *loading.read() {
