@@ -33,6 +33,30 @@ body {
     --keyboard-inset-bottom: 0px;
 }
 
+/* ── Design tokens ──────────────────────────────────────────────────────────
+ * Color values are SPACE-SEPARATED RGB CHANNELS (not hex) so Tailwind's opacity
+ * modifier works: `bg-obsidian-accent/10` compiles to
+ * `rgb(var(--color-accent) / 0.1)`. tailwind.config.js references each of these
+ * as `rgb(var(--…) / <alpha-value>)`. A future light theme overrides this whole
+ * block under a `:root[data-theme="light"]` selector — nothing else changes. */
+:root {
+    /* Surfaces — dark "Blue Topaz". -bg is the page; -sidebar the nav/recessed
+     * panels (#161616); -surface an elevated card on the content area (#262626). */
+    --color-bg: 30 30 30;          /* #1e1e1e */
+    --color-sidebar: 22 22 22;     /* #161616 */
+    --color-surface: 38 38 38;     /* #262626 */
+    /* Brand accent + text. */
+    --color-accent: 68 138 255;    /* #448aff */
+    --color-text: 220 221 222;     /* #dcddde */
+    --color-text-muted: 163 163 163; /* #a3a3a3 */
+    /* Hairline borders — white on dark, so `/10` == the old `border-white/10`. */
+    --color-border: 255 255 255;
+    /* Semantic status — legible on the dark bg (the -400 family). */
+    --color-success: 74 222 128;   /* green-400  */
+    --color-warn: 251 191 36;      /* amber-400  */
+    --color-error: 248 113 113;    /* red-400    */
+}
+
 /* Native <select> dark styling. webkit2gtk ignores CSS background/color on a
  * native <select> unless the native appearance is cleared, so color-scheme:dark
  * alone left the CLOSED picker box unreadable on the Linux desktop (friction
