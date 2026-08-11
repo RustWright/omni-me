@@ -156,24 +156,31 @@ impl BudgetProjection {
             .collect();
         let ts = event.timestamp.to_rfc3339();
 
+        // UPSERT (not CREATE) so a create that arrives *after* a mutation already
+        // materialized a partial row (the lost-create-then-recovered case) fills
+        // the row instead of erroring on the existing id — mirrors the resilient
+        // notes/journal create handlers. On the normal fresh path this is
+        // byte-identical to the old CREATE. Create-owned fields (date/description/
+        // postings/attachment/statement_source) are authoritative; mutation-owned
+        // fields use `?? default` so a partial row's already-applied edits
+        // (category/tags/cleared/removed) aren't clobbered when the create fills in.
         db.query(
-            "CREATE type::record('transactions', $txn_id) CONTENT {
-                date: $date,
-                description: $description,
-                postings: $postings,
-                attachment: $attachment,
-                category: NONE,
-                tags_top: $tags_top,
-                removed: false,
-                superseded_by: NONE,
-                merged_ids: [],
-                balancing_posting: NONE,
-                cleared: false,
-                statement_source: $statement_source,
-                cleared_date: NONE,
-                created_at: type::datetime($ts),
-                updated_at: type::datetime($ts)
-            }",
+            "UPSERT type::record('transactions', $txn_id) SET
+                date = $date,
+                description = $description,
+                postings = $postings,
+                attachment = $attachment,
+                statement_source = $statement_source,
+                created_at = created_at ?? type::datetime($ts),
+                updated_at = type::datetime($ts),
+                category = category ?? NONE,
+                tags_top = tags_top ?? $tags_top,
+                removed = removed ?? false,
+                superseded_by = superseded_by ?? NONE,
+                merged_ids = merged_ids ?? [],
+                balancing_posting = balancing_posting ?? NONE,
+                cleared = cleared ?? false,
+                cleared_date = cleared_date ?? NONE",
         )
         .bind(("txn_id", txn_id))
         .bind(("date", date))
@@ -202,10 +209,25 @@ impl BudgetProjection {
             .to_string();
         let ts = event.timestamp.to_rfc3339();
 
+        // UPSERT-materialize: if this device never saw the `TransactionRecorded`
+        // (lost to an old batch-abort / not-yet-synced), a bare UPDATE would
+        // silently no-op and the edit would vanish — the same gap the notes/journal
+        // projections were hardened against. The `?? default` backfills satisfy the
+        // SCHEMAFULL required fields on a fresh materialization and are no-ops on an
+        // existing row. A later `TransactionRecorded` UPSERT fills the create-owned
+        // fields (see `on_transaction_recorded`).
         db.query(
-            "UPDATE type::record('transactions', $txn_id) SET
+            "UPSERT type::record('transactions', $txn_id) SET
                 category = $category,
-                updated_at = type::datetime($ts)",
+                updated_at = type::datetime($ts),
+                date = date ?? '',
+                description = description ?? '',
+                postings = postings ?? [],
+                tags_top = tags_top ?? [],
+                removed = removed ?? false,
+                merged_ids = merged_ids ?? [],
+                cleared = cleared ?? false,
+                created_at = created_at ?? type::datetime($ts)",
         )
         .bind(("txn_id", txn_id))
         .bind(("category", category))
@@ -235,10 +257,19 @@ impl BudgetProjection {
             .collect();
         let ts = event.timestamp.to_rfc3339();
 
+        // UPSERT-materialize (see `on_transaction_categorized`) so a tag edit
+        // survives even when this device never materialized the create.
         db.query(
-            "UPDATE type::record('transactions', $txn_id) SET
+            "UPSERT type::record('transactions', $txn_id) SET
                 tags_top = $tags,
-                updated_at = type::datetime($ts)",
+                updated_at = type::datetime($ts),
+                date = date ?? '',
+                description = description ?? '',
+                postings = postings ?? [],
+                removed = removed ?? false,
+                merged_ids = merged_ids ?? [],
+                cleared = cleared ?? false,
+                created_at = created_at ?? type::datetime($ts)",
         )
         .bind(("txn_id", txn_id))
         .bind(("tags", tag_strings))
@@ -268,26 +299,42 @@ impl BudgetProjection {
         // an Unmatched leg into a real category leg.
         let postings = changes.get("postings").cloned();
 
-        // Collapse known-field updates into one statement (atomic by definition).
-        // Unknown change keys are ignored — schema-flexible by design.
-        let mut sets: Vec<&str> = Vec::new();
-        if description.is_some() {
-            sets.push("description = $description");
-        }
-        if date.is_some() {
-            sets.push("date = $date");
-        }
-        if postings.is_some() {
-            sets.push("postings = $postings");
-        }
-        if sets.is_empty() {
+        // No recognized change keys → genuine no-op (nothing to write and nothing
+        // to materialize from). Unknown change keys are ignored — schema-flexible.
+        if description.is_none() && date.is_none() && postings.is_none() {
             return Ok(());
         }
-        sets.push("updated_at = type::datetime($ts)");
         let ts = event.timestamp.to_rfc3339();
 
+        // UPSERT-materialize (see `on_transaction_categorized`): each recognized
+        // change field takes its explicit value; every other SCHEMAFULL-required
+        // field is backfilled with a `?? default` (explicit value on an existing
+        // row, safe default on a fresh materialization). Collapsed into one atomic
+        // statement.
+        let mut sets: Vec<&str> = vec!["updated_at = type::datetime($ts)"];
+        sets.push(if description.is_some() {
+            "description = $description"
+        } else {
+            "description = description ?? ''"
+        });
+        sets.push(if date.is_some() {
+            "date = $date"
+        } else {
+            "date = date ?? ''"
+        });
+        sets.push(if postings.is_some() {
+            "postings = $postings"
+        } else {
+            "postings = postings ?? []"
+        });
+        sets.push("tags_top = tags_top ?? []");
+        sets.push("removed = removed ?? false");
+        sets.push("merged_ids = merged_ids ?? []");
+        sets.push("cleared = cleared ?? false");
+        sets.push("created_at = created_at ?? type::datetime($ts)");
+
         let query_str = format!(
-            "UPDATE type::record('transactions', $txn_id) SET {}",
+            "UPSERT type::record('transactions', $txn_id) SET {}",
             sets.join(", ")
         );
         let mut q = db.query(query_str.as_str()).bind(("txn_id", txn_id)).bind(("ts", ts));
@@ -315,6 +362,12 @@ impl BudgetProjection {
             .to_string();
         let ts = event.timestamp.to_rfc3339();
 
+        // Deliberately a bare UPDATE (not the UPSERT-materialize the content
+        // mutations use): a delete for a txn this device never materialized has
+        // nothing to hide, so a no-op is correct — materializing a `removed=true`
+        // tombstone would just be invisible clutter. In practice any content
+        // mutation (categorize/tag/…) that preceded the delete will already have
+        // materialized the row, so the delete then applies normally.
         db.query(
             "UPDATE type::record('transactions', $txn_id) SET
                 removed = true,
@@ -345,12 +398,21 @@ impl BudgetProjection {
             .to_string();
         let ts = event.timestamp.to_rfc3339();
 
+        // UPSERT-materialize (see `on_transaction_categorized`) so a clear/reconcile
+        // survives even when this device never materialized the create.
         db.query(
-            "UPDATE type::record('transactions', $txn_id) SET
+            "UPSERT type::record('transactions', $txn_id) SET
                 cleared = true,
                 statement_source = $statement_source,
                 cleared_date = $cleared_date,
-                updated_at = type::datetime($ts)",
+                updated_at = type::datetime($ts),
+                date = date ?? '',
+                description = description ?? '',
+                postings = postings ?? [],
+                tags_top = tags_top ?? [],
+                removed = removed ?? false,
+                merged_ids = merged_ids ?? [],
+                created_at = created_at ?? type::datetime($ts)",
         )
         .bind(("txn_id", txn_id))
         .bind(("statement_source", statement_source))
@@ -385,8 +447,14 @@ impl BudgetProjection {
         let balancing_posting = event.payload.get("balancing_posting").cloned();
         let ts = event.timestamp.to_rfc3339();
 
-        // Two statements coupled (mark merged_ids superseded + rewrite primary)
-        // — wrap in BEGIN/COMMIT so a partial-failure can't leave a half-merge.
+        // Bare UPDATEs (not UPSERT-materialize): a merge rewrites the primary and
+        // supersedes real originals, so materializing phantom rows from a merge
+        // whose constituents this device never saw would be semantically wrong
+        // (they'd lack postings/amounts). If the row is genuinely missing here the
+        // merge no-ops, and a later sync of the originals + re-derived state
+        // reconciles it. Two statements coupled (mark merged_ids superseded +
+        // rewrite primary) — wrap in BEGIN/COMMIT so a partial-failure can't leave
+        // a half-merge.
         let mut parts = vec!["BEGIN TRANSACTION;".to_string()];
         for i in 0..merged_ids.len() {
             parts.push(format!(
@@ -681,6 +749,117 @@ mod tests {
         assert_eq!(desc.as_deref(), Some("Coffee"));
         assert_eq!(removed, Some(false));
         assert_eq!(cleared, Some(false));
+    }
+
+    /// Sync-resilience (friction 308): a mutation event whose `TransactionRecorded`
+    /// never arrived on this device must still MATERIALIZE the row (UPSERT), not
+    /// silently no-op — the same guarantee the notes/journal projections got in
+    /// `d049f1e`. Exercises all four content mutations from an empty projection.
+    #[tokio::test]
+    async fn mutation_without_create_materializes_row() {
+        // categorize with no prior recorded → row exists, category set, defaults filled.
+        let (db, store, runner) = fixture().await;
+        emit(
+            &store,
+            &runner,
+            "transaction_categorized",
+            "t1",
+            serde_json::json!({ "txn_id": "t1", "category": "Snacks" }),
+        )
+        .await;
+        let mut resp = db
+            .query(
+                "SELECT category, removed, cleared, description, postings, tags_top
+                 FROM type::record('transactions', 't1')",
+            )
+            .await
+            .unwrap();
+        let category: Option<String> = resp.take("category").unwrap();
+        let removed: Option<bool> = resp.take("removed").unwrap();
+        let cleared: Option<bool> = resp.take("cleared").unwrap();
+        assert_eq!(category.as_deref(), Some("Snacks"), "categorize must materialize the row");
+        assert_eq!(removed, Some(false), "SCHEMAFULL required field backfilled");
+        assert_eq!(cleared, Some(false), "SCHEMAFULL required field backfilled");
+
+        // tag / cleared / update each materialize their own orphaned txn too.
+        emit(
+            &store,
+            &runner,
+            "transaction_tagged",
+            "t2",
+            serde_json::json!({ "txn_id": "t2", "tags": ["type:business"] }),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "transaction_cleared",
+            "t3",
+            serde_json::json!({ "txn_id": "t3", "statement_source": "amex", "cleared_date": "2026-05-20" }),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "transaction_updated",
+            "t4",
+            serde_json::json!({ "txn_id": "t4", "changes": { "description": "Renamed" } }),
+        )
+        .await;
+        let mut resp = db
+            .query("SELECT count() AS total FROM transactions GROUP ALL")
+            .await
+            .unwrap();
+        let total: Option<u32> = resp.take("total").unwrap();
+        assert_eq!(total, Some(4), "every orphaned content mutation materialized its row");
+    }
+
+    /// The recovered-create case: a mutation materialized a partial row first, then
+    /// the lost `TransactionRecorded` arrives. It must FILL the create-owned fields
+    /// (date/description/postings) WITHOUT clobbering the already-applied edit — and
+    /// crucially must not error on the pre-existing id (UPSERT, not CREATE).
+    #[tokio::test]
+    async fn create_after_mutation_fills_without_clobbering_edit() {
+        let (db, store, runner) = fixture().await;
+        // Edit lands first (create was lost / out of order).
+        emit(
+            &store,
+            &runner,
+            "transaction_categorized",
+            "t1",
+            serde_json::json!({ "txn_id": "t1", "category": "Snacks" }),
+        )
+        .await;
+        // The create finally arrives.
+        emit(
+            &store,
+            &runner,
+            "transaction_recorded",
+            "t1",
+            simple_txn_payload("t1", "Coffee", "5.25"),
+        )
+        .await;
+
+        let mut resp = db
+            .query("SELECT description, category FROM type::record('transactions', 't1')")
+            .await
+            .unwrap();
+        let description: Option<String> = resp.take("description").unwrap();
+        let category: Option<String> = resp.take("category").unwrap();
+        assert_eq!(description.as_deref(), Some("Coffee"), "create fills the create-owned field");
+        assert_eq!(
+            category.as_deref(),
+            Some("Snacks"),
+            "create must not clobber the already-applied categorize"
+        );
+
+        // And still exactly one row — the create UPSERTed, it did not error or duplicate.
+        let mut resp = db
+            .query("SELECT count() AS total FROM transactions GROUP ALL")
+            .await
+            .unwrap();
+        let total: Option<u32> = resp.take("total").unwrap();
+        assert_eq!(total, Some(1));
     }
 
     #[tokio::test]
