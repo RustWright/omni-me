@@ -2880,6 +2880,9 @@ fn posting_views(value: &serde_json::Value) -> Vec<PostingRowView> {
 fn LedgerView(#[props(default = None)] initial_filter: Option<TxnFilter>) -> Element {
     let mut selected: Signal<Option<String>> = use_signal(|| None);
     let sel = selected.read().clone();
+    // Bumped by the detail pane after a mutation so the co-mounted list re-fetches
+    // (edit → row updates; delete → row drops). See `refresh_epoch` on the list.
+    let mut refresh = use_signal(|| 0u64);
 
     rsx! {
         div { class: "md:flex md:gap-4 md:items-start",
@@ -2891,6 +2894,7 @@ fn LedgerView(#[props(default = None)] initial_filter: Option<TxnFilter>) -> Ele
                     on_open_txn: move |id: String| selected.set(Some(id)),
                     initial_filter,
                     selected_id: sel.clone(),
+                    refresh_epoch: Some(refresh),
                 }
             }
 
@@ -2909,6 +2913,7 @@ fn LedgerView(#[props(default = None)] initial_filter: Option<TxnFilter>) -> Ele
                             key: "{id}",
                             txn_id: id,
                             on_back: move |_| selected.set(None),
+                            on_mutated: move |_| refresh += 1,
                         }
                     }
                 },
@@ -2934,6 +2939,13 @@ fn TransactionListView(
     /// matching row can render selected (Ledger surface). `None` = no highlight.
     #[props(default = None)]
     selected_id: Option<String>,
+    /// Ledger master-detail refresh epoch: the detail pane bumps this after a
+    /// mutation (edit / categorize / tag / delete) so the co-mounted list
+    /// re-fetches instead of showing a stale row or a lingering deleted one.
+    /// `None` for standalone use (the router-arm full-screen detail unmounts the
+    /// list, so it re-hydrates on return without this).
+    #[props(default = None)]
+    refresh_epoch: Option<Signal<u64>>,
 ) -> Element {
     let store = use_continuity();
     let list_key = ContinuityKey::TxnList("main".to_string());
@@ -2983,6 +2995,9 @@ fn TransactionListView(
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
         let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
+        if let Some(ep) = refresh_epoch {
+            let _ = ep.read(); // subscribe: re-run on a detail-pane mutation
+        }
         let filter = active_filter.read().clone();
         // peek (not read) so flipping the flag doesn't re-trigger this effect.
         if *restored_pending.peek() {
@@ -3801,7 +3816,15 @@ fn extract_attachment_meta(value: &serde_json::Value) -> Option<AttachmentMeta> 
 }
 
 #[component]
-fn TransactionDetailView(txn_id: String, on_back: EventHandler<()>) -> Element {
+fn TransactionDetailView(
+    txn_id: String,
+    on_back: EventHandler<()>,
+    /// Called after a successful mutation so a host (the Ledger master-detail)
+    /// can refresh its co-mounted list. `None` for the standalone full-screen
+    /// detail, which re-hydrates its list on return anyway.
+    #[props(default = None)]
+    on_mutated: Option<EventHandler<()>>,
+) -> Element {
     let mut txn: Signal<Option<Result<TransactionView, String>>> = use_signal(|| None);
     let txn_id_for_load = txn_id.clone();
 
@@ -3846,13 +3869,23 @@ fn TransactionDetailView(txn_id: String, on_back: EventHandler<()>) -> Element {
         },
         Some(Ok(t)) => rsx! {
             {header}
-            TransactionDetailBody { txn: t, on_back }
+            TransactionDetailBody { txn: t, on_back, on_mutated }
         },
     }
 }
 
 #[component]
-fn TransactionDetailBody(txn: TransactionView, on_back: EventHandler<()>) -> Element {
+fn TransactionDetailBody(
+    txn: TransactionView,
+    on_back: EventHandler<()>,
+    #[props(default = None)] on_mutated: Option<EventHandler<()>>,
+) -> Element {
+    // Notify the host (Ledger master-detail) so its co-mounted list re-fetches.
+    let notify_mutated = move || {
+        if let Some(h) = on_mutated {
+            h.call(());
+        }
+    };
     // Local mirror of the prop for optimistic-edit updates. Same pattern as
     // TransactionListRow — backend writes succeed before the projection
     // refresh would otherwise re-render us.
@@ -3878,6 +3911,7 @@ fn TransactionDetailBody(txn: TransactionView, on_back: EventHandler<()>) -> Ele
                 let mut next = local.read().clone();
                 next.category = if value.is_empty() { None } else { Some(value) };
                 local.set(next);
+                notify_mutated();
             });
         }
     };
@@ -3896,6 +3930,7 @@ fn TransactionDetailBody(txn: TransactionView, on_back: EventHandler<()>) -> Ele
                 let mut next = local.read().clone();
                 next.tags_top = tags;
                 local.set(next);
+                notify_mutated();
             });
         }
     };
@@ -3910,6 +3945,7 @@ fn TransactionDetailBody(txn: TransactionView, on_back: EventHandler<()>) -> Ele
                 on_saved: move |updated: TransactionView| {
                     local.set(updated);
                     editing.set(false);
+                    notify_mutated();
                 },
             }
         };
@@ -3923,7 +3959,10 @@ fn TransactionDetailBody(txn: TransactionView, on_back: EventHandler<()>) -> Ele
         let id = txn_id.clone();
         spawn(async move {
             match bridge::invoke_delete_transaction(&id).await {
-                Ok(()) => on_back.call(()),
+                Ok(()) => {
+                    notify_mutated();
+                    on_back.call(());
+                }
                 Err(e) => {
                     web_sys::console::error_1(&format!("delete failed: {e}").into());
                     deleting.set(false);
