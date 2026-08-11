@@ -100,7 +100,10 @@ pub struct SourceDef {
     pub kind: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Per-source poll interval. Parsed but not yet honored (see module docs).
+    /// Per-source poll interval (seconds). Honored: `build_generic_sources`
+    /// threads it via `with_schedule_secs` into each source's `poll_interval()`,
+    /// which `spawn_one` uses in place of the global default (falls back to the
+    /// global when `None`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_secs: Option<u64>,
 
