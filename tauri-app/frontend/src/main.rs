@@ -92,10 +92,6 @@ fn App() -> Element {
     // survives page unmount on tab switch. Pages read it via `use_continuity`.
     let continuity_store = continuity::use_continuity_provider();
 
-    // Known-account suggestions: one fetch of the `known_accounts` union, shared
-    // by every `AccountInput` typeahead. Consumers read it via `use_context`.
-    components::account_input::use_account_suggestions_provider();
-
     // Live-refresh on inbound sync (see `sync_refresh`). The backend applies
     // auto-pulled remote events into the local DB and emits `sync:applied`, but
     // the WASM frontend has no event-listen binding, so the open page never
@@ -121,6 +117,15 @@ fn App() -> Element {
             }
         });
     });
+
+    // Known-account suggestions: the shared `known_accounts` union behind every
+    // `AccountInput` typeahead. Registered *after* the `SyncRefresh` provider
+    // above so it can subscribe to `sync_epoch` and re-fetch when a pull lands —
+    // on a fresh device the first fetch runs before the event backfill has
+    // populated the ledger, so a one-shot fetch would leave the list empty and
+    // flag every real account "No such account" until an app restart. Consumers
+    // read it via `use_context`.
+    components::account_input::use_account_suggestions_provider();
 
     // 1.8b: restore the last-open tab once the store's disk snapshot has loaded.
     // Runs before any user interaction. The pending-share intake below still

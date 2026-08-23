@@ -49,10 +49,24 @@ impl AccountSuggestions {
 pub fn use_account_suggestions_provider() {
     let mut list = use_signal(Vec::<String>::new);
     use_context_provider(|| AccountSuggestions { list });
-    use_future(move || async move {
-        if let Ok(accounts) = bridge::invoke_list_known_accounts().await {
-            list.set(accounts);
-        }
+
+    // Load on mount, and re-load whenever a background pull applies new events
+    // (`sync_epoch`). Critical on a fresh device: this initial fetch runs before
+    // the event backfill has populated the ledger, so a one-shot fetch would
+    // leave the list empty — flagging every real account "No such account in the
+    // ledger" until an app restart — even though the live txn queries (which
+    // re-read per navigation) work. Subscribing to `sync_epoch` re-fetches as the
+    // backfill lands (and on later inbound edits). Must be registered *after* the
+    // `SyncRefresh` provider in `main.rs`, or `use_sync_epoch` falls back to an
+    // inert signal that never bumps. (on-device batch 2, 2026-08-14)
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
+    use_effect(move || {
+        let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
+        spawn(async move {
+            if let Ok(accounts) = bridge::invoke_list_known_accounts().await {
+                list.set(accounts);
+            }
+        });
     });
 }
 
