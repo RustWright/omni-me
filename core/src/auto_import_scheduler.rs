@@ -8,8 +8,15 @@
 //! Per-tick contract:
 //! - `pull()` returns `Ok(ImportSummary)` → reset backoff, sleep for the
 //!   configured interval, then tick again.
-//! - `pull()` returns `Err(...)` → sleep for the current backoff (1s start,
-//!   doubling, capped at 1h), then retry.
+//! - `pull()` returns `Err(ImportError::NeedsReauth(_))` → **halt this source's
+//!   loop** (circuit-breaker). The credential is expired and only the user can
+//!   fix it, so re-`pull()`-ing on a schedule would just re-attempt login on
+//!   every tick — for a bank source that means repeated real login attempts
+//!   (lockout / fraud-flag risk). The source goes dormant in `NeedsReauth`; a
+//!   successful `Reconnect` (`SourceRegistry::reauth`) re-arms the loop.
+//! - `pull()` returns any other `Err(...)` → sleep for the current backoff
+//!   (1s start, doubling, capped at 1h), then retry. Transient upstream blips
+//!   are worth retrying; an expired credential is not.
 //!
 //! Real sources plug in by impl-ing `AutoImportSource`. `NullSource` exists
 //! for tests + as a placeholder when a real source isn't yet configured.
@@ -149,6 +156,17 @@ pub fn spawn(source: Arc<dyn AutoImportSource>, interval: Duration) -> tokio::ta
                     );
                     backoff = INITIAL_BACKOFF;
                     tokio::time::sleep(interval).await;
+                }
+                Err(ImportError::NeedsReauth(reason)) => {
+                    // Circuit-breaker: an expired credential won't fix itself by
+                    // retrying — each retry re-attempts login. Halt the loop and
+                    // leave the source dormant until the user reconnects.
+                    tracing::warn!(
+                        source = source.name(),
+                        reason = %reason,
+                        "auto-import source needs re-auth — halting its scheduler (no login-retry loop)"
+                    );
+                    break;
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -337,12 +355,37 @@ impl SourceRegistry {
         };
         let outcome = source.reauth(otp).await;
         if matches!(outcome, ReauthOutcome::Active) {
-            let mut guard = self.inner.write().await;
-            if let Some(r) = guard.get_mut(name) {
-                r.status.auth_state = AuthState::Active;
+            {
+                let mut guard = self.inner.write().await;
+                if let Some(r) = guard.get_mut(name) {
+                    r.status.auth_state = AuthState::Active;
+                }
             }
+            // A source that hit `NeedsReauth` halted its scheduler loop (the
+            // circuit-breaker). A successful Reconnect must resume it, or the
+            // source would sit `Active`-but-idle until the next server restart.
+            self.rearm_if_dormant(name).await;
         }
         Ok(outcome)
+    }
+
+    /// Re-spawn a source's scheduler loop, but only if it previously had one that
+    /// has since exited (the `NeedsReauth` circuit-breaker halts the loop). A
+    /// source that never had a loop (status-only `register`, used by tests) or
+    /// whose loop is still running is left untouched — so this never
+    /// double-spawns a healthy source into a second polling task.
+    async fn rearm_if_dormant(&self, name: &str) {
+        let mut guard = self.inner.write().await;
+        if let Some(r) = guard.get_mut(name) {
+            let dormant = matches!(&r.task, Some(h) if h.is_finished());
+            if dormant {
+                // Reuse the interval the source was originally spawned with
+                // (already resolves the per-source `poll_interval` override).
+                let interval = Duration::from_secs(r.status.interval_secs);
+                let handle = spawn_with_registry(self.clone(), r.source.clone(), interval);
+                r.task = Some(handle);
+            }
+        }
     }
 
     /// Internal: write the result of a tick into the registry. Used by
@@ -404,6 +447,20 @@ pub fn spawn_with_registry(
                     );
                     backoff = INITIAL_BACKOFF;
                     tokio::time::sleep(interval).await;
+                }
+                Err(ImportError::NeedsReauth(reason)) => {
+                    // Circuit-breaker: `record_tick` above already flipped the
+                    // status to `NeedsReauth`. Halting the loop (rather than
+                    // retrying with backoff) is what stops a bank source from
+                    // re-attempting login every tick while it waits for the
+                    // user's OTP. `SourceRegistry::reauth` re-arms the loop on a
+                    // successful Reconnect.
+                    tracing::warn!(
+                        source = source.name(),
+                        reason = %reason,
+                        "auto-import source needs re-auth — halting its scheduler (no login-retry loop); resumes on Reconnect"
+                    );
+                    break;
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -1011,5 +1068,97 @@ mod tests {
         handle.abort();
 
         assert!(src.call_count() >= 3, "got {} calls", src.call_count());
+    }
+
+    // ----- Circuit-breaker: NeedsReauth halts the loop (no login-hammer) -----
+
+    #[tokio::test(start_paused = true)]
+    async fn needs_reauth_halts_the_scheduler_loop() {
+        // A source awaiting OTP must NOT keep re-attempting login on a schedule
+        // (bank lockout / fraud-flag risk). The loop halts after the first
+        // NeedsReauth tick instead of backing off and retrying forever.
+        let registry = SourceRegistry::new();
+        let src = Arc::new(
+            null::NullSource::new("ws")
+                .with_script(vec![Err(ImportError::NeedsReauth("otp".into()))]),
+        );
+        registry
+            .spawn_one(src.clone(), Duration::from_secs(60))
+            .await;
+
+        // Advance far past many would-be ticks. A retrying loop would exhaust
+        // the script and climb call_count well past 1.
+        tokio::time::sleep(Duration::from_secs(3600)).await;
+
+        assert_eq!(
+            src.call_count(),
+            1,
+            "scheduler kept polling after NeedsReauth (login-hammer); should have halted"
+        );
+        assert_eq!(
+            registry.snapshot().await[0].auth_state,
+            AuthState::NeedsReauth {
+                reason: "otp".into()
+            }
+        );
+        registry.remove("ws").await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn successful_reauth_rearms_the_scheduler() {
+        // After the circuit-breaker halts a source, a successful Reconnect must
+        // resume auto-polling — not leave it Active-but-idle until a restart.
+        let registry = SourceRegistry::new();
+        let src = Arc::new(
+            null::NullSource::new("ws")
+                .with_script(vec![Err(ImportError::NeedsReauth("otp".into()))])
+                .with_reauth(ReauthOutcome::Active),
+        );
+        registry
+            .spawn_one(src.clone(), Duration::from_secs(60))
+            .await;
+
+        // First tick hits NeedsReauth and halts the loop.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(src.call_count(), 1, "loop should have halted after NeedsReauth");
+
+        // Reconnect succeeds → re-arms the loop, which resumes polling (the
+        // script is now exhausted, so further pulls return Ok(0)).
+        let outcome = registry.reauth("ws", "123456").await.unwrap();
+        assert_eq!(outcome, ReauthOutcome::Active);
+        assert_eq!(registry.snapshot().await[0].auth_state, AuthState::Active);
+
+        tokio::time::sleep(Duration::from_secs(200)).await; // ~3 ticks @ 60s
+        assert!(
+            src.call_count() >= 2,
+            "reauth should have resumed polling; got {} calls",
+            src.call_count()
+        );
+        registry.remove("ws").await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transient_failures_still_retry_with_backoff() {
+        // The circuit-breaker is scoped to NeedsReauth only — a transient
+        // upstream blip must still retry (this is the pre-existing behavior we
+        // must not regress).
+        let registry = SourceRegistry::new();
+        let src = Arc::new(null::NullSource::new("flaky").with_script(vec![
+            Err(ImportError::Upstream("502".into())),
+            Err(ImportError::Upstream("502".into())),
+            Err(ImportError::Upstream("502".into())),
+        ]));
+        registry
+            .spawn_one(src.clone(), Duration::from_secs(60))
+            .await;
+
+        // 1s + 2s + 4s backoff = 7s → all three retries fire.
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        assert!(
+            src.call_count() >= 3,
+            "transient failures should keep retrying with backoff; got {}",
+            src.call_count()
+        );
+        registry.remove("flaky").await;
     }
 }
