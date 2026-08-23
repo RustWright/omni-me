@@ -88,6 +88,15 @@ fn App() -> Element {
     // renders off this signal.
     let mut swipe_start_x = use_signal(|| None::<f64>);
 
+    // Auto-hide top bar (#7): the header (sync chip + mobile hamburger) slides
+    // away when scrolling *down* through content and returns on scroll *up* or at
+    // the top, reclaiming the strip while reading. `last_scroll_top` remembers the
+    // previous offset so we can tell the direction from the content column's
+    // `onscroll`. The mobile hamburger hiding with it is fine — scroll up (or the
+    // 1.12 edge-swipe) brings the nav back.
+    let mut header_hidden = use_signal(|| false);
+    let mut last_scroll_top = use_signal(|| 0.0_f64);
+
     // Continuity store (Phase 1.1): root-held per-page editing state that
     // survives page unmount on tab switch. Pages read it via `use_continuity`.
     let continuity_store = continuity::use_continuity_provider();
@@ -126,6 +135,15 @@ fn App() -> Element {
     // flag every real account "No such account" until an app restart. Consumers
     // read it via `use_context`.
     components::account_input::use_account_suggestions_provider();
+
+    // Reveal the top bar whenever the tab changes (#7) — a new page scrolls from
+    // the top, so a header left hidden by the previous page's scroll would be
+    // stuck until the user scrolled up. Resetting here keeps it predictable.
+    use_effect(move || {
+        let _ = active_tab.read(); // re-run on tab switch
+        header_hidden.set(false);
+        last_scroll_top.set(0.0);
+    });
 
     // 1.8b: restore the last-open tab once the store's disk snapshot has loaded.
     // Runs before any user interaction. The pending-share intake below still
@@ -227,7 +245,15 @@ fn App() -> Element {
             // Bottom padding only applies on mobile so the bottom nav doesn't
             // overlap the last item.
             main { class: "flex-1 flex flex-col overflow-hidden",
-                header { class: "flex items-center justify-end gap-3 px-4 md:px-6 py-3 border-b border-white/5 bg-obsidian-bg/80 backdrop-blur-sm",
+                // Auto-hiding header (#7): collapses its height + padding (not just
+                // a transform) so the content reclaims the strip. `overflow-hidden`
+                // keeps the chip clipped mid-collapse; the border fades with it.
+                header {
+                    class: if *header_hidden.read() {
+                        "flex items-center justify-end gap-3 px-4 md:px-6 bg-obsidian-bg/80 backdrop-blur-sm overflow-hidden transition-all duration-300 max-h-0 py-0 opacity-0 border-b border-transparent"
+                    } else {
+                        "flex items-center justify-end gap-3 px-4 md:px-6 bg-obsidian-bg/80 backdrop-blur-sm overflow-hidden transition-all duration-300 max-h-16 py-3 opacity-100 border-b border-white/5"
+                    },
                     // Hamburger — mobile only (desktop has the persistent SideNav).
                     // `mr-auto` keeps it hard-left while the sync chip stays right;
                     // when hidden at md+, `justify-end` keeps the chip right.
@@ -246,7 +272,22 @@ fn App() -> Element {
                 // reachable. Desktop keeps its plain `pb-6` (SideNav doesn't
                 // overlap the content column). Values live in
                 // `input.css::.pb-mobile-nav`.
-                div { class: "flex-1 overflow-y-auto p-4 md:p-6 pb-mobile-nav md:pb-6",
+                div {
+                    class: "flex-1 overflow-y-auto p-4 md:p-6 pb-mobile-nav md:pb-6",
+                    // Scroll-direction drives the auto-hiding header (#7). Small
+                    // thresholds debounce jitter; always reveal near the very top.
+                    onscroll: move |e| {
+                        let cur = e.scroll_top();
+                        let last = *last_scroll_top.peek();
+                        if cur <= 8.0 {
+                            header_hidden.set(false);
+                        } else if cur - last > 6.0 {
+                            header_hidden.set(true);
+                        } else if last - cur > 6.0 {
+                            header_hidden.set(false);
+                        }
+                        last_scroll_top.set(cur);
+                    },
                     match *active_tab.read() {
                         Tab::Journal => rsx! { JournalPage {} },
                         Tab::Notes => rsx! { NotesPage {} },
