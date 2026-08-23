@@ -6,7 +6,7 @@ use crate::types::{
     MonthlyTrendBucketView, NetWorthPointView, RecurringObligationView, TaskResult,
 };
 use crate::types::{
-    AccountSummaryView, AccountTagBreakdownView, AffordVerdictView,
+    AccountSummaryView, AccountTagBreakdownView,
     AutoImportSourceView, BalanceCheckView, BudgetProgress,
     BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft,
     NetWorthSeriesView,
@@ -2041,37 +2041,6 @@ pub async fn invoke_net_worth_history(
     }
 }
 
-pub async fn invoke_check_affordability(
-    amount: &str,
-    base_currency: Option<&str>,
-) -> Result<AffordVerdictView, String> {
-    #[cfg(feature = "mock")]
-    {
-        let _ = base_currency;
-        Ok(mock_check_affordability(amount))
-    }
-    #[cfg(not(feature = "mock"))]
-    {
-        #[derive(serde::Serialize)]
-        struct Args<'a> {
-            amount: &'a str,
-            base_currency: Option<&'a str>,
-            as_of: Option<&'a str>,
-            months_back: Option<u32>,
-        }
-        invoke(
-            "check_affordability",
-            &Args {
-                amount,
-                base_currency,
-                as_of: None,
-                months_back: None,
-            },
-        )
-        .await
-    }
-}
-
 // -----------------------------------------------------------------------------
 // Budgets (Phase 5.1) — per-category targets persisted via BudgetSet event.
 // -----------------------------------------------------------------------------
@@ -2675,54 +2644,6 @@ fn mock_dashboard_summary() -> DashboardSummaryView {
                 cadence_days: 30,
             },
         ],
-    }
-}
-
-#[cfg(feature = "mock")]
-fn mock_check_affordability(amount: &str) -> AffordVerdictView {
-    // Mirror the 3.10 liquidity-aware policy in the mock so the UI feels right
-    // without a real backend round-trip. Net worth literal matches
-    // `mock_dashboard_summary`'s `net_worth_in_base` (listable accounts
-    // ex-Unmatched). The liquid pool reads the mock override store, so marking
-    // an account Liquid in Settings visibly changes the verdict here.
-    let amt: f64 = amount.parse().unwrap_or(0.0);
-    let net_worth = 3891.89_f64;
-    // Mock recurring: 16.99 + 55 + 1850 = 1921.99 (all monthly).
-    let recurring = 16.99 + 55.0 + 1850.0;
-
-    // Convertible mock balances (match `mock_account_summaries`); Meridian:AED is
-    // unconvertible and Unmatched is never liquid, so neither contributes.
-    let balance = |acct: &str| -> Option<f64> {
-        match acct {
-            "Assets:Northwind:Cash" => Some(4287.42),
-            "Assets:Globepay:CAD" => Some(1054.65),
-            "Liabilities:Summit:CreditCard" => Some(-1450.18),
-            _ => None,
-        }
-    };
-
-    // Liquid pool: None when no account is marked liquid (→ fall back to net
-    // worth), else the sum of the marked accounts' convertible balances.
-    let liquid: Option<f64> = MOCK_ACCOUNT_OVERRIDES.with(|o| {
-        let marked: Vec<String> = o
-            .borrow()
-            .iter()
-            .filter(|(acct, (_, _, is_liquid))| *is_liquid && acct.as_str() != "Unmatched")
-            .map(|(acct, _)| acct.clone())
-            .collect();
-        (!marked.is_empty()).then(|| marked.iter().filter_map(|a| balance(a)).sum())
-    });
-
-    let (pool, policy_label) = match liquid {
-        Some(x) => (x, "Liquid assets − next month's recurring"),
-        None => (net_worth, "Net worth − next month's recurring"),
-    };
-    let remaining = pool - recurring - amt;
-    AffordVerdictView {
-        can_afford: remaining > 0.0,
-        remaining_in_base: format!("{remaining:.2}"),
-        base_currency: "CAD".into(),
-        policy_label: policy_label.into(),
     }
 }
 

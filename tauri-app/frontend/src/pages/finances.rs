@@ -7,7 +7,7 @@ use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{Button, ButtonSize, ButtonVariant, SegmentedNav};
 use crate::continuity::{use_continuity, CaptureDraft, ContinuityKey, ListState, PostingDraft};
 use crate::types::{
-    AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AffordVerdictView,
+    AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView,
     AttachmentRef, BalanceCheckView, BudgetProgress,
     BudgetRow, DashboardSummaryView, DraftTransactionView, ExtractedDraft, JournalImportPlan,
     JournalImportPreview, JournalImportResult, MatchCandidateView, MonthlyTrendBucketView,
@@ -100,7 +100,7 @@ enum FinancesView {
     /// (Phase 4.4). One card per declared+listable account.
     AccountList,
     /// R1 financial-health glance dashboard (Phase 4.5 + 4.6). Net worth,
-    /// Unmatched, monthly trend, recurring, can-I-afford.
+    /// Unmatched, monthly trend, recurring.
     Dashboard,
     /// W4 budget setup screen (Phase 5.1). Per-category targets with
     /// per-cycle (monthly default; weekly / biweekly) cadence.
@@ -199,6 +199,13 @@ pub fn FinancesPage() -> Element {
     let mut pending_draft: Signal<Option<ExtractedDraft>> = use_signal(|| None);
     let mut selected_batch_id: Signal<Option<String>> = use_signal(|| None);
     let mut selected_txn_id: Signal<Option<String>> = use_signal(|| None);
+    // Drill-down origin (batch-2 nav-back fix). Accounts/Institutions and
+    // Reconciliation are each reachable from BOTH the Overview and Analyze
+    // surfaces, so a hardcoded "Back → Analyze" sent Overview → Institutions →
+    // Back to the wrong tab. Record the surface the user drilled in from and
+    // return there instead. Ephemeral by design — only surface roots persist
+    // (see the write-through effect below), so restore always lands on a root.
+    let mut return_to: Signal<FinancesView> = use_signal(|| FinancesView::Overview);
     // Pending-batch count for the Overview review inbox, refreshed whenever the
     // user is on the Overview root. A separate signal (not derived from listing
     // the batches inline) keeps the tile cheap — one COUNT query, not a full
@@ -344,17 +351,29 @@ pub fn FinancesPage() -> Element {
                         on_resume_capture: move |_| view.set(FinancesView::TransactionForm),
                         on_open_batches: move |_| view.set(FinancesView::BatchList),
                         on_open_transactions: move |_| view.set(FinancesView::TransactionList),
-                        on_open_accounts: move |_| view.set(FinancesView::AccountList),
-                        on_open_reconciliation: move |_| view.set(FinancesView::Reconciliation),
+                        on_open_accounts: move |_| {
+                            return_to.set(FinancesView::Overview);
+                            view.set(FinancesView::AccountList);
+                        },
+                        on_open_reconciliation: move |_| {
+                            return_to.set(FinancesView::Overview);
+                            view.set(FinancesView::Reconciliation);
+                        },
                     }
                 },
                 FinancesView::Analyze => rsx! {
                     AnalyzeHubView {
                         on_open_dashboard: move |_| view.set(FinancesView::Dashboard),
-                        on_open_accounts: move |_| view.set(FinancesView::AccountList),
+                        on_open_accounts: move |_| {
+                            return_to.set(FinancesView::Analyze);
+                            view.set(FinancesView::AccountList);
+                        },
                         on_open_budgets: move |_| view.set(FinancesView::BudgetList),
                         on_open_recurring: move |_| view.set(FinancesView::RecurringReview),
-                        on_open_reconciliation: move |_| view.set(FinancesView::Reconciliation),
+                        on_open_reconciliation: move |_| {
+                            return_to.set(FinancesView::Analyze);
+                            view.set(FinancesView::Reconciliation);
+                        },
                         on_open_balance_check: move |_| view.set(FinancesView::BalanceCheck),
                         on_open_query: move |_| view.set(FinancesView::Query),
                     }
@@ -477,7 +496,9 @@ pub fn FinancesPage() -> Element {
                 }
                 FinancesView::AccountList => rsx! {
                     AccountListView {
-                        on_back: move |_| view.set(FinancesView::Analyze),
+                        // Back to whichever surface we drilled in from (Overview
+                        // or Analyze), not a hardcoded tab (batch-2 nav-back fix).
+                        on_back: move |_| view.set(*return_to.read()),
                     }
                 },
                 FinancesView::Dashboard => rsx! {
@@ -486,7 +507,9 @@ pub fn FinancesPage() -> Element {
                         on_open_unmatched: move |_| {
                             // Per 4.5 spec — Unmatched widget click-through
                             // lands the user in 5.7's reconciliation review
-                            // (now that 5.7 has shipped).
+                            // (now that 5.7 has shipped). Back returns here to the
+                            // Dashboard (where the Unmatched widget lives).
+                            return_to.set(FinancesView::Dashboard);
                             view.set(FinancesView::Reconciliation);
                         },
                     }
@@ -508,7 +531,9 @@ pub fn FinancesPage() -> Element {
                 },
                 FinancesView::Reconciliation => rsx! {
                     ReconciliationReviewView {
-                        on_back: move |_| view.set(FinancesView::Analyze),
+                        // Origin-aware back (batch-2): Overview, Analyze, or the
+                        // Dashboard Unmatched widget can each open this.
+                        on_back: move |_| view.set(*return_to.read()),
                     }
                 },
                 FinancesView::BalanceCheck => rsx! {
@@ -1230,32 +1255,10 @@ fn BudgetSnapshotCard(rows: Vec<BudgetProgress>, on_open: EventHandler<()>) -> E
     }
 }
 
-/// The reserved LLM entry point (Stage C6) — a placeholder card for the coming
-/// natural-language finances interface ([[project-llm-primary-interface-next-push]]).
-/// No backend yet; it just holds the spot in the IA so the surface is designed
-/// for its full future scope.
-#[component]
-fn AskFinancesCard() -> Element {
-    rsx! {
-        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4",
-            div { class: "flex items-center gap-2 mb-2",
-                Icon { name: IconName::DocumentText, class: "w-4 h-4 text-obsidian-accent" }
-                h3 { class: "text-sm font-semibold text-obsidian-text", "Ask your finances" }
-                span { class: "ml-auto text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-obsidian-accent/15 text-obsidian-accent",
-                    "Soon"
-                }
-            }
-            div { class: "flex items-center gap-2 px-3 py-2 rounded-md bg-obsidian-sidebar border border-obsidian-border/10 text-sm text-obsidian-text-muted",
-                "e.g. \u{201c}How much did I spend on groceries last month?\u{201d}"
-            }
-        }
-    }
-}
-
 /// Analyze surface root (Stage C6) — the periodic-analysis landing. Real charts
 /// up top (cash-flow trend + budgets snapshot, from the shared cached payloads),
-/// the reserved LLM entry, then organized links into the deep tools. Every deep
-/// tool stays one tap away — no functionality was removed, only surfaced better.
+/// then organized links into the deep tools. Every deep tool stays one tap away
+/// — no functionality was removed, only surfaced better.
 #[component]
 fn AnalyzeHubView(
     on_open_dashboard: EventHandler<()>,
@@ -1310,13 +1313,11 @@ fn AnalyzeHubView(
                 }
             }
 
-            AskFinancesCard {}
-
             // Deep tools — every existing analysis screen, one tap away.
             h2 { class: "pt-2 text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Tools" }
             HubLinkRow {
                 title: "Dashboard",
-                subtitle: "Net worth, recurring, and can-I-afford.",
+                subtitle: "Net worth, recurring, and monthly trends.",
                 accent: true,
                 on_click: move |_| on_open_dashboard.call(()),
             }
@@ -4886,9 +4887,6 @@ fn DashboardView(
                 recurring: s.recurring.clone(),
                 base_currency: s.base_currency.clone(),
             }
-            AffordCard {
-                base_currency: s.base_currency.clone(),
-            }
         }
     }
 }
@@ -4970,6 +4968,12 @@ fn UnmatchedCard(
 #[component]
 fn MonthlyTrendCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String) -> Element {
     let scale = max_trend_magnitude(&buckets);
+    // Styled hover tooltip (batch-2 #10) — the bars used to carry only a native
+    // `title=` (slow, unstyled, invisible on touch). Mirror the net-worth chart's
+    // richer overlay: a `hover_idx` + an absolutely-positioned chip.
+    let mut hover_idx = use_signal(|| None::<usize>);
+    let hovered = *hover_idx.read();
+    let n = buckets.len();
     rsx! {
         div { class: "mt-3 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
             div { class: "flex items-baseline justify-between mb-3",
@@ -4994,23 +4998,59 @@ fn MonthlyTrendCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String)
                     }
                 },
                 Some(s) => rsx! {
-                    div { class: "flex items-stretch gap-2 h-32",
-                        for bucket in buckets.iter() {
-                            div { class: "flex-1 flex flex-col items-center gap-1 min-h-0",
-                                div { class: "flex-1 w-full flex items-end gap-0.5 min-h-0",
-                                    div { class: "flex-1 bg-emerald-500/70 rounded-sm",
-                                        style: "height: {bar_height_pct(&bucket.income, s)}%",
-                                        title: "{format_money(&bucket.income, &base_currency)} income",
+                    div { class: "relative",
+                        div {
+                            class: "flex items-stretch gap-2 h-32",
+                            onmouseleave: move |_| hover_idx.set(None),
+                            for (i, bucket) in buckets.iter().enumerate() {
+                                div {
+                                    class: "flex-1 flex flex-col items-center gap-1 min-h-0 cursor-default",
+                                    onmouseenter: move |_| hover_idx.set(Some(i)),
+                                    div { class: "flex-1 w-full flex items-end gap-0.5 min-h-0",
+                                        div { class: "flex-1 bg-emerald-500/70 rounded-sm",
+                                            style: "height: {bar_height_pct(&bucket.income, s)}%",
+                                        }
+                                        div { class: "flex-1 bg-rose-500/70 rounded-sm",
+                                            style: "height: {bar_height_pct(&bucket.spending, s)}%",
+                                        }
                                     }
-                                    div { class: "flex-1 bg-rose-500/70 rounded-sm",
-                                        style: "height: {bar_height_pct(&bucket.spending, s)}%",
-                                        title: "{format_money(&bucket.spending, &base_currency)} spending",
+                                    div {
+                                        class: if hovered == Some(i) {
+                                            "text-[10px] text-obsidian-text font-mono"
+                                        } else {
+                                            "text-[10px] text-obsidian-text-muted font-mono"
+                                        },
+                                        "{bucket.month}"
                                     }
-                                }
-                                div { class: "text-[10px] text-obsidian-text-muted font-mono",
-                                    "{bucket.month}"
                                 }
                             }
+                        }
+
+                        // HTML tooltip overlay — month + income + spending, colored
+                        // to the legend. Anchored to the hovered column's center,
+                        // floating at the top of the bar band so it never clips.
+                        {
+                            hovered.and_then(|i| buckets.get(i).map(|b| {
+                                let left = (i as f64 + 0.5) / (n as f64).max(1.0) * 100.0;
+                                let income = format_money(&b.income, &base_currency);
+                                let spending = format_money(&b.spending, &base_currency);
+                                let month = b.month.clone();
+                                rsx! {
+                                    div {
+                                        class: "absolute pointer-events-none z-10 px-2 py-1.5 rounded-md bg-obsidian-sidebar border border-obsidian-border/10 shadow-pop text-xs whitespace-nowrap",
+                                        style: "left: {left}%; top: 0; transform: translateX(-50%);",
+                                        div { class: "text-obsidian-text-muted mb-1", "{month}" }
+                                        div { class: "flex items-center gap-1.5",
+                                            span { class: "inline-block w-2 h-2 bg-emerald-500/70 rounded-sm shrink-0" }
+                                            span { class: "text-obsidian-text tabular-nums", "{income}" }
+                                        }
+                                        div { class: "flex items-center gap-1.5 mt-0.5",
+                                            span { class: "inline-block w-2 h-2 bg-rose-500/70 rounded-sm shrink-0" }
+                                            span { class: "text-obsidian-text tabular-nums", "{spending}" }
+                                        }
+                                    }
+                                }
+                            }))
                         }
                     }
                 },
@@ -5053,92 +5093,6 @@ fn RecurringCard(recurring: Vec<RecurringObligationView>, base_currency: String)
             if recurring.iter().any(|r| !r.commodity.eq_ignore_ascii_case(&base_currency)) {
                 div { class: "text-[10px] text-obsidian-text-muted mt-2",
                     "Base currency: {base_currency}"
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn AffordCard(base_currency: String) -> Element {
-    let mut amount: Signal<String> = use_signal(String::new);
-    let mut verdict: Signal<Option<AffordVerdictView>> = use_signal(|| None);
-    let mut loading: Signal<bool> = use_signal(|| false);
-    let mut error: Signal<Option<String>> = use_signal(|| None);
-
-    let submit = move |e: FormEvent| {
-        e.prevent_default();
-        let raw = amount.read().clone();
-        if raw.trim().is_empty() {
-            return;
-        }
-        loading.set(true);
-        error.set(None);
-        spawn(async move {
-            match bridge::invoke_check_affordability(raw.trim(), None).await {
-                Ok(v) => {
-                    verdict.set(Some(v));
-                }
-                Err(e) => error.set(Some(e)),
-            }
-            loading.set(false);
-        });
-    };
-
-    let current_verdict = verdict.read().clone();
-    let err_msg = error.read().clone();
-
-    rsx! {
-        div { class: "mt-3 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
-            div { class: "text-xs text-obsidian-text-muted uppercase tracking-wider mb-3",
-                "Can I afford …"
-            }
-            form {
-                class: "flex gap-2 items-stretch",
-                onsubmit: submit,
-                div { class: "flex items-center bg-obsidian-bg/60 border border-white/10 rounded px-3 flex-1",
-                    span { class: "text-obsidian-text-muted text-sm mr-2", "{base_currency}" }
-                    input {
-                        class: "bg-transparent text-obsidian-text text-sm w-full py-2 focus:outline-none",
-                        r#type: "text",
-                        placeholder: "Amount",
-                        value: "{amount.read()}",
-                        oninput: move |e| amount.set(e.value().clone()),
-                    }
-                }
-                button {
-                    class: "px-4 py-2 bg-obsidian-accent text-black text-sm font-medium rounded hover:opacity-90 disabled:opacity-50",
-                    r#type: "submit",
-                    disabled: *loading.read(),
-                    if *loading.read() { "Checking…" } else { "Check" }
-                }
-            }
-
-            if let Some(msg) = err_msg {
-                div { class: "mt-3 p-2 bg-red-950/30 border border-red-500/30 rounded text-xs text-red-300",
-                    "{msg}"
-                }
-            }
-
-            if let Some(v) = current_verdict {
-                div { class: "mt-3 p-3 border rounded",
-                    class: if v.can_afford {
-                        "bg-emerald-950/30 border-emerald-500/40"
-                    } else {
-                        "bg-rose-950/30 border-rose-500/40"
-                    },
-                    div { class: "flex items-baseline justify-between gap-3",
-                        div { class: "text-sm font-semibold",
-                            class: if v.can_afford { "text-emerald-300" } else { "text-rose-300" },
-                            if v.can_afford { "Yes — you'd have " } else { "No — you'd be at " }
-                            span { class: "font-mono",
-                                "{format_money(&v.remaining_in_base, &v.base_currency)}"
-                            }
-                        }
-                    }
-                    div { class: "text-[11px] text-obsidian-text-muted mt-1",
-                        "Policy: {v.policy_label}"
-                    }
                 }
             }
         }

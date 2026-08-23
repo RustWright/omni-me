@@ -499,16 +499,6 @@ pub struct NetWorthSeriesView {
     pub points: Vec<NetWorthPointView>,
 }
 
-/// Verdict for a "Can I afford X?" query. Mirrors
-/// `core::dashboard::AffordVerdict` plus the base currency.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AffordVerdictView {
-    pub can_afford: bool,
-    pub remaining_in_base: String,
-    pub base_currency: String,
-    pub policy_label: String,
-}
-
 /// One row from the `budgets` projection. Mirrors `core::db::queries::BudgetRow`
 /// (Phase 5.1). `id` is the category path; `amount` is the per-period target
 /// as a decimal string; `period` is one of `"weekly"` / `"biweekly"` /
