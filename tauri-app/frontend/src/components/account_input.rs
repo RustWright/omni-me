@@ -170,7 +170,20 @@ pub fn AccountInput(
                     open.set(true);
                     highlighted.set(0);
                 },
-                onfocus: move |_| open.set(true),
+                onfocus: move |_| {
+                    open.set(true);
+                    // Self-heal the shared union: the root-level fetch (mount +
+                    // `sync_epoch`) can miss the post-backfill window on a fresh
+                    // device, leaving the list empty so every real account reads
+                    // "unknown" / "new account". Focus is the exact moment the
+                    // list is needed and always lands *after* the backfill, so a
+                    // refresh-if-empty here reliably populates it (one field at a
+                    // time → no thundering herd). `peek` so this handler doesn't
+                    // subscribe. (on-device batch 2, 2026-08-23)
+                    if suggestions_ctx.list.peek().is_empty() {
+                        suggestions_ctx.refresh();
+                    }
+                },
                 onblur: move |_| open.set(false),
                 onkeydown: move |e| {
                     let sugg = &suggestions_for_keys;

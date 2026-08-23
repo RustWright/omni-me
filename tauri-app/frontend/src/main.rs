@@ -278,6 +278,18 @@ fn App() -> Element {
                     // thresholds debounce jitter; always reveal near the very top.
                     onscroll: move |e| {
                         let cur = e.scroll_top();
+                        // Only auto-hide when the content clearly overflows. On a
+                        // barely-scrollable page, collapsing the ~90px header
+                        // shrinks the scroll range and clamps scrollTop, which the
+                        // direction logic reads as "scrolled up" → reveal →
+                        // un-clamp → hide … a constant flip (on-device batch 2
+                        // jitter report, 2026-08-23). Below this range keep the
+                        // header pinned — there's ample room there anyway.
+                        if e.scroll_height() - e.client_height() < 150 {
+                            header_hidden.set(false);
+                            last_scroll_top.set(cur);
+                            return;
+                        }
                         let last = *last_scroll_top.peek();
                         if cur <= 8.0 {
                             header_hidden.set(false);
