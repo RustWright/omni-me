@@ -1,6 +1,7 @@
 pub mod account_input;
 pub mod date_field;
 pub mod editor;
+pub mod month_grid;
 // Design-system foundation (Stage B), now consumed across finances (Stage C) and
 // journal/notes/routines/settings (Stage D): Button, Banner, SegmentedNav, Section
 // and most of the Icon set are live. A few items are deliberately published ahead
