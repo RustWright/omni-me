@@ -867,8 +867,10 @@ fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Elemen
         div { class: "mt-12 animate-in fade-in duration-500",
             h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-6 ml-1", "7-Day Performance" }
 
-            div { class: "grid grid-cols-[1fr_repeat(7,32px)] gap-2 mb-4 px-2",
-                div {}
+            div { class: "grid grid-cols-[repeat(7,1fr)] md:grid-cols-[1fr_repeat(7,32px)] gap-1.5 md:gap-2 mb-4 px-2",
+                // Name-column spacer only on desktop; on mobile the labels fill the
+                // 7 day columns (the name sits on its own line per row, below).
+                div { class: "hidden md:block" }
                 for label in &day_labels {
                     div { class: "text-[10px] font-bold text-obsidian-text-muted text-center", "{label}" }
                 }
@@ -876,8 +878,11 @@ fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Elemen
 
             div { class: "space-y-2",
                 for item in &items {
-                    div { class: "grid grid-cols-[1fr_repeat(7,32px)] gap-2 items-center px-2",
-                        div { class: "text-[12px] text-obsidian-text truncate pr-2", "{item.name}" }
+                    div { class: "grid grid-cols-[repeat(7,1fr)] md:grid-cols-[1fr_repeat(7,32px)] gap-1.5 md:gap-2 items-center px-2",
+                        // Full-width readable name on mobile (spans all 7 day columns
+                        // → its own line, no truncation to 2–3 chars); inline 1fr name
+                        // column on md+. (batch-2 #12)
+                        div { class: "col-span-7 md:col-span-1 text-[12px] text-obsidian-text font-medium md:truncate pr-2 mb-1 md:mb-0", "{item.name}" }
                         for day in &days {
                             {
                                 let completion = history.iter().find(|c| c.item_id == item.id && c.date == *day);
@@ -893,7 +898,7 @@ fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Elemen
                                 };
 
                                 rsx! {
-                                    div { class: "w-8 h-8 rounded-md border flex items-center justify-center text-[10px] font-bold {bg_class}",
+                                    div { class: "w-8 h-8 mx-auto rounded-md border flex items-center justify-center text-[10px] font-bold {bg_class}",
                                         if is_skipped { "—" } else if is_done { "✓" } else { "" }
                                     }
                                 }
