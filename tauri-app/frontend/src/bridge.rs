@@ -2162,6 +2162,27 @@ pub async fn invoke_list_recurring(
     }
 }
 
+/// The transactions a detected recurring pattern was distilled from (5.4
+/// drill-down). Mock returns a few sample rows so the expander is testable in
+/// `dx serve --features mock`.
+pub async fn invoke_list_recurring_matches(
+    pattern_id: &str,
+) -> Result<Vec<TransactionView>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = pattern_id;
+        Ok(mock_transactions().into_iter().take(3).collect())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            pattern_id: &'a str,
+        }
+        invoke("list_recurring_matches", &Args { pattern_id }).await
+    }
+}
+
 pub async fn invoke_confirm_recurring(pattern_id: &str) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {

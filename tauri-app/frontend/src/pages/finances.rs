@@ -5692,6 +5692,31 @@ fn RecurringRowCard(
         (Some(f), Some(l)) => format!("{f} → {l}"),
         _ => "—".to_string(),
     };
+
+    // Drill-down (5.4): tap to load + inline the actual transactions this
+    // pattern was distilled from. Fetched lazily on first expand, once.
+    let pattern_id = row.pattern_id.clone();
+    let amount_label = format!("{} {}", row.amount, row.commodity);
+    let mut expanded = use_signal(|| false);
+    let mut matches: Signal<Vec<TransactionView>> = use_signal(Vec::new);
+    let mut loading = use_signal(|| false);
+    let mut fetched = use_signal(|| false);
+    let toggle = move |_| {
+        let open = !*expanded.peek();
+        expanded.set(open);
+        if open && !*fetched.peek() {
+            fetched.set(true);
+            loading.set(true);
+            let pid = pattern_id.clone();
+            spawn(async move {
+                if let Ok(txns) = bridge::invoke_list_recurring_matches(&pid).await {
+                    matches.set(txns);
+                }
+                loading.set(false);
+            });
+        }
+    };
+
     rsx! {
         div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex flex-col gap-3",
             div { class: "min-w-0",
@@ -5699,22 +5724,65 @@ fn RecurringRowCard(
                     "{row.vendor}"
                 }
                 div { class: "text-xs text-obsidian-text-muted mt-1",
-                    "{row.amount} {row.commodity} · {cadence} · {row.occurrences} occurrences"
+                    "{amount_label} · {cadence} · {row.occurrences} occurrences"
                 }
                 div { class: "text-xs text-obsidian-text-muted",
                     "Seen: {span_label}"
                 }
             }
-            div { class: "flex gap-2 justify-end",
+            div { class: "flex gap-2 justify-between items-center",
                 button {
-                    class: "px-3 py-1.5 text-xs text-red-300/80 hover:text-red-300 border border-red-500/20 hover:border-red-500/40 rounded",
-                    onclick: move |_| on_dismiss.call(()),
-                    "Dismiss"
+                    class: "text-xs text-obsidian-text-muted hover:text-obsidian-text underline decoration-dotted underline-offset-2",
+                    onclick: toggle,
+                    if *expanded.read() {
+                        "Hide transactions"
+                    } else {
+                        "View {row.occurrences} transactions"
+                    }
                 }
-                button {
-                    class: "px-3 py-1.5 text-xs text-emerald-300/90 hover:text-emerald-200 border border-emerald-500/30 hover:border-emerald-500/50 rounded",
-                    onclick: move |_| on_confirm.call(()),
-                    "Confirm"
+                div { class: "flex gap-2",
+                    button {
+                        class: "px-3 py-1.5 text-xs text-red-300/80 hover:text-red-300 border border-red-500/20 hover:border-red-500/40 rounded",
+                        onclick: move |_| on_dismiss.call(()),
+                        "Dismiss"
+                    }
+                    button {
+                        class: "px-3 py-1.5 text-xs text-emerald-300/90 hover:text-emerald-200 border border-emerald-500/30 hover:border-emerald-500/50 rounded",
+                        onclick: move |_| on_confirm.call(()),
+                        "Confirm"
+                    }
+                }
+            }
+
+            if *expanded.read() {
+                div { class: "border-t border-white/5 pt-3 space-y-1.5",
+                    if *loading.read() {
+                        div { class: "text-xs text-obsidian-text-muted", "Loading transactions…" }
+                    } else if matches.read().is_empty() {
+                        div { class: "text-xs text-obsidian-text-muted",
+                            "No matching transactions found."
+                        }
+                    } else {
+                        div { class: "text-[11px] uppercase tracking-wide text-obsidian-text-muted/70",
+                            "Matched transactions · {amount_label}"
+                        }
+                        for txn in matches.read().iter() {
+                            div {
+                                key: "{txn.id}",
+                                class: "flex items-baseline justify-between gap-3 text-xs",
+                                span { class: "text-obsidian-text-muted tabular-nums shrink-0",
+                                    "{txn.date}"
+                                }
+                                span { class: "text-obsidian-text truncate text-right",
+                                    if txn.description.is_empty() {
+                                        "{row.vendor}"
+                                    } else {
+                                        "{txn.description}"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

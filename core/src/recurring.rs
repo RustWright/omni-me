@@ -192,6 +192,29 @@ fn derive_pattern_id(category: &str, amount: &str, commodity: &str, cadence_days
     format!("recurring-{:016x}", hasher.finish())
 }
 
+/// Whether a single posting belongs to a detected pattern's group — the exact
+/// mirror of the grouping key in [`detect_parsed`] (Expenses account + amount
+/// rounded to 2dp + commodity). The recurring drill-down uses this to list the
+/// underlying transactions a pattern was distilled from, so the shown set
+/// matches what the detector actually counted. `pattern_amount_2dp` is the
+/// pattern row's stored `amount` string (already `Decimal::round_dp(2)`).
+pub fn posting_in_pattern(
+    posting_account: &str,
+    posting_amount_raw: &str,
+    posting_commodity: &str,
+    pattern_account: &str,
+    pattern_amount_2dp: &str,
+    pattern_commodity: &str,
+) -> bool {
+    if posting_account != pattern_account || posting_commodity != pattern_commodity {
+        return false;
+    }
+    match posting_amount_raw.parse::<Decimal>() {
+        Ok(qty) => qty.round_dp(2).to_string() == pattern_amount_2dp,
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +229,33 @@ mod tests {
             "amount": amount,
             "commodity": "CAD",
         })
+    }
+
+    #[test]
+    fn posting_in_pattern_mirrors_detector_grouping() {
+        // Exact account + commodity + amount (with 2dp normalization) matches.
+        assert!(posting_in_pattern(
+            "Expenses:Food:Coffee", "4.500", "CAD",
+            "Expenses:Food:Coffee", "4.50", "CAD"
+        ));
+        // Different account, amount, or commodity all reject.
+        assert!(!posting_in_pattern(
+            "Expenses:Food:Groceries", "4.50", "CAD",
+            "Expenses:Food:Coffee", "4.50", "CAD"
+        ));
+        assert!(!posting_in_pattern(
+            "Expenses:Food:Coffee", "5.00", "CAD",
+            "Expenses:Food:Coffee", "4.50", "CAD"
+        ));
+        assert!(!posting_in_pattern(
+            "Expenses:Food:Coffee", "4.50", "USD",
+            "Expenses:Food:Coffee", "4.50", "CAD"
+        ));
+        // Unparseable amount rejects rather than panics.
+        assert!(!posting_in_pattern(
+            "Expenses:Food:Coffee", "n/a", "CAD",
+            "Expenses:Food:Coffee", "4.50", "CAD"
+        ));
     }
 
     #[test]

@@ -1098,6 +1098,68 @@ pub async fn list_recurring(
     Ok(rows.into_iter().filter_map(pattern_row_to_view).collect())
 }
 
+/// The actual transactions a detected recurring pattern was distilled from
+/// (friction-log 5.4 drill-down). Re-finds the postings the detector grouped:
+/// query the pattern's Expenses account over its seen-window, then keep only
+/// transactions with a posting matching the pattern's exact account + amount
+/// (2dp) + commodity — the same key `recurring::detect_parsed` groups on, via
+/// the shared `recurring::posting_in_pattern`. Returns newest-first (the query
+/// orders by date DESC). Empty if the pattern id is unknown.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_recurring_matches(
+    state: State<'_, AppState>,
+    pattern_id: String,
+) -> Result<Vec<TransactionView>, String> {
+    let _t = CmdTimer::new("list_recurring_matches");
+    let rows = queries::list_recurring_patterns(&state.db, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(view) = rows
+        .into_iter()
+        .find(|r| r.id == pattern_id)
+        .and_then(pattern_row_to_view)
+    else {
+        return Ok(Vec::new());
+    };
+
+    let filter = TxnFilter {
+        account: Some(view.vendor.clone()),
+        date_from: view.first_seen.clone(),
+        date_to: view.last_seen.clone(),
+        ..Default::default()
+    };
+    let txn_rows = queries::list_transactions(&state.db, filter, 500, 0)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let matches = txn_rows
+        .into_iter()
+        .filter(|row| {
+            row.postings
+                .clone()
+                .into_json_value()
+                .as_array()
+                .is_some_and(|postings| {
+                    postings.iter().any(|p| {
+                        let acct = p.get("account").and_then(|v| v.as_str()).unwrap_or("");
+                        let amt = p.get("amount").and_then(|v| v.as_str()).unwrap_or("");
+                        let comm = p.get("commodity").and_then(|v| v.as_str()).unwrap_or("CAD");
+                        recurring::posting_in_pattern(
+                            acct,
+                            amt,
+                            comm,
+                            &view.vendor,
+                            &view.amount,
+                            &view.commodity,
+                        )
+                    })
+                })
+        })
+        .map(row_to_view)
+        .collect();
+    Ok(matches)
+}
+
 /// Result of a recurring-pattern scan — how many candidates the detector
 /// found vs how many were already tracked (and therefore skipped to
 /// preserve user confirmations).
