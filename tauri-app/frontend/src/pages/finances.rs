@@ -4794,6 +4794,23 @@ fn bar_height_pct(amount: &str, scale: f64) -> f64 {
     ((v / scale) * 100.0).clamp(0.0, 100.0)
 }
 
+/// Compact axis label for a `"YYYY-MM"` trend bucket: the abbreviated month name
+/// (`"2026-05"` → `"May"`). Keeps the trend axis readable on narrow screens
+/// (batch-2 #11 — the full `YYYY-MM` wrapped to two lines on the S9); the precise
+/// month+year still shows in the hover tooltip. Falls back to the raw string.
+fn short_month(month: &str) -> String {
+    const NAMES: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    month
+        .split('-')
+        .nth(1)
+        .and_then(|mm| mm.parse::<usize>().ok())
+        .filter(|m| (1..=12).contains(m))
+        .map(|m| NAMES[m - 1].to_string())
+        .unwrap_or_else(|| month.to_string())
+}
+
 /// Pretty-print a cadence in days as a human label.
 /// 30 → "monthly", 14 → "biweekly", 7 → "weekly", else "every N days".
 fn cadence_label(days: u32) -> String {
@@ -5016,11 +5033,13 @@ fn MonthlyTrendCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String)
                                     }
                                     div {
                                         class: if hovered == Some(i) {
-                                            "text-[10px] text-obsidian-text font-mono"
+                                            "text-[10px] text-obsidian-text font-mono whitespace-nowrap"
                                         } else {
-                                            "text-[10px] text-obsidian-text-muted font-mono"
+                                            "text-[10px] text-obsidian-text-muted font-mono whitespace-nowrap"
                                         },
-                                        "{bucket.month}"
+                                        // Compact month label (batch-2 #11) — the
+                                        // full YYYY-MM is in the hover tooltip.
+                                        "{short_month(&bucket.month)}"
                                     }
                                 }
                             }
@@ -6857,6 +6876,16 @@ mod tests {
     #[test]
     fn bar_height_pct_zero_scale_returns_zero() {
         assert_eq!(bar_height_pct("100", 0.0), 0.0);
+    }
+
+    #[test]
+    fn short_month_abbreviates_and_falls_back() {
+        assert_eq!(short_month("2026-05"), "May");
+        assert_eq!(short_month("2025-12"), "Dec");
+        assert_eq!(short_month("2026-01"), "Jan");
+        // Malformed / out-of-range inputs fall back to the raw string.
+        assert_eq!(short_month("2026-13"), "2026-13");
+        assert_eq!(short_month("weird"), "weird");
     }
 
     #[test]
