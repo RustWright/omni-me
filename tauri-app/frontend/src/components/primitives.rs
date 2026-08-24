@@ -26,15 +26,25 @@ pub const INPUT_CLASS: &str = "w-full px-3 py-2 bg-obsidian-sidebar border borde
 pub fn Card(
     #[props(default = String::new())] class: String,
     #[props(default = false)] interactive: bool,
+    /// Makes the whole card a click target (adds the interactive hover lift).
+    #[props(default)]
+    onclick: Option<EventHandler<MouseEvent>>,
     children: Element,
 ) -> Element {
-    let hover = if interactive {
+    let clickable = interactive || onclick.is_some();
+    let hover = if clickable {
         " transition-shadow hover:shadow-card-hover cursor-pointer"
     } else {
         ""
     };
     rsx! {
-        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4{hover} {class}",
+        div {
+            class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4{hover} {class}",
+            onclick: move |e| {
+                if let Some(h) = &onclick {
+                    h.call(e);
+                }
+            },
             {children}
         }
     }
@@ -47,12 +57,16 @@ pub fn Card(
 pub fn PageHeader(
     title: String,
     #[props(default = String::new())] subtitle: String,
+    /// Appended to the outer row — mostly for tuning the bottom margin
+    /// (default `mb-4`; pass e.g. `mb-6`/`mb-8` to override).
+    #[props(default = String::new())]
+    class: String,
     children: Element,
 ) -> Element {
     rsx! {
-        div { class: "flex items-start justify-between gap-4 mb-4",
+        div { class: "flex items-start justify-between gap-4 mb-4 {class}",
             div {
-                h1 { class: "text-2xl font-bold text-obsidian-accent", "{title}" }
+                h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "{title}" }
                 if !subtitle.is_empty() {
                     p { class: "mt-0.5 text-sm text-obsidian-text-muted", "{subtitle}" }
                 }
@@ -144,6 +158,49 @@ pub fn Button(
         button {
             r#type: if submit { "submit" } else { "button" },
             class: "{base} {sizing} {tone} {width} {class}",
+            disabled,
+            onclick: move |e| {
+                if let Some(h) = &onclick {
+                    h.call(e);
+                }
+            },
+            {children}
+        }
+    }
+}
+
+/// Square icon-only button — the app's toolbar/back/close/row affordance.
+/// Shares [`ButtonVariant`] tones with [`Button`] so a restyle of one tone
+/// flows to both. `label` becomes the `aria-label` (icon buttons have no text).
+/// `children` is the icon element.
+#[component]
+pub fn IconButton(
+    #[props(default = ButtonVariant::Secondary)] variant: ButtonVariant,
+    #[props(default)] size: ButtonSize,
+    #[props(default = false)] disabled: bool,
+    #[props(default = String::new())] label: String,
+    #[props(default = String::new())] class: String,
+    #[props(default)] onclick: Option<EventHandler<MouseEvent>>,
+    children: Element,
+) -> Element {
+    let base = "inline-flex items-center justify-center rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-obsidian-accent/60 disabled:opacity-50 disabled:cursor-not-allowed shrink-0";
+    let sizing = match size {
+        ButtonSize::Sm => "p-1.5",
+        ButtonSize::Md => "p-2",
+    };
+    let tone = match variant {
+        ButtonVariant::Primary => "bg-obsidian-accent text-white hover:bg-obsidian-accent/90",
+        ButtonVariant::Secondary => {
+            "bg-obsidian-surface text-obsidian-text border border-obsidian-border/10 hover:bg-white/5"
+        }
+        ButtonVariant::Ghost => "text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5",
+        ButtonVariant::Danger => "text-error hover:bg-error/15",
+    };
+    rsx! {
+        button {
+            r#type: "button",
+            class: "{base} {sizing} {tone} {class}",
+            "aria-label": if label.is_empty() { None } else { Some(label.clone()) },
             disabled,
             onclick: move |e| {
                 if let Some(h) = &onclick {

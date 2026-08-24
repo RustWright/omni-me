@@ -25,6 +25,17 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
   1. **#594 Stage D** — finish the design-primitive rollout (A/B/C done; D = roll the shared
      `Card/Button/PageHeader/...` primitives across journal / notes / settings / routines).
      *User thought this was already done — verify what's actually left before building; may be partial.*
+     **AUDIT (2026-08-24): NOT done. Finances is on the new elevated-card system (`obsidian-surface`
+     #262626 / `rounded-card` 12px / `shadow-card` / `obsidian-border` token, 17× each); the other 4
+     pages are still the old flat look (`obsidian-sidebar`/`white/5`, `rounded-lg` 8px, no shadow,
+     `white/10` literal — 0× the new tokens). Primitives barely adopted even in finances (inline cards ×6).
+     Note: `obsidian-border`==white so border swap is light-theme-only (invisible in dark); surface/radius/
+     shadow are the visible deltas. `PageHeader` primitive lacks `tracking-tight` the pages all use → fix it.
+     **SCOPE = Option 3 (user, 2026-08-24): FULL primitive refactor across ALL 5 pages** (incl. finances) +
+     fold `date_field`/`account_input` input copies into `INPUT_CLASS`. Rationale: primitives as single
+     source of truth to facilitate NEXT-phase design changes; accepts higher breakage risk (tests +
+     Playwright + on-device catch as the net). Verify loop: `cargo check --target wasm32-unknown-unknown
+     --features mock` (~8s) + a non-mock check per page. One reviewable commit per page.*
   2. **#370** — desktop freezes on FIRST open after a full reset (not on subsequent opens). Fix the
      cold-open/editor-init hang, desktop side.
   3. **#372** — Android hardware/gesture back button → pop in-app nav first (not close the app).

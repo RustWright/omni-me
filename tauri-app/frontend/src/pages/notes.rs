@@ -4,7 +4,10 @@ use crate::autosave::{self, SaveIndicator, SaveState};
 use crate::bridge;
 use crate::components::editor::Editor;
 use crate::components::icon::{Icon, IconName};
-use crate::components::primitives::{Banner, BannerKind, Button};
+use crate::components::primitives::{
+    Banner, BannerKind, Button, ButtonSize, ButtonVariant, Card, IconButton, PageHeader,
+    SegmentedNav,
+};
 use crate::components::tag_editor::TagChipEditor;
 use crate::continuity::{use_continuity, ContinuityKey, EditSession};
 use crate::note_frontmatter::{serialize_note, split_note, NoteProps};
@@ -140,26 +143,25 @@ pub fn NotesPage() -> Element {
 
 #[component]
 fn NotesSubNav(active: NotesSubTab, on_switch: EventHandler<NotesSubTab>) -> Element {
-    let tab_class = move |tab: NotesSubTab| -> &'static str {
-        if tab == active {
-            "px-4 py-1.5 text-sm font-semibold rounded-md bg-obsidian-sidebar text-obsidian-accent transition-colors"
-        } else {
-            "px-4 py-1.5 text-sm font-medium rounded-md bg-transparent text-obsidian-text-muted hover:text-obsidian-text transition-colors"
-        }
+    let active_key = match active {
+        NotesSubTab::Recent => "recent",
+        NotesSubTab::Search => "search",
     };
-
     rsx! {
-        div { class: "flex gap-1 mb-6 p-1 bg-obsidian-sidebar/40 border border-white/5 rounded-lg w-fit",
-            button {
-                class: "{tab_class(NotesSubTab::Recent)}",
-                onclick: move |_| on_switch.call(NotesSubTab::Recent),
-                "Recent"
-            }
-            button {
-                class: "{tab_class(NotesSubTab::Search)}",
-                onclick: move |_| on_switch.call(NotesSubTab::Search),
-                "Search"
-            }
+        SegmentedNav {
+            class: "mb-6",
+            items: vec![
+                ("recent".to_string(), "Recent".to_string()),
+                ("search".to_string(), "Search".to_string()),
+            ],
+            active: active_key.to_string(),
+            on_select: move |k: String| {
+                on_switch
+                    .call(match k.as_str() {
+                        "search" => NotesSubTab::Search,
+                        _ => NotesSubTab::Recent,
+                    })
+            },
         }
     }
 }
@@ -201,8 +203,7 @@ fn RecentView(on_edit: EventHandler<String>, on_new: EventHandler<()>) -> Elemen
 
     rsx! {
         div { class: "animate-in fade-in duration-200",
-            div { class: "flex justify-between items-center mb-6",
-                h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Notes" }
+            PageHeader { title: "Notes", class: "mb-6",
                 Button {
                     onclick: move |_| on_new.call(()),
                     Icon { name: IconName::Plus, class: "w-5 h-5" }
@@ -278,10 +279,11 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
                         },
                     }
                     if !query.read().is_empty() {
-                        button {
-                            r#type: "button",
-                            "aria-label": "Clear search",
-                            class: "absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5 transition-colors",
+                        IconButton {
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            label: "Clear search",
+                            class: "absolute right-2 top-1/2 -translate-y-1/2",
                             onclick: move |_| {
                                 query.set(String::new());
                                 results.set(vec![]);
@@ -322,9 +324,10 @@ fn NoteCard(note: GenericNoteItem, on_click: EventHandler<String>) -> Element {
     let id = note.id.clone();
 
     rsx! {
-        div {
-            class: "group p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg cursor-pointer transition-all hover:bg-white/5 hover:border-white/10 active:scale-[0.98]",
+        Card {
+            interactive: true,
             onclick: move |_| on_click.call(id.clone()),
+            class: "group active:scale-[0.98]",
             div { class: "font-semibold text-obsidian-text mb-1", "{note.title}" }
             div { class: "text-[13px] leading-relaxed text-obsidian-text-muted line-clamp-2 mb-2",
                 "{preview}"
@@ -597,9 +600,8 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
         // Fill-height flex column so the editor grows to fill the screen (Phase 5).
         div { class: "animate-in fade-in slide-in-from-bottom-4 duration-300 flex flex-col flex-1 min-h-0",
             div { class: "flex justify-between items-center mb-6 gap-3",
-                button {
-                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors shrink-0",
-                    "aria-label": "Back",
+                IconButton {
+                    label: "Back",
                     onclick: move |_| on_back.call(()),
                     Icon { name: IconName::ArrowLeft, class: "w-5 h-5" }
                 }
@@ -627,8 +629,8 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                     };
                     rsx! { SaveIndicator { state: save_state } }
                 }
-                button {
-                    class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50 shrink-0",
+                Button {
+                    class: "shrink-0",
                     disabled: *saving.read() || title.read().trim().is_empty(),
                     onclick: move |_| {
                         let existing_id = local_note_id.peek().clone();
@@ -706,7 +708,9 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
             }
 
             if let Some(status) = &*save_status.read() {
-                div { class: "mt-4 p-3 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
+                Banner {
+                    kind: BannerKind::Info,
+                    class: "mt-4 animate-in zoom-in-95 duration-200",
                     "{status}"
                 }
             }
