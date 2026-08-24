@@ -1,7 +1,7 @@
 import { EditorView, minimalSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
-import { EditorState, RangeSetBuilder } from "@codemirror/state";
-import { Decoration, ViewPlugin, WidgetType, keymap } from "@codemirror/view";
+import { EditorState, RangeSetBuilder, Annotation } from "@codemirror/state";
+import { Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
 
 // ---------------------------------------------------------------------------
 // Editor typography theme (Phase 5 "editor feel")
@@ -55,9 +55,26 @@ const omniEditorTheme = EditorView.theme({
     borderLeftColor: "#448aff",
     borderLeftWidth: "2px",
   },
+  // #344 reveal-on-select line completion time: floated to the right edge of the
+  // active line, small and muted so it reads as metadata, never selectable.
+  ".cm-ts-reveal": {
+    float: "right",
+    marginLeft: "1.5em",
+    color: "#6f747d",
+    fontSize: "0.72em",
+    lineHeight: "1.65",
+    letterSpacing: "0.02em",
+    fontVariantNumeric: "tabular-nums",
+    userSelect: "none",
+    pointerEvents: "none",
+    whiteSpace: "nowrap",
+  },
 });
 
 let editorView = null;
+// Set when a journal editor is created (#344): stamps the final in-progress line
+// on teardown, before the view is destroyed. null for non-journal editors.
+let timestampFlush = null;
 let isDirty = false;
 // Sticky "the user has edited this editor instance at least once". Unlike
 // `isDirty`, this is NOT cleared by markClean()/autosave — only reset when a
@@ -331,39 +348,296 @@ const checkboxPlugin = ViewPlugin.fromClass(
 );
 
 // ---------------------------------------------------------------------------
-// 1.3 - Journal-mode line timestamp on Enter
+// 1.3 - Journal-mode reveal-on-select line completion timestamps (#344)
 // ---------------------------------------------------------------------------
+//
+// Every line you finish in a journal is silently stamped with the wall-clock
+// time you left it. The stamp lives IN the text (Option A) as a concealed line
+// PREFIX token `⟦YYYY-MM-DD HH:MM TZ⟧` — distinctive math brackets so it can't
+// collide with anything a user types, a full date + 24h time + tz captured once
+// at finish. A ViewPlugin hides the token on every line and, on the ACTIVE line
+// only, reveals a reformatted 12h time floated to the right. The stamp FREEZES
+// at first finish: going back to fix a typo never moves the time (a line that
+// already carries a token is never re-stamped). Cross-day is handled by the
+// stored date: when a line was finished on a different day than the journal it
+// belongs to, the reveal carries that day ("Aug 24 · 7:12 AM EDT") instead of a
+// bare time — for the nights the entry is closed out the next morning.
 
 function pad2(n) {
   return n < 10 ? "0" + n : "" + n;
 }
 
-function currentTimestamp() {
-  const d = new Date();
-  return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + " ";
+const TS_OPEN = "⟦"; // ⟦
+const TS_CLOSE = "⟧"; // ⟧
+// A token is only ever a line PREFIX: ⟦YYYY-MM-DD HH:MM TZ⟧ glued to the content
+// (no trailing space — concealing it to nothing leaves exactly the user's text).
+// The tz group is anything up to the closing bracket, and optional (some envs
+// return no zone abbreviation).
+const TS_TOKEN_RE =
+  /^⟦(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: ([^⟧]+))?⟧/;
+
+const TS_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+// Best-effort short zone abbreviation (EDT, PST, …) for a Date. Empty when the
+// runtime won't give one; the token/format code both tolerate a missing tz.
+function tzAbbrev(d) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZoneName: "short",
+    }).formatToParts(d);
+    const tz = parts.find((p) => p.type === "timeZoneName");
+    if (tz && tz.value && !/^GMT[+-]/.test(tz.value)) return tz.value;
+  } catch (_) {
+    /* fall through to no-tz */
+  }
+  return "";
 }
 
-// Keymap entry: on Enter at end of line, insert newline + HH:MM + space.
-// If the user pressed Enter mid-line, behave normally (don't inject timestamp).
-function timestampEnterHandler(view) {
-  const { state } = view;
-  const sel = state.selection.main;
-  if (!sel.empty) return false;
-  const line = state.doc.lineAt(sel.from);
-  if (sel.from !== line.to) return false; // not at end of line
-  const ts = currentTimestamp();
-  view.dispatch({
-    changes: { from: sel.from, to: sel.from, insert: "\n" + ts },
-    selection: { anchor: sel.from + 1 + ts.length },
-    userEvent: "input",
-    scrollIntoView: true,
+// Build the concealed prefix token for a finish time (default: now).
+function makeTimestampToken(d) {
+  d = d || new Date();
+  const date =
+    d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  const time = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  const tz = tzAbbrev(d);
+  const core = tz ? date + " " + time + " " + tz : date + " " + time;
+  return TS_OPEN + core + TS_CLOSE;
+}
+
+/**
+ * Pure: turn a stored token (or a line that starts with one) into its revealed
+ * label, given the journal's entry date (YYYY-MM-DD). Same-day → bare 12h time
+ * `7:12 AM EDT`; a line finished on another day → date-qualified
+ * `Aug 24 · 7:12 AM EDT`. Returns "" when the string carries no valid token.
+ * Exposed on `window` for unit verification.
+ * @param {string} token
+ * @param {string} entryDate
+ * @returns {string}
+ */
+function formatRevealTime(token, entryDate) {
+  const m = String(token || "").match(TS_TOKEN_RE);
+  if (!m) return "";
+  const dateStr = m[1];
+  const timeStr = m[2];
+  const tz = m[3] || "";
+  const hh = parseInt(timeStr.slice(0, 2), 10);
+  const mm = timeStr.slice(3, 5);
+  const ampm = hh < 12 ? "AM" : "PM";
+  let h12 = hh % 12;
+  if (h12 === 0) h12 = 12;
+  const clock = h12 + ":" + mm + " " + ampm + (tz ? " " + tz : "");
+  if (entryDate && dateStr === entryDate) return clock;
+  const mo = TS_MONTHS[parseInt(dateStr.slice(5, 7), 10) - 1] || dateStr.slice(5, 7);
+  const day = parseInt(dateStr.slice(8, 10), 10);
+  return mo + " " + day + " · " + clock;
+}
+window.formatRevealTime = formatRevealTime;
+
+// Reveal widget: the human time, floated right on the active line only.
+class RevealWidget extends WidgetType {
+  constructor(label) {
+    super();
+    this.label = label;
+  }
+  eq(other) {
+    return other.label === this.label;
+  }
+  toDOM() {
+    const span = document.createElement("span");
+    span.className = "cm-ts-reveal";
+    span.textContent = this.label;
+    return span;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+// Build both the conceal decorations (hide the token on every visible line) and,
+// on the active line, the end-of-line reveal widget. The conceal set is returned
+// separately so it can also feed `atomicRanges` — arrow keys / Home then step
+// over the hidden token instead of parking an invisible caret inside it.
+function buildTimestampDecorations(view, entryDate) {
+  const deco = new RangeSetBuilder();
+  const atomic = new RangeSetBuilder();
+  const activeLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from;
+    while (pos <= to) {
+      const line = view.state.doc.lineAt(pos);
+      const m = line.text.match(TS_TOKEN_RE);
+      if (m) {
+        const tokEnd = line.from + m[0].length;
+        deco.add(line.from, tokEnd, Decoration.replace({}));
+        atomic.add(line.from, tokEnd, Decoration.replace({}));
+        if (line.number === activeLine) {
+          const label = formatRevealTime(m[0], entryDate);
+          if (label) {
+            deco.add(
+              line.to,
+              line.to,
+              Decoration.widget({ widget: new RevealWidget(label), side: 1 }),
+            );
+          }
+        }
+      }
+      if (line.to >= to) break;
+      pos = line.to + 1;
+    }
+  }
+  return { deco: deco.finish(), atomic: atomic.finish() };
+}
+
+// Conceal + reveal plugin, parameterized by the journal's entry date so the
+// reveal can decide same-day vs cross-day. Rebuilds on doc, viewport, AND
+// selection change (the reveal follows the caret to the active line).
+function timestampViewPlugin(entryDate) {
+  const plugin = ViewPlugin.fromClass(
+    class {
+      constructor(view) {
+        const built = buildTimestampDecorations(view, entryDate);
+        this.decorations = built.deco;
+        this.atomic = built.atomic;
+      }
+      update(u) {
+        if (u.docChanged || u.viewportChanged || u.selectionSet) {
+          const built = buildTimestampDecorations(u.view, entryDate);
+          this.decorations = built.deco;
+          this.atomic = built.atomic;
+        }
+      }
+    },
+    {
+      decorations: (v) => v.decorations,
+      provide: (plugin) =>
+        EditorView.atomicRanges.of(
+          (view) => view.plugin(plugin)?.atomic || Decoration.none,
+        ),
+    },
+  );
+  return plugin;
+}
+
+// Stamp transactions carry this annotation so the stamp listener ignores its own
+// insertions (they must not re-mark the line as freshly touched).
+const stampAnnotation = Annotation.define();
+
+// The stamp side: watch the caret leave a line the user changed, and prepend a
+// completion token to it. `entryDate` is captured only to keep the whole feature
+// scoped to one editor session; the closure state (touched lines + last caret
+// line) is per-editor. Returns an updateListener extension plus a `flush(view)`
+// used by blur/teardown to stamp the final in-progress line.
+function timestampStamper() {
+  // Line numbers (1-based) the user has edited this session and that are still
+  // candidates for stamping. Remapped through every doc change so the identity
+  // survives inserts/deletes above them.
+  const touched = new Set();
+  let caretLine = null;
+
+  // Synchronous stamp of one line, honoring every guard: it must be a candidate
+  // (touched this session), not already frozen (no existing token), and have
+  // real content. Deleting from `touched` here makes a second call idempotent,
+  // so blur + teardown can't double-stamp the same in-progress line.
+  function stampLine(view, lineNo) {
+    if (!view || lineNo == null) return;
+    const doc = view.state.doc;
+    if (lineNo < 1 || lineNo > doc.lines) return;
+    if (!touched.has(lineNo)) return;
+    const line = doc.line(lineNo);
+    if (TS_TOKEN_RE.test(line.text)) {
+      touched.delete(lineNo); // already frozen
+      return;
+    }
+    if (line.text.trim().length === 0) return; // nothing to stamp yet; keep candidate
+    touched.delete(lineNo);
+    view.dispatch({
+      changes: { from: line.from, to: line.from, insert: makeTimestampToken() },
+      annotations: stampAnnotation.of(true),
+    });
+  }
+
+  const listener = EditorView.updateListener.of((update) => {
+    // Ignore our own stamp insertions: only keep the caret line in sync.
+    if (update.transactions.some((tr) => tr.annotation(stampAnnotation))) {
+      caretLine = update.state.doc.lineAt(
+        update.state.selection.main.head,
+      ).number;
+      return;
+    }
+
+    // Programmatic content replacement (initial load / live sync-refresh) sets
+    // `suppressDirty`. It must NEVER mark lines as user-touched, or merely
+    // navigating a freshly-loaded old journal would back-stamp its lines.
+    // Drop any stale candidates (the doc was replaced wholesale) and bail.
+    if (suppressDirty) {
+      touched.clear();
+      caretLine = update.state.doc.lineAt(
+        update.state.selection.main.head,
+      ).number;
+      return;
+    }
+
+    // Map the previously-tracked caret line forward through this edit, so
+    // "which line did the caret leave" is computed against the new doc.
+    if (update.docChanged) {
+      const oldDoc = update.startState.doc;
+      const newDoc = update.state.doc;
+      if (caretLine != null && caretLine >= 1 && caretLine <= oldDoc.lines) {
+        const mapped = update.changes.mapPos(oldDoc.line(caretLine).from, 1);
+        caretLine = newDoc.lineAt(mapped).number;
+      }
+      // Remap the touched set forward, then mark the line the caret now sits on
+      // as authored-this-session. Marking the CARET line (not the raw changed
+      // range) is deliberate: pressing Enter at the end of a pre-existing line
+      // technically "changes" that upper line (its newline), but the caret has
+      // already moved to the new line below — so a plain Enter after old content
+      // never marks it, and only lines the user actually composes on become
+      // stamp candidates. (Under-marking a multi-line paste's interior lines is
+      // the acceptable trade: a missed stamp beats stamping untouched history.)
+      const remapped = new Set();
+      touched.forEach((ln) => {
+        if (ln < 1 || ln > oldDoc.lines) return;
+        const mapped = update.changes.mapPos(oldDoc.line(ln).from, 1);
+        remapped.add(newDoc.lineAt(mapped).number);
+      });
+      remapped.add(newDoc.lineAt(update.state.selection.main.head).number);
+      touched.clear();
+      remapped.forEach((n) => touched.add(n));
+    }
+
+    const newCaretLine = update.state.doc.lineAt(
+      update.state.selection.main.head,
+    ).number;
+    if (caretLine != null && newCaretLine !== caretLine) {
+      // Defer the stamp out of the update cycle (CM forbids dispatching from
+      // within update). A microtask runs before the user can edit again, so the
+      // captured line number is still valid when stampLine re-reads it.
+      const leftLine = caretLine;
+      Promise.resolve().then(() => stampLine(editorView, leftLine));
+    }
+    caretLine = newCaretLine;
   });
-  return true;
-}
 
-const journalTimestampKeymap = keymap.of([
-  { key: "Enter", run: timestampEnterHandler },
-]);
+  // Blur / teardown: stamp the line the caret is currently sitting on (the last
+  // line still in progress) — the reliable "finished" signal for a final line
+  // the user never pressed Enter after. Synchronous so onChange fires (and the
+  // token persists) before the editor is torn down.
+  const blurHandler = EditorView.domEventHandlers({
+    blur(_event, view) {
+      stampLine(view, view.state.doc.lineAt(view.state.selection.main.head).number);
+    },
+  });
+
+  function flush(view) {
+    if (!view) return;
+    stampLine(view, view.state.doc.lineAt(view.state.selection.main.head).number);
+  }
+
+  return { extensions: [listener, blurHandler], flush };
+}
 
 // ---------------------------------------------------------------------------
 // 1.10 - Keep the caret above the soft keyboard
@@ -467,9 +741,19 @@ window.addEventListener("omni:keyboardinset", keepCaretAboveKeyboard);
 window.createEditor = function (elementId, initialContent, onChange, options) {
   // Destroy any existing editor first
   if (editorView) {
+    // #344: flush the final in-progress line of the OUTGOING editor before we
+    // replace it, so its completion time isn't lost on a remount.
+    if (timestampFlush) {
+      try {
+        timestampFlush(editorView);
+      } catch (e) {
+        console.error("timestamp flush on recreate threw:", e);
+      }
+    }
     editorView.destroy();
     editorView = null;
   }
+  timestampFlush = null;
 
   // Reset dirty state on fresh editor creation. A remount (navigate away + back)
   // makes a fresh editor, so `everDirty` clears too — the load path re-seeds from
@@ -485,6 +769,10 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
 
   const journalMode = !!(options && options.journalMode);
   const readOnly = !!(options && options.readOnly);
+  // #344: the journal day being edited (YYYY-MM-DD), used to decide same-day vs
+  // cross-day reveal formatting. Absent for notes.
+  const entryDate =
+    options && typeof options.entryDate === "string" ? options.entryDate : "";
   // 1.8b position restoration: a saved caret offset to restore, and a callback
   // fired whenever the selection moves so the Rust side can keep the stored
   // offset current.
@@ -502,9 +790,18 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
     checkboxPlugin,
   ];
 
+  // #344 reveal-on-select line timestamps — journal only, and never in read-only
+  // (a closed journal is a frozen record; concealing tokens still applies, but no
+  // stamping). The conceal/reveal plugin runs regardless so previously-stamped
+  // closed entries still hide their tokens; the stamper is gated on !readOnly.
+  timestampFlush = null;
   if (journalMode) {
-    // Prepend timestamp keymap so it runs before minimalSetup's Enter handler.
-    extensions.unshift(journalTimestampKeymap);
+    extensions.push(timestampViewPlugin(entryDate));
+    if (!readOnly) {
+      const stamper = timestampStamper();
+      extensions.push(...stamper.extensions);
+      timestampFlush = stamper.flush;
+    }
   }
 
   if (readOnly) {
@@ -617,8 +914,18 @@ window.setEditorContent = function (content) {
  */
 window.destroyEditor = function () {
   if (editorView) {
+    // #344: stamp the final in-progress line before tearing down, so its
+    // completion time persists via the resulting onChange.
+    if (timestampFlush) {
+      try {
+        timestampFlush(editorView);
+      } catch (e) {
+        console.error("timestamp flush on destroy threw:", e);
+      }
+    }
     editorView.destroy();
     editorView = null;
   }
+  timestampFlush = null;
   emitClean();
 };

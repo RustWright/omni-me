@@ -25060,9 +25060,24 @@
     ".cm-cursor, .cm-dropCursor": {
       borderLeftColor: "#448aff",
       borderLeftWidth: "2px"
+    },
+    // #344 reveal-on-select line completion time: floated to the right edge of the
+    // active line, small and muted so it reads as metadata, never selectable.
+    ".cm-ts-reveal": {
+      float: "right",
+      marginLeft: "1.5em",
+      color: "#6f747d",
+      fontSize: "0.72em",
+      lineHeight: "1.65",
+      letterSpacing: "0.02em",
+      fontVariantNumeric: "tabular-nums",
+      userSelect: "none",
+      pointerEvents: "none",
+      whiteSpace: "nowrap"
     }
   });
   var editorView = null;
+  var timestampFlush = null;
   var isDirty = false;
   var everDirty = false;
   var suppressDirty = false;
@@ -25275,28 +25290,205 @@
   function pad2(n) {
     return n < 10 ? "0" + n : "" + n;
   }
-  function currentTimestamp() {
-    const d = /* @__PURE__ */ new Date();
-    return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + " ";
+  var TS_OPEN = "\u27E6";
+  var TS_CLOSE = "\u27E7";
+  var TS_TOKEN_RE = /^⟦(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: ([^⟧]+))?⟧/;
+  var TS_MONTHS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec"
+  ];
+  function tzAbbrev(d) {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZoneName: "short"
+      }).formatToParts(d);
+      const tz = parts.find((p) => p.type === "timeZoneName");
+      if (tz && tz.value && !/^GMT[+-]/.test(tz.value)) return tz.value;
+    } catch (_) {
+    }
+    return "";
   }
-  function timestampEnterHandler(view) {
-    const { state } = view;
-    const sel = state.selection.main;
-    if (!sel.empty) return false;
-    const line = state.doc.lineAt(sel.from);
-    if (sel.from !== line.to) return false;
-    const ts = currentTimestamp();
-    view.dispatch({
-      changes: { from: sel.from, to: sel.from, insert: "\n" + ts },
-      selection: { anchor: sel.from + 1 + ts.length },
-      userEvent: "input",
-      scrollIntoView: true
+  function makeTimestampToken(d) {
+    d = d || /* @__PURE__ */ new Date();
+    const date = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+    const time = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    const tz = tzAbbrev(d);
+    const core = tz ? date + " " + time + " " + tz : date + " " + time;
+    return TS_OPEN + core + TS_CLOSE;
+  }
+  function formatRevealTime(token, entryDate) {
+    const m = String(token || "").match(TS_TOKEN_RE);
+    if (!m) return "";
+    const dateStr = m[1];
+    const timeStr = m[2];
+    const tz = m[3] || "";
+    const hh = parseInt(timeStr.slice(0, 2), 10);
+    const mm = timeStr.slice(3, 5);
+    const ampm = hh < 12 ? "AM" : "PM";
+    let h12 = hh % 12;
+    if (h12 === 0) h12 = 12;
+    const clock = h12 + ":" + mm + " " + ampm + (tz ? " " + tz : "");
+    if (entryDate && dateStr === entryDate) return clock;
+    const mo = TS_MONTHS[parseInt(dateStr.slice(5, 7), 10) - 1] || dateStr.slice(5, 7);
+    const day = parseInt(dateStr.slice(8, 10), 10);
+    return mo + " " + day + " \xB7 " + clock;
+  }
+  window.formatRevealTime = formatRevealTime;
+  var RevealWidget = class extends WidgetType {
+    constructor(label) {
+      super();
+      this.label = label;
+    }
+    eq(other) {
+      return other.label === this.label;
+    }
+    toDOM() {
+      const span = document.createElement("span");
+      span.className = "cm-ts-reveal";
+      span.textContent = this.label;
+      return span;
+    }
+    ignoreEvent() {
+      return true;
+    }
+  };
+  function buildTimestampDecorations(view, entryDate) {
+    const deco = new RangeSetBuilder();
+    const atomic = new RangeSetBuilder();
+    const activeLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+    for (const { from, to } of view.visibleRanges) {
+      let pos = from;
+      while (pos <= to) {
+        const line = view.state.doc.lineAt(pos);
+        const m = line.text.match(TS_TOKEN_RE);
+        if (m) {
+          const tokEnd = line.from + m[0].length;
+          deco.add(line.from, tokEnd, Decoration.replace({}));
+          atomic.add(line.from, tokEnd, Decoration.replace({}));
+          if (line.number === activeLine) {
+            const label = formatRevealTime(m[0], entryDate);
+            if (label) {
+              deco.add(
+                line.to,
+                line.to,
+                Decoration.widget({ widget: new RevealWidget(label), side: 1 })
+              );
+            }
+          }
+        }
+        if (line.to >= to) break;
+        pos = line.to + 1;
+      }
+    }
+    return { deco: deco.finish(), atomic: atomic.finish() };
+  }
+  function timestampViewPlugin(entryDate) {
+    const plugin = ViewPlugin.fromClass(
+      class {
+        constructor(view) {
+          const built = buildTimestampDecorations(view, entryDate);
+          this.decorations = built.deco;
+          this.atomic = built.atomic;
+        }
+        update(u) {
+          if (u.docChanged || u.viewportChanged || u.selectionSet) {
+            const built = buildTimestampDecorations(u.view, entryDate);
+            this.decorations = built.deco;
+            this.atomic = built.atomic;
+          }
+        }
+      },
+      {
+        decorations: (v) => v.decorations,
+        provide: (plugin2) => EditorView.atomicRanges.of(
+          (view) => view.plugin(plugin2)?.atomic || Decoration.none
+        )
+      }
+    );
+    return plugin;
+  }
+  var stampAnnotation = Annotation.define();
+  function timestampStamper() {
+    const touched = /* @__PURE__ */ new Set();
+    let caretLine = null;
+    function stampLine(view, lineNo) {
+      if (!view || lineNo == null) return;
+      const doc2 = view.state.doc;
+      if (lineNo < 1 || lineNo > doc2.lines) return;
+      if (!touched.has(lineNo)) return;
+      const line = doc2.line(lineNo);
+      if (TS_TOKEN_RE.test(line.text)) {
+        touched.delete(lineNo);
+        return;
+      }
+      if (line.text.trim().length === 0) return;
+      touched.delete(lineNo);
+      view.dispatch({
+        changes: { from: line.from, to: line.from, insert: makeTimestampToken() },
+        annotations: stampAnnotation.of(true)
+      });
+    }
+    const listener = EditorView.updateListener.of((update) => {
+      if (update.transactions.some((tr) => tr.annotation(stampAnnotation))) {
+        caretLine = update.state.doc.lineAt(
+          update.state.selection.main.head
+        ).number;
+        return;
+      }
+      if (suppressDirty) {
+        touched.clear();
+        caretLine = update.state.doc.lineAt(
+          update.state.selection.main.head
+        ).number;
+        return;
+      }
+      if (update.docChanged) {
+        const oldDoc = update.startState.doc;
+        const newDoc = update.state.doc;
+        if (caretLine != null && caretLine >= 1 && caretLine <= oldDoc.lines) {
+          const mapped = update.changes.mapPos(oldDoc.line(caretLine).from, 1);
+          caretLine = newDoc.lineAt(mapped).number;
+        }
+        const remapped = /* @__PURE__ */ new Set();
+        touched.forEach((ln) => {
+          if (ln < 1 || ln > oldDoc.lines) return;
+          const mapped = update.changes.mapPos(oldDoc.line(ln).from, 1);
+          remapped.add(newDoc.lineAt(mapped).number);
+        });
+        remapped.add(newDoc.lineAt(update.state.selection.main.head).number);
+        touched.clear();
+        remapped.forEach((n) => touched.add(n));
+      }
+      const newCaretLine = update.state.doc.lineAt(
+        update.state.selection.main.head
+      ).number;
+      if (caretLine != null && newCaretLine !== caretLine) {
+        const leftLine = caretLine;
+        Promise.resolve().then(() => stampLine(editorView, leftLine));
+      }
+      caretLine = newCaretLine;
     });
-    return true;
+    const blurHandler = EditorView.domEventHandlers({
+      blur(_event, view) {
+        stampLine(view, view.state.doc.lineAt(view.state.selection.main.head).number);
+      }
+    });
+    function flush(view) {
+      if (!view) return;
+      stampLine(view, view.state.doc.lineAt(view.state.selection.main.head).number);
+    }
+    return { extensions: [listener, blurHandler], flush };
   }
-  var journalTimestampKeymap = keymap.of([
-    { key: "Enter", run: timestampEnterHandler }
-  ]);
   function findScrollParent(el) {
     let node = el ? el.parentElement : null;
     while (node) {
@@ -25351,9 +25543,17 @@
   window.addEventListener("omni:keyboardinset", keepCaretAboveKeyboard);
   window.createEditor = function(elementId, initialContent, onChange, options) {
     if (editorView) {
+      if (timestampFlush) {
+        try {
+          timestampFlush(editorView);
+        } catch (e) {
+          console.error("timestamp flush on recreate threw:", e);
+        }
+      }
       editorView.destroy();
       editorView = null;
     }
+    timestampFlush = null;
     isDirty = false;
     everDirty = false;
     const parent = document.getElementById(elementId);
@@ -25363,6 +25563,7 @@
     }
     const journalMode = !!(options && options.journalMode);
     const readOnly2 = !!(options && options.readOnly);
+    const entryDate = options && typeof options.entryDate === "string" ? options.entryDate : "";
     const onCursor = options && typeof options.onCursor === "function" ? options.onCursor : null;
     const initialCursor = options && Number.isFinite(options.initialCursor) ? options.initialCursor : 0;
     const extensions = [
@@ -25373,8 +25574,14 @@
       autoWrapFilter,
       checkboxPlugin
     ];
+    timestampFlush = null;
     if (journalMode) {
-      extensions.unshift(journalTimestampKeymap);
+      extensions.push(timestampViewPlugin(entryDate));
+      if (!readOnly2) {
+        const stamper = timestampStamper();
+        extensions.push(...stamper.extensions);
+        timestampFlush = stamper.flush;
+      }
     }
     if (readOnly2) {
       extensions.push(EditorView.editable.of(false));
@@ -25437,9 +25644,17 @@
   };
   window.destroyEditor = function() {
     if (editorView) {
+      if (timestampFlush) {
+        try {
+          timestampFlush(editorView);
+        } catch (e) {
+          console.error("timestamp flush on destroy threw:", e);
+        }
+      }
       editorView.destroy();
       editorView = null;
     }
+    timestampFlush = null;
     emitClean();
   };
 })();
