@@ -5143,9 +5143,15 @@ fn RecurringObligationRow(r: RecurringObligationView) -> Element {
             button {
                 class: "w-full flex items-baseline justify-between text-sm gap-3 text-left",
                 onclick: toggle,
-                div { class: "min-w-0",
-                    span { class: "text-obsidian-text font-medium", "{r.vendor}" }
-                    span { class: "text-obsidian-text-muted text-xs ml-2",
+                span { class: "flex items-baseline gap-2 min-w-0",
+                    // `truncate` + `min-w-0` lets a long account-path vendor
+                    // (e.g. `Expenses:Housing:Rent`) ellipsize instead of
+                    // overflowing into the amount; cadence stays `shrink-0`
+                    // so "monthly" and the amount are never clipped.
+                    span { class: "text-obsidian-text font-medium truncate min-w-0",
+                        "{r.vendor}"
+                    }
+                    span { class: "text-obsidian-text-muted text-xs shrink-0",
                         "{cadence_label(r.cadence_days)}"
                     }
                 }
