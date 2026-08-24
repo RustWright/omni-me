@@ -69,6 +69,12 @@ extern "C" {
     pub fn js_set_editor_content(content: &str);
     #[wasm_bindgen(js_name = destroyEditor)]
     pub fn js_destroy_editor();
+    // #344: stamp the final in-progress journal line right now and return the
+    // resulting content. Called from the app's background/page-hide handler so a
+    // written-but-never-left line is stamped + persisted before a swiped-away
+    // app is killed (blur/destroy don't fire reliably on Android background).
+    #[wasm_bindgen(js_name = flushEditorTimestamps)]
+    pub fn js_flush_editor_timestamps() -> String;
     #[wasm_bindgen(js_name = markClean)]
     pub fn js_mark_editor_clean();
     // Sticky "user has edited this editor instance" — survives autosave's

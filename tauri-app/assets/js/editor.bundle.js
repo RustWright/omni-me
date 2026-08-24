@@ -25623,6 +25623,16 @@
     if (!editorView) return "";
     return editorView.state.doc.toString();
   };
+  window.flushEditorTimestamps = function() {
+    if (editorView && timestampFlush) {
+      try {
+        timestampFlush(editorView);
+      } catch (e) {
+        console.error("flushEditorTimestamps threw:", e);
+      }
+    }
+    return editorView ? editorView.state.doc.toString() : "";
+  };
   window.getEditorCursor = function() {
     if (!editorView) return 0;
     return editorView.state.selection.main.head;

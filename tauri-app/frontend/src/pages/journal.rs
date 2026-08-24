@@ -1,8 +1,12 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use chrono::{Datelike, NaiveDate};
 use chrono_tz::Tz;
 use dioxus::prelude::*;
+use futures::StreamExt;
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 
 use crate::autosave::{self, SaveIndicator, SaveState};
 use crate::bridge;
@@ -504,6 +508,102 @@ fn DayView(
                     }
                 }
             });
+        });
+    }
+
+    // #344 background/close flush + immediate save. `blur`/`destroyEditor` don't
+    // fire when Android backgrounds the app or the OS kills a swiped-away one, so
+    // a line the user WROTE but never LEFT (no Enter, no click away) would be
+    // persisted by the debounced autosave WITHOUT its completion token — and on
+    // reopen it reads as old, untouched content that (by design) never
+    // back-stamps. On `visibilitychange`→hidden / `pagehide` we stamp that final
+    // line and save it NOW — not through the 1s-debounced autosave a swiped-away
+    // app won't wait for. The callback fires OUTSIDE any Dioxus scope (like the
+    // sync:applied bridge), so it uses `spawn_local`, not `spawn`. The listener
+    // is registered per-mount and removed on unmount so day-navigation (which
+    // remounts DayView) never accumulates stale-signal handlers.
+    {
+        let date_bg = date.clone();
+        // The JS leave-detector callback nudges a channel; the drain loop runs
+        // INSIDE the runtime (`spawn`), where flushing the editor, reading the
+        // entry/last-saved signals, invoking the save, and writing the resulting
+        // signals are all safe (a direct signal write from the callback would
+        // panic — same reason as main.rs's sync:applied bridge). Draining on a
+        // microtask keeps the save near-immediate, unlike the 1s debounce.
+        let cb: Rc<Closure<dyn FnMut(web_sys::Event)>> = use_hook(|| {
+            let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+            let date_bg = date_bg.clone();
+            spawn(async move {
+                while rx.next().await.is_some() {
+                    // Closed journals never auto-save (parity with the debounced
+                    // path); coalesce any queued nudges we can't act on.
+                    if entry.peek().as_ref().map(|e| e.closed).unwrap_or(false) {
+                        continue;
+                    }
+                    // Stamp the in-progress line, then read the now-stamped body.
+                    let stamped = bridge::js_flush_editor_timestamps();
+                    if stamped.is_empty() || stamped == *last_saved_content.peek() {
+                        continue;
+                    }
+                    let jid = entry.peek().as_ref().map(|e| e.journal_id.clone());
+                    let result = match jid {
+                        Some(id) => bridge::invoke_update_journal_entry(&id, &stamped)
+                            .await
+                            .map(|_| None),
+                        None => bridge::invoke_create_journal_entry(&date_bg, &stamped)
+                            .await
+                            .map(Some),
+                    };
+                    // Keep Dioxus in sync so a resume doesn't re-save (or, for a
+                    // fresh day, CREATE a duplicate entry because the new
+                    // journal_id was never learned).
+                    if let Ok(maybe_created) = result {
+                        if let Some(created) = maybe_created {
+                            entry.set(Some(created));
+                        }
+                        last_saved_content.set(stamped);
+                    }
+                }
+            });
+            Rc::new(Closure::wrap(Box::new(move |ev: web_sys::Event| {
+                // Act only when actually LEAVING: `visibilitychange` also fires on
+                // return (hidden == false), and stamping then would freeze a line
+                // the user came back to keep writing. `pagehide` is always a leave.
+                let leaving = if ev.type_() == "visibilitychange" {
+                    web_sys::window()
+                        .and_then(|w| w.document())
+                        .map(|d| d.hidden())
+                        .unwrap_or(false)
+                } else {
+                    true
+                };
+                if leaving {
+                    let _ = tx.unbounded_send(());
+                }
+            }) as Box<dyn FnMut(web_sys::Event)>))
+        });
+
+        use_effect({
+            let cb = cb.clone();
+            move || {
+                if let Some(win) = web_sys::window() {
+                    let f: &js_sys::Function = (*cb).as_ref().unchecked_ref();
+                    if let Some(doc) = win.document() {
+                        let _ = doc.add_event_listener_with_callback("visibilitychange", f);
+                    }
+                    let _ = win.add_event_listener_with_callback("pagehide", f);
+                }
+            }
+        });
+
+        use_drop(move || {
+            if let Some(win) = web_sys::window() {
+                let f: &js_sys::Function = (*cb).as_ref().unchecked_ref();
+                if let Some(doc) = win.document() {
+                    let _ = doc.remove_event_listener_with_callback("visibilitychange", f);
+                }
+                let _ = win.remove_event_listener_with_callback("pagehide", f);
+            }
         });
     }
 

@@ -878,6 +878,27 @@ window.getEditorContent = function () {
 };
 
 /**
+ * #344: stamp the final in-progress line NOW (without tearing the editor down),
+ * then return the resulting content. The app calls this from its background /
+ * page-hide handler so a line that was written but never left — no Enter, no
+ * click away — is stamped and persisted before the OS can kill a swiped-away
+ * app (blur/destroy don't fire reliably on Android background). Synchronous, so
+ * the returned string already carries the fresh token; a no-op that returns the
+ * current content for non-journal editors or an already-frozen line.
+ * @returns {string} The (possibly newly-stamped) document content.
+ */
+window.flushEditorTimestamps = function () {
+  if (editorView && timestampFlush) {
+    try {
+      timestampFlush(editorView);
+    } catch (e) {
+      console.error("flushEditorTimestamps threw:", e);
+    }
+  }
+  return editorView ? editorView.state.doc.toString() : "";
+};
+
+/**
  * Get the current caret offset (selection head). Used as an unmount-time
  * fallback so a position is captured even if no selection event fired (1.8b).
  * @returns {number} The caret offset, or 0 if no editor exists.
