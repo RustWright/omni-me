@@ -2647,18 +2647,21 @@ fn mock_dashboard_summary() -> DashboardSummaryView {
         ],
         recurring: vec![
             RecurringObligationView {
+                pattern_id: "recurring-netflix".into(),
                 vendor: "Netflix".into(),
                 amount: "16.99".into(),
                 commodity: "CAD".into(),
                 cadence_days: 30,
             },
             RecurringObligationView {
+                pattern_id: "recurring-telus".into(),
                 vendor: "Telus mobile".into(),
                 amount: "55.00".into(),
                 commodity: "CAD".into(),
                 cadence_days: 30,
             },
             RecurringObligationView {
+                pattern_id: "recurring-rent".into(),
                 vendor: "Rent".into(),
                 amount: "1850.00".into(),
                 commodity: "CAD".into(),

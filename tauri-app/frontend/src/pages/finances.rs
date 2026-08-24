@@ -5090,19 +5090,9 @@ fn RecurringCard(recurring: Vec<RecurringObligationView>, base_currency: String)
                     "No confirmed recurring patterns yet. Phase 5.3 detection scanner will populate this."
                 }
             } else {
-                div { class: "space-y-2",
+                div { class: "space-y-1",
                     for r in recurring.iter() {
-                        div { class: "flex items-baseline justify-between text-sm",
-                            div { class: "min-w-0",
-                                span { class: "text-obsidian-text font-medium", "{r.vendor}" }
-                                span { class: "text-obsidian-text-muted text-xs ml-2",
-                                    "{cadence_label(r.cadence_days)}"
-                                }
-                            }
-                            span { class: "font-mono text-obsidian-text shrink-0",
-                                "{format_money(&r.amount, &r.commodity)}"
-                            }
-                        }
+                        RecurringObligationRow { key: "{r.pattern_id}", r: r.clone() }
                     }
                 }
             }
@@ -5112,6 +5102,93 @@ fn RecurringCard(recurring: Vec<RecurringObligationView>, base_currency: String)
             if recurring.iter().any(|r| !r.commodity.eq_ignore_ascii_case(&base_currency)) {
                 div { class: "text-[10px] text-obsidian-text-muted mt-2",
                     "Base currency: {base_currency}"
+                }
+            }
+        }
+    }
+}
+
+/// One row in the Dashboard's confirmed "Recurring obligations" card, with the
+/// same tap-to-expand drill-down as the review screen's [`RecurringRowCard`].
+/// The confirmed pattern already lives in the DB, so `list_recurring_matches`
+/// keys on the `pattern_id` threaded through the obligation — no re-derivation.
+/// Transactions are fetched lazily on first expand, once.
+#[component]
+fn RecurringObligationRow(r: RecurringObligationView) -> Element {
+    let pattern_id = r.pattern_id.clone();
+    let vendor = r.vendor.clone();
+    let amount_label = format_money(&r.amount, &r.commodity);
+    let mut expanded = use_signal(|| false);
+    let mut matches: Signal<Vec<TransactionView>> = use_signal(Vec::new);
+    let mut loading = use_signal(|| false);
+    let mut fetched = use_signal(|| false);
+    let toggle = move |_| {
+        let open = !*expanded.peek();
+        expanded.set(open);
+        if open && !*fetched.peek() {
+            fetched.set(true);
+            loading.set(true);
+            let pid = pattern_id.clone();
+            spawn(async move {
+                if let Ok(txns) = bridge::invoke_list_recurring_matches(&pid).await {
+                    matches.set(txns);
+                }
+                loading.set(false);
+            });
+        }
+    };
+
+    rsx! {
+        div { class: "border-b border-white/5 last:border-b-0 py-1",
+            button {
+                class: "w-full flex items-baseline justify-between text-sm gap-3 text-left",
+                onclick: toggle,
+                div { class: "min-w-0",
+                    span { class: "text-obsidian-text font-medium", "{r.vendor}" }
+                    span { class: "text-obsidian-text-muted text-xs ml-2",
+                        "{cadence_label(r.cadence_days)}"
+                    }
+                }
+                span { class: "flex items-baseline gap-1.5 shrink-0",
+                    span { class: "font-mono text-obsidian-text",
+                        "{format_money(&r.amount, &r.commodity)}"
+                    }
+                    span {
+                        class: "text-obsidian-text-muted/60 text-[10px] w-2",
+                        if *expanded.read() { "▾" } else { "▸" }
+                    }
+                }
+            }
+
+            if *expanded.read() {
+                div { class: "mt-2 pl-1 space-y-1.5",
+                    if *loading.read() {
+                        div { class: "text-xs text-obsidian-text-muted", "Loading transactions…" }
+                    } else if matches.read().is_empty() {
+                        div { class: "text-xs text-obsidian-text-muted",
+                            "No matching transactions found."
+                        }
+                    } else {
+                        div { class: "text-[11px] uppercase tracking-wide text-obsidian-text-muted/70",
+                            "Matched transactions · {amount_label}"
+                        }
+                        for txn in matches.read().iter() {
+                            div {
+                                key: "{txn.id}",
+                                class: "flex items-baseline justify-between gap-3 text-xs",
+                                span { class: "text-obsidian-text-muted tabular-nums shrink-0",
+                                    "{txn.date}"
+                                }
+                                span { class: "text-obsidian-text truncate text-right",
+                                    if txn.description.is_empty() {
+                                        "{vendor}"
+                                    } else {
+                                        "{txn.description}"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

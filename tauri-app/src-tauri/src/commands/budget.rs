@@ -620,6 +620,7 @@ pub struct MonthlyTrendBucketView {
 /// Wire shape for one confirmed recurring obligation.
 #[derive(Debug, Clone, Serialize)]
 pub struct RecurringObligationView {
+    pub pattern_id: String,
     pub vendor: String,
     pub amount: String,
     pub commodity: String,
@@ -659,6 +660,7 @@ fn bucket_to_view(b: MonthlyTrendBucket) -> MonthlyTrendBucketView {
 
 fn recurring_to_view(r: RecurringObligation) -> RecurringObligationView {
     RecurringObligationView {
+        pattern_id: r.pattern_id,
         vendor: r.vendor,
         amount: r.amount.to_string(),
         commodity: r.commodity,
@@ -852,6 +854,7 @@ pub async fn check_affordability(
             .recurring
             .iter()
             .map(|r| dashboard::RecurringObligation {
+                pattern_id: r.pattern_id.clone(),
                 vendor: r.vendor.clone(),
                 amount: rust_decimal::Decimal::from_str(&r.amount).unwrap_or_default(),
                 commodity: r.commodity.clone(),

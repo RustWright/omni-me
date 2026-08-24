@@ -461,6 +461,7 @@ pub struct MonthlyTrendBucketView {
 /// `core::dashboard::RecurringObligation`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecurringObligationView {
+    pub pattern_id: String,
     pub vendor: String,
     pub amount: String,
     pub commodity: String,

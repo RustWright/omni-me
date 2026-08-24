@@ -52,6 +52,10 @@ pub struct MonthlyTrendBucket {
 /// `RecurringTransactionDetected.pattern`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecurringObligation {
+    /// The persisted pattern id (`meta::id(id)` form, e.g. `recurring-<hash>`),
+    /// threaded straight from the DB row so the dashboard drill-down can key
+    /// `list_recurring_matches` on the exact same id the lookup query uses.
+    pub pattern_id: String,
     pub vendor: String,
     pub amount: Decimal,
     pub commodity: String,
@@ -580,17 +584,25 @@ fn months_between(a: NaiveDate, b: NaiveDate) -> u32 {
 fn distill_recurring(rows: &[RecurringPatternRow]) -> Vec<RecurringObligation> {
     // Same DbValue → serde_json detour pattern as `bucket_postings_by_month`
     // — keeps the pure logic separately testable.
-    let parsed: Vec<(String, serde_json::Value)> = rows
+    let parsed: Vec<(String, String, serde_json::Value)> = rows
         .iter()
-        .map(|r| (r.status.clone(), r.pattern.clone().into_json_value()))
+        .map(|r| {
+            (
+                r.id.clone(),
+                r.status.clone(),
+                r.pattern.clone().into_json_value(),
+            )
+        })
         .collect();
     distill_parsed_recurring(&parsed)
 }
 
-fn distill_parsed_recurring(rows: &[(String, serde_json::Value)]) -> Vec<RecurringObligation> {
+fn distill_parsed_recurring(
+    rows: &[(String, String, serde_json::Value)],
+) -> Vec<RecurringObligation> {
     rows.iter()
-        .filter(|(status, _)| status == "confirmed")
-        .filter_map(|(_, pattern)| {
+        .filter(|(_, status, _)| status == "confirmed")
+        .filter_map(|(id, _, pattern)| {
             let vendor = pattern.get("vendor")?.as_str()?.to_string();
             let amount_str = pattern.get("amount")?.as_str()?;
             let amount = amount_str.parse::<Decimal>().ok()?;
@@ -601,6 +613,7 @@ fn distill_parsed_recurring(rows: &[(String, serde_json::Value)]) -> Vec<Recurri
                 .to_string();
             let cadence_days = pattern.get("cadence_days")?.as_u64()? as u32;
             Some(RecurringObligation {
+                pattern_id: id.clone(),
                 vendor,
                 amount,
                 commodity,
@@ -722,14 +735,15 @@ mod tests {
         vendor: &str,
         amount: &str,
         cadence_days: u64,
-    ) -> (String, serde_json::Value) {
+    ) -> (String, String, serde_json::Value) {
         let pattern = serde_json::json!({
             "vendor": vendor,
             "amount": amount,
             "commodity": "CAD",
             "cadence_days": cadence_days,
         });
-        (status.to_string(), pattern)
+        let id = format!("recurring-{}", vendor.to_lowercase());
+        (id, status.to_string(), pattern)
     }
 
     #[test]
@@ -948,6 +962,10 @@ mod tests {
         let vendors: Vec<&str> = out.iter().map(|o| o.vendor.as_str()).collect();
         assert!(vendors.contains(&"Netflix"));
         assert!(vendors.contains(&"Telus"));
+        // The DB row id threads straight through to the obligation, so the
+        // dashboard drill-down can key `list_recurring_matches` on it.
+        let netflix = out.iter().find(|o| o.vendor == "Netflix").unwrap();
+        assert_eq!(netflix.pattern_id, "recurring-netflix");
     }
 
     #[test]
@@ -960,12 +978,14 @@ mod tests {
             monthly_buckets: vec![],
             recurring: vec![
                 RecurringObligation {
+                    pattern_id: "recurring-netflix".into(),
                     vendor: "Netflix".into(),
                     amount: d("16.99"),
                     commodity: "CAD".into(),
                     cadence_days: 30, // monthly
                 },
                 RecurringObligation {
+                    pattern_id: "recurring-coffee".into(),
                     vendor: "Coffee shop fund".into(),
                     amount: d("10.00"),
                     commodity: "CAD".into(),
@@ -990,6 +1010,7 @@ mod tests {
             unmatched_balance: None,
             monthly_buckets: vec![],
             recurring: vec![RecurringObligation {
+                pattern_id: "recurring-aws".into(),
                 vendor: "AWS".into(),
                 amount: d("12.00"),
                 commodity: "USD".into(),
@@ -1064,6 +1085,7 @@ mod tests {
 
     fn netflix_monthly() -> RecurringObligation {
         RecurringObligation {
+            pattern_id: "recurring-netflix".into(),
             vendor: "Netflix".into(),
             amount: d("16.99"),
             commodity: "CAD".into(),
