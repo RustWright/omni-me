@@ -734,6 +734,7 @@ fn DayView(
                                 },
                                 read_only: is_closed,
                                 journal_mode: true,
+                                entry_date: date.clone(),
                                 initial_cursor: *cursor.peek(),
                                 on_cursor: move |p: usize| cursor.set(p),
                             }

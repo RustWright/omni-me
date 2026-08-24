@@ -4,10 +4,21 @@ use wasm_bindgen::JsCast;
 
 use crate::bridge::{js_create_editor, js_destroy_editor};
 
-/// Build the base `{ journalMode, readOnly, initialCursor }` options object for
-/// `createEditor`. Returned as an `Object` (not `JsValue`) so the caller can
-/// attach the `onCursor` callback before forwarding it.
-fn editor_options(journal_mode: bool, read_only: bool, initial_cursor: usize) -> js_sys::Object {
+/// Build the base `{ journalMode, readOnly, initialCursor, entryDate }` options
+/// object for `createEditor`. Returned as an `Object` (not `JsValue`) so the
+/// caller can attach the `onCursor` callback before forwarding it.
+///
+/// `entry_date` (YYYY-MM-DD) is the journal day being edited; the editor's
+/// reveal-on-select timestamps compare a line's finish date against it so a
+/// same-day line shows a bare time and a line finished on another day carries
+/// its date (#344). `None`/empty for non-journal surfaces (notes) → the
+/// timestamp feature stays off.
+fn editor_options(
+    journal_mode: bool,
+    read_only: bool,
+    initial_cursor: usize,
+    entry_date: Option<String>,
+) -> js_sys::Object {
     let obj = js_sys::Object::new();
     let _ = js_sys::Reflect::set(
         &obj,
@@ -24,6 +35,9 @@ fn editor_options(journal_mode: bool, read_only: bool, initial_cursor: usize) ->
         &JsValue::from_str("initialCursor"),
         &JsValue::from_f64(initial_cursor as f64),
     );
+    if let Some(date) = entry_date {
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("entryDate"), &JsValue::from_str(&date));
+    }
     obj
 }
 
@@ -47,6 +61,10 @@ pub fn Editor(
     on_change: EventHandler<String>,
     #[props(default = false)] read_only: bool,
     #[props(default = false)] journal_mode: bool,
+    /// The journal day being edited (YYYY-MM-DD), used by the reveal-on-select
+    /// line timestamps to decide same-day vs cross-day display (#344). `None`
+    /// for non-journal surfaces → the timestamp feature stays off.
+    #[props(default)] entry_date: Option<String>,
     /// Caret offset to restore on mount (1.8b). 0 = no restore.
     #[props(default = 0)] initial_cursor: usize,
     /// Fired on every selection change so the page can keep the stored caret
@@ -65,6 +83,7 @@ pub fn Editor(
     // path was never exercised until a real desktop webview ran it.
     use_effect(move || {
         let initial = initial_content.clone();
+        let entry_date = entry_date.clone();
 
         spawn(async move {
             let window = match web_sys::window() {
@@ -141,7 +160,7 @@ pub fn Editor(
                 on_change_closure.forget(); // Leak memory intentionally
 
                 // 4. Initialize the editor
-                let opts = editor_options(journal_mode, read_only, initial_cursor);
+                let opts = editor_options(journal_mode, read_only, initial_cursor, entry_date.clone());
                 attach_cursor_cb(&opts, on_cursor);
                 js_create_editor(
                     editor_container_id,
