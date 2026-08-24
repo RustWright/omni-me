@@ -17,6 +17,47 @@ implementation target (Session 5). Plan file: `~/.claude/plans/vivid-cooking-kur
    Rationale: recent cycles were rushed, so bugs were missed/deferred — the review is the un-rush gate.
    See memory `feedback-rushing-caused-bugs-review-gate`.
 
+**🗺️ AGREED RELEASE ROADMAP (user, 2026-08-24) — the ordered march to v1.**
+*Each numbered push is done in FRESH context: the user compacts before starting each one.
+Do the current step, stop, let the user compact. Do NOT run ahead.*
+
+  **A. Feature-completion (one push each):**
+  1. **#594 Stage D** — finish the design-primitive rollout (A/B/C done; D = roll the shared
+     `Card/Button/PageHeader/...` primitives across journal / notes / settings / routines).
+     *User thought this was already done — verify what's actually left before building; may be partial.*
+  2. **#370** — desktop freezes on FIRST open after a full reset (not on subsequent opens). Fix the
+     cold-open/editor-init hang, desktop side.
+  3. **#372** — Android hardware/gesture back button → pop in-app nav first (not close the app).
+  4. **#367** — off-switch: pause/disable toggle on EVERY source row, including compiled overlay sources
+     (live-abort the scheduler task without deleting config).
+
+  **B. Review gate:**
+  5. **Full end-to-end code review of everything** (per the v1 close-out gate #4 above).
+
+  **C. Email ingest prep:**
+  6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
+     everything it needs. Fix bugs / add necessary features *as they arise in the process*, ad hoc.
+
+  **D. Data catch-up (clean data BEFORE the wipe):**
+  7. **Bring imports current** — the ledger import is months stale; use the **paisa process** to get it
+     up to date and import-ready. Same for the **Obsidian journal** data (stale — user turned OFF Obsidian
+     sync anticipating this; **user will provide / point to the most up-to-date journal data**).
+
+  **E. Box wipe + clean re-import:**
+  8. **Wipe the box clean of everything** — current live data is deemed not worth sorting through;
+     re-import from the clean data produced in step 7.
+
+  **F. Phase 6 full release:**
+  9. Phase 6 polish (6.2 branch-gate, 6.3 v1 semver + tag, 6.4 archive/reset the bloated docs) →
+     ship an **updatable app on mobile + desktop** → make a **trivial change and test the update path
+     end-to-end**; fix it if the OTA path is broken.
+
+  **POST-RELEASE (explicitly gated — only after the core app is solid on journal + routines + finances):**
+  - LLM Chat (the main way to get data/insights out).
+  - Task + project tracking.
+  - Overall inbox monitoring + personal-assistant capabilities.
+  - *Do NOT add any new top-level category until the existing three are working end-to-end.*
+
 **Operating model — dogfooding is the test harness.** The user will use the app heavily;
 real daily friction is the primary bug-finder. The plan front-loads "make it livable enough
 to live in" (Phase 1), then daily use feeds the **Running friction log** below, which is
