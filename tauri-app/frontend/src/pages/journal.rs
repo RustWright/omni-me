@@ -35,14 +35,58 @@ fn viewport_width() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// True when `inner` (the text between a line's `⟦`…`⟧`) has the exact shape of
+/// a #344 completion token: `YYYY-MM-DD HH:MM`, optionally ` TZ`. The fixed
+/// positions up to index 16 are all ASCII, so byte indexing is safe.
+fn is_timestamp_token_inner(inner: &str) -> bool {
+    let b = inner.as_bytes();
+    if b.len() < 16 {
+        return false;
+    }
+    let d = |i: usize| b[i].is_ascii_digit();
+    d(0) && d(1) && d(2) && d(3) && b[4] == b'-'
+        && d(5) && d(6) && b[7] == b'-'
+        && d(8) && d(9) && b[10] == b' '
+        && d(11) && d(12) && b[13] == b':'
+        && d(14) && d(15)
+        && (b.len() == 16 || b[16] == b' ')
+}
+
+/// Drop a leading concealed completion token (#344) from one line, if present.
+/// Only a token whose interior matches the timestamp shape is removed, so real
+/// prose that merely starts with `⟦` is left untouched.
+fn strip_line_token(line: &str) -> &str {
+    let Some(rest) = line.strip_prefix('⟦') else {
+        return line;
+    };
+    let Some(close) = rest.find('⟧') else {
+        return line;
+    };
+    if is_timestamp_token_inner(&rest[..close]) {
+        &rest[close + '⟧'.len_utf8()..]
+    } else {
+        line
+    }
+}
+
+/// Strip the concealed completion-time tokens from a journal body before it is
+/// treated as prose. The tokens are editor metadata glued to the front of each
+/// stamped line (#344), never writing, so they must not surface in any raw-body
+/// consumer — here, the word/character count.
+fn strip_completion_tokens(body: &str) -> String {
+    body.split('\n').map(strip_line_token).collect::<Vec<_>>().join("\n")
+}
+
 /// Word + character count for a note body (the calendar drawer's footer stats,
 /// Obsidian parity). Words are whitespace-delimited tokens (runs of whitespace
 /// collapse); characters are Unicode scalar values, so a multi-byte glyph counts
 /// once. Frontmatter is excluded by construction — `body` is already the prose
-/// with the properties lifted into the panel (Phase 5).
+/// with the properties lifted into the panel (Phase 5). Concealed #344 timestamp
+/// tokens are stripped first so hidden metadata never inflates the count.
 fn body_stats(body: &str) -> (usize, usize) {
-    let words = body.split_whitespace().count();
-    let chars = body.chars().count();
+    let clean = strip_completion_tokens(body);
+    let words = clean.split_whitespace().count();
+    let chars = clean.chars().count();
     (words, chars)
 }
 
@@ -1158,5 +1202,33 @@ mod tests {
         assert_eq!(body_stats("one   two\nthree"), (3, 15));
         // Characters are Unicode scalar values, not bytes ("é" is one char).
         assert_eq!(body_stats("café"), (1, 4));
+    }
+
+    #[test]
+    fn body_stats_ignores_completion_tokens() {
+        // A stamped line counts only its prose, not the concealed token.
+        assert_eq!(
+            body_stats("⟦2026-08-24 07:12 EDT⟧hello world"),
+            body_stats("hello world"),
+        );
+        // Token without a tz is also stripped.
+        assert_eq!(body_stats("⟦2026-08-24 07:12⟧hi"), (1, 2));
+        // Multi-line: every stamped line is cleaned, prose lines untouched.
+        assert_eq!(
+            body_stats("⟦2026-08-24 07:12 EDT⟧one two\nplain line\n⟦2026-08-25 09:00 CDT⟧three"),
+            (5, 24), // "one two\nplain line\nthree"
+        );
+    }
+
+    #[test]
+    fn strip_line_token_leaves_real_prose_alone() {
+        // Real text that merely starts with the bracket is NOT stripped.
+        assert_eq!(strip_line_token("⟦not a timestamp⟧ kept"), "⟦not a timestamp⟧ kept");
+        // Unclosed bracket: left as-is.
+        assert_eq!(strip_line_token("⟦2026-08-24 07:12 EDT no close"), "⟦2026-08-24 07:12 EDT no close");
+        // A well-formed token is removed, prose preserved verbatim.
+        assert_eq!(strip_line_token("⟦2026-08-24 07:12 EDT⟧the text"), "the text");
+        // No token at all.
+        assert_eq!(strip_line_token("just prose"), "just prose");
     }
 }
