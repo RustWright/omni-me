@@ -6,11 +6,11 @@ This project follows the structured process defined in `PROJECT_PROCESS.md` (mir
 
 **Session start:**
 
-1. Run start-of-session sync per `~/.claude/CLAUDE.md` § Session Sync Protocol.
+1. Re-verify live state (`git status`, read what you'll touch). Git sync itself is automatic (SessionStart hook) — don't run it by hand. Inherit decisions already agreed in prior sessions; don't re-derive settled context.
 2. Read `project.md` to find current state and next session. Confirm with user before proceeding.
 3. If resuming mid-session, also read `tasks.md` and `architecture.md` for context.
 
-**Session end:** Follow `PROJECT_PROCESS.md` § End-of-Session Protocol. The 7-step recipe (export → name → save → update `project.md` → update `tasks.md` → commit → sync to parent) lives there as the **single source of truth** — don't duplicate it here. Step 7 defers to `~/.claude/CLAUDE.md` § Session Sync Protocol Step 2 for the parent-sync mechanics (covers both `.log/` and `.curiosities/`).
+**Session end:** Logging and git sync are **automatic** (the session hooks — see `~/.claude/CLAUDE.md` § Session Sync): the transcript is rendered into `.log/`, `.log/` + `.curiosities/` are synced to the parent, and work is committed + pushed. Your only end-of-phase job is the content updates in `PROJECT_PROCESS.md` § End-of-Session Protocol — update `project.md`'s session log and `tasks.md`. No `/export`, no manual parent-sync.
 
 **Session model:** Six-session process per `PROJECT_PROCESS.md` § Process Flow (Initiation → Research → Architecture → Planning → Implementation → Code Review). The AI role per session is documented in `PROJECT_PROCESS.md` § AI's Role.
 

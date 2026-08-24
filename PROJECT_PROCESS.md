@@ -242,7 +242,7 @@ projects/project_name/
 └── [project files]
 ```
 
-Both `.log/` and `.curiosities/` are **gitignored in the project repo** so raw conversation logs and in-progress curiosity captures never enter the project's public history. They sync to the parent `productive_learning` repo at session end (see `~/.claude/CLAUDE.md` § Session Sync Protocol Step 2) where they're tracked privately. The rest of the structure is tracked in the project's own git history.
+Both `.log/` and `.curiosities/` are **gitignored in the project repo** so raw conversation logs and in-progress curiosity captures never enter the project's public history. They sync to the parent `productive_learning` repo automatically at session end (the hooks — see `~/.claude/CLAUDE.md` § Session Sync) where they're tracked privately. The rest of the structure is tracked in the project's own git history.
 
 **Information Density Hierarchy:**
 1. `.log/` files = Full discussion and reasoning
@@ -274,16 +274,24 @@ Status helps quickly identify active vs shelved projects.
 
 ## End-of-Session Protocol
 
-After every session:
-1. **Export conversation:** Run `/export` command to save raw log
-2. **Name consistently:** `session-0X-[type]-cycle-Y.txt` format
-3. **Save to `.log/`:** Place in project's `.log/` directory
-4. **Update `project.md`:** Add session summary to checklist
-5. **Update `tasks.md`:** If in Session 5 (Implementation), ensure task statuses are current
-6. **Commit changes:** Frequent commits throughout, milestone commit after Session 6
-7. **Sync to parent repo:** see `~/.claude/CLAUDE.md` § Session Sync Protocol Step 2 — copies `.log/` and `.curiosities/` into `<parent>/logs/<project-name>/` and `<parent>/curiosities/<project-name>/`. The curiosity log feeds the Session 6 Phase D cycle-close review pass.
+Logging and git sync are **automatic** — the session hooks render this session's
+transcript into `.log/`, sync `.log/` and `.curiosities/` into the parent's
+`logs/<project>/` and `curiosities/<project>/`, and commit + push work. You do **not**
+run `/export`, name log files, or sync to the parent by hand (see `~/.claude/CLAUDE.md`
+§ Session Sync). The captured curiosity log still feeds the Session 6 Phase D
+cycle-close review pass — it's synced for you.
 
-Because a single session may span multiple Claude Code sittings, the end-of-session protocol applies when the *phase* wraps — not every individual sitting. Intermediate sittings still commit and push work, but the summary update and log export happen at phase boundaries.
+What remains yours, at a *phase* boundary:
+1. **Update `project.md`:** add the session summary to the checklist / session log.
+2. **Update `tasks.md`:** in Session 5 (Implementation), keep task statuses current.
+
+A deliberate milestone commit with a meaningful message (e.g. after Session 6) is
+still worth making by hand — single line, under 50 chars. Routine WIP commits and
+pushes happen automatically.
+
+Because a single session may span multiple Claude Code sittings, these *content*
+updates apply when the phase wraps — not every sitting. Intermediate sittings are
+still committed and pushed for you; the summary and task updates happen at phase boundaries.
 
 ---
 
