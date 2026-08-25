@@ -13,13 +13,14 @@
 use dioxus::prelude::*;
 
 use crate::bridge;
+use crate::components::primitives::INPUT_CLASS;
 
 /// Most suggestions to show in the dropdown at once.
 const MAX_SUGGESTIONS: usize = 8;
 
-/// Default input styling (matches the standard form-input class used across the
-/// app). Call sites with their own width/size needs override via `input_class`.
-const DEFAULT_INPUT_CLASS: &str = "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent";
+/// Default input styling — the canonical shared [`INPUT_CLASS`]. Call sites with
+/// their own width/size needs override via `input_class`.
+const DEFAULT_INPUT_CLASS: &str = INPUT_CLASS;
 
 /// Root-provided known-account list, shared by every `AccountInput`.
 ///

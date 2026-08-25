@@ -15,6 +15,7 @@ use dioxus::prelude::*;
 
 use crate::components::icon::{Icon, IconName};
 use crate::components::month_grid::{build_month_cells, next_month, prev_month};
+use crate::components::primitives::INPUT_CLASS;
 use crate::user_date::UserDate;
 
 /// A `YYYY-MM-DD` string is acceptable if it's empty (a cleared/optional field)
@@ -46,8 +47,8 @@ fn picker_day_class(is_today: bool, is_selected: bool, in_month: bool) -> String
     format!("{base} {state}")
 }
 
-/// Default styling — matches the full-width form date inputs it replaces.
-const DEFAULT_DATE_CLASS: &str = "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent";
+/// Default styling — the canonical shared [`INPUT_CLASS`].
+const DEFAULT_DATE_CLASS: &str = INPUT_CLASS;
 
 #[component]
 pub fn DateField(

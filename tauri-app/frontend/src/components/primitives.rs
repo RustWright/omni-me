@@ -13,8 +13,8 @@
 
 use dioxus::prelude::*;
 
-/// Canonical form-input class. `date_field.rs` / `account_input.rs` still carry
-/// their own near-identical copies (folded here when those get migrated); new
+/// Canonical form-input class — the single source of truth for form inputs.
+/// `date_field.rs` / `account_input.rs` default their input styling to this; new
 /// inputs should use this or the [`TextInput`] wrapper.
 pub const INPUT_CLASS: &str = "w-full px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent";
 
