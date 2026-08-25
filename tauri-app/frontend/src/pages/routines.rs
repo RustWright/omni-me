@@ -3,7 +3,10 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::icon::{Icon, IconName};
-use crate::components::primitives::{Banner, BannerKind, Button, ButtonSize, ButtonVariant};
+use crate::components::primitives::{
+    Banner, BannerKind, Button, ButtonSize, ButtonVariant, Card, IconButton, PageHeader, TextInput,
+    INPUT_CLASS,
+};
 use crate::duration;
 use crate::reorder;
 use crate::types::{CompletionEntry, RoutineGroup, RoutineItem};
@@ -142,8 +145,7 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
 
     rsx! {
         div { class: "animate-in fade-in duration-300",
-            div { class: "flex justify-between items-center mb-6",
-                h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Daily Flow" }
+            PageHeader { title: "Daily Flow", class: "mb-6",
                 Button {
                     variant: ButtonVariant::Secondary,
                     size: ButtonSize::Sm,
@@ -262,7 +264,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
     let total = items_read.len();
     let is_fully_done = total > 0 && done_count == total;
 
-    let base_class = "bg-obsidian-sidebar/40 border border-white/5 rounded-xl overflow-hidden shadow-sm transition-all";
+    let base_class = "bg-obsidian-surface border border-obsidian-border/10 rounded-card overflow-hidden shadow-card transition-all";
     let status_class = if is_fully_done { "opacity-60 grayscale-[0.5]" } else { "" };
     let container_class = format!("{} {}", base_class, status_class);
 
@@ -425,9 +427,8 @@ fn GroupListView(
         div { class: "animate-in slide-in-from-right-4 duration-300",
             div { class: "flex justify-between items-center mb-6",
                 div { class: "flex items-center gap-3",
-                    button {
-                        class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
-                        "aria-label": "Back",
+                    IconButton {
+                        label: "Back",
                         onclick: move |_| on_back.call(()),
                         Icon { name: IconName::ArrowLeft, class: "w-5 h-5" }
                     }
@@ -453,7 +454,7 @@ fn GroupListView(
                             let id_confirm = group.id.clone();
                             let is_pending = pending_remove.read().as_deref() == Some(group.id.as_str());
                             rsx! {
-                                div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg transition-all hover:bg-white/5 hover:border-white/10 flex justify-between items-center",
+                                Card { class: "flex justify-between items-center",
                                     div { class: "flex-1 cursor-pointer",
                                         onclick: move |_| on_select.call(id_select.clone()),
                                         span { class: "font-bold text-obsidian-text", "{group.name}" }
@@ -508,9 +509,8 @@ fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHand
     rsx! {
         div { class: "animate-in fade-in slide-in-from-bottom-4 duration-300",
             div { class: "flex justify-between items-center mb-6",
-                button {
-                    class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
-                    "aria-label": "Cancel",
+                IconButton {
+                    label: "Cancel",
                     onclick: move |_| on_cancel.call(()),
                     Icon { name: IconName::Close, class: "w-5 h-5" }
                 }
@@ -546,19 +546,17 @@ fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHand
             div { class: "space-y-6",
                 div {
                     label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Group Name" }
-                    input {
-                        class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
-                        r#type: "text",
+                    TextInput {
                         placeholder: "e.g. Morning Ritual",
-                        value: "{name}",
-                        oninput: move |e| name.set(e.value()),
+                        value: name.read().clone(),
+                        on_input: move |v| name.set(v),
                     }
                 }
 
                 div {
                     label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Frequency" }
                     select {
-                        class: "w-full px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                        class: "{INPUT_CLASS} appearance-none",
                         value: "{frequency}",
                         onchange: move |e| frequency.set(e.value()),
                         option { value: "daily", "Daily" }
@@ -640,9 +638,8 @@ fn GroupDetailView(
         div { class: "animate-in fade-in duration-300",
             div { class: "flex justify-between items-center mb-6",
                 div { class: "flex items-center gap-3",
-                    button {
-                        class: "p-2 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text transition-colors",
-                        "aria-label": "Back",
+                    IconButton {
+                        label: "Back",
                         onclick: move |_| on_back.call(()),
                         Icon { name: IconName::ArrowLeft, class: "w-5 h-5" }
                     }
@@ -786,7 +783,7 @@ fn GroupDetailView(
                 }
             }
 
-            div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-xl space-y-4",
+            Card { class: "space-y-4",
                 h4 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest", "Add New Step" }
                 div { class: "space-y-2",
                     // Name gets its own full-width row; the numeric duration, unit
@@ -815,8 +812,8 @@ fn GroupDetailView(
                             option { value: "{duration::UNIT_MIN}", "min" }
                             option { value: "{duration::UNIT_HOUR}", "hour" }
                         }
-                        button {
-                            class: "flex-1 px-4 py-2 bg-obsidian-accent text-white font-bold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50",
+                        Button {
+                            class: "flex-1",
                             disabled: *adding.read() || new_item_name.read().trim().is_empty(),
                             onclick: {
                                 let gid = group_id.clone();
