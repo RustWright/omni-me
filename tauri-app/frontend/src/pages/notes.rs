@@ -34,6 +34,14 @@ pub fn NotesPage() -> Element {
     let mut sub_tab = use_signal(|| NotesSubTab::Recent);
     let mut view = use_signal(|| NotesView::List);
 
+    // Hardware/gesture-back (#372): from an open note (Edit/New) back returns to
+    // the list, matching the on-screen Back. At the list root depth is 0 → back
+    // falls through to the tab/app behavior at the root.
+    crate::use_page_back(
+        move || u32::from(!matches!(*view.read(), NotesView::List)),
+        move || view.set(NotesView::List),
+    );
+
     // 1.8b nav restoration: re-open the note + sub-tab the user last had here.
     // Gated on `is_loaded` for the boot race; re-applies per mount for within-
     // session continuity. One-shot per mount via `restored`.

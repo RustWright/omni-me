@@ -51,6 +51,42 @@ pub fn listen_backend_event(event: &str, on_event: impl FnMut() + 'static) {
     }
 }
 
+/// Subscribe to a DOM window event, invoking `on_event` once per dispatch.
+/// Unlike [`listen_backend_event`] (which rides the Tauri event bus) this uses
+/// the plain browser event target, so it fires everywhere the WASM frontend
+/// runs — `dx serve`, the desktop webview, the Android webview, and Playwright
+/// (which can `window.dispatchEvent(new Event(...))` to drive it in tests).
+///
+/// Used for `omni:back`: the Android `MainActivity` dispatches it on a
+/// hardware/gesture back press so the frontend can pop one in-app nav level.
+/// Fire-and-forget — the closure is leaked (one listener per app session, like
+/// `listen_backend_event`).
+pub fn listen_window_event(event: &str, on_event: impl FnMut() + 'static) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let mut on_event = on_event;
+    let cb = Closure::wrap(Box::new(move |_evt: web_sys::Event| on_event()) as Box<dyn FnMut(_)>);
+    let _ = window.add_event_listener_with_callback(event, cb.as_ref().unchecked_ref());
+    cb.forget();
+}
+
+/// Publish the current "can the app go back within its own nav?" state to
+/// `window.__omniCanGoBack`. The Android back handler reads this flag
+/// synchronously (`evaluateJavascript`) to decide whether to dispatch
+/// `omni:back` (pop an in-app level) or background the app. No-op off the web
+/// (no `window`). Cheap enough to call from the reactive effect that watches
+/// drawer / page-depth / tab state.
+pub fn set_can_go_back(can: bool) {
+    if let Some(window) = web_sys::window() {
+        let _ = js_sys::Reflect::set(
+            &window,
+            &JsValue::from_str("__omniCanGoBack"),
+            &JsValue::from_bool(can),
+        );
+    }
+}
+
 // CodeMirror interop
 #[wasm_bindgen]
 extern "C" {

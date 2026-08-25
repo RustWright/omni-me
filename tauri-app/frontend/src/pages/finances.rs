@@ -69,7 +69,7 @@ fn classify_share_mime(mime: &str, filename: &str) -> Option<DocumentKind> {
 /// Which sub-view is currently active inside Finances. The variants stay
 /// `Copy`; the pending extracted draft (which is not Copy) lives in a
 /// separate signal alongside this enum.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FinancesView {
     /// Overview surface root (Stage C) — the daily glance: net-worth hero +
     /// history chart, per-institution balances, review inbox, recent activity.
@@ -192,6 +192,25 @@ fn is_surface_root(view: FinancesView) -> bool {
     )
 }
 
+/// The view a drill-down returns to on "back" — the single source of truth for
+/// both the on-screen Back buttons' destinations (mirrored in the match arms
+/// below) and the hardware/gesture-back handler (#372). `None` for the three
+/// surface roots (nothing to pop within Finances). `return_to` resolves the two
+/// multi-origin drill-downs (Accounts, Reconciliation) that can be opened from
+/// either Overview or Analyze (batch-2 nav-back fix).
+fn finances_back_target(view: FinancesView, return_to: FinancesView) -> Option<FinancesView> {
+    use FinancesView::*;
+    match view {
+        Overview | Analyze | TransactionList => None,
+        AddMenu | Capture(_) | Email | TransactionForm | BatchList | StatementImport
+        | JournalImport => Some(Overview),
+        BatchReview => Some(BatchList),
+        TransactionDetail => Some(TransactionList),
+        AccountList | Reconciliation => Some(return_to),
+        Dashboard | BudgetList | RecurringReview | BalanceCheck | Query => Some(Analyze),
+    }
+}
+
 /// Top-level Finances page. Umbrella for capture flows (Phase 3), transactions
 /// surface (Phase 4), workflows (Phase 5), and import (Phase 6).
 #[component]
@@ -208,6 +227,30 @@ pub fn FinancesPage() -> Element {
     // return there instead. Ephemeral by design — only surface roots persist
     // (see the write-through effect below), so restore always lands on a root.
     let mut return_to: Signal<FinancesView> = use_signal(|| FinancesView::Overview);
+
+    // Hardware/gesture-back (#372): pop one Finances drill-down per back press,
+    // routed through the same `finances_back_target` map the on-screen Back
+    // buttons use, and clearing the same per-view selection state those handlers
+    // clear (batch/txn id, pending draft). At a surface root depth is 0 → back
+    // falls through to the tab/app behavior at the app root.
+    crate::use_page_back(
+        move || u32::from(finances_back_target(*view.read(), *return_to.read()).is_some()),
+        move || {
+            let cur = *view.read();
+            if let Some(parent) = finances_back_target(cur, *return_to.read()) {
+                match cur {
+                    FinancesView::BatchReview => selected_batch_id.set(None),
+                    FinancesView::TransactionDetail => selected_txn_id.set(None),
+                    FinancesView::TransactionForm | FinancesView::Capture(_) => {
+                        pending_draft.set(None)
+                    }
+                    _ => {}
+                }
+                view.set(parent);
+            }
+        },
+    );
+
     // Pending-batch count for the Overview review inbox, refreshed whenever the
     // user is on the Overview root. A separate signal (not derived from listing
     // the batches inline) keeps the tile cheap — one COUNT query, not a full
@@ -6863,6 +6906,63 @@ mod tests {
         // is calibrated for the listed subtypes.
         assert_eq!(classify_share_mime("image/tiff", "r.tiff"), None);
         assert_eq!(classify_share_mime("image/svg+xml", "r.svg"), None);
+    }
+
+    // --- #372 hardware-back target map -----------------------------------
+
+    #[test]
+    fn finances_back_target_none_exactly_at_surface_roots() {
+        use FinancesView::*;
+        // The three surface roots have nothing to pop within Finances; every
+        // other view does. This must stay in lockstep with `is_surface_root`
+        // (both feed the hardware-back depth), so assert them together.
+        for v in [
+            Overview,
+            Analyze,
+            TransactionList,
+            AddMenu,
+            Capture(DocumentKind::Photo),
+            Email,
+            TransactionForm,
+            BatchList,
+            BatchReview,
+            TransactionDetail,
+            AccountList,
+            Dashboard,
+            BudgetList,
+            RecurringReview,
+            StatementImport,
+            Reconciliation,
+            BalanceCheck,
+            JournalImport,
+            Query,
+        ] {
+            assert_eq!(
+                finances_back_target(v, Overview).is_none(),
+                is_surface_root(v),
+                "back-target/None must match is_surface_root for {v:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn finances_back_target_maps_drilldowns_to_parents() {
+        use FinancesView::*;
+        assert_eq!(finances_back_target(AddMenu, Overview), Some(Overview));
+        assert_eq!(finances_back_target(BatchReview, Overview), Some(BatchList));
+        assert_eq!(finances_back_target(TransactionDetail, Overview), Some(TransactionList));
+        assert_eq!(finances_back_target(Dashboard, Overview), Some(Analyze));
+        assert_eq!(finances_back_target(Query, Overview), Some(Analyze));
+    }
+
+    #[test]
+    fn finances_back_target_multi_origin_follows_return_to() {
+        use FinancesView::*;
+        // Accounts + Reconciliation open from either Overview or Analyze; back
+        // returns to whichever surface the user drilled in from (batch-2 fix).
+        assert_eq!(finances_back_target(AccountList, Overview), Some(Overview));
+        assert_eq!(finances_back_target(AccountList, Analyze), Some(Analyze));
+        assert_eq!(finances_back_target(Reconciliation, Dashboard), Some(Dashboard));
     }
 
     // --- Phase 4.2 attachment-render classifier --------------------------

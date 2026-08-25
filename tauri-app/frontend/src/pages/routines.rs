@@ -23,6 +23,26 @@ enum RoutineView {
 #[component]
 pub fn RoutinesPage() -> Element {
     let mut view = use_signal(|| RoutineView::DailyChecklist);
+
+    // Hardware/gesture-back (#372): pop one level of the Manage flow, matching
+    // the on-screen Back — GroupDetail/AddGroup → GroupList → DailyChecklist
+    // (root, depth 0).
+    crate::use_page_back(
+        move || match *view.read() {
+            RoutineView::DailyChecklist => 0,
+            RoutineView::GroupList => 1,
+            RoutineView::GroupDetail(_) | RoutineView::AddGroup => 2,
+        },
+        move || {
+            let next = match &*view.read() {
+                RoutineView::DailyChecklist => RoutineView::DailyChecklist,
+                RoutineView::GroupList => RoutineView::DailyChecklist,
+                RoutineView::GroupDetail(_) | RoutineView::AddGroup => RoutineView::GroupList,
+            };
+            view.set(next);
+        },
+    );
+
     let mut groups = use_signal(Vec::<RoutineGroup>::new);
     let mut error_msg = use_signal(|| None::<String>);
 

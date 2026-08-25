@@ -109,6 +109,15 @@ pub fn JournalPage() -> Element {
     // The calendar is a right-edge drawer overlaying the day view (opened by a
     // right-edge swipe or the toolbar button), not a separate sub-tab.
     let mut calendar_open = use_signal(|| false);
+
+    // Hardware/gesture-back (#372): if the calendar drawer is open, back closes
+    // it (like the scrim tap) instead of leaving the app. Journal is the home
+    // tab, so with the calendar closed depth is 0 → back backgrounds the app.
+    crate::use_page_back(
+        move || u32::from(*calendar_open.read()),
+        move || calendar_open.set(false),
+    );
+
     // Right-edge swipe tracking for the calendar drawer (mirror of the app-shell
     // left-edge nav swipe): `Some(start_x)` once a tracked touch begins — near
     // the right edge when closed (candidate open-swipe), or anywhere when open

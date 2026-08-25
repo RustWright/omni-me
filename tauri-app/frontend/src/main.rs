@@ -60,6 +60,59 @@ impl Tab {
     }
 }
 
+/// Bridges each page's in-app nav into the app-wide hardware/gesture-back
+/// handling (#372). The Android `MainActivity` dispatches an `omni:back` DOM
+/// event on a back press; the root ([`App`]) decides what "back" pops in this
+/// order — open drawer → the active page's own drill-down → non-home tab → (at
+/// home root) let the OS background the app. Pages don't know about any of that:
+/// they just call [`use_page_back`] to report how deep they are and to receive a
+/// "pop one level" pulse.
+///
+/// Provided once at the root; the active page reads it via [`use_page_back`].
+#[derive(Clone, Copy)]
+pub struct BackNav {
+    /// In-page levels the active page can still pop (0 = at its own root). The
+    /// active page keeps this current; the root ORs it with the drawer / tab
+    /// state to publish `window.__omniCanGoBack`.
+    page_depth: Signal<u32>,
+    /// Bumped by the root to ask the active page to pop exactly one level. The
+    /// page reacts in its own scope (see [`use_page_back`]), so all view-signal
+    /// writes stay where they belong — the root never touches page internals.
+    pop_seq: Signal<u32>,
+}
+
+/// Wire a page's in-app nav into hardware/gesture-back handling (#372).
+///
+/// `depth` returns the page's current poppable depth (0 = at its root) — it
+/// reads the page's own `view` signal, so this stays reactive and the published
+/// `can-go-back` flag tracks every drill-down. `on_pop` pops exactly one level
+/// and runs in the page's scope (safe to mutate the page's view signals), fired
+/// once per hardware-back while `depth() > 0`.
+///
+/// Pages with no drill-down simply don't call this (their depth stays 0, so a
+/// back press falls through to the tab/app-background behavior at the root).
+pub fn use_page_back(depth: impl Fn() -> u32 + Copy + 'static, on_pop: impl FnMut() + 'static) {
+    let nav = use_context::<BackNav>();
+    let mut page_depth = nav.page_depth;
+    let pop_seq = nav.pop_seq;
+
+    // Publish the page's depth upward whenever its view changes (reactive read
+    // of the page signal inside `depth()`).
+    use_effect(move || page_depth.set(depth()));
+
+    // React to the root's pop pulses. `handled` dedupes the initial effect run
+    // (seq 0) and any re-run that isn't a fresh bump, so we pop once per press.
+    let mut on_pop = on_pop;
+    let mut handled = use_signal(|| 0u32);
+    use_effect(move || {
+        let seq = *pop_seq.read();
+        if seq > *handled.peek() {
+            handled.set(seq);
+            on_pop();
+        }
+    });
+}
+
 /// Left-edge strip width (CSS px) within which a touch may begin a drawer-open
 /// swipe (1.12). The matching native `setSystemGestureExclusionRects` keeps
 /// Android's back-gesture from stealing swipes in this strip.
@@ -101,6 +154,13 @@ fn App() -> Element {
     // survives page unmount on tab switch. Pages read it via `use_continuity`.
     let continuity_store = continuity::use_continuity_provider();
 
+    // Hardware/gesture-back plumbing (#372). The active page reports its
+    // drill-down depth into `page_depth` and pops one level when `pop_seq`
+    // bumps; the root orchestrates below. Provided as `BackNav` context.
+    let mut page_depth = use_signal(|| 0u32);
+    let mut pop_seq = use_signal(|| 0u32);
+    use_context_provider(|| BackNav { page_depth, pop_seq });
+
     // Live-refresh on inbound sync (see `sync_refresh`). The backend applies
     // auto-pulled remote events into the local DB and emits `sync:applied`, but
     // the WASM frontend has no event-listen binding, so the open page never
@@ -127,6 +187,46 @@ fn App() -> Element {
         });
     });
 
+    // Hardware/gesture-back handler (#372). The Android `MainActivity`
+    // dispatches an `omni:back` DOM event on a back press; we drain it here (same
+    // channel→spawn pattern as `sync:applied` above — the JS callback fires
+    // outside any Dioxus scope, so it only nudges a channel and the in-scope
+    // drain does the signal writes). Precedence: close the drawer → pop the
+    // active page's drill-down → return to the home tab → (nothing left) let the
+    // OS background the app. That last case never reaches here: `MainActivity`
+    // only dispatches `omni:back` when `window.__omniCanGoBack` is true, which
+    // the effect below keeps false at the home root.
+    use_hook(move || {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+        bridge::listen_window_event("omni:back", move || {
+            let _ = tx.unbounded_send(());
+        });
+        spawn(async move {
+            while rx.next().await.is_some() {
+                if *drawer_open.peek() {
+                    drawer_open.set(false);
+                } else if *page_depth.peek() > 0 {
+                    // Ask the active page to pop one level (it reacts in its own
+                    // scope via `use_page_back`).
+                    let next = pop_seq.peek().wrapping_add(1);
+                    pop_seq.set(next);
+                } else if *active_tab.peek() != Tab::Journal {
+                    active_tab.set(Tab::Journal);
+                    continuity_store.update_nav(|n| n.tab = Some(Tab::Journal.as_key().to_string()));
+                }
+            }
+        });
+    });
+
+    // Publish the app's can-go-back state to `window.__omniCanGoBack` so the
+    // native back handler can decide pop-in-app vs background-the-app
+    // synchronously (#372). Reactive on drawer / page-depth / tab, so the flag
+    // is always current when a back press arrives.
+    use_effect(move || {
+        let can = *drawer_open.read() || *page_depth.read() > 0 || *active_tab.read() != Tab::Journal;
+        bridge::set_can_go_back(can);
+    });
+
     // Known-account suggestions: the shared `known_accounts` union behind every
     // `AccountInput` typeahead. Registered *after* the `SyncRefresh` provider
     // above so it can subscribe to `sync_epoch` and re-fetch when a pull lands —
@@ -143,6 +243,10 @@ fn App() -> Element {
         let _ = active_tab.read(); // re-run on tab switch
         header_hidden.set(false);
         last_scroll_top.set(0.0);
+        // Clean slate for hardware-back (#372): the newly-mounted page re-reports
+        // its own depth via `use_page_back`; this just clears any stale value from
+        // the outgoing page in the unmount→mount gap.
+        page_depth.set(0);
     });
 
     // 1.8b: restore the last-open tab once the store's disk snapshot has loaded.

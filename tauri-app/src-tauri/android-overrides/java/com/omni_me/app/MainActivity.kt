@@ -5,6 +5,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.FileProvider
@@ -47,6 +49,53 @@ class MainActivity : TauriActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleSendIntent(intent)
+    }
+
+    // --- Hardware/gesture back → in-app navigation (#372) ---
+    //
+    // Stock Tauri lets the back button finish the activity, so a back press from
+    // anywhere in the app closes it — even when the user only meant to leave a
+    // Finances drill-down or a note (the on-screen Back is often out of thumb
+    // reach on a phone). Instead we consult the web layer: the frontend keeps
+    // `window.__omniCanGoBack` current on every nav change (see `bridge.rs` /
+    // `main.rs` #372). If it can go back in-app, we dispatch `omni:back` and let
+    // Dioxus pop one level; otherwise we background the app (moveTaskToBack)
+    // rather than destroy the activity — the standard root-back behavior, and it
+    // keeps the app warm so we dodge the cold-open cost (cf. #370).
+    //
+    // `onBackPressed()` is deprecated on API 33+ in favor of
+    // OnBackPressedDispatcher / predictive back, but our target device is API 29
+    // and the manifest doesn't opt into `enableOnBackInvokedCallback`, so the
+    // legacy path still runs everywhere we ship. Migrate if/when we adopt
+    // predictive back.
+    @Deprecated("Legacy back handling; fine until we adopt predictive back (API 33+).")
+    override fun onBackPressed() {
+        val webView = findWebView(findViewById(android.R.id.content))
+        if (webView == null) {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+            return
+        }
+        // `evaluateJavascript` and its callback both run on the UI thread; the
+        // result is the JSON-serialized expression value ("true"/"false").
+        webView.evaluateJavascript("window.__omniCanGoBack === true") { result ->
+            if (result == "true") {
+                webView.evaluateJavascript("window.dispatchEvent(new Event('omni:back'))", null)
+            } else {
+                moveTaskToBack(true)
+            }
+        }
+    }
+
+    private fun findWebView(view: View?): WebView? {
+        if (view == null) return null
+        if (view is WebView) return view
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                findWebView(view.getChildAt(i))?.let { return it }
+            }
+        }
+        return null
     }
 
     // --- OTA install bridge (app-delivery) ---
