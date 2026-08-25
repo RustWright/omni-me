@@ -96,6 +96,24 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
 
   **B. Review gate:**
   5. **Full end-to-end code review of everything** (per the v1 close-out gate #4 above).
+     **🔄 IN PROGRESS — Phase A sitting 1 DONE 2026-08-25.** Third review of the project; scope is the
+     never-reviewed Cycles 3+4 range `22395f8..HEAD` (230 commits, +49,501/−2,329). Four perspective
+     docs at `reviews/2026-08-25-*.md` (gitignored — durable summaries in `project.md`'s Session-6 row;
+     private-overlay findings in `omni-me-private/reviews/`). Cycle-2 model split reused (Opus:
+     security+logic, Sonnet: perf+bloat) via 4 parallel Write-less reviewer subagents.
+     **5 Criticals.** Logic: (1) `journal_file.rs:247` renders descriptions unsanitized → one `*`-prefixed
+     payee aborts the whole-file ledger parse and collapses Accounts/net-worth/dashboard; the importer
+     strips this *because* it can't round-trip, but no write path does. (2) Pull cursor is server-clock
+     while the pull filter is author-clock → an offline device's backlog is **never delivered to peers**;
+     **verify before roadmap steps 7–8**, which bulk-import months-stale dated data.
+     Security: (3-5) unauthenticated `POST /auto_import/sources` = subprocess RCE on the box, `rest`-source
+     `[secrets]` exfiltration, and `PUT /llm/config` redirecting notes+receipts — all three collapse into
+     one ~50-line bearer-token middleware. `CorsLayer::permissive()` verified unused by the client.
+     **3 prior-deferral status upgrades** (CORS, Gemini key in query string, CSP); blanket
+     "auth deferred (Tailscale)" ruled **no longer defensible** — it predates the server executing
+     commands and writing secrets, and was out of scope in *both* prior reviews.
+     **Remaining:** sitting 2 (backend/server/secrets/platform dives) → user-fired `/code-review ultra`
+     calibration on the sync/event-store path → sitting 3 (frontend) → Phase C triage → Phase B test-gaps.
 
   **C. Email ingest prep:**
   6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
