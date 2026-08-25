@@ -205,11 +205,32 @@ pub async fn run(cfg: RunConfig) {
         device_id,
         extractor,
     };
+    // Persisted off-switch set (#367). A source the user switched off stays off
+    // across restarts — critical for a runaway bank source, where re-arming on
+    // reboot would resume the exact hammering the pause was meant to stop.
+    // Threaded into `spawn_sources` so a paused source is registered but never
+    // spawned (not even one boot tick). Applies uniformly to compiled overlay
+    // sources too: everything the builder returns flows through here. A load
+    // failure degrades to "nothing paused" rather than failing startup.
+    let paused_names = match omni_me_core::auto_import::paused::default_path() {
+        Ok(p) => omni_me_core::auto_import::paused::load(&p).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "failed to load persisted paused sources — treating none as paused");
+            Default::default()
+        }),
+        Err(e) => {
+            tracing::warn!(error = %e, "paused-sources path lookup failed — treating none as paused");
+            Default::default()
+        }
+    };
+
     let sources = (cfg.source_builder)(ctx).await;
     let source_count = sources.len();
-    spawn_sources(sources, interval, &auto_import_registry).await;
+    let paused_count = paused_names.len();
+    spawn_sources(sources, interval, &auto_import_registry, &paused_names).await;
+
     tracing::info!(
         sources = source_count,
+        paused = paused_count,
         interval_secs = interval.as_secs(),
         "auto-import scheduler initialized"
     );

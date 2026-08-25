@@ -20,6 +20,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use omni_me_core::auto_import::config::{self, SourceDef};
+use omni_me_core::auto_import::paused;
 use omni_me_core::auto_import_scheduler::{
     ReauthOutcome, SourceStatus, classify_source_health, SourceHealth,
 };
@@ -40,6 +41,19 @@ pub fn auto_import_routes() -> Router<AppState> {
             get(list_sources_handler).post(add_source_handler),
         )
         .route("/auto_import/sources/{name}", delete(remove_source_handler))
+        // Runtime off-switch (#367). Pause live-aborts a source's scheduler task
+        // (keeping its config) and *persists* the pause so it survives a restart;
+        // resume re-spawns it and clears the persisted flag. Works for compiled
+        // overlay bank sources too — they key on their registry name, no
+        // `sources.toml` entry required.
+        .route(
+            "/auto_import/sources/{name}/pause",
+            post(pause_source_handler),
+        )
+        .route(
+            "/auto_import/sources/{name}/resume",
+            post(resume_source_handler),
+        )
 }
 
 #[derive(Serialize)]
@@ -161,6 +175,10 @@ async fn add_source_handler(
     cfg.sources.retain(|s| s.name != def.name);
     cfg.sources.push(def.clone());
     config::save(&path, &cfg).map_err(internal_err)?;
+    // (Re)configuring a source implies it should run per the new config —
+    // `spawn_one` below un-pauses it in the live registry, so drop any stale
+    // persisted pause to match (otherwise the next boot would re-pause it).
+    clear_persisted_pause(&def.name);
 
     // Apply live: build the source from the def and (re)spawn it straight into
     // the running registry — `spawn_one` aborts+replaces any prior instance of
@@ -196,5 +214,61 @@ async fn remove_source_handler(
     config::save(&path, &cfg).map_err(internal_err)?;
     // Tear the running task down live too (no-op if it wasn't spawned).
     state.auto_import_registry.remove(&name).await;
+    // Drop any persisted pause for this name so a later same-name source isn't
+    // surprise-paused at the next boot. Best-effort: a removed source is already
+    // gone, so a paused-file hiccup shouldn't fail the remove.
+    clear_persisted_pause(&name);
     Ok(Json(serde_json::json!({ "status": "removed", "applies": "live" })))
+}
+
+// =============================================================================
+// Runtime off-switch (#367) — pause / resume, persisted across restarts
+// =============================================================================
+
+/// Best-effort removal of a name from the persisted paused set. Used on the
+/// config add/remove paths, where (re)configuring a source implies it should run
+/// — we never want a stale paused entry to switch it back off at the next boot.
+/// Logged, not surfaced: the primary action (add/remove) already succeeded.
+fn clear_persisted_pause(name: &str) {
+    match paused::default_path() {
+        Ok(p) => {
+            if let Err(e) = paused::set_paused(&p, name, false) {
+                tracing::warn!(source = %name, error = %e, "failed to clear persisted pause");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "paused-sources path lookup failed"),
+    }
+}
+
+/// `POST /auto_import/sources/{name}/pause` — live-abort the source's scheduler
+/// task (keeping its config) and persist the pause. 404 if no source by that
+/// name is running/registered. The persist is a hard requirement, not
+/// best-effort: a pause that silently didn't survive a restart is exactly the
+/// runaway-source failure mode #367 exists to prevent, so a persistence failure
+/// is surfaced as a 500 (the in-memory abort is harmless on its own).
+async fn pause_source_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !state.auto_import_registry.pause(&name).await {
+        return Err((StatusCode::NOT_FOUND, format!("no running source named '{name}'")));
+    }
+    let path = paused::default_path().map_err(internal_err)?;
+    paused::set_paused(&path, &name, true).map_err(internal_err)?;
+    Ok(Json(serde_json::json!({ "status": "paused", "applies": "live" })))
+}
+
+/// `POST /auto_import/sources/{name}/resume` — re-spawn a paused source's
+/// scheduler loop (an immediate fresh pull) and clear the persisted pause. 404
+/// if no source by that name is running/registered.
+async fn resume_source_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !state.auto_import_registry.resume(&name).await {
+        return Err((StatusCode::NOT_FOUND, format!("no running source named '{name}'")));
+    }
+    let path = paused::default_path().map_err(internal_err)?;
+    paused::set_paused(&path, &name, false).map_err(internal_err)?;
+    Ok(Json(serde_json::json!({ "status": "resumed", "applies": "live" })))
 }

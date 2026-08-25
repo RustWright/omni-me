@@ -54,6 +54,11 @@ pub struct AutoImportSourceView {
     /// subprocess-backed Northwind source does today; Globepay/IMAP are `false`).
     #[serde(default)]
     pub reauth_capable: bool,
+    /// Whether the user has paused this source (runtime off-switch, #367). A
+    /// paused source keeps its config but doesn't auto-poll. `#[serde(default)]`
+    /// so an older server that predates the off-switch still deserializes.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -146,6 +151,45 @@ pub async fn reauth_source(
     }
     serde_json::from_str::<serde_json::Value>(&body)
         .map_err(|e| format!("reauth decode: {e}"))
+}
+
+/// Pause or resume a source's background polling (runtime off-switch, #367).
+/// Thin proxy to `POST /auto_import/sources/{name}/{pause|resume}`. The server
+/// live-aborts (pause) or re-spawns (resume) the scheduler task and persists the
+/// state so it survives a restart. A 404 (no running source by that name) or a
+/// server fault surfaces as `Err`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_source_paused(
+    state: State<'_, AppState>,
+    source: String,
+    paused: bool,
+) -> Result<serde_json::Value, String> {
+    let server_url = state.server_url.read().await.clone();
+    let action = if paused { "pause" } else { "resume" };
+    // Source names are simple identifiers (the Add form rejects path-unsafe
+    // characters; compiled source names are code constants), so path-safe as-is.
+    let url = format!(
+        "{}/auto_import/sources/{}/{}",
+        server_url.trim_end_matches('/'),
+        source,
+        action
+    );
+    let resp = state
+        .http
+        .post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("{action} source: {e}"))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("{action} source body: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("server returned {status}: {body}"));
+    }
+    serde_json::from_str::<serde_json::Value>(&body)
+        .map_err(|e| format!("{action} source decode: {e}"))
 }
 
 // =============================================================================

@@ -310,6 +310,12 @@ pub struct AutoImportSourceView {
     /// source does today). Gates whether the Reconnect button/OTP field render.
     #[serde(default)]
     pub reauth_capable: bool,
+    /// Whether the user has paused this source (runtime off-switch, #367). When
+    /// true the row shows a "Paused" state + a Resume action instead of Pause;
+    /// the source keeps its config but does not auto-poll. `#[serde(default)]`
+    /// keeps older-server snapshots parseable (→ not paused).
+    #[serde(default)]
+    pub paused: bool,
 }
 
 /// Captured payload from an Android share-target SEND intent (Phase 3.3).

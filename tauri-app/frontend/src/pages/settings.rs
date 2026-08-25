@@ -727,6 +727,9 @@ fn AutoImportSection() -> Element {
     let mut configs: Signal<Option<Vec<serde_json::Value>>> = use_signal(|| None);
     let mut loading_msg = use_signal(|| None::<String>);
     let ticking = use_signal(|| None::<String>);
+    // Name of the source whose pause/resume request is in flight (#367), so its
+    // row can show "Pausing…"/"Resuming…" and disable the toggle meanwhile.
+    let pausing = use_signal(|| None::<String>);
     let mut show_form = use_signal(|| false);
     let mut edit_target = use_signal(|| None::<serde_json::Value>);
 
@@ -863,6 +866,36 @@ fn AutoImportSection() -> Element {
                                     AutoImportRow {
                                         source: src.clone(),
                                         ticking_now: ticking.read().as_deref() == Some(src.name.as_str()),
+                                        pausing_now: pausing.read().as_deref() == Some(src.name.as_str()),
+                                        on_toggle_paused: {
+                                            let name = src.name.clone();
+                                            let mut pausing = pausing;
+                                            let mut sources = sources;
+                                            let mut loading_msg = loading_msg;
+                                            move |want_paused: bool| {
+                                                let name = name.clone();
+                                                pausing.set(Some(name.clone()));
+                                                spawn(async move {
+                                                    let result =
+                                                        bridge::invoke_set_source_paused(&name, want_paused).await;
+                                                    match result {
+                                                        Ok(()) => loading_msg.set(Some(format!(
+                                                            "'{name}' {}.",
+                                                            if want_paused { "paused" } else { "resumed" }
+                                                        ))),
+                                                        Err(e) => loading_msg.set(Some(format!(
+                                                            "Couldn't {} '{name}': {e}",
+                                                            if want_paused { "pause" } else { "resume" }
+                                                        ))),
+                                                    }
+                                                    pausing.set(None);
+                                                    // Re-pull so the row reflects the new paused state.
+                                                    if let Ok(list) = bridge::invoke_list_auto_import_sources().await {
+                                                        sources.set(Some(list));
+                                                    }
+                                                });
+                                            }
+                                        },
                                         on_tick: {
                                             let name = src.name.clone();
                                             let mut ticking = ticking;
@@ -1227,10 +1260,16 @@ fn LlmProviderSection() -> Element {
 fn AutoImportRow(
     source: AutoImportSourceView,
     ticking_now: bool,
+    pausing_now: bool,
     on_tick: EventHandler<()>,
+    /// Toggle the runtime off-switch (#367). The bool is the *desired* paused
+    /// state — `true` to pause, `false` to resume — which the parent relays to
+    /// the server and then refreshes the row.
+    on_toggle_paused: EventHandler<bool>,
     on_reauth_success: EventHandler<()>,
 ) -> Element {
     let (label, badge_classes) = health_badge(&source.health);
+    let paused = source.paused;
     let relative = format_relative_time(source.last_tick_at.as_deref());
     let summary = outcome_summary(&source.last_outcome);
 
@@ -1265,19 +1304,47 @@ fn AutoImportRow(
                             class: "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border {badge_classes}",
                             "{label}"
                         }
+                        if paused {
+                            span {
+                                class: "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border border-white/15 bg-white/5 text-obsidian-text-muted",
+                                "Paused"
+                            }
+                        }
                     }
-                    div { class: "text-xs text-obsidian-text-muted", "{summary}" }
+                    div { class: "text-xs text-obsidian-text-muted",
+                        if paused { "Paused — not auto-importing until resumed." } else { "{summary}" }
+                    }
                     div { class: "text-[10px] text-obsidian-text-muted/70 mt-1 font-mono",
                         "Last tick: {relative} · interval: {source.interval_secs / 60}m"
                     }
                 }
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    size: ButtonSize::Sm,
-                    class: "shrink-0",
-                    disabled: ticking_now,
-                    onclick: move |_| on_tick.call(()),
-                    if ticking_now { "Fetching…" } else { "Fetch now" }
+                div { class: "flex items-center gap-2 shrink-0",
+                    // Runtime off-switch (#367): live-abort / resume the source's
+                    // scheduler task. Available on every running row — including
+                    // compiled bank sources that have no config to edit.
+                    Button {
+                        variant: if paused { ButtonVariant::Primary } else { ButtonVariant::Ghost },
+                        size: ButtonSize::Sm,
+                        disabled: pausing_now,
+                        onclick: move |_| on_toggle_paused.call(!paused),
+                        if pausing_now {
+                            if paused { "Resuming…" } else { "Pausing…" }
+                        } else if paused {
+                            "Resume"
+                        } else {
+                            "Pause"
+                        }
+                    }
+                    // Manual fetch is meaningless while paused (and for a paused
+                    // runaway source, a fetch is exactly what we don't want) — so
+                    // it's disabled until the source is resumed.
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        size: ButtonSize::Sm,
+                        disabled: ticking_now || paused,
+                        onclick: move |_| on_tick.call(()),
+                        if ticking_now { "Fetching…" } else { "Fetch now" }
+                    }
                 }
             }
 

@@ -2767,6 +2767,7 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 health: "healthy".into(),
                 auth_state: serde_json::json!({ "kind": "active" }),
                 reauth_capable: false,
+                paused: false,
             },
             // The Northwind subprocess source: session expired → needs_reauth +
             // reauth_capable, so the inline Reconnect affordance renders in mock.
@@ -2784,6 +2785,7 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                     "reason": "Session expired — reconnect required",
                 }),
                 reauth_capable: true,
+                paused: false,
             },
             AutoImportSourceView {
                 name: "imap-receipts".into(),
@@ -2793,6 +2795,7 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 health: "unknown".into(),
                 auth_state: serde_json::json!({ "kind": "active" }),
                 reauth_capable: false,
+                paused: false,
             },
             AutoImportSourceView {
                 name: "imap-meridian-aed".into(),
@@ -2805,6 +2808,7 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 health: "degraded".into(),
                 auth_state: serde_json::json!({ "kind": "active" }),
                 reauth_capable: false,
+                paused: false,
             },
         ];
         // Fold the configured generic sources in as running entries — in the
@@ -2833,7 +2837,19 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                     health: "healthy".into(),
                     auth_state: serde_json::json!({ "kind": "active" }),
                     reauth_capable: false,
+                    paused: false,
                 });
+            }
+        });
+        // Overlay the mock pause state so the runtime off-switch (#367) is
+        // walkable end-to-end under `--features mock`: pausing a row here flips
+        // `paused`, which the row renders as a Paused badge + Resume action.
+        MOCK_PAUSED.with(|p| {
+            let p = p.borrow();
+            for s in sources.iter_mut() {
+                if p.contains(&s.name) {
+                    s.paused = true;
+                }
             }
         });
         Ok(sources)
@@ -2901,6 +2917,45 @@ pub async fn invoke_reauth_source(source: &str, otp: &str) -> Result<serde_json:
             otp: &'a str,
         }
         invoke("reauth_source", &Args { source, otp }).await
+    }
+}
+
+// In-memory set of paused source names for the mock (single-threaded WASM), so
+// the runtime off-switch reflects across `invoke_list_auto_import_sources`
+// calls the way the real server persists it.
+#[cfg(feature = "mock")]
+thread_local! {
+    static MOCK_PAUSED: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Pause (`paused=true`) or resume (`paused=false`) a source's background
+/// polling — the runtime off-switch (#367). The server live-aborts / re-spawns
+/// the scheduler task and persists the state; the response is
+/// `{ "status": "paused"|"resumed", "applies": "live" }`. The mock toggles the
+/// in-memory paused set so the Settings row updates on the next refresh.
+pub async fn invoke_set_source_paused(source: &str, paused: bool) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        crate::timer::sleep_ms(250).await;
+        MOCK_PAUSED.with(|p| {
+            let mut p = p.borrow_mut();
+            if paused {
+                p.insert(source.to_string());
+            } else {
+                p.remove(source);
+            }
+        });
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            source: &'a str,
+            paused: bool,
+        }
+        invoke_unit("set_source_paused", &Args { source, paused }).await
     }
 }
 

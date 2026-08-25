@@ -540,6 +540,7 @@ pub fn run() {
             commands::auto_import::list_auto_import_sources,
             commands::auto_import::trigger_auto_import_tick,
             commands::auto_import::reauth_source,
+            commands::auto_import::set_source_paused,
             // Source-definition CRUD (3.7)
             commands::auto_import::list_source_configs,
             commands::auto_import::add_source_config,

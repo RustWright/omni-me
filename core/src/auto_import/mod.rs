@@ -24,6 +24,7 @@ pub mod imap;
 pub mod imap_real;
 pub mod imap_source;
 pub mod mime;
+pub mod paused;
 pub mod receipts;
 pub mod rest;
 pub mod setup;

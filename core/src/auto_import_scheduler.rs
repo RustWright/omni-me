@@ -222,6 +222,15 @@ pub struct SourceStatus {
     /// on the source). The client only renders a Reconnect affordance for
     /// capable sources.
     pub reauth_capable: bool,
+    /// Whether the user has *paused* this source — its scheduler loop is
+    /// live-aborted and it will not auto-poll until resumed. Distinct from
+    /// `NeedsReauth` (the source *wants* to run but can't) and from a config
+    /// `enabled=false` (which prevents the source from ever spawning): a paused
+    /// source keeps its config + registry entry, it's just switched off at
+    /// runtime. Persisted server-side so a pause survives a restart (see
+    /// `auto_import::paused`) — critical for stopping a runaway bank source.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 /// Wraps the source impl with its mutable status. Held inside the
@@ -264,6 +273,11 @@ impl SourceRegistry {
             // first `needs_reauth` tick flips this.
             auth_state: AuthState::Active,
             reauth_capable: source.reauth_capable(),
+            // A freshly-registered source is running; a persisted pause is
+            // re-applied by the composition root *after* spawn (see
+            // `SourceRegistry::pause`), so registration itself never starts
+            // paused.
+            paused: false,
         };
         let mut guard = self.inner.write().await;
         guard.insert(
@@ -311,6 +325,52 @@ impl SourceRegistry {
                 }
                 true
             }
+            None => false,
+        }
+    }
+
+    /// Pause a source live: abort its scheduler task but **keep** its registry
+    /// entry (and thus its config). Returns whether a source by that name was
+    /// registered. This is the runtime off-switch (#367) — for a compiled
+    /// overlay bank source it's the only way to stop it from the app, and for a
+    /// config source it stops polling without touching `sources.toml`.
+    ///
+    /// The handle is dropped (set to `None`) rather than kept-aborted on
+    /// purpose: `rearm_if_dormant` treats a *finished* handle as "resume me",
+    /// so leaving an aborted handle here would let a later Reconnect silently
+    /// un-pause the source. `None` means "no loop, and none wanted" — a
+    /// successful reauth clears `auth_state` but won't spawn a loop for a paused
+    /// source. [`resume`] is the only path back to running.
+    pub async fn pause(&self, name: &str) -> bool {
+        let mut guard = self.inner.write().await;
+        match guard.get_mut(name) {
+            Some(r) => {
+                if let Some(h) = r.task.take() {
+                    h.abort();
+                }
+                r.status.paused = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Resume a paused source: re-spawn its scheduler loop and clear the paused
+    /// flag. Returns whether a source by that name was registered. A no-op
+    /// (still `true`) if the source exists but isn't paused, so a double-resume
+    /// never spawns a second polling task. The re-spawned loop pulls immediately
+    /// on its first iteration, so resume also yields a fresh fetch.
+    pub async fn resume(&self, name: &str) -> bool {
+        let mut guard = self.inner.write().await;
+        match guard.get_mut(name) {
+            Some(r) if r.status.paused => {
+                let interval = Duration::from_secs(r.status.interval_secs);
+                let handle = spawn_with_registry(self.clone(), r.source.clone(), interval);
+                r.task = Some(handle);
+                r.status.paused = false;
+                true
+            }
+            Some(_) => true, // exists but wasn't paused — nothing to do
             None => false,
         }
     }
@@ -706,6 +766,7 @@ mod tests {
             interval_secs,
             auth_state: AuthState::Active,
             reauth_capable: false,
+            paused: false,
         }
     }
 
@@ -899,6 +960,119 @@ mod tests {
         assert_eq!(snap.len(), 1, "re-add replaced, not duplicated");
         assert_eq!(snap[0].interval_secs, 300, "the new config took effect");
         registry.remove("dup").await;
+    }
+
+    // ----- Pause / resume off-switch (#367) -----
+
+    #[tokio::test(start_paused = true)]
+    async fn pause_aborts_the_loop_but_keeps_the_entry() {
+        // A healthy, freely-ticking source. Pausing must stop it from polling
+        // AND leave it in the registry (config preserved), flagged paused.
+        let registry = SourceRegistry::new();
+        let src = Arc::new(null::NullSource::new("bank"));
+        registry
+            .spawn_one(src.clone(), Duration::from_secs(60))
+            .await;
+
+        // Let it tick a couple of times, then pause.
+        tokio::time::sleep(Duration::from_secs(130)).await;
+        let before = src.call_count();
+        assert!(before >= 2, "should have ticked before pause; got {before}");
+
+        assert!(registry.pause("bank").await, "pause reports it existed");
+        let snap = registry.snapshot().await;
+        assert_eq!(snap.len(), 1, "paused source stays registered (config kept)");
+        assert!(snap[0].paused, "status reflects the pause");
+
+        // No further ticks after pause, however long we wait.
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        assert_eq!(
+            src.call_count(),
+            before,
+            "paused source kept polling — the loop wasn't aborted"
+        );
+        registry.remove("bank").await;
+    }
+
+    #[tokio::test]
+    async fn pause_unknown_source_reports_false() {
+        let registry = SourceRegistry::new();
+        assert!(!registry.pause("ghost").await);
+        assert!(!registry.resume("ghost").await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resume_respawns_and_clears_the_flag() {
+        let registry = SourceRegistry::new();
+        let src = Arc::new(null::NullSource::new("bank"));
+        registry
+            .spawn_one(src.clone(), Duration::from_secs(60))
+            .await;
+        registry.pause("bank").await;
+        let paused_at = src.call_count();
+
+        // Resume re-arms the loop (which pulls immediately) and clears the flag.
+        assert!(registry.resume("bank").await);
+        assert!(!registry.snapshot().await[0].paused, "flag cleared on resume");
+
+        tokio::time::sleep(Duration::from_secs(200)).await; // ~3 ticks @ 60s
+        assert!(
+            src.call_count() > paused_at,
+            "resume didn't restart polling; count stuck at {paused_at}"
+        );
+        registry.remove("bank").await;
+    }
+
+    #[tokio::test]
+    async fn resume_on_running_source_is_a_noop_not_a_double_spawn() {
+        // Resuming a source that isn't paused must not spawn a second loop.
+        let registry = SourceRegistry::new();
+        registry
+            .spawn_one(
+                Arc::new(null::NullSource::new("live")),
+                Duration::from_secs(60),
+            )
+            .await;
+        assert!(registry.resume("live").await, "exists → true");
+        assert!(!registry.snapshot().await[0].paused);
+        registry.remove("live").await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reauth_does_not_unpause_a_paused_source() {
+        // A source can be paused while also credential-expired. A successful
+        // Reconnect clears auth_state but must NOT resurrect the scheduler loop
+        // of a source the user deliberately paused — only `resume` does that.
+        let registry = SourceRegistry::new();
+        let src = Arc::new(
+            null::NullSource::new("bank")
+                .with_script(vec![Err(ImportError::NeedsReauth("expired".into()))])
+                .with_reauth(ReauthOutcome::Active),
+        );
+        registry
+            .spawn_one(src.clone(), Duration::from_secs(60))
+            .await;
+
+        // First tick → NeedsReauth halts the loop; then the user pauses.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(registry.pause("bank").await);
+        let count_at_pause = src.call_count();
+
+        // Reconnect succeeds → auth_state Active, but paused stays true and no
+        // loop is spawned.
+        let outcome = registry.reauth("bank", "123456").await.unwrap();
+        assert_eq!(outcome, ReauthOutcome::Active);
+        let snap = registry.snapshot().await;
+        assert_eq!(snap[0].auth_state, AuthState::Active);
+        assert!(snap[0].paused, "reauth must not clear the user's pause");
+
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        assert_eq!(
+            src.call_count(),
+            count_at_pause,
+            "reauth silently un-paused the source (spawned a loop)"
+        );
+        registry.remove("bank").await;
     }
 
     // ----- AuthState tracking + reauth (3.5a) -----
