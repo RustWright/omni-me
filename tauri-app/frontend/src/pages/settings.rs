@@ -2,7 +2,9 @@ use chrono_tz::Tz;
 use dioxus::prelude::*;
 
 use crate::components::icon::{Icon, IconName};
-use crate::components::primitives::Button;
+use crate::components::primitives::{
+    Banner, BannerKind, Button, ButtonSize, ButtonVariant, PageHeader, INPUT_CLASS,
+};
 use crate::{
     bridge,
     types::{AutoImportSourceView, SyncStatus},
@@ -37,7 +39,7 @@ pub fn SettingsPage() -> Element {
     rsx! {
         div { class: "max-w-3xl mx-auto w-full animate-in fade-in duration-300",
 
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent mb-8", "Settings" }
+            PageHeader { title: "Settings", class: "mb-8" }
 
             // --- Sync Section ---
             div { class: "mb-10 space-y-6",
@@ -58,7 +60,7 @@ pub fn SettingsPage() -> Element {
                     label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Sync Server Address" }
                     div { class: "flex gap-2",
                         input {
-                            class: "flex-1 px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
+                            class: "{INPUT_CLASS} flex-1",
                             r#type: "text",
                             value: "{server_url}",
                             oninput: move |e| {
@@ -87,8 +89,10 @@ pub fn SettingsPage() -> Element {
                 }
 
                 div { class: "pt-4",
-                    button {
-                        class: "w-full flex items-center justify-center gap-2 px-6 py-3 bg-white/5 border border-white/10 text-white font-bold rounded-lg hover:bg-white/10 transition-colors shadow-lg active:scale-[0.99]",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        full: true,
+                        class: "shadow-lg active:scale-[0.99]",
                         onclick: move |_| {
                             sync_status.set(Some("Initiating sync...".into()));
                                         spawn(async move {
@@ -108,9 +112,7 @@ pub fn SettingsPage() -> Element {
 
                 // Status display
                 if let Some(status) = &*sync_status.read() {
-                    div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
-                        "{status}"
-                    }
+                    Banner { kind: BannerKind::Info, class: "animate-in zoom-in-95 duration-200", "{status}" }
                 }
             }
 
@@ -127,7 +129,7 @@ pub fn SettingsPage() -> Element {
                     }
                     div { class: "flex gap-2",
                         input {
-                            class: "flex-1 px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
+                            class: "{INPUT_CLASS} flex-1",
                             r#type: "text",
                             placeholder: "e.g. America/New_York",
                             value: "{tz_input}",
@@ -189,9 +191,7 @@ pub fn SettingsPage() -> Element {
                 }
 
                 if let Some(status) = &*tz_status.read() {
-                    div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
-                        "{status}"
-                    }
+                    Banner { kind: BannerKind::Info, class: "animate-in zoom-in-95 duration-200", "{status}" }
                 }
             }
 
@@ -271,7 +271,7 @@ fn BaseCurrencySection() -> Element {
                     "Currency for net worth, accounts, and budget totals"
                 }
                 select {
-                    class: "px-4 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                    class: "{INPUT_CLASS}",
                     value: "{selected}",
                     onchange: move |e| {
                         let code = e.value();
@@ -294,9 +294,7 @@ fn BaseCurrencySection() -> Element {
                 }
             }
             if let Some(s) = &*status.read() {
-                div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
-                    "{s}"
-                }
+                Banner { kind: BannerKind::Info, class: "animate-in zoom-in-95 duration-200", "{s}" }
             }
         }
     }
@@ -395,8 +393,8 @@ fn UpdatesSection() -> Element {
             }
 
             div { class: "flex items-center gap-3",
-                button {
-                    class: "px-4 py-2 bg-white/5 border border-white/10 text-obsidian-text font-semibold rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     disabled: *checking.read() || *working.read() || platform.read().is_none(),
                     onclick: run_check,
                     if *checking.read() { "Checking…" } else { "Check for updates" }
@@ -414,8 +412,7 @@ fn UpdatesSection() -> Element {
                         if !c.notes.is_empty() {
                             p { class: "text-xs text-obsidian-text-muted whitespace-pre-line", "{c.notes}" }
                         }
-                        button {
-                            class: "px-4 py-2 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed",
+                        Button {
                             disabled: *working.read(),
                             onclick: run_install,
                             if *working.read() {
@@ -428,7 +425,7 @@ fn UpdatesSection() -> Element {
                         }
                     }
                 } else {
-                    div { class: "p-4 bg-success/5 border border-success/20 rounded-lg text-sm text-success",
+                    Banner { kind: BannerKind::Success,
                         "You're on the latest version ("
                         span { class: "font-mono", "{c.current_version}" }
                         ")."
@@ -437,9 +434,7 @@ fn UpdatesSection() -> Element {
             }
 
             if let Some(s) = &*status.read() {
-                div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
-                    "{s}"
-                }
+                Banner { kind: BannerKind::Info, class: "animate-in zoom-in-95 duration-200", "{s}" }
             }
         }
     }
@@ -489,8 +484,8 @@ fn CacheSection() -> Element {
                         }
                     }
                 }
-                button {
-                    class: "px-4 py-2 bg-white/5 border border-white/10 text-obsidian-text font-semibold rounded-lg hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     disabled: *clearing.read() || matches!(*size.read(), Some(0)),
                     onclick: move |_| {
                         clearing.set(true);
@@ -517,9 +512,7 @@ fn CacheSection() -> Element {
             }
 
             if let Some(s) = &*status.read() {
-                div { class: "p-4 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
-                    "{s}"
-                }
+                Banner { kind: BannerKind::Info, class: "animate-in zoom-in-95 duration-200", "{s}" }
             }
         }
     }
@@ -561,8 +554,8 @@ fn DangerZone() -> Element {
             }
 
             if !*armed.read() {
-                button {
-                    class: "px-4 py-2 bg-error/15 text-error border border-error/40 rounded-lg font-bold hover:bg-error/25 transition-colors",
+                Button {
+                    variant: ButtonVariant::Danger,
                     onclick: move |_| {
                         armed.set(true);
                         wipe_status.set(None);
@@ -611,8 +604,8 @@ fn DangerZone() -> Element {
                             },
                             if *wiping.read() { "Wiping…" } else { "Confirm Wipe" }
                         }
-                        button {
-                            class: "px-4 py-2 bg-white/5 border border-white/10 text-obsidian-text font-semibold rounded-lg hover:bg-white/10 transition-colors",
+                        Button {
+                            variant: ButtonVariant::Secondary,
                             onclick: move |_| {
                                 armed.set(false);
                                 confirm_input.set(String::new());
@@ -625,9 +618,7 @@ fn DangerZone() -> Element {
             }
 
             if let Some(status) = &*wipe_status.read() {
-                div { class: "p-4 bg-error/10 border border-error/25 rounded-lg text-sm text-error",
-                    "{status}"
-                }
+                Banner { kind: BannerKind::Error, "{status}" }
             }
         }
     }
@@ -922,9 +913,7 @@ fn AutoImportSection() -> Element {
             }
 
             if let Some(msg) = &*loading_msg.read() {
-                div { class: "p-3 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-xs text-obsidian-accent animate-in zoom-in-95 duration-200",
-                    "{msg}"
-                }
+                Banner { kind: BannerKind::Info, class: "animate-in zoom-in-95 duration-200", "{msg}" }
             }
         }
     }
@@ -1124,7 +1113,7 @@ fn LlmProviderSection() -> Element {
     });
 
     let lbl = "block text-xs text-obsidian-text-muted mb-1";
-    let inp = "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none";
+    let inp = INPUT_CLASS;
 
     let is_openai = provider.read().as_str() == "openai_compatible";
     let key_placeholder = if *has_key.read() {
@@ -1218,8 +1207,8 @@ fn LlmProviderSection() -> Element {
             }
 
             div { class: "flex items-center gap-3",
-                button {
-                    class: "px-3 py-1.5 rounded bg-obsidian-accent text-white text-sm font-medium disabled:opacity-60",
+                Button {
+                    size: ButtonSize::Sm,
                     disabled: *saving.read(),
                     onclick: submit,
                     if *saving.read() { "Saving…" } else { "Save" }
@@ -1228,9 +1217,7 @@ fn LlmProviderSection() -> Element {
             }
 
             if let Some(m) = &*msg.read() {
-                div { class: "p-3 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded-lg text-xs text-obsidian-accent",
-                    "{m}"
-                }
+                Banner { kind: BannerKind::Info, "{m}" }
             }
         }
     }
@@ -1284,8 +1271,10 @@ fn AutoImportRow(
                         "Last tick: {relative} · interval: {source.interval_secs / 60}m"
                     }
                 }
-                button {
-                    class: "shrink-0 px-3 py-1.5 bg-white/5 border border-white/10 text-obsidian-text text-xs font-semibold rounded hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    size: ButtonSize::Sm,
+                    class: "shrink-0",
                     disabled: ticking_now,
                     onclick: move |_| on_tick.call(()),
                     if ticking_now { "Fetching…" } else { "Fetch now" }
@@ -1335,8 +1324,8 @@ fn AutoImportRow(
                                         otp.set(cleaned);
                                     },
                                 }
-                                button {
-                                    class: "px-3 py-1.5 bg-obsidian-accent text-white text-xs font-bold rounded hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed",
+                                Button {
+                                    size: ButtonSize::Sm,
                                     disabled: *submitting.read() || otp.read().len() != 6,
                                     onclick: {
                                         let name = name.clone();
@@ -1393,8 +1382,9 @@ fn AutoImportRow(
                                     },
                                     if *submitting.read() { "Reconnecting…" } else { "Submit" }
                                 }
-                                button {
-                                    class: "px-2 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-text disabled:opacity-40",
+                                Button {
+                                    variant: ButtonVariant::Ghost,
+                                    size: ButtonSize::Sm,
                                     disabled: *submitting.read(),
                                     onclick: move |_| {
                                         show_otp.set(false);
@@ -1583,7 +1573,7 @@ fn AddSourceForm(
     let mut err = use_signal(|| None::<String>);
 
     let lbl = "block text-xs text-obsidian-text-muted mb-1";
-    let inp = "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none";
+    let inp = INPUT_CLASS;
 
     let submit = move |_| {
         let nm = name.read().trim().to_string();
@@ -1866,14 +1856,15 @@ fn AddSourceForm(
             }
 
             div { class: "flex items-center gap-2",
-                button {
-                    class: "px-3 py-1.5 rounded bg-obsidian-accent text-white text-sm font-medium disabled:opacity-60",
+                Button {
+                    size: ButtonSize::Sm,
                     disabled: *saving.read(),
                     onclick: submit,
                     if *saving.read() { "Saving…" } else { "Save" }
                 }
-                button {
-                    class: "px-3 py-1.5 rounded text-sm text-obsidian-text-muted hover:text-obsidian-text transition-colors",
+                Button {
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
                     onclick: move |_| on_cancel.call(()),
                     "Cancel"
                 }
