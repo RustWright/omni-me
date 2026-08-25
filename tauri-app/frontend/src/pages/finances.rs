@@ -4,7 +4,9 @@ use crate::bridge;
 use crate::components::account_input::{AccountInput, AccountMode, AccountSuggestions};
 use crate::components::date_field::DateField;
 use crate::components::icon::{Icon, IconName};
-use crate::components::primitives::{Button, ButtonSize, ButtonVariant, SegmentedNav};
+use crate::components::primitives::{
+    Button, ButtonSize, ButtonVariant, Card, PageHeader, SegmentedNav,
+};
 use crate::continuity::{use_continuity, CaptureDraft, ContinuityKey, ListState, PostingDraft};
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView,
@@ -945,7 +947,7 @@ fn ReviewInboxCard(
     };
 
     rsx! {
-        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4",
+        Card {
             div { class: "flex items-center gap-2 mb-3",
                 Icon { name: IconName::Inbox, class: "w-4 h-4 text-obsidian-text-muted" }
                 h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Review inbox" }
@@ -988,7 +990,7 @@ fn CashFlowCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String) -> 
     });
 
     rsx! {
-        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4",
+        Card {
             div { class: "flex items-center justify-between mb-3",
                 h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Cash flow" }
                 if let Some((month , _ , _ , _ , _)) = &computed {
@@ -1364,8 +1366,7 @@ fn AddMenuView(
     on_open_journal_import: EventHandler<()>,
 ) -> Element {
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Add" }
+        PageHeader { title: "Add",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -1599,9 +1600,7 @@ fn DocumentCapture(
                         span { class: "font-mono", "{capture.filename}" }
                         span { class: "text-obsidian-text-muted", " · {capture.size} bytes · {capture.mime}" }
                     }
-                    button {
-                        class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed",
-                        r#type: "button",
+                    Button {
                         disabled: matches!(*state.read(), CaptureState::Working),
                         onclick: move |_| {
                             // Mirror on_file_picked's tail: bytes already in
@@ -1671,8 +1670,7 @@ fn DocumentCapture(
                                 {render_error(msg)}
                                 if let Some((bytes, mime)) = retry {
                                     div { class: "mt-3",
-                                        button {
-                                            class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90",
+                                        Button {
                                             onclick: move |_| {
                                                 let bytes = bytes.clone();
                                                 let mime = mime.clone();
@@ -1811,8 +1809,7 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
 
             // Extract button
             div { class: "flex justify-end",
-                button {
-                    class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed",
+                Button {
                     disabled: body.read().trim().is_empty() || matches!(*state.read(), CaptureState::Working),
                     onclick: move |_| {
                         let text = body.read().clone();
@@ -1838,8 +1835,7 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
                                 {render_error(msg)}
                                 if let Some(text) = retry {
                                     div { class: "mt-3",
-                                        button {
-                                            class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90",
+                                        Button {
                                             onclick: move |_| {
                                                 let text = text.clone();
                                                 kick_off(text);
@@ -2226,9 +2222,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
 
             // Save
             div { class: "flex justify-end gap-2",
-                button {
-                    class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed",
-                    r#type: "button",
+                Button {
                     disabled: *saving.read(),
                     onclick: on_save,
                     if *saving.read() { "Saving…" } else { "Save transaction" }
@@ -2318,10 +2312,7 @@ fn BatchListView(
     });
 
     rsx! {
-        div { class: "flex items-center justify-between mb-6",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Auto-import review"
-            }
+        PageHeader { title: "Auto-import review", class: "mb-6",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -3064,10 +3055,7 @@ fn TransactionListView(
     let filter_active = !active_filter.read().is_empty();
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Transactions"
-            }
+        PageHeader { title: "Transactions",
             if !embedded {
                 button {
                     class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
@@ -3300,8 +3288,7 @@ fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>
     };
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent", "Query transactions" }
+        PageHeader { title: "Query transactions",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -3845,10 +3832,7 @@ fn TransactionDetailView(
     });
 
     let header = rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Transaction"
-            }
+        PageHeader { title: "Transaction",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -4279,16 +4263,13 @@ fn TransactionEditForm(
 
             // Actions
             div { class: "flex justify-end gap-2",
-                button {
-                    class: "px-4 py-2 text-sm text-obsidian-text-muted hover:text-obsidian-text rounded-md",
-                    r#type: "button",
+                Button {
+                    variant: ButtonVariant::Ghost,
                     disabled: *saving.read(),
                     onclick: move |_| on_cancel.call(()),
                     "Cancel"
                 }
-                button {
-                    class: "px-4 py-2 bg-obsidian-accent text-white text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed",
-                    r#type: "button",
+                Button {
                     disabled: *saving.read(),
                     onclick: on_save,
                     if *saving.read() { "Saving…" } else { "Save changes" }
@@ -4515,10 +4496,7 @@ fn AccountListView(on_back: EventHandler<()>) -> Element {
     let show_empty = rows.is_empty() && !is_loading && err_msg.is_none();
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Accounts"
-            }
+        PageHeader { title: "Accounts",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -4859,10 +4837,7 @@ fn DashboardView(
     let err_msg = error.read().clone();
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Dashboard"
-            }
+        PageHeader { title: "Dashboard",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -5413,10 +5388,7 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
     let editing_some = editing.is_some();
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Budgets"
-            }
+        PageHeader { title: "Budgets",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -5696,10 +5668,7 @@ fn RecurringReviewView(on_back: EventHandler<()>) -> Element {
     let scan_summary = last_scan.read().clone();
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Recurring"
-            }
+        PageHeader { title: "Recurring",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -5950,10 +5919,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
     };
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Import statement"
-            }
+        PageHeader { title: "Import statement",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -6148,10 +6114,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
     let no_match_empty = no_match_snapshot.is_empty();
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Reconcile"
-            }
+        PageHeader { title: "Reconcile",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -6391,10 +6354,7 @@ fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
     let is_checking = *checking.read();
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Balance check"
-            }
+        PageHeader { title: "Balance check",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
@@ -6571,10 +6531,7 @@ fn JournalImportView(on_back: EventHandler<()>) -> Element {
     };
 
     rsx! {
-        div { class: "flex items-center justify-between mb-4",
-            h1 { class: "text-2xl font-bold tracking-tight text-obsidian-accent",
-                "Import journal"
-            }
+        PageHeader { title: "Import journal",
             button {
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
