@@ -13,7 +13,9 @@ use crate::bridge;
 use crate::components::editor::Editor;
 use crate::components::icon::{Icon, IconName};
 use crate::components::month_grid::build_month_cells;
-use crate::components::primitives::{Banner, BannerKind, Button, ButtonSize, ButtonVariant};
+use crate::components::primitives::{
+    Banner, BannerKind, Button, ButtonSize, ButtonVariant, IconButton,
+};
 use crate::components::tag_editor::TagChipEditor;
 use crate::continuity::{use_continuity, ContinuityKey, EditSession};
 use crate::journal_template;
@@ -739,8 +741,8 @@ fn DayView(
 
                         rsx! {
                             if is_closed {
-                                button {
-                                    class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     onclick: {
                                         let jid = journal_id.clone();
                                         let date = date.clone();
@@ -765,8 +767,8 @@ fn DayView(
                                     "Reopen"
                                 }
                             } else if have_entry {
-                                button {
-                                    class: "px-3 py-1.5 bg-obsidian-sidebar border border-white/5 rounded-md hover:bg-white/5 text-obsidian-text text-sm transition-colors",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
                                     onclick: {
                                         let jid = journal_id.clone();
                                         let date = date.clone();
@@ -792,8 +794,7 @@ fn DayView(
                                 }
                             }
 
-                            button {
-                                class: "px-4 py-1.5 bg-obsidian-accent text-white font-bold rounded-md hover:opacity-90 transition-opacity disabled:opacity-50",
+                            Button {
                                 disabled: *saving.read() || is_closed,
                                 onclick: {
                                     let date = date.clone();
@@ -888,9 +889,7 @@ fn DayView(
             }
 
             if let Some(status) = &*save_status.read() {
-                div { class: "mt-4 p-3 bg-obsidian-accent/5 border border-obsidian-accent/20 rounded text-sm text-obsidian-accent animate-in zoom-in-95 duration-200",
-                    "{status}"
-                }
+                Banner { kind: BannerKind::Info, class: "mt-4 animate-in zoom-in-95 duration-200", "{status}" }
             }
 
         }
@@ -1125,9 +1124,11 @@ fn CalendarDrawer(
             // Drawer header: title + close
             div { class: "flex items-center justify-between px-4 pb-3 mb-1 border-b border-white/5",
                 h2 { class: "text-sm font-bold text-obsidian-accent uppercase tracking-wider", "Calendar" }
-                button {
-                    class: "p-1 -mr-1 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
-                    "aria-label": "Close calendar",
+                IconButton {
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    class: "-mr-1",
+                    label: "Close calendar",
                     onclick: move |_| on_close.call(()),
                     Icon { name: IconName::Close, class: "w-5 h-5" }
                 }
@@ -1136,9 +1137,10 @@ fn CalendarDrawer(
             div { class: "px-3 py-2",
                 // Month navigation header
                 div { class: "flex items-center justify-between mb-3",
-                    button {
-                        class: "p-1.5 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
-                        "aria-label": "Previous month",
+                    IconButton {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        label: "Previous month",
                         onclick: move |_| {
                             let a = *anchor.read();
                             let (y, m) = if a.month() == 1 {
@@ -1151,9 +1153,10 @@ fn CalendarDrawer(
                         Icon { name: IconName::ChevronLeft, class: "w-4 h-4" }
                     }
                     h3 { class: "text-sm font-semibold text-obsidian-text", "{month_label}" }
-                    button {
-                        class: "p-1.5 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
-                        "aria-label": "Next month",
+                    IconButton {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        label: "Next month",
                         onclick: move |_| {
                             let a = *anchor.read();
                             let (y, m) = if a.month() == 12 {
@@ -1212,9 +1215,7 @@ fn CalendarDrawer(
                 }
 
                 if let Some(err) = &*fetch_error.read() {
-                    div { class: "mt-3 p-2 bg-error/10 text-error rounded border border-error/25 text-xs",
-                        "{err}"
-                    }
+                    Banner { kind: BannerKind::Error, class: "mt-3", "{err}" }
                 }
             }
 
