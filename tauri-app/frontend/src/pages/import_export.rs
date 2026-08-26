@@ -26,6 +26,14 @@ enum ImportPhase {
 #[derive(Clone, PartialEq)]
 enum ExportPhase {
     Idle,
+    /// Dry run in flight.
+    Checking,
+    /// Dry run done — the user is looking at what would be replaced and has
+    /// not committed yet. Export overwrites every colliding file under the
+    /// target, and the path is typed into a field directly below the *import*
+    /// field, so aiming it at an existing vault used to replace that vault's
+    /// notes with no warning at all.
+    Confirm(crate::types::ExportPreview),
     Exporting,
     Done { written: usize, errors: usize },
     Error(String),
@@ -393,24 +401,87 @@ fn ExportFlow() -> Element {
                         onclick: move |_| {
                             let t = target.read().trim().to_string();
                             if t.is_empty() { return; }
-                            phase.set(ExportPhase::Exporting);
+                            phase.set(ExportPhase::Checking);
                             spawn(async move {
-                                match bridge::invoke_export_obsidian(&t).await {
-                                    Ok(s) => phase.set(ExportPhase::Done {
-                                        written: s.journal_written + s.generic_written,
-                                        errors: s.errors.len(),
-                                    }),
+                                match bridge::invoke_preview_obsidian_export(&t).await {
+                                    Ok(p) => phase.set(ExportPhase::Confirm(p)),
                                     Err(e) => phase.set(ExportPhase::Error(e)),
                                 }
                             });
                         },
-                        "Export"
+                        "Check target"
                     }
                 }
 
                 if let ExportPhase::Error(err) = &*phase.read() {
                     div { class: "p-2 bg-red-900/20 text-red-400 border border-red-900/50 rounded text-xs",
                         "{err}"
+                    }
+                }
+            }
+
+            if matches!(*phase.read(), ExportPhase::Checking) {
+                div { class: "py-4 text-center text-obsidian-text-muted text-sm", "Checking target..." }
+            }
+
+            if let ExportPhase::Confirm(preview) = &*phase.read() {
+                {
+                    let target_now = preview.target.clone();
+                    let count = preview.overwrite_count;
+                    let total = preview.total_files;
+                    let listed: Vec<String> = preview.would_overwrite.clone();
+                    rsx! {
+                        div { class: "p-3 border rounded text-sm",
+                            class: if count > 0 { "bg-red-900/20 border-red-900/50" } else { "bg-obsidian-accent/10 border-obsidian-accent/30" },
+                            div { class: "font-semibold",
+                                class: if count > 0 { "text-red-400" } else { "text-obsidian-accent" },
+                                if count > 0 {
+                                    "{count} existing file(s) will be overwritten"
+                                } else {
+                                    "Nothing will be overwritten"
+                                }
+                            }
+                            div { class: "text-xs text-obsidian-text-muted mt-1",
+                                "{total} files will be written to "
+                                code { class: "font-mono", "{target_now}" }
+                            }
+                            if !listed.is_empty() {
+                                ul { class: "mt-2 max-h-40 overflow-y-auto text-[11px] font-mono text-obsidian-text-muted space-y-0.5",
+                                    for path in listed.iter() {
+                                        li { key: "{path}", "{path}" }
+                                    }
+                                }
+                                if count > listed.len() {
+                                    div { class: "text-[11px] text-obsidian-text-muted mt-1 italic",
+                                        "…and {count - listed.len()} more"
+                                    }
+                                }
+                            }
+                            div { class: "flex gap-2 mt-3",
+                                button {
+                                    class: "px-3 py-1.5 bg-obsidian-accent text-white text-xs font-bold rounded hover:opacity-90",
+                                    onclick: move |_| {
+                                        let t = target_now.clone();
+                                        phase.set(ExportPhase::Exporting);
+                                        spawn(async move {
+                                            match bridge::invoke_export_obsidian(&t).await {
+                                                Ok(s) => phase.set(ExportPhase::Done {
+                                                    written: s.journal_written + s.generic_written,
+                                                    errors: s.errors.len(),
+                                                }),
+                                                Err(e) => phase.set(ExportPhase::Error(e)),
+                                            }
+                                        });
+                                    },
+                                    if count > 0 { "Overwrite and export" } else { "Export" }
+                                }
+                                button {
+                                    class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-text",
+                                    onclick: move |_| phase.set(ExportPhase::Idle),
+                                    "Cancel"
+                                }
+                            }
+                        }
                     }
                 }
             }

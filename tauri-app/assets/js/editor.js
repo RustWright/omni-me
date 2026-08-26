@@ -84,8 +84,6 @@ let isDirty = false;
 // edit clobber text the user is actively typing between autosaves.
 let everDirty = false;
 let suppressDirty = false;
-const dirtyListeners = [];
-const cleanListeners = [];
 
 // ---------------------------------------------------------------------------
 // 1.4 - Dirty / Clean signalling
@@ -98,37 +96,19 @@ function emitDirty() {
   everDirty = true;
   if (isDirty) return;
   isDirty = true;
-  for (const cb of dirtyListeners) {
-    try {
-      cb();
-    } catch (e) {
-      console.error("editorEvents.onDirty listener threw:", e);
-    }
-  }
 }
 
 function emitClean() {
   if (!isDirty) return;
   isDirty = false;
-  for (const cb of cleanListeners) {
-    try {
-      cb();
-    } catch (e) {
-      console.error("editorEvents.onClean listener threw:", e);
-    }
-  }
 }
 
+// Minimal by design. `onDirty`/`onClean` used to be here, pushing callbacks
+// into arrays that no Rust code ever registered with and that createEditor and
+// destroyEditor never cleared; `isDirty()` had no caller either. On an origin
+// with `csp: null` and `withGlobalTauri: true`, unused globals are pure
+// surface — keep only what something actually reads.
 window.editorEvents = {
-  onDirty(cb) {
-    if (typeof cb === "function") dirtyListeners.push(cb);
-  },
-  onClean(cb) {
-    if (typeof cb === "function") cleanListeners.push(cb);
-  },
-  isDirty() {
-    return isDirty;
-  },
   // Sticky across autosave; reset only on createEditor. See `everDirty` decl.
   everDirty() {
     return everDirty;
@@ -327,6 +307,17 @@ const checkboxPlugin = ViewPlugin.fromClass(
     decorations: (v) => v.decorations,
     eventHandlers: {
       mousedown(event, view) {
+        // Read-only means read-only, including for OUR OWN dispatches.
+        //
+        // `EditorView.editable.of(false)` blocks user *input* — typing, paste,
+        // drag — but does nothing to a programmatic `view.dispatch`, and this
+        // handler is exactly that. So clicking a rendered `- [ ]` in a CLOSED
+        // journal edited the frozen record: the change applied locally, fired
+        // onChange, and the continuity write-through mirror persisted it into
+        // the on-disk workspace. The backend correctly refused the save, which
+        // is why it showed up as a permanently stuck "Unsaved" pill rather than
+        // as corrupted server state.
+        if (!view.state.facet(EditorView.editable)) return false;
         const target = event.target;
         if (!(target instanceof HTMLInputElement)) return false;
         if (!target.classList.contains("cm-checkbox-widget")) return false;
@@ -805,11 +796,18 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
   }
 
   if (readOnly) {
-    // `editable.of(false)` is stronger than `EditorState.readOnly.of(true)` —
-    // it disables the input cursor entirely (no caret, no focus, no selection-
-    // driven edits), so the user gets a clear visual signal that typing won't
-    // do anything. Used for closed journals.
+    // `editable.of(false)` disables the input cursor entirely (no caret, no
+    // focus, no selection-driven edits), so the user gets a clear visual signal
+    // that typing won't do anything. Used for closed journals.
+    //
+    // This comment used to claim `editable.of(false)` is "stronger than
+    // `EditorState.readOnly.of(true)`". It is not, and believing it is why the
+    // second flag was never added: `editable` gates USER INPUT, `readOnly`
+    // gates the DOCUMENT. Neither stops a programmatic `view.dispatch`, so any
+    // custom handler that dispatches must check for itself — see the checkbox
+    // plugin's mousedown, which learned this the hard way.
     extensions.push(EditorView.editable.of(false));
+    extensions.push(EditorState.readOnly.of(true));
   }
 
   // Update listener: doc changes drive onChange + dirty/clean signalling;
@@ -880,15 +878,6 @@ function clampCursor(pos, docLength) {
 }
 
 /**
- * Get the current editor content.
- * @returns {string} The document content, or empty string if no editor exists
- */
-window.getEditorContent = function () {
-  if (!editorView) return "";
-  return editorView.state.doc.toString();
-};
-
-/**
  * #344: stamp the final in-progress line NOW (without tearing the editor down),
  * then return the resulting content. The app calls this from its background /
  * page-hide handler so a line that was written but never left — no Enter, no
@@ -907,16 +896,6 @@ window.flushEditorTimestamps = function () {
     }
   }
   return editorView ? editorView.state.doc.toString() : "";
-};
-
-/**
- * Get the current caret offset (selection head). Used as an unmount-time
- * fallback so a position is captured even if no selection event fired (1.8b).
- * @returns {number} The caret offset, or 0 if no editor exists.
- */
-window.getEditorCursor = function () {
-  if (!editorView) return 0;
-  return editorView.state.selection.main.head;
 };
 
 /**

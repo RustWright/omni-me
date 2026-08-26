@@ -95,6 +95,15 @@ pub struct SyncInfo {
     pub has_server_token: bool,
 }
 
+/// Dry run of an Obsidian export — what it would overwrite, before it does.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportPreview {
+    pub target: String,
+    pub would_overwrite: Vec<String>,
+    pub overwrite_count: usize,
+    pub total_files: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TimezoneInfo {
     pub timezone: String,

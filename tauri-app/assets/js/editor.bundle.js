@@ -25081,41 +25081,16 @@
   var isDirty = false;
   var everDirty = false;
   var suppressDirty = false;
-  var dirtyListeners = [];
-  var cleanListeners = [];
   function emitDirty() {
     everDirty = true;
     if (isDirty) return;
     isDirty = true;
-    for (const cb of dirtyListeners) {
-      try {
-        cb();
-      } catch (e) {
-        console.error("editorEvents.onDirty listener threw:", e);
-      }
-    }
   }
   function emitClean() {
     if (!isDirty) return;
     isDirty = false;
-    for (const cb of cleanListeners) {
-      try {
-        cb();
-      } catch (e) {
-        console.error("editorEvents.onClean listener threw:", e);
-      }
-    }
   }
   window.editorEvents = {
-    onDirty(cb) {
-      if (typeof cb === "function") dirtyListeners.push(cb);
-    },
-    onClean(cb) {
-      if (typeof cb === "function") cleanListeners.push(cb);
-    },
-    isDirty() {
-      return isDirty;
-    },
     // Sticky across autosave; reset only on createEditor. See `everDirty` decl.
     everDirty() {
       return everDirty;
@@ -25269,6 +25244,7 @@
       decorations: (v) => v.decorations,
       eventHandlers: {
         mousedown(event, view) {
+          if (!view.state.facet(EditorView.editable)) return false;
           const target = event.target;
           if (!(target instanceof HTMLInputElement)) return false;
           if (!target.classList.contains("cm-checkbox-widget")) return false;
@@ -25585,6 +25561,7 @@
     }
     if (readOnly2) {
       extensions.push(EditorView.editable.of(false));
+      extensions.push(EditorState.readOnly.of(true));
     }
     extensions.push(
       EditorView.updateListener.of((update) => {
@@ -25621,10 +25598,6 @@
   function clampCursor(pos, docLength) {
     return Math.min(pos, docLength);
   }
-  window.getEditorContent = function() {
-    if (!editorView) return "";
-    return editorView.state.doc.toString();
-  };
   window.flushEditorTimestamps = function() {
     if (editorView && timestampFlush) {
       try {
@@ -25634,10 +25607,6 @@
       }
     }
     return editorView ? editorView.state.doc.toString() : "";
-  };
-  window.getEditorCursor = function() {
-    if (!editorView) return 0;
-    return editorView.state.selection.main.head;
   };
   window.setEditorContent = function(content2) {
     if (!editorView) return;

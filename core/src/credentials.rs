@@ -39,7 +39,7 @@ pub enum CredentialError {
 /// Public-engine credentials — only the generic kinds. Bank-specific sections
 /// in the same TOML file are ignored here (serde skips unknown fields) and are
 /// read by the private overlay's own credentials struct.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Credentials {
     /// Name-keyed map so multiple email accounts can be configured (e.g.
     /// `gmail_personal`, `gmail_work`, `yahoo`). Each key is a user-chosen
@@ -83,7 +83,7 @@ pub struct Credentials {
 /// phone, a page the browser loaded), not "one of my devices turned hostile".
 /// Per-device tokens would buy revocation we have no way to trigger and no
 /// place to manage.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// Random hex, generated on first boot when the section is missing.
     pub auth_token: String,
@@ -92,7 +92,7 @@ pub struct ServerConfig {
 /// Text-LLM provider selection + its connection config. Lives in
 /// `credentials.toml` because `api_key` is a secret; the non-secret fields ride
 /// along so one section fully describes the provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LlmProviderConfig {
     /// `"gemini"` (default) or `"openai_compatible"`.
     pub provider: String,
@@ -116,7 +116,7 @@ pub struct LlmProviderConfig {
 
 /// IMAP poller — host + port + account + app-password (NOT main login).
 /// `watched_label` is the email-side label/folder the poller scans.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ImapCredentials {
     pub host: String,
     pub port: u16,
@@ -130,9 +130,91 @@ fn default_imap_label() -> String {
     "omni-me".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct GeminiCredentials {
     pub api_key: String,
+}
+
+// ---------------------------------------------------------------------------
+// Redacted Debug
+// ---------------------------------------------------------------------------
+//
+// Every struct in this module previously derived `Debug` with no redaction —
+// including the plaintext `secrets` map, `ImapCredentials.app_password`,
+// `GeminiCredentials.api_key` and `LlmProviderConfig.api_key`. Nothing logged
+// them (checked across both repos, and `GET /llm/config` correctly returns
+// `has_key`), so this was one careless `tracing::debug!(?creds, ...)` away from
+// a log file holding every credential on the box.
+//
+// Hand-written impls rather than a `Secret<String>` newtype: the newtype would
+// touch every construction and read site across two repositories, while what
+// actually needs to change is only what happens when someone formats one of
+// these. Shape is preserved so `?creds` still tells you what is configured.
+
+/// Render a secret as its presence plus length — enough to answer "is it set?"
+/// and "is it plausibly the right value?", never enough to use.
+fn redacted(secret: &str) -> String {
+    if secret.is_empty() {
+        "<unset>".to_string()
+    } else {
+        format!("<redacted {} chars>", secret.len())
+    }
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("imap", &self.imap)
+            .field("gemini", &self.gemini)
+            .field("llm", &self.llm)
+            // Keys are configuration, values are secrets.
+            .field("secrets", &self.secrets.keys().collect::<Vec<_>>())
+            .field("server", &self.server)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerConfig")
+            .field("auth_token", &redacted(&self.auth_token))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ImapCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImapCredentials")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("account", &self.account)
+            .field("app_password", &redacted(&self.app_password))
+            .field("watched_label", &self.watched_label)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for GeminiCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeminiCredentials")
+            .field("api_key", &redacted(&self.api_key))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for LlmProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmProviderConfig")
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field(
+                "api_key",
+                &self.api_key.as_deref().map(redacted),
+            )
+            .field("vision", &self.vision)
+            .finish()
+    }
 }
 
 /// Generate a fresh 256-bit bearer token, hex-encoded.
@@ -491,6 +573,66 @@ mod tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "expected 0600, got {mode:o}");
+    }
+
+
+    /// The whole point of the hand-written `Debug` impls: one careless
+    /// `tracing::debug!(?creds, ...)` must not be able to write every
+    /// credential on the box into a log file.
+    #[test]
+    fn debug_output_contains_no_secret_material() {
+        let mut creds = Credentials::default();
+        creds.imap.insert(
+            "gmail".into(),
+            ImapCredentials {
+                host: "imap.example.com".into(),
+                port: 993,
+                account: "me@example.com".into(),
+                app_password: "hunter2-app-password".into(),
+                watched_label: "omni-me".into(),
+            },
+        );
+        creds.gemini = Some(GeminiCredentials {
+            api_key: "AIza-super-secret-key".into(),
+        });
+        creds.llm = Some(LlmProviderConfig {
+            provider: "openai_compatible".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            model: Some("llama3.1".into()),
+            api_key: Some("sk-do-not-log-me".into()),
+            vision: false,
+        });
+        creds
+            .secrets
+            .insert("some_api".into(), "value-must-not-appear".into());
+        creds.server = Some(ServerConfig {
+            auth_token: "bearer-token-must-not-appear".into(),
+        });
+
+        let rendered = format!("{creds:?}");
+
+        for secret in [
+            "hunter2-app-password",
+            "AIza-super-secret-key",
+            "sk-do-not-log-me",
+            "value-must-not-appear",
+            "bearer-token-must-not-appear",
+        ] {
+            assert!(
+                !rendered.contains(secret),
+                "Debug output leaked {secret}:\n{rendered}",
+            );
+        }
+
+        // Shape is still useful: you can see WHAT is configured.
+        assert!(rendered.contains("imap.example.com"), "host is not a secret");
+        assert!(rendered.contains("me@example.com"), "account is not a secret");
+        assert!(rendered.contains("llama3.1"), "model is not a secret");
+        assert!(
+            rendered.contains("some_api"),
+            "secret NAMES are configuration and stay visible",
+        );
+        assert!(rendered.contains("redacted"), "secrets render as redacted");
     }
 
 }

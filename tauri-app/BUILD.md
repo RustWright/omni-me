@@ -92,6 +92,28 @@ gradle edit would not survive.
 `dx serve --platform web --features mock` standalone and ignores all of this (see
 `UI_WORKFLOW.md`).
 
+### Desktop release — `scripts/desktop-build.sh`
+
+Same trap as Android, same fix. `frontendDist` in `tauri.conf.json` points at the **debug** dir
+(because `cargo tauri dev` reads it there), while `beforeBuildCommand` populates **release** —
+and nothing refreshes debug. A plain `cargo tauri build` therefore embeds whatever was last left
+in the debug directory, which after any UI session is a `dx serve --features mock` build. That is
+how friction 1.13 shipped mock data; `android-build.sh` fixed the Android path and left this one.
+
+`scripts/desktop-build.sh` overrides `frontendDist`→release for the build only, then runs the
+mock guard.
+
+### The mock guard — `scripts/assert-no-mock.sh`
+
+`--features mock` compiles `OMNI_MOCK_BUILD_SENTINEL` into the wasm; the script greps a bundle
+directory for it and refuses to package if present. It runs inside `npm run build` (so both
+release paths get it) and again at the end of `desktop-build.sh`.
+
+A `compile_error!` gated on `cfg(not(debug_assertions))` would *not* have caught 1.13:
+`dx serve --features mock` is a debug build, so the guard never fires — the leak is in which
+directory gets copied, not in how the code was compiled. Verified both ways: the sentinel is
+present in a mock build and absent from a non-mock release build.
+
 ## Dev vs release at a glance
 
 | | Command | builds | serves |
@@ -99,6 +121,7 @@ gradle edit would not survive.
 | UI-only dev | `dx serve --platform web --features mock --port 8080` | debug (dx server) | dx dev server (browser) |
 | Full-app dev | `cargo tauri dev` | debug (`npm run dev`) | `frontendDist` = debug |
 | Release APK | `scripts/android-build.sh release` | release (`npm run build`) | `frontendDist` override = release, embedded in `.so` |
+| Desktop release | `scripts/desktop-build.sh` | release (`npm run build`) | `frontendDist` override = release |
 
 ## npm scripts (`package.json`)
 

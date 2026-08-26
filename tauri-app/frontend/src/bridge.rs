@@ -1,5 +1,26 @@
 use wasm_bindgen::prelude::*;
 
+/// Marker string compiled into the WASM binary whenever the `mock` feature is
+/// on, so packaging can refuse to ship a mock build.
+///
+/// **Why a sentinel and not a `compile_error!`.** The obvious guard is
+/// `#[cfg(all(feature = "mock", not(debug_assertions)))] compile_error!(...)`,
+/// and it would not have caught the one time this actually happened
+/// (friction 1.13, an APK that shipped with mock data). `dx serve --features
+/// mock` builds in DEBUG, so `debug_assertions` is true and the guard never
+/// fires; the release bundle then picked up that already-compiled debug
+/// output. The failure was in *which directory got copied*, not in how the
+/// code was compiled, so a compile-time flag is the wrong layer to guard.
+///
+/// `scripts/assert-no-mock.sh` greps the bundled artifact for this string.
+/// Anything the packaging step can see, it can refuse.
+///
+/// `#[used]` and `#[no_mangle]` keep it from being optimised away.
+#[cfg(feature = "mock")]
+#[used]
+#[unsafe(no_mangle)]
+pub static OMNI_MOCK_BUILD_SENTINEL: &[u8; 32] = b"OMNI_MOCK_BUILD__DO_NOT_SHIP__!!";
+
 #[cfg(feature = "mock")]
 use crate::types::{
     AccountTagGroupView, AttachmentRef, CommodityBalanceView, ExtractedPostingView,
@@ -14,6 +35,7 @@ use crate::types::{
     MatchCandidateView,
     PendingBatchView, PendingShareCapture, ReconciliationTxnPreview, RecurringPattern,
     RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot,
+    ExportPreview,
     TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
@@ -97,10 +119,6 @@ extern "C" {
         on_change: Option<&js_sys::Function>,
         options: JsValue,
     );
-    #[wasm_bindgen(js_name = getEditorContent)]
-    pub fn js_get_editor_content() -> String;
-    #[wasm_bindgen(js_name = getEditorCursor)]
-    pub fn js_get_editor_cursor() -> usize;
     #[wasm_bindgen(js_name = setEditorContent)]
     pub fn js_set_editor_content(content: &str);
     #[wasm_bindgen(js_name = destroyEditor)]
@@ -950,6 +968,30 @@ pub async fn invoke_update_server_url(server_url: &str) -> Result<(), String> {
             server_url: &'a str,
         }
         invoke_unit("update_server_url", &Args { server_url }).await
+    }
+}
+
+/// Dry run for the Obsidian export — the files it would overwrite.
+pub async fn invoke_preview_obsidian_export(target: &str) -> Result<ExportPreview, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(ExportPreview {
+            target: target.to_string(),
+            would_overwrite: vec![
+                "journal/2026-08-01.md".into(),
+                "notes/Reading List.md".into(),
+            ],
+            overwrite_count: 2,
+            total_files: 12,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            target: &'a str,
+        }
+        invoke("preview_obsidian_export", &Args { target }).await
     }
 }
 

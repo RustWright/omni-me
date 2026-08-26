@@ -414,6 +414,77 @@ pub struct ExportSummary {
     pub errors: Vec<String>,
 }
 
+/// What an export would overwrite, computed without writing anything.
+#[derive(serde::Serialize)]
+pub struct ExportPreview {
+    pub target: String,
+    /// Files that already exist and would be replaced, as paths relative to
+    /// `target`. Capped — see [`MAX_PREVIEW_PATHS`].
+    pub would_overwrite: Vec<String>,
+    /// Full count, even when the list above was truncated.
+    pub overwrite_count: usize,
+    /// How many files the export would write in total.
+    pub total_files: usize,
+}
+
+/// Cap on listed paths, so pointing the export at a large vault doesn't build a
+/// ten-thousand-line confirmation nobody reads. The count is always exact.
+const MAX_PREVIEW_PATHS: usize = 50;
+
+/// Dry run for [`export_obsidian`].
+///
+/// Export takes a free-text path and overwrites every colliding
+/// `journal/YYYY-MM-DD.md` and `notes/<title>.md` under it — and the field it is
+/// typed into sits directly below the *import* field, which is pointed at an
+/// existing vault. Aiming export at that same path silently replaced the vault's
+/// notes with omni-me's copies. The wipe flow demands a typed phrase for an
+/// action no less recoverable than this one; this is the missing counterpart.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn preview_obsidian_export(
+    state: State<'_, AppState>,
+    target: String,
+) -> Result<ExportPreview, String> {
+    let target_path = PathBuf::from(&target);
+    let journal_dir = target_path.join("journal");
+    let notes_dir = target_path.join("notes");
+
+    let journals = queries::list_journal_entries(&state.db, 100_000, 0)
+        .await
+        .map_err(|e| e.to_string())?;
+    let notes = queries::list_generic_notes(&state.db, 100_000, 0)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Same name resolution the real export uses, so the preview cannot drift
+    // from what actually gets written.
+    let titles: Vec<String> = notes.iter().map(|n| n.title.clone()).collect();
+    let names = assign_unique_filenames(&titles);
+
+    let mut existing = Vec::new();
+    for j in &journals {
+        let rel = format!("journal/{}.md", j.date);
+        if journal_dir.join(format!("{}.md", j.date)).exists() {
+            existing.push(rel);
+        }
+    }
+    for name in &names {
+        let rel = format!("notes/{name}.md");
+        if notes_dir.join(format!("{name}.md")).exists() {
+            existing.push(rel);
+        }
+    }
+
+    let overwrite_count = existing.len();
+    existing.truncate(MAX_PREVIEW_PATHS);
+
+    Ok(ExportPreview {
+        target,
+        would_overwrite: existing,
+        overwrite_count,
+        total_files: journals.len() + notes.len(),
+    })
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn export_obsidian(
     state: State<'_, AppState>,

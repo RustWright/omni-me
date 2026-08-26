@@ -14,8 +14,9 @@
     "_patch-android-viewport": "sed -i 's|<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">|<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">|' src-tauri/gen/android/app/src/main/assets/index.html",
     "copy:android:dev": "if [ -d src-tauri/gen/android/app/src/main/assets ]; then npm run _clean-android-assets && cp -r frontend/target/dx/frontend/debug/web/public/. src-tauri/gen/android/app/src/main/assets/ && npm run _patch-android-viewport; fi",
     "copy:android:release": "if [ -d src-tauri/gen/android/app/src/main/assets ]; then npm run _clean-android-assets && cp -r frontend/target/dx/frontend/release/web/public/. src-tauri/gen/android/app/src/main/assets/ && npm run _patch-android-viewport; fi",
-    "build": "npm run build:editor && npm run build:frontend && npm run copy:editor:release && npm run copy:android:release",
-    "dev": "npm run build:editor && npm run build:frontend:dev && npm run copy:editor:dev && npm run copy:android:dev"
+    "build": "npm run build:editor && npm run build:frontend && npm run assert:no-mock && npm run copy:editor:release && npm run copy:android:release",
+    "dev": "npm run build:editor && npm run build:frontend:dev && npm run copy:editor:dev && npm run copy:android:dev",
+    "assert:no-mock": "./scripts/assert-no-mock.sh frontend/target/dx/frontend/release/web/public"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

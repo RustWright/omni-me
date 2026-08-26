@@ -555,6 +555,7 @@ pub fn run() {
             commands::import::preview_import,
             commands::import::commit_import,
             commands::import::export_obsidian,
+            commands::import::preview_obsidian_export,
             // hledger journal import (Phase 6.2 + 6.3)
             commands::journal_import::preview_journal_import,
             commands::journal_import::commit_journal_import,
