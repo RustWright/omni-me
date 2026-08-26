@@ -96,7 +96,7 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
 
   **B. Review gate:**
   5. **Full end-to-end code review of everything** (per the v1 close-out gate #4 above).
-     **🔄 IN PROGRESS — Phase A sitting 1 DONE 2026-08-25.** Third review of the project; scope is the
+     **🔄 IN PROGRESS — Phase A sittings 1+2 DONE 2026-08-25.** Third review of the project; scope is the
      never-reviewed Cycles 3+4 range `22395f8..HEAD` (230 commits, +49,501/−2,329). Four perspective
      docs at `reviews/2026-08-25-*.md` (gitignored — durable summaries in `project.md`'s Session-6 row;
      private-overlay findings in `omni-me-private/reviews/`). Cycle-2 model split reused (Opus:
@@ -112,8 +112,53 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      **3 prior-deferral status upgrades** (CORS, Gemini key in query string, CSP); blanket
      "auth deferred (Tailscale)" ruled **no longer defensible** — it predates the server executing
      commands and writing secrets, and was out of scope in *both* prior reviews.
-     **Remaining:** sitting 2 (backend/server/secrets/platform dives) → user-fired `/code-review ultra`
-     calibration on the sync/event-store path → sitting 3 (frontend) → Phase C triage → Phase B test-gaps.
+     **SITTING 2 (2026-08-25)** — 5 reviewers over ~20k never-reviewed backend lines (money chain,
+     event store + 6 projections, sync, server routes, auto-import/secrets, platform, both repos).
+     **4 more Criticals, every one re-verified first-hand before filing.**
+     (1) `JournalFile` is a **registered production projection** (`lib.rs:300`) whose handlers raw-append
+     with no `; txn_id:` anchor check — the only non-idempotent handler in the system. `pull_only` has no
+     in-flight guard and Sync Now is a bare `spawn`, so two taps (or one during the 20s scheduler pull)
+     write every pulled txn into `budget.journal` **twice** → balances silently diverge from the Ledger
+     list and never self-heal. Also fires with zero concurrency whenever a peer's author timestamp leads
+     the server clock.
+     (2) `ParserPosting::reality` is never read anywhere (grep: **0 hits**) → `[Assets:Budget:Food]`
+     virtual postings import as **real** and inflate net worth.
+     (3) The elided-leg split never consults `p.balance` (grep: **0 hits**) → `Assets:Cash = 500.00 CAD`
+     is treated as the elided leg and handed an invented amount; assertions are also never re-rendered,
+     so every reconciliation checkpoint is erased on regeneration.
+     (4) An **empty** description renders an unparseable line → same whole-file collapse as sitting 1's
+     `*`/`!` bug; reachable from a bank CSV with a blank memo column.
+     (5) **These are one class, not five bugs** — `render_*` writes user text into a grammar without
+     escaping and `TransactionRecordedPayload::new` validates nothing. Five known variants now
+     (`*`/`!`, empty, zero-postings, leading `(code)`, embedded ` ;`, comma-in-tag). `many0(item)+eof`
+     means no partial success, so one bad row of 10,200 takes down net worth + Accounts + roster
+     together. **One validation point fixes all of them** — do this before roadmap step 7's re-import.
+     **Key warnings:** routines is the projection family nobody hardened (4 bare `UPDATE`s → a rename
+     that outruns its create is lost forever); the **push** path has no poison-pill escape (server 400s
+     the whole chunk, retry resends it forever → all outbound sync wedged); `sync/client.rs:306` is the
+     push-side twin of the mixed-clock Critical; `SyncBuffer` (691 LOC) is **dead in production** —
+     `append` has zero non-test callers — and that is the root cause of the missing-`trigger()` bug.
+     **Security:** no new Criticals. One unparseable email permanently kills a mailbox's auto-import
+     (`imap.rs:122` `?` inside the dispatch loop, cursor advance below it); untrusted PDFs reach
+     unsandboxed poppler uncapped/untimed; the subprocess helper inherits `GEMINI_API_KEY`. Repo-wide
+     grep for `.env_clear(|timeout(|.kill(|current_dir(` in `auto_import/`: **0 hits**.
+     **Performance:** the transactions projection defines ~20 fields and **zero indexes** — the only
+     projection without them → every Finances read is a full scan at N=10,200. `budget_progress`
+     bypasses the journal cache (distinct from the documented `net_worth_history` case).
+     **Bloat found a bug:** `import.rs:257` + `journal_import.rs:358` never call `push_debouncer
+     .trigger()` — Obsidian/hledger imports never wake the pusher; `auto_import.rs:471` documents this
+     exact bug, already fixed once next door. Plus 4 commands registered but unreachable from any UI.
+     **CI gap (orchestrator):** `omni-me-app` is **never compiled by CI** (`-p` allowlist omits it);
+     its 38 tests and the frontend's 82 never run; no clippy, no fmt. Structural cause of the Cycle 2
+     "release builds don't compile" blocker. **Fix:** `--workspace` instead of the `-p` allowlist.
+     **Calibration:** the `/code-review ultra` run was **cancelled by the user (2026-08-25)**. Replaced
+     with a zero-cost retrospective substitute: the friction log's resolved root causes are real bugs
+     found by dogfooding rather than review, and 6 of 8 sit in files sitting 2 just covered — so
+     "would this pass have caught it from the code alone?" becomes the miss-rate test. Corpus extracted;
+     runs at the tail of sitting 3.
+     **Remaining:** sitting 3 (frontend + `editor.js` lighter sweep, then the retrospective calibration)
+     → Phase C triage (one doc at a time, user picks order; every deferral gets a trip-wire; verify prior
+     FIXED markers) → Phase B test-gaps (written AFTER Phase C, biased toward absence-tests).
 
   **C. Email ingest prep:**
   6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
