@@ -454,6 +454,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                 apply_raw_note(props, body, initial_content, &s.content);
                 save_generation.set(s.save_generation);
                 cursor.set(s.cursor);
+                hydrated.set(true);
             } else if let Some(id) = id {
                 // No session: load the persisted note from the backend.
                 match bridge::invoke_get_generic_note(&id).await {
@@ -463,13 +464,31 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                         last_saved_content.set(raw.clone());
                         content.set(raw.clone());
                         apply_raw_note(props, body, initial_content, &raw);
+                        hydrated.set(true);
                     }
-                    Err(e) => fetch_error.set(Some(e)),
+                    // On error, leave `hydrated` false — the same choice
+                    // `journal.rs:425` makes deliberately, and notes was the
+                    // asymmetric half of an already-solved problem.
+                    //
+                    // It used to set `hydrated` unconditionally, so a transient
+                    // fetch failure left a **blank but editable** editor holding
+                    // a live `local_note_id`: `content`, `body` and
+                    // `last_saved_content` all `""`. The first keystroke then
+                    // satisfied the autosave effect (`"x" != ""`, id present) and
+                    // called `invoke_update_generic_note(&nid, "x")`, overwriting
+                    // the real note with near-empty content.
+                    Err(e) => {
+                        fetch_error.set(Some(e));
+                        loading.set(false);
+                        return;
+                    }
                 }
+            } else {
+                // Brand-new blank draft — signals keep their empty defaults, and
+                // there is no persisted note to clobber.
+                hydrated.set(true);
             }
-            // else: brand-new blank draft — signals keep their empty defaults.
 
-            hydrated.set(true);
             loading.set(false);
         }
     });

@@ -25589,9 +25589,11 @@
     extensions.push(
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-          if (!suppressDirty) emitDirty();
-          if (typeof onChange === "function") {
-            onChange(update.state.doc.toString());
+          if (!suppressDirty) {
+            emitDirty();
+            if (typeof onChange === "function") {
+              onChange(update.state.doc.toString());
+            }
           }
         }
         if (update.selectionSet && onCursor) {

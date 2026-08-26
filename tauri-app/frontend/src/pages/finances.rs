@@ -228,6 +228,10 @@ pub fn FinancesPage() -> Element {
     // (see the write-through effect below), so restore always lands on a root.
     let mut return_to: Signal<FinancesView> = use_signal(|| FinancesView::Overview);
 
+    // Read here rather than at the share-intake effect below, because the
+    // hardware-back handler needs to clear it too.
+    let mut pending_share: Signal<Option<PendingShareCapture>> = use_context();
+
     // Hardware/gesture-back (#372): pop one Finances drill-down per back press,
     // routed through the same `finances_back_target` map the on-screen Back
     // buttons use, and clearing the same per-view selection state those handlers
@@ -242,7 +246,15 @@ pub fn FinancesPage() -> Element {
                     FinancesView::BatchReview => selected_batch_id.set(None),
                     FinancesView::TransactionDetail => selected_txn_id.set(None),
                     FinancesView::TransactionForm | FinancesView::Capture(_) => {
-                        pending_draft.set(None)
+                        pending_draft.set(None);
+                        // Also drop the share that routed us here. The intake
+                        // effect above re-routes into Capture on *every* remount
+                        // while `pending_share` is set, so backing out of a
+                        // share-triggered capture and switching tabs bounced the
+                        // user straight back into Capture with the same file,
+                        // forever. The on-screen Capture handlers already clear
+                        // it; hardware/gesture back did not.
+                        pending_share.set(None);
                     }
                     _ => {}
                 }
@@ -307,7 +319,6 @@ pub fn FinancesPage() -> Element {
     // matching capture view, hand the bytes to DocumentCapture as a
     // `preloaded` prop, and clear the signal so a Back-then-forward navigation
     // doesn't replay the same share.
-    let mut pending_share: Signal<Option<PendingShareCapture>> = use_context();
     use_effect(move || {
         // Snapshot + drop the read guard before any .set() — Dioxus signals
         // hold the read borrow until end-of-expression, so set/read in the
@@ -2993,7 +3004,16 @@ fn TransactionListView(
     let restored = if initial_filter.is_some() {
         None
     } else {
-        store.peek_list(&list_key)
+        // Never restore an *empty* stored list. Doing so set `init_loading =
+        // false` and `restored_pending = true`, so the load effect returned
+        // early without fetching and the Ledger came back blank — no loader, no
+        // error, no "Load more" — and because the mirror writes into
+        // `PersistedWorkspace.lists`, it survived an app restart. Only an
+        // explicit filter Apply or an inbound `sync:applied` cleared it.
+        // Also repairs a workspace already carrying a poisoned entry.
+        store
+            .peek_list(&list_key)
+            .filter(|ls| !ls.transactions.is_empty())
     };
     let seed = initial_filter.clone().unwrap_or_default();
     let (init_txns, init_offset, init_has_more, init_filter, init_loading) = match &restored {
@@ -3021,6 +3041,11 @@ fn TransactionListView(
     // One-shot: true only when we hydrated from the store, so the load effect
     // below skips its first fetch (the rows are already populated).
     let mut restored_pending = use_signal(|| restored.is_some());
+    // Gate for the write-through mirror below: true once a fetch has actually
+    // succeeded (or we hydrated from a non-empty stored list). Without it the
+    // pre-load empty signals get persisted and then suppress the fetch forever.
+    // Mirrors the `hydrated` pattern `journal.rs` already uses.
+    let mut loaded_ok = use_signal(|| restored.is_some());
 
     // Load (or re-load) the first page whenever active_filter changes — except
     // on the first run after a store-restore, where re-fetching would discard
@@ -3047,6 +3072,7 @@ fn TransactionListView(
                     has_more.set(rows.len() as u32 == TXN_PAGE_SIZE);
                     offset.set(rows.len() as u32);
                     transactions.set(rows);
+                    loaded_ok.set(true);
                 }
                 Err(e) => error.set(Some(e)),
             }
@@ -3059,6 +3085,9 @@ fn TransactionListView(
     {
         let key = list_key.clone();
         use_effect(move || {
+            if !*loaded_ok.read() {
+                return;
+            }
             let state = ListState {
                 transactions: transactions.read().clone(),
                 offset: *offset.read(),
@@ -3070,20 +3099,27 @@ fn TransactionListView(
     }
 
     let load_more = move |_| {
-        if *loading.read() {
+        if *loading.peek() {
             return;
         }
-        let current_offset = *offset.read();
-        let filter = active_filter.read().clone();
+        // Claim the guard *synchronously*. `loading.set(true)` used to live
+        // inside the spawned future, which isn't polled until the handler
+        // returns — so two quick taps both read the same `current_offset`,
+        // fetched the same page, and the second `transactions.set(all)` appended
+        // a duplicate block while `offset` jumped by 2 × TXN_PAGE_SIZE. Every
+        // transaction on that page then rendered twice.
+        loading.set(true);
+        let current_offset = *offset.peek();
+        let filter = active_filter.peek().clone();
         spawn(async move {
-            loading.set(true);
             match bridge::invoke_list_transactions(filter, TXN_PAGE_SIZE, current_offset).await {
                 Ok(rows) => {
                     has_more.set(rows.len() as u32 == TXN_PAGE_SIZE);
-                    let mut all = transactions.read().clone();
+                    let mut all = transactions.peek().clone();
                     all.extend(rows);
                     offset.set(all.len() as u32);
                     transactions.set(all);
+                    loaded_ok.set(true);
                 }
                 Err(e) => error.set(Some(e)),
             }

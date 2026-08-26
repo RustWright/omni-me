@@ -819,9 +819,20 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
   extensions.push(
     EditorView.updateListener.of((update) => {
       if (update.docChanged) {
-        if (!suppressDirty) emitDirty();
-        if (typeof onChange === "function") {
-          onChange(update.state.doc.toString());
+        // Both are gated on `suppressDirty`, which `setEditorContent` raises
+        // around its own dispatch. Only `emitDirty` used to be, so a programmatic
+        // write during live sync-refresh re-entered Rust `on_change` and ran the
+        // text back through `recombine`, making `content` equal
+        // `serialize_journal(split_journal(raw))` rather than `raw`. Identical for
+        // app-authored notes, but an imported Obsidian entry with an unquoted
+        // reflection, non-canonical key order, or `tags: [a,b]` spacing
+        // re-serializes differently — one spurious normalize-and-resave event per
+        // refresh, while the pill already read "Saved".
+        if (!suppressDirty) {
+          emitDirty();
+          if (typeof onChange === "function") {
+            onChange(update.state.doc.toString());
+          }
         }
       }
       if (update.selectionSet && onCursor) {
@@ -935,8 +946,11 @@ window.setEditorContent = function (content) {
  */
 window.destroyEditor = function () {
   if (editorView) {
-    // #344: stamp the final in-progress line before tearing down, so its
-    // completion time persists via the resulting onChange.
+    // #344: stamp the final in-progress line before tearing down. The
+    // resulting onChange is NOT a reliable delivery path — the Rust scope that
+    // owns the handler is mid-teardown, so no effect of its re-runs. The page
+    // reads the stamped doc directly in its own `use_drop` (journal.rs) and
+    // writes it to the continuity store, which outlives the scope.
     if (timestampFlush) {
       try {
         timestampFlush(editorView);

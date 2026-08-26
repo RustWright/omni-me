@@ -451,6 +451,48 @@ fn DayView(
         });
     }
 
+    // Teardown flush (#344, second half). Stamp the in-progress line and fold it
+    // into the stored session *before* this scope goes away.
+    //
+    // `Editor`'s `use_drop` already calls `destroyEditor`, which runs
+    // `timestampFlush(editorView)` and dispatches the stamp — but by then
+    // `DayView` is mid-teardown, so no `use_effect` re-runs: neither the autosave
+    // nor the continuity mirror above fires, and the store still holds the
+    // pre-stamp text. This is the unfixed half of the friction the user already
+    // hit ("Android last line loses its timestamp"), whose fix wired only the
+    // `visibilitychange` / `pagehide` path. Finish a line without pressing Enter,
+    // then tab to Notes or pick another day, and the line came back unstamped —
+    // and by design (freeze-at-first-finish) it could never be stamped again.
+    //
+    // Writing straight to the root-held continuity store rather than going
+    // through `on_change` is deliberate: the store outlives this scope, whereas
+    // an effect scheduled here would never run.
+    {
+        let key_for_drop = continuity_key.clone();
+        use_drop(move || {
+            if !*hydrated.peek() {
+                return;
+            }
+            let stamped_body = bridge::js_flush_editor_timestamps();
+            if stamped_body.is_empty() || stamped_body == *body.peek() {
+                return;
+            }
+            let mut body = body;
+            body.set(stamped_body);
+            recombine(props, body, content);
+            store.put(
+                key_for_drop.clone(),
+                EditSession {
+                    title: String::new(),
+                    content: content.peek().clone(),
+                    last_saved_content: last_saved_content.peek().clone(),
+                    save_generation: *save_generation.peek(),
+                    cursor: *cursor.peek(),
+                },
+            );
+        });
+    }
+
     // Mirror the live body up to `JournalPage` so the calendar drawer's footer
     // can show this note's word/char count. The drawer lives in the parent, but
     // the body lives here in the keyed `DayView`. Post-hydrate only, so the empty

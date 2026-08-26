@@ -119,7 +119,17 @@ pub fn RoutinesPage() -> Element {
                     },
                     RoutineView::AddGroup => rsx! {
                         AddGroupView {
-                            next_order: visible.len() as u32,
+                            // `max(order_num) + 1`, not `len()`: after any removal
+                            // (0,1,2 → remove #1) the new group would be handed an
+                            // `order_num` that already exists. The (order_num, name)
+                            // render sort keeps that deterministic and lossless, but
+                            // the group lands in an alphabetical position the user
+                            // didn't choose.
+                            next_order: visible
+                                .iter()
+                                .map(|g| g.order_num)
+                                .max()
+                                .map_or(0, |m| (m + 1).max(0) as u32),
                             on_save: move |_| {
                                 view.set(RoutineView::GroupList);
                                 refresh_groups();
@@ -151,20 +161,44 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
     // Seeding the signal directly from the prop would lose the parent's later
     // load (prop is empty on first render while `use_future` is in flight).
     let mut pending_order: Signal<Option<Vec<RoutineGroup>>> = use_signal(|| None);
+    let mut reorder_error = use_signal(|| None::<String>);
     let mut dragging_id = use_signal(|| None::<String>);
     let mut drag_over_id = use_signal(|| None::<String>);
 
-    let ordered: Vec<RoutineGroup> = match pending_order.read().as_ref() {
-        Some(o) => o.clone(),
-        None => {
-            let mut g = groups.clone();
-            g.sort_by_key(|x| (x.order_num, x.name.clone()));
-            g
+    // Apply the optimistic order as a *ranking hint over the prop*, never as a
+    // replacement for it. Replacing meant `pending_order` gated the entire list
+    // read for the life of the mount: after one drag the parent's `sync_epoch`
+    // refetch was invisible, so groups added or removed on another device never
+    // appeared. Ranking keeps the drag responsive while letting the prop remain
+    // the source of truth for membership; anything not in the pending order
+    // sorts after it on its own `order_num`.
+    let ordered: Vec<RoutineGroup> = {
+        let mut g = groups.clone();
+        match pending_order.read().as_ref() {
+            Some(o) => {
+                let rank: std::collections::HashMap<&str, usize> = o
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| (x.id.as_str(), i))
+                    .collect();
+                g.sort_by_key(|x| {
+                    (
+                        rank.get(x.id.as_str()).copied().unwrap_or(usize::MAX),
+                        x.order_num,
+                        x.name.clone(),
+                    )
+                });
+            }
+            None => g.sort_by_key(|x| (x.order_num, x.name.clone())),
         }
+        g
     };
 
     rsx! {
         div { class: "animate-in fade-in duration-300",
+            if let Some(err) = &*reorder_error.read() {
+                Banner { kind: BannerKind::Error, class: "mb-4", "{err}" }
+            }
             PageHeader { title: "Daily Flow", class: "mb-6",
                 Button {
                     variant: ButtonVariant::Secondary,
@@ -256,7 +290,18 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
                                             let payload = reorder::to_orderings_payload(&new_order);
                                             pending_order.set(Some(new_order));
                                             spawn(async move {
-                                                let _ = bridge::invoke_reorder_routine_groups(&payload).await;
+                                                // The result used to be discarded, so a
+                                                // rejected reorder kept showing an order
+                                                // the backend never accepted and then
+                                                // silently snapped back on the next mount.
+                                                match bridge::invoke_reorder_routine_groups(&payload).await {
+                                                    Ok(_) => reorder_error.set(None),
+                                                    Err(e) => {
+                                                        pending_order.set(None);
+                                                        reorder_error
+                                                            .set(Some(format!("Reorder failed: {e}")));
+                                                    }
+                                                }
                                             });
                                         }
                                     },
@@ -279,6 +324,10 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
 fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
     let mut items = use_signal(Vec::<RoutineItem>::new);
     let mut completions = use_signal(Vec::<CompletionEntry>::new);
+    // A failed toggle used to give zero feedback — the checkbox simply didn't
+    // move, because the refetch that follows keeps the UI truthful and the
+    // `let _ = …await` swallowed the error.
+    let mut toggle_error = use_signal(|| None::<String>);
     let group_id = group.id.clone();
     let date_for_load = date.clone();
 
@@ -317,6 +366,9 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
 
     rsx! {
         div { class: "{container_class}",
+            if let Some(err) = &*toggle_error.read() {
+                div { class: "px-4 py-2 text-xs text-error bg-error/10 border-b border-error/20", "{err}" }
+            }
             div { class: "px-4 py-3 bg-white/5 flex justify-between items-center border-bottom border-white/5",
                 div { class: "flex items-center gap-2",
                     span { class: "font-bold text-[15px] tracking-tight text-white", "{group.name}" }
@@ -360,7 +412,11 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                                 let gid_inner = gid_inner.clone();
                                                 let d_inner = d_inner.clone();
                                                 spawn(async move {
-                                                    let _ = bridge::invoke_undo_completion(&iid, &d_inner).await;
+                                                    if let Err(e) = bridge::invoke_undo_completion(&iid, &d_inner).await {
+                                                        toggle_error.set(Some(format!("Undo failed: {e}")));
+                                                    } else {
+                                                        toggle_error.set(None);
+                                                    }
                                                     if let Ok(list) = bridge::invoke_get_completions_for_date(&gid_inner, &d_inner).await {
                                                         completions.set(list);
                                                     }
@@ -382,7 +438,11 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                                 let gid_inner = gid_inner.clone();
                                                 let d_inner = d_inner.clone();
                                                 spawn(async move {
-                                                    let _ = bridge::invoke_undo_skip(&iid, &d_inner).await;
+                                                    if let Err(e) = bridge::invoke_undo_skip(&iid, &d_inner).await {
+                                                        toggle_error.set(Some(format!("Undo failed: {e}")));
+                                                    } else {
+                                                        toggle_error.set(None);
+                                                    }
                                                     if let Ok(list) = bridge::invoke_get_completions_for_date(&gid_inner, &d_inner).await {
                                                         completions.set(list);
                                                     }
@@ -404,7 +464,11 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                                 let gid = gid.clone();
                                                 let d = d.clone();
                                                 spawn(async move {
-                                                    let _ = bridge::invoke_complete_routine_item(&iid, &gid, &d).await;
+                                                    if let Err(e) = bridge::invoke_complete_routine_item(&iid, &gid, &d).await {
+                                                        toggle_error.set(Some(format!("Could not tick that off: {e}")));
+                                                    } else {
+                                                        toggle_error.set(None);
+                                                    }
                                                     if let Ok(list) = bridge::invoke_get_completions_for_date(&gid, &d).await {
                                                         completions.set(list);
                                                     }
@@ -424,7 +488,11 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                                 let gid = gid.clone();
                                                 let d = d.clone();
                                                 spawn(async move {
-                                                    let _ = bridge::invoke_skip_routine_item(&iid, &gid, &d, None).await;
+                                                    if let Err(e) = bridge::invoke_skip_routine_item(&iid, &gid, &d, None).await {
+                                                        toggle_error.set(Some(format!("Skip failed: {e}")));
+                                                    } else {
+                                                        toggle_error.set(None);
+                                                    }
                                                     if let Ok(list) = bridge::invoke_get_completions_for_date(&gid, &d).await {
                                                         completions.set(list);
                                                     }
