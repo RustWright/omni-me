@@ -9,7 +9,7 @@ use crate::components::primitives::{
     SegmentedNav,
 };
 use crate::components::tag_editor::TagChipEditor;
-use crate::continuity::{use_continuity, ContinuityKey, EditSession};
+use crate::continuity::{session_is_recoverable, use_continuity, ContinuityKey, EditSession};
 use crate::note_frontmatter::{serialize_note, split_note, NoteProps};
 use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
 use crate::types::GenericNoteItem;
@@ -442,7 +442,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
             // a clean one must yield so edits that synced in from another device
             // surface instead of being permanently masked (the "nothing syncs to
             // desktop" bug). Continuity of typed-but-unsaved text is preserved.
-            let stored = store.get(&key).filter(|s| s.content != s.last_saved_content);
+            let stored = store.get(&key).filter(session_is_recoverable);
 
             if let Some(s) = stored {
                 // Restore an in-flight session: a saved note re-opened mid-edit,
@@ -520,8 +520,17 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
     // creation still requires a manual Save click; after that, local_note_id
     // is populated and this effect takes over for body updates.
     use_effect(move || {
-        let current = content.read().clone();
-        if current == *last_saved_content.peek() {
+        // Compared through the guards, not cloned. `current` was only ever
+        // used for the equality check below — a full heap copy of the whole
+        // document, per keystroke, to answer a question that needs none. The
+        // snapshot the save actually sends is taken separately, later, inside
+        // the spawned future.
+        //
+        // `read()` on content (subscribes — this effect must re-run on input);
+        // `peek()` on last_saved_content (must NOT subscribe, or our own
+        // write-back when a save resolves re-triggers a redundant pass that
+        // gen-cancels itself one tick later).
+        if *content.read() == *last_saved_content.peek() {
             return;
         }
         // Bail if we don't have an id yet — manual Save handles creation.

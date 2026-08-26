@@ -17,7 +17,7 @@ use crate::components::primitives::{
     Banner, BannerKind, Button, ButtonSize, ButtonVariant, IconButton,
 };
 use crate::components::tag_editor::TagChipEditor;
-use crate::continuity::{use_continuity, ContinuityKey, EditSession};
+use crate::continuity::{session_is_recoverable, use_continuity, ContinuityKey, EditSession};
 use crate::journal_template;
 use crate::note_frontmatter::{serialize_journal, split_journal, JournalProps};
 use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
@@ -263,7 +263,22 @@ pub fn JournalPage() -> Element {
             }
 
             {
-                let (words, chars) = body_stats(&viewed_body.read());
+                // Gated on `calendar_open`: `body_stats` splits the body into
+                // lines to strip #344 timestamp tokens, counts whitespace-
+                // separated words, then walks the whole thing again for a
+                // Unicode scalar count. That ran on every `JournalPage` render —
+                // i.e. every keystroke, via the `viewed_body` mirror — to
+                // produce two numbers only the drawer displays, and the drawer
+                // is closed almost all of the time.
+                //
+                // `read()` (not `peek()`) on `calendar_open`, so opening the
+                // drawer re-renders and the counts appear; `CalendarDrawer` also
+                // takes the signal itself, so it keeps reacting after that.
+                let (words, chars) = if *calendar_open.read() {
+                    body_stats(&viewed_body.read())
+                } else {
+                    (0, 0)
+                };
                 rsx! {
                     CalendarDrawer {
                         open: calendar_open,
@@ -382,7 +397,7 @@ fn DayView(
             // that synced in from another device (the "nothing syncs to desktop"
             // bug). The continuity guarantee (never lose typed-but-unsaved text)
             // is untouched: only clean sessions defer.
-            let stored = store.get(&key).filter(|s| s.content != s.last_saved_content);
+            let stored = store.get(&key).filter(session_is_recoverable);
             match bridge::invoke_get_journal_by_date(&d).await {
                 Ok(Some(e)) => {
                     if let Some(s) = stored {
@@ -511,12 +526,17 @@ fn DayView(
     {
         let date_for_autosave = date.clone();
         use_effect(move || {
-            let current = content.read().clone();
-            // peek() avoids subscribing to last_saved_content — we only re-run
-            // on user input (content changes), not on our own write-back when
-            // a save resolves. That self-trigger would schedule a redundant
-            // pass that gen-cancels itself one tick later.
-            if current == *last_saved_content.peek() {
+            // Compared through the guards, not cloned. `current` was only ever
+            // used for the equality check below — a full heap copy of the whole
+            // document, per keystroke, to answer a question that needs none. The
+            // snapshot the save actually sends is taken separately, later, inside
+            // the spawned future.
+            //
+            // `read()` on content (subscribes — this effect must re-run on input);
+            // `peek()` on last_saved_content (must NOT subscribe, or our own
+            // write-back when a save resolves re-triggers a redundant pass that
+            // gen-cancels itself one tick later).
+            if *content.read() == *last_saved_content.peek() {
                 return;
             }
             // Closed journals must not auto-save (the manual Save button is

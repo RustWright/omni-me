@@ -3127,10 +3127,18 @@ fn TransactionListView(
         });
     };
 
-    let rows = transactions.read().clone();
+    // Length, not a clone of the list. `transactions` is the *accumulated*
+    // result of every "Load more" (`load_more` extends without windowing), and
+    // each `TransactionView` carries `postings: serde_json::Value` — a recursive
+    // JSON clone, not a memcpy. Cloning the whole Vec here re-cloned every
+    // accumulated row on every render, and `LedgerView` re-renders this on each
+    // `selected.set(..)`, so tapping a row — the single most common Ledger
+    // interaction — copied the entire browsed-so-far list, worsening the longer
+    // you browse.
+    let row_count = transactions.read().len();
     let is_loading = *loading.read();
     let err_msg = error.read().clone();
-    let show_empty = rows.is_empty() && !is_loading && err_msg.is_none();
+    let show_empty = row_count == 0 && !is_loading && err_msg.is_none();
     let filter_active = !active_filter.read().is_empty();
 
     rsx! {
@@ -3172,7 +3180,10 @@ fn TransactionListView(
             }
         } else {
             div { class: "space-y-2",
-                for txn in rows {
+                // Iterated through the read guard. The per-row `clone()` stays
+                // — `TransactionListRow` takes the row by value — but it is now
+                // one clone per row instead of two.
+                for txn in transactions.read().iter() {
                     TransactionListRow {
                         key: "{txn.id}",
                         txn: txn.clone(),

@@ -157,6 +157,25 @@ pub struct PersistedWorkspace {
     pub nav: NavState,
 }
 
+/// Does this session hold anything a reader would act on?
+///
+/// **The one predicate**, shared by the two hydrate paths (`journal.rs`,
+/// `notes.rs`) and by [`ContinuityStore::put`]'s eviction. Deliberately one
+/// function rather than three copies of `content != last_saved_content`: the
+/// readers discard clean sessions and `put` therefore declines to store them,
+/// and those two behaviours are only safe together. If a reader started
+/// accepting clean sessions while `put` kept dropping them, the store would
+/// silently lose live data — and the bug would look like a sync fault, not a
+/// caching one. Sharing the function makes that divergence unrepresentable.
+///
+/// "Clean" means saved: `last_saved_content` is what the backend last
+/// acknowledged, so equality means the backend copy is at least as fresh, and
+/// the fresh copy must win — otherwise a session stored at first open
+/// permanently shadows edits synced in from another device.
+pub fn session_is_recoverable(session: &EditSession) -> bool {
+    session.content != session.last_saved_content
+}
+
 /// Root continuity store. Cheap to copy (it's a handle to a `Signal`); one
 /// instance is provided at the app root and read by every page via context.
 #[derive(Clone, Copy)]
@@ -177,6 +196,14 @@ pub struct ContinuityStore {
     /// it's always re-derivable from the backend, so it stays out of
     /// `PersistedWorkspace` to keep the on-disk workspace lean.
     reads: Signal<HashMap<String, serde_json::Value>>,
+    /// Bumped by every mutation of the three persisted maps (and `nav`). The
+    /// debounced write-back subscribes to *this* rather than to the maps
+    /// themselves, so a keystroke costs one `u64` increment instead of a deep
+    /// clone of the whole workspace. See `snapshot_for_persist`.
+    ///
+    /// Not persisted, and not a version number anyone reads — only its
+    /// *changing* matters.
+    revision: Signal<u64>,
 }
 
 impl ContinuityStore {
@@ -193,23 +220,64 @@ impl ContinuityStore {
         *self.loaded.read()
     }
 
+    /// Mark the persisted state as changed, waking the debounced write-back.
+    ///
+    /// Every mutator of `sessions` / `captures` / `lists` / `nav` must call this
+    /// — a mutation that skips it is a change that never reaches disk, which on
+    /// Android (where the OS kills the app without warning) is exactly the data
+    /// loss the continuity store exists to prevent.
+    fn bump(&self) {
+        let mut revision = self.revision;
+        *revision.write() += 1;
+    }
+
     /// Snapshot the session for `key`, if one is being tracked.
     pub fn get(&self, key: &ContinuityKey) -> Option<EditSession> {
         self.sessions.read().get(key).cloned()
     }
 
-    /// Insert or replace the session for `key`. `&self` (not `&mut self`) because
-    /// `Signal` is a `Copy` interior-mutable handle — call sites needn't hold a
-    /// mutable binding.
+    /// Insert or replace the session for `key` — **unless it is clean**, in
+    /// which case any existing session for that key is dropped instead.
+    ///
+    /// `&self` (not `&mut self`) because `Signal` is a `Copy` interior-mutable
+    /// handle — call sites needn't hold a mutable binding.
+    ///
+    /// **Why clean sessions are dropped rather than stored.** Both readers —
+    /// `journal.rs` and `notes.rs`, the only two in the app — hydrate with
+    /// `store.get(&key).filter(|s| s.content != s.last_saved_content)`. A clean
+    /// session is therefore *already* discarded at every read, deliberately: it
+    /// must yield to the fresh backend copy or it permanently shadows edits that
+    /// synced in from another device. Storing one buys nothing and costs a great
+    /// deal, because a session is inserted the first time a day or note is
+    /// **opened** — read-only, no edits — and `remove` was wired for exactly one
+    /// transient key (`NewNote`). In a daily journalling app that is one
+    /// full-text entry per day accumulating for the life of the install, each
+    /// one re-serialised into the persisted workspace blob and re-parsed at
+    /// every cold start.
+    ///
+    /// So the eviction predicate is not a new retention policy to tune — it is
+    /// the readers' own filter, applied at write time. Behaviour is unchanged by
+    /// construction: nothing can observe a session that every reader rejects.
+    ///
+    /// Enforced here rather than at the three call sites for the same reason
+    /// `box_request` exists: a rule at the call site is a rule that the fourth
+    /// writer forgets.
     pub fn put(&self, key: ContinuityKey, session: EditSession) {
         let mut sessions = self.sessions;
+        if !session_is_recoverable(&session) {
+            sessions.write().remove(&key);
+            self.bump();
+            return;
+        }
         sessions.write().insert(key, session);
+        self.bump();
     }
 
     /// Drop a session once it's fully persisted and no longer needs recovering.
     pub fn remove(&self, key: &ContinuityKey) {
         let mut sessions = self.sessions;
         sessions.write().remove(key);
+        self.bump();
     }
 
     /// Snapshot the in-flight capture draft for `key`, if one is tracked.
@@ -229,12 +297,14 @@ impl ContinuityStore {
     pub fn put_capture(&self, key: ContinuityKey, draft: CaptureDraft) {
         let mut captures = self.captures;
         captures.write().insert(key, draft);
+        self.bump();
     }
 
     /// Drop a capture draft once it's committed (saved) or abandoned (back).
     pub fn remove_capture(&self, key: &ContinuityKey) {
         let mut captures = self.captures;
         captures.write().remove(key);
+        self.bump();
     }
 
     /// Non-subscribing read of a list's pagination state — for one-time
@@ -247,6 +317,7 @@ impl ContinuityStore {
     pub fn put_list(&self, key: ContinuityKey, state: ListState) {
         let mut lists = self.lists;
         lists.write().insert(key, state);
+        self.bump();
     }
 
     /// Non-subscribing snapshot of the saved navigation position (1.8b) — for
@@ -257,11 +328,15 @@ impl ContinuityStore {
 
     /// Mutate the saved navigation position in place. Pages call this from a
     /// write-through effect as their sub-position changes; the debounced persist
-    /// effect (which subscribes to `nav`) then flushes it to disk.
+    /// effect (which subscribes to `revision`) then flushes it to disk.
     pub fn update_nav(&self, f: impl FnOnce(&mut NavState)) {
         let mut nav = self.nav;
-        let mut guard = nav.write();
-        f(&mut guard);
+        {
+            let mut guard = nav.write();
+            f(&mut guard);
+        }
+        // After the guard drops: `bump` takes its own write lock.
+        self.bump();
     }
 
     /// Non-subscribing read of a cached finances payload (Stage C3), deserialized
@@ -283,29 +358,38 @@ impl ContinuityStore {
         }
     }
 
-    /// Snapshot all three maps for on-disk persistence (1.8a). Reads — and thus
-    /// subscribes — so the debounced persist effect re-runs on any change.
+    /// Snapshot all three maps for on-disk persistence (1.8a).
+    ///
+    /// **`peek`, not `read`** — this deliberately does *not* subscribe. It used
+    /// to, which was how the persist effect knew to re-run; the effect now
+    /// subscribes to the cheap `revision` counter instead and calls this only
+    /// after its debounce has elapsed. Subscribing here would drag the deep
+    /// clone back onto the per-change path, which is the whole thing being
+    /// fixed: this clones every session, capture and — via `ListState` — the
+    /// entire accumulated Ledger list with each row's `postings` JSON. Only the
+    /// `to_string` + disk write were ever debounced, so typing one character in
+    /// today's journal entry deep-cloned all of that, on every keystroke.
     pub fn snapshot_for_persist(&self) -> PersistedWorkspace {
         PersistedWorkspace {
             sessions: self
                 .sessions
-                .read()
+                .peek()
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             captures: self
                 .captures
-                .read()
+                .peek()
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             lists: self
                 .lists
-                .read()
+                .peek()
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
-            nav: self.nav.read().clone(),
+            nav: self.nav.peek().clone(),
         }
     }
 
@@ -330,6 +414,7 @@ pub fn use_continuity_provider() -> ContinuityStore {
     let lists = use_signal(HashMap::<ContinuityKey, ListState>::new);
     let nav = use_signal(NavState::default);
     let reads = use_signal(HashMap::<String, serde_json::Value>::new);
+    let revision = use_signal(|| 0u64);
     // `loaded` gates the persistence writer until the boot read finishes (1.8a)
     // *and* is read by pages to gate first hydration (1.8b). It lives on the
     // struct so descendants can consult it via `loaded_peek`.
@@ -347,6 +432,7 @@ pub fn use_continuity_provider() -> ContinuityStore {
         nav,
         loaded,
         reads,
+        revision,
     };
     use_context_provider(|| store);
 
@@ -409,7 +495,12 @@ pub fn use_continuity_provider() -> ContinuityStore {
         if !*load_succeeded.read() {
             return;
         }
-        let snapshot = store.snapshot_for_persist();
+        // Subscribe to the revision counter, *not* to the maps. Reading the maps
+        // here (which is what calling `snapshot_for_persist` used to do) both
+        // subscribed the effect and performed the deep clone, so every keystroke
+        // paid a full workspace copy while only the serialize + disk write were
+        // debounced.
+        let _ = store.revision.read();
         let scheduled = {
             let mut g = persist_gen.write();
             *g += 1;
@@ -420,6 +511,10 @@ pub fn use_continuity_provider() -> ContinuityStore {
             if *persist_gen.peek() != scheduled {
                 return;
             }
+            // Snapshot *after* the debounce and after the gen check, so a burst
+            // of keystrokes yields exactly one clone rather than one per key.
+            // Taken here it is also fresher than a pre-debounce copy would be.
+            let snapshot = store.snapshot_for_persist();
             if let Ok(json) = serde_json::to_string(&snapshot) {
                 let _ = crate::bridge::invoke_save_workspace(&json).await;
             }
