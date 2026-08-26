@@ -49,14 +49,23 @@ impl Projection for AutoImportProjection {
              DEFINE FIELD IF NOT EXISTS status ON pending_auto_import_batches TYPE string;
              DEFINE FIELD IF NOT EXISTS resolved_at ON pending_auto_import_batches TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS resolve_reason ON pending_auto_import_batches TYPE option<string>;
-             DEFINE INDEX IF NOT EXISTS pending_auto_import_batch_id_idx ON pending_auto_import_batches FIELDS batch_id;",
+             DEFINE INDEX IF NOT EXISTS pending_auto_import_batch_id_idx ON pending_auto_import_batches FIELDS batch_id;
+
+             DEFINE TABLE IF NOT EXISTS auto_import_resolutions SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS status ON auto_import_resolutions TYPE string;
+             DEFINE FIELD IF NOT EXISTS resolved_at ON auto_import_resolutions TYPE string;
+             DEFINE FIELD IF NOT EXISTS resolve_reason ON auto_import_resolutions TYPE option<string>;",
         )
         .await?;
         Ok(())
     }
 
     async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
-        db.query("DELETE FROM pending_auto_import_batches;").await?;
+        db.query(
+            "DELETE FROM pending_auto_import_batches;
+             DELETE FROM auto_import_resolutions;",
+        )
+        .await?;
         Ok(())
     }
 
@@ -112,6 +121,20 @@ impl AutoImportProjection {
             return Ok(());
         }
 
+        // The pending row may never have existed here while the *resolution*
+        // still arrived (out-of-order pull, or a create skipped by
+        // `apply_events_resilient`). The stub written by `on_resolved` is keyed
+        // on `batch_id`, so it survives that gap and stops the proposal being
+        // resurrected as pending — which is what allowed a second commit.
+        let mut resolved = db
+            .query("SELECT status FROM type::record('auto_import_resolutions', $bid) LIMIT 1")
+            .bind(("bid", batch_id.clone()))
+            .await?;
+        let resolved_status: Option<String> = resolved.take("status").unwrap_or(None);
+        if resolved_status.is_some() {
+            return Ok(());
+        }
+
         db.query(
             "UPSERT type::record('pending_auto_import_batches', $rid) CONTENT {
                 batch_id: $batch_id,
@@ -153,14 +176,33 @@ impl AutoImportProjection {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        // Look up by batch_id field (record id is source+dedup_key; the
-        // resolved event only carries batch_id, hence the index).
+        // Two writes, because the pending row is keyed on `source-dedup_key`
+        // while a resolve event carries only `batch_id` — there is no record id
+        // to UPSERT against, which is why this was a field-scan `UPDATE`.
+        //
+        // The scan silently matched nothing on any device that never
+        // materialized the `Proposed` row (skipped by `apply_events_resilient`,
+        // or simply not pulled yet). The batch then sat at `pending` there
+        // forever, and `commit_batch`'s only gate is `row.status != "pending"`
+        // (`commands/auto_import.rs:356`) — so it could be committed a **second**
+        // time, minting fresh ULID-keyed `TransactionRecorded` events with no
+        // content dedup behind them.
+        //
+        // So also write a resolution stub keyed on `batch_id`, which
+        // `on_proposed` consults: a late-arriving proposal for an
+        // already-resolved batch is then dropped instead of resurrecting it as
+        // pending.
         db.query(
             "UPDATE pending_auto_import_batches SET
                 status = $status,
                 resolved_at = $resolved_at,
                 resolve_reason = $resolve_reason
-             WHERE batch_id = $batch_id",
+             WHERE batch_id = $batch_id;
+
+             UPSERT type::record('auto_import_resolutions', $batch_id) SET
+                status = $status,
+                resolved_at = $resolved_at,
+                resolve_reason = $resolve_reason;",
         )
         .bind(("batch_id", batch_id))
         .bind(("status", new_status.to_string()))
@@ -213,6 +255,59 @@ mod tests {
         let batch_ids: Vec<String> = resp.take("batch_id").unwrap();
         let statuses: Vec<String> = resp.take("status").unwrap();
         batch_ids.into_iter().zip(statuses).collect()
+    }
+
+    /// A resolve that arrives **before** its proposal must not leave the batch
+    /// re-openable.
+    ///
+    /// Absence test for a double-spend. The pending row is keyed on
+    /// `source-dedup_key` while a resolve event carries only `batch_id`, so
+    /// `on_resolved` was a field-scan `UPDATE` — which silently matched nothing
+    /// on a device that had not materialized the proposal yet. The batch stayed
+    /// `pending` there, and `commit_batch`'s only gate is
+    /// `row.status != "pending"`, so committing again minted a second set of
+    /// ULID-keyed `TransactionRecorded` events with no content dedup behind them.
+    #[tokio::test]
+    async fn resolve_before_propose_blocks_the_late_proposal() {
+        let (db, store, runner) = test_db_and_runner().await;
+
+        // Device B applies the commit first — it never saw the proposal.
+        let committed = store
+            .append(NewEvent {
+                id: None,
+                event_type: "auto_import_batch_committed".into(),
+                aggregate_id: "b1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({ "batch_id": "b1" }),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[committed]).await.unwrap();
+
+        assert!(
+            list_pending(&db).await.is_empty(),
+            "a resolve with no matching row should not create a pending row"
+        );
+
+        // The proposal catches up on the next pull.
+        let proposed = store
+            .append(NewEvent {
+                id: None,
+                event_type: "auto_import_batch_proposed".into(),
+                aggregate_id: "b1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: proposed_payload("b1", "email", "dedup-1"),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[proposed]).await.unwrap();
+
+        assert!(
+            list_pending(&db).await.is_empty(),
+            "an already-committed batch was resurrected as pending — it could be committed twice"
+        );
     }
 
     #[tokio::test]

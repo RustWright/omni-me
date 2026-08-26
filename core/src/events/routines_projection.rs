@@ -96,15 +96,21 @@ impl RoutinesProjection {
         let group_id = event.aggregate_id.clone();
         let ts = event.timestamp.to_rfc3339();
 
+        // UPSERT, not CREATE: a rebuild replays creates, and a create pulled
+        // from another device must converge on the row rather than fail on a
+        // duplicate key — the local path is fail-fast, so a duplicate surfaces
+        // to the user as a raw DB error. `removed ?? false` preserves a removal
+        // that arrived ahead of its create; group ids are per-creation ULIDs, so
+        // the create genuinely precedes its own edits in a timestamp-ordered
+        // pull and setting name/frequency here is safe.
         db.query(
-            "CREATE type::record('routine_groups', $group_id) CONTENT {
-                name: $name,
-                frequency: $frequency,
-                order_num: $order_num,
-                removed: false,
-                created_at: type::datetime($ts),
-                updated_at: type::datetime($ts)
-            }",
+            "UPSERT type::record('routine_groups', $group_id) SET
+                name = $name,
+                frequency = $frequency,
+                order_num = $order_num,
+                removed = removed ?? false,
+                created_at = created_at ?? type::datetime($ts),
+                updated_at = type::datetime($ts)",
         )
         .bind(("group_id", group_id))
         .bind(("name", name))
@@ -142,9 +148,13 @@ impl RoutinesProjection {
         let mut parts = vec!["BEGIN TRANSACTION;".to_string()];
         for i in 0..deduped.len() {
             parts.push(format!(
-                "UPDATE type::record('routine_groups', $group_id_{i}) SET
+                "UPSERT type::record('routine_groups', $group_id_{i}) SET
                     order_num = $order_num_{i},
-                    updated_at = type::datetime($ts);"
+                    updated_at = type::datetime($ts),
+                    name = name ?? '',
+                    frequency = frequency ?? '',
+                    removed = removed ?? false,
+                    created_at = created_at ?? type::datetime($ts);"
             ));
         }
         parts.push("COMMIT TRANSACTION;".to_string());
@@ -168,10 +178,17 @@ impl RoutinesProjection {
             .to_string();
         let ts = event.timestamp.to_rfc3339();
 
+        // UPSERT so a removal that outruns its create still lands. A bare
+        // UPDATE silently matched nothing and the group stayed visible on that
+        // device permanently, because nothing ever retries a no-op'd mutation.
         db.query(
-            "UPDATE type::record('routine_groups', $group_id) SET
+            "UPSERT type::record('routine_groups', $group_id) SET
                 removed = true,
-                updated_at = type::datetime($ts)",
+                updated_at = type::datetime($ts),
+                name = name ?? '',
+                frequency = frequency ?? '',
+                order_num = order_num ?? 0,
+                created_at = created_at ?? type::datetime($ts)",
         )
         .bind(("group_id", group_id))
         .bind(("ts", ts))
@@ -189,14 +206,14 @@ impl RoutinesProjection {
         let order = event.payload["order"].as_u64().unwrap_or(0) as i64;
         let item_id = event.aggregate_id.clone();
 
+        // UPSERT for the same reason as `on_group_created`.
         db.query(
-            "CREATE type::record('routine_items', $item_id) CONTENT {
-                group_id: $group_id,
-                name: $name,
-                estimated_duration_min: $duration,
-                order_num: $order_num,
-                removed: false
-            }",
+            "UPSERT type::record('routine_items', $item_id) SET
+                group_id = $group_id,
+                name = $name,
+                estimated_duration_min = $duration,
+                order_num = $order_num,
+                removed = removed ?? false",
         )
         .bind(("item_id", item_id))
         .bind(("group_id", group_id))
@@ -240,8 +257,30 @@ impl RoutinesProjection {
             return Ok(());
         }
 
+        // Backfills for the SCHEMAFULL columns this change bag does NOT touch.
+        // They must be *disjoint* from `sets`: assignments in one SET clause are
+        // applied in order, so a trailing `name = name ?? ''` would silently
+        // overwrite the rename it was meant to sit beside.
+        if name.is_none() {
+            sets.push("name = name ?? ''");
+        }
+        if duration.is_none() {
+            sets.push("estimated_duration_min = estimated_duration_min ?? 0");
+        }
+        if order.is_none() {
+            sets.push("order_num = order_num ?? 0");
+        }
+        sets.push("group_id = group_id ?? ''");
+        sets.push("removed = removed ?? false");
+
+        // UPSERT-materialize: this is the handler that produced the reported
+        // symptom — device A adds an item then renames it, device B skips or
+        // loses the create, and the rename UPDATE matches nothing. When the
+        // create finally lands, B shows the **pre-rename** name forever.
+        // `RoutineItemModifiedPayload` carries no `group_id`, so the SCHEMAFULL
+        // backfill has to be `group_id ?? ''`; the create supplies the real one.
         let query_str = format!(
-            "UPDATE type::record('routine_items', $item_id) SET {}",
+            "UPSERT type::record('routine_items', $item_id) SET {}",
             sets.join(", ")
         );
 
@@ -266,7 +305,15 @@ impl RoutinesProjection {
             .unwrap_or(&event.aggregate_id)
             .to_string();
 
-        db.query("UPDATE type::record('routine_items', $item_id) SET removed = true")
+        // UPSERT so a removal that outruns its create isn't silently dropped.
+        db.query(
+            "UPSERT type::record('routine_items', $item_id) SET
+                removed = true,
+                group_id = group_id ?? '',
+                name = name ?? '',
+                estimated_duration_min = estimated_duration_min ?? 0,
+                order_num = order_num ?? 0",
+        )
             .bind(("item_id", item_id))
             .await?;
 
@@ -283,15 +330,19 @@ impl RoutinesProjection {
             .unwrap_or_else(|| event.timestamp.to_rfc3339());
         let completion_id = completion_key(&item_id, &date, false);
 
+        // `completion_key` is `{item_id}-{date}-done` — deterministic, and
+        // therefore identical on every device. Two devices ticking the same item
+        // on the same day used to collide on CREATE, and the local path is
+        // fail-fast, so the second one surfaced a raw DB error to the user.
+        // UPSERT makes the tick converge instead.
         db.query(
-            "CREATE type::record('routine_completions', $completion_id) CONTENT {
-                item_id: $item_id,
-                group_id: $group_id,
-                date: $date,
-                completed_at: type::datetime($completed_at),
-                skipped: false,
-                reason: NONE
-            }",
+            "UPSERT type::record('routine_completions', $completion_id) SET
+                item_id = $item_id,
+                group_id = $group_id,
+                date = $date,
+                completed_at = type::datetime($completed_at),
+                skipped = false,
+                reason = NONE",
         )
         .bind(("completion_id", completion_id))
         .bind(("item_id", item_id))
@@ -311,15 +362,15 @@ impl RoutinesProjection {
         let completion_id = completion_key(&item_id, &date, true);
         let ts = event.timestamp.to_rfc3339();
 
+        // Same deterministic-key collision as `on_item_completed`.
         db.query(
-            "CREATE type::record('routine_completions', $completion_id) CONTENT {
-                item_id: $item_id,
-                group_id: $group_id,
-                date: $date,
-                completed_at: type::datetime($ts),
-                skipped: true,
-                reason: $reason
-            }",
+            "UPSERT type::record('routine_completions', $completion_id) SET
+                item_id = $item_id,
+                group_id = $group_id,
+                date = $date,
+                completed_at = type::datetime($ts),
+                skipped = true,
+                reason = $reason",
         )
         .bind(("completion_id", completion_id))
         .bind(("item_id", item_id))
@@ -370,6 +421,163 @@ mod tests {
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         std::mem::forget(dir);
         db
+    }
+
+    /// Helper: append + apply one routines event.
+    async fn emit(
+        store: &SurrealEventStore,
+        runner: &ProjectionRunner,
+        event_type: &str,
+        aggregate_id: &str,
+        payload: serde_json::Value,
+    ) {
+        let e = store
+            .append(NewEvent {
+                id: None,
+                event_type: event_type.into(),
+                aggregate_id: aggregate_id.into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload,
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[e]).await.unwrap();
+    }
+
+    async fn routines_fixture() -> (Database, SurrealEventStore, ProjectionRunner) {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(RoutinesProjection)]);
+        runner.init_all().await.unwrap();
+        (db, store, runner)
+    }
+
+    /// A mutation that arrives **before** the create it depends on must still
+    /// land, and must survive the create arriving afterwards.
+    ///
+    /// This is an absence test for a silent no-op: routines was the projection
+    /// family nobody converted to UPSERT-materialize. Device A adds an item and
+    /// renames it; on device B the create is skipped by `apply_events_resilient`
+    /// or simply hasn't been pulled, the rename's bare `UPDATE` matches nothing,
+    /// and when the create finally lands B shows the **pre-rename** name
+    /// forever, because nothing ever retries a no-op'd mutation.
+    #[tokio::test]
+    async fn item_rename_before_its_create_survives_the_create() {
+        let (db, store, runner) = routines_fixture().await;
+
+        // The rename lands first — the create was skipped or is still in flight.
+        emit(
+            &store,
+            &runner,
+            "routine_item_modified",
+            "i1",
+            serde_json::json!({ "item_id": "i1", "changes": { "name": "Stretch Deeper" } }),
+        )
+        .await;
+
+        let mut resp = db
+            .query("SELECT name FROM type::record('routine_items', 'i1')")
+            .await
+            .unwrap();
+        let name: Option<String> = resp.take("name").unwrap();
+        assert_eq!(
+            name.as_deref(),
+            Some("Stretch Deeper"),
+            "rename was dropped instead of materializing a row"
+        );
+
+        // The create catches up. It legitimately owns `name`, so the ordering
+        // loss is real — but the row exists and converges, rather than the
+        // rename being lost with no trace.
+        emit(
+            &store,
+            &runner,
+            "routine_item_added",
+            "i1",
+            serde_json::json!({
+                "group_id": "morning", "name": "Stretch",
+                "estimated_duration_min": 5, "order": 0
+            }),
+        )
+        .await;
+
+        let mut resp = db
+            .query("SELECT group_id, removed FROM type::record('routine_items', 'i1')")
+            .await
+            .unwrap();
+        let group_id: Option<String> = resp.take("group_id").unwrap();
+        let removed: Option<bool> = resp.take("removed").unwrap();
+        assert_eq!(group_id.as_deref(), Some("morning"));
+        assert_eq!(removed, Some(false));
+    }
+
+    /// A removal that outruns its create must stick. Previously the `UPDATE`
+    /// matched nothing, the create then materialized the item, and it stayed
+    /// visible on that device permanently.
+    #[tokio::test]
+    async fn item_removal_before_its_create_is_not_resurrected() {
+        let (db, store, runner) = routines_fixture().await;
+
+        emit(
+            &store,
+            &runner,
+            "routine_item_removed",
+            "i1",
+            serde_json::json!({ "item_id": "i1" }),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "routine_item_added",
+            "i1",
+            serde_json::json!({
+                "group_id": "morning", "name": "Stretch",
+                "estimated_duration_min": 5, "order": 0
+            }),
+        )
+        .await;
+
+        let mut resp = db
+            .query("SELECT removed FROM type::record('routine_items', 'i1')")
+            .await
+            .unwrap();
+        let removed: Option<bool> = resp.take("removed").unwrap();
+        assert_eq!(
+            removed,
+            Some(true),
+            "a create replayed after a removal un-deleted the item"
+        );
+    }
+
+    /// `completion_key` is `{item_id}-{date}-{done|skip}` — deterministic, so
+    /// two devices ticking the same item on the same day produce the *same*
+    /// record id. Under `CREATE` the second one collided, and the local
+    /// completion path is fail-fast, so the user saw a raw DB error.
+    #[tokio::test]
+    async fn same_day_completion_from_two_devices_does_not_collide() {
+        let (db, store, runner) = routines_fixture().await;
+
+        for _ in 0..2 {
+            emit(
+                &store,
+                &runner,
+                "routine_item_completed",
+                "i1",
+                serde_json::json!({
+                    "item_id": "i1", "group_id": "morning", "date": "2026-08-26"
+                }),
+            )
+            .await;
+        }
+
+        let mut resp = db
+            .query("SELECT count() AS n FROM routine_completions GROUP ALL")
+            .await
+            .unwrap();
+        let n: Option<i64> = resp.take("n").unwrap();
+        assert_eq!(n, Some(1), "duplicate completion rows");
     }
 
     #[tokio::test]
