@@ -143,16 +143,30 @@ fn raw_balances(ledger: &Ledger) -> Balance {
     balance
 }
 
-fn prep_content(content: &str) -> String {
-    // `ledger-utils` (ledger_parser) parses transactions but errors on `account`
-    // directives. The JournalFile projection appends an
-    // `account <name>  ; commodity:<c>` block (plus an optional indented
-    // `note <label>` sub-directive) for every per-account override
-    // (rename / hide / liquid). Those carry no balance information — overrides
-    // live in the DB — so strip each `account` block before parsing. Otherwise a
-    // single override makes the whole journal unparseable and collapses every
-    // balance view (net worth, the Accounts screen, the detected-account list).
-    let mut kept: Vec<&str> = Vec::new();
+/// Normalize an hledger file into something `ledger-parser` v6 will accept.
+///
+/// **One helper, two callers** — this module (which reads balances back out of
+/// `budget.journal`) and `journal_import` (which reads a user's journal in).
+/// They used to have *disjoint* prep passes, and each one's gap was the other's
+/// fix: this side stripped `account` blocks but not malformed `P` directives,
+/// the import side did the reverse. Since the `JournalFile` projection writes an
+/// `account` block for every per-account override, importing omni-me's **own**
+/// regenerated journal failed wholesale — and one such directive is already
+/// present in real user data.
+///
+/// Three normalizations, none of which drops balance information:
+///
+/// 1. `account` blocks are removed. `ledger-parser` errors on them, and they
+///    carry no balances — the overrides they encode (rename / hide / liquid)
+///    live in the DB. A single one otherwise collapses every balance view.
+/// 2. Status markers are spaced out — see [`normalize_status_marker`].
+/// 3. `P` price directives are kept when they carry a time component and
+///    dropped when they don't. **Not** dropped wholesale: `insert_from` reads
+///    these for base-currency conversion, so stripping them all here would
+///    silently un-price every foreign holding. `ledger-parser` v6 requires the
+///    time, which hand-written journals routinely omit.
+pub(crate) fn prep_content(content: &str) -> String {
+    let mut kept: Vec<String> = Vec::new();
     let mut in_account_block = false;
     for line in content.lines() {
         if in_account_block {
@@ -167,11 +181,57 @@ fn prep_content(content: &str) -> String {
             in_account_block = true;
             continue;
         }
-        kept.push(line.trim_end());
+        if line.starts_with("P ") && !price_directive_has_time(line) {
+            continue;
+        }
+        kept.push(normalize_status_marker(line.trim_end()));
     }
     let mut out = kept.join("\n");
     out.push_str("\n\n");
     out
+}
+
+/// True when a `P` directive carries the `HH:MM:SS` component `ledger-parser`
+/// v6 requires. Shape: `P <date> <time> <commodity> <rate> <commodity>`.
+fn price_directive_has_time(line: &str) -> bool {
+    line.split_whitespace()
+        .nth(2)
+        .is_some_and(|tok| tok.len() == 8 && tok.split(':').count() == 3)
+}
+
+/// ledger lets a transaction's status marker abut the payee
+/// (`2019/10/21 **SAMPLE PAYEE**` parses as status `*` + payee `*SAMPLE PAYEE**`).
+/// `ledger-parser` v6 requires whitespace after the marker and otherwise aborts
+/// the whole-file parse. Insert that space when a date-led line has
+/// `<date> <*|!><non-space>`, reproducing ledger's own interpretation exactly
+/// (the second `*` stays in the description). No-ops on every other line.
+pub(crate) fn normalize_status_marker(line: &str) -> String {
+    if !starts_with_date(line) {
+        return line.to_string();
+    }
+    // Split into `<date>` and the remainder after the run of spaces.
+    let Some(sep) = line.find(' ') else {
+        return line.to_string();
+    };
+    let (date, rest_with_ws) = line.split_at(sep);
+    let rest = rest_with_ws.trim_start();
+    let mut chars = rest.chars();
+    match (chars.next(), chars.next()) {
+        (Some(marker @ ('*' | '!')), Some(next)) if !next.is_whitespace() => {
+            format!("{date} {marker} {}", &rest[marker.len_utf8()..])
+        }
+        _ => line.to_string(),
+    }
+}
+
+fn starts_with_date(line: &str) -> bool {
+    let b = line.as_bytes();
+    b.len() >= 10
+        && b[0..4].iter().all(u8::is_ascii_digit)
+        && (b[4] == b'/' || b[4] == b'-')
+        && b[5..7].iter().all(u8::is_ascii_digit)
+        && (b[7] == b'/' || b[7] == b'-')
+        && b[8..10].iter().all(u8::is_ascii_digit)
 }
 
 #[cfg(test)]

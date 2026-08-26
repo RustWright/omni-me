@@ -264,7 +264,7 @@ fn walk(path: &Path, state: &mut WalkState) {
             return;
         }
     };
-    let prepped = prep_content(&raw);
+    let prepped = crate::ledger::prep_content(&raw);
     state.files_parsed += 1;
     state.total_bytes += prepped.len();
 
@@ -330,66 +330,16 @@ fn consume_items(ledger: ParserLedger, parent: &Path, source: &Path, state: &mut
     }
 }
 
-fn prep_content(raw: &str) -> String {
-    let mut out = raw
-        .lines()
-        .filter(|line| !is_price_directive(line))
-        .map(|line| normalize_status_marker(line.trim_end()))
-        .collect::<Vec<_>>()
-        .join("\n");
-    out.push_str("\n\n");
-    out
-}
-
-/// ledger `P DATE COMMODITY PRICE` market-price directives are valuation hints
-/// only — irrelevant to cost-based balances and unsupported by `ledger-parser`
-/// v6 (they abort the whole-file parse). Column-0 `P ` is unambiguous: postings
-/// are indented, transactions start with a date, comments with `;`.
-fn is_price_directive(line: &str) -> bool {
-    line.starts_with("P ")
-}
-
-/// ledger lets a transaction's status marker abut the payee
-/// (`2019/10/21 **SAMPLE PAYEE**` parses as status `*` + payee `*SAMPLE PAYEE**`).
-/// `ledger-parser` v6 requires whitespace after the marker and otherwise aborts
-/// the whole-file parse. Insert that space when a date-led line has
-/// `<date> <*|!><non-space>`, reproducing ledger's own interpretation exactly
-/// (the second `*` stays in the description). No-ops on every other line.
-fn normalize_status_marker(line: &str) -> String {
-    if !starts_with_date(line) {
-        return line.to_string();
-    }
-    // Split into `<date>` and the remainder after the run of spaces.
-    let Some(sep) = line.find(' ') else {
-        return line.to_string();
-    };
-    let (date, rest_with_ws) = line.split_at(sep);
-    let rest = rest_with_ws.trim_start();
-    let mut chars = rest.chars();
-    match (chars.next(), chars.next()) {
-        (Some(marker @ ('*' | '!')), Some(next)) if !next.is_whitespace() => {
-            format!("{date} {marker} {}", &rest[marker.len_utf8()..])
-        }
-        _ => line.to_string(),
-    }
-}
-
-/// True when the line begins `YYYY/MM/DD` or `YYYY-MM-DD` (a transaction header).
-fn starts_with_date(line: &str) -> bool {
-    let b = line.as_bytes();
-    b.len() >= 10
-        && b[0..4].iter().all(u8::is_ascii_digit)
-        && (b[4] == b'/' || b[4] == b'-')
-        && b[5..7].iter().all(u8::is_ascii_digit)
-        && (b[7] == b'/' || b[7] == b'-')
-        && b[8..10].iter().all(u8::is_ascii_digit)
-}
 
 fn convert_transaction(
     source_index: usize,
     t: &ParserTxn,
     hash_occurrence: &mut BTreeMap<String, usize>,
 ) -> Result<DraftImportedTransaction, String> {
+    if let Some(reason) = unsupported_syntax(t) {
+        return Err(reason);
+    }
+
     let mut explicit: Vec<Posting> = Vec::with_capacity(t.postings.len());
     // Original parser postings for the explicit legs, kept in parallel so the
     // elided leg can be balanced by *exact* cost (the `@@ TOTAL` price), not the
@@ -478,6 +428,69 @@ fn convert_transaction(
         top_tags,
         content_hash: hash,
     })
+}
+
+/// Refuse — loudly — the three hledger constructs omni-me does not model, so
+/// the transaction lands in `balance_failures` where the user can see it,
+/// instead of being imported as something it isn't.
+///
+/// Each one used to be silently *misread* rather than rejected:
+///
+/// * **Virtual postings.** `convert_explicit_posting` never read
+///   `ParserPosting::reality` (the word appeared nowhere in `core/src`), so
+///   `ledger-parser` stripped the brackets and `[Assets:Budget:Food] 50.00 CAD`
+///   was imported as a **real** posting — inventing 50 CAD of assets and net
+///   worth. `infer_elided_postings` then summed virtual amounts into the same
+///   pot as real ones, where ledger keeps the two balances strictly separate.
+/// * **Balance assertions.** The explicit/elided split is exactly
+///   `p.amount.is_some()` and never consulted `p.balance`, so
+///   `Assets:Cash = 500.00 CAD` (amount `None`) was classified as *the elided
+///   leg* and handed the negation of the other legs — ledger would compute
+///   `500 − running_balance`. It also consumed the transaction's one allowed
+///   elided slot, so a genuinely elided leg in the same entry was rejected.
+///   Assertions were dropped on re-render anyway, erasing every reconciliation
+///   checkpoint in the file.
+/// * **Lot prices.** `infer_elided_postings` matched only `price` (`@`/`@@`)
+///   and never `lot_price` (`{…}`), so `Assets:NWG 10 NWG {50.00 CAD}` with an
+///   elided cash leg balanced at raw quantity and produced `Assets:Cash -10 NWG`
+///   — a nonsense commodity on a cash account, which then surfaced in
+///   `account_summaries`.
+///
+/// Refusing rather than supporting is a deliberate scope call: a scan of the
+/// user's real journal (10,209 transactions) found **zero** instances of all
+/// three. If that changes, the failure is visible and the transaction is
+/// recoverable, rather than quietly wrong in the balances.
+fn unsupported_syntax(t: &ParserTxn) -> Option<String> {
+    for p in &t.postings {
+        let what = match p.reality {
+            ledger_parser::Reality::Real => None,
+            ledger_parser::Reality::BalancedVirtual => Some("a balanced virtual posting ([...])"),
+            ledger_parser::Reality::UnbalancedVirtual => {
+                Some("an unbalanced virtual posting ((...))")
+            }
+        };
+        if let Some(what) = what {
+            return Some(format!(
+                "posting '{}' is {}, which omni-me does not import",
+                p.account, what
+            ));
+        }
+        if p.balance.is_some() {
+            return Some(format!(
+                "posting '{}' carries a balance assertion (= ...), which omni-me does not import",
+                p.account
+            ));
+        }
+        if let Some(pa) = &p.amount
+            && pa.lot_price.is_some()
+        {
+            return Some(format!(
+                "posting '{}' carries a lot price ({{...}}), which omni-me does not import",
+                p.account
+            ));
+        }
+    }
+    None
 }
 
 fn convert_explicit_posting(p: &ParserPosting) -> Option<Posting> {
@@ -728,6 +741,102 @@ mod tests {
     Expenses:Groceries  42.10 CAD
     Assets:Cash
 ";
+
+    /// Importing a journal that declares accounts must work — including
+    /// omni-me's **own** regenerated `budget.journal`, where the `JournalFile`
+    /// projection writes an `account <name>  ; commodity:<c>` block for every
+    /// per-account override (rename / hide / liquid).
+    ///
+    /// Absence test. The importer and the balance reader had disjoint prep
+    /// passes: the reader stripped `account` blocks, the importer did not, and
+    /// `ledger-parser` errors on them — so a single override made the *entire*
+    /// import fail with zero transactions. One such directive is already sitting
+    /// in real user data, which makes this a live blocker on any clean
+    /// re-import rather than a hypothetical.
+    #[test]
+    fn imports_a_journal_that_declares_accounts() {
+        let dir = TempDir::new().unwrap();
+        let body = "\
+account Assets:Cash  ; commodity:CAD
+    note Everyday cash
+
+2026-01-04 Coffee
+    Expenses:Coffee     5.25 CAD
+    Assets:Cash        -5.25 CAD
+";
+        let root = write(dir.path(), "budget.journal", body);
+        let out = parse_journal(&root).unwrap();
+        assert!(
+            out.parse_errors.is_empty(),
+            "account directive broke the parse: {:?}",
+            out.parse_errors
+        );
+        assert_eq!(out.transactions.len(), 1, "transaction was not imported");
+        assert_eq!(out.transactions[0].description, "Coffee");
+    }
+
+    /// A date-only `P` directive is dropped (ledger-parser v6 needs the time),
+    /// but one carrying a time is preserved — the balance reader converts
+    /// foreign holdings with these, so stripping them all would silently
+    /// un-price every non-base commodity.
+    #[test]
+    fn price_directives_are_kept_when_parseable() {
+        let with_time = crate::ledger::prep_content("P 2026-01-04 00:00:00 USD 1.37 CAD\n");
+        assert!(with_time.contains("P 2026-01-04"), "priced line was dropped");
+        let date_only = crate::ledger::prep_content("P 2026-01-04 USD 1.37 CAD\n");
+        assert!(
+            !date_only.contains("P 2026-01-04"),
+            "unparseable price line was kept"
+        );
+    }
+
+    /// The three constructs omni-me refuses must land in `balance_failures`
+    /// with a readable reason, not be silently misread.
+    ///
+    /// Absence test: each case previously *succeeded* and produced wrong money.
+    /// A virtual posting was imported as real (inventing assets); a
+    /// balance-assertion-only posting was treated as the elided leg and handed
+    /// the negation of the other legs; a lot price was ignored so the elided leg
+    /// balanced at raw quantity and minted a nonsense commodity.
+    #[test]
+    fn unsupported_hledger_syntax_is_refused_and_reported() {
+        let cases: [(&str, &str); 3] = [
+            (
+                "virtual posting",
+                "2026-01-04 Budget envelope\n    [Assets:Budget:Food]   50.00 CAD\n    Assets:Cash          -50.00 CAD\n",
+            ),
+            (
+                "balance assertion",
+                "2026-01-04 Reconcile\n    Expenses:Misc          10.00 CAD\n    Assets:Cash        = 500.00 CAD\n",
+            ),
+            (
+                "lot price",
+                "2026-01-04 Buy\n    Assets:NWG      10 NWG {50.00 CAD}\n    Assets:Cash\n",
+            ),
+        ];
+
+        for (label, body) in cases {
+            let dir = TempDir::new().unwrap();
+            let root = write(dir.path(), "x.journal", body);
+            let out = parse_journal(&root).unwrap();
+            assert!(
+                out.transactions.is_empty(),
+                "{label}: imported anyway as {:?}",
+                out.transactions
+            );
+            assert_eq!(
+                out.balance_failures.len(),
+                1,
+                "{label}: not reported to the user (failures: {:?})",
+                out.balance_failures
+            );
+            assert!(
+                out.balance_failures[0].contains("does not import"),
+                "{label}: unhelpful reason {:?}",
+                out.balance_failures[0]
+            );
+        }
+    }
 
     #[test]
     fn parses_simple_journal_and_fills_elided_amount() {
