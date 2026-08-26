@@ -96,7 +96,7 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
 
   **B. Review gate:**
   5. **Full end-to-end code review of everything** (per the v1 close-out gate #4 above).
-     **🔄 IN PROGRESS — Phase A sittings 1+2 DONE 2026-08-25.** Third review of the project; scope is the
+     **🔄 IN PROGRESS — Phase A COMPLETE (3 sittings) + calibration DONE 2026-08-25.** Third review of the project; scope is the
      never-reviewed Cycles 3+4 range `22395f8..HEAD` (230 commits, +49,501/−2,329). Four perspective
      docs at `reviews/2026-08-25-*.md` (gitignored — durable summaries in `project.md`'s Session-6 row;
      private-overlay findings in `omni-me-private/reviews/`). Cycle-2 model split reused (Opus:
@@ -156,9 +156,96 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      found by dogfooding rather than review, and 6 of 8 sit in files sitting 2 just covered — so
      "would this pass have caught it from the code alone?" becomes the miss-rate test. Corpus extracted;
      runs at the tail of sitting 3.
-     **Remaining:** sitting 3 (frontend + `editor.js` lighter sweep, then the retrospective calibration)
-     → Phase C triage (one doc at a time, user picks order; every deferral gets a trip-wire; verify prior
-     FIXED markers) → Phase B test-gaps (written AFTER Phase C, biased toward absence-tests).
+     **SITTING 3 (2026-08-25)** — 4 reviewers over the frontend (20,411 Rust) + `editor.js`
+     (952 JS, zero coverage). **Phase A is now COMPLETE.** **4 more Criticals, all re-verified.**
+     (1) `journal.rs:553-575` — the #344 background flush persists **body-only text as the whole
+     note, destroying the frontmatter**. `js_flush_editor_timestamps()` returns the CodeMirror doc,
+     which since Phase 5 is the **body only** (`Editor{initial_content: body.peek()}`, :865), but it
+     is passed to the same `invoke_update_journal_entry` parameter the manual Save fills with the
+     **full** note (:818). Both guards fail (body vs full note never compares equal), and
+     `last_saved_content.set(stamped)` then records the mutilated copy as persisted. **Just opening
+     today and backgrounding the app** wipes `date`/`tags`/the three reflection keys. Same class as
+     the money-chain Criticals: two value shapes, one `String` parameter, no type distinction.
+     (2) `components/editor.rs:84` — the `use_effect` reads no signal, so the editor is built **once
+     per mount** and `read_only` flipping never rebuilds it: after **Reopen** the day is permanently
+     un-typeable, and after **Close Day** the body stays editable while autosave silently bails →
+     typed text discarded with no feedback.
+     (3) `routines.rs:185` — the checklist list is **unkeyed** (verified: no `key:` on the wrapper
+     div or `ChecklistGroup`) and `ChecklistGroup`'s `use_future` captures `gid` once, so a reorder
+     (or a peer deleting a group) leaves items bound to the wrong card and a tick files
+     `complete_routine_item(iid_of_a, gid_of_c)` — **completions recorded against the wrong group**.
+     (4) `journal.rs:106` — `selected_date` is seeded from `UserDate::today()` on the first render,
+     when `tz_signal` is still the `Tz::UTC` default, and **nothing re-anchors it** when the real tz
+     arrives. Evening in a UTC-behind zone opens **tomorrow's** entry; the wrong date then persists
+     into nav, so it survives the fix unless the stored value is corrected too.
+     **Key warnings:** `editor.rs:182` discards the teardown timestamp stamp on plain navigation —
+     the **unfixed half** of the already-closed "Android last line loses its timestamp" friction
+     entry; `notes.rs:459` leaves a fetch error hydrated+editable so one keystroke autosaves over
+     the real note (`journal.rs:393` deliberately does the opposite); `finances.rs:3059` can persist
+     an **empty `ListState`** that permanently blanks the Ledger *across restarts*; `load_more`
+     (:3072) is re-entrant → duplicate page.
+     **Security:** no new Criticals. One High — `MainActivity.kt:39` force-enables WebView DevTools
+     on **every** build (deliberate: Android must build `--release`), so any release APK exposes the
+     full `__TAURI__.core.invoke` surface over adb. Filed as a **v1 decision**, not a defect — it is
+     the on-device debugging mechanism; fix gates the trigger, keeps the capability. Also settles the
+     CSP blast-radius question: the editor's `window.*` globals add nothing on top of `__TAURI__`.
+     Editor.js is clean of HTML sinks (both widget `toDOM`s use `createElement`+`textContent`).
+     **Performance:** the continuity store inserts a full-text entry the first time a day/note is
+     **opened** and `remove()` is called from exactly **one** site (`notes.rs:671`, `NewNote` only),
+     while `snapshot_for_persist()` deep-clones every tracked session on **every** change — only the
+     disk write is debounced. Typing one character deep-clones every document ever opened; cost grows
+     with **app age**, and inflates the boot parse. Zero `use_memo` against 308 signals.
+     **Bloat:** `components/mod.rs:5-12`'s dead-code rationale is stale **in both directions** —
+     `Card`/`PageHeader`/`INPUT_CLASS` have 23/16/19 real uses while `Section` (claimed live) has
+     **none**; real dead set is `Section`/`StatTile`/`FieldLabel`/`Trend`. `getEditorContent` +
+     `getEditorCursor` are dead on **both** sides of the wasm boundary (converged with Security).
+     **Orchestrator own-pass:** rebuilt `editor.bundle.js` from source and diffed — **identical**, no
+     drift. The `frontendDist`=debug trap from friction 1.13 was **suspected and disproven**: all
+     three real build paths override it via `--config` (verified-clean, recorded so it isn't
+     re-investigated). Frontend tests: all **82 sit in 9 pure-logic modules**; `autosave.rs`,
+     `continuity.rs`, `sync_refresh.rs` (570 LOC, the "did typing get saved" trio) have **zero** —
+     and `autosave.rs` already lost user data. Top Phase B target, and small.
+     **CALIBRATION DONE** (`reviews/2026-08-25-calibration.md`) — substitute for the cancelled
+     `ultra`. Scored all 9 root-caused friction bugs: **5 findable, 4 structurally unfindable.**
+     The split is by class, not luck. Data-integrity/event-sourcing: **strong** — F2 (transactions
+     projection bare `UPDATE`) had to be found by dogfooding, and sitting 2 then found the same class
+     in the last unhardened family (`routines_projection.rs` still has 4 bare `UPDATE`s at
+     :145/:172/:244/:269, verified live); F8 is sharper still — sitting 3 found the **unfixed half of
+     an already-closed friction entry**, which is exactly the failure mode a review gate exists for.
+     Platform-runtime/visual-layout: **~0%, and more review will not help** — webkit2gtk focus grab,
+     `min-width:auto` at 390px, missing `color-scheme` are invisible in source by construction.
+     **Consequence for v1:** the instrument that covers the unfindable half is `ui-checklist.md`,
+     which reads "Last tested: 2026-04-24" and describes a **deleted 3-tab nav**. Nearly half the real
+     bug tail is currently guarded by a stale document → **refreshing it on-device at real widths
+     should be a v1 gate item, not polish.**
+     **Comment convention — RAISED then DEFERRED by user 2026-08-25 (post-triage, may not be needed).**
+     Prompted by two comment-caused findings (`editor.js:808`'s wrong `editable` vs `readOnly` claim;
+     `components/mod.rs:5-12`'s stale dead-code inventory), the question was whether to sweep every
+     comment in the codebase and set a convention (incl. when to use `todo!()`). **Measured first, and
+     the premise didn't hold:** comment density is **13-20%** across all four areas (normal), and
+     markers are **2 TODOs** (both in one scoped `TODO(android-native-callback)` block), 0 FIXME/XXX/
+     HACK, **0 `todo!()`** — no marker rot to clean. An **exhaustive** audit of the two shapes that
+     actually caused bugs found **8 instances total**: 1 harmful (`editor.js:808`), 1 stale
+     (`mod.rs`) — **both already filed with fixes** — 1 worth a triage look
+     (`journal_template.rs:4`, asserts "used two places" + a claim about `notes_projection.rs`), and
+     5 harmless (self-contained rationales). A full sweep would read ~7,400 comment lines to find
+     ~1 more instance, and would strip comments that **actively sped this review up** (the
+     `desktop-build.sh`/`android-build.sh` headers disproved the `frontendDist` bug in minutes;
+     `snapshot_for_persist`'s doc comment documented the perf bug).
+     **The rule, if it's ever written:** a comment is safe when it describes **the code it sits on**
+     (why this value, why this approach) and risky when it describes **the state of code elsewhere**
+     (who calls this, what's used, how a third-party API behaves) — the first can't rot unless you
+     edit that line, the second rots when someone edits a *different* file. Both our bugs were the
+     second kind. **Deeper form: prefer enforcement over assertion** — drop `allow(dead_code)` and let
+     rustc maintain the inventory; a shared const instead of `WIPE_CONFIRM_PHRASE`'s comment-only
+     defence; a test spanning both `⟦⟧` encoders instead of a cross-reference note; and a
+     `Body`/`FullNote` newtype would have made the frontmatter Critical a **compile error**.
+     `buffer.rs:297` already does this right (`unimplemented!("append never called by SyncBuffer")`).
+     **Decision:** fold comment fixes into Phase C opportunistically (those files are being edited
+     anyway); revisit the convention after triage and only if it still looks needed.
+     **Remaining:** Phase C triage (one doc at a time, **user picks order**; every deferral gets a
+     trip-wire; verify prior FIXED markers) → Phase B test-gaps (written AFTER Phase C, biased toward
+     absence-tests). **13 Criticals total across 3 sittings.**
 
   **C. Email ingest prep:**
   6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
