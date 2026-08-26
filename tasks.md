@@ -96,7 +96,7 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
 
   **B. Review gate:**
   5. **Full end-to-end code review of everything** (per the v1 close-out gate #4 above).
-     **🔄 IN PROGRESS — Phase A COMPLETE + calibration DONE 2026-08-25; Phase C: logic doc TRIAGED + FIXED 2026-08-26 (3 docs left).** Third review of the project; scope is the
+     **🔄 IN PROGRESS — Phase A COMPLETE + calibration DONE 2026-08-25; Phase C: logic + security docs TRIAGED + FIXED 2026-08-26 (2 docs left).** Third review of the project; scope is the
      never-reviewed Cycles 3+4 range `22395f8..HEAD` (230 commits, +49,501/−2,329). Four perspective
      docs at `reviews/2026-08-25-*.md` (gitignored — durable summaries in `project.md`'s Session-6 row;
      private-overlay findings in `omni-me-private/reviews/`). Cycle-2 model split reused (Opus:
@@ -267,10 +267,49 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      - UI verified with `dx serve` + Playwright: Journal / Routines / Finances render, Ledger survives
        the navigate-away round-trip, 0 console errors. Denylist clean, 0 hits / 22 patterns.
 
-     **Remaining:** triage the **security**, **performance** and **bloat-complexity** documents (same
-     rules: every deferral gets a trip-wire; verify prior FIXED markers) → Phase B test-gaps (written
-     AFTER Phase C, biased toward absence-tests). **13 Criticals total across 3 sittings; the 4 logic
-     Criticals and all 4 frontend Criticals are now fixed.**
+     **Sitting 2 — SECURITY doc TRIAGED + FIXED 2026-08-26 (30 findings, 8 clusters, 7 commits).**
+     6 public (`1d04999` auth gate, `6a46e4b` devtools gate, `da2a28a` process hygiene, `178652f`
+     server response hygiene, `f38f3cb` readonly checkbox + mock guard) + 1 private (`0882608`).
+     core 605 / app 47 / server 25 / frontend 82, clippy clean ×4, denylist 0 hits.
+     - **3 user decisions:** (A) delete CORS **and** add a bearer token on everything but `/health`
+       and `/updates` — the deciding argument was the phone, where Tailscale routes device-wide so any
+       installed app could already reach the box directly, a path CORS removal doesn't touch;
+       (B) gate Android WebView DevTools behind `OMNI_WEBVIEW_DEBUG` (keeps the on-device workflow);
+       (C) defer `csp: null` once more, replacing Cycle 1's *"when the app is stable"* with two
+       observable triggers.
+     - **3 review prescriptions were wrong.** The `compile_error!` mock guard wouldn't have fired on
+       the incident it cites (`dx serve --features mock` is a *debug* build — 1.13 was a packaging
+       leak); the proposed IMAP range cap would have **reintroduced the poison pill** twenty lines
+       above it (UIDs are monotonic but not contiguous); and `pdftotext` has no password-file form to
+       switch to (poppler 24.02: argv only).
+     - **4 findings no perspective filed:** `poppler-utils` is **absent from the production image**, so
+       PDF extraction has never worked on the box (and that made the argv-password finding
+       unreachable); the **desktop** release path still embeds the debug `frontendDist`; the
+       enforcement test written last sitting **could not match a multi-line violation** (whitespace was
+       collapsed, not stripped — both scanners fixed and re-controlled); and last sitting's `push_only`
+       signature change **silently broke the private overlay**.
+     - Deferrals, each trip-wired: PDF password on argv (no fix exists), `csp: null` (first
+       content-derived string reaching an HTML/URL sink, or first non-owner device). **The Gemini key
+       in the query string is left OPEN and carried forward** — one line in `llm/gemini.rs`, outside
+       every cluster triaged here, needs its own check that `gemini.rs:485-514` still pass.
+     - Read-only checkbox bug proved in-browser both ways (pre-fix: `onChange` fires, `everDirty`
+       latches; fixed: neither, while an open journal still toggles). Note `dx serve` was found serving
+       a **two-day-old `editor.bundle.js`** — it reads a *copied* bundle, so `npm run copy:editor:dev`
+       is required before any editor.js verification.
+     - **Known flake, not chased:** one private-overlay driver test (named in the overlay's own
+       review doc) failed 1 in 11 runs, then 0/8 — it writes a shell script and immediately execs it
+       (ETXTBSY race under parallel test threads). Independent of these changes; the module spawns its
+       own `Command` and never touches `core`'s subprocess path. Phase B material, alongside the
+       SurrealDB tempfile race.
+
+     **Remaining:** triage the **performance** and **bloat-complexity** documents (same rules: every
+     deferral gets a trip-wire; verify prior FIXED markers) → Phase B test-gaps (written AFTER Phase C,
+     biased toward absence-tests). **13 Criticals total across 3 sittings; the 4 logic Criticals, all 4
+     frontend Criticals and all 3 security Criticals are now fixed.**
+     **Carry into Phase B:** `cargo test -p omni-me-core` alone does **not** run the `auto_import`
+     tests — they need `--features auto-import` (598 filtered out without it), so a per-package run
+     silently under-tests. Also: build `omni-me-private` after any `core::sync` / `SourceCtx`
+     signature change; CI does not.
 
   **C. Email ingest prep:**
   6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
