@@ -161,6 +161,13 @@ impl BudgetProjection {
         // postings/attachment/statement_source) are authoritative; mutation-owned
         // fields use `?? default` so a partial row's already-applied edits
         // (category/tags/cleared/removed) aren't clobbered when the create fills in.
+        //
+        // `tags_top = $tags_top ?? tags_top` (not the reverse): header tags are
+        // create-owned, the same way `category` is mutation-owned. The old order
+        // treated them as mutation-owned and silently dropped an import's
+        // `top_tags` whenever a mutation had already materialized the row —
+        // contradicting the "create-owned fields are authoritative" rule stated
+        // three lines up.
         db.query(
             "UPSERT type::record('transactions', $txn_id) SET
                 date = $date,
@@ -171,7 +178,7 @@ impl BudgetProjection {
                 created_at = created_at ?? type::datetime($ts),
                 updated_at = type::datetime($ts),
                 category = category ?? NONE,
-                tags_top = tags_top ?? $tags_top,
+                tags_top = $tags_top ?? tags_top,
                 removed = removed ?? false,
                 superseded_by = superseded_by ?? NONE,
                 merged_ids = merged_ids ?? [],
@@ -610,11 +617,17 @@ impl BudgetProjection {
             .to_string();
         let pattern = event.payload["pattern"].clone();
 
+        // `status = status ?? 'detected'`, and CONTENT → SET, so a re-detection
+        // cannot walk a resolved pattern backwards. `derive_pattern_id` is
+        // deterministic across devices while the scanner's skip check is purely
+        // local, so a device that never materialized the row re-detects and its
+        // event used to reset a peer's **confirmed/dismissed** pattern back to
+        // `detected` — and replay made it stick. `auto_import_projection`
+        // already takes exactly this care.
         db.query(
-            "UPSERT type::record('recurring_patterns', $pattern_id) CONTENT {
-                pattern: $pattern,
-                status: 'detected'
-            }",
+            "UPSERT type::record('recurring_patterns', $pattern_id) SET
+                pattern = $pattern,
+                status = status ?? 'detected'",
         )
         .bind(("pattern_id", pattern_id))
         .bind(("pattern", pattern))

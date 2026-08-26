@@ -213,7 +213,10 @@ async fn retry_until_success(inner: &Arc<Inner>) {
         let push_result = inner.client.push_only(&inner.db).await;
 
         match push_result {
-            Ok(PushOutcome { pushed }) => {
+            Ok(PushOutcome { pushed, quarantined }) => {
+                if quarantined > 0 {
+                    tracing::warn!(quarantined, "rejected events skipped during retry");
+                }
                 reset_attempt(inner).await;
                 let _ = inner.events.send(RetryEvent::Recovered { attempt, pushed });
                 let _ = inner.events.send(RetryEvent::Idle);
@@ -224,6 +227,9 @@ async fn retry_until_success(inner: &Arc<Inner>) {
                     SyncError::Network(m) => format!("network: {m}"),
                     SyncError::Server(m) => format!("server: {m}"),
                     SyncError::Local(m) => format!("local: {m}"),
+                // Only reachable if a whole chunk is rejected and
+                // bisection somehow does not isolate it.
+                SyncError::Rejected(m) => format!("rejected: {m}"),
                 };
                 let _ = inner.events.send(RetryEvent::Failed { attempt, error: msg });
                 // Continue loop — next iteration backs off further.

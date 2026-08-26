@@ -131,17 +131,25 @@ fn parse_row(
     // Some bank exports include zero-balance summary rows.
     let debit = debit.filter(|a| !a.is_zero());
     let credit = credit.filter(|a| !a.is_zero());
+    // `.abs()`: `ParsedStatementRow::amount` is documented as a **magnitude**
+    // and `direction` carries the sign, but the parse never enforced it. Plenty
+    // of exports write the debit column signed (`-42.18`) even when a separate
+    // credit column already says which way the money moved — and
+    // `import_chequing_csv` negates on `Outflow`, so a signed debit came out as
+    // `+42.18` on the asset account. Silent sign inversion on every row of that
+    // file, which is the worst possible failure for an import: it balances, it
+    // parses, and the numbers are simply backwards.
     match (debit, credit) {
         (Some(amount), None) => Ok(Some(ParsedStatementRow {
             date,
             description,
-            amount,
+            amount: amount.abs(),
             direction: MoneyDirection::Outflow,
         })),
         (None, Some(amount)) => Ok(Some(ParsedStatementRow {
             date,
             description,
-            amount,
+            amount: amount.abs(),
             direction: MoneyDirection::Inflow,
         })),
         (None, None) => Ok(None), // skip silently
@@ -170,6 +178,36 @@ mod tests {
     }
     fn date(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    /// A signed debit cell must not invert the posting.
+    ///
+    /// Absence test: `amount` is documented as a magnitude and `direction`
+    /// carries the sign, but nothing enforced it, and `import_chequing_csv`
+    /// negates on `Outflow`. A `-42.18` debit therefore landed as `+42.18` on
+    /// the asset account — every row of such a file backwards, with no parse
+    /// error and a balanced transaction to hide it.
+    #[test]
+    fn signed_cells_are_normalised_to_magnitudes() {
+        let signed = parse_row(1, date("2026-05-16"), "Grocer".into(), "-42.18", "")
+            .unwrap()
+            .expect("row should parse");
+        assert_eq!(signed.amount, d("42.18"), "debit magnitude");
+        assert_eq!(signed.direction, MoneyDirection::Outflow);
+
+        let unsigned = parse_row(2, date("2026-05-16"), "Grocer".into(), "42.18", "")
+            .unwrap()
+            .expect("row should parse");
+        assert_eq!(
+            unsigned, signed,
+            "a signed and unsigned debit of the same size must agree"
+        );
+
+        let credit = parse_row(3, date("2026-05-16"), "Refund".into(), "", "-10.00")
+            .unwrap()
+            .expect("row should parse");
+        assert_eq!(credit.amount, d("10.00"), "credit magnitude");
+        assert_eq!(credit.direction, MoneyDirection::Inflow);
     }
 
     #[test]

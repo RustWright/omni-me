@@ -135,7 +135,13 @@ async fn attempt_push(inner: &Arc<Inner>) {
     // that had just run — and hand it in as the push `since`, so local events at
     // or below the server cursor were never pushed by the background pusher.
     match inner.client.push_only(&inner.db).await {
-        Ok(PushOutcome { pushed }) => {
+        Ok(PushOutcome { pushed, quarantined }) => {
+            if quarantined > 0 {
+                tracing::warn!(
+                    quarantined,
+                    "events the server rejected were skipped so the push queue could drain"
+                );
+            }
             let _ = inner.outcomes.send(PushEvent::Succeeded { pushed });
             let mut counter = inner.last_known_events.lock().await;
             *counter = counter.saturating_add(pushed as u64);
@@ -145,6 +151,9 @@ async fn attempt_push(inner: &Arc<Inner>) {
                 SyncError::Network(m) => format!("network: {m}"),
                 SyncError::Server(m) => format!("server: {m}"),
                 SyncError::Local(m) => format!("local: {m}"),
+                // Only reachable if a whole chunk is rejected and
+                // bisection somehow does not isolate it.
+                SyncError::Rejected(m) => format!("rejected: {m}"),
             };
             let _ = inner.outcomes.send(PushEvent::Failed { error: msg });
         }

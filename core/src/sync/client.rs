@@ -24,6 +24,12 @@ pub enum SyncError {
     Server(String),
     #[error("sync local error: {0}")]
     Local(String),
+    /// The server rejected the *content* of a push (HTTP 400): an unknown
+    /// `event_type` or a payload that fails `validate_payload`. Distinct from
+    /// [`SyncError::Server`] because retrying is pointless — the same bytes will
+    /// be rejected forever — so this drives isolation, not backoff.
+    #[error("sync rejected by server: {0}")]
+    Rejected(String),
 }
 
 /// Result of a sync operation.
@@ -71,9 +77,13 @@ pub struct PullOutcome {
 }
 
 /// Outcome of a push-only call.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PushOutcome {
+    /// Events the server acknowledged.
     pub pushed: usize,
+    /// Events the server rejected outright and that were skipped so the rest of
+    /// the queue could drain. They remain in the local store.
+    pub quarantined: usize,
 }
 
 /// Client that syncs local events with a remote server.
@@ -199,11 +209,16 @@ impl SyncClient {
             .into_iter()
             .filter(|e| e.received_at.is_none_or(|r| r <= hi))
             .collect();
-        let pushed = local_events.len();
-
-        if !local_events.is_empty() {
-            self.push_events(&local_events).await?;
-        }
+        let mut outcome = if local_events.is_empty() {
+            PushOutcome::default()
+        } else {
+            self.push_events(&local_events).await?
+        };
+        // Report what the *server* acknowledged, not the pre-push local count.
+        // The two diverge whenever an event is quarantined, and "N up" claiming
+        // events the server never counted is exactly the kind of quiet lie this
+        // review is trying to remove.
+        outcome.pushed = outcome.pushed.min(local_events.len());
 
         // Advance only after the server accepted everything, and only as far as
         // the events actually pushed — never to `hi`, which would step over an
@@ -212,7 +227,7 @@ impl SyncClient {
             self.update_push_watermark(db, &hw).await?;
         }
 
-        Ok(PushOutcome { pushed })
+        Ok(outcome)
     }
 
     /// This device's push watermark (epoch if never pushed).
@@ -354,13 +369,57 @@ impl SyncClient {
             .map_err(|e| SyncError::Network(format!("failed to parse pull response: {e}")))
     }
 
-    async fn push_events(&self, events: &[Event]) -> Result<usize, SyncError> {
+    /// Push every chunk, isolating any event the server rejects.
+    ///
+    /// The push path had no poison-pill escape. The server validates the whole
+    /// request and returns 400 for the *entire chunk* on one bad payload or one
+    /// unknown `event_type`, and `retry_until_success` then resent the identical
+    /// chunk forever at a 60s cap while the cursor never advanced — so **all**
+    /// outbound sync for that device was permanently wedged, not just the bad
+    /// event. Reachable from a legacy-shaped event still above the cursor, or a
+    /// client that self-updates ahead of the box. This is precisely the
+    /// asymmetry the pull side already fixed with `apply_events_resilient`.
+    ///
+    /// On a rejection the chunk is bisected until the offending event is alone,
+    /// then that one event is skipped and logged. It stays in the local store,
+    /// so nothing is destroyed — it simply stops holding the queue hostage.
+    async fn push_events(&self, events: &[Event]) -> Result<PushOutcome, SyncError> {
         let url = format!("{}/sync/push", self.server_url);
-        let mut total = 0;
-        for chunk in chunk_for_push(events) {
-            total += self.post_push_chunk(&url, chunk).await?;
+        let mut out = PushOutcome::default();
+
+        // Explicit stack rather than recursion: an async fn that calls itself
+        // needs boxing, and this stays flat and easy to reason about.
+        let mut stack: Vec<Vec<NewEvent>> = chunk_for_push(events);
+        stack.reverse();
+
+        while let Some(chunk) = stack.pop() {
+            match self.post_push_chunk(&url, chunk.clone()).await {
+                Ok(count) => out.pushed += count,
+                Err(SyncError::Rejected(msg)) => {
+                    if chunk.len() == 1 {
+                        let bad = &chunk[0];
+                        tracing::error!(
+                            event_id = ?bad.id,
+                            event_type = %bad.event_type,
+                            aggregate_id = %bad.aggregate_id,
+                            reason = %msg,
+                            "server rejected this event; skipping it so the rest of the \
+                             push queue can drain. It remains in the local event store."
+                        );
+                        out.quarantined += 1;
+                    } else {
+                        let mid = chunk.len() / 2;
+                        let (head, tail) = chunk.split_at(mid);
+                        // Pushed in reverse so `head` is processed first.
+                        stack.push(tail.to_vec());
+                        stack.push(head.to_vec());
+                    }
+                }
+                Err(e) => return Err(e),
+            }
         }
-        Ok(total)
+
+        Ok(out)
     }
 
     /// POST one already-sized batch of events to `/sync/push`.
@@ -385,6 +444,9 @@ impl SyncClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::BAD_REQUEST {
+                return Err(SyncError::Rejected(body));
+            }
             return Err(SyncError::Server(format!("push failed ({status}): {body}")));
         }
 

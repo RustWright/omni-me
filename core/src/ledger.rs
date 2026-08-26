@@ -113,6 +113,19 @@ pub fn parse_artifacts(content: &str) -> Result<JournalArtifacts, LedgerError> {
     let ledger = parse(content)?;
     let balance = balances_from(&ledger);
     let mut prices = Prices::new();
+    // KNOWN LIMITATION (reviewed 2026-08-26, deferred): `insert_from` applies
+    // `get_commodity_prices` and *then* `get_prices_from_transactions` into the
+    // same per-date map, so a rate inferred from any two-commodity transaction
+    // overwrites an explicit `P` directive on the same date — one CAD/USD
+    // transfer carrying a wire fee would re-rate every foreign holding from that
+    // date forward. Not fixable without upstream help: `add_prices` and both
+    // `get_*` helpers are private in ledger-utils 0.6, so the precedence can't
+    // be reordered from here.
+    //
+    // Currently unreachable: `render_exchange_rate` is the only writer of `P`
+    // lines and the live journal contains none, so no date can hold both kinds
+    // of rate. REVISIT if `P` directives start appearing for a pair that also
+    // shows up in transactions — i.e. once FX rates are actually being recorded.
     prices.insert_from(&ledger);
     Ok(JournalArtifacts { balance, prices })
 }

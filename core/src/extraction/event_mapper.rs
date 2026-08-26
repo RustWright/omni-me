@@ -117,8 +117,23 @@ fn build_receipt_posting(p: &ExtractedPosting) -> Posting {
         } else {
             p.commodity.clone()
         },
-        // Receipts are extracted as positive costs — keep sign as-is so the
-        // expense leg is positive and the Unmatched mirror is negative.
+        // Receipts are extracted as positive costs — keep the sign normalized so
+        // the expense leg is positive and the Unmatched mirror is negative.
+        //
+        // KNOWN TRADE-OFF (reviewed 2026-08-26, kept deliberately): this also
+        // flattens a *genuinely* negative line — a refund or credit printed on
+        // the receipt — into an expense, so a returned item would increase
+        // spending. Removing `.abs()` was tried and reverted: the guard exists
+        // because the extractor sometimes emits a negative for an ordinary
+        // purchase (see `receipt_mapping_normalizes_negative_to_positive`), and
+        // dropping it would invert those instead — trading a rare wrong sign for
+        // a common one. Which failure is actually more common is an empirical
+        // question about real receipts, not something to guess at.
+        //
+        // REVISIT when a real receipt with a refund line is run through
+        // extraction and the output is checked: if the extractor reports refunds
+        // reliably, gate on `p.amount.is_sign_negative()` plus a refund hint
+        // rather than blanket-normalizing.
         amount: p.amount.abs(),
         fx_rate: None,
         tags: vec![],

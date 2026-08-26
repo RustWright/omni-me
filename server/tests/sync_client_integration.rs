@@ -258,3 +258,37 @@ async fn offline_backlog_reaches_a_peer_whose_cursor_is_already_ahead() {
     let quiet = client_b.sync(&db_b).await.unwrap();
     assert_eq!(quiet.pulled, 0, "cursor failed to advance past the backlog");
 }
+
+/// One event the server refuses must not wedge every other event behind it.
+///
+/// The push path had no poison-pill escape: the server validates the whole
+/// request and 400s the *entire chunk* on one unknown `event_type` or one bad
+/// payload, and `retry_until_success` then resent the identical chunk forever at
+/// a 60s cap while the cursor never advanced. All outbound sync for the device
+/// stopped — permanently, and for every event, not just the bad one. The pull
+/// side already had `apply_events_resilient`; this is the missing other half.
+#[tokio::test]
+async fn one_rejected_event_does_not_wedge_the_rest_of_the_push() {
+    let (url, _h) = start_server().await;
+    let local = device_db().await;
+    let store = SurrealEventStore::new(local.clone());
+
+    store.append(sample_event("device-a", "good-1")).await.unwrap();
+
+    // An event type the server's `EventType::from_str` will not accept.
+    let mut poison = sample_event("device-a", "poison");
+    poison.event_type = "definitely_not_a_real_event_type".into();
+    store.append(poison).await.unwrap();
+
+    store.append(sample_event("device-a", "good-2")).await.unwrap();
+
+    let client = SyncClient::new(url.clone(), "device-a".into());
+    let result = client.sync(&local).await.expect("push must not error out");
+
+    assert_eq!(result.pushed, 2, "both good events should have landed");
+
+    // The queue drained: a second sync has nothing left to send, i.e. the
+    // watermark advanced instead of sticking behind the poison event.
+    let again = client.sync(&local).await.expect("second sync must not error");
+    assert_eq!(again.pushed, 0, "push watermark stuck behind the rejected event");
+}

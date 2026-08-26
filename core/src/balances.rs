@@ -181,7 +181,14 @@ pub(crate) fn convert_to_base(
     base: &str,
     as_of: NaiveDate,
 ) -> Option<Decimal> {
-    if commodity.eq_ignore_ascii_case(base) {
+    // Exact comparison, matching every other consumer. `Prices::get_rate` and
+    // `account_summaries_from` both key on the exact string, so case-folding
+    // *here alone* was the inconsistency: `cad` passed through as base (silently
+    // asserting a 1:1 rate) while `Cad` looked up a pair that never exists. Both
+    // still render as separate rows from `CAD` regardless, so folding here only
+    // hid half the problem. Commodity is free text from the frontend; if it ever
+    // needs normalizing, that belongs at the write boundary, not in one reader.
+    if commodity == base {
         return Some(quantity);
     }
     prices.convert(quantity, commodity, base, as_of).ok()
