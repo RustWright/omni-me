@@ -16,7 +16,7 @@ use omni_me_core::journal_file::JournalFile;
 use omni_me_core::ledger::{self, JournalArtifacts};
 use omni_me_core::sync::{
     NetworkMonitor, PullEvent, PullScheduler, PushDebouncer, RetryEngine, StatusReporter,
-    SyncBuffer, SyncClient, wire_accelerator, wire_puller_network,
+    SyncClient, wire_accelerator, wire_puller_network,
 };
 
 const DB_NAME: &str = "local.db";
@@ -90,9 +90,7 @@ pub struct AppState {
     /// Local LRU mirror of `/blobs/<sha256>` — see `commands::attachments`.
     pub attachment_cache_dir: std::path::PathBuf,
     pub http: reqwest::Client,
-    /// Debounced event buffer — 1s idle flush (see `SyncBuffer`).
-    pub sync_buffer: SyncBuffer,
-    /// Debounced push orchestrator — 2s idle after buffer flush.
+    /// Debounced push orchestrator — 2s idle after the last local append.
     pub push_debouncer: PushDebouncer,
     /// Retry engine — exponential backoff 1s → 60s.
     pub retry_engine: RetryEngine,
@@ -353,27 +351,17 @@ pub fn run() {
                     timezone_shared.clone(),
                 );
 
-                // Recurring-pattern scanner (Phase 5.3) — warm-up 60s after
-                // boot, then 24h cadence. Skip-already-tracked logic in
-                // `run_one_scan` preserves user confirmations across ticks.
-                recurring_scanner::spawn(
-                    db.clone(),
-                    event_store.clone(),
-                    projections.clone(),
-                    device_id.clone(),
-                );
-
                 // Auto-import runs server-side (per `feedback_llm_server_side.md`).
                 // Tauri client just projects synced events into its local DB +
                 // journal file via the BudgetProjection + JournalFile entries in
                 // the ProjectionRunner above.
 
-                // Phase 2 sync pipeline: buffer -> pusher -> retry engine
-                // wired together, plus a network monitor feeding hints in.
+                // Phase 2 sync pipeline: pusher -> retry engine wired
+                // together, plus a network monitor feeding hints in. Appends
+                // nudge the pusher through `commands::shared`.
                 let sync_client = SyncClient::new(server_url.clone(), device_id.clone());
-                let (sync_buffer, _buffer_task) = SyncBuffer::new(Arc::new(event_store.clone()));
                 let (push_debouncer, _pusher_task) =
-                    PushDebouncer::spawn(sync_client.clone(), db.clone(), &sync_buffer);
+                    PushDebouncer::spawn(sync_client.clone(), db.clone());
                 let (retry_engine, _retry_task) =
                     RetryEngine::spawn(sync_client.clone(), db.clone(), &push_debouncer);
                 let probe_target = probe_target_from_url(&server_url);
@@ -381,6 +369,20 @@ pub fn run() {
                 let _accel_task = wire_accelerator(&network_monitor, retry_engine.clone());
                 let (status_reporter, _sr_push_task, _sr_retry_task) =
                     StatusReporter::spawn(&push_debouncer, &retry_engine);
+
+                // Recurring-pattern scanner (Phase 5.3) — warm-up 60s after
+                // boot, then 24h cadence. Skip-already-tracked logic in
+                // `run_one_scan` preserves user confirmations across ticks.
+                // Spawned *after* the debouncer exists so the patterns it emits
+                // wake the pusher; it used to append without nudging, and
+                // `pusher::run_loop` has no interval fallback to cover that.
+                recurring_scanner::spawn(
+                    db.clone(),
+                    event_store.clone(),
+                    projections.clone(),
+                    device_id.clone(),
+                    push_debouncer.clone(),
+                );
 
                 // Auto-pull (inbound half of auto-sync): startup backfill +
                 // interval + network-online pulls, applied best-effort. Nothing
@@ -424,7 +426,6 @@ pub fn run() {
                     app_data_dir: app_data,
                     attachment_cache_dir,
                     http: reqwest::Client::new(),
-                    sync_buffer,
                     push_debouncer,
                     retry_engine,
                     pull_scheduler,

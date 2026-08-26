@@ -220,6 +220,7 @@ pub async fn commit_import(
         &state.device_id,
         &scanned_root,
         rows,
+        Some(&state.push_debouncer),
     )
     .await
 }
@@ -232,6 +233,11 @@ async fn commit_import_inner(
     device_id: &str,
     scanned_root: &Path,
     rows: Vec<AcceptedRow>,
+    // Threaded in rather than taken from `AppState` so tests can still call
+    // this without one — they pass `None`. It is not optional in production:
+    // a bulk import that doesn't nudge the pusher pushes *nothing*, because
+    // `pusher::run_loop` has no interval fallback and only wakes on a trigger.
+    push_debouncer: Option<&omni_me_core::sync::PushDebouncer>,
 ) -> Result<CommitSummary, String> {
     // Phase 1: parse every row, collecting events to write + per-row errors.
     // build_event_for_row never touches the DB, so a parse failure on row N
@@ -262,6 +268,11 @@ async fn commit_import_inner(
         .apply_events(&batched)
         .await
         .map_err(|e| e.to_string())?;
+    if !batched.is_empty()
+        && let Some(pd) = push_debouncer
+    {
+        pd.trigger();
+    }
     let (journal_created, generic_created) =
         event_kinds
             .into_iter()
@@ -873,6 +884,7 @@ mod tests {
             "test-device",
             &scanned_root,
             vec![],
+            None,
         )
         .await
         .expect("empty input must not error");

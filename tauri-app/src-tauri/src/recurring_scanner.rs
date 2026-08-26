@@ -17,6 +17,7 @@ use omni_me_core::db::queries;
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, EventType, NewEvent, ProjectionRunner, SurrealEventStore};
 use omni_me_core::recurring;
+use omni_me_core::sync::PushDebouncer;
 
 const WARMUP_DELAY: Duration = Duration::from_secs(60);
 const PERIODIC_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -27,6 +28,7 @@ pub fn spawn(
     event_store: SurrealEventStore,
     projections: ProjectionRunner,
     device_id: String,
+    push_debouncer: PushDebouncer,
 ) {
     tauri::async_runtime::spawn(async move {
         // Warm-up — let the initial UI load + event replay settle before
@@ -35,10 +37,12 @@ pub fn spawn(
 
         loop {
             match run_one_scan(&db, &event_store, &projections, &device_id).await {
-                Ok(emitted) if emitted > 0 => tracing::info!(
-                    emitted,
-                    "recurring-scanner: emitted new pattern events"
-                ),
+                Ok(emitted) if emitted > 0 => {
+                    // Nudge the pusher, or these events sit unsynced until an
+                    // unrelated edit happens to wake it.
+                    push_debouncer.trigger();
+                    tracing::info!(emitted, "recurring-scanner: emitted new pattern events");
+                }
                 Ok(_) => tracing::debug!("recurring-scanner: no new patterns this tick"),
                 Err(e) => tracing::warn!(error = %e, "recurring-scanner: tick failed"),
             }

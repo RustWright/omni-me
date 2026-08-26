@@ -1,5 +1,4 @@
 mod accelerator;
-mod buffer;
 mod client;
 mod diagnostics;
 mod network;
@@ -12,9 +11,6 @@ pub use accelerator::wire as wire_accelerator;
 pub use puller::{
     wire_network as wire_puller_network, PullEvent, PullScheduler, DEFAULT_PULL_INTERVAL,
     DEFAULT_PULL_WARMUP,
-};
-pub use buffer::{
-    BufferError, BufferEvent, SyncBuffer, DEFAULT_FLUSH_DELAY, DEFAULT_MAX_QUEUE_LEN,
 };
 pub use client::{
     PullOutcome, PullRequest, PullResponse, PushOutcome, PushRequest, PushResponse, SyncClient,

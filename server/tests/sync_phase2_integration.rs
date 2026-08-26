@@ -17,7 +17,7 @@ use omni_me_core::events::{EventStore, NewEvent, ProjectionRunner, SurrealEventS
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::GeminiClient;
 use omni_me_core::sync::{
-    NetworkMonitor, PushDebouncer, PushEvent, RetryEngine, RetryEvent, StatusReporter, SyncBuffer,
+    NetworkMonitor, PushDebouncer, PushEvent, RetryEngine, RetryEvent, StatusReporter,
     SyncClient, SyncStatus, wire_accelerator,
 };
 use omni_me_server::{AppState, routes};
@@ -131,12 +131,9 @@ async fn kill_server_edit_queue_retry_recover() {
     let store = SurrealEventStore::new(local_db.clone());
 
     let client = SyncClient::new(server_url.clone(), "device-test".into());
-    let (buffer, _buffer_h) =
-        SyncBuffer::with_delay(Arc::new(store.clone()), Duration::from_millis(100));
     let (pusher, _pusher_h) = PushDebouncer::spawn_with_delay(
         client.clone(),
         local_db.clone(),
-        &buffer,
         Duration::from_millis(150),
     );
     let (retry, _retry_h) = RetryEngine::spawn_with(
@@ -162,7 +159,10 @@ async fn kill_server_edit_queue_retry_recover() {
     // Give the OS a moment to release the socket.
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Step 3: Append an event via the buffer — simulating a journal entry save.
+    // Step 3: Append an event and nudge the pusher — exactly what
+    // `commands::shared::append_new_and_apply` does on a journal entry save.
+    // This used to go through `SyncBuffer`, which production never actually fed;
+    // driving the real path makes the test mean what it claims.
     let event = NewEvent {
         id: None,
         event_type: "journal_entry_created".into(),
@@ -179,9 +179,10 @@ async fn kill_server_edit_queue_retry_recover() {
     let mut push_sub = pusher.subscribe();
     let mut retry_sub = retry.subscribe();
 
-    buffer.append(event.clone()).await.unwrap();
+    store.append(event.clone()).await.unwrap();
+    pusher.trigger();
 
-    // Step 4: wait for buffer flush -> pusher trigger -> push Failed.
+    // Step 4: wait for pusher trigger -> push Failed.
     let mut saw_push_failed = false;
     for _ in 0..30 {
         let ev = tokio::time::timeout(Duration::from_millis(3000), push_sub.recv())
@@ -195,7 +196,7 @@ async fn kill_server_edit_queue_retry_recover() {
     }
     assert!(saw_push_failed, "push should fail against dead server");
 
-    // Verify event is durably stored locally (buffer flushed to store).
+    // Verify the event is durably stored locally.
     let local_events = store.get_by_aggregate("journal-phase2-test").await.unwrap();
     assert_eq!(
         local_events.len(),

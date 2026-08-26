@@ -203,11 +203,9 @@ async fn watch_retry(mut rx: broadcast::Receiver<RetryEvent>, inner: Arc<Inner>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::buffer::SyncBuffer;
     use super::super::client::SyncClient;
     use crate::events::{EventStore, NewEvent, SurrealEventStore};
     use chrono::Utc;
-    use std::sync::Arc;
     use std::time::Duration;
 
     async fn test_db() -> crate::db::Database {
@@ -256,12 +254,7 @@ mod tests {
             .unwrap();
 
         let client = SyncClient::new("http://127.0.0.1:1".into(), "device-x".into());
-        let (buffer, _bh) = SyncBuffer::with_delay(Arc::new(store), Duration::from_secs(60));
-        let (pusher, _ph) = PushDebouncer::spawn_with_delay(
-            client.clone(),
-            db.clone(),
-            &buffer,
-            Duration::from_millis(30),
+        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client.clone(), db.clone(), Duration::from_millis(30),
         );
         let (retry, _rh) = RetryEngine::spawn_with(
             client,

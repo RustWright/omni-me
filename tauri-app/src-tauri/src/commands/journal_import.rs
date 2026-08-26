@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use omni_me_core::db::queries;
-use omni_me_core::events::{EventStore, NewEvent, TransactionRecordedPayload};
+use omni_me_core::events::{NewEvent, TransactionRecordedPayload};
 use omni_me_core::journal_import::{
     DraftImportedTransaction, ImportPlan, apply_a2_rewriter, apply_plan, parse_journal,
 };
@@ -356,16 +356,7 @@ async fn emit_transaction_event(
         .with_tags(top_tags);
     let new_event = NewEvent::transaction_recorded(state.device_id.clone(), &payload)
         .map_err(|e| e.to_string())?;
-    let event = state
-        .event_store
-        .append(new_event)
-        .await
-        .map_err(|e| e.to_string())?;
-    state
-        .projections
-        .apply_events(&[event])
-        .await
-        .map_err(|e| e.to_string())?;
+    super::shared::append_new_and_apply(&state, new_event).await?;
 
     // Quick post-condition: ensure the projection actually has the row. If a
     // race between dedup-check and apply ever sneaks in, surface it.

@@ -1,13 +1,15 @@
 //! Debounced sync push.
 //!
-//! A background task that waits for buffer-flush notifications, debounces
-//! further flushes, then calls `SyncClient::push_only`. On failure, the
-//! exponential-backoff retry loop in `retry.rs` takes over.
+//! A background task that waits to be nudged, debounces further nudges, then
+//! calls `SyncClient::push_only`. On failure, the exponential-backoff retry
+//! loop in `retry.rs` takes over.
 //!
 //! Design:
-//! - The pusher subscribes to a [`SyncBuffer`]'s flush channel.
-//! - After a flush, it waits `DEFAULT_PUSH_DELAY` (2s) for quiet.
-//! - If another flush arrives inside that window, the timer resets.
+//! - Every local event append nudges the debouncer via [`PushDebouncer::trigger`].
+//!   Command code never calls that directly — `commands::shared` owns the
+//!   append-and-nudge pairing so it cannot be forgotten.
+//! - After a nudge, it waits `DEFAULT_PUSH_DELAY` (2s) for quiet.
+//! - If another nudge arrives inside that window, the timer resets.
 //! - When the window expires, it invokes `SyncClient::push_only` against the
 //!   database's current `sync_state` timestamp.
 //! - Success and failure are reported out via a broadcast channel so the
@@ -24,7 +26,6 @@ use tokio::task::JoinHandle;
 
 use crate::db::Database;
 
-use super::buffer::SyncBuffer;
 use super::client::{PushOutcome, SyncClient, SyncError};
 
 /// Default quiet period after a local flush before a sync push is attempted.
@@ -62,20 +63,15 @@ pub struct PushDebouncer {
 }
 
 impl PushDebouncer {
-    /// Spawn a debouncer wired to the given `buffer`'s flush channel. Returns
-    /// the handle plus a join on the background task.
-    pub fn spawn(
-        client: SyncClient,
-        db: Database,
-        buffer: &SyncBuffer,
-    ) -> (Self, JoinHandle<()>) {
-        Self::spawn_with_delay(client, db, buffer, DEFAULT_PUSH_DELAY)
+    /// Spawn a debouncer. Returns the handle plus a join on the background
+    /// task. Wake it with [`PushDebouncer::trigger`].
+    pub fn spawn(client: SyncClient, db: Database) -> (Self, JoinHandle<()>) {
+        Self::spawn_with_delay(client, db, DEFAULT_PUSH_DELAY)
     }
 
     pub fn spawn_with_delay(
         client: SyncClient,
         db: Database,
-        buffer: &SyncBuffer,
         delay: Duration,
     ) -> (Self, JoinHandle<()>) {
         let (outcomes_tx, _rx) = broadcast::channel(OUTCOME_CHANNEL_CAPACITY);
@@ -89,11 +85,6 @@ impl PushDebouncer {
             delay,
         });
         let debouncer = Self { inner: inner.clone() };
-
-        // Fan the buffer flush notifications into the trigger Notify.
-        let flush_rx = buffer.subscribe();
-        let inner_for_flush = inner.clone();
-        tokio::spawn(forward_flush(flush_rx, inner_for_flush));
 
         let handle = tokio::spawn(run_loop(inner));
         (debouncer, handle)
@@ -113,30 +104,6 @@ impl PushDebouncer {
     /// Stop the debouncer. No final push is performed.
     pub fn shutdown(&self) {
         self.inner.shutdown.notify_one();
-    }
-}
-
-async fn forward_flush(
-    mut rx: broadcast::Receiver<super::buffer::BufferEvent>,
-    inner: Arc<Inner>,
-) {
-    use super::buffer::BufferEvent;
-    loop {
-        match rx.recv().await {
-            Ok(BufferEvent::Flushed { .. }) => {
-                inner.trigger.notify_one();
-            }
-            Ok(BufferEvent::FlushFailed { .. }) | Ok(BufferEvent::Overflow { .. }) => {
-                // Local persist failed or backpressure — nothing to push, so
-                // don't trigger. The error is broadcast separately for any
-                // upstream surface that wants to react.
-            }
-            Err(broadcast::error::RecvError::Closed) => return,
-            Err(broadcast::error::RecvError::Lagged(_)) => {
-                // Treat a lag as a trigger — we still want to push soon.
-                inner.trigger.notify_one();
-            }
-        }
     }
 }
 
@@ -195,7 +162,6 @@ mod tests {
     use super::*;
     use crate::events::{EventStore, NewEvent, SurrealEventStore};
     use chrono::Utc;
-    use std::sync::Arc;
 
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
@@ -235,12 +201,7 @@ mod tests {
             "http://127.0.0.1:1".into(), // unreachable
             "device-x".into(),
         );
-        let (buffer, _bh) = SyncBuffer::with_delay(Arc::new(store.clone()), Duration::from_millis(20));
-        let (pusher, _ph) = PushDebouncer::spawn_with_delay(
-            client,
-            db.clone(),
-            &buffer,
-            Duration::from_millis(30),
+        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client, db.clone(), Duration::from_millis(30),
         );
         let mut sub = pusher.subscribe();
 
@@ -283,12 +244,7 @@ mod tests {
             .unwrap();
 
         let client = SyncClient::new("http://127.0.0.1:1".into(), "device-x".into());
-        let (buffer, _bh) = SyncBuffer::with_delay(Arc::new(store), Duration::from_secs(60));
-        let (pusher, _ph) = PushDebouncer::spawn_with_delay(
-            client,
-            db,
-            &buffer,
-            Duration::from_millis(80),
+        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client, db, Duration::from_millis(80),
         );
         let mut sub = pusher.subscribe();
 

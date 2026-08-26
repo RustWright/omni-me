@@ -316,18 +316,21 @@ pub async fn wipe_all_data(
         "initiated_at": Utc::now().to_rfc3339(),
         "device_id": state.device_id,
     });
-    state
-        .event_store
-        .append(NewEvent {
+    // Through the shared tail like every other append. `DataWiped` is
+    // audit-only (no projection handler), but the wipe is local-only by design
+    // and the record of it should still reach peers.
+    super::shared::append_new_and_apply(
+        &state,
+        NewEvent {
             id: None,
             event_type: EventType::DataWiped.to_string(),
             aggregate_id: ulid::Ulid::new().to_string(),
             timestamp: Utc::now(),
             device_id: state.device_id.clone(),
             payload,
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+        },
+    )
+    .await?;
 
     state
         .projections

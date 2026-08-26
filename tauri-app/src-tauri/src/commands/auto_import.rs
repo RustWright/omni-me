@@ -24,7 +24,7 @@ use tauri::State;
 use omni_me_core::db::queries;
 use omni_me_core::events::{
     AutoImportBatchCommittedPayload, AutoImportBatchDismissedPayload, DraftTransaction,
-    EventStore, EventType, ExchangeRateRecordedPayload, NewEvent, TransactionRecordedPayload,
+    EventType, ExchangeRateRecordedPayload, NewEvent, TransactionRecordedPayload,
 };
 
 use crate::AppState;
@@ -450,25 +450,8 @@ pub async fn commit_batch(
         payload: serde_json::to_value(&committed_payload).map_err(|e| e.to_string())?,
     });
 
-    let appended = state
-        .event_store
-        .append_batch(new_events)
-        .await
-        .map_err(|e| e.to_string())?;
+    let appended = super::shared::append_batch_and_apply(&state, new_events).await?;
     let events_appended = appended.len();
-    state
-        .projections
-        .apply_events(&appended)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Wake the pusher so the committed transactions propagate, exactly like the
-    // manual `record_transaction` path (see `append_new_and_apply`). This
-    // hand-rolled `append_batch` path replicated store + project but dropped the
-    // push nudge, so committed auto-import suggestions stored + projected locally
-    // (visible on this device) yet never synced until some *other* edit happened
-    // to trigger a push.
-    state.push_debouncer.trigger();
 
     Ok(CommitBatchResult {
         events_appended,
@@ -501,26 +484,18 @@ pub async fn dismiss_batch(
         batch_id: batch_id.clone(),
         reason,
     };
-    let event = state
-        .event_store
-        .append(NewEvent {
+    super::shared::append_new_and_apply(
+        &state,
+        NewEvent {
             id: None,
             event_type: EventType::AutoImportBatchDismissed.to_string(),
             aggregate_id: batch_id,
             timestamp: Utc::now(),
             device_id: state.device_id.clone(),
             payload: serde_json::to_value(&payload).map_err(|e| e.to_string())?,
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-    state
-        .projections
-        .apply_events(&[event])
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Wake the pusher so the dismissal propagates (same reason as `commit_batch`).
-    state.push_debouncer.trigger();
+        },
+    )
+    .await?;
 
     Ok(())
 }
