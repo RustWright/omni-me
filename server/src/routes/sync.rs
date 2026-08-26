@@ -4,7 +4,6 @@ use axum::{
     extract::State,
     routing::post,
 };
-use chrono::Utc;
 
 use axum::http::StatusCode;
 use omni_me_core::events::{EventStore, EventType, SurrealEventStore, validate_payload};
@@ -67,7 +66,17 @@ async fn pull_handler(
             vec![]
         });
 
-    let sync_timestamp = Utc::now();
+    // The cursor handed back is the highest `received_at` among the events we
+    // actually returned — the server's own clock, which is the clock the next
+    // pull's filter compares against. It used to be `Utc::now()` taken *after*
+    // the query, which both skipped anything appended during that window and
+    // advanced the cursor on empty pulls. Echoing `since` when nothing matched
+    // keeps it from stepping over an event still in flight.
+    let sync_timestamp = events
+        .iter()
+        .filter_map(|e| e.received_at)
+        .max()
+        .unwrap_or(body.since);
 
     Json(PullResponse {
         events,

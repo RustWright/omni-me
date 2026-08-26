@@ -39,7 +39,15 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
         DEFINE FIELD IF NOT EXISTS timestamp ON events TYPE datetime;
         DEFINE FIELD IF NOT EXISTS device_id ON events TYPE string;
         DEFINE FIELD IF NOT EXISTS payload ON events TYPE object FLEXIBLE;
+        -- When THIS node stored the event, as opposed to `timestamp`, which is
+        -- when the authoring device *wrote* it. Sync cursors key on this: a
+        -- cursor handed out by one node has to be compared against a clock that
+        -- node owns, or events silently fall below it forever. `option<>` so
+        -- rows written before this field existed still load; the backfill below
+        -- fills them in.
+        DEFINE FIELD IF NOT EXISTS received_at ON events TYPE option<datetime>;
         DEFINE INDEX IF NOT EXISTS idx_events_timestamp ON events FIELDS timestamp;
+        DEFINE INDEX IF NOT EXISTS idx_events_received_at ON events FIELDS received_at;
         DEFINE INDEX IF NOT EXISTS idx_events_aggregate ON events FIELDS aggregate_id;
         DEFINE INDEX IF NOT EXISTS idx_events_device ON events FIELDS device_id;
 
@@ -47,10 +55,25 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
         DEFINE FIELD IF NOT EXISTS device_id ON sync_state TYPE string;
         DEFINE FIELD IF NOT EXISTS last_sync_timestamp ON sync_state TYPE datetime;
         DEFINE INDEX IF NOT EXISTS idx_sync_device ON sync_state FIELDS device_id UNIQUE;
+        -- Push watermark, kept separate from `last_sync_timestamp` (the pull
+        -- cursor). They advance on different clocks and conflating them meant
+        -- the background pusher used a post-pull *server* cursor as its push
+        -- `since`, skipping local work at or below it.
+        DEFINE FIELD IF NOT EXISTS last_push_received_at ON sync_state TYPE option<datetime>;
         ",
     )
     .await
     .map_err(DbError::Schema)?;
+
+    // One-time backfill for events stored before `received_at` existed. The
+    // author timestamp is the only approximation available, and it is the right
+    // one: those events were already exchanged under the old author-clock rule,
+    // so seeding the new watermark from it keeps them below both cursors instead
+    // of stranding them (NONE compares false against any bound, which would mean
+    // local events could never push again).
+    db.query("UPDATE events SET received_at = timestamp WHERE received_at IS NONE")
+        .await
+        .map_err(DbError::Schema)?;
 
     Ok(())
 }

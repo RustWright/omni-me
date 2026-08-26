@@ -275,6 +275,7 @@ mod tests {
             timestamp: Utc::now(),
             device_id: "d1".into(),
             payload: serde_json::json!({}),
+            received_at: None,
         }
     }
 
@@ -323,6 +324,7 @@ mod tests {
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
                 payload: serde_json::json!({}),
+                received_at: None,
             },
             Event {
                 id: "e2".into(),
@@ -331,6 +333,7 @@ mod tests {
                 timestamp: Utc::now(),
                 device_id: "d1".into(),
                 payload: serde_json::json!({}),
+                received_at: None,
             },
         ];
 

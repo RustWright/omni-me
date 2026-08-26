@@ -16,6 +16,18 @@ pub enum EventError {
 }
 
 /// A persisted event with a generated ID.
+///
+/// Two clocks live on this struct and they are not interchangeable.
+/// `timestamp` is when the **authoring device** wrote the event — it is the
+/// display and ordering value, and it travels unchanged between nodes.
+/// `received_at` is when **this node** stored it, stamped locally at insert and
+/// never accepted from the wire.
+///
+/// Sync cursors must key on `received_at`. Filtering a cursor issued by one node
+/// against the other node's clock is what let a device that was offline Monday
+/// to Thursday push its backlog on Friday and have every peer — whose cursor was
+/// already Friday — never receive it, permanently and silently. Ordinary clock
+/// skew did the same.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub id: String,
@@ -24,6 +36,11 @@ pub struct Event {
     pub timestamp: DateTime<Utc>,
     pub device_id: String,
     pub payload: serde_json::Value,
+    /// Local storage time on whichever node loaded this row. Not sent over the
+    /// wire (each node stamps its own), and `None` only for rows read before
+    /// the backfill in `db::init_schema` has run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub received_at: Option<DateTime<Utc>>,
 }
 
 /// An event to be appended — supply an ID to preserve it, or leave as None to auto-generate.
@@ -193,7 +210,8 @@ impl EventStore for SurrealEventStore {
                     aggregate_id: $aggregate_id,
                     timestamp: type::datetime($timestamp),
                     device_id: $device_id,
-                    payload: $payload
+                    payload: $payload,
+                    received_at: time::now()
                 } ON DUPLICATE KEY UPDATE id = id",
             )
             .bind(("id", id.clone()))
@@ -212,6 +230,7 @@ impl EventStore for SurrealEventStore {
             timestamp: event.timestamp,
             device_id: event.device_id,
             payload: event.payload,
+            received_at: Some(Utc::now()),
         })
     }
 
@@ -233,7 +252,8 @@ impl EventStore for SurrealEventStore {
                     aggregate_id: $aggregate_id_{i},
                     timestamp: type::datetime($timestamp_{i}),
                     device_id: $device_id_{i},
-                    payload: $payload_{i}
+                    payload: $payload_{i},
+                    received_at: time::now()
                 }} ON DUPLICATE KEY UPDATE id = id;"
             ));
             result_events.push(Event {
@@ -243,6 +263,7 @@ impl EventStore for SurrealEventStore {
                 timestamp: event.timestamp,
                 device_id: event.device_id.clone(),
                 payload: event.payload.clone(),
+                received_at: Some(Utc::now()),
             });
         }
 
@@ -277,18 +298,20 @@ impl EventStore for SurrealEventStore {
             Some(_) => {
                 "SELECT meta::id(id) AS eid, event_type, aggregate_id,
                         <string> timestamp AS ts, timestamp,
+                        <string> received_at AS rcv, received_at,
                         device_id, payload
                  FROM events
-                 WHERE timestamp > type::datetime($since) AND device_id != $exclude_device
-                 ORDER BY timestamp ASC"
+                 WHERE received_at > type::datetime($since) AND device_id != $exclude_device
+                 ORDER BY received_at ASC, eid ASC"
             }
             None => {
                 "SELECT meta::id(id) AS eid, event_type, aggregate_id,
                         <string> timestamp AS ts, timestamp,
+                        <string> received_at AS rcv, received_at,
                         device_id, payload
                  FROM events
-                 WHERE timestamp > type::datetime($since)
-                 ORDER BY timestamp ASC"
+                 WHERE received_at > type::datetime($since)
+                 ORDER BY received_at ASC, eid ASC"
             }
         };
 
@@ -320,10 +343,11 @@ impl EventStore for SurrealEventStore {
             .query(
                 "SELECT meta::id(id) AS eid, event_type, aggregate_id,
                         <string> timestamp AS ts, timestamp,
+                        <string> received_at AS rcv, received_at,
                         device_id, payload
                  FROM events
-                 WHERE timestamp > type::datetime($since) AND device_id = $device
-                 ORDER BY timestamp ASC",
+                 WHERE received_at > type::datetime($since) AND device_id = $device
+                 ORDER BY received_at ASC, eid ASC",
             )
             .bind(("since", since_str))
             .bind(("device", device))
@@ -345,10 +369,11 @@ impl EventStore for SurrealEventStore {
             .query(
                 "SELECT meta::id(id) AS eid, event_type, aggregate_id,
                         <string> timestamp AS ts, timestamp,
+                        <string> received_at AS rcv, received_at,
                         device_id, payload
                  FROM events
                  WHERE aggregate_id = $aggregate_id
-                 ORDER BY timestamp ASC",
+                 ORDER BY timestamp ASC, eid ASC",
             )
             .bind(("aggregate_id", agg_id))
             .await
@@ -375,6 +400,7 @@ struct EventRow {
     event_type: String,
     aggregate_id: String,
     ts: String,
+    rcv: Option<String>,
     device_id: String,
     payload: DbValue,
 }
@@ -389,6 +415,12 @@ impl TryFrom<EventRow> for Event {
 
         let payload = row.payload.into_json_value();
 
+        let received_at = row.rcv.as_deref().and_then(|s| {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
+
         Ok(Event {
             id: row.eid,
             event_type: row.event_type,
@@ -396,6 +428,7 @@ impl TryFrom<EventRow> for Event {
             timestamp,
             device_id: row.device_id,
             payload,
+            received_at,
         })
     }
 }
@@ -439,48 +472,65 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_since_filters_by_timestamp() {
+    async fn get_since_keys_on_receipt_not_authorship() {
+        // The cursor a node hands out is that node's own clock, so the filter
+        // has to compare against the same clock. Two events authored months
+        // apart but *stored here* just now are both above a cursor taken before
+        // they arrived — even though one was authored long before it.
+        //
+        // Under the old author-clock filter this was the silent-data-loss bug: a
+        // device offline Monday to Thursday pushed its backlog on Friday, every
+        // peer's cursor already read Friday, and those events — stamped Mon–Thu
+        // by their author — never came down. Permanently. Ordinary clock skew
+        // between two devices did the same thing.
         let db = test_db().await;
         let store = SurrealEventStore::new(db);
 
-        let t1 = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        let cursor_before_arrival = Utc::now();
+
+        let stale = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let t2 = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-
-        store
-            .append(NewEvent {
-                id: None,
-                event_type: "note_created".into(),
-                aggregate_id: "n1".into(),
-                timestamp: t1,
-                device_id: "d1".into(),
-                payload: serde_json::json!({"raw_text": "old", "date": "2026-01-01"}),
-            })
-            .await
-            .unwrap();
-
-        store
-            .append(NewEvent {
-                id: None,
-                event_type: "note_created".into(),
-                aggregate_id: "n2".into(),
-                timestamp: t2,
-                device_id: "d1".into(),
-                payload: serde_json::json!({"raw_text": "new", "date": "2026-06-01"}),
-            })
-            .await
-            .unwrap();
-
-        let cutoff = chrono::DateTime::parse_from_rfc3339("2026-03-01T00:00:00Z")
+        let recent = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
 
-        let events = store.get_since(cutoff, None).await.unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].aggregate_id, "n2");
+        for (agg, ts) in [("backlog", stale), ("fresh", recent)] {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: agg.into(),
+                    timestamp: ts,
+                    device_id: "d1".into(),
+                    payload: serde_json::json!({"raw_text": agg, "date": "2026-01-01"}),
+                })
+                .await
+                .unwrap();
+        }
+
+        let events = store.get_since(cursor_before_arrival, None).await.unwrap();
+        assert_eq!(
+            events.len(),
+            2,
+            "an event authored before the cursor but received after it must still be delivered"
+        );
+        assert!(
+            events.iter().any(|e| e.aggregate_id == "backlog"),
+            "the stale-authored event is the one the old author-clock filter dropped"
+        );
+
+        // A cursor taken after arrival returns nothing — the watermark still
+        // advances, it just advances on the right clock.
+        let after = events
+            .iter()
+            .filter_map(|e| e.received_at)
+            .max()
+            .expect("received_at is stamped at append");
+        assert!(
+            store.get_since(after, None).await.unwrap().is_empty(),
+            "cursor at the high-water mark must not re-deliver"
+        );
     }
 
     #[tokio::test]

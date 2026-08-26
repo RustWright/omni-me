@@ -130,17 +130,11 @@ async fn run_loop(inner: Arc<Inner>) {
 async fn attempt_push(inner: &Arc<Inner>) {
     let _ = inner.outcomes.send(PushEvent::Started);
 
-    let since = match inner.client.last_sync_timestamp(&inner.db).await {
-        Ok(t) => t,
-        Err(e) => {
-            let _ = inner.outcomes.send(PushEvent::Failed {
-                error: e.to_string(),
-            });
-            return;
-        }
-    };
-
-    match inner.client.push_only(&inner.db, &since).await {
+    // `push_only` reads its own watermark. This used to fetch
+    // `last_sync_timestamp` — the *pull* cursor, already advanced by any pull
+    // that had just run — and hand it in as the push `since`, so local events at
+    // or below the server cursor were never pushed by the background pusher.
+    match inner.client.push_only(&inner.db).await {
         Ok(PushOutcome { pushed }) => {
             let _ = inner.outcomes.send(PushEvent::Succeeded { pushed });
             let mut counter = inner.last_known_events.lock().await;

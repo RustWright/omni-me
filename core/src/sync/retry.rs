@@ -210,10 +210,7 @@ async fn retry_until_success(inner: &Arc<Inner>) {
 
         let _ = inner.events.send(RetryEvent::Attempting { attempt });
 
-        let push_result = async {
-            let since = inner.client.last_sync_timestamp(&inner.db).await?;
-            inner.client.push_only(&inner.db, &since).await
-        }.await;
+        let push_result = inner.client.push_only(&inner.db).await;
 
         match push_result {
             Ok(PushOutcome { pushed }) => {

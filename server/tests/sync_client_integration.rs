@@ -184,3 +184,77 @@ async fn sync_does_not_re_push_pulled_events() {
             .any(|event| event.device_id == "device-b")
     );
 }
+
+/// A device that was offline for days must have its backlog delivered to a peer
+/// whose cursor is already *ahead* of those events' author timestamps.
+///
+/// End-to-end regression for the mixed-clock cursor. The pull cursor is issued
+/// by the server, but the pull filter used to compare it against the authoring
+/// device's clock, which `append_batch` preserves verbatim. So: device B's
+/// cursor advances to "now" after a normal sync; device A comes back online and
+/// pushes events it authored days ago; B's next pull asks for "everything after
+/// now" and those events sit permanently below it. Not delayed — never
+/// delivered, and silently, because nothing is aware a gap exists. Routine clock
+/// skew between two devices reproduced it without anyone going offline.
+///
+/// Note the third device: B's cursor only moves when a pull actually returns
+/// something, so without C there is no "cursor ahead" state and the test passes
+/// against the broken code too. That is exactly what the first draft of this
+/// test did.
+///
+/// This is also the roadmap step 7–8 shape (bring imports current → wipe box →
+/// clean re-import), which is a bulk import of months-old dated data.
+#[tokio::test]
+async fn offline_backlog_reaches_a_peer_whose_cursor_is_already_ahead() {
+    let (url, _h) = start_server().await;
+
+    // Device C publishes something current, so B's cursor advances to ~now.
+    let db_c = device_db().await;
+    let store_c = SurrealEventStore::new(db_c.clone());
+    store_c.append(sample_event("device-c", "current")).await.unwrap();
+    SyncClient::new(url.clone(), "device-c".into())
+        .sync(&db_c)
+        .await
+        .unwrap();
+
+    let db_b = device_db().await;
+    let client_b = SyncClient::new(url.clone(), "device-b".into());
+    let warmup = client_b.sync(&db_b).await.unwrap();
+    assert_eq!(warmup.pulled, 1, "B should pull C's event and move its cursor");
+
+    // Device A pushes work it authored days ago while offline — all of it
+    // stamped *before* B's cursor.
+    let db_a = device_db().await;
+    let store_a = SurrealEventStore::new(db_a.clone());
+    for (i, days_ago) in [4_i64, 3, 2, 1].iter().enumerate() {
+        let mut ev = sample_event("device-a", &format!("backlog-{i}"));
+        ev.timestamp = Utc::now() - chrono::Duration::days(*days_ago);
+        store_a.append(ev).await.unwrap();
+    }
+    let pushed = SyncClient::new(url.clone(), "device-a".into())
+        .sync(&db_a)
+        .await
+        .unwrap();
+    assert_eq!(pushed.pushed, 4, "device A should push its whole backlog");
+
+    // B pulls again. Every backlogged event must arrive despite its author
+    // timestamp predating B's cursor.
+    let result = client_b.sync(&db_b).await.unwrap();
+    assert_eq!(
+        result.pulled, 4,
+        "backlog authored before the peer's cursor was dropped — the mixed-clock bug"
+    );
+
+    let store_b = SurrealEventStore::new(db_b.clone());
+    for i in 0..4 {
+        let got = store_b
+            .get_by_aggregate(&format!("backlog-{i}"))
+            .await
+            .unwrap();
+        assert_eq!(got.len(), 1, "backlog-{i} missing on the peer");
+    }
+
+    // And a further sync with nothing new stays a no-op.
+    let quiet = client_b.sync(&db_b).await.unwrap();
+    assert_eq!(quiet.pulled, 0, "cursor failed to advance past the backlog");
+}

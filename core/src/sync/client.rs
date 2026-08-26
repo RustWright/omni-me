@@ -128,14 +128,13 @@ impl SyncClient {
     /// Preserved for backward compatibility with integration tests and the
     /// `trigger_sync` Tauri command.
     pub async fn sync(&self, db: &Database) -> Result<SyncResult, SyncError> {
-        let last_sync = self.last_sync_timestamp(db).await?;
-
-        // 1. Pull + apply + update sync_state timestamp.
+        // The push watermark is this device's own clock and is unaffected by the
+        // pull, so it no longer needs snapshotting beforehand — `push_only` reads
+        // it itself. Capturing the *pull* cursor pre-pull used to be the guard
+        // against missing work created mid-pull; separate watermarks make that
+        // structural instead.
         let pull = self.pull_only(db).await?;
-
-        // 2. Push any local events since the *pre-pull* timestamp (so we don't
-        //    miss work created while the pull was in flight).
-        let push = self.push_only(db, &last_sync).await?;
+        let push = self.push_only(db).await?;
 
         Ok(SyncResult {
             pulled: pull.pulled,
@@ -176,22 +175,97 @@ impl SyncClient {
         })
     }
 
-    /// Push all local events from this device created after `since` to the
-    /// server. Chunks at 100 events per HTTP request.
-    pub async fn push_only(
-        &self,
-        db: &Database,
-        since: &DateTime<Utc>,
-    ) -> Result<PushOutcome, SyncError> {
+    /// Push local events this device has authored but not yet pushed.
+    /// Chunks at 100 events per HTTP request.
+    ///
+    /// Keyed on `last_push_received_at` — **this device's** clock — against each
+    /// event's locally-stamped `received_at`. It used to filter the author
+    /// timestamp against the *server's* pull cursor, so a device whose clock
+    /// trailed the server by more than one pull interval authored events already
+    /// below the cursor and never pushed them: silent, permanent, and invisible
+    /// to the orphan audit because the `device_id` was correct.
+    ///
+    /// The window is bounded above by `hi`, captured before the read. Anything
+    /// stamped after `hi` simply lands in the next push rather than being
+    /// skipped by a watermark that outran it.
+    pub async fn push_only(&self, db: &Database) -> Result<PushOutcome, SyncError> {
         let store = SurrealEventStore::new(db.clone());
-        let local_events = self.get_local_events_since(&store, since).await?;
+        let since = self.last_push_watermark(db).await?;
+        let hi = Utc::now();
+
+        let local_events: Vec<Event> = self
+            .get_local_events_since(&store, &since)
+            .await?
+            .into_iter()
+            .filter(|e| e.received_at.is_none_or(|r| r <= hi))
+            .collect();
         let pushed = local_events.len();
 
         if !local_events.is_empty() {
             self.push_events(&local_events).await?;
         }
 
+        // Advance only after the server accepted everything, and only as far as
+        // the events actually pushed — never to `hi`, which would step over an
+        // event stamped inside the window but written after the read.
+        if let Some(hw) = local_events.iter().filter_map(|e| e.received_at).max() {
+            self.update_push_watermark(db, &hw).await?;
+        }
+
         Ok(PushOutcome { pushed })
+    }
+
+    /// This device's push watermark (epoch if never pushed).
+    pub async fn last_push_watermark(
+        &self,
+        db: &Database,
+    ) -> Result<DateTime<Utc>, SyncError> {
+        let device_id = self.device_id.clone();
+        let mut resp = db
+            .query("SELECT * FROM sync_state WHERE device_id = $device_id")
+            .bind(("device_id", device_id))
+            .await
+            .map_err(|e| SyncError::Local(e.to_string()))?;
+
+        let raw: Vec<serde_json::Value> = resp
+            .take(0)
+            .map_err(|e| SyncError::Local(format!("take raw: {e}")))?;
+
+        let ts = raw
+            .first()
+            .and_then(|r| r.get("last_push_received_at"))
+            .and_then(|v| match v {
+                serde_json::Value::String(s) => Some(s.clone()),
+                _ => v.as_str().map(|s| s.to_string()),
+            });
+
+        match ts {
+            Some(s) => DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|e| SyncError::Local(format!("invalid push watermark: {e}"))),
+            None => Ok(DateTime::UNIX_EPOCH),
+        }
+    }
+
+    async fn update_push_watermark(
+        &self,
+        db: &Database,
+        timestamp: &DateTime<Utc>,
+    ) -> Result<(), SyncError> {
+        let device_id = self.device_id.clone();
+        let ts = timestamp.to_rfc3339();
+        db.query(
+            "UPSERT sync_state SET
+                device_id = $device_id,
+                last_push_received_at = type::datetime($ts)
+             WHERE device_id = $device_id",
+        )
+        .bind(("device_id", device_id))
+        .bind(("ts", ts))
+        .await
+        .map_err(|e| SyncError::Local(e.to_string()))?;
+
+        Ok(())
     }
 
     /// The last-sync timestamp recorded for this device (epoch if none).
@@ -374,6 +448,7 @@ mod tests {
             timestamp: Utc::now(),
             device_id: "test-device".to_string(),
             payload: serde_json::json!({ "blob": "x".repeat(payload_len) }),
+            received_at: None,
         }
     }
 

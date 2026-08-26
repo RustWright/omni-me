@@ -1105,6 +1105,7 @@ account Assets:Bank  ; commodity:CAD
             timestamp: chrono::Utc::now(),
             device_id: "d1".into(),
             payload,
+            received_at: None,
         }
     }
 
