@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 use crate::db::Database;
 use crate::events::{Event, EventStore, NewEvent, SurrealEventStore};
@@ -85,6 +88,20 @@ pub struct SyncClient {
     server_url: String,
     device_id: String,
     http: reqwest::Client,
+    /// Serializes `pull_only` across every clone of this client.
+    ///
+    /// Nothing else stops two pulls overlapping: the Settings "Sync Now" button
+    /// is a bare `spawn` with no disabled state, and the 20s pull scheduler runs
+    /// independently, so a double tap — or one tap landing inside a scheduled
+    /// tick — used to apply the same pulled batch twice concurrently. Every
+    /// projection but one is an UPSERT and absorbed that; `JournalFile` appended,
+    /// so the money numbers parsed back out of `budget.journal` silently drifted
+    /// from the Ledger list. That handler is now anchor-idempotent as well —
+    /// this is the other half, and it also stops the duplicated work.
+    ///
+    /// A waiting caller re-pulls once the first finishes; the cursor has moved
+    /// by then, so the second pull simply returns nothing.
+    pull_lock: Arc<Mutex<()>>,
 }
 
 impl SyncClient {
@@ -93,6 +110,7 @@ impl SyncClient {
             server_url,
             device_id,
             http: reqwest::Client::new(),
+            pull_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -132,6 +150,7 @@ impl SyncClient {
     /// Does NOT push. Callers wanting a full sync should follow with
     /// `push_only`, or use `sync()`.
     pub async fn pull_only(&self, db: &Database) -> Result<PullOutcome, SyncError> {
+        let _in_flight = self.pull_lock.lock().await;
         let store = SurrealEventStore::new(db.clone());
         let last_sync = self.last_sync_timestamp(db).await?;
 

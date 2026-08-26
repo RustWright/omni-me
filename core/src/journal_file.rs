@@ -24,6 +24,8 @@ use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
+use std::collections::HashSet;
+
 use crate::db::Database;
 use crate::db::queries::{self, TransactionRow};
 use crate::events::{
@@ -33,19 +35,69 @@ use crate::events::{
 
 pub struct JournalFile {
     path: PathBuf,
-    write_lock: Mutex<()>,
+    /// Serializes every write **and** carries the idempotence state, so holding
+    /// the lock is the same thing as being allowed to consult it.
+    ///
+    /// `None` means "not scanned yet" — the set is rebuilt lazily from the file
+    /// on first use. Without it `append` would have to re-read the whole journal
+    /// to answer "have I already written this?", which turns a 10k-transaction
+    /// import into O(n²) over a multi-megabyte file.
+    write_lock: Mutex<Option<HashSet<String>>>,
 }
 
 impl JournalFile {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
-            write_lock: Mutex::new(()),
+            write_lock: Mutex::new(None),
         }
     }
 
-    async fn append(&self, content: &str) -> Result<(), EventError> {
-        let _guard = self.write_lock.lock().await;
+    /// Append a transaction entry unless its `txn_id` anchor is already in the
+    /// file.
+    ///
+    /// This handler used to be the only non-idempotent projection in the system:
+    /// a plain append, so re-applying an event wrote the transaction into
+    /// `budget.journal` a second time. `transactions` (an UPSERT) stayed correct
+    /// while net worth and the Accounts screen — which are parsed back out of
+    /// this file — silently drifted, and nothing self-healed because `rebuild()`
+    /// is only reachable through `wipe_all_data`.
+    ///
+    /// Re-application is ordinary, not exotic: `pull_only` has no in-flight
+    /// guard and the Settings "Sync Now" button is a bare `spawn` with no
+    /// disabled state, so a double tap — or one tap landing inside the 20s
+    /// scheduler pull — applies the same pulled batch twice.
+    async fn append_transaction(&self, txn_id: &str, content: &str) -> Result<(), EventError> {
+        self.append_keyed(&format!("t:{txn_id}"), content).await
+    }
+
+    /// Append a `P` price directive unless a byte-identical one is already
+    /// present. Keyed on the whole rendered line rather than date+pair, because
+    /// re-recording the *same* pair at a *different* rate is a legitimate
+    /// update — ledger takes the last `P` for a date — while an identical line
+    /// can only be a re-applied event.
+    async fn append_exchange_rate(&self, content: &str) -> Result<(), EventError> {
+        self.append_keyed(&format!("p:{}", content.trim()), content)
+            .await
+    }
+
+    async fn append_keyed(&self, key: &str, content: &str) -> Result<(), EventError> {
+        let mut guard = self.write_lock.lock().await;
+        if guard.is_none() {
+            let existing = self.read_existing().await?;
+            *guard = Some(scan_anchors(&existing));
+        }
+        let anchors = guard.as_mut().expect("anchor set populated above");
+        if anchors.contains(key) {
+            return Ok(());
+        }
+        self.append_locked(content).await?;
+        anchors.insert(key.to_string());
+        Ok(())
+    }
+
+    /// Raw append. Callers must already hold `write_lock`.
+    async fn append_locked(&self, content: &str) -> Result<(), EventError> {
         if let Some(parent) = self.path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -116,20 +168,29 @@ impl JournalFile {
     /// prices — which have no projection table — are preserved for free. If the
     /// id isn't present the block is appended, making the file correct either way.
     async fn rewrite_transaction(&self, txn_id: &str, block: &str) -> Result<(), EventError> {
-        let _guard = self.write_lock.lock().await;
+        let mut guard = self.write_lock.lock().await;
         let existing = self.read_existing().await?;
         let updated = replace_transaction_block(&existing, txn_id, block);
-        self.overwrite(&updated).await
+        self.overwrite(&updated).await?;
+        // Splice-or-append: the id is present either way afterwards.
+        if let Some(anchors) = guard.as_mut() {
+            anchors.insert(format!("t:{txn_id}"));
+        }
+        Ok(())
     }
 
     /// Drop a transaction entry from the file by its `; txn_id:<id>` anchor — the
     /// `TransactionDeleted` path and the merged-away originals of
     /// `TransactionsMerged`. A no-op (unchanged file) when the id is absent.
     async fn remove_transaction(&self, txn_id: &str) -> Result<(), EventError> {
-        let _guard = self.write_lock.lock().await;
+        let mut guard = self.write_lock.lock().await;
         let existing = self.read_existing().await?;
         let updated = remove_transaction_block(&existing, txn_id);
-        self.overwrite(&updated).await
+        self.overwrite(&updated).await?;
+        if let Some(anchors) = guard.as_mut() {
+            anchors.remove(&format!("t:{txn_id}"));
+        }
+        Ok(())
     }
 
     /// Re-render a modified transaction from its (already-updated) projection
@@ -152,7 +213,10 @@ impl JournalFile {
     }
 
     async fn truncate(&self) -> Result<(), EventError> {
-        let _guard = self.write_lock.lock().await;
+        let mut guard = self.write_lock.lock().await;
+        // The file is about to hold nothing, so the set is known-empty rather
+        // than unknown — a rebuild replaying every event must not skip writes.
+        *guard = Some(HashSet::new());
         if !self.path.exists() {
             return Ok(());
         }
@@ -188,7 +252,8 @@ impl Projection for JournalFile {
                     serde_json::from_value(event.payload.clone()).map_err(|e| {
                         EventError::Validation(format!("bad transaction_recorded payload: {e}"))
                     })?;
-                self.append(&render_transaction(&payload)).await
+                self.append_transaction(&payload.txn_id, &render_transaction(&payload))
+                    .await
             }
             "account_added" => {
                 let payload: AccountAddedPayload =
@@ -203,7 +268,7 @@ impl Projection for JournalFile {
                     serde_json::from_value(event.payload.clone()).map_err(|e| {
                         EventError::Validation(format!("bad exchange_rate_recorded payload: {e}"))
                     })?;
-                self.append(&render_exchange_rate(&payload)).await
+                self.append_exchange_rate(&render_exchange_rate(&payload)).await
             }
             "transaction_updated" => {
                 let txn_id = event.payload["txn_id"]
@@ -600,6 +665,45 @@ fn find_transaction_block(content: &str, txn_id: &str) -> Option<std::ops::Range
     let start = lines[start_idx].0;
     let end = lines.get(end_idx).map_or(content.len(), |(o, _)| *o);
     Some(start..end)
+}
+
+/// Build the set of append anchors already present in `content`.
+///
+/// Two shapes count as "already written": a transaction's `; txn_id:<id>`
+/// metadata line, and a `P` price directive. Quarantined entries (rendered as
+/// `; skipped <id>: …` by [`unrenderable_reason`]) are anchored too, so a
+/// replay doesn't accrete a comment per pass.
+fn scan_anchors(content: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("; skipped ") {
+            if let Some(id) = rest.split(':').next() {
+                out.insert(format!("t:{}", id.trim()));
+                continue;
+            }
+        }
+        if trimmed.starts_with("P ") {
+            out.insert(format!("p:{trimmed}"));
+            continue;
+        }
+        if let Some(id) = extract_txn_id(trimmed) {
+            out.insert(format!("t:{id}"));
+        }
+    }
+    out
+}
+
+/// Pull the value of a `txn_id:` tag out of a metadata line. Ids are ULIDs for
+/// app-authored transactions and `import-<hash>-<n>` for imported ones, so the
+/// terminator set has to allow `-` and `_` as well as alphanumerics.
+fn extract_txn_id(line: &str) -> Option<&str> {
+    let pos = line.find("txn_id:")?;
+    let rest = &line[pos + "txn_id:".len()..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+        .unwrap_or(rest.len());
+    (end > 0).then(|| &rest[..end])
 }
 
 /// True when `line` carries the `txn_id:<id>` metadata tag for exactly `id` —
@@ -1025,6 +1129,119 @@ account Assets:Bank  ; commodity:CAD
         assert!(contents.contains("2026-05-16 Coffee"));
         assert!(contents.contains("Assets:Cash  -5.25 CAD"));
         assert!(contents.contains("Expenses:Coffee  5.25 CAD"));
+    }
+
+    /// Re-applying the same `TransactionRecorded` must not write the entry
+    /// twice.
+    ///
+    /// This handler was the only non-idempotent projection in the system. The
+    /// `transactions` table is an UPSERT and stayed correct, so the divergence
+    /// showed up only in the numbers parsed back out of this file — net worth
+    /// and the Accounts screen — and never self-healed, because `rebuild()` is
+    /// reachable only through `wipe_all_data`. Re-application needs no exotic
+    /// setup: `pull_only` has no in-flight guard and the Settings "Sync Now"
+    /// button has no disabled state.
+    #[tokio::test]
+    async fn re_applying_a_transaction_does_not_duplicate_it() {
+        let (proj, _dir) = make_projection().await;
+        let db = fake_db().await;
+        let event = make_event(
+            EventType::TransactionRecorded,
+            serde_json::json!({
+                "txn_id": "01JKTXN",
+                "date": "2026-05-16",
+                "description": "Coffee",
+                "postings": [
+                    { "account": "Assets:Cash", "commodity": "CAD", "amount": "-5.25" },
+                    { "account": "Expenses:Coffee", "commodity": "CAD", "amount": "5.25" }
+                ]
+            }),
+        );
+        proj.apply(&event, &db).await.unwrap();
+        proj.apply(&event, &db).await.unwrap();
+        proj.apply(&event, &db).await.unwrap();
+
+        let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
+        assert_eq!(
+            contents.matches("txn_id:01JKTXN").count(),
+            1,
+            "entry written more than once:\n{contents}"
+        );
+        // And the balance parsed back out is the single-entry one.
+        let bal = crate::ledger::balances(&contents).unwrap();
+        assert_eq!(
+            bal.account_balances
+                .get("Assets:Cash")
+                .unwrap()
+                .amounts
+                .get("CAD")
+                .unwrap()
+                .quantity,
+            rust_decimal::Decimal::from_str("-5.25").unwrap()
+        );
+    }
+
+    /// The anchor cache is built lazily from the file, so a projection that
+    /// starts against an *existing* journal must still recognise entries it
+    /// never wrote itself — the real-world case, since the process restarts
+    /// with 10k transactions already on disk.
+    #[tokio::test]
+    async fn anchors_are_recovered_from_an_existing_file() {
+        let (proj, dir) = make_projection().await;
+        let db = fake_db().await;
+        let event = make_event(
+            EventType::TransactionRecorded,
+            serde_json::json!({
+                "txn_id": "01JKTXN",
+                "date": "2026-05-16",
+                "description": "Coffee",
+                "postings": [
+                    { "account": "Assets:Cash", "commodity": "CAD", "amount": "-5.25" },
+                    { "account": "Expenses:Coffee", "commodity": "CAD", "amount": "5.25" }
+                ]
+            }),
+        );
+        proj.apply(&event, &db).await.unwrap();
+
+        // A second projection over the same path, with a cold cache.
+        let reopened = JournalFile::new(proj.path.clone());
+        reopened.apply(&event, &db).await.unwrap();
+
+        let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
+        assert_eq!(
+            contents.matches("txn_id:01JKTXN").count(),
+            1,
+            "cold-cache projection re-appended:\n{contents}"
+        );
+        drop(dir);
+    }
+
+    /// An identical `P` directive is a re-applied event and must be skipped,
+    /// but the *same* pair at a *different* rate is a legitimate correction —
+    /// ledger takes the last `P` for a date — so it must still be written.
+    #[tokio::test]
+    async fn exchange_rates_dedupe_identical_lines_but_allow_corrections() {
+        let (proj, _dir) = make_projection().await;
+        let db = fake_db().await;
+        let rate = |r: &str| {
+            make_event(
+                EventType::ExchangeRateRecorded,
+                serde_json::json!({
+                    "date": "2026-05-16",
+                    "base": "USD",
+                    "quote": "CAD",
+                    "rate": r,
+                    "source": "frankfurter"
+                }),
+            )
+        };
+        proj.apply(&rate("1.37"), &db).await.unwrap();
+        proj.apply(&rate("1.37"), &db).await.unwrap();
+        proj.apply(&rate("1.39"), &db).await.unwrap();
+
+        let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
+        assert_eq!(contents.matches("1.37").count(), 1, "duplicate rate line");
+        assert_eq!(contents.matches("1.39").count(), 1, "correction was dropped");
     }
 
     #[tokio::test]
