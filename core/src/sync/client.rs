@@ -119,7 +119,7 @@ impl SyncClient {
         Self {
             server_url,
             device_id,
-            http: reqwest::Client::new(),
+            http: crate::http::client(),
             pull_lock: Arc::new(Mutex::new(())),
         }
     }
@@ -145,7 +145,15 @@ impl SyncClient {
             Ok(mut value) => {
                 value.set_sensitive(true);
                 headers.insert(reqwest::header::AUTHORIZATION, value);
-                match reqwest::Client::builder().default_headers(headers).build() {
+                // Through `http::builder`, NOT `reqwest::Client::builder`. This
+                // replaces the client `new()` just built, so a bare builder here
+                // would hand the *authenticated* path — the only one that runs
+                // in production — a client with no timeout, while `new()`'s
+                // timeout survived only in tests.
+                match crate::http::builder(crate::http::DEFAULT_TIMEOUT)
+                    .default_headers(headers)
+                    .build()
+                {
                     Ok(client) => self.http = client,
                     Err(e) => tracing::error!(error = %e, "sync: auth client build failed"),
                 }

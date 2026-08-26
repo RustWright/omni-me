@@ -170,6 +170,13 @@ fn collect_expense_parsed(
 /// the journal for `Prices`, flattens postings, and computes per-budget
 /// progress. The Tauri layer just supplies raw inputs — keeps the
 /// `ledger-utils` dep contained to core.
+///
+/// **Prefer [`budget_progress_summary_from`] when a `Prices` table is already
+/// to hand.** The entire parse here exists to build one — nothing else touches
+/// `parsed` — so a caller holding a cached `Prices` (as the Tauri layer's
+/// `journal_artifacts()` does) is paying a full nom parse of the whole journal
+/// to rebuild a table it is already holding. This entry stays for callers that
+/// genuinely only have the text.
 pub fn budget_progress_summary(
     journal_content: &str,
     budgets: &[(String, Decimal, String)],
@@ -180,8 +187,28 @@ pub fn budget_progress_summary(
     let parsed = crate::ledger::parse(journal_content)?;
     let mut prices = Prices::new();
     prices.insert_from(&parsed);
-    let postings = collect_expense_postings(txn_rows, base_currency, &prices);
-    Ok(compute_budget_progress(budgets, &postings, as_of))
+    Ok(budget_progress_summary_from(
+        &prices,
+        budgets,
+        txn_rows,
+        base_currency,
+        as_of,
+    ))
+}
+
+/// [`budget_progress_summary`] with the price table supplied rather than parsed.
+///
+/// Infallible, because the only fallible step in the full entry is the parse
+/// this one skips.
+pub fn budget_progress_summary_from(
+    prices: &Prices,
+    budgets: &[(String, Decimal, String)],
+    txn_rows: &[TxnPostingsRow],
+    base_currency: &str,
+    as_of: NaiveDate,
+) -> Vec<BudgetProgress> {
+    let postings = collect_expense_postings(txn_rows, base_currency, prices);
+    compute_budget_progress(budgets, &postings, as_of)
 }
 
 /// Outcome of a `balance_check` — sum of cleared postings on the
@@ -548,5 +575,55 @@ mod tests {
         // at 0 (caller's UI can choose to render "no target set").
         assert_eq!(out[0].percent_used, 0.0);
         assert!(out[0].over_budget); // 10 > 0
+    }
+}
+
+#[cfg(test)]
+mod budget_progress_entry_tests {
+    use super::*;
+
+    /// The cached price table must equal the one the full entry parses.
+    ///
+    /// This is the whole basis of the `budget_progress` change: the Tauri
+    /// command stopped re-parsing `budget.journal` and now hands
+    /// [`budget_progress_summary_from`] the `Prices` from `journal_artifacts()`.
+    /// That substitution is sound only because the parse in the full entry
+    /// contributes *nothing else* — the two entries share the identical
+    /// `collect_expense_postings` + `compute_budget_progress` tail, so `Prices`
+    /// is the only place they can diverge.
+    ///
+    /// Pin it here rather than end-to-end because `TxnPostingsRow.postings` is a
+    /// surreal `DbValue` and surrealdb-types v3 exposes no clean
+    /// `from_json_value` for FLEXIBLE objects — the same reason
+    /// `dashboard::bucket_postings_by_month` keeps a pure inner fn.
+    #[test]
+    fn the_cached_price_table_matches_what_the_full_entry_would_parse() {
+        // The `00:00:00` is not decoration: ledger-parser's P grammar requires a
+        // datetime, and a date-only directive parses to an *empty* price table
+        // silently — the Phase 4.4 bug that `render_exchange_rate` was fixed
+        // for. Without it the assertion below would compare None to None.
+        let journal = "P 2026-05-01 00:00:00 USD 1.35 CAD\n\n\
+                       2026-05-02 coffee\n    Expenses:Food  5.00 USD\n    Assets:Cash  -5.00 USD\n";
+
+        // What `journal_artifacts()` caches.
+        let cached = crate::ledger::parse_artifacts(journal).expect("fixture parses");
+
+        // What `budget_progress_summary` builds inline.
+        let parsed = crate::ledger::parse(journal).expect("fixture parses");
+        let mut inline = Prices::new();
+        inline.insert_from(&parsed);
+
+        let date = NaiveDate::from_ymd_opt(2026, 5, 2).unwrap();
+        let amount = Decimal::from(100);
+        let via_cache = cached.prices.convert(amount, "USD", "CAD", date).ok();
+        let via_inline = inline.convert(amount, "USD", "CAD", date).ok();
+
+        // Non-vacuous: a fixture whose rate never resolves would make any two
+        // tables agree on `None`.
+        assert!(
+            via_inline.is_some(),
+            "fixture must yield a resolvable rate, else the equality proves nothing"
+        );
+        assert_eq!(via_cache, via_inline);
     }
 }

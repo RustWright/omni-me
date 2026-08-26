@@ -27,7 +27,7 @@ use omni_me_core::statement_csv::{self, MoneyDirection};
 use omni_me_core::accounts;
 use rust_decimal::Decimal;
 
-use super::shared::{append_and_apply, append_new_and_apply};
+use super::shared::{append_and_apply, append_batch_and_apply, append_new_and_apply};
 use crate::AppState;
 
 /// Lightweight latency probe for the finances read commands. Logs the elapsed
@@ -396,7 +396,14 @@ pub struct DetectedAccountView {
 /// `AccountInput` typeahead consumes this so the user never maintains a list.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn list_known_accounts(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let artifacts = state.journal_artifacts_or_empty().await;
+    // `journal_artifacts()`, not `_or_empty()`: these are money figures, and
+    // empty artifacts mean an empty price table, which silently renders every
+    // foreign-currency posting unconverted rather than failing. The old code
+    // propagated both the read error and the parse error; so does this.
+    let artifacts = state
+        .journal_artifacts()
+        .await
+        .map_err(|e| format!("budget progress computation: {e}"))?;
     let declared = queries::list_accounts(&state.db)
         .await
         .map_err(|e| e.to_string())?;
@@ -985,25 +992,29 @@ pub async fn budget_progress(
         .unwrap_or(as_of_date);
     let cutoff = earliest_start.to_string();
 
-    let journal_path = state.app_data_dir.join("budget.journal");
-    let journal_content = match tokio::fs::read_to_string(&journal_path).await {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("read journal file: {e}")),
-    };
+    // The cached price table, not a fresh read-and-parse of `budget.journal`.
+    // This command used to do the latter — and the parse existed *solely* to
+    // build `Prices`, which `journal_artifacts()` already holds and shares with
+    // five sibling commands. So every Budget-screen load paid a full nom parse
+    // of the whole journal (~2.4 MB / 51k lines on real data) to reconstruct a
+    // table sitting in memory one field away.
+    //
+    // Note this is not the same shape as `net_worth_history`'s documented
+    // re-read below: that one needs the *dated transactions*, which the cache
+    // genuinely does not carry. This one needed nothing the cache was missing.
+    let artifacts = state.journal_artifacts_or_empty().await;
 
     let txn_rows = queries::list_transactions_since(&state.db, &cutoff)
         .await
         .map_err(|e| e.to_string())?;
 
-    let summary = budget::budget_progress_summary(
-        &journal_content,
+    let summary = budget::budget_progress_summary_from(
+        &artifacts.prices,
         &triples,
         &txn_rows,
         &base,
         as_of_date,
-    )
-    .map_err(|e| format!("budget progress computation: {e}"))?;
+    );
 
     Ok(summary.into_iter().map(budget_progress_to_view).collect())
 }
@@ -1265,7 +1276,19 @@ pub async fn import_chequing_csv(
     let parsed = statement_csv::parse_chequing_csv(&csv_text)
         .map_err(|e| format!("csv parse: {e}"))?;
 
-    let mut imported = 0usize;
+    // Collected, not appended per row. `append_new_and_apply` costs an
+    // event-store round trip *plus* a bookmark advance *plus* a debouncer nudge
+    // each time, so a 300-row statement paid ~900 serial awaits where
+    // `append_batch` folds the appends into one `BEGIN TRANSACTION` and the
+    // bookmark/nudge into one apiece. (The per-event projection work is
+    // unchanged — `apply_events` still walks events x projections — so this is
+    // roughly a 3x cut on the import, not a 300x one.)
+    //
+    // Failure semantics change with it, in the safer direction: a malformed row
+    // now aborts before anything is written, instead of leaving the first N-1
+    // rows committed under a returned Err. `commit_batch` next door already
+    // works this way.
+    let mut events = Vec::with_capacity(parsed.len());
     for row in &parsed {
         // Sign convention: Outflow = money leaving source (debit column on
         // chequing, charge on credit card). Negate for outflow, pass for
@@ -1292,11 +1315,14 @@ pub async fn import_chequing_csv(
             vec![source_posting, unmatched_posting],
         )
         .with_statement_source(Some(statement_source.clone()));
-        let event = NewEvent::transaction_recorded(state.device_id.clone(), &payload)
-            .map_err(|e| e.to_string())?;
-        append_new_and_apply(&state, event).await?;
-        imported += 1;
+        events.push(
+            NewEvent::transaction_recorded(state.device_id.clone(), &payload)
+                .map_err(|e| e.to_string())?,
+        );
     }
+
+    let imported = events.len();
+    append_batch_and_apply(&state, events).await?;
 
     Ok(ImportStatementCsvResult {
         imported,

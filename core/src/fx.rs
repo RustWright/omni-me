@@ -72,7 +72,7 @@ pub struct FrankfurterClient {
 impl FrankfurterClient {
     pub fn new() -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::http::client(),
             base_url: FRANKFURTER_BASE_URL.to_string(),
         }
     }

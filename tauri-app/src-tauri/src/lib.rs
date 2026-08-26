@@ -228,11 +228,29 @@ impl AppState {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(format!("read journal file: {e}")),
         };
+        // `spawn_blocking`, because `parse_artifacts` is a fully synchronous
+        // CPU burn — `catch_unwind`-wrapped nom parsing of the whole journal,
+        // then `SimplifiedLedger::try_from`, then `Balance::from` — measured at
+        // ~70 ms on the real 2.4 MB journal. Run inline it occupies the Tokio
+        // worker servicing this Tauri command with no await point, so nothing
+        // else on that worker progresses meanwhile.
+        //
+        // That is not rare. `JournalFile` rewrites the journal on *every*
+        // transaction-affecting event, and the cache is keyed on the file's
+        // `(mtime, len)` — so a bulk import or an applied sync pull invalidates
+        // it repeatedly, and each cold parse lands while the sync tasks and
+        // other commands are competing for the same pool.
         let parse_start = std::time::Instant::now();
-        let artifacts = Arc::new(ledger::parse_artifacts(&content).map_err(|e| e.to_string())?);
+        let bytes = content.len();
+        let artifacts = Arc::new(
+            tokio::task::spawn_blocking(move || ledger::parse_artifacts(&content))
+                .await
+                .map_err(|e| format!("journal parse task: {e}"))?
+                .map_err(|e| e.to_string())?,
+        );
         tracing::debug!(
             target: "omni::perf",
-            bytes = content.len(),
+            bytes,
             elapsed_ms = parse_start.elapsed().as_millis() as u64,
             "journal parse (cold)"
         );
@@ -383,21 +401,44 @@ pub fn run() {
                 // it), and loudly warns on the orphan signature — every local event
                 // authored under a non-bound id with no successful pull, i.e. data
                 // that can never be pushed (the stranding bug). Read-only, non-fatal.
-                match omni_me_core::sync::audit_device_ids(&db, &device_id).await {
-                    Ok(audit) => {
-                        tracing::info!("{}", audit.summary());
-                        if audit.orphan_signature() {
-                            tracing::warn!(
-                                "SYNC ORPHAN: {} local event(s) exist under foreign device id(s) \
-                                 with none authored by this device ({}) and no successful pull — \
-                                 they can never be pushed. A wrong-id import or restore is the \
-                                 likely cause; re-import under this device id or reset local data.",
-                                audit.total(),
-                                device_id,
-                            );
+                //
+                // **Spawned, not awaited.** This is a `GROUP BY device_id` aggregate
+                // over the whole events table plus a `sync_state` lookup, and this
+                // whole block sits inside a `block_on` that gates the window
+                // appearing. Awaited, it was the largest unconditional scan on the
+                // pre-paint path, growing with the log forever, on a diagnostic
+                // whose only consumer is the log file — nothing downstream reads it,
+                // so no startup step needs its result. `PullScheduler`'s 4 s warm-up
+                // already treats startup contention as the thing to avoid.
+                //
+                // A 5 s delay keeps the scan clear of the first-paint burst of
+                // finances reads rather than merely moving it off the critical path
+                // into competition with it.
+                {
+                    let audit_db = db.clone();
+                    let audit_device_id = device_id.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        match omni_me_core::sync::audit_device_ids(&audit_db, &audit_device_id)
+                            .await
+                        {
+                            Ok(audit) => {
+                                tracing::info!("{}", audit.summary());
+                                if audit.orphan_signature() {
+                                    tracing::warn!(
+                                        "SYNC ORPHAN: {} local event(s) exist under foreign device \
+                                         id(s) with none authored by this device ({}) and no \
+                                         successful pull — they can never be pushed. A wrong-id \
+                                         import or restore is the likely cause; re-import under \
+                                         this device id or reset local data.",
+                                        audit.total(),
+                                        audit_device_id,
+                                    );
+                                }
+                            }
+                            Err(e) => tracing::warn!("device_id audit failed: {e}"),
                         }
-                    }
-                    Err(e) => tracing::warn!("device_id audit failed: {e}"),
+                    });
                 }
 
                 let timezone_shared = Arc::new(tokio::sync::RwLock::new(timezone));
@@ -485,7 +526,7 @@ pub fn run() {
                     roster: tokio::sync::RwLock::new(roster),
                     app_data_dir: app_data,
                     attachment_cache_dir,
-                    http: reqwest::Client::new(),
+                    http: omni_me_core::http::client(),
                     server_token: tokio::sync::RwLock::new(server_token.clone()),
                     push_debouncer,
                     retry_engine,

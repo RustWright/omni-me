@@ -12,6 +12,7 @@ pub mod db;
 pub mod events;
 pub mod extraction;
 pub mod fx;
+pub mod http;
 pub mod import;
 pub mod journal_file;
 pub mod journal_import;

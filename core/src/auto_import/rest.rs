@@ -328,7 +328,7 @@ impl AutoImportSource for RestSource {
     async fn pull(&self) -> Result<ImportSummary, ImportError> {
         let auth = self.resolve_auth()?;
 
-        let client = reqwest::Client::new();
+        let client = crate::http::client();
         let mut req = client.get(&self.url);
         if let Some((header, value)) = auth {
             req = req.header(header, value);

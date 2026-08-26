@@ -160,6 +160,61 @@ mod tests {
         );
     }
 
+    /// Nothing in `src-tauri` may build an HTTP client without a timeout.
+    ///
+    /// The `src-tauri` half of `omni_me_core::http`'s own scan. `AppState.http`
+    /// is the client every `box_request` rides on, so a client built here
+    /// straight from `reqwest` means the phone can hang forever on an
+    /// unresponsive box with no error surfaced — the failure mode that reads as
+    /// "the app is frozen" rather than "the box is down".
+    ///
+    /// Note the prose above deliberately avoids spelling the constructors out:
+    /// this file is itself in scope, so a literal in a comment makes the scan
+    /// match itself. It did, on the first run.
+    #[test]
+    fn no_bare_reqwest_client_in_src_tauri() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+
+        // Assembled at runtime: as literals they would appear in this file and
+        // the scan would match itself.
+        let needles = [
+            format!("reqwest::Client::new{}", "()"),
+            format!("reqwest::Client::builder{}", "()"),
+        ];
+
+        fn walk(dir: &std::path::Path, needles: &[String], offenders: &mut Vec<String>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, needles, offenders);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                // Stripped, not collapsed — see `no_command_appends_events_directly`.
+                let flat: String = text.split_whitespace().collect();
+                if needles.iter().any(|n| flat.contains(n.as_str())) {
+                    offenders.push(path.display().to_string());
+                }
+            }
+        }
+
+        walk(&src, &needles, &mut offenders);
+        assert!(
+            offenders.is_empty(),
+            "these build an HTTP client with no timeout; use \
+             `omni_me_core::http::client()`: {offenders:#?}"
+        );
+    }
+
     /// Nothing may talk to the box except through [`AppState::box_request`].
     ///
     /// Companion to `no_command_appends_events_directly`, and the same reasoning:

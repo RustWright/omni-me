@@ -29,7 +29,7 @@ impl GeminiClient {
             api_key,
             model: "gemini-2.0-flash".to_string(),
             base_url: "https://generativelanguage.googleapis.com".to_string(),
-            http: reqwest::Client::new(),
+            http: crate::http::llm_client(),
             last_request: Arc::new(Mutex::new(
                 Instant::now()
                     .checked_sub(MIN_REQUEST_INTERVAL)

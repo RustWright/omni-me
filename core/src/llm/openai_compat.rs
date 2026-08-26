@@ -40,7 +40,7 @@ impl OpenAiCompatClient {
             api_key: api_key.into(),
             model: model.into(),
             base_url: base_url.into(),
-            http: reqwest::Client::new(),
+            http: crate::http::llm_client(),
         }
     }
 
