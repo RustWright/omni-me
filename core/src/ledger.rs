@@ -372,4 +372,172 @@ account Assets:Cash  ; commodity:CAD
             Decimal::from_str("-5.25").unwrap()
         );
     }
+
+    /// Every description shape that changes the *structure* of an hledger
+    /// header line must still round-trip to correct balances.
+    ///
+    /// This is an absence test: it asserts the file does not fail to parse. No
+    /// fix commit would produce it, because each case is a payee string nobody
+    /// would think to write by hand — they arrive from bank CSV description
+    /// columns, which is exactly why `journal_import` already strips `**` on
+    /// the way in while no *write* path did on the way out. One unlucky payee
+    /// used to abort `parse_ledger` for the whole file, and `account_summaries`
+    /// then falls back to empty, so net worth, Accounts and the dashboard all
+    /// went blank together.
+    #[test]
+    fn hazardous_descriptions_still_parse() {
+        use crate::events::{Posting, TransactionRecordedPayload};
+        use chrono::NaiveDate;
+
+        let cases = [
+            ("status marker", "**SAMPLE PAYEE - GENERIC MEMO**"),
+            ("pending marker", "!URGENT VENDOR"),
+            ("leading code paren", "(refund) Amazon"),
+            ("embedded semicolon", "VENDOR ;ETF: Bought 2.0000 shares"),
+            ("embedded newline", "LINE ONE\nLINE TWO"),
+            ("empty", ""),
+            ("whitespace only", "   \t  "),
+            ("marker and comment", "*STORE* ; memo"),
+        ];
+
+        for (label, description) in cases {
+            let payload = TransactionRecordedPayload {
+                txn_id: "01JKTXN".into(),
+                date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
+                description: description.into(),
+                postings: vec![
+                    Posting {
+                        account: "Assets:Cash".into(),
+                        commodity: "CAD".into(),
+                        amount: Decimal::from_str("-5.25").unwrap(),
+                        fx_rate: None,
+                        tags: vec![],
+                    },
+                    Posting {
+                        account: "Expenses:Coffee".into(),
+                        commodity: "CAD".into(),
+                        amount: Decimal::from_str("5.25").unwrap(),
+                        fx_rate: None,
+                        tags: vec![],
+                    },
+                ],
+                tags: vec![],
+                attachment: None,
+                statement_source: None,
+            };
+            let rendered = crate::journal_file::render_transaction(&payload);
+            let bal = balances(&rendered)
+                .unwrap_or_else(|e| panic!("{label}: rendered journal failed to parse: {e}"));
+            let cash = bal
+                .account_balances
+                .get("Assets:Cash")
+                .unwrap_or_else(|| panic!("{label}: Assets:Cash missing after round trip"));
+            assert_eq!(
+                cash.amounts.get("CAD").unwrap().quantity,
+                Decimal::from_str("-5.25").unwrap(),
+                "{label}: balance drifted"
+            );
+        }
+    }
+
+    /// A zero-posting transaction is rendered as a comment rather than a
+    /// header with no posting lines, which `many1(parse_posting)` would reject
+    /// for the whole file. `validate_payload` accepts `postings: []` and
+    /// `update_transaction` passes an arbitrary `changes` bag, so this shape is
+    /// reachable without a malformed event.
+    #[test]
+    fn zero_posting_transaction_does_not_break_the_file() {
+        use crate::events::{Posting, TransactionRecordedPayload};
+        use chrono::NaiveDate;
+
+        let empty = TransactionRecordedPayload {
+            txn_id: "01JKEMPTY".into(),
+            date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
+            description: "Nothing".into(),
+            postings: vec![],
+            tags: vec![],
+            attachment: None,
+            statement_source: None,
+        };
+        let good = TransactionRecordedPayload {
+            txn_id: "01JKGOOD".into(),
+            date: NaiveDate::from_ymd_opt(2026, 5, 17).unwrap(),
+            description: "Coffee".into(),
+            postings: vec![
+                Posting {
+                    account: "Assets:Cash".into(),
+                    commodity: "CAD".into(),
+                    amount: Decimal::from_str("-5.25").unwrap(),
+                    fx_rate: None,
+                    tags: vec![],
+                },
+                Posting {
+                    account: "Expenses:Coffee".into(),
+                    commodity: "CAD".into(),
+                    amount: Decimal::from_str("5.25").unwrap(),
+                    fx_rate: None,
+                    tags: vec![],
+                },
+            ],
+            tags: vec![],
+            attachment: None,
+            statement_source: None,
+        };
+
+        let mut file = crate::journal_file::render_transaction(&empty);
+        file.push_str(&crate::journal_file::render_transaction(&good));
+
+        let bal = balances(&file).expect("zero-posting entry must not break the file");
+        assert_eq!(
+            bal.account_balances
+                .get("Assets:Cash")
+                .unwrap()
+                .amounts
+                .get("CAD")
+                .unwrap()
+                .quantity,
+            Decimal::from_str("-5.25").unwrap()
+        );
+    }
+
+    /// An empty commodity used to render as `""`, which `string_between_quotes`
+    /// cannot parse — and `ledger-parser` v6 rejects a bare unqualified amount
+    /// too, so there is no valid rendering. The entry is quarantined as a
+    /// comment instead, which costs one transaction rather than every balance.
+    #[test]
+    fn unrenderable_transactions_are_quarantined() {
+        use crate::events::{Posting, TransactionRecordedPayload};
+        use chrono::NaiveDate;
+
+        let payload = TransactionRecordedPayload {
+            txn_id: "01JKBARE".into(),
+            date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
+            description: "Bare amount".into(),
+            postings: vec![
+                Posting {
+                    account: "Assets:Cash".into(),
+                    commodity: String::new(),
+                    amount: Decimal::from_str("-5.25").unwrap(),
+                    fx_rate: None,
+                    tags: vec![],
+                },
+                Posting {
+                    account: "Expenses:Coffee".into(),
+                    commodity: String::new(),
+                    amount: Decimal::from_str("5.25").unwrap(),
+                    fx_rate: None,
+                    tags: vec![],
+                },
+            ],
+            tags: vec![],
+            attachment: None,
+            statement_source: None,
+        };
+        let rendered = crate::journal_file::render_transaction(&payload);
+        assert!(
+            rendered.starts_with("; skipped 01JKBARE:"),
+            "empty commodity should quarantine, got: {rendered}"
+        );
+        balances(&rendered).expect("quarantined entry must not break the file");
+    }
 }

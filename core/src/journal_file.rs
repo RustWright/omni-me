@@ -245,7 +245,29 @@ impl Projection for JournalFile {
 /// Render a single `TransactionRecorded` into an hledger transaction block,
 /// trailing with one blank line so successive entries don't run together.
 pub fn render_transaction(t: &TransactionRecordedPayload) -> String {
-    let mut out = format!("{} {}\n", t.date, t.description);
+    // Two payload shapes have no valid hledger rendering at all, and both abort
+    // the *whole-file* parse rather than just corrupting their own entry:
+    //
+    // * no postings — `parse_transaction` ends in `many1(parse_posting)`, so a
+    //   header with no posting lines fails. `validate_payload` accepts
+    //   `postings: []` and `update_transaction` forwards an arbitrary `changes`
+    //   bag, so this is reachable without a malformed event.
+    // * a posting with an empty commodity — `""` fails `string_between_quotes`,
+    //   and a bare unqualified amount is not accepted by `ledger-parser` v6
+    //   either (asserted by `ledger::tests::unrenderable_transactions_are_quarantined`).
+    //
+    // Quarantine the entry as a comment: parseable, inert, still traceable by
+    // id, and it costs one transaction's worth of balance rather than every
+    // balance view in the app.
+    if let Some(reason) = unrenderable_reason(t) {
+        return format!("; skipped {}: {}\n\n", t.txn_id, reason);
+    }
+
+    let mut out = format!(
+        "{} {}\n",
+        t.date,
+        sanitize_description(&t.description, &t.txn_id)
+    );
 
     let mut meta = vec![format!("txn_id:{}", t.txn_id)];
     if let Some(att) = &t.attachment {
@@ -263,15 +285,90 @@ pub fn render_transaction(t: &TransactionRecordedPayload) -> String {
     out
 }
 
+/// Why this payload cannot be rendered as a valid hledger entry, or `None`
+/// when it can. Both cases would otherwise abort the whole-file parse.
+fn unrenderable_reason(t: &TransactionRecordedPayload) -> Option<String> {
+    if t.postings.is_empty() {
+        return Some("transaction has no postings".to_string());
+    }
+    if let Some(bad) = t.postings.iter().find(|p| p.commodity.trim().is_empty()) {
+        return Some(format!("posting on {} has no commodity", bad.account));
+    }
+    None
+}
+
+/// Make a description safe to emit on an hledger transaction header line.
+///
+/// The header grammar is `DATE [*|!] [(CODE)] [DESCRIPTION]`, so several
+/// characters change the *structure* of the line rather than its content:
+///
+/// * a leading `*` or `!` is read as the status marker (`**PAYEE**` — the
+///   dominant bank-statement shape — parses as status `*` plus payee `*PAYEE**`,
+///   and `ledger-parser` v6 rejects a marker not followed by whitespace, which
+///   aborts the whole file);
+/// * a leading `(` opens a transaction code, so `(refund) Amazon` re-parses as
+///   code `refund` with the payee reduced to `Amazon`;
+/// * a `;` starts a header comment, silently truncating the payee;
+/// * an embedded newline ends the entry, orphaning the postings that follow;
+/// * an empty description leaves `preceded(space1, parse_payee)` nothing to
+///   match, which also aborts the whole file.
+///
+/// The last two are the dangerous class: one bad row makes `ledger::parse` fail
+/// wholesale, and `account_summaries` then falls back to empty — so net worth,
+/// the Accounts screen and the dashboard all collapse together from a single
+/// unlucky payee.
+///
+/// This is the only guard that covers every writer. `validate_payload` runs
+/// exclusively on the server's push path (`routes/sync.rs:40`), never on local
+/// append, and the record/import/auto-import commands each build payloads
+/// independently — so sanitizing here is what makes `record_transaction`,
+/// `import_chequing_csv` and `commit_batch` safe without changing any of them.
+/// It also covers replay of events already in the store, which no upstream
+/// validation can reach.
+///
+/// Normalization is lossy on the payee and exact on the money, which is the
+/// right trade: the projection keeps the user's original string and stays the
+/// authority for the Ledger list, search and export, while the journal file
+/// exists to be re-parsed for balances. `journal_import::normalize_status_marker`
+/// already makes the same trade in the opposite direction.
+fn sanitize_description(raw: &str, txn_id: &str) -> String {
+    // Structural characters -> space. `;` would comment out the rest of the
+    // line; CR/LF would terminate the entry mid-transaction.
+    let flattened: String = raw
+        .chars()
+        .map(|c| match c {
+            ';' | '\r' | '\n' | '\t' => ' ',
+            other => other,
+        })
+        .collect();
+
+    // Leading marker characters, stripped repeatedly: `**PAYEE**` leaves a
+    // second `*` behind after the first is removed.
+    let stripped = flattened.trim().trim_start_matches(['*', '!', '(', ' ']);
+
+    let collapsed = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if collapsed.is_empty() {
+        // Never emit a bare date. Anything traceable beats an unparseable file.
+        format!("txn {txn_id}")
+    } else {
+        collapsed
+    }
+}
+
 /// Render a single posting line — 4-space indent + account + two-space gap +
 /// amount/commodity + optional FX + optional trailing tag comment.
 pub fn render_posting(p: &Posting) -> String {
-    let mut line = format!(
-        "    {}  {} {}",
-        p.account,
-        p.amount,
-        render_commodity(&p.commodity)
-    );
+    // An account name ends at the first run of two spaces, so an account
+    // containing one would truncate here and hand the remainder to the amount
+    // parser. Account strings are free text from the frontend.
+    let account = p.account.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut line = format!("    {}  {}", account, p.amount);
+    let commodity = render_commodity(&p.commodity);
+    if !commodity.is_empty() {
+        line.push(' ');
+        line.push_str(&commodity);
+    }
     if let Some(fx) = &p.fx_rate {
         line.push_str(&render_fx(fx));
     }
@@ -291,7 +388,13 @@ fn render_fx(fx: &FxRate) -> String {
 /// rendered journal always re-parses. (ledger-parser's own serializer omits
 /// this, so we must do it here or the round-trip through `core::ledger` fails.)
 fn render_commodity(name: &str) -> String {
-    if name.is_empty() || name.chars().any(|c| !is_bare_commodity_char(c)) {
+    if name.is_empty() {
+        // `""` is not a valid commodity — `string_between_quotes` needs at
+        // least one fragment, so quoting an empty name aborts the whole-file
+        // parse. A bare amount with no commodity is valid hledger, so emit
+        // nothing and let `render_posting` drop the separating space.
+        String::new()
+    } else if name.chars().any(|c| !is_bare_commodity_char(c)) {
         format!("\"{name}\"")
     } else {
         name.to_string()
