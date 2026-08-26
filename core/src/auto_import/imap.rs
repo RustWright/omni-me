@@ -116,12 +116,40 @@ pub async fn poll_once(
     let mut events = Vec::new();
     let mut unrouted = 0usize;
 
+    let mut failed = 0usize;
+
     for msg in &messages {
         match dispatch_to(msg, handlers) {
-            Some(handler) => {
-                let mut handler_events = handler.handle(msg).await?;
-                events.append(&mut handler_events);
-            }
+            Some(handler) => match handler.handle(msg).await {
+                Ok(mut handler_events) => events.append(&mut handler_events),
+                // A per-message failure must NOT abort the pass.
+                //
+                // This used to be `handler.handle(msg).await?`, and the cursor
+                // advance below is unreachable once that returns early — so a
+                // single message the handler couldn't parse (a receipt with no
+                // extractable text is enough) left the cursor pinned, and every
+                // later tick refetched the same message, failed the same way,
+                // and backed off to the one-hour maximum. Auto-import for that
+                // mailbox was then dead permanently, with every subsequent
+                // statement queued behind it and no recovery short of editing
+                // `imap_cursors` by hand.
+                //
+                // Note the asymmetry that gave the bug away: the `None` arm
+                // below — a message no handler claimed — has always counted it
+                // and moved on. A message a handler claimed but choked on is no
+                // more re-processable than one nobody wanted.
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!(
+                        account = fetcher.name(),
+                        uid = msg.uid,
+                        from = %msg.from,
+                        subject = %msg.subject,
+                        error = %e,
+                        "imap: handler failed on one message — skipping it and continuing",
+                    );
+                }
+            },
             None => {
                 unrouted += 1;
             }
@@ -134,9 +162,17 @@ pub async fn poll_once(
             "imap: messages with no handler match (likely unrelated mail)",
         );
     }
+    if failed > 0 {
+        tracing::warn!(
+            account = fetcher.name(),
+            count = failed,
+            total = messages.len(),
+            "imap: some messages failed to process and were skipped",
+        );
+    }
 
-    // Advance the cursor regardless of unrouted count — those messages don't
-    // need re-processing next tick.
+    // Advance the cursor regardless of unrouted OR failed count — neither is
+    // re-processable, and pinning the cursor on them wedges the mailbox.
     let next_cursor = FetchCursor {
         last_seen_uid: max_uid.or(cursor.last_seen_uid),
     };
@@ -211,6 +247,28 @@ pub mod mock {
                 device_id: "test".into(),
                 payload: serde_json::json!({ "from": message.from }),
             }])
+        }
+    }
+
+    /// Handler that claims any message whose `from` contains `needle` and then
+    /// always fails. Stands in for the real-world case: a receipt email whose
+    /// body yields no extractable text, which `ReceiptHandler::handle` reports
+    /// as `ImportError::Parse`.
+    pub struct FailingHandler {
+        pub name: String,
+        pub needle: String,
+    }
+
+    #[async_trait]
+    impl ImapHandler for FailingHandler {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn accepts(&self, message: &ImapMessage) -> bool {
+            message.from.contains(&self.needle)
+        }
+        async fn handle(&self, _message: &ImapMessage) -> Result<Vec<NewEvent>, ImportError> {
+            Err(ImportError::Parse("no extractable text".into()))
         }
     }
 }
@@ -316,4 +374,76 @@ mod tests {
         assert!(events.is_empty());
         assert_eq!(next.last_seen_uid, Some(500), "cursor must NOT regress to None");
     }
+
+    /// The poison pill. One message a handler chokes on must not stop the pass
+    /// or pin the cursor — otherwise every later tick refetches it, fails
+    /// identically, and backs the source off to its 1h maximum forever.
+    #[tokio::test]
+    async fn one_unparseable_message_does_not_wedge_the_mailbox() {
+        let fetcher = MockFetcher::new("gmail");
+        fetcher.push_response(
+            vec![
+                make_message(101, "receipts@shop.example"),
+                make_message(102, "receipts@shop.example"),
+            ],
+            Some(102),
+        );
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(FailingHandler {
+            name: "receipts".into(),
+            needle: "shop.example".into(),
+        })];
+        let cursor = FetchCursor {
+            last_seen_uid: Some(100),
+        };
+
+        let (events, next) = poll_once(&fetcher, &handlers, &cursor)
+            .await
+            .expect("a per-message handler failure must not fail the whole pass");
+
+        assert!(events.is_empty(), "the failing handler produced nothing");
+        assert_eq!(
+            next.last_seen_uid,
+            Some(102),
+            "the cursor must move past messages that cannot be processed",
+        );
+    }
+
+    /// The message that matters most: good mail behind bad mail still lands.
+    /// Before the fix the first failure returned early, so message 102 was
+    /// never even dispatched.
+    #[tokio::test]
+    async fn a_failing_message_does_not_block_the_ones_behind_it() {
+        let fetcher = MockFetcher::new("gmail");
+        fetcher.push_response(
+            vec![
+                make_message(101, "receipts@shop.example"),
+                make_message(102, "statements@bank.example"),
+            ],
+            Some(102),
+        );
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![
+            Box::new(FailingHandler {
+                name: "receipts".into(),
+                needle: "shop.example".into(),
+            }),
+            Box::new(NeedleHandler {
+                name: "statements".into(),
+                needle: "bank.example".into(),
+            }),
+        ];
+        let cursor = FetchCursor {
+            last_seen_uid: Some(100),
+        };
+
+        let (events, next) = poll_once(&fetcher, &handlers, &cursor).await.unwrap();
+
+        assert_eq!(
+            events.len(),
+            1,
+            "the statement behind the unparseable receipt must still be imported",
+        );
+        assert_eq!(events[0].aggregate_id, "imap-statements-102");
+        assert_eq!(next.last_seen_uid, Some(102));
+    }
+
 }

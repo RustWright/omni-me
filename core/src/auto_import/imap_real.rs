@@ -19,6 +19,15 @@ use crate::credentials::ImapCredentials;
 
 use super::imap::{FetchCursor, ImapFetcher, ImapMessage};
 
+/// Most message BODIES one tick will fetch. The UID enumeration stays
+/// open-ended, so the cursor always advances and a backlog drains across
+/// successive ticks rather than being skipped.
+const MAX_UIDS_PER_TICK: usize = 200;
+
+/// Largest single message body accepted. Anything above this is skipped
+/// (and stepped over) rather than buffered.
+const MAX_MESSAGE_BYTES: usize = 25 * 1024 * 1024;
+
 pub struct AsyncImapFetcher {
     name: String,
     creds: ImapCredentials,
@@ -78,13 +87,55 @@ fn fetch_blocking(
 
     // Build UID range. On first run (no cursor), only fetch latest message
     // so we don't backfill the entire mailbox accidentally.
+    // Two round trips: enumerate UIDs first, then fetch at most
+    // MAX_UIDS_PER_TICK bodies.
+    //
+    // The single open-ended `{last+1}:*` fetch this replaces pulled every new
+    // message's FULL body and materialized the lot into one Vec, so after a
+    // stretch of downtime — or under a flood from anyone who knows the watched
+    // address — one tick tried to hold the whole backlog in RAM.
+    //
+    // The obvious cap, narrowing the range to `{last+1}:{last+N}`, is WRONG and
+    // would have reintroduced the poison pill in a new shape: IMAP UIDs are
+    // monotonic but not contiguous, so if the next real message sits beyond
+    // `last+N` the narrowed fetch returns nothing, `max_uid` never moves, and
+    // every later tick re-requests the same empty window forever. Enumerating
+    // first keeps the range open — only the *body* fetch is bounded — so the
+    // cursor always advances and a backlog simply drains over several ticks.
     let range = match cursor.last_seen_uid {
         Some(uid) => format!("{}:*", uid + 1),
         None => "*".to_string(),
     };
 
+    let uid_only = session
+        .uid_fetch(&range, "(UID)")
+        .map_err(|e| ImportError::Upstream(format!("uid_fetch (enumerate): {e}")))?;
+
+    let mut pending: Vec<u32> = uid_only.iter().filter_map(|f| f.uid).collect();
+    pending.sort_unstable();
+    let total_pending = pending.len();
+    pending.truncate(MAX_UIDS_PER_TICK);
+
+    if pending.is_empty() {
+        let _ = session.logout();
+        return Ok((Vec::new(), cursor.last_seen_uid));
+    }
+    if total_pending > pending.len() {
+        tracing::info!(
+            pending = total_pending,
+            taking = pending.len(),
+            "imap: backlog exceeds the per-tick cap — draining over several ticks",
+        );
+    }
+
+    let body_range = pending
+        .iter()
+        .map(|u| u.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+
     let fetches = session
-        .uid_fetch(&range, "(UID INTERNALDATE RFC822)")
+        .uid_fetch(&body_range, "(UID INTERNALDATE RFC822)")
         .map_err(|e| ImportError::Upstream(format!("uid_fetch: {e}")))?;
 
     let mut messages = Vec::new();
@@ -96,6 +147,19 @@ fn fetch_blocking(
             None => continue,
         };
         let body = match fetch.body() {
+            Some(b) if b.len() > MAX_MESSAGE_BYTES => {
+                // Skipped, not fatal — and the cursor still advances past it,
+                // so one oversized message can't pin the mailbox.
+                tracing::warn!(
+                    uid,
+                    bytes = b.len(),
+                    "imap: message over the size cap — skipping",
+                );
+                if uid > max_uid.unwrap_or(0) {
+                    max_uid = Some(uid);
+                }
+                continue;
+            }
             Some(b) => b.to_vec(),
             None => continue,
         };

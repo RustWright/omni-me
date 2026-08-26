@@ -31,6 +31,32 @@ use crate::auto_import_scheduler::{
 };
 use crate::events::{DraftTransaction, EventStore, ProjectionRunner};
 
+/// How long a helper may run before it is killed.
+///
+/// Generous on purpose — a helper that logs into a bank and pages through a
+/// statement is legitimately slow. The point is not to be tight, it is to have
+/// a bound at all: before this, a helper that hung blocked its scheduler task
+/// for the lifetime of the process.
+const HELPER_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Cap on how much of a helper's stdout/stderr is retained. `wait_with_output`
+/// buffers both streams in full, so an unbounded writer is an OOM on the box.
+/// The response contract is a single JSON line, so anything past this is noise.
+const MAX_HELPER_OUTPUT: usize = 8 * 1024 * 1024;
+
+/// Truncate captured output to [`MAX_HELPER_OUTPUT`], on a UTF-8 boundary so
+/// the result still decodes.
+fn truncate(bytes: &[u8]) -> Vec<u8> {
+    if bytes.len() <= MAX_HELPER_OUTPUT {
+        return bytes.to_vec();
+    }
+    let mut end = MAX_HELPER_OUTPUT;
+    while end > 0 && (bytes[end] & 0xC0) == 0x80 {
+        end -= 1;
+    }
+    bytes[..end].to_vec()
+}
+
 /// Engine → helper request, sent as one JSON line on the helper's stdin.
 /// Tagged by `verb` so the wire form is `{"verb":"pull"}` /
 /// `{"verb":"reauth","otp":"…"}`.
@@ -154,8 +180,35 @@ impl SubprocessSource {
         let request_json = serde_json::to_string(request)
             .map_err(|e| ImportError::Parse(format!("serialize request: {e}")))?;
 
-        let mut child = Command::new(&self.command)
-            .args(&self.args)
+        // `.env_clear()` + an explicit allow-list, not inheritance.
+        //
+        // The module doc above says "the engine never sees a secret". That was
+        // true one way and false the other: the server reads `GEMINI_API_KEY`
+        // from its own environment, and every helper it spawned inherited that
+        // plus whatever else the compose `.env` injected. For a boundary whose
+        // whole point is third-party plugin authors, inheritance handed each
+        // plugin the engine's credentials for free.
+        //
+        // The allow-list is what a helper legitimately needs to find its OWN
+        // config: `HOME`/`XDG_CONFIG_HOME` locate `credentials.toml`, `PATH`
+        // resolves interpreters, and the locale vars keep text handling sane.
+        let mut cmd = Command::new(&self.command);
+        cmd.args(&self.args).env_clear().kill_on_drop(true);
+        for key in [
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "PATH",
+            "LANG",
+            "LC_ALL",
+            "TZ",
+        ] {
+            if let Ok(value) = std::env::var(key) {
+                cmd.env(key, value);
+            }
+        }
+
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -177,22 +230,51 @@ impl SubprocessSource {
             drop(stdin);
         }
 
-        let output = child
-            .wait_with_output()
-            .await
-            .map_err(|e| ImportError::Io(format!("wait helper: {e}")))?;
+        // A helper that never exits used to block its scheduler task forever —
+        // `wait_with_output()` has no deadline and nothing else kills the child.
+        // On timeout we kill explicitly; dropping the handle alone is not
+        // enough to guarantee the process is gone.
+        let output = match tokio::time::timeout(HELPER_TIMEOUT, child.wait_with_output()).await {
+            Ok(result) => result.map_err(|e| ImportError::Io(format!("wait helper: {e}")))?,
+            Err(_) => {
+                // `wait_with_output` consumed the child, so there is no handle
+                // left to call `kill()` on — which is why the command is built
+                // with `.kill_on_drop(true)`. Timing out drops the future, the
+                // future drops the `Child`, and tokio sends the signal. Without
+                // that flag the helper would outlive its own timeout.
+                return Err(ImportError::Upstream(format!(
+                    "helper {} exceeded {}s and was killed",
+                    self.name,
+                    HELPER_TIMEOUT.as_secs(),
+                )));
+            }
+        };
+
+        // Both streams are buffered in full by `wait_with_output`, so a helper
+        // that prints without bound is an OOM on the box. Truncate rather than
+        // fail: a chatty helper is a nuisance, not an incident, and the JSON
+        // line we actually want is the first thing on stdout.
+        if output.stdout.len() > MAX_HELPER_OUTPUT || output.stderr.len() > MAX_HELPER_OUTPUT {
+            tracing::warn!(
+                helper = %self.name,
+                stdout_bytes = output.stdout.len(),
+                stderr_bytes = output.stderr.len(),
+                "helper produced oversized output — truncating",
+            );
+        }
 
         // Non-zero exit = the helper crashed or never produced JSON (per the
         // contract, even `needs_reauth` exits 0). Treat as transient → backoff.
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr_bytes = truncate(&output.stderr);
+            let stderr = String::from_utf8_lossy(&stderr_bytes);
             return Err(ImportError::Upstream(format!(
                 "helper {} exited {} stderr: {stderr}",
                 self.name, output.status
             )));
         }
 
-        let stdout = String::from_utf8(output.stdout)
+        let stdout = String::from_utf8(truncate(&output.stdout))
             .map_err(|e| ImportError::Parse(format!("stdout not utf-8: {e}")))?;
         serde_json::from_str(stdout.trim())
             .map_err(|e| ImportError::Parse(format!("helper response: {e}")))

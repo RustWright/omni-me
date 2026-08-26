@@ -67,12 +67,39 @@ impl ReceiptHandler {
     }
 }
 
+/// Largest PDF attachment handed to poppler. Receipts and statements are well
+/// under a megabyte; anything at this size is not a receipt.
+const MAX_PDF_BYTES: usize = 25 * 1024 * 1024;
+
+/// Cap on extracted text. Bounds the decompression ratio a crafted PDF can
+/// achieve even when poppler itself exits cleanly.
+const MAX_PDF_TEXT_BYTES: usize = 4 * 1024 * 1024;
+
+/// Wall-clock bound on one `pdftotext` run.
+const PDFTOTEXT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Pdftotext over bytes, no encryption — used to pull text out of plain
 /// (non-password-protected) PDF attachments. Returns empty string when
 /// pdftotext can't extract (typically image-only PDFs); the caller decides
 /// whether to fall back to image-mode extraction.
 async fn pdftotext_bytes(pdf_bytes: &[u8]) -> Result<String, ImportError> {
     use std::io::Write;
+
+    // Refuse oversized attachments before poppler ever sees them.
+    //
+    // This is the least-trusted input in the system: an arbitrary PDF, from an
+    // unauthenticated email, reaching a large C++ parser as the server user
+    // with no sandbox — and `accepts()` is spoofable, since `from` is taken
+    // from the raw RFC822 header with no SPF or DKIM check. A size cap does not
+    // make poppler safe, but it removes the cheapest attack (a compression bomb
+    // that OOM-kills the box) and costs nothing: real receipts are tiny.
+    if pdf_bytes.len() > MAX_PDF_BYTES {
+        return Err(ImportError::Parse(format!(
+            "pdf attachment is {} bytes, over the {MAX_PDF_BYTES}-byte limit",
+            pdf_bytes.len(),
+        )));
+    }
+
     let mut temp = tempfile::NamedTempFile::new()
         .map_err(|e| ImportError::Io(format!("temp file: {e}")))?;
     temp.write_all(pdf_bytes)
@@ -80,21 +107,48 @@ async fn pdftotext_bytes(pdf_bytes: &[u8]) -> Result<String, ImportError> {
     temp.flush()
         .map_err(|e| ImportError::Io(format!("flush temp: {e}")))?;
 
-    let output = Command::new("pdftotext")
+    // `kill_on_drop` so the timeout below actually terminates poppler: a
+    // malformed PDF that sends it into a loop would otherwise wedge this
+    // source's scheduler task for the life of the process.
+    let child = Command::new("pdftotext")
         .arg("-layout")
         .arg(temp.path())
         .arg("-")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .await
+        .kill_on_drop(true)
+        .spawn()
         .map_err(|e| ImportError::Io(format!("pdftotext spawn: {e}")))?;
+
+    let output = match tokio::time::timeout(PDFTOTEXT_TIMEOUT, child.wait_with_output()).await {
+        Ok(result) => result.map_err(|e| ImportError::Io(format!("pdftotext wait: {e}")))?,
+        Err(_) => {
+            tracing::warn!(
+                timeout_secs = PDFTOTEXT_TIMEOUT.as_secs(),
+                "pdftotext exceeded its timeout and was killed",
+            );
+            // Non-fatal, same as an unextractable PDF — and now that a handler
+            // error no longer wedges the mailbox, either outcome is survivable.
+            return Ok(String::new());
+        }
+    };
 
     if !output.status.success() {
         // Non-fatal — image-only PDFs return error; let caller decide.
         return Ok(String::new());
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+
+    // `.output()`/`wait_with_output` buffer stdout in full, so a PDF crafted to
+    // expand into gigabytes of text is an OOM even when poppler itself behaves.
+    let mut text = output.stdout;
+    if text.len() > MAX_PDF_TEXT_BYTES {
+        tracing::warn!(
+            bytes = text.len(),
+            "pdftotext output over the cap — truncating",
+        );
+        text.truncate(MAX_PDF_TEXT_BYTES);
+    }
+    Ok(String::from_utf8_lossy(&text).into_owned())
 }
 
 #[async_trait]
@@ -152,6 +206,22 @@ impl ImapHandler for ReceiptHandler {
             )));
         }
 
+        // HARD CONSTRAINT — read before wiring any auto-commit path.
+        //
+        // `combined_text` is attacker-controlled twice over: the email body and
+        // the text lifted out of its PDF attachments, concatenated and sent to
+        // the extractor verbatim. Prompt injection can therefore make the LLM
+        // return amounts and an `account_hint` of the sender's choosing, which
+        // become drafts.
+        //
+        // That is acceptable ONLY because every draft lands in the `pending`
+        // review inbox and requires an explicit user commit. The review step is
+        // not a UX nicety here — it is the sole control standing between a
+        // crafted email and a fabricated transaction in the ledger. The planned
+        // LLM-primary interface will be tempted to auto-commit high-confidence
+        // drafts; doing so on this path, without sender authentication (there
+        // is no SPF/DKIM check — see `accepts`), hands write access to anyone
+        // who knows the watched address.
         let result = self
             .extractor
             .extract(
