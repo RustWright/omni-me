@@ -356,7 +356,7 @@ async fn emit_transaction_event(
         .with_tags(top_tags);
     let new_event = NewEvent::transaction_recorded(state.device_id.clone(), &payload)
         .map_err(|e| e.to_string())?;
-    super::shared::append_new_and_apply(&state, new_event).await?;
+    super::shared::append_new_and_apply(state, new_event).await?;
 
     // Quick post-condition: ensure the projection actually has the row. If a
     // race between dedup-check and apply ever sneaks in, surface it.

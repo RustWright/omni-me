@@ -206,6 +206,26 @@ fn DailyChecklistView(groups: Vec<RoutineGroup>, on_manage: EventHandler<()>) ->
                             );
                             rsx! {
                                 div {
+                                    // Keyed on the group id, not position. Dioxus
+                                    // diffs an unkeyed list positionally and *reuses
+                                    // the scope*, updating only the `group` prop —
+                                    // while `ChecklistGroup`'s `use_future` captured
+                                    // its ids on first render and never re-runs. So
+                                    // the card rendered `c`'s name over `a`'s items,
+                                    // and ticking one filed the completion against
+                                    // the wrong group. No drag needed: a peer device
+                                    // removing a group slides every card up one index.
+                                    //
+                                    // The date is in the key too. `today` here is
+                                    // also computed from `tz_signal`, which is still
+                                    // the `Tz::UTC` default on the first render, and
+                                    // `ChecklistGroup` loads its completions in a
+                                    // `use_future` that runs once per scope. Keying on
+                                    // the id alone would keep that scope alive when the
+                                    // real zone lands, leaving the checklist showing
+                                    // the wrong day's completions. Also covers midnight
+                                    // rollover for free.
+                                    key: "{group.id}-{today}",
                                     class: "{wrapper_class}",
                                     draggable: true,
                                     style: "cursor: grab",

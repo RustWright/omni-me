@@ -106,6 +106,10 @@ pub fn JournalPage() -> Element {
     let today = UserDate::today(&*tz_signal.read()).to_date_string();
 
     let mut selected_date = use_signal(|| today.clone());
+    // The value `selected_date` was last anchored to, so the effect below can
+    // tell "still sitting on the app's idea of today" apart from "the user
+    // navigated somewhere deliberately".
+    let mut anchored_today = use_signal(|| today.clone());
     // The calendar is a right-edge drawer overlaying the day view (opened by a
     // right-edge swipe or the toolbar button), not a separate sub-tab.
     let mut calendar_open = use_signal(|| false);
@@ -145,6 +149,34 @@ pub fn JournalPage() -> Element {
             selected_date.set(d);
         }
         restored.set(true);
+    });
+
+    // Re-anchor once the real timezone arrives.
+    //
+    // `UserDate::today` above runs on the first render, when `tz_signal` still
+    // holds the `Tz::UTC` default (`main.rs:269` — `invoke_get_timezone` is
+    // async and cannot have resolved yet), and `use_signal` captures that seed
+    // once. Fresh install in Toronto at 21:30 EDT: UTC is already tomorrow, so
+    // the app opened on tomorrow behind a "← Back to today" header and
+    // everything written that evening became the *next* day's entry — wrong
+    // `date:` in frontmatter, wrong calendar cell, wrong day-complete. It also
+    // compounded: the bad date was written straight into nav, so the next launch
+    // restored it through the `Some` branch and the error outlived the fix.
+    // Symmetric for UTC-ahead zones in the early morning.
+    //
+    // Every other `UserDate::today` call site reads `tz_signal` at render time
+    // and self-corrects; this was the only frozen one.
+    use_effect(move || {
+        let real_today = UserDate::today(&tz_signal.read()).to_date_string();
+        let anchor = anchored_today.peek().clone();
+        if real_today == anchor {
+            return;
+        }
+        // Leave a deliberate navigation (or a restored nav date) alone.
+        if *selected_date.peek() == anchor {
+            selected_date.set(real_today.clone());
+        }
+        anchored_today.set(real_today);
     });
 
     // Write-through: mirror the viewed day into nav (and persist to disk). Gated
@@ -551,9 +583,35 @@ fn DayView(
                     if entry.peek().as_ref().map(|e| e.closed).unwrap_or(false) {
                         continue;
                     }
-                    // Stamp the in-progress line, then read the now-stamped body.
-                    let stamped = bridge::js_flush_editor_timestamps();
-                    if stamped.is_empty() || stamped == *last_saved_content.peek() {
+                    // Stamp the in-progress line, then read the now-stamped
+                    // **body** and fold it back into the full note before saving.
+                    //
+                    // `js_flush_editor_timestamps` returns
+                    // `editorView.state.doc.toString()`, and since Phase 5 that
+                    // doc holds only the body — frontmatter moved to the
+                    // properties panel (`Editor { initial_content: body.peek() }`
+                    // below). This used to hand that body straight to
+                    // `invoke_update_journal_entry`, the *same parameter* the
+                    // manual Save fills with the full note, so backgrounding the
+                    // app wrote the body over the whole entry: `date`,
+                    // `tags: [daily_note]`, `homework_for_life`, `grateful_for`
+                    // and `learnt_today` all gone, the Complete pill dropped, the
+                    // calendar day-dot cleared. Opening today and switching away
+                    // was enough to do it.
+                    //
+                    // Neither guard caught it: a template body alone is
+                    // non-empty, and `stamped == last_saved_content` compared a
+                    // body against a full note, which can never match — so it
+                    // then recorded the mutilated copy as persisted and nothing
+                    // ever re-saved it.
+                    let stamped_body = bridge::js_flush_editor_timestamps();
+                    if stamped_body.is_empty() {
+                        continue;
+                    }
+                    body.set(stamped_body);
+                    recombine(props, body, content);
+                    let stamped = content.peek().clone();
+                    if stamped == *last_saved_content.peek() {
                         continue;
                     }
                     let jid = entry.peek().as_ref().map(|e| e.journal_id.clone());
@@ -785,8 +843,24 @@ fn DayView(
                                             let jid = jid.clone();
                                             let date = date.clone();
                                             spawn(async move {
-                                                if let Some(id) = jid
-                                                    && bridge::invoke_close_journal_entry(&id, "manual").await.is_ok()
+                                                let Some(id) = jid else { return };
+                                                // Flush anything typed inside the
+                                                // autosave debounce window first.
+                                                // Once closed, autosave bails on
+                                                // `entry.closed` and Save is
+                                                // disabled, so the refetch below
+                                                // would otherwise overwrite unsaved
+                                                // text with the server's copy and
+                                                // discard it with no feedback.
+                                                let pending = content.peek().clone();
+                                                if pending != *last_saved_content.peek()
+                                                    && bridge::invoke_update_journal_entry(&id, &pending)
+                                                        .await
+                                                        .is_ok()
+                                                {
+                                                    last_saved_content.set(pending);
+                                                }
+                                                if bridge::invoke_close_journal_entry(&id, "manual").await.is_ok()
                                                     && let Ok(Some(refreshed)) =
                                                         bridge::invoke_get_journal_by_date(&date).await
                                                 {
@@ -881,6 +955,21 @@ fn DayView(
                         }
                         div { class: "{editor_class}",
                             Editor {
+                                // Remount when the closed-state flips. The editor
+                                // is built once per mount: its `use_effect` reads
+                                // no signal, so it fires exactly once, and
+                                // `read_only` is baked into `editor_options` inside
+                                // the spawned future — `js_create_editor` is what
+                                // installs `EditorView.editable.of(false)`.
+                                //
+                                // Without this, Reopen left a reopened day
+                                // permanently un-typeable (no caret, no keystrokes,
+                                // no error), and Close Day left the body looking
+                                // fully editable while autosave silently bailed.
+                                // `initial_content` and `initial_cursor` are read
+                                // fresh on this render, so the remount keeps the
+                                // text and the caret.
+                                key: "{is_closed}",
                                 initial_content: initial,
                                 on_change: move |new_body: String| {
                                     body.set(new_body);

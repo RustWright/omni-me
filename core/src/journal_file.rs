@@ -677,11 +677,11 @@ fn scan_anchors(content: &str) -> HashSet<String> {
     let mut out = HashSet::new();
     for line in content.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("; skipped ") {
-            if let Some(id) = rest.split(':').next() {
-                out.insert(format!("t:{}", id.trim()));
-                continue;
-            }
+        if let Some(rest) = trimmed.strip_prefix("; skipped ")
+            && let Some(id) = rest.split(':').next()
+        {
+            out.insert(format!("t:{}", id.trim()));
+            continue;
         }
         if trimmed.starts_with("P ") {
             out.insert(format!("p:{trimmed}"));

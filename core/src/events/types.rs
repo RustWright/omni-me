@@ -545,9 +545,6 @@ pub struct AccountAddedPayload {
     pub is_liquid: bool,
 }
 
-/// Mark an account reconciled against a real statement. `statement_balance`
-/// is in `commodity`; `cleared_through` is the statement's closing date.
-/// Used by Phase 5.8 balance check.
 // Budget — recurring
 
 /// Pattern detected by the W3 scanner. `pattern` is left as schema-flexible
