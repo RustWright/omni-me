@@ -96,7 +96,7 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
 
   **B. Review gate:**
   5. **Full end-to-end code review of everything** (per the v1 close-out gate #4 above).
-     **🔄 IN PROGRESS — Phase A COMPLETE (3 sittings) + calibration DONE 2026-08-25.** Third review of the project; scope is the
+     **🔄 IN PROGRESS — Phase A COMPLETE + calibration DONE 2026-08-25; Phase C: logic doc TRIAGED + FIXED 2026-08-26 (3 docs left).** Third review of the project; scope is the
      never-reviewed Cycles 3+4 range `22395f8..HEAD` (230 commits, +49,501/−2,329). Four perspective
      docs at `reviews/2026-08-25-*.md` (gitignored — durable summaries in `project.md`'s Session-6 row;
      private-overlay findings in `omni-me-private/reviews/`). Cycle-2 model split reused (Opus:
@@ -243,9 +243,34 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      `buffer.rs:297` already does this right (`unimplemented!("append never called by SyncBuffer")`).
      **Decision:** fold comment fixes into Phase C opportunistically (those files are being edited
      anyway); revisit the convention after triage and only if it still looks needed.
-     **Remaining:** Phase C triage (one doc at a time, **user picks order**; every deferral gets a
-     trip-wire; verify prior FIXED markers) → Phase B test-gaps (written AFTER Phase C, biased toward
-     absence-tests). **13 Criticals total across 3 sittings.**
+     **PHASE C — logical-consistency document TRIAGED AND FIXED (2026-08-26).** All 40 findings
+     dispositioned and annotated in place, 8 commits, every one green (core 504 / app 39 / server 21 /
+     frontend 82, clippy clean ×4 configs, golden guardrail green). Three user decisions taken:
+     unsupported hledger syntax → **refuse and report** (0 instances in the real 10,209-txn journal);
+     `SyncBuffer` → **delete** with the push nudge made structural; `AccountReconciled` → **remove**.
+
+     Highlights worth not re-deriving:
+     - The `account`-directive Warning was a **live blocker on step 8**, verified both ways against the
+       real file: fixed = 10,209 txns / 0 errors; control with the fix disabled = **0 imported**.
+     - A **sixth** append-without-nudge site (`auto_import::dismiss_batch`) was found during triage, and
+       the class is worse than filed: `pusher::run_loop` has no interval fallback, so an un-nudged bulk
+       import pushes **nothing**. Second independent cause of "imported data absent on mobile".
+     - Enforcement added per the user's "defensive" instruction:
+       `commands::shared::tests::no_command_appends_events_directly`, control-verified both directions.
+     - One regression test was **caught worthless** (passed against the broken code) and rewritten;
+       control now shows 0-of-4 vs 4-of-4. Same discipline disproved an assumed fix (ledger-parser v6
+       rejects a bare unqualified amount).
+     - Deferrals, each with a trip-wire: `Prices` precedence (unreachable — 0 `P` directives live),
+       `DefaultHasher` ids (single toolchain today), `event_mapper` `.abs()` (**tried, reverted, KEEPING**
+       — it is deliberate and tested; needs a real refund receipt to settle). Projection `version()`
+       bumps deliberately not taken (step 8 wipes anyway).
+     - UI verified with `dx serve` + Playwright: Journal / Routines / Finances render, Ledger survives
+       the navigate-away round-trip, 0 console errors. Denylist clean, 0 hits / 22 patterns.
+
+     **Remaining:** triage the **security**, **performance** and **bloat-complexity** documents (same
+     rules: every deferral gets a trip-wire; verify prior FIXED markers) → Phase B test-gaps (written
+     AFTER Phase C, biased toward absence-tests). **13 Criticals total across 3 sittings; the 4 logic
+     Criticals and all 4 frontend Criticals are now fixed.**
 
   **C. Email ingest prep:**
   6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
