@@ -218,10 +218,10 @@ pub async fn process_note_llm(
         .await?
         .ok_or_else(|| format!("Aggregate '{aggregate_id}' not found"))?;
 
-    let server_url = state.server_url.read().await.clone();
+    let path = format!("/notes/{aggregate_id}/process");
     let resp = state
-        .http
-        .post(format!("{}/notes/{}/process", server_url, aggregate_id))
+        .box_request(reqwest::Method::POST, &path)
+        .await
         .json(&serde_json::json!({
             "raw_text": raw_text,
             "device_id": state.device_id,
@@ -241,8 +241,10 @@ pub async fn process_note_llm(
         .await
         .map_err(|e| format!("Failed to parse server response: {e}"))?;
 
-    let sync_client =
-        omni_me_core::sync::SyncClient::new(server_url, state.device_id.clone());
+    let server_url = state.server_url.read().await.clone();
+    let server_token = state.server_token.read().await.clone();
+    let sync_client = omni_me_core::sync::SyncClient::new(server_url, state.device_id.clone())
+        .with_token(&server_token);
 
     if let Err(warning) = sync_back_after_llm(&sync_client, &state).await
         && let serde_json::Value::Object(ref mut map) = result

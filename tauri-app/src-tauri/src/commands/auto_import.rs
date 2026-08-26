@@ -65,14 +65,9 @@ pub struct AutoImportSourceView {
 pub async fn list_auto_import_sources(
     state: State<'_, AppState>,
 ) -> Result<Vec<AutoImportSourceView>, String> {
-    let server_url = state.server_url.read().await.clone();
-    let url = format!(
-        "{}/auto_import/status",
-        server_url.trim_end_matches('/')
-    );
     let resp = state
-        .http
-        .get(&url)
+        .box_request(reqwest::Method::GET, "/auto_import/status")
+        .await
         .send()
         .await
         .map_err(|e| format!("auto-import status fetch: {e}"))?;
@@ -97,11 +92,9 @@ pub async fn trigger_auto_import_tick(
     state: State<'_, AppState>,
     source: String,
 ) -> Result<TickResponse, String> {
-    let server_url = state.server_url.read().await.clone();
-    let url = format!("{}/auto_import/tick", server_url.trim_end_matches('/'));
     let resp = state
-        .http
-        .post(&url)
+        .box_request(reqwest::Method::POST, "/auto_import/tick")
+        .await
         .query(&[("source", source.as_str())])
         .send()
         .await
@@ -132,11 +125,9 @@ pub async fn reauth_source(
     source: String,
     otp: String,
 ) -> Result<serde_json::Value, String> {
-    let server_url = state.server_url.read().await.clone();
-    let url = format!("{}/auto_import/reauth", server_url.trim_end_matches('/'));
     let resp = state
-        .http
-        .post(&url)
+        .box_request(reqwest::Method::POST, "/auto_import/reauth")
+        .await
         .json(&serde_json::json!({ "source": source, "otp": otp }))
         .send()
         .await
@@ -164,19 +155,13 @@ pub async fn set_source_paused(
     source: String,
     paused: bool,
 ) -> Result<serde_json::Value, String> {
-    let server_url = state.server_url.read().await.clone();
     let action = if paused { "pause" } else { "resume" };
     // Source names are simple identifiers (the Add form rejects path-unsafe
     // characters; compiled source names are code constants), so path-safe as-is.
-    let url = format!(
-        "{}/auto_import/sources/{}/{}",
-        server_url.trim_end_matches('/'),
-        source,
-        action
-    );
+    let path = format!("/auto_import/sources/{source}/{action}");
     let resp = state
-        .http
-        .post(&url)
+        .box_request(reqwest::Method::POST, &path)
+        .await
         .send()
         .await
         .map_err(|e| format!("{action} source: {e}"))?;
@@ -208,11 +193,9 @@ pub async fn set_source_paused(
 pub async fn list_source_configs(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let server_url = state.server_url.read().await.clone();
-    let url = format!("{}/auto_import/sources", server_url.trim_end_matches('/'));
     let resp = state
-        .http
-        .get(&url)
+        .box_request(reqwest::Method::GET, "/auto_import/sources")
+        .await
         .send()
         .await
         .map_err(|e| format!("source configs fetch: {e}"))?;
@@ -231,11 +214,9 @@ pub async fn add_source_config(
     state: State<'_, AppState>,
     source: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let server_url = state.server_url.read().await.clone();
-    let url = format!("{}/auto_import/sources", server_url.trim_end_matches('/'));
     let resp = state
-        .http
-        .post(&url)
+        .box_request(reqwest::Method::POST, "/auto_import/sources")
+        .await
         .json(&source)
         .send()
         .await
@@ -258,17 +239,12 @@ pub async fn remove_source_config(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<serde_json::Value, String> {
-    let server_url = state.server_url.read().await.clone();
     // Source names are constrained to simple identifiers (the Add form
     // rejects path-unsafe characters), so the name is path-safe as-is.
-    let url = format!(
-        "{}/auto_import/sources/{}",
-        server_url.trim_end_matches('/'),
-        name
-    );
+    let path = format!("/auto_import/sources/{name}");
     let resp = state
-        .http
-        .delete(&url)
+        .box_request(reqwest::Method::DELETE, &path)
+        .await
         .send()
         .await
         .map_err(|e| format!("remove source: {e}"))?;

@@ -16,9 +16,15 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{extract::DefaultBodyLimit, routing::get, Json, Router};
+use axum::{
+    extract::{DefaultBodyLimit, State},
+    http::{header, Request, StatusCode},
+    middleware::{self, Next},
+    response::Response,
+    routing::get,
+    Json, Router,
+};
 use tokio::signal;
-use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
@@ -116,6 +122,27 @@ pub async fn run(cfg: RunConfig) {
         .ok()
         .and_then(|p| credentials::load(&p).ok())
         .unwrap_or_default();
+
+    // HTTP bearer token. Deliberately FAILS OPEN when `[server]` is absent:
+    // upgrading the box must not start rejecting devices that haven't been
+    // given the token yet, or a routine deploy silently kills sync everywhere
+    // and looks like a network fault. The warning below carries a ready-made
+    // token so closing the gap is copy-paste, and it keeps shouting on every
+    // boot until it is closed.
+    let auth_token = creds
+        .server
+        .as_ref()
+        .map(|s| s.auth_token.clone())
+        .filter(|t| !t.trim().is_empty());
+    if auth_token.is_none() {
+        tracing::warn!(
+            suggested_token = %credentials::generate_auth_token(),
+            "SECURITY: no [server].auth_token configured — every endpoint is \
+             unauthenticated to anything that can reach this port. Add \
+             `[server]\\nauth_token = \"<token>\"` to credentials.toml and set the \
+             same value on each device (Settings → Server token), then restart.",
+        );
+    }
 
     // Gemini key resolution order: GEMINI_API_KEY env var → credentials.toml
     // [gemini].api_key. Env wins so CI/secret-manager flows still work; the
@@ -249,7 +276,7 @@ pub async fn run(cfg: RunConfig) {
         None => tracing::info!("UPDATES_DIR unset — /updates route disabled"),
     }
 
-    let app = build_app(state, updates_dir);
+    let app = build_app(state, updates_dir, auth_token);
 
     let listener = tokio::net::TcpListener::bind(LISTEN_ADDR)
         .await
@@ -267,9 +294,13 @@ pub async fn run(cfg: RunConfig) {
 /// production route set against a test [`AppState`]. `updates_dir`, when `Some`,
 /// mounts a read-only static file service at `/updates` (app-update hosting);
 /// `None` leaves the route absent.
-pub fn build_app(state: AppState, updates_dir: Option<PathBuf>) -> Router {
-    let mut app = Router::new()
-        .route("/health", get(health))
+pub fn build_app(state: AppState, updates_dir: Option<PathBuf>, auth_token: Option<String>) -> Router {
+    // Everything that reads or writes state sits behind the bearer gate. The
+    // exceptions are deliberate: `/health` has to answer the deploy's readiness
+    // probe before any device is provisioned, and `/updates` has to stay
+    // reachable so a device that has lost its token can still pull an APK and
+    // recover — it serves only already-published artifacts.
+    let mut protected = Router::new()
         .merge(routes::sync_routes())
         .merge(routes::notes_routes())
         .layer(DefaultBodyLimit::max(256 * 1024))
@@ -278,6 +309,19 @@ pub fn build_app(state: AppState, updates_dir: Option<PathBuf>) -> Router {
         .merge(routes::auto_import_routes())
         .merge(routes::llm_routes());
 
+    if let Some(token) = auth_token {
+        // `route_layer`, NOT `layer`: a plain `layer` also wraps the fallback,
+        // so every unmatched path would answer 401 instead of 404 — which turns
+        // a typo'd URL into an auth failure and makes the box maddening to
+        // debug. `route_layer` only runs for paths this router actually has.
+        protected = protected.route_layer(middleware::from_fn_with_state(
+            Arc::new(token),
+            require_token,
+        ));
+    }
+
+    let mut app = Router::new().route("/health", get(health)).merge(protected);
+
     if let Some(dir) = updates_dir {
         // ServeDir maps /updates/<rel> -> <dir>/<rel>; missing files → 404. GETs
         // carry no request body, so the 256 KiB DefaultBodyLimit above is
@@ -285,9 +329,50 @@ pub fn build_app(state: AppState, updates_dir: Option<PathBuf>) -> Router {
         app = app.nest_service("/updates", ServeDir::new(dir));
     }
 
-    app.layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
+    // No CORS layer. It used to be `CorsLayer::permissive()`, which was both
+    // unused and actively harmful: the WASM frontend makes zero direct HTTP
+    // calls (everything goes through the Rust client in `commands/*`), while
+    // the permissive preflight let any page the user happened to open drive
+    // these endpoints cross-origin. With no CORS headers a browser refuses the
+    // preflight, and the JSON content-type these routes require means the
+    // no-preflight "simple request" path can't reach them either.
+    app.layer(TraceLayer::new_for_http()).with_state(state)
+}
+
+/// Reject any request that does not carry `Authorization: Bearer <token>`.
+///
+/// The comparison is constant-time in the length-equal case; an attacker who
+/// can measure it is already on the tailnet, but the cost of getting this right
+/// is one loop.
+async fn require_token(
+    State(expected): State<Arc<String>>,
+    req: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let presented = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+
+    if constant_time_eq(presented.as_bytes(), expected.as_bytes()) {
+        Ok(next.run(req).await)
+    } else {
+        // No body: nothing to learn from the response beyond "not authorized".
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 async fn health() -> Json<serde_json::Value> {

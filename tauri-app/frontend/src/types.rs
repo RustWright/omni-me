@@ -88,6 +88,11 @@ pub struct SyncStatus {
 pub struct SyncInfo {
     pub server_url: String,
     pub device_id: String,
+    /// Whether this device has a bearer token for the box. The token itself is
+    /// never returned — Settings renders state, it does not re-display secrets
+    /// (same rule as the LLM key's `has_key`).
+    #[serde(default)]
+    pub has_server_token: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

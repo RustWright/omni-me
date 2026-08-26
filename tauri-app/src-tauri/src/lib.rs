@@ -22,6 +22,11 @@ use omni_me_core::sync::{
 const DB_NAME: &str = "local.db";
 const DEVICE_ID_FILE: &str = "device_id";
 const SERVER_URL_FILE: &str = "server_url";
+/// Bearer token for the box, entered once per device in Settings. Stored
+/// beside `server_url` rather than in the DB so it survives a wipe and is
+/// readable before any projection has run. Empty file = unauthenticated,
+/// which matches the server's fail-open posture when `[server]` is unset.
+const SERVER_TOKEN_FILE: &str = "server_token";
 /// Fresh-install default sync server. Overridable at BUILD time via the
 /// `OMNI_DEFAULT_SERVER_URL` env (the private overlay's CI sets it to the box
 /// address); unset → localhost so the public zero-config build is unchanged.
@@ -90,6 +95,10 @@ pub struct AppState {
     /// Local LRU mirror of `/blobs/<sha256>` — see `commands::attachments`.
     pub attachment_cache_dir: std::path::PathBuf,
     pub http: reqwest::Client,
+    /// Bearer token sent to the box on every request. Behind an `RwLock` for
+    /// the same reason as `server_url` — Settings can change it without a
+    /// restart, which is exactly when a device is being provisioned.
+    pub server_token: tokio::sync::RwLock<String>,
     /// Debounced push orchestrator — 2s idle after the last local append.
     pub push_debouncer: PushDebouncer,
     /// Retry engine — exponential backoff 1s → 60s.
@@ -129,6 +138,52 @@ pub struct JournalCacheEntry {
 }
 
 impl AppState {
+    /// Build a request to the box with the base URL resolved and the bearer
+    /// token attached.
+    ///
+    /// **This is the only sanctioned way for a command to talk to the box**, and
+    /// `no_command_builds_a_box_request_by_hand` fails the build if anything
+    /// reaches for `state.http` directly. The reason is not tidiness: before
+    /// this existed, fourteen call sites each re-derived the URL and none of
+    /// them carried auth, so the fifteenth would have shipped unauthenticated
+    /// and nothing would have caught it. Auth that depends on remembering is
+    /// auth that eventually is not there.
+    ///
+    /// A blank token yields an unauthenticated request, matching the server's
+    /// fail-open posture while `[server]` is unconfigured.
+    pub async fn box_request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+    ) -> reqwest::RequestBuilder {
+        let base = self.server_url.read().await.clone();
+        let url = format!(
+            "{}/{}",
+            base.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        );
+        let builder = self.http.request(method, url);
+        let token = self.server_token.read().await.clone();
+        let token = token.trim();
+        if token.is_empty() {
+            builder
+        } else {
+            builder.bearer_auth(token)
+        }
+    }
+
+    /// Absolute URL for a path on the box, for the rare caller that needs the
+    /// string rather than a request (logging, or handing a URL to another
+    /// layer). Carries no credential — never use it to build a request.
+    pub async fn box_url(&self, path: &str) -> String {
+        let base = self.server_url.read().await.clone();
+        format!(
+            "{}/{}",
+            base.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        )
+    }
+
     /// Return the journal's balance + price tables, parsing at most once per
     /// file change. The read path `stat`s `budget.journal` for its
     /// `(mtime, len)` stamp: on a cache hit (stamp unchanged) it hands back the
@@ -310,6 +365,8 @@ pub fn run() {
                 let server_url = load_or_create(&app_data, SERVER_URL_FILE, || {
                     std::env::var("OMNI_SERVER_URL").unwrap_or(DEFAULT_SERVER_URL.to_string())
                 });
+                let server_token =
+                    load_or_create(&app_data, SERVER_TOKEN_FILE, String::new);
                 let timezone = load_or_create(&app_data, TIMEZONE_FILE, || {
                     iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string())
                 });
@@ -317,7 +374,9 @@ pub fn run() {
                     load_or_create(&app_data, BASE_CURRENCY_FILE, || "CAD".to_string());
                 let roster = load_roster(&app_data);
 
-                tracing::info!(device_id = %device_id, server_url = %server_url, timezone = %timezone, roster_len = roster.len(), "App initialized");
+                // `has_server_token`, never the token itself — this line is the first
+                // thing in every log the user might paste into an issue.
+                tracing::info!(device_id = %device_id, server_url = %server_url, has_server_token = !server_token.trim().is_empty(), timezone = %timezone, roster_len = roster.len(), "App initialized");
 
                 // Durability guardrail 3: audit the local event log's device_id
                 // distribution. Always logged (so any future sync investigation has
@@ -359,7 +418,8 @@ pub fn run() {
                 // Phase 2 sync pipeline: pusher -> retry engine wired
                 // together, plus a network monitor feeding hints in. Appends
                 // nudge the pusher through `commands::shared`.
-                let sync_client = SyncClient::new(server_url.clone(), device_id.clone());
+                let sync_client =
+                    SyncClient::new(server_url.clone(), device_id.clone()).with_token(&server_token);
                 let (push_debouncer, _pusher_task) =
                     PushDebouncer::spawn(sync_client.clone(), db.clone());
                 let (retry_engine, _retry_task) =
@@ -426,6 +486,7 @@ pub fn run() {
                     app_data_dir: app_data,
                     attachment_cache_dir,
                     http: reqwest::Client::new(),
+                    server_token: tokio::sync::RwLock::new(server_token.clone()),
                     push_debouncer,
                     retry_engine,
                     pull_scheduler,
@@ -480,6 +541,7 @@ pub fn run() {
             commands::sync::trigger_sync,
             commands::sync::get_sync_info,
             commands::sync::update_server_url,
+            commands::sync::update_server_token,
             commands::sync::get_sync_status,
             // Timezone
             commands::timezone::get_timezone,

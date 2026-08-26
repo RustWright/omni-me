@@ -202,11 +202,10 @@ pub async fn fetch_attachment(
         return Ok(bytes);
     }
 
-    let server_url = state.server_url.read().await.clone();
-    let url = format!("{}/blobs/{sha256}", server_url.trim_end_matches('/'));
+    let path = format!("/blobs/{sha256}");
     let resp = state
-        .http
-        .get(&url)
+        .box_request(reqwest::Method::GET, &path)
+        .await
         .send()
         .await
         .map_err(|e| format!("attachment fetch: {e}"))?;

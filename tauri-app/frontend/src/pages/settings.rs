@@ -16,6 +16,12 @@ pub fn SettingsPage() -> Element {
     let mut device_id = use_signal(String::new);
     let mut sync_status = use_signal(|| None::<String>);
     let mut url_dirty = use_signal(|| false);
+    // The token is write-only from the UI's side: `has_token` renders whether
+    // one is configured, `token_input` holds what the user is typing now. The
+    // stored value is never fetched back, so it can't be shoulder-read off the
+    // Settings screen or land in a screenshot.
+    let mut has_token = use_signal(|| false);
+    let mut token_input = use_signal(String::new);
 
     // Timezone state
     let mut tz_signal: Signal<Tz> = use_context();
@@ -29,6 +35,7 @@ pub fn SettingsPage() -> Element {
         if let Ok(info) = bridge::invoke_get_sync_info().await {
             server_url.set(info.server_url);
             device_id.set(info.device_id);
+            has_token.set(info.has_server_token);
         }
         if let Ok(info) = bridge::invoke_get_timezone().await {
             tz_input.set(info.timezone);
@@ -85,6 +92,44 @@ pub fn SettingsPage() -> Element {
                                 "Update"
                             }
                         }
+                    }
+                }
+
+                // Server token (write-only)
+                div {
+                    label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                        "Server Token"
+                    }
+                    div { class: "flex gap-2",
+                        input {
+                            class: "{INPUT_CLASS} flex-1",
+                            r#type: "password",
+                            autocomplete: "off",
+                            placeholder: if *has_token.read() { "Configured — type to replace" } else { "Not set" },
+                            value: "{token_input}",
+                            oninput: move |e| token_input.set(e.value().clone()),
+                        }
+                        Button {
+                            onclick: move |_| {
+                                let token = token_input.read().trim().to_string();
+                                spawn(async move {
+                                    match bridge::invoke_update_server_token(&token).await {
+                                        Ok(_) => {
+                                            token_input.set(String::new());
+                                            has_token.set(!token.is_empty());
+                                            sync_status.set(Some(
+                                                "Server token saved. Restart the app so background sync picks it up.".into(),
+                                            ));
+                                        }
+                                        Err(e) => sync_status.set(Some(format!("Error: {e}"))),
+                                    }
+                                });
+                            },
+                            "Save"
+                        }
+                    }
+                    p { class: "text-[11px] text-obsidian-text-muted mt-2",
+                        "Matches [server].auth_token in the box's credentials.toml. Leave blank if the box has no token configured."
                     }
                 }
 

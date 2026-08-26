@@ -25,11 +25,9 @@ pub struct LlmConfigView {
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_llm_config(state: State<'_, AppState>) -> Result<LlmConfigView, String> {
-    let server_url = state.server_url.read().await.clone();
-    let url = format!("{}/llm/config", server_url.trim_end_matches('/'));
     let resp = state
-        .http
-        .get(&url)
+        .box_request(reqwest::Method::GET, "/llm/config")
+        .await
         .send()
         .await
         .map_err(|e| format!("llm config fetch: {e}"))?;
@@ -49,11 +47,9 @@ pub async fn set_llm_config(
     state: State<'_, AppState>,
     config: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let server_url = state.server_url.read().await.clone();
-    let url = format!("{}/llm/config", server_url.trim_end_matches('/'));
     let resp = state
-        .http
-        .put(&url)
+        .box_request(reqwest::Method::PUT, "/llm/config")
+        .await
         .json(&config)
         .send()
         .await

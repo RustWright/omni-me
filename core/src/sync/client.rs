@@ -124,6 +124,40 @@ impl SyncClient {
         }
     }
 
+    /// Attach the box's bearer token to every request this client makes.
+    ///
+    /// A builder rather than a `new` parameter for two reasons: the 17 test
+    /// call sites of `new` stay untouched, and the token rides on the
+    /// `reqwest::Client` itself via `default_headers` instead of being applied
+    /// per-`send`. A request builder that forgets `.bearer_auth()` is a bug
+    /// waiting on the next call site; a client that carries the credential
+    /// cannot forget it.
+    ///
+    /// An empty/blank token is a no-op, matching the server's fail-open
+    /// posture when `[server]` is unconfigured.
+    pub fn with_token(mut self, token: &str) -> Self {
+        let token = token.trim();
+        if token.is_empty() {
+            return self;
+        }
+        let mut headers = reqwest::header::HeaderMap::new();
+        match reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
+            Ok(mut value) => {
+                value.set_sensitive(true);
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+                match reqwest::Client::builder().default_headers(headers).build() {
+                    Ok(client) => self.http = client,
+                    Err(e) => tracing::error!(error = %e, "sync: auth client build failed"),
+                }
+            }
+            // Non-ASCII in the token would be a corrupt config, not a live
+            // condition worth failing startup over — log and stay unauthed so
+            // the failure surfaces as a 401 rather than a silent no-sync.
+            Err(e) => tracing::error!(error = %e, "sync: auth token is not a valid header value"),
+        }
+        self
+    }
+
     /// The device ID this client is bound to.
     pub fn device_id(&self) -> &str {
         &self.device_id

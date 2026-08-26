@@ -16,7 +16,6 @@ use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::GeminiClient;
 use omni_me_server::{AppState, routes};
-use tower_http::cors::CorsLayer;
 
 /// Spin up a real Axum server on a random port with its own temp SurrealDB.
 /// Returns (server_url, join_handle). The tempdir is leaked intentionally —
@@ -50,7 +49,8 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
     let app = Router::new()
         .route("/health", get(health))
         .merge(routes::sync_routes())
-        .layer(CorsLayer::permissive())
+        // No CORS layer — production dropped it (security review High #4); the test
+        // harness must mirror the real router or it would hide the difference.
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -75,6 +75,15 @@ async fn health() -> Json<serde_json::Value> {
 /// Used by the updates-route test; `start_server` above stays minimal (sync only).
 pub async fn start_full_server(
     updates_dir: Option<std::path::PathBuf>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    start_full_server_with_auth(updates_dir, None).await
+}
+
+/// As [`start_full_server`], but with an optional bearer token enforced on
+/// every route except `/health` and `/updates`.
+pub async fn start_full_server_with_auth(
+    updates_dir: Option<std::path::PathBuf>,
+    auth_token: Option<String>,
 ) -> (String, tokio::task::JoinHandle<()>) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.db");
@@ -101,7 +110,7 @@ pub async fn start_full_server(
         default_interval: std::time::Duration::from_secs(1800),
     };
 
-    let app = omni_me_server::build_app(state, updates_dir);
+    let app = omni_me_server::build_app(state, updates_dir, auth_token);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

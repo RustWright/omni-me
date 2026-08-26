@@ -21,7 +21,6 @@ use omni_me_core::sync::{
     SyncClient, SyncStatus, wire_accelerator,
 };
 use omni_me_server::{AppState, routes};
-use tower_http::cors::CorsLayer;
 
 use common::device_db;
 
@@ -34,7 +33,7 @@ fn make_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .merge(routes::sync_routes())
-        .layer(CorsLayer::permissive())
+        // No CORS layer — mirrors production, which dropped it (security review High #4).
         .with_state(state)
 }
 

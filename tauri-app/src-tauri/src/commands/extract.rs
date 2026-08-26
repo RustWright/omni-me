@@ -82,20 +82,17 @@ pub async fn extract_document(
     mime: String,
     hint: String,
 ) -> Result<ExtractedDraft, String> {
-    let server_url = state.server_url.read().await.clone();
     // Hint values are simple snake_case strings (receipt, bank_statement, ...)
     // so no URL encoding is needed; the server will 400 on anything unknown.
-    let url = format!(
-        "{}/documents/extract?hint={hint}&attach=true",
-        server_url.trim_end_matches('/'),
-    );
+    let path = format!("/documents/extract?hint={hint}&attach=true");
+    let url = state.box_url(&path).await;
     tracing::info!(bytes = bytes.len(), mime = %mime, hint = %hint, %url, "extract_document");
 
     let body_for_cache = bytes.clone();
 
     let resp = state
-        .http
-        .post(&url)
+        .box_request(reqwest::Method::POST, &path)
+        .await
         .header(reqwest::header::CONTENT_TYPE, &mime)
         .body(bytes)
         .send()

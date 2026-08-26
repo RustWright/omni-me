@@ -138,17 +138,16 @@ mod tests {
                 let Ok(text) = std::fs::read_to_string(&path) else {
                     continue;
                 };
-                // Collapse whitespace so a method chain split across lines is
-                // matched the same as a single-line one.
-                let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                for needle in [
-                    "state . event_store . append",
-                    "state.event_store.append",
-                ] {
-                    if flat.contains(needle) {
-                        offenders.push(path.display().to_string());
-                        break;
-                    }
+                // Strip whitespace ENTIRELY rather than collapsing it to single
+                // spaces. Collapsing looks equivalent and is not: rustfmt breaks
+                // a long chain as `state\n    .event_store`, and since `.event_store`
+                // is one whitespace-delimited token that collapses to
+                // `state .event_store` — which matches neither a spaced nor an
+                // unspaced needle. This test passed against a planted multi-line
+                // violation until that was found.
+                let flat: String = text.split_whitespace().collect();
+                if flat.contains("state.event_store.append") {
+                    offenders.push(path.display().to_string());
                 }
             }
         }
@@ -160,4 +159,62 @@ mod tests {
              debouncer is never nudged and the events never sync: {offenders:#?}"
         );
     }
+
+    /// Nothing may talk to the box except through [`AppState::box_request`].
+    ///
+    /// Companion to `no_command_appends_events_directly`, and the same reasoning:
+    /// the box's bearer token rides on `box_request`, so a command that reaches
+    /// for the raw client on `AppState` is a command that sends an unauthenticated
+    /// request. Before the helper existed there were fourteen such call sites,
+    /// each re-deriving the base URL by hand — a convention would not have
+    /// survived the fifteenth.
+    #[test]
+    fn no_command_builds_a_box_request_by_hand() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+
+        fn walk(dir: &std::path::Path, offenders: &mut Vec<String>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, offenders);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                // `lib.rs` defines `box_request` itself and owns the one
+                // `reqwest::Client` the helper borrows.
+                if path.file_name().and_then(|f| f.to_str()) == Some("lib.rs") {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                // Whitespace stripped, not collapsed — see the note in the
+                // sibling test above.
+                let flat: String = text.split_whitespace().collect();
+                // Needle assembled at runtime rather than written as a literal:
+                // spelling it out would make this file match itself, and the
+                // usual dodge — excluding the scanner's own file — would blind
+                // the scan to a real violation added here later.
+                let needle = format!("state{}http", ".");
+                if flat.contains(&needle) {
+                    offenders.push(path.display().to_string());
+                }
+            }
+        }
+
+        walk(&src, &mut offenders);
+        assert!(
+            offenders.is_empty(),
+            "these use the raw reqwest client on AppState instead of \
+             AppState::box_request, so \
+             they send the box an unauthenticated request: {offenders:#?}"
+        );
+    }
+
 }

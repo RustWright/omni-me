@@ -910,6 +910,7 @@ pub async fn invoke_get_sync_info() -> Result<SyncInfo, String> {
         Ok(SyncInfo {
             server_url: "https://demo.example.com".into(),
             device_id: "DEMO-DEVICE-01".into(),
+            has_server_token: true,
         })
     }
     #[cfg(not(feature = "mock"))]
@@ -949,6 +950,23 @@ pub async fn invoke_update_server_url(server_url: &str) -> Result<(), String> {
             server_url: &'a str,
         }
         invoke_unit("update_server_url", &Args { server_url }).await
+    }
+}
+
+/// Set (or clear, with an empty string) this device's bearer token for the box.
+pub async fn invoke_update_server_token(server_token: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = server_token;
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            server_token: &'a str,
+        }
+        invoke_unit("update_server_token", &Args { server_token }).await
     }
 }
 

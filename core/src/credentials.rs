@@ -68,6 +68,25 @@ pub struct Credentials {
     /// design that `[llm].api_key` and the subprocess helpers already follow).
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub secrets: std::collections::HashMap<String, String>,
+    /// Server-side HTTP auth. Absent = the box accepts unauthenticated requests
+    /// (with a loud startup warning) so a half-provisioned device never silently
+    /// loses sync; present = every route but `/health` and `/updates` requires
+    /// `Authorization: Bearer <token>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<ServerConfig>,
+}
+
+/// `[server]` section — the shared bearer token each device sends.
+///
+/// One token for all devices rather than per-device credentials: the threat
+/// model is "something on the tailnet that isn't omni-me" (a stray app on the
+/// phone, a page the browser loaded), not "one of my devices turned hostile".
+/// Per-device tokens would buy revocation we have no way to trigger and no
+/// place to manage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    /// Random hex, generated on first boot when the section is missing.
+    pub auth_token: String,
 }
 
 /// Text-LLM provider selection + its connection config. Lives in
@@ -116,6 +135,18 @@ pub struct GeminiCredentials {
     pub api_key: String,
 }
 
+/// Generate a fresh 256-bit bearer token, hex-encoded.
+///
+/// `thread_rng` is a CSPRNG (ChaCha-family, OS-seeded) in rand 0.8, so this is
+/// suitable for a credential — the same generator already backs sync's retry
+/// jitter, which is why no new dependency is needed here.
+pub fn generate_auth_token() -> String {
+    use rand::Rng;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill(&mut bytes[..]);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Default location for the credentials file. Follows XDG Base Directory.
 pub fn default_path() -> Result<PathBuf, CredentialError> {
     let base = std::env::var("XDG_CONFIG_HOME")
@@ -147,26 +178,36 @@ pub fn save(path: &Path, creds: &Credentials) -> Result<(), CredentialError> {
     }
     let serialized = toml::to_string_pretty(creds)?;
 
-    // Write to temp + rename for atomicity.
+    // Write to temp + rename for atomicity. The temp file is *created* 0600
+    // rather than chmod'ed afterwards — a plain `write` then `set_permissions`
+    // leaves the plaintext readable at the default umask for the width of the
+    // write, which is a real window on a multi-user box.
     let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, &serialized)?;
-    enforce_secret_perms(&tmp)?;
+    write_secret_file(&tmp, serialized.as_bytes())?;
     std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
 #[cfg(unix)]
-fn enforce_secret_perms(path: &Path) -> Result<(), CredentialError> {
-    use std::os::unix::fs::PermissionsExt;
-    let perms = std::fs::Permissions::from_mode(0o600);
-    std::fs::set_permissions(path, perms)?;
+fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(bytes)?;
+    f.flush()?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn enforce_secret_perms(_path: &Path) -> Result<(), CredentialError> {
+fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     // Windows ACLs require a different API; rely on default user-private
     // permissions for the AppData folder on Windows installs.
+    std::fs::write(path, bytes)?;
     Ok(())
 }
 
@@ -217,6 +258,7 @@ mod tests {
             }),
             llm: None,
             secrets: Default::default(),
+            server: None,
         };
 
         save(&path, &original).unwrap();
@@ -388,4 +430,67 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn the_server_section_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        let original = Credentials {
+            server: Some(ServerConfig {
+                auth_token: "deadbeef".into(),
+            }),
+            ..Default::default()
+        };
+        save(&path, &original).unwrap();
+        let reloaded = load(&path).unwrap();
+        assert_eq!(
+            reloaded.server.map(|s| s.auth_token),
+            Some("deadbeef".to_string()),
+        );
+    }
+
+    /// A credentials.toml written by an older build has no `[server]` section —
+    /// it must still load, and must load as "no token" so the box stays open
+    /// rather than locking out every device on upgrade.
+    #[test]
+    fn a_file_without_a_server_section_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        std::fs::write(
+            &path,
+            "[gemini]\napi_key = \"k\"\n",
+        )
+        .unwrap();
+        let creds = load(&path).unwrap();
+        assert!(creds.server.is_none());
+    }
+
+    #[test]
+    fn generated_tokens_are_long_and_distinct() {
+        let a = generate_auth_token();
+        let b = generate_auth_token();
+        assert_eq!(a.len(), 64, "256 bits, hex-encoded");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b, "two calls must not produce the same token");
+    }
+
+    /// The plaintext must never exist at the default umask, not even briefly.
+    /// The old code wrote the file and *then* chmod'ed it, leaving a window in
+    /// which any local user could read the secrets map.
+    #[cfg(unix)]
+    #[test]
+    fn the_credentials_file_is_never_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        let mut creds = Credentials::default();
+        creds
+            .secrets
+            .insert("some_api".into(), "super-secret".into());
+        save(&path, &creds).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "expected 0600, got {mode:o}");
+    }
+
 }
