@@ -97,10 +97,22 @@ async fn get_blob_handler(
         .map(|t| t.mime_type())
         .unwrap_or("application/octet-stream");
 
+    // `nosniff` + an attachment disposition.
+    //
+    // The content type here is *sniffed from the bytes*, and blob PUT accepts
+    // any content that matches its claimed hash — so without these headers,
+    // storing a blob that sniffs as `text/html` and then opening its URL
+    // executes script on the server's own origin, with whatever that origin can
+    // reach. `nosniff` stops the browser second-guessing the type, and
+    // `attachment` stops it rendering the response as a document at all. The
+    // app's own reader fetches these bytes programmatically, so neither header
+    // changes anything for the legitimate caller.
     Ok((
         [
             (header::CONTENT_TYPE, mime),
             (header::CONTENT_LENGTH, &bytes.len().to_string()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::CONTENT_DISPOSITION, "attachment"),
         ],
         bytes,
     )

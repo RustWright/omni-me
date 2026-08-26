@@ -100,8 +100,28 @@ async fn tick_handler(
         Err(omni_me_core::auto_import_scheduler::ImportError::NotConfigured(msg)) => {
             Err((StatusCode::NOT_FOUND, msg))
         }
-        Err(e) => Err((StatusCode::BAD_GATEWAY, e.to_string())),
+        Err(e) => Err(upstream_err("tick", &q.source, e)),
     }
+}
+
+/// Log the real failure, return a generic one.
+///
+/// `ImportError`'s Display carries whatever the failing layer produced —
+/// including a subprocess helper's raw **stderr** (python tracebacks and all)
+/// and `io::Error` strings with absolute box paths. Handing that to the caller
+/// is free reconnaissance: the box's directory layout, which helpers exist, and
+/// what they are written in. The operator still gets the full detail, in the
+/// place operators look.
+fn upstream_err(
+    op: &str,
+    source: &str,
+    e: omni_me_core::auto_import_scheduler::ImportError,
+) -> (StatusCode, String) {
+    tracing::warn!(op, source, error = %e, "auto-import request failed");
+    (
+        StatusCode::BAD_GATEWAY,
+        format!("auto-import {op} failed for '{source}' — see server logs"),
+    )
 }
 
 impl IntoResponse for TickResponseOk {
@@ -134,7 +154,7 @@ async fn reauth_handler(
         Err(omni_me_core::auto_import_scheduler::ImportError::NotConfigured(msg)) => {
             Err((StatusCode::NOT_FOUND, msg))
         }
-        Err(e) => Err((StatusCode::BAD_GATEWAY, e.to_string())),
+        Err(e) => Err(upstream_err("reauth", &req.source, e)),
     }
 }
 
@@ -149,8 +169,14 @@ async fn reauth_handler(
 // writers (acceptable per [[project-auth-deferred]]); `config::save` is itself
 // atomic (temp + rename).
 
+/// Same reasoning as [`upstream_err`]: config-layer failures are `io::Error`
+/// strings naming absolute paths on the box. Logged in full, returned generic.
 fn internal_err<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    tracing::warn!(error = %e, "auto-import config operation failed");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "auto-import configuration error — see server logs".to_string(),
+    )
 }
 
 /// `GET /auto_import/sources` — the *configured* source definitions (distinct
