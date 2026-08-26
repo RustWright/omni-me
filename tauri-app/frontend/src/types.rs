@@ -431,8 +431,6 @@ pub struct CommodityBalanceView {
 pub struct AccountSummaryView {
     pub account: String,
     pub display_name: Option<String>,
-    pub last_reconciled_through: Option<String>,
-    pub last_statement_balance: Option<String>,
     pub balances: Vec<CommodityBalanceView>,
     pub total_in_base: Option<String>,
 }

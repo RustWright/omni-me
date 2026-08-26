@@ -68,8 +68,6 @@ impl Projection for BudgetProjection {
              DEFINE FIELD IF NOT EXISTS display_name ON accounts TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS hidden ON accounts TYPE bool DEFAULT false;
              DEFINE FIELD IF NOT EXISTS is_liquid ON accounts TYPE bool DEFAULT false;
-             DEFINE FIELD IF NOT EXISTS last_reconciled_through ON accounts TYPE option<string>;
-             DEFINE FIELD IF NOT EXISTS last_statement_balance ON accounts TYPE option<string>;
 
              DEFINE TABLE IF NOT EXISTS budgets SCHEMAFULL;
              DEFINE FIELD IF NOT EXISTS amount ON budgets TYPE string;
@@ -105,7 +103,6 @@ impl Projection for BudgetProjection {
             "transaction_cleared" => self.on_transaction_cleared(event, db).await,
             "transactions_merged" => self.on_transactions_merged(event, db).await,
             "account_added" => self.on_account_added(event, db).await,
-            "account_reconciled" => self.on_account_reconciled(event, db).await,
             "budget_set" => self.on_budget_set(event, db).await,
             "budget_updated" => self.on_budget_updated(event, db).await,
             "budget_removed" => self.on_budget_removed(event, db).await,
@@ -508,9 +505,8 @@ impl BudgetProjection {
         // UPSERT … SET (not CREATE … CONTENT): the same account is now an
         // idempotent override target — re-declaring, renaming, hiding, or
         // marking-liquid an already-seen account must update in place, not
-        // error. SET (vs CONTENT) leaves `last_reconciled_through` /
-        // `last_statement_balance` untouched so an override doesn't wipe a
-        // prior reconcile.
+        // error. SET rather than CONTENT so an override only touches the fields
+        // it owns and leaves any other state on the row intact.
         db.query(
             "UPSERT type::record('accounts', $account) SET
                 commodity = $commodity,
@@ -523,36 +519,6 @@ impl BudgetProjection {
         .bind(("display_name", display_name))
         .bind(("hidden", hidden))
         .bind(("is_liquid", is_liquid))
-        .await?;
-        Ok(())
-    }
-
-    async fn on_account_reconciled(
-        &self,
-        event: &Event,
-        db: &Database,
-    ) -> Result<(), EventError> {
-        let account = event.payload["account"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let statement_balance = event.payload["statement_balance"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let cleared_through = event.payload["cleared_through"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-
-        db.query(
-            "UPDATE type::record('accounts', $account) SET
-                last_reconciled_through = $cleared_through,
-                last_statement_balance = $statement_balance",
-        )
-        .bind(("account", account))
-        .bind(("statement_balance", statement_balance))
-        .bind(("cleared_through", cleared_through))
         .await?;
         Ok(())
     }
@@ -1045,51 +1011,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn account_lifecycle_added_then_reconciled() {
-        let (db, store, runner) = fixture().await;
-        emit(
-            &store,
-            &runner,
-            "account_added",
-            "Assets:Summit:Chequing",
-            serde_json::json!({
-                "account": "Assets:Summit:Chequing",
-                "commodity": "CAD",
-                "display_name": "Summit Chequing"
-            }),
-        )
-        .await;
-        emit(
-            &store,
-            &runner,
-            "account_reconciled",
-            "Assets:Summit:Chequing",
-            serde_json::json!({
-                "account": "Assets:Summit:Chequing",
-                "commodity": "CAD",
-                "statement_balance": "5076.10",
-                "cleared_through": "2026-04-30"
-            }),
-        )
-        .await;
-
-        let mut resp = db
-            .query("SELECT display_name, last_reconciled_through, last_statement_balance FROM type::record('accounts', 'Assets:Summit:Chequing')")
-            .await
-            .unwrap();
-        let display: Option<String> = resp.take("display_name").unwrap();
-        let through: Option<String> = resp.take("last_reconciled_through").unwrap();
-        let balance: Option<String> = resp.take("last_statement_balance").unwrap();
-        assert_eq!(display.as_deref(), Some("Summit Chequing"));
-        assert_eq!(through.as_deref(), Some("2026-04-30"));
-        assert_eq!(balance.as_deref(), Some("5076.10"));
-    }
-
-    #[tokio::test]
-    async fn account_override_upsert_sets_hidden_and_preserves_reconcile() {
-        // 3.9: re-emitting account_added is now an idempotent override
-        // (rename + hide). It must (a) update display/hidden, (b) NOT wipe a
-        // prior reconcile (SET, not CONTENT), (c) not duplicate the row.
+    async fn account_override_upsert_sets_hidden_without_duplicating() {
+        // 3.9: re-emitting account_added is an idempotent override
+        // (rename + hide). It must update display/hidden and must not
+        // duplicate the row. (Formerly also asserted that a prior reconcile
+        // survived the override; the reconcile plumbing was removed 2026-08-26
+        // as unreachable — no command ever emitted `AccountReconciled`.)
         let (db, store, runner) = fixture().await;
         emit(
             &store,
@@ -1097,19 +1024,6 @@ mod tests {
             "account_added",
             "Assets:Globepay:CAD",
             serde_json::json!({ "account": "Assets:Globepay:CAD", "commodity": "CAD" }),
-        )
-        .await;
-        emit(
-            &store,
-            &runner,
-            "account_reconciled",
-            "Assets:Globepay:CAD",
-            serde_json::json!({
-                "account": "Assets:Globepay:CAD",
-                "commodity": "CAD",
-                "statement_balance": "1200.00",
-                "cleared_through": "2026-05-31"
-            }),
         )
         .await;
         // Override: rename + hide.
@@ -1135,19 +1049,13 @@ mod tests {
         assert_eq!(total, Some(1), "override must not duplicate the row");
 
         let mut resp = db
-            .query("SELECT display_name, hidden, last_reconciled_through FROM type::record('accounts', 'Assets:Globepay:CAD')")
+            .query("SELECT display_name, hidden FROM type::record('accounts', 'Assets:Globepay:CAD')")
             .await
             .unwrap();
         let display: Option<String> = resp.take("display_name").unwrap();
         let hidden: Option<bool> = resp.take("hidden").unwrap();
-        let through: Option<String> = resp.take("last_reconciled_through").unwrap();
         assert_eq!(display.as_deref(), Some("Globepay (CAD)"), "rename applied");
         assert_eq!(hidden, Some(true), "hidden flag set");
-        assert_eq!(
-            through.as_deref(),
-            Some("2026-05-31"),
-            "reconcile state preserved across override (SET, not CONTENT)"
-        );
     }
 
     #[tokio::test]
@@ -1288,7 +1196,7 @@ mod tests {
                  FROM transactions ORDER BY id ASC;
                  SELECT meta::id(id) AS id, amount, period, removed
                  FROM budgets ORDER BY id ASC;
-                 SELECT meta::id(id) AS id, commodity, display_name, last_reconciled_through
+                 SELECT meta::id(id) AS id, commodity, display_name
                  FROM accounts ORDER BY id ASC;
                  SELECT meta::id(id) AS id, status FROM recurring_patterns ORDER BY id ASC;",
             )
@@ -1337,13 +1245,6 @@ mod tests {
                  "account": "Assets:Summit:Chequing",
                  "commodity": "CAD",
                  "display_name": "Summit Chequing"
-             })).await;
-        emit(&store, &runner, "account_reconciled", "Assets:Summit:Chequing",
-             serde_json::json!({
-                 "account": "Assets:Summit:Chequing",
-                 "commodity": "CAD",
-                 "statement_balance": "5076.10",
-                 "cleared_through": "2026-04-30"
              })).await;
 
         // Budget set + revised

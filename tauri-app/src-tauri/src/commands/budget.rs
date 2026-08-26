@@ -316,8 +316,6 @@ pub struct CommodityBalanceView {
 pub struct AccountSummaryView {
     pub account: String,
     pub display_name: Option<String>,
-    pub last_reconciled_through: Option<String>,
-    pub last_statement_balance: Option<String>,
     pub balances: Vec<CommodityBalanceView>,
     pub total_in_base: Option<String>,
 }
@@ -342,8 +340,6 @@ fn summary_to_view(s: AccountSummary) -> AccountSummaryView {
     AccountSummaryView {
         account: s.account,
         display_name: s.display_name,
-        last_reconciled_through: s.last_reconciled_through,
-        last_statement_balance: s.last_statement_balance,
         balances: s.balances.into_iter().map(balance_to_view).collect(),
         total_in_base: s.total_in_base.map(base_money),
     }

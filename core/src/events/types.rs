@@ -43,7 +43,6 @@ pub enum EventType {
     BudgetRemoved,
     // Budget — accounts
     AccountAdded,
-    AccountReconciled,
     // Budget — recurring
     RecurringTransactionDetected,
     RecurringTransactionConfirmed,
@@ -90,7 +89,6 @@ impl fmt::Display for EventType {
             EventType::BudgetUpdated => "budget_updated",
             EventType::BudgetRemoved => "budget_removed",
             EventType::AccountAdded => "account_added",
-            EventType::AccountReconciled => "account_reconciled",
             EventType::RecurringTransactionDetected => "recurring_transaction_detected",
             EventType::RecurringTransactionConfirmed => "recurring_transaction_confirmed",
             EventType::RecurringTransactionDismissed => "recurring_transaction_dismissed",
@@ -138,7 +136,6 @@ impl FromStr for EventType {
             "budget_updated" => Ok(EventType::BudgetUpdated),
             "budget_removed" => Ok(EventType::BudgetRemoved),
             "account_added" => Ok(EventType::AccountAdded),
-            "account_reconciled" => Ok(EventType::AccountReconciled),
             "recurring_transaction_detected" => Ok(EventType::RecurringTransactionDetected),
             "recurring_transaction_confirmed" => Ok(EventType::RecurringTransactionConfirmed),
             "recurring_transaction_dismissed" => Ok(EventType::RecurringTransactionDismissed),
@@ -551,16 +548,6 @@ pub struct AccountAddedPayload {
 /// Mark an account reconciled against a real statement. `statement_balance`
 /// is in `commodity`; `cleared_through` is the statement's closing date.
 /// Used by Phase 5.8 balance check.
-#[serde_as]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccountReconciledPayload {
-    pub account: String,
-    pub commodity: String,
-    #[serde_as(as = "DisplayFromStr")]
-    pub statement_balance: Decimal,
-    pub cleared_through: chrono::NaiveDate,
-}
-
 // Budget — recurring
 
 /// Pattern detected by the W3 scanner. `pattern` is left as schema-flexible
@@ -778,9 +765,6 @@ pub fn validate_payload(
         EventType::AccountAdded => {
             serde_json::from_value::<AccountAddedPayload>(payload.clone()).map(|_| ())
         }
-        EventType::AccountReconciled => {
-            serde_json::from_value::<AccountReconciledPayload>(payload.clone()).map(|_| ())
-        }
         EventType::RecurringTransactionDetected => {
             serde_json::from_value::<RecurringTransactionDetectedPayload>(payload.clone())
                 .map(|_| ())
@@ -851,7 +835,6 @@ mod tests {
             EventType::BudgetUpdated,
             EventType::BudgetRemoved,
             EventType::AccountAdded,
-            EventType::AccountReconciled,
             EventType::RecurringTransactionDetected,
             EventType::RecurringTransactionConfirmed,
             EventType::RecurringTransactionDismissed,
@@ -1311,17 +1294,6 @@ mod tests {
             "commodity": "CAD"
         });
         assert!(validate_payload(&EventType::AccountAdded, &minimal).is_ok());
-    }
-
-    #[test]
-    fn validate_account_reconciled() {
-        let payload = serde_json::json!({
-            "account": "Assets:Summit:Chequing",
-            "commodity": "CAD",
-            "statement_balance": "5076.10",
-            "cleared_through": "2026-04-30"
-        });
-        assert!(validate_payload(&EventType::AccountReconciled, &payload).is_ok());
     }
 
     #[test]

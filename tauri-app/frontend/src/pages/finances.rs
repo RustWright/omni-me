@@ -4725,14 +4725,6 @@ fn AccountSummaryCard(summary: AccountSummaryView) -> Element {
                 }
             }
 
-            if let Some(date) = summary.last_reconciled_through.as_deref() {
-                div { class: "mt-3 text-xs text-obsidian-text-muted",
-                    "Last reconciled through {date}"
-                    if let Some(bal) = summary.last_statement_balance.as_deref() {
-                        " · statement {format_money(bal, \"CAD\")}"
-                    }
-                }
-            }
         }
     }
 }

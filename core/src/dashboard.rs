@@ -1043,8 +1043,6 @@ mod tests {
         AccountSummary {
             account: account.into(),
             display_name: None,
-            last_reconciled_through: None,
-            last_statement_balance: None,
             balances: vec![],
             total_in_base: total,
             is_liquid,

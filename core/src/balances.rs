@@ -5,7 +5,7 @@
 //!   directives) — fed through [`ledger::balances`] for per-(account,
 //!   commodity) quantities.
 //! - The `accounts` projection table — for declared-account metadata
-//!   (`display_name`, `last_reconciled_through`, `last_statement_balance`).
+//!   (`display_name`, `hidden`, `is_liquid`).
 //! - `ledger-utils::Prices` over the same parsed journal — for converting
 //!   foreign-commodity balances into the user's base currency.
 //!
@@ -50,8 +50,6 @@ pub struct CommodityBalance {
 pub struct AccountSummary {
     pub account: String,
     pub display_name: Option<String>,
-    pub last_reconciled_through: Option<String>,
-    pub last_statement_balance: Option<String>,
     /// One row per commodity held, sorted by commodity name for determinism
     /// (POC 0.1c finding — HashMap iteration order is non-deterministic).
     pub balances: Vec<CommodityBalance>,
@@ -167,8 +165,6 @@ pub fn account_summaries_from(
         summaries.push(AccountSummary {
             account: name,
             display_name: declared_meta.and_then(|m| m.display_name.clone()),
-            last_reconciled_through: declared_meta.and_then(|m| m.last_reconciled_through.clone()),
-            last_statement_balance: declared_meta.and_then(|m| m.last_statement_balance.clone()),
             balances,
             total_in_base,
             is_liquid: declared_meta.is_some_and(|m| m.is_liquid),
@@ -384,26 +380,6 @@ mod tests {
             display_name: display.map(String::from),
             hidden: false,
             is_liquid: false,
-            last_reconciled_through: None,
-            last_statement_balance: None,
-        }
-    }
-
-    fn acct_row_reconciled(
-        id: &str,
-        commodity: &str,
-        display: Option<&str>,
-        through: &str,
-        balance: &str,
-    ) -> AccountRow {
-        AccountRow {
-            id: id.into(),
-            commodity: commodity.into(),
-            display_name: display.map(String::from),
-            hidden: false,
-            is_liquid: false,
-            last_reconciled_through: Some(through.into()),
-            last_statement_balance: Some(balance.into()),
         }
     }
 
@@ -607,12 +583,10 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     Assets:Northwind:Cash       1000.00 CAD
     Equity:OpeningBalances        -1000.00 CAD
 ";
-        let declared = vec![acct_row_reconciled(
+        let declared = vec![acct_row(
             "Assets:Northwind:Cash",
             "CAD",
             Some("Northwind Cash"),
-            "2026-05-15",
-            "1000.00",
         )];
         let summaries = account_summaries(journal, &declared, "CAD", as_of(), &roster()).unwrap();
 
@@ -621,8 +595,6 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
             .find(|s| s.account == "Assets:Northwind:Cash")
             .unwrap();
         assert_eq!(northwind.display_name.as_deref(), Some("Northwind Cash"));
-        assert_eq!(northwind.last_reconciled_through.as_deref(), Some("2026-05-15"));
-        assert_eq!(northwind.last_statement_balance.as_deref(), Some("1000.00"));
     }
 
     #[test]

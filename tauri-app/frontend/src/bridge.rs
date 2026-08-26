@@ -1709,8 +1709,6 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
         AccountSummaryView {
             account: "Assets:Northwind:Cash".into(),
             display_name: Some("Northwind Cash".into()),
-            last_reconciled_through: Some("2026-05-15".into()),
-            last_statement_balance: Some("4250.00".into()),
             balances: vec![CommodityBalanceView {
                 commodity: "CAD".into(),
                 quantity: "4287.42".into(),
@@ -1721,8 +1719,6 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
         AccountSummaryView {
             account: "Assets:Globepay:CAD".into(),
             display_name: Some("Globepay multi-currency".into()),
-            last_reconciled_through: None,
-            last_statement_balance: None,
             balances: vec![
                 CommodityBalanceView {
                     commodity: "CAD".into(),
@@ -1745,8 +1741,6 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
         AccountSummaryView {
             account: "Assets:Meridian:AED".into(),
             display_name: Some("Meridian AED".into()),
-            last_reconciled_through: None,
-            last_statement_balance: None,
             balances: vec![CommodityBalanceView {
                 commodity: "AED".into(),
                 quantity: "52400.00".into(),
@@ -1757,8 +1751,6 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
         AccountSummaryView {
             account: "Liabilities:Summit:CreditCard".into(),
             display_name: Some("Summit Rewards".into()),
-            last_reconciled_through: Some("2026-04-30".into()),
-            last_statement_balance: Some("-1182.06".into()),
             balances: vec![CommodityBalanceView {
                 commodity: "CAD".into(),
                 quantity: "-1450.18".into(),
@@ -1769,8 +1761,6 @@ fn mock_account_summaries() -> Vec<AccountSummaryView> {
         AccountSummaryView {
             account: "Unmatched".into(),
             display_name: None,
-            last_reconciled_through: None,
-            last_statement_balance: None,
             balances: vec![CommodityBalanceView {
                 commodity: "CAD".into(),
                 quantity: "-1.50".into(),

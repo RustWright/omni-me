@@ -98,8 +98,6 @@ pub struct AccountRow {
     /// toward the "Can I afford X?" verdict. Opt-in — default not-liquid.
     #[serde(default)]
     pub is_liquid: bool,
-    pub last_reconciled_through: Option<String>,
-    pub last_statement_balance: Option<String>,
 }
 
 /// A budget row.
@@ -568,7 +566,7 @@ pub async fn list_accounts(db: &Database) -> Result<Vec<AccountRow>, DbError> {
     let mut resp = db
         .query(
             "SELECT meta::id(id) AS id, commodity, display_name,
-                    hidden, is_liquid, last_reconciled_through, last_statement_balance
+                    hidden, is_liquid
              FROM accounts
              ORDER BY id ASC",
         )
