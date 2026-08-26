@@ -96,7 +96,7 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
 
   **B. Review gate:**
   5. **Full end-to-end code review of everything** (per the v1 close-out gate #4 above).
-     **🔄 IN PROGRESS — Phase A COMPLETE + calibration DONE 2026-08-25; Phase C: logic + security docs TRIAGED + FIXED 2026-08-26 (2 docs left).** Third review of the project; scope is the
+     **🔄 IN PROGRESS — Phase A COMPLETE + calibration DONE 2026-08-25; Phase C: logic + security + performance docs TRIAGED + FIXED 2026-08-26 (1 doc left).** Third review of the project; scope is the
      never-reviewed Cycles 3+4 range `22395f8..HEAD` (230 commits, +49,501/−2,329). Four perspective
      docs at `reviews/2026-08-25-*.md` (gitignored — durable summaries in `project.md`'s Session-6 row;
      private-overlay findings in `omni-me-private/reviews/`). Cycle-2 model split reused (Opus:
@@ -302,8 +302,41 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
        own `Command` and never touches `core`'s subprocess path. Phase B material, alongside the
        SurrealDB tempfile race.
 
-     **Remaining:** triage the **performance** and **bloat-complexity** documents (same rules: every
-     deferral gets a trip-wire; verify prior FIXED markers) → Phase B test-gaps (written AFTER Phase C,
+     **Sitting 3 — PERFORMANCE doc TRIAGED 2026-08-26** (`b60525f` backend, `d71ad8a` frontend). All
+     18 findings dispositioned: **5 fixed, 2 partially, 1 already fixed by the security sitting, 7
+     deferred with trip-wires, 1 withdrawn on measurement.**
+     **Two findings were already closed before triage began.** The subprocess/`pdftotext` timeouts
+     landed in the security sitting (`da2a28a`). More significantly, the doc's **top-ranked sitting-2
+     item — add `DEFINE INDEX` on `transactions`** — asserts "nothing in `tasks.md` or `project.md`
+     mentions indexes, so this is new to the record". It is in the record: `tasks.md:918` (Finances
+     Stage A, 2026-08-10) records the measurement on real data that **disproves it** — the indexes
+     moved `list_transactions(100)` only ~330→~250 ms because SurrealDB 3.0.4 won't use them to skip
+     the `ORDER BY date DESC` sort. Adding them would have funded the same failed hypothesis twice.
+     **Five review prescriptions did not survive verification** — a repeat of the security sitting's
+     pattern. The worst: "route `budget_progress` through `journal_artifacts()`" **would not have
+     compiled** (`JournalArtifacts` is `{balance, prices}`; the fn takes `&str`). Asking what the
+     parse was *for* produced a better fix — the parse existed solely to build `Prices`, which the
+     cache already holds, so the Budget screen was re-parsing 2.4 MB to rebuild an in-memory table.
+     Also: "a string-Jaccard per pair" (three early-outs precede it), "a few hundred KB" per journal
+     entry (that's the whole file; `DayView` is per-day), and the sync-timeout one-liner, which
+     applied literally would have left the **authenticated** path — the only one in production —
+     untimed, because `with_token` replaces the client `new()` built.
+     **Biggest measured win, and sharper than filed:** the continuity store never evicted clean
+     sessions. The review frames this as needing a retention policy; it doesn't — **both** readers
+     already filter clean sessions out, so a clean session had *no reader anywhere*. Eviction is the
+     readers' own predicate applied at write time, now literally the same shared function
+     (`session_is_recoverable`) so the two can't drift. Control-measured in-browser: opening six
+     journal days read-only persisted **2,996 bytes** with eviction off vs **189** with it on (15.9×,
+     and that's mock's near-empty templates). Paired fix moved the deep clone inside the debounce —
+     verified 0 writes across 12 keystrokes, 1 after the quiet period.
+     **Also fixed:** all **seven** bare `reqwest::Client`s now route through a new `core::http`
+     (30 s ordinary / 180 s LLM), guarded by two enforcement tests control-checked against planted
+     multi-line violations; CSV import batched; cold `parse_artifacts` moved to `spawn_blocking`;
+     `audit_device_ids` off the pre-paint path (**not** claimed as the cold-open fix — the hang stays
+     undiagnosed per the verify-first rule).
+
+     **Remaining:** triage the **bloat-complexity** document (same rules: every deferral gets a
+     trip-wire; verify prior FIXED markers) → Phase B test-gaps (written AFTER Phase C,
      biased toward absence-tests). **13 Criticals total across 3 sittings; the 4 logic Criticals, all 4
      frontend Criticals and all 3 security Criticals are now fixed.**
      **Carry into Phase B:** `cargo test -p omni-me-core` alone does **not** run the `auto_import`
