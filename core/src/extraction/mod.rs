@@ -1,13 +1,15 @@
-//! Document extraction trait + routing scaffold (Phase 2.5).
+//! Document extraction trait + routing scaffold.
 //!
 //! Takes raw document bytes (PDF / image / text), an `ExtractionHint` for
 //! per-type prompt selection, and returns a draft transaction the user
-//! reviews in the Phase 3.6 confirm-draft screen.
+//! reviews in the confirm-draft screen.
 //!
 //! Trait split deliberately keeps multimodal byte handling out of `LlmClient`
-//! (which stays tool-call / text-only). Cycle 3 ships a single Gemini-multimodal
-//! impl (Phase 2.4); Cycle 4 adds Veryfi for receipts/paystubs/bank statements
-//! by registering a second impl behind a routing table — no changes to callers.
+//! (which stays tool-call / text-only). There is exactly one implementation
+//! today: Gemini multimodal. A second one — a receipt/statement specialist
+//! such as Veryfi, currently unimplemented — registers behind the routing
+//! table below without touching a single caller. That is the whole reason
+//! for the split.
 
 use async_trait::async_trait;
 use chrono::NaiveDate;
@@ -117,7 +119,7 @@ pub trait DocumentExtractor: Send + Sync {
     ) -> Result<ExtractionResult, ExtractionError>;
 }
 
-// --- Routing (hybrid policy per Cycle 3 plan) ---
+// --- Routing: MIME-derived default hint, with a user override where MIME is ambiguous ---
 
 /// MIME-based default hint. Images → receipt (most common photo-capture path);
 /// plain text → email body; PDFs explicitly require user pick (None) because

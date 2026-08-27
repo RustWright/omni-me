@@ -1,8 +1,8 @@
-//! Frankfurter FX rate fetcher (Phase 2.7).
+//! Frankfurter FX rate fetcher.
 //!
 //! Free ECB-sourced daily rates, no API key. Covers CAD/USD/EUR which are
 //! three common demo currencies. AED is handled separately as
-//! manual entry at import time (Phase 2.13).
+//! manual entry at import time.
 //!
 //! Wire shape: `GET https://api.frankfurter.app/{date|"latest"}?from=X&to=Y`
 //! returns `{ "amount": 1.0, "base": "X", "date": "YYYY-MM-DD", "rates": { "Y": 1.37 } }`.

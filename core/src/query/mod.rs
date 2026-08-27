@@ -1,7 +1,7 @@
-//! R2 ad-hoc transaction query (Phase 7.2).
+//! Ad-hoc transaction query.
 //!
 //! A small filter DSL over the `transactions` projection. The GUI query builder
-//! (Phase 7.1) emits DSL strings; hand-typers write the same grammar. The engine
+//! emits DSL strings; hand-typers write the same grammar. The engine
 //! is split into three pure layers:
 //!
 //! - [`ast`] — the query AST plus the [`QueryTxn`] view the evaluator runs on.

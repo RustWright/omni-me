@@ -929,7 +929,8 @@ mod tests {
     #[test]
     fn unknown_event_type_errors() {
         assert!("unknown_type".parse::<EventType>().is_err());
-        // old Cycle 1 types must no longer parse — decisive rename, not an alias.
+        // The pre-rename names below must no longer parse: the rename was
+        // decisive, deliberately without a back-compat alias.
         assert!("note_created".parse::<EventType>().is_err());
         assert!("note_updated".parse::<EventType>().is_err());
     }

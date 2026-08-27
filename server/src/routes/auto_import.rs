@@ -1,4 +1,4 @@
-//! Auto-import observability + manual-trigger routes (Phase 3.9).
+//! Auto-import observability + manual-trigger routes.
 //!
 //! `GET /auto_import/status` returns the full registry snapshot — used by the
 //! Settings panel to render per-source health badges.

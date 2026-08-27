@@ -1,11 +1,11 @@
-//! Phase 6.2 + 6.3 — hledger journal import Tauri commands.
+//! hledger journal import Tauri commands.
 //!
 //! `preview_journal_import` parses a journal at a given path and returns a
 //! summary (per-account counts, sample transactions, parse errors). The path
 //! is canonicalized and stored on `AppState::last_journal_import_path` so the
 //! companion commit command can only ever ingest a path the user previewed.
 //!
-//! `commit_journal_import` re-parses, applies the A2 rewriter (Phase 6.6) +
+//! `commit_journal_import` re-parses, applies the A2 rewriter +
 //! the user's per-account drop/rename plan, then emits a `TransactionRecorded`
 //! event per surviving draft. Idempotent by deterministic `txn_id`
 //! (`import-<content_hash>-<occurrence>`) — re-running the commit against the

@@ -1,4 +1,4 @@
-//! SurrealDB projection over auto-import batch events (Phase 3.10.4).
+//! SurrealDB projection over auto-import batch events.
 //!
 //! One read-optimized table: `pending_auto_import_batches`. The UI lists
 //! `status = "pending"` rows; `committed` and `dismissed` are kept for audit

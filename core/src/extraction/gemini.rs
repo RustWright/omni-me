@@ -1,6 +1,6 @@
-//! Gemini multimodal `DocumentExtractor` implementation (Phase 2.4).
+//! Gemini multimodal `DocumentExtractor` implementation.
 //!
-//! Cycle 3's sole extractor — Veryfi is deferred to Cycle 4. POC 0.3
+//! The only `DocumentExtractor` implementation at present. POC 0.3
 //! (2026-05-09) validated `gemini-2.5-flash` on a 5-page brokerage
 //! statement: clean structured extraction in ~7s, balance + dates correct.
 //!

@@ -1,4 +1,4 @@
-//! Phase 6.1 + 6.6 — hledger journal → `DraftImportedTransaction` list.
+//! hledger journal → `DraftImportedTransaction` list.
 //!
 //! Inverse of `journal_file::render_transaction`. Walks an hledger file
 //! (resolving `include` globs per the POC 0.1b harness at
@@ -16,7 +16,7 @@
 //! Transactions with more than one elided posting are skipped with a
 //! `balance_failures` entry.
 //!
-//! Phase 6.6 (A2 rewriter) lives at the bottom of this module: `apply_a2_rewriter`
+//! The A2 rewriter lives at the bottom of this module: `apply_a2_rewriter`
 //! walks draft postings, calls `accounts::strip_business_prefix`, and appends the
 //! `type:business` posting tag when the segment was present. Co-located because
 //! the rewriter and the parser share `DraftImportedTransaction`.

@@ -1,4 +1,4 @@
-//! Root-held continuity store (Phase 1.1).
+//! Root-held continuity store.
 //!
 //! Per-page editing state used to die whenever a page component unmounted. The
 //! shell in `main.rs` swaps pages with `match *active_tab.read()`, so switching
@@ -135,7 +135,7 @@ pub struct NavState {
     pub notes_edit_id: Option<String>,
     /// Notes sub-tab: "recent" | "search".
     pub notes_subtab: Option<String>,
-    /// Finances surface: "overview" | "ledger" | "analyze" (Stage C sub-nav).
+    /// Finances surface: "overview" | "ledger" | "analyze" — the persistent sub-nav.
     #[serde(default)]
     pub finances_view: Option<String>,
 }

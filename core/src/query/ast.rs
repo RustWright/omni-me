@@ -1,8 +1,11 @@
-//! Query AST for the R2 ad-hoc transaction filter (Phase 7.2).
+//! Query AST for the ad-hoc transaction filter.
 //!
 //! The grammar is intentionally flat: a single top-level combinator (`All` /
 //! `Any`) over a list of field predicates. Nested boolean groups, regex account
-//! matching, and per-commodity amount comparison are deferred to Cycle 4.
+//! matching, and per-commodity amount comparison are deliberately absent.
+//! Add them when a query surface actually needs them — nesting is not a
+//! drop-in, it changes this AST's shape and `parser::to_dsl`'s round-trip
+//! contract along with it.
 //!
 //! The [`QueryTxn`] / [`QueryPosting`] view types are the *only* surface the
 //! evaluator touches, and they hold no DB or Tauri dependency — that is what

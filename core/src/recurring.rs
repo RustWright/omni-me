@@ -1,4 +1,4 @@
-//! Recurring-transaction detection (Phase 5.3).
+//! Recurring-transaction detection.
 //!
 //! The W3 scanner sweeps the transaction log for repeat patterns and emits
 //! `RecurringTransactionDetected` events for new candidates. The dashboard

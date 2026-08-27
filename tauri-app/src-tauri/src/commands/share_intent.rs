@@ -1,4 +1,4 @@
-//! Pending share-intent (Phase 3.3).
+//! Pending share-intent.
 //!
 //! On Android, `MainActivity.kt` writes shared file bytes + a metadata
 //! sidecar to the app's private `filesDir` whenever a SEND intent arrives.

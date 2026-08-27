@@ -1,4 +1,4 @@
-//! Tauri commands for the budget feature (Phase 1.8 + 1.9).
+//! Tauri commands for the budget feature.
 //!
 //! Pattern mirror of `commands::routines`: each mutating command builds a
 //! payload, calls `append_and_apply`, optionally returns the projected row.
@@ -34,8 +34,8 @@ use crate::AppState;
 /// wall-clock time on drop — so it covers every early-return `?` path without
 /// per-return boilerplate — under the `omni::perf` target. Profiling a
 /// real-data run is then just enabling `RUST_LOG=omni::perf=debug`; the guard is
-/// silent unless that target is on. Stage A instrumentation (finances perf
-/// overhaul): measure before touching indexes / the unbounded scan / cache.
+/// silent unless that target is on. Added deliberately *before* touching
+/// indexes / the unbounded scan / the cache: measure first, then optimise.
 struct CmdTimer {
     label: &'static str,
     start: std::time::Instant,

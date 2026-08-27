@@ -71,14 +71,14 @@ fn classify_share_mime(mime: &str, filename: &str) -> Option<DocumentKind> {
 /// separate signal alongside this enum.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FinancesView {
-    /// Overview surface root (Stage C) — the daily glance: net-worth hero +
+    /// Overview surface root — the daily glance: net-worth hero +
     /// history chart, per-institution balances, review inbox, recent activity.
     /// Replaces the old data-less `Home` table-of-contents.
     Overview,
-    /// Analyze surface root (Stage C) — the hub for periodic deep views
+    /// Analyze surface root — the hub for periodic deep views
     /// (dashboard, budgets, recurring, reconcile, balance-check, accounts).
     Analyze,
-    /// Add / Import action sheet (Stage C) — the launch point for the capture
+    /// Add / Import action sheet — the launch point for the capture
     /// flows (photo/pdf/email/manual) and the statement / journal imports.
     AddMenu,
     Capture(DocumentKind),
@@ -131,7 +131,7 @@ enum FinancesView {
     Query,
 }
 
-/// The three persistent finances surfaces (Stage C IA). The `SegmentedNav`
+/// The three persistent finances surfaces. The `SegmentedNav`
 /// sub-nav switches between them; every `FinancesView` belongs to exactly one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FinancesSurface {
@@ -280,7 +280,7 @@ pub fn FinancesPage() -> Element {
         }
     });
 
-    // Stage C: restore the last-open surface (overview/ledger/analyze) so a tab
+    // Restore the last-open surface (overview/ledger/analyze) so a tab
     // switch or app-kill returns here instead of snapping to Overview. Mirrors
     // the notes/journal nav-restore — gated on `is_loaded` for the boot race,
     // one-shot per mount via `restored`.
@@ -371,7 +371,7 @@ pub fn FinancesPage() -> Element {
     rsx! {
         div { class: "{container_w} mx-auto w-full animate-in fade-in duration-300",
 
-            // Persistent finances sub-nav (Stage C) — shown only at the surface
+            // Persistent finances sub-nav — shown only at the surface
             // roots; deeper/modal sub-routes carry their own back navigation.
             if show_subnav {
                 div { class: "flex items-center justify-between gap-3 mb-4",
@@ -617,7 +617,7 @@ pub fn FinancesPage() -> Element {
 }
 
 /// A tappable navigation row — title + subtitle + chevron. The shared building
-/// block of the Analyze hub and the Add/Import menu (Stage C), replacing the
+/// block of the Analyze hub and the Add/Import menu, replacing the
 /// copy-pasted link buttons of the old finances Home.
 #[component]
 fn HubLinkRow(
@@ -1407,7 +1407,7 @@ fn AnalyzeHubView(
     }
 }
 
-/// Add / Import action sheet (Stage C) — the launch point for the capture flows
+/// Add / Import action sheet — the launch point for the capture flows
 /// and the statement / journal imports, reached from the sub-nav's Add button.
 #[component]
 fn AddMenuView(

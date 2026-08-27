@@ -3,9 +3,10 @@
 //! from the parent workspace doesn't fail — the frontend is only ever run as
 //! wasm in practice.
 
-/// How long the editor must be quiet before an auto-save fires. Matches
-/// Cycle 2's "1s local debounce" decision (project.md: Obsidian-equivalent).
-/// Shared between journal and generic notes so the cadence stays consistent.
+/// How long the editor must be quiet before an auto-save fires. 1s is
+/// deliberate: it matches Obsidian's local-save cadence, which is the feel
+/// this editor is measured against. Shared between journal and generic notes
+/// so the cadence stays consistent.
 pub const AUTOSAVE_DEBOUNCE_MS: i32 = 1000;
 
 #[cfg(target_arch = "wasm32")]

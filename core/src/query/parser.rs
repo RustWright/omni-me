@@ -17,7 +17,8 @@
 //!
 //! Terms join with AND by default; an unquoted `OR` separator switches the whole
 //! query to ANY. `AND` is accepted as a no-op separator. Mixed/nested boolean
-//! groups are deferred to Cycle 4.
+//! groups are not supported: there is no grouping syntax, and adding one
+//! means changing the AST alongside it (see `ast.rs`).
 //!
 //! [`to_dsl`] is the canonical serializer: `parse(to_dsl(&q))` reproduces `q`
 //! (for queries with ≥2 predicates, where the combinator is meaningful).

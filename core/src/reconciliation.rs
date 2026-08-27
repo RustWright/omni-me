@@ -1,4 +1,4 @@
-//! Unified reconciliation engine (Phase 5.6).
+//! Unified reconciliation engine.
 //!
 //! Signal-only candidate scoring over `Unmatched`-touching transactions
 //! per [[project-unmatched-account-pattern]]. Source-agnostic: pairs

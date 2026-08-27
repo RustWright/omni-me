@@ -1,9 +1,10 @@
-//! Local attachment cache (Phase 3.7).
+//! Local attachment cache.
 //!
 //! On-device LRU mirror of the server-side `/blobs/{sha256}` store. Capture
-//! flows write through here so a captured receipt stays viewable offline; the
-//! Phase 4 transaction detail view will fetch through here, falling back to a
-//! `GET /blobs/{sha256}` and re-populating the cache on miss.
+//! flows write through here so a captured receipt stays viewable offline, and
+//! the transaction detail view fetches through here too (`fetch_attachment`,
+//! reached from `finances.rs`), falling back to a `GET /blobs/{sha256}` and
+//! re-populating the cache on miss.
 //!
 //! Eviction policy: when `cache_size > CAP_BYTES`, sort entries by mtime
 //! ascending and delete until under the cap. `atime` is unreliable on

@@ -1,4 +1,4 @@
-//! App-level settings commands (Phase 7.3).
+//! App-level settings commands.
 //!
 //! Base currency is persisted to a flat file in `app_data_dir` — the same
 //! load-on-boot / write-on-change pattern as the timezone setting in

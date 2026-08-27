@@ -1,4 +1,4 @@
-//! Bank-statement CSV parsing (Phase 5.5).
+//! Bank-statement CSV parsing.
 //!
 //! Each parsed row becomes a draft transaction with one real-account
 //! posting (on the source account, e.g., `Assets:Summit:Chequing`) and a

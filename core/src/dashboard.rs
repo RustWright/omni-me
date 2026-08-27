@@ -1,4 +1,4 @@
-//! R1 financial-health glance dashboard aggregation (Phase 4.5 + 4.6).
+//! Financial-health glance dashboard aggregation.
 //!
 //! Produces the four widget payloads that `DashboardView` renders:
 //! - **Net worth** — sum of listable accounts' base-currency values, with
@@ -13,8 +13,9 @@
 //!   Foreign-commodity legs are excluded (documented limitation; revisit
 //!   when more than 5% of activity isn't in `base_currency`).
 //! - **Recurring obligations** — confirmed `RecurringPattern` rows pulled
-//!   from the projection table. Empty until Phase 5.3/5.4 ship the
-//!   detection scanner + confirm UI.
+//!   from the projection table. `recurring_scanner` proposes patterns and
+//!   `confirm_recurring` promotes them; this list stays empty until the user
+//!   confirms at least one.
 //!
 //! Plus one decision-shaped helper:
 //! - [`can_i_afford`] — verdict-from-payload for the "can I afford X?" UX.

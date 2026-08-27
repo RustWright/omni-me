@@ -1,11 +1,11 @@
-//! Tauri command for document extraction (Phase 3.1+).
+//! Tauri command for document extraction.
 //!
 //! Forwards captured document bytes to `omni-me-server`'s
 //! `/documents/extract` endpoint, which runs `GeminiExtractor`. Server-side
 //! host honors `feedback_llm_server_side.md` — Gemini API keys never live
 //! on the client.
 //!
-//! Phase 3.7 wiring: every call sets `attach=true` so the server stores the
+//! Attachment wiring: every call sets `attach=true` so the server stores the
 //! bytes content-addressably as well as extracting from them. The
 //! `AttachmentRef` round-trips back so the client can mirror the bytes into
 //! the local LRU cache (see `commands::attachments`) and surface the ref to

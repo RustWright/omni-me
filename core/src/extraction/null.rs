@@ -1,7 +1,7 @@
 //! Null extractor — returned when no real provider is configured, and used by
 //! tests that want a deterministic no-op result without spinning up Gemini.
 //!
-//! Always returns a zero-confidence empty draft. The Phase 3.6 confirm-draft
+//! Always returns a zero-confidence empty draft. The confirm-draft
 //! screen treats this as "no extraction available, manual entry only."
 
 use async_trait::async_trait;

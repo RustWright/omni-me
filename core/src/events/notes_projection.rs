@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn is_complete_recognizes_journal_template_when_filled() {
-        // Regression for Cycle 2 Critical #2 (2026-04-24 logical-inconsistencies review):
+        // Cross-crate parity regression (this broke once, 2026-04-24):
         // the journal template (frontend/src/journal_template.rs) renders the
         // frontmatter that *this* parser must accept once the user fills in the
         // three reflection properties. If the template adds a YAML block-list

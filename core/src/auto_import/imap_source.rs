@@ -4,7 +4,7 @@
 //! Holds a fetcher + a list of handlers + a persistent cursor. Each `pull()`
 //! tick:
 //!   1. Loads cursor from store (else in-memory fallback for tests)
-//!   2. Calls `poll_once(fetcher, handlers, cursor)` (Phase 2.11)
+//!   2. Calls `poll_once(fetcher, handlers, cursor)`
 //!   3. Appends emitted events via `EventStore::append_batch`
 //!   4. Runs projections on the batch
 //!   5. Persists the advanced cursor

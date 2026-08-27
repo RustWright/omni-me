@@ -1,4 +1,4 @@
-//! IMAP poller infrastructure (Phase 2.11).
+//! IMAP poller infrastructure.
 //!
 //! ## Architecture
 //!
@@ -12,7 +12,7 @@
 //!   waits for a real cred + label flow).
 //! - `ImapHandler` — per-source extractor. Declares which messages it claims
 //!   via `accepts(envelope)` and produces zero-or-more events via `handle()`.
-//!   Real handlers land in Phase 2.12 (AED) + 2.13 (online receipts).
+//!   `ReceiptHandler` (`receipts.rs`) is the only production handler today.
 //! - `dispatch(message, handlers)` — pure routing helper: matches the message
 //!   against each handler's `accepts` filter, calls the first match.
 //!
@@ -181,8 +181,8 @@ pub async fn poll_once(
 
 #[cfg(test)]
 pub mod mock {
-    //! Mock fetcher + handlers for tests. Public so individual handler crates
-    //! (Phase 2.12 + 2.13) can use these in their own tests.
+    //! Mock fetcher + handlers for tests. Public so individual handler
+    //! modules can use these in their own tests.
 
     use super::*;
     use std::sync::Mutex;

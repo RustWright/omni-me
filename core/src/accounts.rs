@@ -2,7 +2,7 @@
 //!
 //! Three concerns live here:
 //! - A2 business/personal separation — `BUSINESS_HIERARCHY_PREFIX` const +
-//!   `strip_business_prefix` helper for the Phase 6.6 import rewriter.
+//!   `strip_business_prefix` helper for the journal-import rewriter.
 //! - `Unmatched` placeholder account — top-level clearing account used by
 //!   auto-import sources that lack the other half of a transaction.
 //! - `Posting` validation — commodity required, FX rate's `quote_commodity`
@@ -11,7 +11,7 @@
 //! The A2 decision uses a posting tag (`type:business`) rather than an
 //! account-hierarchy prefix — see `MEMORY.md::project_a2_business_hierarchy_finding.md`.
 //! The existing journal still encodes business via `Expenses:Business:*`;
-//! the Phase 6.6 rewriter walks parsed postings, strips that segment, and
+//! the import rewriter walks parsed postings, strips that segment, and
 //! emits the tag.
 
 use rust_decimal::Decimal;

@@ -1,4 +1,4 @@
-//! Pure helpers for the budget feature (Phase 5).
+//! Pure helpers for the budget feature.
 //!
 //! The W4 budget setup screen (5.1) stores each budget target's cadence
 //! as a free-form string in `BudgetSetPayload.period` — `"weekly"`,

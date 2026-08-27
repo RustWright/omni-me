@@ -1,7 +1,7 @@
-//! Post-extraction verification (Phase 2.6).
+//! Post-extraction verification.
 //!
 //! Cross-checks the extractor's output for arithmetic consistency and surfaces
-//! warnings + a possibly-adjusted confidence. The Phase 3.6 confirm-draft
+//! warnings + a possibly-adjusted confidence. The confirm-draft
 //! screen routes anything with `needs_manual_review = true` into a "look at
 //! this carefully" lane rather than auto-committing.
 //!

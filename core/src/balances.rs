@@ -1,4 +1,4 @@
-//! Account-balance aggregation for the Phase 4.4 account-list screen.
+//! Account-balance aggregation for the account-list screen.
 //!
 //! Pulls together three sources:
 //! - The per-device journal file (source of truth for postings + `P`
@@ -10,9 +10,9 @@
 //!   foreign-commodity balances into the user's base currency.
 //!
 //! The journal's `P` directives come from two converging paths:
-//! - Frankfurter daily-rate fetcher writes CAD/USD/EUR (Phase 2.7).
+//! - Frankfurter daily-rate fetcher writes CAD/USD/EUR.
 //! - Auto-import batch commit writes manual AED rates entered at review
-//!   time (Phase 3.10.5).
+//!   time.
 //!
 //! Both paths land as the same hledger `P` directive shape, so this module
 //! consumes them uniformly through `Prices::insert_from`.

@@ -4,13 +4,13 @@
 //!
 //! Validated against the user's real 5,826-transaction production journal in
 //! POC 0.1b (desktop) and POC 0.1c (Android arm64); both produced byte-identical
-//! results — see project.md session log entries for 2026-05-09.
+//! results.
 //!
 //! Used by:
-//! - Phase 4 R1 financial-health dashboard (balance aggregation across accounts).
-//! - Phase 5.7 unified reconciliation review (`Unmatched`-account balance check).
-//! - Phase 5.8 statement-reconciliation balance check.
-//! - Phase 7.2 R2 filter DSL.
+//! - the financial-health dashboard (balance aggregation across accounts).
+//! - unified reconciliation review (`Unmatched`-account balance check).
+//! - the statement-reconciliation balance check.
+//! - the ad-hoc transaction filter DSL.
 //!
 //! Scope deliberately stays *read-side*. Writes go through the event store +
 //! journal-file projection.

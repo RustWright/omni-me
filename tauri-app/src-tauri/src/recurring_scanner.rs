@@ -1,5 +1,5 @@
 //! Background scheduler that periodically runs the recurring-pattern
-//! detector (Phase 5.3). Same shape as `auto_close_scheduler` —
+//! detector. Same shape as `auto_close_scheduler` —
 //! spawned on app boot, sleeps between ticks, emits new
 //! `RecurringTransactionDetected` events for patterns not already in
 //! the `recurring_patterns` table.

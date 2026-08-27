@@ -1,6 +1,5 @@
 //! Client-side split/serialize of a journal note's frontmatter into typed
-//! properties + body — the data model behind the journal properties panel
-//! (Phase 5.1/5.2).
+//! properties + body — the data model behind the journal properties panel.
 //!
 //! The frontend crate has **no `core` dependency and no YAML library**, so this
 //! is a small, forgiving, hand-rolled parser/serializer. It only understands the

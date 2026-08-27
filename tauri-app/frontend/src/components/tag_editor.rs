@@ -1,5 +1,5 @@
 //! Shared tag chip-editor used by both the journal and generic-note properties
-//! panels (Phase 5.1/5.2). Renders the current tags as removable chips plus an
+//! panels. Renders the current tags as removable chips plus an
 //! "Add tag…" input; the parent owns the tag vector and mutates it in the
 //! `on_add` / `on_remove` handlers, so this component stays stateless except for
 //! the in-progress draft.

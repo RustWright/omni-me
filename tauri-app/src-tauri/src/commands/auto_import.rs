@@ -1,5 +1,4 @@
-//! Auto-import observability commands (Phase 3.9) + batch-review commands
-//! (Phase 3.10.5).
+//! Auto-import observability commands + batch-review commands.
 //!
 //! **Observability half** is a pure HTTP proxy to `/auto_import/{status,tick}`
 //! on the sync server — the scheduler lives server-side
@@ -29,10 +28,11 @@ use omni_me_core::events::{
 
 use crate::AppState;
 
-/// Base currency for manual-FX events recorded against this client. Cycle 3
-/// hard-codes CAD; Cycle 4 may surface a per-user setting (the
-/// `ExchangeRateRecordedPayload.base` field already carries it, so making
-/// this configurable later only touches this constant + a settings command).
+/// Base currency for manual-FX events recorded against this client.
+/// Hard-coded rather than configurable: `ExchangeRateRecordedPayload.base`
+/// already carries the value per-event, so promoting this to a user setting
+/// later touches only this constant plus a settings command. Do that when a
+/// second base currency is actually needed.
 const BASE_CURRENCY: &str = "CAD";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -494,8 +494,9 @@ fn pick_fx_event_date(accepted_dates: &[NaiveDate], fetched_at: DateTime<Utc>) -
     // batch. Earlier rows fall back to whatever prior `P` directives are in
     // scope. For AED today (no automatic feed) that means earlier rows in the
     // batch won't be auto-valued at the manual rate; if the user wants
-    // multi-date coverage they can dismiss + re-review per-day, or Cycle 4
-    // can add a "rate effective for whole batch" mode.
+    // multi-date coverage they can dismiss + re-review per-day. A "rate
+    // effective for the whole batch" mode would remove that step, worth
+    // adding if the per-day workaround becomes a routine annoyance.
     let _ = fetched_at;
     accepted_dates.iter().copied().max().unwrap_or_else(|| {
         // Caller guarantees non-empty (only invoked inside the fx_pair branch

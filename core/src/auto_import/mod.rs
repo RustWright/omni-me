@@ -1,4 +1,4 @@
-//! Auto-import source implementations (Phase 2B + 3.10).
+//! Auto-import source implementations.
 //!
 //! Each submodule implements `auto_import_scheduler::AutoImportSource` for a
 //! specific upstream — Northwind via Python subprocess, Globepay via REST API,
@@ -9,7 +9,7 @@
 //!   event (one event per tick that produced new data). On user-side commit
 //!   the batch fans out into `TransactionRecorded` events with one real-account
 //!   posting + one mirror posting to `Unmatched` (per the unmatched-account
-//!   pattern — the matching engine in Phase 5.6/5.7 collapses pairs later).
+//!   pattern — the reconciliation matching engine collapses pairs later).
 //! - Dedup happens via the `dedup_key` field on the proposed event, derived
 //!   from each upstream's stable external id (e.g. Meridian AED message UID, Globepay
 //!   transfer-id watermark, etc.).

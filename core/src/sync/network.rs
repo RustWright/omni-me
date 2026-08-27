@@ -6,7 +6,7 @@
 //!
 //! ## Platform coverage
 //!
-//! Phase 2 ships with a simple probe-based monitor that works on every Rust
+//! The shipped monitor is a simple TCP probe that works on every Rust
 //! platform we support (Linux, macOS, Windows, Android, iOS). It polls TCP
 //! reachability to a configurable probe host on an interval and emits an
 //! `Online` event on reconnect edges.
@@ -15,11 +15,12 @@
 //! network info (adapters, IPs), not push-based connectivity events. A
 //! richer implementation using Android's `ConnectivityManager.NetworkCallback`
 //! is deferred until a JNI bridge is wired — see TODO below. The probe
-//! monitor is sufficient as a Phase 2 hint source on all platforms.
+//! monitor is sufficient as a reconnect-hint source on all platforms.
 //!
 //! TODO(android-native-callback): Replace the probe on Android with
 //! `ConnectivityManager.NetworkCallback` once a JNI bridge is available.
-//! Filed as Cycle 3 backlog candidate.
+//! Worth doing when probe polling shows up as a measurable battery cost on
+//! device, or when a JNI bridge lands for some other reason — not before.
 
 use std::sync::Arc;
 use std::time::Duration;
