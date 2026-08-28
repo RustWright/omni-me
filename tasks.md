@@ -96,7 +96,7 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
 
   **B. Review gate:**
   5. **Full end-to-end code review of everything** (per the v1 close-out gate #4 above).
-     **🔄 IN PROGRESS — Phase A COMPLETE + calibration DONE 2026-08-25; Phase C: logic + security + performance docs TRIAGED + FIXED 2026-08-26 (1 doc left).** Third review of the project; scope is the
+     **🔄 IN PROGRESS — Phase A COMPLETE + calibration DONE 2026-08-25; PHASE C COMPLETE 2026-08-28 — all four documents triaged + fixed.** Third review of the project; scope is the
      never-reviewed Cycles 3+4 range `22395f8..HEAD` (230 commits, +49,501/−2,329). Four perspective
      docs at `reviews/2026-08-25-*.md` (gitignored — durable summaries in `project.md`'s Session-6 row;
      private-overlay findings in `omni-me-private/reviews/`). Cycle-2 model split reused (Opus:
@@ -335,14 +335,24 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      `audit_device_ids` off the pre-paint path (**not** claimed as the cold-open fix — the hang stays
      undiagnosed per the verify-first rule).
 
-     **Remaining:** triage the **bloat-complexity** document (same rules: every deferral gets a
-     trip-wire; verify prior FIXED markers) → Phase B test-gaps (written AFTER Phase C,
-     biased toward absence-tests). **13 Criticals total across 3 sittings; the 4 logic Criticals, all 4
-     frontend Criticals and all 3 security Criticals are now fixed.**
-     **Carry into Phase B:** `cargo test -p omni-me-core` alone does **not** run the `auto_import`
-     tests — they need `--features auto-import` (598 filtered out without it), so a per-package run
-     silently under-tests. Also: build `omni-me-private` after any `core::sync` / `SourceCtx`
-     signature change; CI does not.
+     **Remaining:** refresh the stale repo docs (`architecture.md`, `ui-checklist.md`, `UI_WORKFLOW.md`,
+     a missing `README.md`) → close the one open finding left across all four documents (the Gemini
+     API-key-in-query-string item, `llm/gemini.rs:93`) → Phase B test-gaps (written AFTER Phase C,
+     biased toward absence-tests) → Phase D curiosities. **13 Criticals total across 3 sittings; the 4
+     logic Criticals, all 4 frontend Criticals and all 3 security Criticals are fixed.**
+     **Bloat doc closed 2026-08-28** — 25 findings (13 fixed, 7 deferred with in-code trip-wires,
+     2 keeping, 1 declined, 1 claim withdrawn). Its most valuable item carried no impact rating: CI
+     now builds and tests what it ships (`omni-me-app` + frontend + clippy ×4; `src-tauri/**` had
+     been in no path filter at all). Both High-Impact items — the `finances.rs` and `budget.rs`
+     splits — were correct but deferred, because a bloat review ranks by how much code could go away
+     while a release gate ranks by what could break.
+     **Carry into Phase B:** the `--features auto-import` caveat below applies to a *single-package*
+     run only — `cargo test -p omni-me-core -p omni-me-server` in ONE invocation unifies features
+     (server depends on core with that feature) and does run all 609. Splitting it into two commands
+     silently drops core to 513; CI now carries a comment saying so. Still true: build
+     `omni-me-private` after any `core::sync` / `SourceCtx` signature change; CI does not.
+     Also queued: `cargo fmt --all` as one standalone commit once this review closes (396 hunks /
+     84 files of rustfmt-1.9.0 drift), then add `cargo fmt --check` to CI.
 
   **C. Email ingest prep:**
   6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
