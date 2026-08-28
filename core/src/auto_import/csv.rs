@@ -29,12 +29,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::accounts::UNMATCHED_ACCOUNT;
 use crate::auto_import::to_proposed_event;
 use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary};
 use crate::events::{DraftTransaction, EventStore, Posting, ProjectionRunner};
 
-/// The clearing account every imported row balances against.
-const UNMATCHED_ACCOUNT: &str = "Unmatched";
 /// chrono format used when a source doesn't override `date_format`.
 pub const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d";
 

@@ -11,6 +11,8 @@
 //! presents pairs for one-click confirmation (emits `TransactionsMerged`)
 //! or dismissal.
 
+use crate::accounts::is_unmatched;
+use crate::events::Posting;
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::Serialize;
@@ -237,6 +239,28 @@ pub fn check_mergeable(a: &UnmatchedTxn, b: &UnmatchedTxn) -> Result<(), MergeRe
 /// separately written expressions of this same rule until 2026-08-28.
 pub fn clears_statement(a: Option<&str>, b: Option<&str>) -> bool {
     a.is_some() != b.is_some()
+}
+
+/// Build the surviving transaction's postings for a merge.
+///
+/// Both `Unmatched` legs come out and what is left is concatenated. That is
+/// correct precisely when [`check_mergeable`] passes: each side balanced on its
+/// own, so its non-`Unmatched` legs sum to the negation of its `Unmatched` leg,
+/// and if the two `Unmatched` legs cancel then so do the two remainders. Call
+/// `check_mergeable` first — this function does no checking of its own, because
+/// it is also the shape `golden_reconcile` renders through the journal writer to
+/// prove the result still balances after a round-trip.
+///
+/// Lives in `core` rather than beside the Tauri command so the reconcile
+/// guardrail can reach it, and so a future LLM tool merges through the same
+/// rule the UI does.
+pub fn combine_for_merge(primary: &[Posting], secondary: &[Posting]) -> Vec<Posting> {
+    primary
+        .iter()
+        .chain(secondary)
+        .filter(|p| !is_unmatched(&p.account))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -492,5 +516,36 @@ mod tests {
         assert!(clears_statement(None, Some("stmt")));
         assert!(!clears_statement(Some("stmt"), Some("other")));
         assert!(!clears_statement(None, None));
+    }
+    // --- combining ----------------------------------------------------------
+
+    fn p(account: &str, amount: &str) -> Posting {
+        Posting {
+            account: account.into(),
+            commodity: "CAD".into(),
+            amount: dec(amount),
+            fx_rate: None,
+            tags: vec![],
+        }
+    }
+
+    #[test]
+    fn combine_drops_every_unmatched_leg_and_keeps_the_order_of_the_rest() {
+        let combined = combine_for_merge(
+            &[p("Assets:Chequing", "-50.00"), p("Unmatched", "50.00")],
+            &[p("Unmatched", "-50.00"), p("Expenses:Food", "50.00")],
+        );
+        let accounts: Vec<&str> = combined.iter().map(|x| x.account.as_str()).collect();
+        assert_eq!(accounts, vec!["Assets:Chequing", "Expenses:Food"]);
+    }
+
+    #[test]
+    fn combining_a_cancelling_pair_yields_postings_that_sum_to_zero() {
+        // The property `check_mergeable` is the precondition for. Stated here
+        // as an assertion so the two are read together.
+        let a = [p("Assets:Chequing", "-50.00"), p("Unmatched", "50.00")];
+        let b = [p("Unmatched", "-50.00"), p("Expenses:Food", "50.00")];
+        let total: Decimal = combine_for_merge(&a, &b).iter().map(|x| x.amount).sum();
+        assert!(total.is_zero(), "combined legs sum to {total}, expected 0");
     }
 }

@@ -30,6 +30,7 @@ use ledger_utils::prices::Prices;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::accounts::is_unmatched;
 use crate::db::queries::AccountRow;
 use crate::ledger::{self, LedgerError};
 use crate::query::{QueryTxn, group_account_by_tag};
@@ -212,8 +213,13 @@ pub fn account_type(name: &str) -> &str {
 /// worth: `Assets` and `Liabilities`, plus the single `Unmatched` clearing
 /// account (`project_unmatched_account_pattern`). Excludes `Expenses` /
 /// `Income` / `Equity`, which are flow/category accounts, not balances.
-fn is_balance_bearing(name: &str) -> bool {
-    matches!(account_type(name), "Assets" | "Liabilities") || name == "Unmatched"
+///
+/// Public because `commands::budget` filters the legacy roster file with the
+/// same rule. It kept a private copy of this line until 2026-08-28; had the two
+/// drifted, the Accounts screen and net worth would have disagreed about which
+/// accounts count, in opposite directions and with nothing to flag it.
+pub fn is_balance_bearing(name: &str) -> bool {
+    matches!(account_type(name), "Assets" | "Liabilities") || is_unmatched(name)
 }
 
 /// Insert `name` and every ancestor prefix into `set` (`A:B:C` → `A`, `A:B`,

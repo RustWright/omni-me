@@ -4,19 +4,27 @@
 //! payload, calls `append_and_apply`, optionally returns the projected row.
 //! Reads go through `core::db::queries`.
 //!
-//! **This file covers eight unrelated feature areas across ~30 commands and has
-//! no tests of its own.** Both halves of that sentence are deferrals, and the
-//! order they get fixed in matters.
-//!
-//! Splitting it by feature is worth doing, but not first. A refactor of
+//! **This file covers eight unrelated feature areas across ~30 commands.**
+//! Splitting it is still owed; the order matters, because a refactor of
 //! untested code has nothing to tell you whether it preserved behaviour, and
 //! this file is reachable only through Tauri's IPC layer, so a mistake here
 //! surfaces as a screen that quietly stops working rather than as a failing
-//! build. Trip-wire: split it once it HAS tests — write those first, then move
-//! code with something watching. The commands are pure enough to test through
-//! their helpers (`check_wipe_confirmation` in `routines.rs` is the shape to
-//! copy: pull the logic out of the `#[tauri::command]` so it can be called
-//! without an `AppState`).
+//! build.
+//!
+//! The first half of that debt is paid. 2026-08-28 added tests over the logic
+//! that exists *only* here — `plan_merge` and `plan_resolve`, which rewrite
+//! postings — by pulling the payload construction out of the
+//! `#[tauri::command]` wrappers so it runs without an `AppState`
+//! (`check_wipe_confirmation` in `routines.rs` is the same shape). Everything
+//! those two rely on now lives in `core::reconciliation` next to its tests, and
+//! `golden_reconcile` renders a merge end-to-end.
+//!
+//! **Still untested, and the trip-wire for the split:** the read-side
+//! arithmetic — `dashboard_summary`, `budget_progress`, `account_summaries`,
+//! `net_worth_history`, `account_tag_breakdown` — and `import_chequing_csv`.
+//! Those mostly delegate to `core::{budget,balances,dashboard}`, which carry
+//! their own tests, so the residual risk is in the assembly rather than the
+//! sums. Cover that, then split.
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -33,6 +41,7 @@ use omni_me_core::db::queries::{
 };
 use omni_me_core::events::{
     AttachmentRef, EventType, NewEvent, Posting, TransactionRecordedPayload,
+    TransactionsMergedPayload,
 };
 use omni_me_core::ledger::JournalArtifacts;
 use omni_me_core::query::{self, QueryPosting, QueryTxn};
@@ -324,14 +333,6 @@ fn summary_to_view(s: AccountSummary) -> AccountSummaryView {
     }
 }
 
-/// True for `Assets` / `Liabilities` / `Unmatched` — the account types that
-/// belong on the Accounts screen. Mirrors `core::balances`' private predicate;
-/// used here only to filter the legacy `ROSTER_FILE` extra-includes so they
-/// can't drag a flow account (Expenses/Income) into net worth.
-fn is_balance_bearing(name: &str) -> bool {
-    matches!(balances::account_type(name), "Assets" | "Liabilities") || name == "Unmatched"
-}
-
 /// The Accounts-screen allowlist (3.9 auto-include-by-type). Auto-derives the
 /// balance-bearing accounts from the journal + declared rows (minus hidden),
 /// then folds in any still-present `ROSTER_FILE` entries that are themselves
@@ -349,7 +350,7 @@ fn effective_roster(
         .collect();
     let mut roster = balances::auto_roster_from(&artifacts.balance, declared, &hidden);
     for extra in file_roster {
-        if is_balance_bearing(extra) && !hidden.contains(extra) && !roster.contains(extra) {
+        if balances::is_balance_bearing(extra) && !hidden.contains(extra) && !roster.contains(extra) {
             roster.push(extra.clone());
         }
     }
@@ -1345,6 +1346,28 @@ impl MergeSide {
         }
     }
 
+    /// Postings as `Vec<Posting>` rather than raw JSON.
+    ///
+    /// Not a formality. `validate_payload` runs only on the server's push path
+    /// (`routes/sync.rs`), never on local append, so this is the sole point at
+    /// which a locally-merged transaction's posting shape is checked. Anything
+    /// that entered through the canonical event builder round-trips fine; a
+    /// shape that does not is exactly what should stop here, rather than reach
+    /// the projection and the journal file and then fail to sync.
+    fn typed_postings(&self) -> Result<Vec<Posting>, String> {
+        serde_json::from_value(self.postings.clone())
+            .map_err(|e| format!("transaction {} has malformed postings: {e}", self.id))
+    }
+
+    fn typed_attachment(&self) -> Result<Option<AttachmentRef>, String> {
+        match &self.attachment {
+            None => Ok(None),
+            Some(v) => serde_json::from_value(v.clone())
+                .map(Some)
+                .map_err(|e| format!("transaction {} has a malformed attachment: {e}", self.id)),
+        }
+    }
+
     fn as_unmatched(&self) -> Option<UnmatchedTxn> {
         unmatched_from_parts(
             &self.id,
@@ -1388,24 +1411,26 @@ fn plan_merge(primary: &MergeSide, secondary: &MergeSide) -> Result<MergePlan, S
 
     // Safe now: `check_mergeable` has established the two legs cancel, so the
     // postings left after stripping them sum to zero.
-    let mut combined = strip_unmatched_legs(&primary.postings);
-    combined.extend(strip_unmatched_legs(&secondary.postings));
-
-    let merged = serde_json::json!({
-        "primary_id": primary.id,
-        "merged_ids": [secondary.id],
-        "combined_postings": combined,
-        "combined_description": if primary.description.is_empty() {
+    let merged = TransactionsMergedPayload {
+        primary_id: primary.id.clone(),
+        merged_ids: vec![secondary.id.clone()],
+        combined_postings: reconciliation::combine_for_merge(
+            &primary.typed_postings()?,
+            &secondary.typed_postings()?,
+        ),
+        combined_description: if primary.description.is_empty() {
             secondary.description.clone()
         } else {
             primary.description.clone()
         },
-        "combined_attachment": primary
-            .attachment
-            .clone()
-            .or_else(|| secondary.attachment.clone()),
-        "balancing_posting": null,
-    });
+        combined_attachment: primary
+            .typed_attachment()?
+            .or(secondary.typed_attachment()?),
+        // The merged legs already balance, so there is nothing left to plug.
+        balancing_posting: None,
+    };
+    let merged = serde_json::to_value(merged)
+        .map_err(|e| format!("could not serialize the merge payload: {e}"))?;
 
     // This match answers a question the boolean rule cannot: *which* side's
     // source and date to record. It must still agree with core about whether
@@ -1585,21 +1610,6 @@ pub async fn resolve_unmatched(
         append_and_apply(&state, EventType::TransactionCleared, txn_id, cleared).await?;
     }
     Ok(())
-}
-
-fn strip_unmatched_legs(postings: &serde_json::Value) -> Vec<serde_json::Value> {
-    postings
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|p| {
-            !p.get("account")
-                .and_then(|v| v.as_str())
-                .map(is_unmatched)
-                .unwrap_or(false)
-        })
-        .collect()
 }
 
 /// Return Unmatched-touching transactions that DO NOT appear in any
@@ -1948,18 +1958,44 @@ mod tests {
         assert_eq!(plan.merged["combined_description"], "groceries");
     }
 
+    fn attachment(filename: &str) -> serde_json::Value {
+        serde_json::json!({
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "filename": filename,
+            "mime_type": "application/pdf",
+            "size": 1024,
+        })
+    }
+
     #[test]
     fn merge_prefers_the_primary_attachment_and_falls_back_to_the_secondary() {
         let mut p = statement_side("t1", "2026-01-01", Some("stmt"));
         let mut s = manual_side("t2", "2026-01-02", None);
-        s.attachment = Some(serde_json::json!({ "blob_id": "from-secondary" }));
+        s.attachment = Some(attachment("from-secondary.pdf"));
 
         let plan = plan_merge(&p, &s).unwrap();
-        assert_eq!(plan.merged["combined_attachment"]["blob_id"], "from-secondary");
+        assert_eq!(
+            plan.merged["combined_attachment"]["filename"],
+            "from-secondary.pdf"
+        );
 
-        p.attachment = Some(serde_json::json!({ "blob_id": "from-primary" }));
+        p.attachment = Some(attachment("from-primary.pdf"));
         let plan = plan_merge(&p, &s).unwrap();
-        assert_eq!(plan.merged["combined_attachment"]["blob_id"], "from-primary");
+        assert_eq!(
+            plan.merged["combined_attachment"]["filename"],
+            "from-primary.pdf"
+        );
+    }
+
+    #[test]
+    fn merge_refuses_an_attachment_that_is_not_a_real_reference() {
+        // Same reasoning as the postings: the projection and the journal file
+        // both consume this event before anything validates it.
+        let mut s = manual_side("t2", "2026-01-02", None);
+        s.attachment = Some(serde_json::json!({ "blob_id": "not-an-attachment-ref" }));
+        let err = plan_merge(&statement_side("t1", "2026-01-01", Some("stmt")), &s)
+            .expect_err("a bare blob id is not an AttachmentRef");
+        assert!(err.contains("malformed attachment"), "got: {err}");
     }
 
     // --- resolve ------------------------------------------------------------
@@ -2059,19 +2095,43 @@ mod tests {
         assert_eq!(cleared["cleared_date"], "2026-01-01");
     }
 
-    // --- shared helpers -----------------------------------------------------
+    // --- payload shape ------------------------------------------------------
 
     #[test]
-    fn strip_unmatched_legs_keeps_postings_whose_account_is_missing() {
-        // Defensive shape: a posting with no `account` key is malformed, but
-        // dropping it would delete money from the merged entry. Keeping it
-        // makes the problem visible downstream instead.
-        let postings = serde_json::json!([
-            posting("Unmatched", "50.00", "CAD"),
+    fn merge_refuses_a_transaction_with_malformed_postings() {
+        // A posting with no `account` used to be carried into the merged entry
+        // untouched. Nothing local would have objected — `validate_payload`
+        // runs only on the server's push path — so the bad row reached the
+        // projection and the journal file, and only failed later at sync.
+        let mut broken = manual_side("t2", "2026-01-02", None);
+        broken.postings = serde_json::json!([
             { "amount": "50.00", "commodity": "CAD" },
+            posting("Unmatched", "-50.00", "CAD"),
         ]);
-        let kept = strip_unmatched_legs(&postings);
-        assert_eq!(kept.len(), 1);
-        assert!(kept[0].get("account").is_none());
+        let err = plan_merge(&statement_side("t1", "2026-01-01", Some("stmt")), &broken)
+            .expect_err("a posting with no account must not reach the projection");
+        assert!(err.contains("malformed postings"), "got: {err}");
+    }
+
+    #[test]
+    fn merged_payload_deserializes_as_the_event_type_it_claims_to_be() {
+        // `append_and_apply` takes a `serde_json::Value`, so nothing downstream
+        // of here checks the shape locally. Round-tripping through the real
+        // payload type is what makes a renamed or dropped field a test failure
+        // rather than a field the projection silently never sees.
+        let plan = plan_merge(
+            &statement_side("t1", "2026-01-01", Some("stmt")),
+            &manual_side("t2", "2026-01-02", None),
+        )
+        .unwrap();
+        let payload: TransactionsMergedPayload =
+            serde_json::from_value(plan.merged).expect("merged payload must round-trip");
+        assert_eq!(payload.primary_id, "t1");
+        assert_eq!(payload.merged_ids, vec!["t2".to_string()]);
+        assert_eq!(payload.combined_postings.len(), 2);
+        assert!(
+            payload.balancing_posting.is_none(),
+            "a balanced merge must not carry a plug posting"
+        );
     }
 }

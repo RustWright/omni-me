@@ -22,7 +22,10 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use omni_me_core::events::TransactionRecordedPayload;
+use chrono::NaiveDate;
+use omni_me_core::accounts::unmatched_posting;
+use omni_me_core::events::{Posting, TransactionRecordedPayload};
+use omni_me_core::reconciliation::combine_for_merge;
 use omni_me_core::journal_file::render_transaction;
 use omni_me_core::journal_import::parse_journal;
 use rust_decimal::Decimal;
@@ -62,6 +65,30 @@ fn norm(d: Decimal) -> String {
     d.normalize().to_string()
 }
 
+/// Render payloads through the production journal writer and read the balances
+/// back with the same library the app uses. Zero balances are dropped so an
+/// account that nets out (an `Unmatched` pair, say) doesn't show up as a
+/// difference between two otherwise identical tables — the same convention
+/// Path B has always applied to its direct sum.
+fn render_and_balance(payloads: &[TransactionRecordedPayload]) -> BalanceTable {
+    let mut journal = String::new();
+    for payload in payloads {
+        journal.push_str(&render_transaction(payload));
+        journal.push('\n');
+    }
+    let balance = omni_me_core::ledger::balances(&journal).expect("rendered journal balances");
+    let mut out = BalanceTable::new();
+    for (account, ab) in &balance.account_balances {
+        for (commodity, amount) in &ab.amounts {
+            if amount.quantity.is_zero() {
+                continue;
+            }
+            out.insert((account.clone(), commodity.clone()), norm(amount.quantity));
+        }
+    }
+    out
+}
+
 #[test]
 fn golden_reconcile_matches_frozen_balances() {
     let imported = parse_journal(&fixture_path()).expect("fixture parses");
@@ -94,25 +121,20 @@ fn golden_reconcile_matches_frozen_balances() {
 
     // Path A — the full production path: canonical builder -> render -> the app's
     // balance library.
-    let mut journal = String::new();
-    for txn in &imported.transactions {
-        let payload = TransactionRecordedPayload::new(
-            txn.txn_id.clone(),
-            txn.date,
-            txn.description.clone(),
-            txn.postings.clone(),
-        )
-        .with_tags(txn.top_tags.clone());
-        journal.push_str(&render_transaction(&payload));
-        journal.push('\n');
-    }
-    let balance = omni_me_core::ledger::balances(&journal).expect("rendered journal balances");
-    let mut path_a: BalanceTable = BTreeMap::new();
-    for (account, ab) in &balance.account_balances {
-        for (commodity, amount) in &ab.amounts {
-            path_a.insert((account.clone(), commodity.clone()), norm(amount.quantity));
-        }
-    }
+    let payloads: Vec<TransactionRecordedPayload> = imported
+        .transactions
+        .iter()
+        .map(|txn| {
+            TransactionRecordedPayload::new(
+                txn.txn_id.clone(),
+                txn.date,
+                txn.description.clone(),
+                txn.postings.clone(),
+            )
+            .with_tags(txn.top_tags.clone())
+        })
+        .collect();
+    let path_a = render_and_balance(&payloads);
 
     let frozen = expected();
     assert_eq!(
@@ -122,5 +144,94 @@ fn golden_reconcile_matches_frozen_balances() {
     assert_eq!(
         path_a, frozen,
         "render/balance drift: the full reconcile path no longer reproduces the frozen balances"
+    );
+}
+
+/// Merging two halves of a reconciliation must not move a single balance.
+///
+/// `merge_transactions` strips both `Unmatched` legs and concatenates the rest.
+/// The resulting `TransactionsMerged` event is replayed into the SurrealDB
+/// projection *and* the on-disk hledger file, and nothing downstream re-derives
+/// what the balances ought to be — so a merge that drops or duplicates a leg
+/// surfaces only as numbers that quietly disagree with the bank.
+///
+/// This renders the same money twice through the production writer: once as the
+/// two unreconciled halves, once as the merged entry. The balance library must
+/// reach the same table both times. It is the end-to-end counterpart to the
+/// unit tests on `combine_for_merge` and `plan_merge` — those check the
+/// arithmetic, this checks that the arithmetic survives a render / re-parse
+/// round-trip, which is where the money chain has drifted before.
+#[test]
+fn merging_two_halves_leaves_every_balance_unchanged() {
+    let date = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
+    let amount = Decimal::from_str("42.10").unwrap();
+
+    // The statement half: money left the account, the other side is unknown.
+    let statement = vec![
+        Posting {
+            account: "Assets:NonRegistered:CAD".to_string(),
+            commodity: "CAD".to_string(),
+            amount: -amount,
+            fx_rate: None,
+            tags: vec![],
+        },
+        unmatched_posting(amount, "CAD"),
+    ];
+    // The manual half: the user recorded what it was for.
+    let manual = vec![
+        Posting {
+            account: "Expenses:Groceries".to_string(),
+            commodity: "CAD".to_string(),
+            amount,
+            fx_rate: None,
+            tags: vec![],
+        },
+        unmatched_posting(-amount, "CAD"),
+    ];
+
+    let unreconciled = vec![
+        TransactionRecordedPayload::new(
+            "merge-a".to_string(),
+            date,
+            "NORTHWIND WITHDRAWAL".to_string(),
+            statement.clone(),
+        ),
+        TransactionRecordedPayload::new(
+            "merge-b".to_string(),
+            date,
+            "groceries".to_string(),
+            manual.clone(),
+        ),
+    ];
+
+    let merged = vec![TransactionRecordedPayload::new(
+        "merge-a".to_string(),
+        date,
+        "groceries".to_string(),
+        combine_for_merge(&statement, &manual),
+    )];
+
+    let before = render_and_balance(&unreconciled);
+    let after = render_and_balance(&merged);
+
+    assert_eq!(
+        after, before,
+        "merging moved a balance: the two halves and the merged entry must \
+         reconcile to the same table"
+    );
+    // And the pair really did net out, rather than both tables being empty.
+    assert_eq!(
+        before.get(&("Expenses:Groceries".to_string(), "CAD".to_string())),
+        Some(&norm(amount)),
+        "fixture is not exercising the balances it claims to"
+    );
+    // Read this off the rendered text, not off `after`. A pair of leftover
+    // `Unmatched` legs cancels to zero, and `render_and_balance` drops zero
+    // balances — so the balance table cannot see the difference between a
+    // merge that stripped them and one that forgot to.
+    let merged_journal = render_transaction(&merged[0]);
+    assert!(
+        !merged_journal.contains("Unmatched"),
+        "the merged entry still carries an Unmatched leg:\n{merged_journal}"
     );
 }
