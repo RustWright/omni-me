@@ -25,21 +25,38 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# There is deliberately no `cargo fmt --check` step yet. As of 2026-08-28 the
-# tree does not satisfy rustfmt 1.9.0 (2026-05-25): `cargo fmt --all --check`
-# reports 396 hunks across 84 files. Spot-checking them shows normal formatting
-# that a newer rustfmt now lays out differently (a `#[error(...)]` attribute it
-# will no longer wrap, a `let` binding it now fits on one line) — toolchain
-# drift, not neglect, and nothing a reviewer would call wrong.
-#
-# Adding the step therefore means first landing a ~400-hunk mechanical reformat,
-# which would touch nearly every file currently under code review and make those
-# diffs unreadable. Trip-wire: once the pre-v1 review closes, run
-# `cargo fmt --all` as ONE standalone commit that changes nothing else, then add
-# the check step here. Do not fold that reformat into a commit carrying real
-# changes.
-
 jobs:
+  # Ungated on purpose. Every other job here is behind a paths-filter because it
+  # compiles something; this one only runs rustfmt, so it costs a toolchain
+  # install and a few seconds, and there is no path filter that means "any Rust
+  # file" without duplicating all three filters below.
+  #
+  # This step could not exist until 2026-08-28. The tree had drifted ~400 hunks
+  # from rustfmt 1.9.0 (2026-05-25) — toolchain drift rather than neglect, since
+  # the hunks were normal formatting a newer rustfmt lays out differently — and
+  # landing that reformat mid-review would have made every review diff
+  # unreadable. It went in as one standalone commit once the pre-v1 review
+  # closed, which is what unblocked this check.
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting (core + server + app)
+        run: cargo fmt --all -- --check
+
+      # Same seam as the clippy/test jobs below: `tauri-app/frontend` is
+      # `exclude`d from the root workspace and declares its own bare
+      # `[workspace]`, so `--all` above cannot reach it. It needs its own
+      # invocation from its own directory, permanently.
+      - name: Check formatting (frontend)
+        working-directory: tauri-app/frontend
+        run: cargo fmt --all -- --check
+
   # Compute which areas actually changed (robust git-diff, not substring matching)
   # so the expensive build jobs only run when their sources moved.
   changes:
