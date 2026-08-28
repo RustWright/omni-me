@@ -377,6 +377,30 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      `/llm/config -> 200 OK`. **Remaining Phase B work is unwritten tests, not unwritten analysis** —
      the biggest is `commands/budget.rs` (0 tests), which the bloat triage ordered ahead of splitting
      that file.
+     **BUDGET.RS MUTATING PATH DONE 2026-08-28** (`2e525a8`, `fadf3bb`). Scoped by measurement, not
+     by LOC: most of the ~30 commands delegate to `core::{budget,balances,dashboard}` (already
+     tested), so the work went to `merge_transactions` + `resolve_unmatched` — the only
+     money-*mutating* logic that existed nowhere else. Payload construction extracted into
+     `plan_merge` / `plan_resolve`; **19 tests**, each control-checked by reverting the behaviour it
+     guards. Four defects found in the writing: (1) `merge_transactions` never checked its own
+     precondition — stripping both `Unmatched` legs balances only if they cancel, which was asserted
+     in a comment and guaranteed only by the candidate *generator*, so an arbitrary pair of ids over
+     IPC could append a `TransactionsMerged` that did not sum to zero; now
+     `core::reconciliation::check_mergeable`. (2) `resolve_unmatched` blanked the FX rate on the leg
+     it rewrote, re-pricing a foreign-currency posting at par without touching any amount. (3) The
+     merge payload was untyped `json!` — and `validate_payload` runs **only** on the server push
+     path, never on local append, so a malformed posting reached both the projection and the journal
+     file and failed only at sync; now a real `TransactionsMergedPayload`. (4) `is_balance_bearing`
+     was implemented twice (core private + a copy here), which would have split the Accounts screen
+     from net worth; core's is now `pub` and the copy is gone, along with two duplicate
+     `UNMATCHED_ACCOUNT` consts in `auto_import/{rest,csv}.rs`.
+     `golden_reconcile` gained `merging_two_halves_leaves_every_balance_unchanged` — it renders the
+     same money twice through the production writer (two halves vs. merged) and asserts the balance
+     library agrees. **Trip-wire for the file split:** the read-side arithmetic
+     (`dashboard_summary`, `budget_progress`, `account_summaries`, `net_worth_history`,
+     `account_tag_breakdown`) + `import_chequing_csv` remain untested; those delegate to tested core
+     functions, so the risk is assembly rather than sums. Cover them, then split.
+     Verified: core+server 617, app 68, frontend 85, clippy clean ×4 configs.
 
   **C. Email ingest prep:**
   6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
