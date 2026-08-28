@@ -150,3 +150,78 @@ async fn no_configured_token_leaves_the_box_open() {
         resp.status(),
     );
 }
+
+/// Every route the box exposes must be behind the gate — not just the one this
+/// file happens to drive.
+///
+/// The other tests here prove the gate *works*. None of them prove it *covers*.
+/// That distinction has teeth because of how the layer is attached in
+/// `build_app`: `protected.route_layer(...)` binds only the routes present on
+/// `protected` at the moment it is called, and the final router is
+/// `Router::new().route("/health", ...).merge(protected)`. So a new route group
+/// merged into `app` instead of `protected` — or merged into `protected` after
+/// the `if let Some(token)` block — is served with no authentication at all,
+/// and every existing test in this file still passes.
+///
+/// The path list is DERIVED from the route modules rather than written out
+/// here, so a route added tomorrow is covered without anyone remembering to
+/// extend this test. A hand-maintained list would reintroduce exactly the
+/// forgettable step the test exists to eliminate.
+///
+/// `/health` and `/updates` are deliberately open and are declared in `lib.rs`,
+/// not in `routes/` — so "everything declared in `routes/` is protected" is the
+/// whole rule, with no allow-list to keep in sync.
+#[tokio::test]
+async fn every_route_module_path_is_behind_the_auth_gate() {
+    let routes_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes");
+
+    // Collect `.route("<path>"` literals across every route module.
+    let mut paths: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(&routes_dir).expect("routes dir").flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&p).unwrap();
+        let mut rest = src.as_str();
+        while let Some(i) = rest.find(".route(\"") {
+            rest = &rest[i + ".route(\"".len()..];
+            let end = rest.find('"').expect("unterminated route literal");
+            // Axum path params (`{name}`) need a concrete value to route to.
+            let concrete = rest[..end]
+                .split('/')
+                .map(|seg| if seg.starts_with('{') { "x" } else { seg })
+                .collect::<Vec<_>>()
+                .join("/");
+            paths.push(concrete);
+            rest = &rest[end..];
+        }
+    }
+
+    assert!(
+        paths.len() >= 8,
+        "expected to discover the box's routes by scanning src/routes; found {paths:?} — \
+         if the `.route(\"...\")` form changed, fix this scan rather than deleting the test"
+    );
+
+    let (url, _h) = common::start_full_server_with_auth(None, Some("secret-token".into())).await;
+    let client = reqwest::Client::new();
+
+    let mut unprotected = Vec::new();
+    for path in &paths {
+        let resp = client
+            .get(format!("{url}{path}"))
+            .send()
+            .await
+            .expect("request failed");
+        if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
+            unprotected.push(format!("{path} -> {}", resp.status()));
+        }
+    }
+
+    assert!(
+        unprotected.is_empty(),
+        "these routes answered an unauthenticated request without 401 — anything that can \
+         reach the port can call them: {unprotected:#?}"
+    );
+}

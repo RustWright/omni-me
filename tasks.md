@@ -364,6 +364,19 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      actually worked on the box). Neither is live today. Fold both into the deployment that
      accompanies the DB reset (roadmap steps 8-9) rather than making a special trip, and re-verify
      PDF extraction end-to-end afterwards, since it has never once run successfully in production.
+     **PHASE B DONE 2026-08-28** — `reviews/2026-08-28-test-gaps.md` (164 lines). Ran Cycle 2's
+     lesson as an explicit filter ("would a fix commit ever have produced this test?"), since Phase C
+     produced a large body of tests including six structural guards. 3 High / 4 Medium / 3 Low, plus
+     a "deliberately NOT proposing" section so the next review doesn't re-file `bridge.rs`'s and
+     `types.rs`'s zero-test counts as gaps. Highest item was IMPLEMENTED rather than filed:
+     `every_route_module_path_is_behind_the_auth_gate` — the auth tests proved the gate WORKS but
+     nothing proved it COVERS, and `route_layer` binds only what is on `protected` when it is called,
+     so a route group merged into `app` instead is unauthenticated with every existing test still
+     green. Path list is derived by scanning `src/routes/*.rs`, so new routes are covered
+     automatically. Control-checked: moving `llm_routes()` outside the gate fails with
+     `/llm/config -> 200 OK`. **Remaining Phase B work is unwritten tests, not unwritten analysis** —
+     the biggest is `commands/budget.rs` (0 tests), which the bloat triage ordered ahead of splitting
+     that file.
 
   **C. Email ingest prep:**
   6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
