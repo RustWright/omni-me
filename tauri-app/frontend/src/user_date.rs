@@ -15,12 +15,6 @@ impl UserDate {
         Self(Utc::now().with_timezone(tz).date_naive())
     }
 
-    /// Yesterday's date in the user's local timezone.
-    pub fn yesterday(tz: &Tz) -> Self {
-        let today = Self::today(tz);
-        Self(today.0 - chrono::Duration::days(1))
-    }
-
     /// A date N days before today in the user's local timezone.
     pub fn days_ago(tz: &Tz, n: i64) -> Self {
         let today = Self::today(tz);

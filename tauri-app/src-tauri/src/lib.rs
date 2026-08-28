@@ -548,7 +548,6 @@ pub fn run() {
             commands::notes::close_journal_entry,
             commands::notes::reopen_journal_entry,
             commands::notes::get_journal_by_date,
-            commands::notes::list_journal_entries,
             commands::notes::list_journal_day_stats,
             // Generic notes (id-keyed)
             commands::notes::create_generic_note,
@@ -610,8 +609,6 @@ pub fn run() {
             commands::budget::run_transaction_query,
             commands::budget::get_transaction,
             // Budget — accounts, budgets, recurring
-            commands::budget::add_account,
-            commands::budget::list_accounts,
             commands::budget::list_known_accounts,
             commands::budget::list_detected_accounts,
             commands::budget::set_account_override,
@@ -619,7 +616,6 @@ pub fn run() {
             commands::budget::account_tag_breakdown,
             commands::budget::dashboard_summary,
             commands::budget::net_worth_history,
-            commands::budget::check_affordability,
             commands::budget::set_budget,
             commands::budget::list_budgets,
             commands::budget::remove_budget,

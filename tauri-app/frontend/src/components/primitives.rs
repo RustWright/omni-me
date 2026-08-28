@@ -76,31 +76,6 @@ pub fn PageHeader(
     }
 }
 
-/// A labeled sub-section: small uppercase caption + content.
-#[component]
-pub fn Section(
-    title: String,
-    #[props(default = String::new())] class: String,
-    children: Element,
-) -> Element {
-    rsx! {
-        section { class: "{class}",
-            h2 { class: "mb-2 text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted",
-                "{title}"
-            }
-            {children}
-        }
-    }
-}
-
-/// Small form-field caption.
-#[component]
-pub fn FieldLabel(text: String, #[props(default = String::new())] class: String) -> Element {
-    rsx! {
-        label { class: "block mb-1 text-xs font-medium text-obsidian-text-muted {class}", "{text}" }
-    }
-}
-
 // ── Button ──────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Default)]
@@ -219,6 +194,13 @@ pub enum BannerKind {
     #[default]
     Info,
     Success,
+    /// No caller today. Kept — and scoped to this one variant rather than
+    /// silenced module-wide — because it is the missing rung of a conventional
+    /// Info/Success/Warn/Error ladder whose `bg-warn` / `text-warn` tokens
+    /// already exist in the token layer. Deleting it would orphan those tokens
+    /// and leave the next warning-level banner with nowhere to go. Drop this
+    /// attribute the moment something constructs it.
+    #[allow(dead_code)]
     Warn,
     Error,
 }
@@ -239,43 +221,6 @@ pub fn Banner(
     rsx! {
         div { class: "flex items-start gap-2 px-3 py-2 rounded-md border text-sm {tone} {class}",
             {children}
-        }
-    }
-}
-
-// ── StatTile ────────────────────────────────────────────────────────────────
-
-/// Direction of a stat's delta — colors the delta line.
-#[derive(Clone, Copy, PartialEq, Default)]
-pub enum Trend {
-    #[default]
-    Flat,
-    Up,
-    Down,
-}
-
-/// Headline metric: caption + big tabular value + optional colored delta.
-/// The Overview surface's net-worth / balance tiles.
-#[component]
-pub fn StatTile(
-    label: String,
-    value: String,
-    #[props(default = String::new())] delta: String,
-    #[props(default)] trend: Trend,
-    #[props(default = String::new())] class: String,
-) -> Element {
-    let delta_class = match trend {
-        Trend::Up => "text-success",
-        Trend::Down => "text-error",
-        Trend::Flat => "text-obsidian-text-muted",
-    };
-    rsx! {
-        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card p-4 {class}",
-            p { class: "text-xs font-medium uppercase tracking-wide text-obsidian-text-muted", "{label}" }
-            p { class: "mt-1 text-2xl font-bold text-obsidian-text tabular-nums", "{value}" }
-            if !delta.is_empty() {
-                p { class: "mt-0.5 text-xs font-medium {delta_class}", "{delta}" }
-            }
         }
     }
 }

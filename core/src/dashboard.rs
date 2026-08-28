@@ -641,6 +641,18 @@ fn distill_parsed_recurring(
 /// `remaining = pool − next_month_recurring − amount`, `can_afford =
 /// remaining > 0`. `Unmatched` is excluded from both pools (clearing account),
 /// so it never inflates a verdict.
+///
+/// **Deliberately caller-less — do not remove as dead code.** This is the
+/// affordability policy itself, kept while the UI that asked the question is
+/// gone: the Can-I-Afford widget was retired on purpose, because questions of
+/// that shape are to be answered by the LLM chat rather than a bespoke screen.
+/// Its `#[tauri::command]` wrapper was deleted with the widget (2026-08-28) and
+/// is not the template to restore from — it stringified `Decimal`s to cross the
+/// IPC boundary and then parsed them straight back, and it dropped
+/// `monthly_buckets` entirely. An LLM tool holds a real `DashboardSummary` and
+/// needs none of that: tools live in `llm/tools.rs` and call these core
+/// functions directly, never through a Tauri command. The tests below are what
+/// keep the policy honest until that binding exists.
 pub fn can_i_afford(amount: Decimal, summary: &DashboardSummary) -> AffordVerdict {
     let (pool, policy_label) = match (summary.liquid_assets_in_base, summary.net_worth_in_base) {
         (Some(liquidity), _) => (liquidity, "Liquid assets − next month's recurring".into()),

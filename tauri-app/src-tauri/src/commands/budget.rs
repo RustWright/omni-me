@@ -11,7 +11,7 @@ use tauri::State;
 use omni_me_core::balances::{self, AccountSummary, CommodityBalance};
 use omni_me_core::budget::{self, BalanceCheckResult, BudgetProgress};
 use omni_me_core::dashboard::{
-    self, AffordVerdict, DashboardSummary, MonthlyTrendBucket, NetWorthSeries, RecurringObligation,
+    self, DashboardSummary, MonthlyTrendBucket, NetWorthSeries, RecurringObligation,
 };
 use omni_me_core::db::queries::{
     self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow, TxnFilter,
@@ -263,42 +263,6 @@ fn view_to_querytxn(view: &TransactionView) -> QueryTxn {
 }
 
 // --- Accounts + Budgets + Recurring (1.9) ---
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn add_account(
-    state: State<'_, AppState>,
-    account: String,
-    commodity: String,
-    display_name: Option<String>,
-) -> Result<AccountRow, String> {
-    tracing::info!(account = %account, commodity = %commodity, "add_account");
-    let payload = serde_json::json!({
-        "account": account,
-        "commodity": commodity,
-        "display_name": display_name,
-    });
-    append_and_apply(
-        &state,
-        EventType::AccountAdded,
-        account.clone(),
-        payload,
-    )
-    .await?;
-
-    queries::list_accounts(&state.db)
-        .await
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .find(|a| a.id == account)
-        .ok_or_else(|| "account created but not found in projection".to_string())
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<AccountRow>, String> {
-    queries::list_accounts(&state.db)
-        .await
-        .map_err(|e| e.to_string())
-}
 
 /// Wire shape for one commodity holding — Decimal → String at the boundary
 /// so the frontend doesn't have to depend on `rust_decimal`. Mirrors
@@ -635,22 +599,12 @@ pub struct RecurringObligationView {
 pub struct DashboardSummaryView {
     pub base_currency: String,
     pub net_worth_in_base: Option<String>,
-    /// 3.10: spendable (liquid) total — `None` means no account marked liquid
-    /// (verdict falls back to net worth). Round-trips so `check_affordability`
-    /// can rebuild the verdict without a second DB read.
+    /// Spendable (liquid) total; `None` means no account is marked liquid, in
+    /// which case affordability policy falls back to net worth.
     pub liquid_assets_in_base: Option<String>,
     pub unmatched_balance: Option<String>,
     pub monthly_buckets: Vec<MonthlyTrendBucketView>,
     pub recurring: Vec<RecurringObligationView>,
-}
-
-/// Wire shape for an affordability verdict.
-#[derive(Debug, Clone, Serialize)]
-pub struct AffordVerdictView {
-    pub can_afford: bool,
-    pub remaining_in_base: String,
-    pub base_currency: String,
-    pub policy_label: String,
 }
 
 fn bucket_to_view(b: MonthlyTrendBucket) -> MonthlyTrendBucketView {
@@ -819,59 +773,6 @@ pub async fn net_worth_history(
     let series = dashboard::net_worth_series(&content, &base, as_of_date, &roster, range)
         .map_err(|e| e.to_string())?;
     Ok(series_to_view(series))
-}
-
-/// Test-the-policy command for the Can-I-Afford widget. Calls
-/// `dashboard_summary` then `dashboard::can_i_afford` on the result.
-#[tauri::command(rename_all = "snake_case")]
-pub async fn check_affordability(
-    state: State<'_, AppState>,
-    amount: String,
-    base_currency: Option<String>,
-    as_of: Option<String>,
-    months_back: Option<u32>,
-) -> Result<AffordVerdictView, String> {
-    use std::str::FromStr;
-    let amt = rust_decimal::Decimal::from_str(amount.trim())
-        .map_err(|e| format!("bad amount: {e}"))?;
-    let summary_view = dashboard_summary(state, base_currency, as_of, months_back).await?;
-    // Rebuild a minimal DashboardSummary for the verdict — we already
-    // stringified Decimals at the boundary, so parse back here. Avoids
-    // double DB I/O by reusing the summary we just computed.
-    let summary = dashboard::DashboardSummary {
-        base_currency: summary_view.base_currency.clone(),
-        net_worth_in_base: summary_view
-            .net_worth_in_base
-            .as_deref()
-            .and_then(|s| rust_decimal::Decimal::from_str(s).ok()),
-        liquid_assets_in_base: summary_view
-            .liquid_assets_in_base
-            .as_deref()
-            .and_then(|s| rust_decimal::Decimal::from_str(s).ok()),
-        unmatched_balance: summary_view
-            .unmatched_balance
-            .as_deref()
-            .and_then(|s| rust_decimal::Decimal::from_str(s).ok()),
-        monthly_buckets: vec![],
-        recurring: summary_view
-            .recurring
-            .iter()
-            .map(|r| dashboard::RecurringObligation {
-                pattern_id: r.pattern_id.clone(),
-                vendor: r.vendor.clone(),
-                amount: rust_decimal::Decimal::from_str(&r.amount).unwrap_or_default(),
-                commodity: r.commodity.clone(),
-                cadence_days: r.cadence_days,
-            })
-            .collect(),
-    };
-    let verdict: AffordVerdict = dashboard::can_i_afford(amt, &summary);
-    Ok(AffordVerdictView {
-        can_afford: verdict.can_afford,
-        remaining_in_base: base_money(verdict.remaining_in_base),
-        base_currency: summary_view.base_currency,
-        policy_label: verdict.policy_label,
-    })
 }
 
 /// First-day-of-month string for `months_back-1` months before `as_of`.

@@ -10,9 +10,15 @@
 //! that lists every sender. The dispatch loop (`imap::poll_once`) routes
 //! each message to the first handler that claims it.
 //!
-//! Event-emission deferred (same shape as the bank-specific IMAP handlers in
-//! the private overlay — wires through Gemini, returns empty Vec for now to
-//! avoid duplicate-event ghosts during the bring-up period).
+//! Emits one `AutoImportBatchProposed` per message that yields drafts, built by
+//! `to_proposed_event` at the tail of `handle`. The dedup key is
+//! `<handler-name>-uid-<message-uid>`, so re-polling a mailbox cannot
+//! re-propose mail already seen. An empty `Vec` means only that extraction
+//! produced no drafts — this path is fully wired, not a stub.
+//!
+//! Drafts land in the `pending` review inbox and are never auto-committed. See
+//! the HARD CONSTRAINT note in `handle` before changing that: the review step
+//! is the sole control between a crafted email and a fabricated ledger entry.
 
 use async_trait::async_trait;
 use std::process::Stdio;
@@ -177,7 +183,8 @@ impl ImapHandler for ReceiptHandler {
 
         // Start with the text body; append text from any non-encrypted PDF
         // attachments. Image-only PDFs (pdftotext returns empty) contribute
-        // nothing here — they'd need image-mode extraction (Phase 4+).
+        // nothing here — recovering those needs image-mode extraction, which
+        // this text-only path deliberately does not attempt.
         let mut combined_text = parsed.body_text.clone();
         for att in &parsed.attachments {
             if att.content_type.to_ascii_lowercase().starts_with("application/pdf") {

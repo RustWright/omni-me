@@ -97,15 +97,6 @@ pub async fn get_journal_by_date(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn list_journal_entries(
-    state: State<'_, AppState>,
-) -> Result<Vec<JournalEntryRow>, String> {
-    queries::list_journal_entries(&state.db, 100, 0)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command(rename_all = "snake_case")]
 pub async fn list_journal_day_stats(
     state: State<'_, AppState>,
     from_date: String,
