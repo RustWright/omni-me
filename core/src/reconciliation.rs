@@ -102,13 +102,15 @@ pub fn find_match_candidates(
                 description_similarity,
             };
             let score = score_signals(&signals, max_days_gap);
-            let clears_statement = a.statement_source.is_some() != b.statement_source.is_some();
             out.push(MatchCandidate {
                 primary_id,
                 secondary_id,
                 score,
                 signals,
-                clears_statement,
+                clears_statement: clears_statement(
+                    a.statement_source.as_deref(),
+                    b.statement_source.as_deref(),
+                ),
             });
         }
     }
@@ -157,12 +159,96 @@ fn jaccard_token_similarity(a: &str, b: &str) -> f64 {
     }
 }
 
+/// Why a proposed merge was refused.
+///
+/// `find_match_candidates` only ever emits pairs that satisfy both rules, so
+/// a refusal means the caller reached [`check_mergeable`] some other way — a
+/// hand-typed id in the UI, a stale candidate list whose underlying rows moved
+/// on, or a future LLM tool. That is precisely why the check exists at the
+/// point of merge rather than being inherited from the candidate list.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum MergeRefusal {
+    #[error(
+        "cannot merge {a_id} with {b_id}: Unmatched legs are in different \
+         commodities ({a_commodity} vs {b_commodity})"
+    )]
+    CommodityMismatch {
+        a_id: String,
+        b_id: String,
+        a_commodity: String,
+        b_commodity: String,
+    },
+    #[error(
+        "cannot merge {a_id} with {b_id}: Unmatched legs do not cancel \
+         ({a_amount} + {b_amount} = {sum}, expected 0)"
+    )]
+    DoesNotCancel {
+        a_id: String,
+        b_id: String,
+        a_amount: Decimal,
+        b_amount: Decimal,
+        sum: Decimal,
+    },
+}
+
+/// The merge precondition, stated once.
+///
+/// Merging drops both `Unmatched` legs and concatenates what is left. Since
+/// each side balances on its own, the leftovers sum to
+/// `-(a.unmatched + b.unmatched)` — so the merged transaction balances **iff**
+/// the two Unmatched legs cancel in a single commodity. These are the same two
+/// rules `find_match_candidates` filters on; keeping them in one function is
+/// what stops the generator and the consumer from drifting apart.
+///
+/// Checked at merge time rather than trusted, because the ids arrive over IPC
+/// as two free-form strings and nothing in the type system ties them to a
+/// candidate the engine actually produced.
+pub fn check_mergeable(a: &UnmatchedTxn, b: &UnmatchedTxn) -> Result<(), MergeRefusal> {
+    if a.unmatched_commodity != b.unmatched_commodity {
+        return Err(MergeRefusal::CommodityMismatch {
+            a_id: a.txn_id.clone(),
+            b_id: b.txn_id.clone(),
+            a_commodity: a.unmatched_commodity.clone(),
+            b_commodity: b.unmatched_commodity.clone(),
+        });
+    }
+    let sum = a.unmatched_amount + b.unmatched_amount;
+    if !sum.is_zero() {
+        return Err(MergeRefusal::DoesNotCancel {
+            a_id: a.txn_id.clone(),
+            b_id: b.txn_id.clone(),
+            a_amount: a.unmatched_amount,
+            b_amount: b.unmatched_amount,
+            sum,
+        });
+    }
+    Ok(())
+}
+
+/// Does merging these two clear a statement?
+///
+/// Only when **exactly one** side traces back to a statement. Both-sourced is
+/// deliberately false: two statement lines that cancel are the two halves of a
+/// transfer already reflected on both statements, so there is no third-party
+/// record left to reconcile against and nothing to mark cleared.
+///
+/// Extracted so `find_match_candidates`' `clears_statement` flag and the
+/// `TransactionCleared` decision at merge time cannot disagree — they were
+/// separately written expressions of this same rule until 2026-08-28.
+pub fn clears_statement(a: Option<&str>, b: Option<&str>) -> bool {
+    a.is_some() != b.is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn date(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    fn dec(s: &str) -> Decimal {
+        s.parse().unwrap()
     }
 
     fn u(id: &str, d: &str, desc: &str, amount: &str, source: Option<&str>) -> UnmatchedTxn {
@@ -327,5 +413,84 @@ mod tests {
         // → 1/3 ≈ 0.333
         let s = jaccard_token_similarity("Loblaws Groceries", "Loblaws Market");
         assert!((s - 1.0 / 3.0).abs() < 1e-9);
+    }
+
+    // --- merge precondition -------------------------------------------------
+    //
+    // `check_mergeable` exists to catch pairs that never came from
+    // `find_match_candidates`. These tests therefore feed it pairs the engine
+    // would have filtered out, which is exactly what the old
+    // `merge_transactions` accepted without complaint.
+
+    #[test]
+    fn mergeable_when_unmatched_legs_cancel_in_one_commodity() {
+        let a = u("t1", "2026-01-01", "coffee", "50.00", None);
+        let b = u("t2", "2026-01-02", "coffee", "-50.00", Some("stmt"));
+        assert_eq!(check_mergeable(&a, &b), Ok(()));
+    }
+
+    #[test]
+    fn merge_refused_when_legs_do_not_cancel() {
+        // The corruption the check exists to stop: stripping both Unmatched
+        // legs would leave 10.00 CAD unaccounted for in the merged entry.
+        let a = u("t1", "2026-01-01", "coffee", "50.00", None);
+        let b = u("t2", "2026-01-02", "coffee", "-40.00", None);
+        let err = check_mergeable(&a, &b).unwrap_err();
+        assert!(
+            matches!(&err, MergeRefusal::DoesNotCancel { sum, .. } if *sum == dec("10.00")),
+            "expected a DoesNotCancel carrying the residual, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn merge_refused_when_commodities_differ() {
+        // Equal magnitudes, opposite signs, different currencies: the raw
+        // Decimal sum IS zero, so a sum-only check would wave this through and
+        // silently merge 50 USD into a CAD transaction.
+        let mut a = u("t1", "2026-01-01", "wire", "50.00", None);
+        a.unmatched_commodity = "USD".into();
+        let b = u("t2", "2026-01-02", "wire", "-50.00", None);
+        assert!((a.unmatched_amount + b.unmatched_amount).is_zero());
+        assert!(matches!(
+            check_mergeable(&a, &b).unwrap_err(),
+            MergeRefusal::CommodityMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn merge_precondition_matches_what_the_candidate_engine_emits() {
+        // The anti-drift assertion: every pair the engine surfaces must pass
+        // the merge check. If someone loosens `find_match_candidates` without
+        // loosening `check_mergeable`, the UI starts offering merges that
+        // refuse when clicked, and this fails first.
+        let txns = vec![
+            u("t1", "2026-01-01", "coffee shop", "50.00", Some("stmt")),
+            u("t2", "2026-01-02", "coffee shop", "-50.00", None),
+            u("t3", "2026-01-03", "rent", "-1200.00", None),
+            u("t4", "2026-01-04", "rent", "1200.00", Some("stmt")),
+        ];
+        let candidates = find_match_candidates(&txns, 10);
+        assert!(!candidates.is_empty(), "fixture produced no candidates");
+        for c in &candidates {
+            let a = txns.iter().find(|t| t.txn_id == c.primary_id).unwrap();
+            let b = txns.iter().find(|t| t.txn_id == c.secondary_id).unwrap();
+            assert_eq!(
+                check_mergeable(a, b),
+                Ok(()),
+                "engine surfaced {} + {} but check_mergeable refuses it",
+                c.primary_id,
+                c.secondary_id
+            );
+        }
+    }
+
+    // --- cleared rule -------------------------------------------------------
+
+    #[test]
+    fn clears_statement_is_exclusive_or_over_the_two_sources() {
+        assert!(clears_statement(Some("stmt"), None));
+        assert!(clears_statement(None, Some("stmt")));
+        assert!(!clears_statement(Some("stmt"), Some("other")));
+        assert!(!clears_statement(None, None));
     }
 }

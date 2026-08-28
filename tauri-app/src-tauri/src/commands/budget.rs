@@ -22,6 +22,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use omni_me_core::accounts::is_unmatched;
 use omni_me_core::balances::{self, AccountSummary, CommodityBalance};
 use omni_me_core::budget::{self, BalanceCheckResult, BudgetProgress};
 use omni_me_core::dashboard::{
@@ -1272,42 +1273,166 @@ pub struct MatchCandidateView {
     pub secondary: ReconciliationTxnPreview,
 }
 
-/// Flatten a TransactionRow into an UnmatchedTxn, picking out the
-/// `Unmatched` posting's signed amount + commodity. Returns `None` if
-/// the row has no Unmatched leg (shouldn't happen if the caller queried
-/// via `list_unmatched_transactions`, but defensive).
-fn unmatched_from_row(row: &TransactionRow) -> Option<UnmatchedTxn> {
-    let postings = row.postings.clone().into_json_value();
-    let arr = postings.as_array()?;
-    let unmatched_posting = arr.iter().find(|p| {
+/// Pull the `Unmatched` leg out of a set of postings and flatten the
+/// transaction into the shape `core::reconciliation` works in.
+///
+/// Takes plain JSON rather than a `TransactionRow` so the Tauri commands (which
+/// hold a row) and the payload planners below (which are tested without a
+/// database) share one extraction. Returns `None` when there is no `Unmatched`
+/// posting: for the listing paths that means "not a reconciliation candidate",
+/// for the merge path it is a refusal.
+fn unmatched_from_parts(
+    txn_id: &str,
+    date: &str,
+    description: &str,
+    postings: &serde_json::Value,
+    statement_source: Option<&str>,
+) -> Option<UnmatchedTxn> {
+    let leg = postings.as_array()?.iter().find(|p| {
         p.get("account")
             .and_then(|v| v.as_str())
-            .map(|s| s == "Unmatched")
+            .map(is_unmatched)
             .unwrap_or(false)
     })?;
-    let amount_raw = unmatched_posting.get("amount")?.as_str()?;
-    let amount = amount_raw.parse::<Decimal>().ok()?;
-    let commodity = unmatched_posting
-        .get("commodity")
-        .and_then(|v| v.as_str())
-        .unwrap_or("CAD")
-        .to_string();
-    let date = chrono::NaiveDate::parse_from_str(&row.date, "%Y-%m-%d").ok()?;
     Some(UnmatchedTxn {
-        txn_id: row.id.clone(),
-        date,
-        description: row.description.clone(),
-        unmatched_amount: amount,
-        unmatched_commodity: commodity,
-        statement_source: row.statement_source.clone(),
+        txn_id: txn_id.to_string(),
+        date: chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?,
+        description: description.to_string(),
+        unmatched_amount: leg.get("amount")?.as_str()?.parse::<Decimal>().ok()?,
+        unmatched_commodity: leg
+            .get("commodity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("CAD")
+            .to_string(),
+        statement_source: statement_source.map(String::from),
     })
 }
 
+fn unmatched_from_row(row: &TransactionRow) -> Option<UnmatchedTxn> {
+    unmatched_from_parts(
+        &row.id,
+        &row.date,
+        &row.description,
+        &row.postings.clone().into_json_value(),
+        row.statement_source.as_deref(),
+    )
+}
+
+/// One side of a merge, lifted out of `TransactionRow` into plain JSON.
+///
+/// `TransactionRow` carries SurrealDB `Value`s that a test would have to build
+/// through the driver; the merge arithmetic only ever reads the JSON. Splitting
+/// the two is what lets `plan_merge` run in a unit test.
+#[derive(Debug, Clone)]
+struct MergeSide {
+    id: String,
+    date: String,
+    description: String,
+    postings: serde_json::Value,
+    attachment: Option<serde_json::Value>,
+    statement_source: Option<String>,
+}
+
+impl MergeSide {
+    fn from_row(row: &TransactionRow) -> Self {
+        Self {
+            id: row.id.clone(),
+            date: row.date.clone(),
+            description: row.description.clone(),
+            postings: row.postings.clone().into_json_value(),
+            attachment: row.attachment.clone().map(|a| a.into_json_value()),
+            statement_source: row.statement_source.clone(),
+        }
+    }
+
+    fn as_unmatched(&self) -> Option<UnmatchedTxn> {
+        unmatched_from_parts(
+            &self.id,
+            &self.date,
+            &self.description,
+            &self.postings,
+            self.statement_source.as_deref(),
+        )
+    }
+}
+
+/// The events a merge will emit, decided before anything is appended.
+#[derive(Debug)]
+struct MergePlan {
+    merged: serde_json::Value,
+    /// `Some` only when exactly one side traces back to a statement.
+    cleared: Option<serde_json::Value>,
+}
+
+/// Pure core of [`merge_transactions`] — everything between "both rows are in
+/// hand" and "append the events".
+///
+/// Refuses when the pair fails `reconciliation::check_mergeable`. That check
+/// used to live only in the candidate *generator*, so this function trusted
+/// whatever two ids arrived over IPC. Merging drops both `Unmatched` legs and
+/// concatenates the rest, which balances only if those legs cancel — so an
+/// arbitrary pair produced a `TransactionsMerged` whose postings did not sum to
+/// zero. That event is replayed into both the SurrealDB projection and the
+/// on-disk hledger journal, so a bad merge lands in two places at once and
+/// surfaces only as balances that quietly disagree with the bank.
+fn plan_merge(primary: &MergeSide, secondary: &MergeSide) -> Result<MergePlan, String> {
+    let no_leg = |side: &MergeSide| {
+        format!(
+            "cannot merge {}: it has no Unmatched posting, so it is not awaiting reconciliation",
+            side.id
+        )
+    };
+    let p = primary.as_unmatched().ok_or_else(|| no_leg(primary))?;
+    let s = secondary.as_unmatched().ok_or_else(|| no_leg(secondary))?;
+    reconciliation::check_mergeable(&p, &s).map_err(|e| e.to_string())?;
+
+    // Safe now: `check_mergeable` has established the two legs cancel, so the
+    // postings left after stripping them sum to zero.
+    let mut combined = strip_unmatched_legs(&primary.postings);
+    combined.extend(strip_unmatched_legs(&secondary.postings));
+
+    let merged = serde_json::json!({
+        "primary_id": primary.id,
+        "merged_ids": [secondary.id],
+        "combined_postings": combined,
+        "combined_description": if primary.description.is_empty() {
+            secondary.description.clone()
+        } else {
+            primary.description.clone()
+        },
+        "combined_attachment": primary
+            .attachment
+            .clone()
+            .or_else(|| secondary.attachment.clone()),
+        "balancing_posting": null,
+    });
+
+    // This match answers a question the boolean rule cannot: *which* side's
+    // source and date to record. It must still agree with core about whether
+    // to clear at all, which
+    // `cleared_decision_matches_core_for_every_source_combination` asserts
+    // across all four combinations.
+    let cleared = match (&primary.statement_source, &secondary.statement_source) {
+        (Some(src), None) => Some((src.clone(), primary.date.clone())),
+        (None, Some(src)) => Some((src.clone(), secondary.date.clone())),
+        _ => None,
+    }
+    .map(|(statement_source, cleared_date)| {
+        serde_json::json!({
+            "txn_id": primary.id,
+            "statement_source": statement_source,
+            "cleared_date": cleared_date,
+        })
+    });
+
+    Ok(MergePlan { merged, cleared })
+}
+
 /// Merge two `Unmatched`-touching transactions into one. Emits
-/// `TransactionsMerged` (always) + `TransactionCleared` (when exactly one
-/// side has `statement_source`). The surviving transaction id is the
-/// lexicographically smaller of the two, matching the candidate
-/// engine's `primary_id` convention.
+/// `TransactionsMerged` (always) + `TransactionCleared` (when exactly one side
+/// has `statement_source`). `primary_id` is the surviving transaction; callers
+/// coming from the candidate list get the pair already ordered
+/// lexicographically by `find_match_candidates`.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn merge_transactions(
     state: State<'_, AppState>,
@@ -1323,61 +1448,107 @@ pub async fn merge_transactions(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("secondary transaction {secondary_id} not found"))?;
 
-    // Strip Unmatched legs from both — they're equal-and-opposite so the
-    // combined non-Unmatched postings balance to zero.
-    let primary_legs = strip_unmatched_legs(&primary.postings.clone().into_json_value());
-    let secondary_legs = strip_unmatched_legs(&secondary.postings.clone().into_json_value());
-    let mut combined: Vec<serde_json::Value> = primary_legs;
-    combined.extend(secondary_legs);
+    let plan = plan_merge(
+        &MergeSide::from_row(&primary),
+        &MergeSide::from_row(&secondary),
+    )?;
 
-    let combined_description = if primary.description.is_empty() {
-        secondary.description.clone()
-    } else {
-        primary.description.clone()
-    };
-    let combined_attachment = primary
-        .attachment
-        .clone()
-        .map(|a| a.into_json_value())
-        .or_else(|| secondary.attachment.clone().map(|a| a.into_json_value()));
-
-    let merged_payload = serde_json::json!({
-        "primary_id": primary_id,
-        "merged_ids": [secondary_id],
-        "combined_postings": combined,
-        "combined_description": combined_description,
-        "combined_attachment": combined_attachment,
-        "balancing_posting": null,
-    });
     append_and_apply(
         &state,
         EventType::TransactionsMerged,
         primary_id.clone(),
-        merged_payload,
+        plan.merged,
     )
     .await?;
-
-    // Cleared flag: exactly one side has statement_source.
-    let (source, cleared_date) = match (&primary.statement_source, &secondary.statement_source) {
-        (Some(s), None) => (Some(s.clone()), primary.date.clone()),
-        (None, Some(s)) => (Some(s.clone()), secondary.date.clone()),
-        _ => (None, String::new()),
-    };
-    if let Some(s) = source {
-        let cleared_payload = serde_json::json!({
-            "txn_id": primary_id,
-            "statement_source": s,
-            "cleared_date": cleared_date,
-        });
-        append_and_apply(
-            &state,
-            EventType::TransactionCleared,
-            primary_id,
-            cleared_payload,
-        )
-        .await?;
+    if let Some(cleared) = plan.cleared {
+        append_and_apply(&state, EventType::TransactionCleared, primary_id, cleared).await?;
     }
     Ok(())
+}
+
+/// The events a resolve will emit.
+#[derive(Debug)]
+struct ResolvePlan {
+    update: serde_json::Value,
+    cleared: Option<serde_json::Value>,
+}
+
+/// Pure core of [`resolve_unmatched`].
+///
+/// Renames the `Unmatched` leg to a real category and leaves its amount,
+/// commodity and FX rate exactly as they were. That is the whole trick: the
+/// `Unmatched` leg was created as the sign-inverted mirror of the real posting
+/// (`core::accounts::make_unmatched_mirror`), so it already carries the
+/// balancing amount. Renaming the account preserves the sum, and a transaction
+/// that balanced before still balances after. Adjusting the amount or flipping
+/// the sign here would silently unbalance the entry — see
+/// `resolve_preserves_the_transaction_total`.
+fn plan_resolve(
+    txn_id: &str,
+    date: &str,
+    postings: &serde_json::Value,
+    statement_source: Option<&str>,
+    category: &str,
+) -> Result<ResolvePlan, String> {
+    let category = category.trim();
+    if category.is_empty() {
+        return Err("resolve refused: category must not be empty".to_string());
+    }
+    if is_unmatched(category) {
+        return Err(
+            "resolve refused: resolving to Unmatched would leave the transaction unchanged \
+             and still awaiting reconciliation"
+                .to_string(),
+        );
+    }
+
+    let arr = postings
+        .as_array()
+        .ok_or_else(|| "transaction postings not an array".to_string())?;
+    // First `Unmatched` leg only. A transaction carrying two of them resolves
+    // one per call and stays in the pool until both are done — clumsy, but
+    // visible and self-correcting, unlike collapsing them into one guess.
+    let idx = arr
+        .iter()
+        .position(|p| {
+            p.get("account")
+                .and_then(|v| v.as_str())
+                .map(is_unmatched)
+                .unwrap_or(false)
+        })
+        .ok_or_else(|| "transaction has no Unmatched posting to resolve".to_string())?;
+
+    let mut new_postings = arr.clone();
+    new_postings[idx] = serde_json::json!({
+        "account": category,
+        "amount": arr[idx].get("amount").and_then(|v| v.as_str()).unwrap_or("0"),
+        "commodity": arr[idx]
+            .get("commodity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("CAD"),
+        // Carried through, not blanked. `make_unmatched_mirror` inherits the
+        // real posting's rate, so a foreign-currency leg reaches here with one
+        // attached; dropping it would re-price the posting at par and move the
+        // transaction's base-currency value.
+        "fx_rate": arr[idx].get("fx_rate").cloned().unwrap_or(serde_json::Value::Null),
+        // Tags stay empty: they record the user's intent about a real posting,
+        // and the placeholder never had any to inherit.
+        "tags": [],
+    });
+
+    Ok(ResolvePlan {
+        update: serde_json::json!({
+            "txn_id": txn_id,
+            "changes": { "postings": new_postings },
+        }),
+        cleared: statement_source.map(|source| {
+            serde_json::json!({
+                "txn_id": txn_id,
+                "statement_source": source,
+                "cleared_date": date,
+            })
+        }),
+    })
 }
 
 /// Resolve an Unmatched-touching transaction by replacing its Unmatched
@@ -1395,72 +1566,23 @@ pub async fn resolve_unmatched(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("transaction {txn_id} not found"))?;
 
-    let postings_json = row.postings.clone().into_json_value();
-    let arr = postings_json
-        .as_array()
-        .ok_or_else(|| "transaction postings not an array".to_string())?;
-    let unmatched_idx = arr
-        .iter()
-        .position(|p| {
-            p.get("account")
-                .and_then(|v| v.as_str())
-                .map(|s| s == "Unmatched")
-                .unwrap_or(false)
-        })
-        .ok_or_else(|| "transaction has no Unmatched posting to resolve".to_string())?;
-    let unmatched = &arr[unmatched_idx];
-    let amount = unmatched
-        .get("amount")
-        .and_then(|v| v.as_str())
-        .unwrap_or("0")
-        .to_string();
-    let commodity = unmatched
-        .get("commodity")
-        .and_then(|v| v.as_str())
-        .unwrap_or("CAD")
-        .to_string();
+    let plan = plan_resolve(
+        &txn_id,
+        &row.date,
+        &row.postings.clone().into_json_value(),
+        row.statement_source.as_deref(),
+        &category,
+    )?;
 
-    // Build the replacement category posting — same amount + commodity,
-    // opposite sign would already balance, but the Unmatched leg already
-    // carried the balancing sign (inversion of the source posting), so
-    // we keep the SAME amount + commodity here. The result balances
-    // because we're only renaming the account.
-    let replacement = serde_json::json!({
-        "account": category.clone(),
-        "amount": amount,
-        "commodity": commodity,
-        "fx_rate": null,
-        "tags": [],
-    });
-    let mut new_postings: Vec<serde_json::Value> = arr.clone();
-    new_postings[unmatched_idx] = replacement;
-
-    let update_payload = serde_json::json!({
-        "txn_id": txn_id,
-        "changes": { "postings": new_postings },
-    });
     append_and_apply(
         &state,
         EventType::TransactionUpdated,
         txn_id.clone(),
-        update_payload,
+        plan.update,
     )
     .await?;
-
-    // Auto-clear when this resolved transaction traces back to a statement.
-    if let Some(source) = row.statement_source.clone() {
-        let cleared_payload = serde_json::json!({
-            "txn_id": txn_id,
-            "statement_source": source,
-            "cleared_date": row.date,
-        });
-        append_and_apply(
-            &state,
-            EventType::TransactionCleared,
-            txn_id,
-            cleared_payload,
-        )
-        .await?;
+    if let Some(cleared) = plan.cleared {
+        append_and_apply(&state, EventType::TransactionCleared, txn_id, cleared).await?;
     }
     Ok(())
 }
@@ -1472,10 +1594,10 @@ fn strip_unmatched_legs(postings: &serde_json::Value) -> Vec<serde_json::Value> 
         .unwrap_or_default()
         .into_iter()
         .filter(|p| {
-            p.get("account")
+            !p.get("account")
                 .and_then(|v| v.as_str())
-                .map(|s| s != "Unmatched")
-                .unwrap_or(true)
+                .map(is_unmatched)
+                .unwrap_or(false)
         })
         .collect()
 }
@@ -1616,4 +1738,340 @@ pub async fn dismiss_recurring(
         payload,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the money-mutating logic that exists only in this file.
+    //!
+    //! Most commands here are glue over `core::budget`, `core::balances` and
+    //! `core::dashboard`, which carry their own tests. `plan_merge` and
+    //! `plan_resolve` are the exceptions: they rewrite postings, and until
+    //! 2026-08-28 that arithmetic had no coverage anywhere. Both feed events
+    //! that replay into the SurrealDB projection *and* the on-disk hledger
+    //! journal, so an unbalanced result corrupts two stores at once and shows
+    //! up only as balances disagreeing with the bank.
+
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn posting(account: &str, amount: &str, commodity: &str) -> serde_json::Value {
+        serde_json::json!({
+            "account": account,
+            "amount": amount,
+            "commodity": commodity,
+            "tags": [],
+        })
+    }
+
+    fn side(
+        id: &str,
+        date: &str,
+        description: &str,
+        postings: Vec<serde_json::Value>,
+        statement_source: Option<&str>,
+    ) -> MergeSide {
+        MergeSide {
+            id: id.into(),
+            date: date.into(),
+            description: description.into(),
+            postings: serde_json::Value::Array(postings),
+            attachment: None,
+            statement_source: statement_source.map(String::from),
+        }
+    }
+
+    /// Sum postings per commodity. A balanced entry nets to zero in every one.
+    fn totals(postings: &[serde_json::Value]) -> BTreeMap<String, Decimal> {
+        let mut out: BTreeMap<String, Decimal> = BTreeMap::new();
+        for p in postings {
+            let amount: Decimal = p["amount"].as_str().unwrap().parse().unwrap();
+            *out.entry(p["commodity"].as_str().unwrap().to_string())
+                .or_default() += amount;
+        }
+        out
+    }
+
+    fn combined(plan: &MergePlan) -> Vec<serde_json::Value> {
+        plan.merged["combined_postings"].as_array().unwrap().clone()
+    }
+
+    /// The statement half of a reconciliation pair: money left the chequing
+    /// account, the other side is not known yet.
+    fn statement_side(id: &str, date: &str, source: Option<&str>) -> MergeSide {
+        side(
+            id,
+            date,
+            "NORTHWIND WITHDRAWAL",
+            vec![
+                posting("Assets:Chequing", "-50.00", "CAD"),
+                posting("Unmatched", "50.00", "CAD"),
+            ],
+            source,
+        )
+    }
+
+    /// The manual half: the user recorded what the money was for.
+    fn manual_side(id: &str, date: &str, source: Option<&str>) -> MergeSide {
+        side(
+            id,
+            date,
+            "groceries",
+            vec![
+                posting("Expenses:Food", "50.00", "CAD"),
+                posting("Unmatched", "-50.00", "CAD"),
+            ],
+            source,
+        )
+    }
+
+    // --- merge --------------------------------------------------------------
+
+    #[test]
+    fn merge_drops_both_unmatched_legs_and_keeps_the_real_ones() {
+        let plan = plan_merge(
+            &statement_side("t1", "2026-01-01", Some("stmt")),
+            &manual_side("t2", "2026-01-02", None),
+        )
+        .unwrap();
+        let legs = combined(&plan);
+        let accounts: Vec<&str> = legs.iter().map(|p| p["account"].as_str().unwrap()).collect();
+        assert_eq!(accounts, vec!["Assets:Chequing", "Expenses:Food"]);
+    }
+
+    #[test]
+    fn merged_postings_sum_to_zero_in_every_commodity() {
+        // The invariant the old code asserted in a comment and nothing checked.
+        let plan = plan_merge(
+            &statement_side("t1", "2026-01-01", Some("stmt")),
+            &manual_side("t2", "2026-01-02", None),
+        )
+        .unwrap();
+        for (commodity, total) in totals(&combined(&plan)) {
+            assert!(
+                total.is_zero(),
+                "merged entry is unbalanced: {commodity} nets to {total}, expected 0"
+            );
+        }
+    }
+
+    #[test]
+    fn merge_refuses_a_pair_whose_unmatched_legs_do_not_cancel() {
+        // 50.00 against -40.00. Stripping both legs leaves 10.00 CAD
+        // unaccounted for, which is precisely what used to get written.
+        let mut manual = manual_side("t2", "2026-01-02", None);
+        manual.postings = serde_json::json!([
+            posting("Expenses:Food", "40.00", "CAD"),
+            posting("Unmatched", "-40.00", "CAD"),
+        ]);
+        let err = plan_merge(&statement_side("t1", "2026-01-01", Some("stmt")), &manual)
+            .expect_err("a pair that does not cancel must be refused, not merged");
+        assert!(
+            err.contains("do not cancel"),
+            "error should name the residual, got: {err}"
+        );
+    }
+
+    #[test]
+    fn merge_refuses_a_pair_in_different_commodities() {
+        let mut manual = manual_side("t2", "2026-01-02", None);
+        manual.postings = serde_json::json!([
+            posting("Expenses:Food", "50.00", "USD"),
+            posting("Unmatched", "-50.00", "USD"),
+        ]);
+        let err = plan_merge(&statement_side("t1", "2026-01-01", Some("stmt")), &manual)
+            .expect_err("a USD leg must not merge into a CAD transaction");
+        assert!(err.contains("different"), "got: {err}");
+    }
+
+    #[test]
+    fn merge_refuses_a_transaction_with_no_unmatched_leg() {
+        let settled = side(
+            "t3",
+            "2026-01-03",
+            "already reconciled",
+            vec![
+                posting("Assets:Chequing", "-50.00", "CAD"),
+                posting("Expenses:Food", "50.00", "CAD"),
+            ],
+            None,
+        );
+        let err = plan_merge(&settled, &manual_side("t2", "2026-01-02", None)).unwrap_err();
+        assert!(err.contains("t3") && err.contains("no Unmatched posting"), "got: {err}");
+    }
+
+    #[test]
+    fn cleared_decision_matches_core_for_every_source_combination() {
+        // `plan_merge` picks WHICH side's source to record with a local match;
+        // core owns WHETHER to record one at all. This pins the two together
+        // so loosening `clears_statement` cannot slip past the command layer.
+        for (a, b) in [
+            (Some("stmt"), None),
+            (None, Some("stmt")),
+            (Some("stmt"), Some("other")),
+            (None, None),
+        ] {
+            let plan = plan_merge(
+                &statement_side("t1", "2026-01-01", a),
+                &manual_side("t2", "2026-01-02", b),
+            )
+            .unwrap();
+            assert_eq!(
+                plan.cleared.is_some(),
+                omni_me_core::reconciliation::clears_statement(a, b),
+                "cleared decision diverged from core for ({a:?}, {b:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn cleared_date_comes_from_whichever_side_carries_the_statement() {
+        // Statement on the secondary: the cleared date must be the secondary's
+        // 2026-01-02, not the surviving transaction's 2026-01-01.
+        let plan = plan_merge(
+            &statement_side("t1", "2026-01-01", None),
+            &manual_side("t2", "2026-01-02", Some("stmt")),
+        )
+        .unwrap();
+        let cleared = plan.cleared.expect("exactly one side has a source");
+        assert_eq!(cleared["cleared_date"], "2026-01-02");
+        assert_eq!(cleared["statement_source"], "stmt");
+        // Always recorded against the survivor, whichever side supplied the date.
+        assert_eq!(cleared["txn_id"], "t1");
+    }
+
+    #[test]
+    fn merge_falls_back_to_the_secondary_description_when_the_primary_is_empty() {
+        let mut blank = statement_side("t1", "2026-01-01", Some("stmt"));
+        blank.description = String::new();
+        let plan = plan_merge(&blank, &manual_side("t2", "2026-01-02", None)).unwrap();
+        assert_eq!(plan.merged["combined_description"], "groceries");
+    }
+
+    #[test]
+    fn merge_prefers_the_primary_attachment_and_falls_back_to_the_secondary() {
+        let mut p = statement_side("t1", "2026-01-01", Some("stmt"));
+        let mut s = manual_side("t2", "2026-01-02", None);
+        s.attachment = Some(serde_json::json!({ "blob_id": "from-secondary" }));
+
+        let plan = plan_merge(&p, &s).unwrap();
+        assert_eq!(plan.merged["combined_attachment"]["blob_id"], "from-secondary");
+
+        p.attachment = Some(serde_json::json!({ "blob_id": "from-primary" }));
+        let plan = plan_merge(&p, &s).unwrap();
+        assert_eq!(plan.merged["combined_attachment"]["blob_id"], "from-primary");
+    }
+
+    // --- resolve ------------------------------------------------------------
+
+    fn unresolved() -> serde_json::Value {
+        serde_json::json!([
+            posting("Assets:Chequing", "-50.00", "CAD"),
+            posting("Unmatched", "50.00", "CAD"),
+        ])
+    }
+
+    fn updated_postings(plan: &ResolvePlan) -> Vec<serde_json::Value> {
+        plan.update["changes"]["postings"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn resolve_preserves_the_transaction_total() {
+        // Resolving only renames an account. If it ever starts adjusting the
+        // amount or flipping the sign, the entry stops balancing — and because
+        // nothing downstream re-checks, the wrong number just propagates.
+        let before = totals(unresolved().as_array().unwrap());
+        let plan = plan_resolve("t1", "2026-01-01", &unresolved(), None, "Expenses:Food").unwrap();
+        assert_eq!(totals(&updated_postings(&plan)), before);
+    }
+
+    #[test]
+    fn resolve_renames_only_the_unmatched_leg() {
+        let plan = plan_resolve("t1", "2026-01-01", &unresolved(), None, "Expenses:Food").unwrap();
+        let legs = updated_postings(&plan);
+        assert_eq!(legs[0], unresolved()[0], "the real leg must be untouched");
+        assert_eq!(legs[1]["account"], "Expenses:Food");
+        assert_eq!(legs[1]["amount"], "50.00");
+        assert_eq!(legs[1]["commodity"], "CAD");
+    }
+
+    #[test]
+    fn resolve_keeps_the_fx_rate_on_the_leg_it_rewrites() {
+        // `make_unmatched_mirror` inherits the real posting's FX rate, so a
+        // foreign-currency leg arrives here carrying one. Blanking it would
+        // re-price the posting at par and move the transaction's base-currency
+        // value without touching a single amount.
+        let postings = serde_json::json!([
+            posting("Assets:USD", "-50.00", "USD"),
+            {
+                "account": "Unmatched",
+                "amount": "50.00",
+                "commodity": "USD",
+                "fx_rate": { "quote_commodity": "CAD", "rate": "1.35" },
+                "tags": [],
+            },
+        ]);
+        let plan = plan_resolve("t1", "2026-01-01", &postings, None, "Expenses:Travel").unwrap();
+        let rewritten = &updated_postings(&plan)[1];
+        assert_eq!(rewritten["fx_rate"]["quote_commodity"], "CAD");
+        assert_eq!(rewritten["fx_rate"]["rate"], "1.35");
+    }
+
+    #[test]
+    fn resolve_refuses_an_empty_or_whitespace_category() {
+        for category in ["", "   "] {
+            let err = plan_resolve("t1", "2026-01-01", &unresolved(), None, category)
+                .expect_err("an empty category would write a nameless account");
+            assert!(err.contains("must not be empty"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn resolve_refuses_resolving_to_unmatched() {
+        let err = plan_resolve("t1", "2026-01-01", &unresolved(), None, "Unmatched")
+            .expect_err("resolving to Unmatched is a no-op that looks like progress");
+        assert!(err.contains("unchanged"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_refuses_a_transaction_with_no_unmatched_leg() {
+        let settled = serde_json::json!([
+            posting("Assets:Chequing", "-50.00", "CAD"),
+            posting("Expenses:Food", "50.00", "CAD"),
+        ]);
+        let err = plan_resolve("t1", "2026-01-01", &settled, None, "Expenses:Food").unwrap_err();
+        assert!(err.contains("no Unmatched posting"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_clears_only_when_the_transaction_came_from_a_statement() {
+        let plan = plan_resolve("t1", "2026-01-01", &unresolved(), None, "Expenses:Food").unwrap();
+        assert!(plan.cleared.is_none());
+
+        let plan =
+            plan_resolve("t1", "2026-01-01", &unresolved(), Some("stmt"), "Expenses:Food").unwrap();
+        let cleared = plan.cleared.unwrap();
+        assert_eq!(cleared["txn_id"], "t1");
+        assert_eq!(cleared["statement_source"], "stmt");
+        assert_eq!(cleared["cleared_date"], "2026-01-01");
+    }
+
+    // --- shared helpers -----------------------------------------------------
+
+    #[test]
+    fn strip_unmatched_legs_keeps_postings_whose_account_is_missing() {
+        // Defensive shape: a posting with no `account` key is malformed, but
+        // dropping it would delete money from the merged entry. Keeping it
+        // makes the problem visible downstream instead.
+        let postings = serde_json::json!([
+            posting("Unmatched", "50.00", "CAD"),
+            { "amount": "50.00", "commodity": "CAD" },
+        ]);
+        let kept = strip_unmatched_legs(&postings);
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].get("account").is_none());
+    }
 }
