@@ -364,6 +364,14 @@ const TS_CLOSE = "⟧"; // ⟧
 // (no trailing space — concealing it to nothing leaves exactly the user's text).
 // The tz group is anything up to the closing bracket, and optional (some envs
 // return no zone abbreviation).
+//
+// This regex is the WRITER for a format that also has a hand-rolled READER on
+// the other side of the wasm boundary: `is_timestamp_token_inner` /
+// `strip_line_token` in `frontend/src/pages/journal.rs`. They share no code and
+// no generated definition, so editing this pattern alone breaks stripping
+// silently — the Rust side keeps compiling and simply stops recognising tokens,
+// leaking editor metadata into note bodies, exports and LLM context. Change
+// both together; a Rust test pins this literal and will fail if you don't.
 const TS_TOKEN_RE =
   /^⟦(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: ([^⟧]+))?⟧/;
 

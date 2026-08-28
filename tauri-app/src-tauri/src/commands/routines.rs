@@ -276,10 +276,17 @@ pub async fn get_routine_history(
 // Destructive: emit DataWiped + clear events + rebuild projections.
 // -----------------------------------------------------------------------------
 
-/// Confirmation phrase the caller must pass to authorize a wipe. Mirrored
-/// in `frontend/src/pages/settings.rs::WIPE_CONFIRM_PHRASE`. Re-validated on
-/// the backend so a DevTools-driven `invoke('wipe_all_data', ...)` call
+/// Confirmation phrase the caller must pass to authorize a wipe. Re-validated
+/// on the backend so a DevTools-driven `invoke('wipe_all_data', ...)` call
 /// can't bypass the UI's typed-phrase gate.
+///
+/// The same literal is declared independently in
+/// `frontend/src/pages/settings.rs`, because the wasm frontend does not depend
+/// on any crate this one can export a const through. If the two drift the
+/// failure is silent and total: the UI keeps accepting the phrase it prints,
+/// this side rejects it, and the wipe button simply stops working with a
+/// "confirmation phrase mismatch" the user cannot act on.
+/// `wipe_phrase_matches_the_frontend_copy` below is the guard for that.
 const WIPE_CONFIRM_PHRASE: &str = "wipe everything zkqp";
 
 /// Pure helper so the validation is testable without spinning up an
@@ -344,6 +351,35 @@ pub async fn wipe_all_data(
 #[cfg(test)]
 mod wipe_tests {
     use super::{check_wipe_confirmation, WIPE_CONFIRM_PHRASE};
+
+    /// The other tests in this module compare the phrase to itself, so they
+    /// pass no matter what it says. This is the one that has anything to prove:
+    /// it reads the frontend's independent declaration off disk and requires
+    /// the two literals to agree.
+    #[test]
+    fn wipe_phrase_matches_the_frontend_copy() {
+        let settings = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../frontend/src/pages/settings.rs");
+        let src = std::fs::read_to_string(&settings)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", settings.display()));
+
+        let decl = src
+            .split_once("const WIPE_CONFIRM_PHRASE: &str =")
+            .expect("settings.rs no longer declares WIPE_CONFIRM_PHRASE — it was renamed, moved, or the gate was removed")
+            .1;
+        let frontend_phrase = decl
+            .split_once(';')
+            .expect("WIPE_CONFIRM_PHRASE declaration has no terminating semicolon")
+            .0
+            .trim()
+            .trim_matches('"');
+
+        assert_eq!(
+            frontend_phrase, WIPE_CONFIRM_PHRASE,
+            "the wipe confirmation phrase has drifted between the frontend and \
+             this backend check; the wipe flow is broken until they match again"
+        );
+    }
 
     #[test]
     fn correct_phrase_passes() {

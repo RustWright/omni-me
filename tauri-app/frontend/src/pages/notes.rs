@@ -653,16 +653,11 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                     oninput: move |e| title.set(e.value()),
                 }
                 {
-                    // Glanceable save state (1.7): in-flight > failed > dirty > clean.
-                    let save_state = if *saving.read() {
-                        SaveState::Saving
-                    } else if *save_failed.read() {
-                        SaveState::Failed
-                    } else if *content.read() != *last_saved_content.read() {
-                        SaveState::Unsaved
-                    } else {
-                        SaveState::Saved
-                    };
+                    let save_state = SaveState::derive(
+                        *saving.read(),
+                        *save_failed.read(),
+                        *content.read() != *last_saved_content.read(),
+                    );
                     rsx! { SaveIndicator { state: save_state } }
                 }
                 Button {

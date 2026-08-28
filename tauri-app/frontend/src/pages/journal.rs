@@ -12,7 +12,7 @@ use crate::autosave::{self, SaveIndicator, SaveState};
 use crate::bridge;
 use crate::components::editor::Editor;
 use crate::components::icon::{Icon, IconName};
-use crate::components::month_grid::build_month_cells;
+use crate::components::month_grid::{build_month_cells, next_month, prev_month};
 use crate::components::primitives::{
     Banner, BannerKind, Button, ButtonSize, ButtonVariant, IconButton,
 };
@@ -42,8 +42,16 @@ fn viewport_width() -> f64 {
 }
 
 /// True when `inner` (the text between a line's `⟦`…`⟧`) has the exact shape of
-/// a #344 completion token: `YYYY-MM-DD HH:MM`, optionally ` TZ`. The fixed
+/// a completion token: `YYYY-MM-DD HH:MM`, optionally ` TZ`. The fixed
 /// positions up to index 16 are all ASCII, so byte indexing is safe.
+///
+/// **This shape is encoded twice and the compiler cannot see the second one.**
+/// The writer lives in JavaScript — `TS_TOKEN_RE` in `assets/js/editor.js` —
+/// and this is the reader, hand-rolled in Rust across the wasm boundary. Change
+/// the format on either side (seconds, a different bracket, a wider zone field)
+/// and nothing fails to build: this matcher would simply stop recognising real
+/// tokens and start leaving them in the prose it is supposed to strip.
+/// `token_regex_in_editor_js_has_not_drifted` below is the alarm for that.
 fn is_timestamp_token_inner(inner: &str) -> bool {
     let b = inner.as_bytes();
     if b.len() < 16 {
@@ -58,7 +66,7 @@ fn is_timestamp_token_inner(inner: &str) -> bool {
         && (b.len() == 16 || b[16] == b' ')
 }
 
-/// Drop a leading concealed completion token (#344) from one line, if present.
+/// Drop a leading concealed completion token from one line, if present.
 /// Only a token whose interior matches the timestamp shape is removed, so real
 /// prose that merely starts with `⟦` is left untouched.
 fn strip_line_token(line: &str) -> &str {
@@ -77,7 +85,7 @@ fn strip_line_token(line: &str) -> &str {
 
 /// Strip the concealed completion-time tokens from a journal body before it is
 /// treated as prose. The tokens are editor metadata glued to the front of each
-/// stamped line (#344), never writing, so they must not surface in any raw-body
+/// stamped line, never writing, so they must not surface in any raw-body
 /// consumer — here, the word/character count.
 fn strip_completion_tokens(body: &str) -> String {
     body.split('\n').map(strip_line_token).collect::<Vec<_>>().join("\n")
@@ -847,17 +855,11 @@ fn DayView(
                         }
                     }
                     {
-                        // Glanceable save state (1.7), derived from existing
-                        // signals: in-flight > failed > dirty > clean.
-                        let save_state = if *saving.read() {
-                            SaveState::Saving
-                        } else if *save_failed.read() {
-                            SaveState::Failed
-                        } else if *content.read() != *last_saved_content.read() {
-                            SaveState::Unsaved
-                        } else {
-                            SaveState::Saved
-                        };
+                        let save_state = SaveState::derive(
+                            *saving.read(),
+                            *save_failed.read(),
+                            *content.read() != *last_saved_content.read(),
+                        );
                         rsx! { SaveIndicator { state: save_state } }
                     }
                 }
@@ -1303,12 +1305,7 @@ fn CalendarDrawer(
                         label: "Previous month",
                         onclick: move |_| {
                             let a = *anchor.read();
-                            let (y, m) = if a.month() == 1 {
-                                (a.year() - 1, 12)
-                            } else {
-                                (a.year(), a.month() - 1)
-                            };
-                            anchor.set(NaiveDate::from_ymd_opt(y, m, 1).unwrap());
+                            anchor.set(prev_month(a));
                         },
                         Icon { name: IconName::ChevronLeft, class: "w-4 h-4" }
                     }
@@ -1319,12 +1316,7 @@ fn CalendarDrawer(
                         label: "Next month",
                         onclick: move |_| {
                             let a = *anchor.read();
-                            let (y, m) = if a.month() == 12 {
-                                (a.year() + 1, 1)
-                            } else {
-                                (a.year(), a.month() + 1)
-                            };
-                            anchor.set(NaiveDate::from_ymd_opt(y, m, 1).unwrap());
+                            anchor.set(next_month(a));
                         },
                         Icon { name: IconName::ChevronRight, class: "w-4 h-4" }
                     }
@@ -1479,6 +1471,53 @@ mod tests {
             body_stats("⟦2026-08-24 07:12 EDT⟧one two\nplain line\n⟦2026-08-25 09:00 CDT⟧three"),
             (5, 24), // "one two\nplain line\nthree"
         );
+    }
+
+    /// Cross-boundary drift alarm for the `⟦YYYY-MM-DD HH:MM[ TZ]⟧` token.
+    ///
+    /// The token's WRITER is `TS_TOKEN_RE` in `assets/js/editor.js`; its READER
+    /// is `is_timestamp_token_inner` in this file. Nothing links them — no
+    /// shared crate, no generated definition, not even a common language — so a
+    /// format change on the JS side compiles clean here and only shows up as
+    /// editor metadata leaking into note bodies, exports and LLM context.
+    ///
+    /// This pins the JS literal. If it fires, that is the point: update
+    /// `is_timestamp_token_inner` to match the new format FIRST, then update
+    /// the pin below. Do not silence it by editing the pin alone.
+    #[test]
+    fn token_regex_in_editor_js_has_not_drifted() {
+        let js_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../assets/js/editor.js");
+        let js = std::fs::read_to_string(&js_path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", js_path.display()));
+
+        let after = js
+            .split_once("const TS_TOKEN_RE =")
+            .expect("TS_TOKEN_RE not found in editor.js — it was renamed or removed")
+            .1;
+        let literal = after
+            .split_once(';')
+            .expect("TS_TOKEN_RE declaration has no terminating semicolon")
+            .0
+            .trim();
+
+        assert_eq!(
+            literal,
+            r"/^⟦(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: ([^⟧]+))?⟧/",
+            "editor.js changed the completion-token format. Update \
+             is_timestamp_token_inner in this file to match, then update this pin."
+        );
+    }
+
+    /// The reader must accept what the writer actually emits. These are the
+    /// concrete shapes `TS_TOKEN_RE` produces: with a zone abbreviation, and
+    /// without one when the runtime declines to supply it.
+    #[test]
+    fn reader_accepts_every_shape_the_js_writer_emits() {
+        assert_eq!(strip_line_token("⟦2026-08-24 07:12 EDT⟧done"), "done");
+        assert_eq!(strip_line_token("⟦2026-08-24 07:12⟧done"), "done");
+        // Zone abbreviations are not all three letters (GMT+5:30, CEST).
+        assert_eq!(strip_line_token("⟦2026-08-24 07:12 GMT+5:30⟧done"), "done");
     }
 
     #[test]

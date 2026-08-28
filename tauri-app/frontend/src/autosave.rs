@@ -1,4 +1,4 @@
-//! Auto-save resilience (task 1.7).
+//! Auto-save resilience.
 //!
 //! A shared save-state model + a retry/backoff policy for the journal and notes
 //! editors. The editors differ in *what* they save (different backend calls),
@@ -23,6 +23,28 @@ pub enum SaveState {
     Saving,
     Unsaved,
     Failed,
+}
+
+impl SaveState {
+    /// Collapse the editors' three independent signals into one indicator
+    /// state, in strict priority order: in-flight beats failed beats dirty.
+    ///
+    /// Lives here rather than at each call site because the journal and notes
+    /// editors had drifted-by-copy versions of exactly this ladder. Nothing
+    /// about the duplication was compiler-visible — both branches type-check
+    /// independently — so reordering the rungs in one editor would have shown
+    /// up only as two screens disagreeing about whether your work was saved.
+    pub fn derive(saving: bool, failed: bool, dirty: bool) -> Self {
+        if saving {
+            Self::Saving
+        } else if failed {
+            Self::Failed
+        } else if dirty {
+            Self::Unsaved
+        } else {
+            Self::Saved
+        }
+    }
 }
 
 /// Given a zero-based retry `attempt` (0 = the wait before the *first* retry,
@@ -90,5 +112,30 @@ pub fn SaveIndicator(state: SaveState) -> Element {
             class: "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border {classes}",
             "{label}"
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SaveState;
+
+    /// Locks the priority order, which is the whole point of `derive`: the
+    /// three inputs are not mutually exclusive, so every overlapping pair has
+    /// to resolve the same way in both editors. Asserting only the four
+    /// single-flag cases would pass against a ladder with its rungs reordered.
+    #[test]
+    fn derive_resolves_overlapping_flags_by_priority() {
+        // Saving wins over everything else it can overlap with.
+        assert!(SaveState::derive(true, true, true) == SaveState::Saving);
+        assert!(SaveState::derive(true, false, true) == SaveState::Saving);
+        assert!(SaveState::derive(true, true, false) == SaveState::Saving);
+
+        // Failed outranks dirty: a save that exhausted its retries must not be
+        // softened into "Unsaved" just because the buffer also differs.
+        assert!(SaveState::derive(false, true, true) == SaveState::Failed);
+
+        // Then the unambiguous cases.
+        assert!(SaveState::derive(false, false, true) == SaveState::Unsaved);
+        assert!(SaveState::derive(false, false, false) == SaveState::Saved);
     }
 }
