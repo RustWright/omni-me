@@ -234,6 +234,7 @@ projects/project_name/
 │   ├── cycle-1.md
 │   ├── cycle-2.md
 │   └── ...
+├── NEXT.md                  # Instant-resume handoff — rewritten EVERY sitting, max 40 lines
 ├── project.md               # Persistent checklist/tracker (from template)
 ├── research.md              # Research findings (first cycle)
 ├── architecture.md          # Architecture decisions and rationale
@@ -245,6 +246,8 @@ projects/project_name/
 Both `.log/` and `.curiosities/` are **gitignored in the project repo** so raw conversation logs and in-progress curiosity captures never enter the project's public history. They sync to the parent `productive_learning` repo automatically at session end (the hooks — see `~/.claude/CLAUDE.md` § Session Sync) where they're tracked privately. The rest of the structure is tracked in the project's own git history.
 
 **Information Density Hierarchy:**
+0. `NEXT.md` = Where you are *right now* and which decisions are closed — the only
+   file read *before* doing anything, because SessionStart prints it into context
 1. `.log/` files = Full discussion and reasoning
 2. `project.md` = Decision summaries with alternatives and trade-offs
 3. `research.md` / `architecture.md` = Canonical technical decisions with brief rationale
@@ -281,6 +284,16 @@ run `/export`, name log files, or sync to the parent by hand (see `~/.claude/CLA
 § Session Sync). The captured curiosity log still feeds the Session 6 Phase D
 cycle-close review pass — it's synced for you.
 
+What remains yours, **every sitting** (not just at a phase boundary):
+
+0. **Rewrite `NEXT.md`.** This is the last thing you do before the session ends or
+   compacts. Rewrite it *wholesale* — it describes only *now*; the history already
+   lives in `project.md` and `logs/`. Max 40 lines, enforced by the hook. It holds the
+   next action, the decisions in force **with their rationale**, what NOT to re-survey,
+   and open threads. It is **never a state snapshot** — the next session re-verifies
+   state live, so a file listing "what's currently in `src/`" is both redundant and a
+   future lie.
+
 What remains yours, at a *phase* boundary:
 1. **Update `project.md`:** add the session summary to the checklist / session log.
 2. **Update `tasks.md`:** in Session 5 (Implementation), keep task statuses current.
@@ -289,9 +302,14 @@ A deliberate milestone commit with a meaningful message (e.g. after Session 6) i
 still worth making by hand — single line, under 50 chars. Routine WIP commits and
 pushes happen automatically.
 
-Because a single session may span multiple Claude Code sittings, these *content*
-updates apply when the phase wraps — not every sitting. Intermediate sittings are
-still committed and pushed for you; the summary and task updates happen at phase boundaries.
+Because a single session may span multiple Claude Code sittings, updates 1 and 2 apply
+when the phase wraps — not every sitting. Intermediate sittings are still committed and
+pushed for you; the summary and task updates happen at phase boundaries.
+
+**`NEXT.md` is the exception, and that cadence gap is the whole reason it exists.**
+Every break between sittings is a context loss that a phase-boundary document does not
+cover — so `NEXT.md` is rewritten at *every* boundary, sitting or phase. It is what makes
+starting a fresh session cost nothing, instead of `/compact`-ing forever to avoid one.
 
 ---
 

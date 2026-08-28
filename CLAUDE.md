@@ -6,11 +6,12 @@ This project follows the structured process defined in `PROJECT_PROCESS.md` (mir
 
 **Session start:**
 
+0. **`NEXT.md` is already in your context** — SessionStart printed it. Start there. Trust it about **decisions** (if it says a choice is settled, or names files as not-worth-re-surveying, skip them — that is permission, take it). Never trust it about **state**.
 1. Re-verify live state (`git status`, read what you'll touch). Git sync itself is automatic (SessionStart hook) — don't run it by hand. Inherit decisions already agreed in prior sessions; don't re-derive settled context.
 2. Read `project.md` to find current state and next session. Confirm with user before proceeding.
 3. If resuming mid-session, also read `tasks.md` and `architecture.md` for context.
 
-**Session end:** Logging and git sync are **automatic** (the session hooks — see `~/.claude/CLAUDE.md` § Session Sync): the transcript is rendered into `.log/`, `.log/` + `.curiosities/` are synced to the parent, and work is committed + pushed. Your only end-of-phase job is the content updates in `PROJECT_PROCESS.md` § End-of-Session Protocol — update `project.md`'s session log and `tasks.md`. No `/export`, no manual parent-sync.
+**Session end:** Logging and git sync are **automatic** (the session hooks — see `~/.claude/CLAUDE.md` § Session Sync): the transcript is rendered into `.log/`, `.log/` + `.curiosities/` are synced to the parent, and work is committed + pushed. Your jobs are the content updates in `PROJECT_PROCESS.md` § End-of-Session Protocol: **rewrite `NEXT.md` wholesale every sitting** (max 40 lines — decisions + next action, never a state snapshot), and at a phase boundary also update `project.md`'s session log and `tasks.md`. No `/export`, no manual parent-sync.
 
 **Session model:** Six-session process per `PROJECT_PROCESS.md` § Process Flow (Initiation → Research → Architecture → Planning → Implementation → Code Review). The AI role per session is documented in `PROJECT_PROCESS.md` § AI's Role.
 
