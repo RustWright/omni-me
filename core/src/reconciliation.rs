@@ -68,10 +68,7 @@ pub struct MatchCandidate {
 /// Build the ranked candidate list. `max_days_gap` controls how far
 /// apart two transactions can be dated and still pair (typical: 5-10).
 /// Returns candidates sorted by `score` descending.
-pub fn find_match_candidates(
-    unmatched: &[UnmatchedTxn],
-    max_days_gap: u32,
-) -> Vec<MatchCandidate> {
+pub fn find_match_candidates(unmatched: &[UnmatchedTxn], max_days_gap: u32) -> Vec<MatchCandidate> {
     let mut out = Vec::new();
     for (i, a) in unmatched.iter().enumerate() {
         for b in unmatched.iter().skip(i + 1) {
@@ -116,7 +113,11 @@ pub fn find_match_candidates(
             });
         }
     }
-    out.sort_by(|x, y| y.score.partial_cmp(&x.score).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|x, y| {
+        y.score
+            .partial_cmp(&x.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out
 }
 
@@ -290,7 +291,13 @@ mod tests {
     fn finds_obvious_pair_same_amount_opposite_sign_same_day() {
         let txns = vec![
             u("a", "2026-05-15", "Loblaws Groceries", "42.18", None),
-            u("b", "2026-05-15", "LOBLAWS", "-42.18", Some("summit-2026-05")),
+            u(
+                "b",
+                "2026-05-15",
+                "LOBLAWS",
+                "-42.18",
+                Some("summit-2026-05"),
+            ),
         ];
         let cands = find_match_candidates(&txns, 5);
         assert_eq!(cands.len(), 1);
@@ -422,7 +429,10 @@ mod tests {
 
     #[test]
     fn description_similarity_full_overlap_is_one() {
-        assert_eq!(jaccard_token_similarity("Loblaws Groceries", "loblaws groceries"), 1.0);
+        assert_eq!(
+            jaccard_token_similarity("Loblaws Groceries", "loblaws groceries"),
+            1.0
+        );
     }
 
     #[test]

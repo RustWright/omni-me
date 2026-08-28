@@ -76,7 +76,6 @@ fn load_roster(app_data: &Path) -> Vec<String> {
     }
 }
 
-
 pub struct AppState {
     pub db: Database,
     pub event_store: SurrealEventStore,

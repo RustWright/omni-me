@@ -105,7 +105,10 @@ pub fn SaveIndicator(state: SaveState) -> Element {
             "Unsaved",
             "bg-amber-500/10 text-amber-400 border-amber-500/30",
         ),
-        SaveState::Failed => ("Save failed", "bg-red-900/20 text-red-400 border-red-900/50"),
+        SaveState::Failed => (
+            "Save failed",
+            "bg-red-900/20 text-red-400 border-red-900/50",
+        ),
     };
     rsx! {
         span {

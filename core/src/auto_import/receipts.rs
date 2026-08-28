@@ -27,9 +27,7 @@ use tokio::process::Command;
 
 use crate::auto_import_scheduler::ImportError;
 use crate::events::NewEvent;
-use crate::extraction::{
-    receipt_extraction_to_drafts, DocumentExtractor, ExtractionHint,
-};
+use crate::extraction::{DocumentExtractor, ExtractionHint, receipt_extraction_to_drafts};
 
 use super::imap::{ImapHandler, ImapMessage};
 use super::mime::parse_eml;
@@ -106,8 +104,8 @@ async fn pdftotext_bytes(pdf_bytes: &[u8]) -> Result<String, ImportError> {
         )));
     }
 
-    let mut temp = tempfile::NamedTempFile::new()
-        .map_err(|e| ImportError::Io(format!("temp file: {e}")))?;
+    let mut temp =
+        tempfile::NamedTempFile::new().map_err(|e| ImportError::Io(format!("temp file: {e}")))?;
     temp.write_all(pdf_bytes)
         .map_err(|e| ImportError::Io(format!("write temp: {e}")))?;
     temp.flush()
@@ -172,9 +170,7 @@ impl ImapHandler for ReceiptHandler {
         {
             return false;
         }
-        self.sender_patterns
-            .iter()
-            .any(|p| from_lower.contains(p))
+        self.sender_patterns.iter().any(|p| from_lower.contains(p))
     }
 
     async fn handle(&self, message: &ImapMessage) -> Result<Vec<NewEvent>, ImportError> {
@@ -187,7 +183,11 @@ impl ImapHandler for ReceiptHandler {
         // this text-only path deliberately does not attempt.
         let mut combined_text = parsed.body_text.clone();
         for att in &parsed.attachments {
-            if att.content_type.to_ascii_lowercase().starts_with("application/pdf") {
+            if att
+                .content_type
+                .to_ascii_lowercase()
+                .starts_with("application/pdf")
+            {
                 match pdftotext_bytes(&att.bytes).await {
                     Ok(t) if !t.is_empty() => {
                         combined_text.push_str("\n\n--- PDF: ");
@@ -316,8 +316,9 @@ mod tests {
         // A catch-all `.com` handler that excludes `@meridian.example` (since SC has
         // a dedicated handler upstream).
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler = ReceiptHandler::new("catchall", vec![".com".into()], "device-test", extractor)
-            .with_excluded(vec!["@meridian.example".into()]);
+        let handler =
+            ReceiptHandler::new("catchall", vec![".com".into()], "device-test", extractor)
+                .with_excluded(vec!["@meridian.example".into()]);
         assert!(handler.accepts(&imap_msg_from("any@anywhere.com", Vec::new())));
         assert!(!handler.accepts(&imap_msg_from("notifications@meridian.example", Vec::new())));
     }
@@ -326,11 +327,18 @@ mod tests {
     async fn handles_audible_inline_body_eml() {
         let body = match fixture_eml("Thanks, your order is complete_audible.eml") {
             Some(b) => b,
-            None => { eprintln!("fixture missing — skipping"); return; }
+            None => {
+                eprintln!("fixture missing — skipping");
+                return;
+            }
         };
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
-        let handler =
-            ReceiptHandler::new("audible", vec!["@audible.ca".into()], "device-test", extractor);
+        let handler = ReceiptHandler::new(
+            "audible",
+            vec!["@audible.ca".into()],
+            "device-test",
+            extractor,
+        );
         let msg = imap_msg_from("donotreply@audible.ca", body);
         let events = handler
             .handle(&msg)
@@ -344,12 +352,18 @@ mod tests {
     async fn handles_oxio_inline_body_eml() {
         let body = match fixture_eml("📫 oxio invoice available..eml") {
             Some(b) => b,
-            None => { eprintln!("fixture missing — skipping"); return; }
+            None => {
+                eprintln!("fixture missing — skipping");
+                return;
+            }
         };
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
         let handler = ReceiptHandler::new("oxio", vec!["oxio".into()], "device-test", extractor);
         let msg = imap_msg_from("billing@oxio.com", body);
-        let events = handler.handle(&msg).await.expect("oxio handler should succeed");
+        let events = handler
+            .handle(&msg)
+            .await
+            .expect("oxio handler should succeed");
         assert!(events.is_empty());
     }
 

@@ -206,11 +206,7 @@ mod tests {
         assert!(!needs_manual_fx("PKR")); // not yet listed; would 404 on Frankfurter
     }
 
-    fn frankfurter_payload(
-        base: &str,
-        date: &str,
-        rates: Vec<(&str, &str)>,
-    ) -> serde_json::Value {
+    fn frankfurter_payload(base: &str, date: &str, rates: Vec<(&str, &str)>) -> serde_json::Value {
         let rates_obj: serde_json::Value = rates
             .into_iter()
             .map(|(k, v)| (k.to_string(), serde_json::Value::String(v.to_string())))
@@ -226,11 +222,13 @@ mod tests {
             .and(path("/latest"))
             .and(query_param("from", "USD"))
             .and(query_param("to", "CAD,EUR"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(frankfurter_payload(
-                "USD",
-                "2026-05-16",
-                vec![("EUR", "0.92"), ("CAD", "1.37")],
-            )))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(frankfurter_payload(
+                    "USD",
+                    "2026-05-16",
+                    vec![("EUR", "0.92"), ("CAD", "1.37")],
+                )),
+            )
             .mount(&server)
             .await;
 
@@ -244,7 +242,10 @@ mod tests {
         assert_eq!(records[1].quote, "EUR");
         assert_eq!(records[1].rate, Decimal::from_str("0.92").unwrap());
         assert_eq!(records[0].base, "USD");
-        assert_eq!(records[0].date, NaiveDate::from_ymd_opt(2026, 5, 16).unwrap());
+        assert_eq!(
+            records[0].date,
+            NaiveDate::from_ymd_opt(2026, 5, 16).unwrap()
+        );
     }
 
     #[tokio::test]
@@ -252,20 +253,29 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/2026-04-15"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(frankfurter_payload(
-                "USD",
-                "2026-04-15",
-                vec![("CAD", "1.35")],
-            )))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(frankfurter_payload(
+                    "USD",
+                    "2026-04-15",
+                    vec![("CAD", "1.35")],
+                )),
+            )
             .mount(&server)
             .await;
 
         let records = make_client(&server)
-            .fetch_historical(NaiveDate::from_ymd_opt(2026, 4, 15).unwrap(), "USD", &["CAD"])
+            .fetch_historical(
+                NaiveDate::from_ymd_opt(2026, 4, 15).unwrap(),
+                "USD",
+                &["CAD"],
+            )
             .await
             .unwrap();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].date, NaiveDate::from_ymd_opt(2026, 4, 15).unwrap());
+        assert_eq!(
+            records[0].date,
+            NaiveDate::from_ymd_opt(2026, 4, 15).unwrap()
+        );
     }
 
     #[tokio::test]

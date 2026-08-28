@@ -208,10 +208,7 @@ impl std::fmt::Debug for LlmProviderConfig {
             .field("provider", &self.provider)
             .field("base_url", &self.base_url)
             .field("model", &self.model)
-            .field(
-                "api_key",
-                &self.api_key.as_deref().map(redacted),
-            )
+            .field("api_key", &self.api_key.as_deref().map(redacted))
             .field("vision", &self.vision)
             .finish()
     }
@@ -234,7 +231,11 @@ pub fn default_path() -> Result<PathBuf, CredentialError> {
     let base = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .ok()
-        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        })
         .ok_or_else(|| {
             CredentialError::ConfigDir("neither XDG_CONFIG_HOME nor HOME set".to_string())
         })?;
@@ -538,11 +539,7 @@ mod tests {
     fn a_file_without_a_server_section_still_loads() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("credentials.toml");
-        std::fs::write(
-            &path,
-            "[gemini]\napi_key = \"k\"\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "[gemini]\napi_key = \"k\"\n").unwrap();
         let creds = load(&path).unwrap();
         assert!(creds.server.is_none());
     }
@@ -574,7 +571,6 @@ mod tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "expected 0600, got {mode:o}");
     }
-
 
     /// The whole point of the hand-written `Debug` impls: one careless
     /// `tracing::debug!(?creds, ...)` must not be able to write every
@@ -625,8 +621,14 @@ mod tests {
         }
 
         // Shape is still useful: you can see WHAT is configured.
-        assert!(rendered.contains("imap.example.com"), "host is not a secret");
-        assert!(rendered.contains("me@example.com"), "account is not a secret");
+        assert!(
+            rendered.contains("imap.example.com"),
+            "host is not a secret"
+        );
+        assert!(
+            rendered.contains("me@example.com"),
+            "account is not a secret"
+        );
         assert!(rendered.contains("llama3.1"), "model is not a secret");
         assert!(
             rendered.contains("some_api"),
@@ -634,5 +636,4 @@ mod tests {
         );
         assert!(rendered.contains("redacted"), "secrets render as redacted");
     }
-
 }

@@ -17,25 +17,25 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
+    Json, Router,
     extract::{DefaultBodyLimit, State},
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
     middleware::{self, Next},
     response::Response,
     routing::get,
-    Json, Router,
 };
 use tokio::signal;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
-use omni_me_core::auto_import::setup::{spawn_sources, DEFAULT_INTERVAL};
+use omni_me_core::auto_import::setup::{DEFAULT_INTERVAL, spawn_sources};
 use omni_me_core::auto_import_scheduler::{AutoImportSource, SourceRegistry};
 use omni_me_core::credentials::{self, Credentials};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::{
-    gemini::GeminiExtractor, null::NullExtractor, openai_compat::OpenAiCompatExtractor,
-    DocumentExtractor,
+    DocumentExtractor, gemini::GeminiExtractor, null::NullExtractor,
+    openai_compat::OpenAiCompatExtractor,
 };
 use omni_me_core::llm::{GeminiClient, LlmClient, OpenAiCompatClient};
 
@@ -192,8 +192,8 @@ pub async fn run(cfg: RunConfig) {
     // from them) while the boot-time `SourceCtx` builder consumes the originals.
     // Projections vec is empty: the server stores events + syncs them to clients,
     // which run their own projections locally.
-    let device_id = std::env::var("OMNI_SERVER_DEVICE_ID")
-        .unwrap_or_else(|_| "server-auto-import".to_string());
+    let device_id =
+        std::env::var("OMNI_SERVER_DEVICE_ID").unwrap_or_else(|_| "server-auto-import".to_string());
     let server_projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
     if let Err(e) = server_projections.init_all().await {
         tracing::warn!(error = %e, "server projection_versions init failed");
@@ -294,7 +294,11 @@ pub async fn run(cfg: RunConfig) {
 /// production route set against a test [`AppState`]. `updates_dir`, when `Some`,
 /// mounts a read-only static file service at `/updates` (app-update hosting);
 /// `None` leaves the route absent.
-pub fn build_app(state: AppState, updates_dir: Option<PathBuf>, auth_token: Option<String>) -> Router {
+pub fn build_app(
+    state: AppState,
+    updates_dir: Option<PathBuf>,
+    auth_token: Option<String>,
+) -> Router {
     // Everything that reads or writes state sits behind the bearer gate. The
     // exceptions are deliberate: `/health` has to answer the deploy's readiness
     // probe before any device is provisioned, and `/updates` has to stay
@@ -455,7 +459,9 @@ fn build_llm_client(creds: &Credentials, gemini_key: Option<String>) -> Arc<dyn 
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
 
     let terminate = async {

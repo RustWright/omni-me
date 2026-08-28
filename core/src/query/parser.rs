@@ -23,9 +23,7 @@
 //! [`to_dsl`] is the canonical serializer: `parse(to_dsl(&q))` reproduces `q`
 //! (for queries with ≥2 predicates, where the combinator is meaningful).
 
-use super::ast::{
-    AccountMatch, CmpOp, Combinator, DateRange, Predicate, Query, TagQuery,
-};
+use super::ast::{AccountMatch, CmpOp, Combinator, DateRange, Predicate, Query, TagQuery};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -117,8 +115,9 @@ fn parse_predicate(token: &str) -> Result<Predicate, QueryParseError> {
         "tag" => parse_tag(value),
         "date" => parse_date(value),
         "amount" | "amt" => parse_amount(value),
-        "commodity" | "cur" | "ccy" => non_empty(value, "commodity")
-            .map(|v| Predicate::Commodity(v.to_string())),
+        "commodity" | "cur" | "ccy" => {
+            non_empty(value, "commodity").map(|v| Predicate::Commodity(v.to_string()))
+        }
         "desc" | "description" => {
             non_empty(value, "desc").map(|v| Predicate::Description(v.to_string()))
         }

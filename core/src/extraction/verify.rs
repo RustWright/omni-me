@@ -115,7 +115,11 @@ mod tests {
         }
     }
 
-    fn receipt(postings: Vec<ExtractedPosting>, total: Option<Decimal>, conf: f64) -> ExtractionResult {
+    fn receipt(
+        postings: Vec<ExtractedPosting>,
+        total: Option<Decimal>,
+        conf: f64,
+    ) -> ExtractionResult {
         ExtractionResult {
             date: NaiveDate::from_ymd_opt(2026, 5, 16),
             description: Some("Loblaws".into()),
@@ -135,7 +139,11 @@ mod tests {
             0.95,
         );
         let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
-        assert!(report.warnings.is_empty(), "warnings: {:?}", report.warnings);
+        assert!(
+            report.warnings.is_empty(),
+            "warnings: {:?}",
+            report.warnings
+        );
         assert!(!report.needs_manual_review);
         assert_eq!(report.effective_confidence, 0.95);
     }
@@ -215,7 +223,11 @@ mod tests {
             0.9,
         );
         let report = verify(&r, ExtractionHint::Paystub, DEFAULT_CONFIDENCE_THRESHOLD);
-        assert_eq!(report.warnings.len(), 1, "sum check should warn for naive abs() sum");
+        assert_eq!(
+            report.warnings.len(),
+            1,
+            "sum check should warn for naive abs() sum"
+        );
         // Note: a more sophisticated check for paystubs (gross − sum(deductions) = net)
         // would require labeling postings — deferred to a future iteration when the
         // prompt yields posting categories reliably.

@@ -44,9 +44,7 @@ pub enum PostingError {
         base: String,
         posting: String,
     },
-    #[error(
-        "posting commodity '{posting}' equals base '{base}' — FX rate must be omitted"
-    )]
+    #[error("posting commodity '{posting}' equals base '{base}' — FX rate must be omitted")]
     FxOnBaseCommodity { base: String, posting: String },
 }
 
@@ -177,8 +175,7 @@ mod tests {
     fn does_not_match_partial_word_prefix() {
         // "Expenses:BusinessExpenses" must NOT be treated as a Business-prefixed
         // account — the colon after "Business" is part of the constant on purpose.
-        let (stripped, was_business) =
-            strip_business_prefix("Expenses:BusinessExpenses:Office");
+        let (stripped, was_business) = strip_business_prefix("Expenses:BusinessExpenses:Office");
         assert_eq!(stripped, "Expenses:BusinessExpenses:Office");
         assert!(!was_business);
     }
@@ -244,7 +241,11 @@ mod tests {
             tags: vec![],
         };
         match validate_posting(&p, "CAD") {
-            Err(PostingError::FxQuoteMismatch { quote, base, posting }) => {
+            Err(PostingError::FxQuoteMismatch {
+                quote,
+                base,
+                posting,
+            }) => {
                 assert_eq!(quote, "EUR");
                 assert_eq!(base, "CAD");
                 assert_eq!(posting, "USD");
@@ -271,7 +272,10 @@ mod tests {
     fn validate_rejects_empty_commodity() {
         let mut p = cad_posting("1.00");
         p.commodity = String::new();
-        assert_eq!(validate_posting(&p, "CAD"), Err(PostingError::EmptyCommodity));
+        assert_eq!(
+            validate_posting(&p, "CAD"),
+            Err(PostingError::EmptyCommodity)
+        );
     }
 
     // --- Unmatched helpers ---

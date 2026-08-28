@@ -1300,19 +1300,13 @@ mod tests {
             "pattern_id": "rec_netflix",
             "pattern": { "vendor": "Netflix", "amount": "16.99", "cadence_days": 30 }
         });
-        assert!(
-            validate_payload(&EventType::RecurringTransactionDetected, &detected).is_ok()
-        );
+        assert!(validate_payload(&EventType::RecurringTransactionDetected, &detected).is_ok());
 
         let confirmed = serde_json::json!({ "pattern_id": "rec_netflix" });
-        assert!(
-            validate_payload(&EventType::RecurringTransactionConfirmed, &confirmed).is_ok()
-        );
+        assert!(validate_payload(&EventType::RecurringTransactionConfirmed, &confirmed).is_ok());
 
         let dismissed = serde_json::json!({ "pattern_id": "rec_netflix" });
-        assert!(
-            validate_payload(&EventType::RecurringTransactionDismissed, &dismissed).is_ok()
-        );
+        assert!(validate_payload(&EventType::RecurringTransactionDismissed, &dismissed).is_ok());
     }
 
     #[test]

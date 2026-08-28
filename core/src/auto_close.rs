@@ -11,7 +11,7 @@
 
 use chrono::{NaiveDate, Utc};
 
-use crate::db::{queries, Database};
+use crate::db::{Database, queries};
 use crate::events::{EventStore, EventType, NewEvent, ProjectionRunner};
 
 /// Scan for stale complete-but-not-closed journals and emit
@@ -147,10 +147,22 @@ mod tests {
             .unwrap();
         assert_eq!(closed, 2);
 
-        let apr17 = queries::get_journal_by_date(&db, "2026-04-17").await.unwrap().unwrap();
-        let apr18 = queries::get_journal_by_date(&db, "2026-04-18").await.unwrap().unwrap();
-        let apr19 = queries::get_journal_by_date(&db, "2026-04-19").await.unwrap().unwrap();
-        let apr16 = queries::get_journal_by_date(&db, "2026-04-16").await.unwrap().unwrap();
+        let apr17 = queries::get_journal_by_date(&db, "2026-04-17")
+            .await
+            .unwrap()
+            .unwrap();
+        let apr18 = queries::get_journal_by_date(&db, "2026-04-18")
+            .await
+            .unwrap()
+            .unwrap();
+        let apr19 = queries::get_journal_by_date(&db, "2026-04-19")
+            .await
+            .unwrap()
+            .unwrap();
+        let apr16 = queries::get_journal_by_date(&db, "2026-04-16")
+            .await
+            .unwrap()
+            .unwrap();
 
         assert!(apr17.closed);
         assert!(apr18.closed);
@@ -176,7 +188,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(first, 1, "closed on first run");
-        assert_eq!(second, 0, "already-closed rows are filtered out on second run");
+        assert_eq!(
+            second, 0,
+            "already-closed rows are filtered out on second run"
+        );
     }
 
     #[tokio::test]

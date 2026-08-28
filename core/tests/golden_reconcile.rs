@@ -25,9 +25,9 @@ use std::str::FromStr;
 use chrono::NaiveDate;
 use omni_me_core::accounts::unmatched_posting;
 use omni_me_core::events::{Posting, TransactionRecordedPayload};
-use omni_me_core::reconciliation::combine_for_merge;
 use omni_me_core::journal_file::render_transaction;
 use omni_me_core::journal_import::parse_journal;
+use omni_me_core::reconciliation::combine_for_merge;
 use rust_decimal::Decimal;
 
 type BalanceTable = BTreeMap<(String, String), String>;

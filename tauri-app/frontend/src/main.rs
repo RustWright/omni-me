@@ -17,12 +17,12 @@ use dioxus::prelude::*;
 use futures::StreamExt;
 
 use components::nav::{NavDrawer, SideNav};
-use sync_refresh::SyncRefresh;
 use pages::finances::FinancesPage;
 use pages::journal::JournalPage;
 use pages::notes::NotesPage;
 use pages::routines::RoutinesPage;
 use pages::settings::SettingsPage;
+use sync_refresh::SyncRefresh;
 
 /// Top-level feature tabs. Order matches the nav display order.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -159,7 +159,10 @@ fn App() -> Element {
     // bumps; the root orchestrates below. Provided as `BackNav` context.
     let mut page_depth = use_signal(|| 0u32);
     let mut pop_seq = use_signal(|| 0u32);
-    use_context_provider(|| BackNav { page_depth, pop_seq });
+    use_context_provider(|| BackNav {
+        page_depth,
+        pop_seq,
+    });
 
     // Live-refresh on inbound sync (see `sync_refresh`). The backend applies
     // auto-pulled remote events into the local DB and emits `sync:applied`, but
@@ -212,7 +215,8 @@ fn App() -> Element {
                     pop_seq.set(next);
                 } else if *active_tab.peek() != Tab::Journal {
                     active_tab.set(Tab::Journal);
-                    continuity_store.update_nav(|n| n.tab = Some(Tab::Journal.as_key().to_string()));
+                    continuity_store
+                        .update_nav(|n| n.tab = Some(Tab::Journal.as_key().to_string()));
                 }
             }
         });
@@ -223,7 +227,8 @@ fn App() -> Element {
     // synchronously (#372). Reactive on drawer / page-depth / tab, so the flag
     // is always current when a back press arrives.
     use_effect(move || {
-        let can = *drawer_open.read() || *page_depth.read() > 0 || *active_tab.read() != Tab::Journal;
+        let can =
+            *drawer_open.read() || *page_depth.read() > 0 || *active_tab.read() != Tab::Journal;
         bridge::set_can_go_back(can);
     });
 
@@ -427,4 +432,3 @@ fn App() -> Element {
         }
     }
 }
-

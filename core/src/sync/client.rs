@@ -273,10 +273,7 @@ impl SyncClient {
     }
 
     /// This device's push watermark (epoch if never pushed).
-    pub async fn last_push_watermark(
-        &self,
-        db: &Database,
-    ) -> Result<DateTime<Utc>, SyncError> {
+    pub async fn last_push_watermark(&self, db: &Database) -> Result<DateTime<Utc>, SyncError> {
         let device_id = self.device_id.clone();
         let mut resp = db
             .query("SELECT * FROM sync_state WHERE device_id = $device_id")
@@ -326,10 +323,7 @@ impl SyncClient {
     }
 
     /// The last-sync timestamp recorded for this device (epoch if none).
-    pub async fn last_sync_timestamp(
-        &self,
-        db: &Database,
-    ) -> Result<DateTime<Utc>, SyncError> {
+    pub async fn last_sync_timestamp(&self, db: &Database) -> Result<DateTime<Utc>, SyncError> {
         let device_id = self.device_id.clone();
         let mut resp = db
             .query("SELECT * FROM sync_state WHERE device_id = $device_id")
@@ -341,7 +335,8 @@ impl SyncClient {
             .take(0)
             .map_err(|e| SyncError::Local(format!("take raw: {e}")))?;
 
-        let ts = raw.first()
+        let ts = raw
+            .first()
             .and_then(|r| r.get("last_sync_timestamp"))
             .and_then(|v| match v {
                 serde_json::Value::String(s) => Some(s.clone()),
@@ -382,10 +377,7 @@ impl SyncClient {
         Ok(())
     }
 
-    async fn pull_events(
-        &self,
-        since: &DateTime<Utc>,
-    ) -> Result<PullResponse, SyncError> {
+    async fn pull_events(&self, since: &DateTime<Utc>) -> Result<PullResponse, SyncError> {
         let url = format!("{}/sync/pull", self.server_url);
         let body = PullRequest {
             device_id: self.device_id.clone(),
@@ -525,8 +517,7 @@ fn chunk_for_push(events: &[Event]) -> Vec<Vec<NewEvent>> {
     for ev in events {
         let ne = NewEvent::from(ev);
         let sz = serde_json::to_vec(&ne).map(|v| v.len()).unwrap_or(0);
-        if !batch.is_empty()
-            && (batch.len() >= MAX_EVENTS_PER_PUSH || bytes + sz > MAX_PUSH_BYTES)
+        if !batch.is_empty() && (batch.len() >= MAX_EVENTS_PER_PUSH || bytes + sz > MAX_PUSH_BYTES)
         {
             chunks.push(std::mem::take(&mut batch));
             bytes = 0;
@@ -557,7 +548,9 @@ mod tests {
     }
 
     fn chunk_bytes(c: &[NewEvent]) -> usize {
-        c.iter().map(|ne| serde_json::to_vec(ne).unwrap().len()).sum()
+        c.iter()
+            .map(|ne| serde_json::to_vec(ne).unwrap().len())
+            .sum()
     }
 
     #[test]
@@ -573,7 +566,11 @@ mod tests {
         // ~50 KiB each; five of them (~250 KiB) must split into >1 chunk.
         let events: Vec<Event> = (0..5).map(|i| ev(&format!("e{i}"), 50 * 1024)).collect();
         let chunks = chunk_for_push(&events);
-        assert!(chunks.len() > 1, "expected split, got {} chunk(s)", chunks.len());
+        assert!(
+            chunks.len() > 1,
+            "expected split, got {} chunk(s)",
+            chunks.len()
+        );
         for c in &chunks {
             assert!(chunk_bytes(c) <= MAX_PUSH_BYTES || c.len() == 1);
         }

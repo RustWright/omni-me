@@ -24,7 +24,11 @@ const CAP_BYTES: u64 = 200 * 1024 * 1024;
 /// Lowercase hex-sha256 character set, matches the server validator at
 /// `server/src/routes/blobs.rs::validate_hash_format`.
 fn validate_hash(hash: &str) -> Result<(), String> {
-    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()) {
+    if hash.len() != 64
+        || !hash
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
+    {
         return Err("hash must be 64 lowercase hex chars".into());
     }
     Ok(())
@@ -211,7 +215,10 @@ pub async fn fetch_attachment(
         .await
         .map_err(|e| format!("attachment fetch: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("attachment fetch: server returned {}", resp.status()));
+        return Err(format!(
+            "attachment fetch: server returned {}",
+            resp.status()
+        ));
     }
     let bytes = resp
         .bytes()
@@ -284,7 +291,11 @@ mod tests {
     async fn invalid_hash_rejected() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(cache_write(tmp.path(), "short", b"x").await.is_err());
-        assert!(cache_write(tmp.path(), &"G".repeat(64), b"x").await.is_err());
+        assert!(
+            cache_write(tmp.path(), &"G".repeat(64), b"x")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

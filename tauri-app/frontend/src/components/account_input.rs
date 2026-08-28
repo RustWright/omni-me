@@ -140,7 +140,12 @@ pub fn AccountInput(
     // differently-cased-but-real account doesn't flash the "new account" hint.
     let is_known = {
         let q = trimmed.to_lowercase();
-        !q.is_empty() && suggestions_ctx.list.read().iter().any(|a| a.to_lowercase() == q)
+        !q.is_empty()
+            && suggestions_ctx
+                .list
+                .read()
+                .iter()
+                .any(|a| a.to_lowercase() == q)
     };
 
     let show_unknown = !disabled && !trimmed.is_empty() && !is_known;

@@ -105,7 +105,10 @@ pub async fn audit_device_ids(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let n = row.get("n").and_then(serde_json::Value::as_u64).unwrap_or(0) as usize;
+        let n = row
+            .get("n")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
         if id == own_device_id {
             own_count = n;
         } else if n > 0 {
@@ -160,7 +163,10 @@ mod tests {
         DeviceIdAudit {
             own_device_id: "own".into(),
             own_count: own,
-            foreign: foreign.iter().map(|(id, n)| ((*id).to_string(), *n)).collect(),
+            foreign: foreign
+                .iter()
+                .map(|(id, n)| ((*id).to_string(), *n))
+                .collect(),
             ever_synced,
         }
     }

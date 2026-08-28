@@ -457,7 +457,10 @@ mod tests {
         let reloaded = load(&path).unwrap();
         assert_eq!(reloaded.sources.len(), 1);
         assert_eq!(reloaded.sources[0].name, "my-checking");
-        assert_eq!(reloaded.sources[0].account.as_deref(), Some("Assets:MyBank:Checking"));
+        assert_eq!(
+            reloaded.sources[0].account.as_deref(),
+            Some("Assets:MyBank:Checking")
+        );
     }
 
     #[test]

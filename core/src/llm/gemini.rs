@@ -82,9 +82,8 @@ impl GeminiClient {
 
         let response = self.send_request(body).await?;
         let text = Self::extract_text(&response)?;
-        serde_json::from_str(&text).map_err(|e| {
-            LlmError::ParseError(format!("Failed to parse multimodal JSON: {e}"))
-        })
+        serde_json::from_str(&text)
+            .map_err(|e| LlmError::ParseError(format!("Failed to parse multimodal JSON: {e}")))
     }
 
     /// Build the API endpoint URL.
@@ -141,18 +140,18 @@ impl GeminiClient {
             return Err(LlmError::RateLimited);
         }
 
-        let response_body: Value = response
-            .json()
-            .await
-            .map_err(|e| LlmError::ParseError(format!("Failed to parse response JSON: {}", e.without_url())))?;
+        let response_body: Value = response.json().await.map_err(|e| {
+            LlmError::ParseError(format!(
+                "Failed to parse response JSON: {}",
+                e.without_url()
+            ))
+        })?;
 
         if !status.is_success() {
             let error_msg = response_body["error"]["message"]
                 .as_str()
                 .unwrap_or("Unknown API error");
-            return Err(LlmError::ApiError(format!(
-                "HTTP {status}: {error_msg}"
-            )));
+            return Err(LlmError::ApiError(format!("HTTP {status}: {error_msg}")));
         }
 
         Ok(response_body)
@@ -163,9 +162,7 @@ impl GeminiClient {
         response["candidates"][0]["content"]["parts"][0]["text"]
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| {
-                LlmError::ParseError("No text found in response".to_string())
-            })
+            .ok_or_else(|| LlmError::ParseError("No text found in response".to_string()))
     }
 
     /// Convert ToolDef list to Gemini API function declarations format.
@@ -199,11 +196,7 @@ impl GeminiClient {
             })
             .collect();
 
-        if calls.is_empty() {
-            None
-        } else {
-            Some(calls)
-        }
+        if calls.is_empty() { None } else { Some(calls) }
     }
 }
 
@@ -222,11 +215,7 @@ impl LlmClient for GeminiClient {
         Self::extract_text(&response)
     }
 
-    async fn complete_json(
-        &self,
-        prompt: &str,
-        schema: &Value,
-    ) -> Result<Value, LlmError> {
+    async fn complete_json(&self, prompt: &str, schema: &Value) -> Result<Value, LlmError> {
         let body = json!({
             "contents": [{ "parts": [{ "text": prompt }] }],
             "generationConfig": {
@@ -238,9 +227,8 @@ impl LlmClient for GeminiClient {
         let response = self.send_request(body).await?;
         let text = Self::extract_text(&response)?;
 
-        serde_json::from_str(&text).map_err(|e| {
-            LlmError::ParseError(format!("Failed to parse JSON response: {e}"))
-        })
+        serde_json::from_str(&text)
+            .map_err(|e| LlmError::ParseError(format!("Failed to parse JSON response: {e}")))
     }
 
     async fn complete_with_tools(
@@ -393,9 +381,12 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path_regex(r"/v1beta/models/.+:generateContent"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                gemini_tool_call_response("create_tag", json!({"tag": "personal"})),
-            ))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(gemini_tool_call_response(
+                    "create_tag",
+                    json!({"tag": "personal"}),
+                )),
+            )
             .mount(&server)
             .await;
 
@@ -459,9 +450,7 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path_regex(r"/v1beta/models/.+:generateContent"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(gemini_text_response("ok")),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(gemini_text_response("ok")))
             .expect(2)
             .mount(&server)
             .await;
@@ -547,7 +536,10 @@ mod tests {
         let body = json!({"contents": [{"parts": [{"text": "test"}]}]});
         let err = client.send_request(body).await.unwrap_err();
         let err_msg = err.to_string();
-        assert!(!err_msg.contains(secret_key), "API key leaked in network error: {err_msg}");
+        assert!(
+            !err_msg.contains(secret_key),
+            "API key leaked in network error: {err_msg}"
+        );
     }
 
     #[tokio::test]
@@ -561,12 +553,14 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = GeminiClient::new(secret_key.to_string())
-            .with_base_url(server.uri());
+        let client = GeminiClient::new(secret_key.to_string()).with_base_url(server.uri());
 
         let body = json!({"contents": [{"parts": [{"text": "test"}]}]});
         let err = client.send_request(body).await.unwrap_err();
         let err_msg = err.to_string();
-        assert!(!err_msg.contains(secret_key), "API key leaked in parse error: {err_msg}");
+        assert!(
+            !err_msg.contains(secret_key),
+            "API key leaked in parse error: {err_msg}"
+        );
     }
 }

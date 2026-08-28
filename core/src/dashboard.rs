@@ -518,7 +518,11 @@ fn net_worth_at(
 /// `as_of` so the series' last point is the live net worth. Day-stepped for the
 /// short ranges, month-end-stepped for the long ones, down-sampled so `All`
 /// never exceeds ~60 points.
-fn sample_boundaries(range: NetWorthRange, as_of: NaiveDate, earliest: NaiveDate) -> Vec<NaiveDate> {
+fn sample_boundaries(
+    range: NetWorthRange,
+    as_of: NaiveDate,
+    earliest: NaiveDate,
+) -> Vec<NaiveDate> {
     let months_back = |n: u32| as_of.checked_sub_months(Months::new(n)).unwrap_or(as_of);
     match range {
         NetWorthRange::Month1 => day_stepped(months_back(1), as_of, 1),
@@ -571,7 +575,9 @@ fn month_stepped(start: NaiveDate, as_of: NaiveDate, stride: u32) -> Vec<NaiveDa
 
 /// Last day of the month containing `first_of_month` (which must be day 1).
 fn month_end(first_of_month: NaiveDate) -> Option<NaiveDate> {
-    first_of_month.checked_add_months(Months::new(1))?.pred_opt()
+    first_of_month
+        .checked_add_months(Months::new(1))?
+        .pred_opt()
 }
 
 /// Whole calendar months from `a` to `b` (0 if `b <= a`).
@@ -835,9 +841,14 @@ mod tests {
     Assets:Globepay:CAD                250.00 CAD
     Unmatched                     -250.00 CAD
 ";
-        let series =
-            net_worth_series(journal, "CAD", day(2026, 5, 23), &roster(), NetWorthRange::All)
-                .unwrap();
+        let series = net_worth_series(
+            journal,
+            "CAD",
+            day(2026, 5, 23),
+            &roster(),
+            NetWorthRange::All,
+        )
+        .unwrap();
         let last = series.points.last().expect("at least one point");
         assert_eq!(last.date, "2026-05-23");
         assert_eq!(last.net_worth_in_base, Some(d("3250.00")));
@@ -854,9 +865,14 @@ mod tests {
     Assets:Northwind:Cash       500.00 CAD
     Income:Salary                 -500.00 CAD
 ";
-        let series =
-            net_worth_series(journal, "CAD", day(2026, 5, 23), &roster(), NetWorthRange::All)
-                .unwrap();
+        let series = net_worth_series(
+            journal,
+            "CAD",
+            day(2026, 5, 23),
+            &roster(),
+            NetWorthRange::All,
+        )
+        .unwrap();
         let at = |date: &str| {
             series
                 .points
@@ -1080,7 +1096,7 @@ mod tests {
             summ("Assets:Globepay:CAD", Some(d("1000.00")), true),
             summ("Assets:Northwind:Cash", Some(d("250.00")), true),
             summ("Assets:Northwind:TFSA", Some(d("9000.00")), false), // illiquid: excluded
-            summ("Unmatched", Some(d("500.00")), true),        // clearing account: never liquid
+            summ("Unmatched", Some(d("500.00")), true), // clearing account: never liquid
         ];
         assert_eq!(sum_liquid_assets(&summaries), Some(d("1250.00")));
     }

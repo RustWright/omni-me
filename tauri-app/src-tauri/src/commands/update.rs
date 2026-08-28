@@ -133,7 +133,9 @@ pub async fn download_android_update(
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     if !actual.eq_ignore_ascii_case(&sha256) {
-        return Err(format!("checksum mismatch: expected {sha256}, got {actual}"));
+        return Err(format!(
+            "checksum mismatch: expected {sha256}, got {actual}"
+        ));
     }
 
     std::fs::write(&apk_path, &bytes).map_err(|e| format!("write apk failed: {e}"))?;
@@ -338,11 +340,8 @@ mod tests {
 
     #[test]
     fn a_different_host_is_refused() {
-        let err = same_origin_path(
-            "http://attacker.test/evil.apk",
-            "http://100.64.1.2:3000",
-        )
-        .expect_err("a foreign host must be refused");
+        let err = same_origin_path("http://attacker.test/evil.apk", "http://100.64.1.2:3000")
+            .expect_err("a foreign host must be refused");
         assert!(err.contains("refusing update"), "got: {err}");
     }
 

@@ -330,7 +330,6 @@ fn consume_items(ledger: ParserLedger, parent: &Path, source: &Path, state: &mut
     }
 }
 
-
 fn convert_transaction(
     source_index: usize,
     t: &ParserTxn,
@@ -537,8 +536,9 @@ fn infer_elided_postings(p: &ParserPosting, explicit: &[&ParserPosting]) -> Vec<
         let qty = pa.amount.quantity;
         match &pa.price {
             Some(ParserPrice::Unit(unit)) => {
-                *sums.entry(unit.commodity.name.clone()).or_insert(Decimal::ZERO) +=
-                    qty * unit.quantity;
+                *sums
+                    .entry(unit.commodity.name.clone())
+                    .or_insert(Decimal::ZERO) += qty * unit.quantity;
             }
             Some(ParserPrice::Total(total)) => {
                 // `@@ TOTAL` is a positive magnitude; the cost's sign follows the
@@ -782,7 +782,10 @@ account Assets:Cash  ; commodity:CAD
     #[test]
     fn price_directives_are_kept_when_parseable() {
         let with_time = crate::ledger::prep_content("P 2026-01-04 00:00:00 USD 1.37 CAD\n");
-        assert!(with_time.contains("P 2026-01-04"), "priced line was dropped");
+        assert!(
+            with_time.contains("P 2026-01-04"),
+            "priced line was dropped"
+        );
         let date_only = crate::ledger::prep_content("P 2026-01-04 USD 1.37 CAD\n");
         assert!(
             !date_only.contains("P 2026-01-04"),
@@ -1011,7 +1014,11 @@ account Assets:Cash  ; commodity:CAD
 ";
         let path = write(dir.path(), "main.ledger", body);
         let imported = parse_journal(&path).unwrap();
-        assert_eq!(imported.transactions.len(), 1, "file must not fail to parse");
+        assert_eq!(
+            imported.transactions.len(),
+            1,
+            "file must not fail to parse"
+        );
         // The first `*` is the status marker; the residual leading `*` is
         // stripped so the description re-parses through the renderer.
         assert_eq!(

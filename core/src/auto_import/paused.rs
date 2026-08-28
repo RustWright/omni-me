@@ -53,7 +53,9 @@ pub fn default_path() -> Result<PathBuf, PausedError> {
                 .ok()
                 .map(|h| PathBuf::from(h).join(".config"))
         })
-        .ok_or_else(|| PausedError::ConfigDir("neither XDG_CONFIG_HOME nor HOME set".to_string()))?;
+        .ok_or_else(|| {
+            PausedError::ConfigDir("neither XDG_CONFIG_HOME nor HOME set".to_string())
+        })?;
     Ok(base.join("omni-me").join("paused_sources.toml"))
 }
 

@@ -177,7 +177,10 @@ async fn every_route_module_path_is_behind_the_auth_gate() {
 
     // Collect `.route("<path>"` literals across every route module.
     let mut paths: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&routes_dir).expect("routes dir").flatten() {
+    for entry in std::fs::read_dir(&routes_dir)
+        .expect("routes dir")
+        .flatten()
+    {
         let p = entry.path();
         if p.extension().and_then(|e| e.to_str()) != Some("rs") {
             continue;

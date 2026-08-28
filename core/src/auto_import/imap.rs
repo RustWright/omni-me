@@ -321,9 +321,9 @@ mod tests {
         let fetcher = MockFetcher::new("gmail");
         fetcher.push_response(
             vec![
-                make_message(101, "noreply@meridian.example"),    // routes to meridian
-                make_message(102, "ship@amazon.ca"),    // routes to receipts
-                make_message(103, "random@example.com"), // no handler
+                make_message(101, "noreply@meridian.example"), // routes to meridian
+                make_message(102, "ship@amazon.ca"),           // routes to receipts
+                make_message(103, "random@example.com"),       // no handler
             ],
             Some(103),
         );
@@ -351,10 +351,7 @@ mod tests {
         // cursor forever. Per-handler accepts() filtering is what protects
         // privacy — we read but discard if no handler claims it.
         let fetcher = MockFetcher::new("gmail");
-        fetcher.push_response(
-            vec![make_message(101, "random@example.com")],
-            Some(101),
-        );
+        fetcher.push_response(vec![make_message(101, "random@example.com")], Some(101));
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
         };
@@ -372,7 +369,11 @@ mod tests {
         };
         let (events, next) = poll_once(&fetcher, &[], &cursor).await.unwrap();
         assert!(events.is_empty());
-        assert_eq!(next.last_seen_uid, Some(500), "cursor must NOT regress to None");
+        assert_eq!(
+            next.last_seen_uid,
+            Some(500),
+            "cursor must NOT regress to None"
+        );
     }
 
     /// The poison pill. One message a handler chokes on must not stop the pass
@@ -445,5 +446,4 @@ mod tests {
         assert_eq!(events[0].aggregate_id, "imap-statements-102");
         assert_eq!(next.last_seen_uid, Some(102));
     }
-
 }

@@ -9,9 +9,9 @@ use crate::components::primitives::{
     SegmentedNav,
 };
 use crate::components::tag_editor::TagChipEditor;
-use crate::continuity::{session_is_recoverable, use_continuity, ContinuityKey, EditSession};
-use crate::note_frontmatter::{serialize_note, split_note, NoteProps};
-use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
+use crate::continuity::{ContinuityKey, EditSession, session_is_recoverable, use_continuity};
+use crate::note_frontmatter::{NoteProps, serialize_note, split_note};
+use crate::timer::{AUTOSAVE_DEBOUNCE_MS, sleep_ms};
 use crate::types::GenericNoteItem;
 
 /// Second-level tabs inside the Notes feature.
@@ -371,11 +371,7 @@ fn apply_raw_note(
 /// Recombine the typed properties + body back into `content` (the full raw text
 /// that autosave/save persist). Called only from user edits — the panel's
 /// `on_change` and the editor's `on_change` — never on hydrate.
-fn recombine_note(
-    props: Signal<NoteProps>,
-    body: Signal<String>,
-    mut content: Signal<String>,
-) {
+fn recombine_note(props: Signal<NoteProps>, body: Signal<String>, mut content: Signal<String>) {
     content.set(serialize_note(&props.read(), body.read().as_str()));
 }
 

@@ -329,7 +329,8 @@ account Assets:Cash  ; commodity:CAD
     fn parse_handles_missing_trailing_blank_line() {
         // No trailing newline — POC 0.1b found ledger-parser's nom parser
         // returns Incomplete here without the prep wrapper.
-        let trimmed = "2026-05-16 Coffee\n    Assets:Cash    -5.25 CAD\n    Expenses:Coffee  5.25 CAD";
+        let trimmed =
+            "2026-05-16 Coffee\n    Assets:Cash    -5.25 CAD\n    Expenses:Coffee  5.25 CAD";
         assert!(parse(trimmed).is_ok());
     }
 

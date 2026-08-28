@@ -48,22 +48,19 @@ use wasm_bindgen::prelude::*;
 #[unsafe(no_mangle)]
 pub static OMNI_MOCK_BUILD_SENTINEL: &[u8; 32] = b"OMNI_MOCK_BUILD__DO_NOT_SHIP__!!";
 
+use crate::types::{
+    AccountSummaryView, AccountTagBreakdownView, AutoImportSourceView, BalanceCheckView,
+    BudgetProgress, BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView,
+    ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementCsvResult, JournalDayStat,
+    JournalEntryItem, LlmResult, MatchCandidateView, NetWorthSeriesView, PendingBatchView,
+    PendingShareCapture, ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem,
+    ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
+    TransactionFormDraft, TransactionView, TxnFilter,
+};
 #[cfg(feature = "mock")]
 use crate::types::{
     AccountTagGroupView, AttachmentRef, CommodityBalanceView, ExtractedPostingView,
     MonthlyTrendBucketView, NetWorthPointView, RecurringObligationView, TaskResult,
-};
-use crate::types::{
-    AccountSummaryView, AccountTagBreakdownView,
-    AutoImportSourceView, BalanceCheckView, BudgetProgress,
-    BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView, ExtractedDraft,
-    NetWorthSeriesView,
-    GenericNoteItem, ImportStatementCsvResult, JournalDayStat, JournalEntryItem, LlmResult,
-    MatchCandidateView,
-    PendingBatchView, PendingShareCapture, ReconciliationTxnPreview, RecurringPattern,
-    RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot,
-    ExportPreview,
-    TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 // Tauri IPC
@@ -94,7 +91,8 @@ pub fn listen_backend_event(event: &str, on_event: impl FnMut() + 'static) {
     #[cfg(not(feature = "mock"))]
     {
         let mut on_event = on_event;
-        let cb = Closure::wrap(Box::new(move |_evt: JsValue| on_event()) as Box<dyn FnMut(JsValue)>);
+        let cb =
+            Closure::wrap(Box::new(move |_evt: JsValue| on_event()) as Box<dyn FnMut(JsValue)>);
         let _ = tauri_listen(event, cb.as_ref().unchecked_ref());
         cb.forget();
     }
@@ -1191,9 +1189,7 @@ pub async fn invoke_update_base_currency(currency: &str) -> Result<(), String> {
 // Obsidian import / export
 // -----------------------------------------------------------------------------
 
-use crate::types::{
-    AcceptedImportRow, ExportSummary, ImportCommitSummary, ImportPreviewSummary,
-};
+use crate::types::{AcceptedImportRow, ExportSummary, ImportCommitSummary, ImportPreviewSummary};
 
 pub async fn invoke_preview_import(root: &str) -> Result<ImportPreviewSummary, String> {
     #[cfg(feature = "mock")]
@@ -1578,11 +1574,7 @@ pub async fn invoke_run_transaction_query(
             limit: u32,
             offset: u32,
         }
-        invoke(
-            "run_transaction_query",
-            &Args { dsl, limit, offset },
-        )
-        .await
+        invoke("run_transaction_query", &Args { dsl, limit, offset }).await
     }
 }
 
@@ -1596,7 +1588,10 @@ fn mock_apply_dsl(rows: Vec<TransactionView>, dsl: &str) -> Vec<TransactionView>
     let terms: Vec<(String, String)> = dsl
         .split_whitespace()
         .filter(|t| *t != "OR" && *t != "AND")
-        .filter_map(|t| t.split_once(':').map(|(f, v)| (f.to_lowercase(), v.to_string())))
+        .filter_map(|t| {
+            t.split_once(':')
+                .map(|(f, v)| (f.to_lowercase(), v.to_string()))
+        })
         .filter(|(f, _)| matches!(f.as_str(), "account" | "acct" | "desc" | "description"))
         .map(|(f, v)| (f, v.trim_matches('"').trim_end_matches('$').to_lowercase()))
         .collect();
@@ -1903,7 +1898,11 @@ fn mock_account_tag_breakdown(account: &str, group_by: &str) -> AccountTagBreakd
             value_in_base: base.map(str::to_string),
         }
     }
-    fn group(value: &str, total: Option<&str>, balances: Vec<CommodityBalanceView>) -> AccountTagGroupView {
+    fn group(
+        value: &str,
+        total: Option<&str>,
+        balances: Vec<CommodityBalanceView>,
+    ) -> AccountTagGroupView {
         AccountTagGroupView {
             value: value.into(),
             balances,
@@ -1913,18 +1912,37 @@ fn mock_account_tag_breakdown(account: &str, group_by: &str) -> AccountTagBreakd
     // Fictional institutions/products for the drill-down demo (privacy discipline).
     let groups = if group_by == "product" {
         vec![
-            group("chequing", Some("3000.00"), vec![bal("CAD", "3000.00", Some("3000.00"))]),
-            group("savings", Some("1287.42"), vec![bal("CAD", "1287.42", Some("1287.42"))]),
+            group(
+                "chequing",
+                Some("3000.00"),
+                vec![bal("CAD", "3000.00", Some("3000.00"))],
+            ),
+            group(
+                "savings",
+                Some("1287.42"),
+                vec![bal("CAD", "1287.42", Some("1287.42"))],
+            ),
         ]
     } else {
         vec![
             group(
                 "Globepay",
                 Some("1561.65"),
-                vec![bal("CAD", "1500.00", Some("1500.00")), bal("USD", "45.00", Some("61.65"))],
+                vec![
+                    bal("CAD", "1500.00", Some("1500.00")),
+                    bal("USD", "45.00", Some("61.65")),
+                ],
             ),
-            group("Summit", Some("2500.00"), vec![bal("CAD", "2500.00", Some("2500.00"))]),
-            group("(unassigned)", Some("287.42"), vec![bal("CAD", "287.42", Some("287.42"))]),
+            group(
+                "Summit",
+                Some("2500.00"),
+                vec![bal("CAD", "2500.00", Some("2500.00"))],
+            ),
+            group(
+                "(unassigned)",
+                Some("287.42"),
+                vec![bal("CAD", "287.42", Some("287.42"))],
+            ),
         ]
     };
     AccountTagBreakdownView {
@@ -2263,9 +2281,7 @@ pub async fn invoke_scan_recurring(
     }
 }
 
-pub async fn invoke_list_recurring(
-    status: Option<&str>,
-) -> Result<Vec<RecurringPattern>, String> {
+pub async fn invoke_list_recurring(status: Option<&str>) -> Result<Vec<RecurringPattern>, String> {
     #[cfg(feature = "mock")]
     {
         let _ = status;
@@ -2398,10 +2414,7 @@ pub async fn invoke_list_unmatched_without_candidates(
     }
 }
 
-pub async fn invoke_resolve_unmatched(
-    txn_id: &str,
-    category: &str,
-) -> Result<(), String> {
+pub async fn invoke_resolve_unmatched(txn_id: &str, category: &str) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
         let _ = (txn_id, category);
@@ -2418,10 +2431,7 @@ pub async fn invoke_resolve_unmatched(
     }
 }
 
-pub async fn invoke_merge_transactions(
-    primary_id: &str,
-    secondary_id: &str,
-) -> Result<(), String> {
+pub async fn invoke_merge_transactions(primary_id: &str, secondary_id: &str) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
         let _ = (primary_id, secondary_id);
@@ -3369,10 +3379,7 @@ pub async fn invoke_commit_batch(
     }
 }
 
-pub async fn invoke_dismiss_batch(
-    batch_id: &str,
-    reason: Option<String>,
-) -> Result<(), String> {
+pub async fn invoke_dismiss_batch(batch_id: &str, reason: Option<String>) -> Result<(), String> {
     #[cfg(feature = "mock")]
     {
         let _ = (batch_id, reason);

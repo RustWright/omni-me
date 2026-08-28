@@ -76,7 +76,11 @@ struct Inner {
 impl RetryEngine {
     /// Spawn a retry engine that watches `pusher` outcomes. Returns a handle
     /// plus the background task join handle.
-    pub fn spawn(client: SyncClient, db: Database, pusher: &PushDebouncer) -> (Self, JoinHandle<()>) {
+    pub fn spawn(
+        client: SyncClient,
+        db: Database,
+        pusher: &PushDebouncer,
+    ) -> (Self, JoinHandle<()>) {
         Self::spawn_with(client, db, pusher, DEFAULT_RETRY_BASE, DEFAULT_RETRY_CAP)
     }
 
@@ -98,7 +102,9 @@ impl RetryEngine {
             base,
             cap,
         });
-        let engine = Self { inner: inner.clone() };
+        let engine = Self {
+            inner: inner.clone(),
+        };
         let pusher_sub = pusher.subscribe();
 
         let handle = tokio::spawn(run_loop(inner, pusher_sub));
@@ -142,10 +148,7 @@ pub fn backoff_delay(attempt: u32, base: Duration, cap: Duration) -> Duration {
     dur.min(cap)
 }
 
-async fn run_loop(
-    inner: Arc<Inner>,
-    mut pusher_sub: broadcast::Receiver<PushEvent>,
-) {
+async fn run_loop(inner: Arc<Inner>, mut pusher_sub: broadcast::Receiver<PushEvent>) {
     let _ = inner.events.send(RetryEvent::Idle);
 
     loop {
@@ -213,7 +216,10 @@ async fn retry_until_success(inner: &Arc<Inner>) {
         let push_result = inner.client.push_only(&inner.db).await;
 
         match push_result {
-            Ok(PushOutcome { pushed, quarantined }) => {
+            Ok(PushOutcome {
+                pushed,
+                quarantined,
+            }) => {
                 if quarantined > 0 {
                     tracing::warn!(quarantined, "rejected events skipped during retry");
                 }
@@ -227,11 +233,14 @@ async fn retry_until_success(inner: &Arc<Inner>) {
                     SyncError::Network(m) => format!("network: {m}"),
                     SyncError::Server(m) => format!("server: {m}"),
                     SyncError::Local(m) => format!("local: {m}"),
-                // Only reachable if a whole chunk is rejected and
-                // bisection somehow does not isolate it.
-                SyncError::Rejected(m) => format!("rejected: {m}"),
+                    // Only reachable if a whole chunk is rejected and
+                    // bisection somehow does not isolate it.
+                    SyncError::Rejected(m) => format!("rejected: {m}"),
                 };
-                let _ = inner.events.send(RetryEvent::Failed { attempt, error: msg });
+                let _ = inner.events.send(RetryEvent::Failed {
+                    attempt,
+                    error: msg,
+                });
                 // Continue loop — next iteration backs off further.
             }
         }
@@ -313,8 +322,8 @@ mod tests {
             .unwrap();
 
         let client = SyncClient::new("http://127.0.0.1:1".into(), "device-x".into());
-        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client.clone(), db.clone(), Duration::from_millis(30),
-        );
+        let (pusher, _ph) =
+            PushDebouncer::spawn_with_delay(client.clone(), db.clone(), Duration::from_millis(30));
         let (retry, _rh) = RetryEngine::spawn_with(
             client,
             db,
@@ -356,8 +365,8 @@ mod tests {
 
         // Use a big base so the very first attempt has a sleep > 2s.
         let client = SyncClient::new("http://127.0.0.1:1".into(), "device-x".into());
-        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client.clone(), db.clone(), Duration::from_millis(30),
-        );
+        let (pusher, _ph) =
+            PushDebouncer::spawn_with_delay(client.clone(), db.clone(), Duration::from_millis(30));
         let (retry, _rh) = RetryEngine::spawn_with(
             client,
             db,

@@ -559,10 +559,7 @@ pub enum SourceHealth {
 ///
 /// `now` is injected so tests can pin time without freezing the clock; in
 /// production callers pass `Utc::now()`.
-pub fn classify_source_health(
-    status: &SourceStatus,
-    now: DateTime<Utc>,
-) -> SourceHealth {
+pub fn classify_source_health(status: &SourceStatus, now: DateTime<Utc>) -> SourceHealth {
     // Stale cutoff: after 3× the configured interval without a completed
     // tick, a previously-successful source flips Healthy → Stale. Survives
     // one slow/missed tick silently; flags two-in-a-row.
@@ -574,9 +571,8 @@ pub fn classify_source_health(
         TickOutcome::Success { .. } => match status.last_tick_at {
             None => SourceHealth::Unknown,
             Some(at) => {
-                let stale_after = chrono::Duration::seconds(
-                    (status.interval_secs * STALE_MULTIPLIER) as i64,
-                );
+                let stale_after =
+                    chrono::Duration::seconds((status.interval_secs * STALE_MULTIPLIER) as i64);
                 if now.signed_duration_since(at) > stale_after {
                     SourceHealth::Stale
                 } else {
@@ -627,10 +623,7 @@ pub mod null {
             self
         }
 
-        pub fn with_script(
-            mut self,
-            script: Vec<Result<ImportSummary, ImportError>>,
-        ) -> Self {
+        pub fn with_script(mut self, script: Vec<Result<ImportSummary, ImportError>>) -> Self {
             self.scripted = Mutex::new(script.into());
             self
         }
@@ -734,13 +727,11 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn scheduler_calls_source_repeatedly_on_success() {
         // start_paused lets us advance virtual time without real sleeping.
-        let src = Arc::new(
-            null::NullSource::new("happy-path").with_script(vec![
-                Ok(ImportSummary { events_appended: 1 }),
-                Ok(ImportSummary { events_appended: 1 }),
-                Ok(ImportSummary { events_appended: 1 }),
-            ]),
-        );
+        let src = Arc::new(null::NullSource::new("happy-path").with_script(vec![
+            Ok(ImportSummary { events_appended: 1 }),
+            Ok(ImportSummary { events_appended: 1 }),
+            Ok(ImportSummary { events_appended: 1 }),
+        ]));
         let handle = spawn(src.clone(), Duration::from_secs(60));
 
         // Advance enough virtual time for ~3 ticks at 60s interval.
@@ -981,7 +972,11 @@ mod tests {
 
         assert!(registry.pause("bank").await, "pause reports it existed");
         let snap = registry.snapshot().await;
-        assert_eq!(snap.len(), 1, "paused source stays registered (config kept)");
+        assert_eq!(
+            snap.len(),
+            1,
+            "paused source stays registered (config kept)"
+        );
         assert!(snap[0].paused, "status reflects the pause");
 
         // No further ticks after pause, however long we wait.
@@ -1013,7 +1008,10 @@ mod tests {
 
         // Resume re-arms the loop (which pulls immediately) and clears the flag.
         assert!(registry.resume("bank").await);
-        assert!(!registry.snapshot().await[0].paused, "flag cleared on resume");
+        assert!(
+            !registry.snapshot().await[0].paused,
+            "flag cleared on resume"
+        );
 
         tokio::time::sleep(Duration::from_secs(200)).await; // ~3 ticks @ 60s
         assert!(
@@ -1213,9 +1211,7 @@ mod tests {
             .await;
         registry
             .register(
-                Arc::new(
-                    null::NullSource::new("northwind").with_reauth(ReauthOutcome::Active),
-                ),
+                Arc::new(null::NullSource::new("northwind").with_reauth(ReauthOutcome::Active)),
                 Duration::from_secs(60),
             )
             .await;
@@ -1223,7 +1219,10 @@ mod tests {
         let snap = registry.snapshot().await;
         let globepay = snap.iter().find(|s| s.name == "globepay").unwrap();
         let northwind = snap.iter().find(|s| s.name == "northwind").unwrap();
-        assert!(!globepay.reauth_capable, "globepay has no interactive reauth");
+        assert!(
+            !globepay.reauth_capable,
+            "globepay has no interactive reauth"
+        );
         assert!(northwind.reauth_capable, "northwind is reauth-capable");
     }
 
@@ -1294,7 +1293,11 @@ mod tests {
 
         // First tick hits NeedsReauth and halts the loop.
         tokio::time::sleep(Duration::from_secs(1)).await;
-        assert_eq!(src.call_count(), 1, "loop should have halted after NeedsReauth");
+        assert_eq!(
+            src.call_count(),
+            1,
+            "loop should have halted after NeedsReauth"
+        );
 
         // Reconnect succeeds → re-arms the loop, which resumes polling (the
         // script is now exhausted, so further pulls return Ok(0)).

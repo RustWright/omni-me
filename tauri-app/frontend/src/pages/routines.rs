@@ -4,8 +4,8 @@ use dioxus::prelude::*;
 use crate::bridge;
 use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{
-    Banner, BannerKind, Button, ButtonSize, ButtonVariant, Card, IconButton, PageHeader, TextInput,
-    INPUT_CLASS,
+    Banner, BannerKind, Button, ButtonSize, ButtonVariant, Card, INPUT_CLASS, IconButton,
+    PageHeader, TextInput,
 };
 use crate::duration;
 use crate::reorder;
@@ -354,7 +354,11 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
     let is_fully_done = total > 0 && done_count == total;
 
     let base_class = "bg-obsidian-surface border border-obsidian-border/10 rounded-card overflow-hidden shadow-card transition-all";
-    let status_class = if is_fully_done { "opacity-60 grayscale-[0.5]" } else { "" };
+    let status_class = if is_fully_done {
+        "opacity-60 grayscale-[0.5]"
+    } else {
+        ""
+    };
     let container_class = format!("{} {}", base_class, status_class);
 
     let progress_width = if total > 0 {
@@ -618,7 +622,11 @@ fn GroupListView(
 // --- Add Group View ---
 
 #[component]
-fn AddGroupView(next_order: u32, on_save: EventHandler<()>, on_cancel: EventHandler<()>) -> Element {
+fn AddGroupView(
+    next_order: u32,
+    on_save: EventHandler<()>,
+    on_cancel: EventHandler<()>,
+) -> Element {
     let mut name = use_signal(String::new);
     // "daily" | "weekly" | "biweekly" | "monthly" | "custom"
     let mut frequency = use_signal(|| "daily".to_string());
@@ -976,9 +984,15 @@ fn GroupDetailView(
 fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Element {
     let tz_signal: Signal<Tz> = use_context();
     let tz = *tz_signal.read();
-    let days: Vec<String> = (0..7).rev().map(|i| UserDate::days_ago(&tz, i).to_date_string()).collect();
+    let days: Vec<String> = (0..7)
+        .rev()
+        .map(|i| UserDate::days_ago(&tz, i).to_date_string())
+        .collect();
 
-    let day_labels: Vec<String> = (0..7).rev().map(|i| UserDate::days_ago(&tz, i).format("%a")).collect();
+    let day_labels: Vec<String> = (0..7)
+        .rev()
+        .map(|i| UserDate::days_ago(&tz, i).format("%a"))
+        .collect();
 
     rsx! {
         div { class: "mt-12 animate-in fade-in duration-500",

@@ -67,12 +67,8 @@ fn fetch_blocking(
     let tls = native_tls::TlsConnector::builder()
         .build()
         .map_err(|e| ImportError::Io(format!("tls builder: {e}")))?;
-    let client = imap::connect(
-        (creds.host.as_str(), creds.port),
-        creds.host.as_str(),
-        &tls,
-    )
-    .map_err(|e| ImportError::Io(format!("connect {}:{}: {e}", creds.host, creds.port)))?;
+    let client = imap::connect((creds.host.as_str(), creds.port), creds.host.as_str(), &tls)
+        .map_err(|e| ImportError::Io(format!("connect {}:{}: {e}", creds.host, creds.port)))?;
 
     let mut session = client
         .login(&creds.account, &creds.app_password)
@@ -239,7 +235,9 @@ mod tests {
         };
         let fetcher = AsyncImapFetcher::new("gmail_personal", creds);
         // First run: no cursor → fetcher should fetch the latest message only.
-        let cursor = FetchCursor { last_seen_uid: None };
+        let cursor = FetchCursor {
+            last_seen_uid: None,
+        };
         let (messages, max_uid) = fetcher
             .fetch_new(&cursor)
             .await

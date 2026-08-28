@@ -21,7 +21,7 @@ use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary}
 use crate::db::Database;
 use crate::events::{EventStore, ProjectionRunner};
 
-use super::imap::{poll_once, FetchCursor, ImapFetcher, ImapHandler};
+use super::imap::{FetchCursor, ImapFetcher, ImapHandler, poll_once};
 
 #[async_trait]
 pub trait CursorStore: Send + Sync {
@@ -170,8 +170,8 @@ impl AutoImportSource for ImapSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auto_import::imap::mock::{MockFetcher, NeedleHandler};
     use crate::auto_import::imap::ImapMessage;
+    use crate::auto_import::imap::mock::{MockFetcher, NeedleHandler};
     use chrono::{TimeZone, Utc};
     use std::sync::Mutex as StdMutex;
 
@@ -192,10 +192,8 @@ mod tests {
         std::mem::forget(dir);
         let store: Arc<dyn EventStore> =
             Arc::new(crate::events::SurrealEventStore::new(db.clone()));
-        let runner = ProjectionRunner::new(
-            db.clone(),
-            vec![Box::new(crate::events::BudgetProjection)],
-        );
+        let runner =
+            ProjectionRunner::new(db.clone(), vec![Box::new(crate::events::BudgetProjection)]);
         runner.init_all().await.unwrap();
         (db, store, runner)
     }

@@ -33,10 +33,7 @@ impl PromptRegistry {
     pub fn new() -> Self {
         let mut templates = HashMap::new();
 
-        templates.insert(
-            NOTE_PROCESS_V1.name,
-            NOTE_PROCESS_V1.clone(),
-        );
+        templates.insert(NOTE_PROCESS_V1.name, NOTE_PROCESS_V1.clone());
 
         Self { templates }
     }
@@ -58,7 +55,9 @@ impl PromptRegistry {
             .ok_or_else(|| LlmError::ParseError(format!("Template not found: {name}")))?;
 
         let ctx_map = context.as_object().ok_or_else(|| {
-            LlmError::ParseError("Render context must be a JSON object, got a non-object value".to_string())
+            LlmError::ParseError(
+                "Render context must be a JSON object, got a non-object value".to_string(),
+            )
         })?;
 
         let mut result = template.template.to_string();

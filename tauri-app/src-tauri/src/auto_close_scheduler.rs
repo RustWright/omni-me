@@ -45,7 +45,8 @@ pub fn spawn(
 
             let tz_name = timezone.read().await.clone();
             let today = today_in_tz(&tz_name, Utc::now());
-            match auto_close_stale_journals(&db, &event_store, &projections, &device_id, today).await
+            match auto_close_stale_journals(&db, &event_store, &projections, &device_id, today)
+                .await
             {
                 Ok(0) => tracing::debug!("auto-close: no stale journals"),
                 Ok(n) => tracing::info!(closed = n, "auto-close: closed stale journals"),
@@ -67,14 +68,13 @@ fn today_in_tz(tz_name: &str, now_utc: DateTime<Utc>) -> chrono::NaiveDate {
     now_utc.with_timezone(&tz).date_naive()
 }
 
-fn duration_until_next_tick(
-    tz_name: &str,
-    now_utc: DateTime<Utc>,
-    grace_seconds: i64,
-) -> Duration {
+fn duration_until_next_tick(tz_name: &str, now_utc: DateTime<Utc>, grace_seconds: i64) -> Duration {
     let tz = parse_tz(tz_name);
     let local_now = now_utc.with_timezone(&tz);
-    let tomorrow = local_now.date_naive().succ_opt().unwrap_or(local_now.date_naive());
+    let tomorrow = local_now
+        .date_naive()
+        .succ_opt()
+        .unwrap_or(local_now.date_naive());
 
     // Midnight in the local zone.
     let midnight = tomorrow

@@ -81,13 +81,7 @@ pub async fn remove_routine_group(
 ) -> Result<(), String> {
     tracing::info!(group_id = %group_id, "remove_routine_group");
     let payload = serde_json::json!({ "group_id": group_id });
-    append_and_apply(
-        &state,
-        EventType::RoutineGroupRemoved,
-        group_id,
-        payload,
-    )
-    .await
+    append_and_apply(&state, EventType::RoutineGroupRemoved, group_id, payload).await
 }
 
 // -----------------------------------------------------------------------------
@@ -219,13 +213,7 @@ pub async fn skip_routine_item(
         "reason": reason,
     });
     let aggregate_id = ulid::Ulid::new().to_string();
-    append_and_apply(
-        &state,
-        EventType::RoutineItemSkipped,
-        aggregate_id,
-        payload,
-    )
-    .await
+    append_and_apply(&state, EventType::RoutineItemSkipped, aggregate_id, payload).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -300,10 +288,7 @@ fn check_wipe_confirmation(confirmation: &str) -> Result<(), String> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn wipe_all_data(
-    state: State<'_, AppState>,
-    confirmation: String,
-) -> Result<(), String> {
+pub async fn wipe_all_data(state: State<'_, AppState>, confirmation: String) -> Result<(), String> {
     if let Err(e) = check_wipe_confirmation(&confirmation) {
         tracing::warn!("wipe_all_data rejected: {e}");
         return Err(e);
@@ -350,7 +335,7 @@ pub async fn wipe_all_data(
 
 #[cfg(test)]
 mod wipe_tests {
-    use super::{check_wipe_confirmation, WIPE_CONFIRM_PHRASE};
+    use super::{WIPE_CONFIRM_PHRASE, check_wipe_confirmation};
 
     /// The other tests in this module compare the phrase to itself, so they
     /// pass no matter what it says. This is the one that has anything to prove:

@@ -23,7 +23,7 @@ pub mod openai_compat;
 pub mod verify;
 
 pub use event_mapper::{receipt_extraction_to_drafts, statement_extraction_to_drafts};
-pub use verify::{verify, VerificationReport, DEFAULT_CONFIDENCE_THRESHOLD};
+pub use verify::{DEFAULT_CONFIDENCE_THRESHOLD, VerificationReport, verify};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

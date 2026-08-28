@@ -253,11 +253,7 @@ pub fn balance_check(
 /// cleared `TxnPostingsRow`s. Skips legs in other commodities (caller
 /// handles FX conversion if needed; for the balance-check use case the
 /// statement is in one currency so single-commodity is the right scope).
-pub fn sum_cleared_postings(
-    rows: &[TxnPostingsRow],
-    account: &str,
-    commodity: &str,
-) -> Decimal {
+pub fn sum_cleared_postings(rows: &[TxnPostingsRow], account: &str, commodity: &str) -> Decimal {
     let mut total = Decimal::ZERO;
     for row in rows {
         let postings = row.postings.clone().into_json_value();
@@ -271,10 +267,7 @@ pub fn sum_cleared_postings(
             if acc != account {
                 continue;
             }
-            let posting_commodity = p
-                .get("commodity")
-                .and_then(|v| v.as_str())
-                .unwrap_or("CAD");
+            let posting_commodity = p.get("commodity").and_then(|v| v.as_str()).unwrap_or("CAD");
             if !posting_commodity.eq_ignore_ascii_case(commodity) {
                 continue;
             }
@@ -529,10 +522,7 @@ mod tests {
     fn collect_expense_parsed_skips_malformed_rows() {
         let rows = vec![
             ("not-a-date".to_string(), serde_json::json!([])),
-            (
-                "2026-05-15".to_string(),
-                serde_json::json!("not an array"),
-            ),
+            ("2026-05-15".to_string(), serde_json::json!("not an array")),
         ];
         let out = collect_expense_parsed(&rows, "CAD", &Prices::new());
         assert!(out.is_empty());
@@ -542,21 +532,36 @@ mod tests {
 
     #[test]
     fn balance_check_zero_discrepancy_is_ok() {
-        let r = balance_check("Assets:Summit:Chequing", "CAD", Decimal::from(1500), Decimal::from(1500));
+        let r = balance_check(
+            "Assets:Summit:Chequing",
+            "CAD",
+            Decimal::from(1500),
+            Decimal::from(1500),
+        );
         assert!(r.ok);
         assert_eq!(r.discrepancy, Decimal::ZERO);
     }
 
     #[test]
     fn balance_check_positive_discrepancy_means_cleared_exceeds_statement() {
-        let r = balance_check("Assets:Summit:Chequing", "CAD", Decimal::from(1525), Decimal::from(1500));
+        let r = balance_check(
+            "Assets:Summit:Chequing",
+            "CAD",
+            Decimal::from(1525),
+            Decimal::from(1500),
+        );
         assert!(!r.ok);
         assert_eq!(r.discrepancy, Decimal::from(25));
     }
 
     #[test]
     fn balance_check_negative_discrepancy_means_cleared_short_of_statement() {
-        let r = balance_check("Assets:Summit:Chequing", "CAD", Decimal::from(1480), Decimal::from(1500));
+        let r = balance_check(
+            "Assets:Summit:Chequing",
+            "CAD",
+            Decimal::from(1480),
+            Decimal::from(1500),
+        );
         assert!(!r.ok);
         assert_eq!(r.discrepancy, Decimal::from(-20));
     }

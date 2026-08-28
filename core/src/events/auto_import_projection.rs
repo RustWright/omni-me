@@ -108,9 +108,7 @@ impl AutoImportProjection {
         let record_id = format!("{source}-{dedup_key}");
 
         let mut existing = db
-            .query(
-                "SELECT status FROM type::record('pending_auto_import_batches', $rid) LIMIT 1",
-            )
+            .query("SELECT status FROM type::record('pending_auto_import_batches', $rid) LIMIT 1")
             .bind(("rid", record_id.clone()))
             .await?;
         let existing_status: Option<String> = existing.take("status").unwrap_or(None);
@@ -226,8 +224,7 @@ mod tests {
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         std::mem::forget(dir);
         let store = SurrealEventStore::new(db.clone());
-        let runner =
-            ProjectionRunner::new(db.clone(), vec![Box::new(AutoImportProjection)]);
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(AutoImportProjection)]);
         runner.init_all().await.unwrap();
         (db, store, runner)
     }
@@ -452,7 +449,9 @@ mod tests {
 
     #[tokio::test]
     async fn queries_list_pending_returns_only_pending_rows() {
-        use crate::db::queries::{count_pending_batches, get_pending_batch_by_id, list_pending_batches};
+        use crate::db::queries::{
+            count_pending_batches, get_pending_batch_by_id, list_pending_batches,
+        };
 
         let (db, store, runner) = test_db_and_runner().await;
 
@@ -510,7 +509,10 @@ mod tests {
         // for already-resolved rows, so it must return them too — the
         // status-gate is in the command, not the query).
         let fetched = get_pending_batch_by_id(&db, "P2").await.unwrap();
-        assert!(fetched.is_some(), "committed row still queryable by batch_id");
+        assert!(
+            fetched.is_some(),
+            "committed row still queryable by batch_id"
+        );
         assert_eq!(fetched.unwrap().status, "committed");
     }
 }

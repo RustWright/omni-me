@@ -245,7 +245,11 @@ fn insert_with_ancestors(set: &mut std::collections::BTreeSet<String>, name: &st
 /// Tolerant of a malformed journal: an unparseable file yields no *seen*
 /// accounts (declared ones still surface) and [`account_summaries`] reports the
 /// real parse error.
-pub fn auto_roster(journal_content: &str, declared: &[AccountRow], hidden: &[String]) -> Vec<String> {
+pub fn auto_roster(
+    journal_content: &str,
+    declared: &[AccountRow],
+    hidden: &[String],
+) -> Vec<String> {
     // Tolerant of a malformed journal: fall back to an empty balance (so only
     // declared accounts surface), matching the pre-cache `if let Ok(balance)`.
     let balance = ledger::balances(journal_content).unwrap_or_else(|_| Balance::new());
@@ -254,7 +258,11 @@ pub fn auto_roster(journal_content: &str, declared: &[AccountRow], hidden: &[Str
 
 /// Parsed-input variant of [`auto_roster`] — works off a pre-computed
 /// `balance` (the Tauri-side journal cache) instead of re-parsing.
-pub fn auto_roster_from(balance: &Balance, declared: &[AccountRow], hidden: &[String]) -> Vec<String> {
+pub fn auto_roster_from(
+    balance: &Balance,
+    declared: &[AccountRow],
+    hidden: &[String],
+) -> Vec<String> {
     let hidden: std::collections::HashSet<&str> = hidden.iter().map(String::as_str).collect();
     let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
@@ -469,7 +477,10 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         // proving membership (not mere presence in postings) is required.
         let narrow = vec!["Unmatched".to_string()];
         let summaries = account_summaries(journal, &[], "CAD", as_of(), &narrow).unwrap();
-        assert!(summaries.is_empty(), "no roster account touched → empty list");
+        assert!(
+            summaries.is_empty(),
+            "no roster account touched → empty list"
+        );
 
         // Full roster → the Northwind account surfaces; Expenses:Coffee (never in the
         // roster) is still dropped.
@@ -489,8 +500,8 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     Assets:Northwind:Cash      -42.18 CAD
     Expenses:Groceries             42.18 CAD
 ";
-        let summaries =
-            account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
+        let summaries = account_summaries(journal, &[], "CAD", as_of(), &roster())
+            .expect("balance computation");
 
         // Only Assets:Northwind:Cash survives the filter; Expenses:* are
         // dropped.
@@ -499,13 +510,19 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         assert_eq!(northwind.account, "Assets:Northwind:Cash");
         assert_eq!(northwind.balances.len(), 1);
         assert_eq!(northwind.balances[0].commodity, "CAD");
-        assert_eq!(northwind.balances[0].quantity, Decimal::from_str("-47.43").unwrap());
+        assert_eq!(
+            northwind.balances[0].quantity,
+            Decimal::from_str("-47.43").unwrap()
+        );
         // CAD == base → value_in_base passes through.
         assert_eq!(
             northwind.balances[0].value_in_base,
             Some(Decimal::from_str("-47.43").unwrap())
         );
-        assert_eq!(northwind.total_in_base, Some(Decimal::from_str("-47.43").unwrap()));
+        assert_eq!(
+            northwind.total_in_base,
+            Some(Decimal::from_str("-47.43").unwrap())
+        );
     }
 
     #[test]
@@ -525,8 +542,8 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     Assets:Globepay:CAD                 10.00 CAD
     Expenses:Coffee                -10.00 CAD
 ";
-        let summaries =
-            account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
+        let summaries = account_summaries(journal, &[], "CAD", as_of(), &roster())
+            .expect("balance computation");
 
         let globepay = summaries
             .iter()
@@ -536,14 +553,20 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         // Two commodity rows — alphabetical sort means CAD before USD.
         assert_eq!(globepay.balances.len(), 2);
         assert_eq!(globepay.balances[0].commodity, "CAD");
-        assert_eq!(globepay.balances[0].quantity, Decimal::from_str("10.00").unwrap());
+        assert_eq!(
+            globepay.balances[0].quantity,
+            Decimal::from_str("10.00").unwrap()
+        );
         assert_eq!(
             globepay.balances[0].value_in_base,
             Some(Decimal::from_str("10.00").unwrap())
         );
 
         assert_eq!(globepay.balances[1].commodity, "USD");
-        assert_eq!(globepay.balances[1].quantity, Decimal::from_str("100.00").unwrap());
+        assert_eq!(
+            globepay.balances[1].quantity,
+            Decimal::from_str("100.00").unwrap()
+        );
         // 100 USD * 1.37 CAD/USD = 137.00 CAD
         assert_eq!(
             globepay.balances[1].value_in_base,
@@ -551,7 +574,10 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         );
 
         // Total = 10 + 137 = 147 CAD
-        assert_eq!(globepay.total_in_base, Some(Decimal::from_str("147.00").unwrap()));
+        assert_eq!(
+            globepay.total_in_base,
+            Some(Decimal::from_str("147.00").unwrap())
+        );
     }
 
     #[test]
@@ -568,8 +594,8 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
     Assets:Northwind:Cash       -100.00 CAD
     Expenses:Random                 100.00 CAD
 ";
-        let summaries =
-            account_summaries(journal, &[], "CAD", as_of(), &roster()).expect("balance computation");
+        let summaries = account_summaries(journal, &[], "CAD", as_of(), &roster())
+            .expect("balance computation");
 
         let northwind = &summaries[0];
         assert_eq!(northwind.account, "Assets:Northwind:Cash");
@@ -582,11 +608,21 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         assert_eq!(btc.quantity, Decimal::from_str("0.003").unwrap());
         assert_eq!(btc.value_in_base, None);
 
-        let cad = northwind.balances.iter().find(|b| b.commodity == "CAD").unwrap();
-        assert_eq!(cad.value_in_base, Some(Decimal::from_str("-100.00").unwrap()));
+        let cad = northwind
+            .balances
+            .iter()
+            .find(|b| b.commodity == "CAD")
+            .unwrap();
+        assert_eq!(
+            cad.value_in_base,
+            Some(Decimal::from_str("-100.00").unwrap())
+        );
 
         // Total reflects only the convertible CAD leg.
-        assert_eq!(northwind.total_in_base, Some(Decimal::from_str("-100.00").unwrap()));
+        assert_eq!(
+            northwind.total_in_base,
+            Some(Decimal::from_str("-100.00").unwrap())
+        );
     }
 
     #[test]
@@ -629,7 +665,10 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         let summit = summaries
             .iter()
             .find(|s| s.account == "Liabilities:Summit:CreditCard");
-        assert!(summit.is_some(), "declared listable account must appear even with zero balance");
+        assert!(
+            summit.is_some(),
+            "declared listable account must appear even with zero balance"
+        );
         let summit = summit.unwrap();
         assert!(summit.balances.is_empty());
         assert_eq!(summit.total_in_base, None);
@@ -753,7 +792,13 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
             assert!(known.contains(&leaf.to_string()), "missing leaf {leaf}");
         }
         // …plus the intermediate hierarchy nodes for typeahead.
-        for node in ["Assets", "Assets:Globepay", "Expenses", "Expenses:Food", "Income"] {
+        for node in [
+            "Assets",
+            "Assets:Globepay",
+            "Expenses",
+            "Expenses:Food",
+            "Income",
+        ] {
             assert!(known.contains(&node.to_string()), "missing node {node}");
         }
         // Sorted + deduped (BTreeSet guarantees both).
@@ -817,17 +862,28 @@ P 2026-05-20 00:00:00 USD 1.37 CAD
         // Globepay: 100 USD @ 1.37 → 137.00 CAD base value.
         assert_eq!(out[0].value, "Globepay");
         assert_eq!(out[0].balances[0].commodity, "USD");
-        assert_eq!(out[0].balances[0].quantity, Decimal::from_str("100.00").unwrap());
-        assert_eq!(out[0].total_in_base, Some(Decimal::from_str("137.00").unwrap()));
+        assert_eq!(
+            out[0].balances[0].quantity,
+            Decimal::from_str("100.00").unwrap()
+        );
+        assert_eq!(
+            out[0].total_in_base,
+            Some(Decimal::from_str("137.00").unwrap())
+        );
         // Summit: 300 CAD passes through (== base).
         assert_eq!(out[1].value, "Summit");
-        assert_eq!(out[1].total_in_base, Some(Decimal::from_str("300.00").unwrap()));
+        assert_eq!(
+            out[1].total_in_base,
+            Some(Decimal::from_str("300.00").unwrap())
+        );
     }
 
     #[test]
     fn account_tag_breakdown_marks_unconvertible_commodity_none() {
         // No P directive for AED → its group has no base total.
-        let txns = vec![breakdown_txn(breakdown_posting("AED", "500.00", "Meridian"))];
+        let txns = vec![breakdown_txn(breakdown_posting(
+            "AED", "500.00", "Meridian",
+        ))];
         let out = account_tag_breakdown(
             "",
             &txns,

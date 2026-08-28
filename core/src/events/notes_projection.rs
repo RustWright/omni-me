@@ -89,7 +89,10 @@ impl NotesProjection {
         // idempotent. `?? existing` guards preserve any further-along state
         // (closed/tags/summary/created_at) an earlier-applied event already set.
         let date = event.aggregate_id.clone();
-        let raw_text = event.payload["raw_text"].as_str().unwrap_or_default().to_string();
+        let raw_text = event.payload["raw_text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let legacy_properties = event.payload.get("legacy_properties").cloned();
         let complete = is_complete(&raw_text);
         let ts = event.timestamp.to_rfc3339();
@@ -125,7 +128,10 @@ impl NotesProjection {
         // no row (the other device minted a different journal_id) or the create
         // was lost to the old fail-fast batch abort. Preserve closed/tags/summary.
         let date = event.aggregate_id.clone();
-        let raw_text = event.payload["raw_text"].as_str().unwrap_or_default().to_string();
+        let raw_text = event.payload["raw_text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let complete = is_complete(&raw_text);
         let ts = event.timestamp.to_rfc3339();
 
@@ -181,8 +187,14 @@ impl NotesProjection {
 
     async fn on_generic_created(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let note_id = event.aggregate_id.clone();
-        let title = event.payload["title"].as_str().unwrap_or_default().to_string();
-        let raw_text = event.payload["raw_text"].as_str().unwrap_or_default().to_string();
+        let title = event.payload["title"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let raw_text = event.payload["raw_text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let legacy_properties = event.payload.get("legacy_properties").cloned();
         let ts = event.timestamp.to_rfc3339();
 
@@ -216,7 +228,10 @@ impl NotesProjection {
         // — the note-body half of "content edits don't materialize on sync".
         // `title ?? ''` supplies the SCHEMAFULL-required title when materializing.
         let note_id = event.aggregate_id.clone();
-        let raw_text = event.payload["raw_text"].as_str().unwrap_or_default().to_string();
+        let raw_text = event.payload["raw_text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
@@ -238,7 +253,10 @@ impl NotesProjection {
 
     async fn on_generic_renamed(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let note_id = event.aggregate_id.clone();
-        let title = event.payload["title"].as_str().unwrap_or_default().to_string();
+        let title = event.payload["title"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
@@ -486,7 +504,10 @@ mod tests {
             learnt_today: fence-aware scanning\n\
             ---\n\
             body";
-        assert!(is_complete(text), "block-list tags must not hide the reflections");
+        assert!(
+            is_complete(text),
+            "block-list tags must not hide the reflections"
+        );
     }
 
     #[test]
@@ -502,7 +523,10 @@ mod tests {
             date: 2026-07-03\n\
             ---\n\
             body";
-        assert!(is_complete(text), "reordered keys must still register complete");
+        assert!(
+            is_complete(text),
+            "reordered keys must still register complete"
+        );
     }
 
     #[test]
@@ -516,7 +540,10 @@ mod tests {
             \n\
             learnt_today: c\n\
             ---";
-        assert!(is_complete(text), "blank lines inside the fence must not terminate the scan");
+        assert!(
+            is_complete(text),
+            "blank lines inside the fence must not terminate the scan"
+        );
     }
 
     #[test]
@@ -530,7 +557,10 @@ mod tests {
             learnt_today: c\n\
             \n\
             body";
-        assert!(is_complete(text), "fence-less block list must not hide the reflections");
+        assert!(
+            is_complete(text),
+            "fence-less block list must not hide the reflections"
+        );
     }
 
     #[test]
@@ -646,7 +676,10 @@ mod tests {
         let failed = runner
             .apply_events_resilient(&[created_a, created_b, updated_b])
             .await;
-        assert_eq!(failed, 0, "no duplicate-key error across two devices' creates");
+        assert_eq!(
+            failed, 0,
+            "no duplicate-key error across two devices' creates"
+        );
 
         // Exactly one row for the day, carrying the cross-device edit.
         let mut resp = db
@@ -661,7 +694,11 @@ mod tests {
             .await
             .unwrap();
         let raw: Option<String> = resp.take("raw_text").unwrap();
-        assert_eq!(raw.as_deref(), Some("merged body"), "cross-device edit lands");
+        assert_eq!(
+            raw.as_deref(),
+            Some("merged body"),
+            "cross-device edit lands"
+        );
     }
 
     #[tokio::test]
@@ -688,13 +725,23 @@ mod tests {
         runner.apply_events(&[update_only]).await.unwrap();
 
         let mut resp = db
-            .query("SELECT raw_text, date, closed FROM type::record('journal_entries', '2026-05-01')")
+            .query(
+                "SELECT raw_text, date, closed FROM type::record('journal_entries', '2026-05-01')",
+            )
             .await
             .unwrap();
         let raw: Option<String> = resp.take("raw_text").unwrap();
-        assert_eq!(raw.as_deref(), Some("orphan edit"), "update upserts a full valid row");
+        assert_eq!(
+            raw.as_deref(),
+            Some("orphan edit"),
+            "update upserts a full valid row"
+        );
         let date: Option<String> = resp.take("date").unwrap();
-        assert_eq!(date.as_deref(), Some("2026-05-01"), "date backfilled from aggregate_id");
+        assert_eq!(
+            date.as_deref(),
+            Some("2026-05-01"),
+            "date backfilled from aggregate_id"
+        );
         let closed: Option<bool> = resp.take("closed").unwrap();
         assert_eq!(closed, Some(false), "required fields defaulted");
     }
@@ -744,7 +791,11 @@ mod tests {
             .await
             .unwrap();
         let complete: Option<bool> = resp.take("complete").unwrap();
-        assert_eq!(complete, Some(true), "complete flips to true once 3 properties are filled");
+        assert_eq!(
+            complete,
+            Some(true),
+            "complete flips to true once 3 properties are filled"
+        );
     }
 
     #[tokio::test]
@@ -814,15 +865,24 @@ mod tests {
 
         let nid = "01JKNOTE00000000000000000A";
         let events = [
-            ("generic_note_created", serde_json::json!({
-                "note_id": nid, "title": "Ideas", "raw_text": "first"
-            })),
-            ("generic_note_updated", serde_json::json!({
-                "note_id": nid, "raw_text": "second"
-            })),
-            ("generic_note_renamed", serde_json::json!({
-                "note_id": nid, "title": "Renamed"
-            })),
+            (
+                "generic_note_created",
+                serde_json::json!({
+                    "note_id": nid, "title": "Ideas", "raw_text": "first"
+                }),
+            ),
+            (
+                "generic_note_updated",
+                serde_json::json!({
+                    "note_id": nid, "raw_text": "second"
+                }),
+            ),
+            (
+                "generic_note_renamed",
+                serde_json::json!({
+                    "note_id": nid, "title": "Renamed"
+                }),
+            ),
         ];
 
         for (et, payload) in events {

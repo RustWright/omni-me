@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 
 use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{
-    Banner, BannerKind, Button, ButtonSize, ButtonVariant, PageHeader, INPUT_CLASS,
+    Banner, BannerKind, Button, ButtonSize, ButtonVariant, INPUT_CLASS, PageHeader,
 };
 use crate::{
     bridge,
@@ -702,18 +702,9 @@ fn format_relative_time(iso: Option<&str>) -> String {
 /// `wire_health` is one of `"healthy" | "stale" | "degraded" | "unknown"`.
 fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
     match wire_health {
-        "healthy" => (
-            "Healthy",
-            "bg-success/15 text-success border-success/30",
-        ),
-        "stale" => (
-            "Stale",
-            "bg-warn/15 text-warn border-warn/30",
-        ),
-        "degraded" => (
-            "Degraded",
-            "bg-error/15 text-error border-error/30",
-        ),
+        "healthy" => ("Healthy", "bg-success/15 text-success border-success/30"),
+        "stale" => ("Stale", "bg-warn/15 text-warn border-warn/30"),
+        "degraded" => ("Degraded", "bg-error/15 text-error border-error/30"),
         _ => (
             "Unknown",
             "bg-white/5 text-obsidian-text-muted border-white/10",
@@ -725,7 +716,10 @@ fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
 fn outcome_summary(outcome: &serde_json::Value) -> String {
     match outcome.get("kind").and_then(|k| k.as_str()) {
         Some("success") => {
-            let n = outcome.get("events_appended").and_then(|v| v.as_u64()).unwrap_or(0);
+            let n = outcome
+                .get("events_appended")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             if n == 0 {
                 "Last tick: no new events".into()
             } else {
@@ -733,7 +727,10 @@ fn outcome_summary(outcome: &serde_json::Value) -> String {
             }
         }
         Some("failure") => {
-            let err = outcome.get("error").and_then(|v| v.as_str()).unwrap_or("(no error)");
+            let err = outcome
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no error)");
             format!("Last tick failed: {err}")
         }
         _ => "Not yet run".into(),
@@ -1650,8 +1647,11 @@ fn AddSourceForm(
     let mut path = use_signal(|| g("path"));
     let mut account = use_signal(|| g("account"));
     let mut commodity = use_signal(|| or(g("commodity"), "CAD"));
-    let mut has_header =
-        use_signal(|| init.get("has_header").and_then(|v| v.as_bool()).unwrap_or(true));
+    let mut has_header = use_signal(|| {
+        init.get("has_header")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    });
     let mut date_format = use_signal(|| or(g("date_format"), "%Y-%m-%d"));
     let mut col_date = use_signal(|| or(gcol("date"), "Date"));
     let mut col_amount = use_signal(|| or(gcol("amount"), "Amount"));
@@ -1781,8 +1781,7 @@ fn AddSourceForm(
                 err.set(Some("Command is required.".into()));
                 return;
             }
-            let arg_vec: Vec<String> =
-                args.read().split_whitespace().map(str::to_string).collect();
+            let arg_vec: Vec<String> = args.read().split_whitespace().map(str::to_string).collect();
             serde_json::json!({
                 "name": nm,
                 "type": "subprocess",
@@ -1984,4 +1983,3 @@ fn AddSourceForm(
         }
     }
 }
-

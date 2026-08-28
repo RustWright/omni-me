@@ -68,7 +68,10 @@ pub fn serialize_journal(props: &JournalProps, body: &str) -> String {
     }
     // Always inline — never a block list.
     fm.push_str(&format!("tags: [{}]\n", props.tags.join(", ")));
-    fm.push_str(&reflection_line("homework_for_life", &props.homework_for_life));
+    fm.push_str(&reflection_line(
+        "homework_for_life",
+        &props.homework_for_life,
+    ));
     fm.push_str(&reflection_line("grateful_for", &props.grateful_for));
     fm.push_str(&reflection_line("learnt_today", &props.learnt_today));
     // Legacy block last, so it can't interrupt the is_complete reflection scan.
@@ -256,7 +259,9 @@ fn consume_block_list(lines: &[&str], start: usize) -> (Vec<String>, usize) {
     let mut collected = Vec::new();
     while j < lines.len() {
         let t = lines[j].trim();
-        let Some(item) = t.strip_prefix('-') else { break };
+        let Some(item) = t.strip_prefix('-') else {
+            break;
+        };
         let item = item.trim().trim_matches('"').trim();
         if !item.is_empty() {
             collected.push(item.to_string());
@@ -439,7 +444,10 @@ mod tests {
             tags:\n  - daily_note\n  - work\n\
             homework_for_life: a\n---\nbody";
         let (props, _) = split_journal(raw);
-        assert_eq!(props.tags, vec!["daily_note".to_string(), "work".to_string()]);
+        assert_eq!(
+            props.tags,
+            vec!["daily_note".to_string(), "work".to_string()]
+        );
         // …and re-serialize to the inline, is_complete-safe form.
         let out = serialize_journal(&props, "body");
         assert!(out.contains("tags: [daily_note, work]"));

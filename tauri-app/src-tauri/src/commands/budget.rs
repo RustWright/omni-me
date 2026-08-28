@@ -30,6 +30,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use omni_me_core::accounts;
 use omni_me_core::accounts::is_unmatched;
 use omni_me_core::balances::{self, AccountSummary, CommodityBalance};
 use omni_me_core::budget::{self, BalanceCheckResult, BudgetProgress};
@@ -45,10 +46,9 @@ use omni_me_core::events::{
 };
 use omni_me_core::ledger::JournalArtifacts;
 use omni_me_core::query::{self, QueryPosting, QueryTxn};
-use omni_me_core::recurring;
 use omni_me_core::reconciliation::{self, UnmatchedTxn};
+use omni_me_core::recurring;
 use omni_me_core::statement_csv::{self, MoneyDirection};
-use omni_me_core::accounts;
 use rust_decimal::Decimal;
 
 use super::shared::{append_and_apply, append_batch_and_apply, append_new_and_apply};
@@ -157,10 +157,7 @@ pub async fn tag_transaction(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn delete_transaction(
-    state: State<'_, AppState>,
-    txn_id: String,
-) -> Result<(), String> {
+pub async fn delete_transaction(state: State<'_, AppState>, txn_id: String) -> Result<(), String> {
     tracing::info!(txn_id = %txn_id, "delete_transaction");
     let payload = serde_json::json!({ "txn_id": txn_id });
     append_and_apply(&state, EventType::TransactionDeleted, txn_id, payload).await
@@ -268,8 +265,7 @@ pub async fn run_transaction_query(
 /// the string-amount + string-tag encoding, so the posting shape isn't
 /// re-implemented here.
 fn view_to_querytxn(view: &TransactionView) -> QueryTxn {
-    let postings: Vec<Posting> =
-        serde_json::from_value(view.postings.clone()).unwrap_or_default();
+    let postings: Vec<Posting> = serde_json::from_value(view.postings.clone()).unwrap_or_default();
     QueryTxn {
         date: view.date.clone(),
         description: view.description.clone(),
@@ -350,7 +346,8 @@ fn effective_roster(
         .collect();
     let mut roster = balances::auto_roster_from(&artifacts.balance, declared, &hidden);
     for extra in file_roster {
-        if balances::is_balance_bearing(extra) && !hidden.contains(extra) && !roster.contains(extra) {
+        if balances::is_balance_bearing(extra) && !hidden.contains(extra) && !roster.contains(extra)
+        {
             roster.push(extra.clone());
         }
     }
@@ -472,8 +469,9 @@ pub async fn account_summaries(
         None => state.base_currency.read().await.clone(),
     };
     let as_of_date = match as_of {
-        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
-            .map_err(|e| format!("bad as_of date: {e}"))?,
+        Some(s) => {
+            NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|e| format!("bad as_of date: {e}"))?
+        }
         None => chrono::Utc::now().date_naive(),
     };
 
@@ -545,8 +543,9 @@ pub async fn account_tag_breakdown(
         None => state.base_currency.read().await.clone(),
     };
     let as_of_date = match as_of {
-        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
-            .map_err(|e| format!("bad as_of date: {e}"))?,
+        Some(s) => {
+            NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|e| format!("bad as_of date: {e}"))?
+        }
         None => chrono::Utc::now().date_naive(),
     };
     let tag_key = match group_by.as_deref() {
@@ -673,8 +672,9 @@ pub async fn dashboard_summary(
     };
     let months = months_back.unwrap_or(6).max(1);
     let as_of_date = match as_of {
-        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
-            .map_err(|e| format!("bad as_of date: {e}"))?,
+        Some(s) => {
+            NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|e| format!("bad as_of date: {e}"))?
+        }
         None => chrono::Utc::now().date_naive(),
     };
 
@@ -817,13 +817,7 @@ pub async fn set_budget(
         "amount": amount,
         "period": period,
     });
-    append_and_apply(
-        &state,
-        EventType::BudgetSet,
-        category.clone(),
-        payload,
-    )
-    .await?;
+    append_and_apply(&state, EventType::BudgetSet, category.clone(), payload).await?;
 
     queries::list_budgets(&state.db)
         .await
@@ -878,8 +872,9 @@ pub async fn budget_progress(
         None => state.base_currency.read().await.clone(),
     };
     let as_of_date = match as_of {
-        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
-            .map_err(|e| format!("bad as_of date: {e}"))?,
+        Some(s) => {
+            NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|e| format!("bad as_of date: {e}"))?
+        }
         None => chrono::Utc::now().date_naive(),
     };
 
@@ -892,7 +887,8 @@ pub async fn budget_progress(
 
     // Triple shape compute_budget_progress wants — also lets us find the
     // earliest window start across all budgets for the txn cutoff query.
-    let mut triples: Vec<(String, rust_decimal::Decimal, String)> = Vec::with_capacity(budgets.len());
+    let mut triples: Vec<(String, rust_decimal::Decimal, String)> =
+        Vec::with_capacity(budgets.len());
     for b in &budgets {
         let amount = b
             .amount
@@ -903,7 +899,9 @@ pub async fn budget_progress(
 
     let earliest_start = triples
         .iter()
-        .filter_map(|(_, _, period)| omni_me_core::budget::current_period_window(period, as_of_date))
+        .filter_map(|(_, _, period)| {
+            omni_me_core::budget::current_period_window(period, as_of_date)
+        })
         .map(|(start, _)| start)
         .min()
         .unwrap_or(as_of_date);
@@ -937,19 +935,10 @@ pub async fn budget_progress(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn remove_budget(
-    state: State<'_, AppState>,
-    category: String,
-) -> Result<(), String> {
+pub async fn remove_budget(state: State<'_, AppState>, category: String) -> Result<(), String> {
     tracing::info!(category = %category, "remove_budget");
     let payload = serde_json::json!({ "category": category });
-    append_and_apply(
-        &state,
-        EventType::BudgetRemoved,
-        category,
-        payload,
-    )
-    .await
+    append_and_apply(&state, EventType::BudgetRemoved, category, payload).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1113,8 +1102,8 @@ pub async fn scan_recurring(
     lookback_days: Option<u32>,
 ) -> Result<ScanRecurringResult, String> {
     let lookback = lookback_days.unwrap_or(365);
-    let cutoff = (chrono::Utc::now().date_naive() - chrono::Duration::days(lookback as i64))
-        .to_string();
+    let cutoff =
+        (chrono::Utc::now().date_naive() - chrono::Duration::days(lookback as i64)).to_string();
 
     let txn_rows = queries::list_transactions_since(&state.db, &cutoff)
         .await
@@ -1190,8 +1179,8 @@ pub async fn import_chequing_csv(
     commodity: Option<String>,
 ) -> Result<ImportStatementCsvResult, String> {
     let commodity = commodity.unwrap_or_else(|| "CAD".to_string());
-    let parsed = statement_csv::parse_chequing_csv(&csv_text)
-        .map_err(|e| format!("csv parse: {e}"))?;
+    let parsed =
+        statement_csv::parse_chequing_csv(&csv_text).map_err(|e| format!("csv parse: {e}"))?;
 
     // Collected, not appended per row. `append_new_and_apply` costs an
     // event-store round trip *plus* a bookmark advance *plus* a debouncer nudge
@@ -1718,8 +1707,9 @@ pub async fn check_account_balance(
     as_of: Option<String>,
 ) -> Result<BalanceCheckView, String> {
     let as_of_date = match as_of {
-        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
-            .map_err(|e| format!("bad as_of date: {e}"))?,
+        Some(s) => {
+            NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|e| format!("bad as_of date: {e}"))?
+        }
         None => chrono::Utc::now().date_naive(),
     };
     let statement_balance_dec = statement_balance
@@ -1845,7 +1835,10 @@ mod tests {
         )
         .unwrap();
         let legs = combined(&plan);
-        let accounts: Vec<&str> = legs.iter().map(|p| p["account"].as_str().unwrap()).collect();
+        let accounts: Vec<&str> = legs
+            .iter()
+            .map(|p| p["account"].as_str().unwrap())
+            .collect();
         assert_eq!(accounts, vec!["Assets:Chequing", "Expenses:Food"]);
     }
 
@@ -1907,7 +1900,10 @@ mod tests {
             None,
         );
         let err = plan_merge(&settled, &manual_side("t2", "2026-01-02", None)).unwrap_err();
-        assert!(err.contains("t3") && err.contains("no Unmatched posting"), "got: {err}");
+        assert!(
+            err.contains("t3") && err.contains("no Unmatched posting"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -2087,8 +2083,14 @@ mod tests {
         let plan = plan_resolve("t1", "2026-01-01", &unresolved(), None, "Expenses:Food").unwrap();
         assert!(plan.cleared.is_none());
 
-        let plan =
-            plan_resolve("t1", "2026-01-01", &unresolved(), Some("stmt"), "Expenses:Food").unwrap();
+        let plan = plan_resolve(
+            "t1",
+            "2026-01-01",
+            &unresolved(),
+            Some("stmt"),
+            "Expenses:Food",
+        )
+        .unwrap();
         let cleared = plan.cleared.unwrap();
         assert_eq!(cleared["txn_id"], "t1");
         assert_eq!(cleared["statement_source"], "stmt");

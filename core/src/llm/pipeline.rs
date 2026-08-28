@@ -193,7 +193,11 @@ fn interpret_tool_calls(response: LlmResponse) -> Result<ParsedToolCalls, Pipeli
                         expenses.push(ExtractedExpense {
                             amount: require_f64(&tc.arguments, "amount", "extract_expense")?,
                             currency: require_str(&tc.arguments, "currency", "extract_expense")?,
-                            description: require_str(&tc.arguments, "description", "extract_expense")?,
+                            description: require_str(
+                                &tc.arguments,
+                                "description",
+                                "extract_expense",
+                            )?,
                         });
                     }
                     _ => {}

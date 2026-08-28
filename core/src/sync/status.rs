@@ -19,7 +19,7 @@ use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 
 use super::pusher::{PushDebouncer, PushEvent};
-use super::retry::{RetryEngine, RetryEvent, DEFAULT_RETRY_CAP};
+use super::retry::{DEFAULT_RETRY_CAP, RetryEngine, RetryEvent};
 
 /// Four aggregate states the UI can display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -80,7 +80,9 @@ impl StatusReporter {
             shutdown: tokio::sync::Notify::new(),
         });
 
-        let reporter = Self { inner: inner.clone() };
+        let reporter = Self {
+            inner: inner.clone(),
+        };
         let push_rx = pusher.subscribe();
         let retry_rx = retry.subscribe();
 
@@ -202,8 +204,8 @@ async fn watch_retry(mut rx: broadcast::Receiver<RetryEvent>, inner: Arc<Inner>)
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::client::SyncClient;
+    use super::*;
     use crate::events::{EventStore, NewEvent, SurrealEventStore};
     use chrono::Utc;
     use std::time::Duration;
@@ -254,8 +256,8 @@ mod tests {
             .unwrap();
 
         let client = SyncClient::new("http://127.0.0.1:1".into(), "device-x".into());
-        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client.clone(), db.clone(), Duration::from_millis(30),
-        );
+        let (pusher, _ph) =
+            PushDebouncer::spawn_with_delay(client.clone(), db.clone(), Duration::from_millis(30));
         let (retry, _rh) = RetryEngine::spawn_with(
             client,
             db,

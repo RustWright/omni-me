@@ -99,8 +99,7 @@ impl ProjectionRunner {
                 )
                 .bind(("name", name))
                 .bind(("version", version))
-                .await
-    ?;
+                .await?;
         }
 
         if !stale.is_empty() {
@@ -114,7 +113,10 @@ impl ProjectionRunner {
 
         let caught_up = self.catch_up().await?;
         if caught_up > 0 {
-            tracing::info!(events = caught_up, "replayed events the projections had missed");
+            tracing::info!(
+                events = caught_up,
+                "replayed events the projections had missed"
+            );
         }
 
         Ok(())
@@ -248,7 +250,10 @@ impl ProjectionRunner {
     /// `last_received_at` is the one that matters — it is what `catch_up` reads.
     /// `last_event_id` is kept for diagnostics.
     async fn advance_bookmark(&self, event: &Event) -> Result<(), EventError> {
-        let received = event.received_at.unwrap_or_else(chrono::Utc::now).to_rfc3339();
+        let received = event
+            .received_at
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
         for proj in self.projections.iter() {
             let name = proj.name().to_string();
             self.db
@@ -289,7 +294,11 @@ impl ProjectionRunner {
         // second successful rebuild.
         let failed = self.apply_events_resilient(&events).await;
         if failed > 0 {
-            tracing::warn!(failed, total = events.len(), "events skipped during rebuild");
+            tracing::warn!(
+                failed,
+                total = events.len(),
+                "events skipped during rebuild"
+            );
         }
 
         Ok(())
@@ -301,8 +310,8 @@ mod tests {
     use super::*;
     use crate::events::store::{EventStore, NewEvent};
     use chrono::Utc;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     struct CountingProjection {
         applied: Arc<AtomicU32>,
@@ -426,7 +435,9 @@ mod tests {
         {
             let runner = ProjectionRunner::new(
                 db.clone(),
-                vec![Box::new(CountingProjection { applied: counter.clone() })],
+                vec![Box::new(CountingProjection {
+                    applied: counter.clone(),
+                })],
             );
             runner.init_all().await.unwrap();
         }
@@ -449,7 +460,9 @@ mod tests {
         // Next launch.
         let runner = ProjectionRunner::new(
             db.clone(),
-            vec![Box::new(CountingProjection { applied: counter.clone() })],
+            vec![Box::new(CountingProjection {
+                applied: counter.clone(),
+            })],
         );
         runner.init_all().await.unwrap();
 
@@ -462,7 +475,9 @@ mod tests {
         // And it is not replayed a second time on the launch after that.
         let runner = ProjectionRunner::new(
             db.clone(),
-            vec![Box::new(CountingProjection { applied: counter.clone() })],
+            vec![Box::new(CountingProjection {
+                applied: counter.clone(),
+            })],
         );
         runner.init_all().await.unwrap();
         assert_eq!(
@@ -483,7 +498,10 @@ mod tests {
 
         let runner = ProjectionRunner::new(
             db.clone(),
-            vec![Box::new(VersionedProjection { applied: counter.clone(), version: 1 })],
+            vec![Box::new(VersionedProjection {
+                applied: counter.clone(),
+                version: 1,
+            })],
         );
         runner.init_all().await.unwrap();
 
@@ -504,15 +522,25 @@ mod tests {
         // Same version again: no rebuild, no replay.
         let same = ProjectionRunner::new(
             db.clone(),
-            vec![Box::new(VersionedProjection { applied: counter.clone(), version: 1 })],
+            vec![Box::new(VersionedProjection {
+                applied: counter.clone(),
+                version: 1,
+            })],
         );
         same.init_all().await.unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 1, "unchanged version rebuilt anyway");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "unchanged version rebuilt anyway"
+        );
 
         // Bumped version: full replay.
         let bumped = ProjectionRunner::new(
             db.clone(),
-            vec![Box::new(VersionedProjection { applied: counter.clone(), version: 2 })],
+            vec![Box::new(VersionedProjection {
+                applied: counter.clone(),
+                version: 2,
+            })],
         );
         bumped.init_all().await.unwrap();
         assert_eq!(
@@ -605,11 +633,19 @@ mod tests {
         runner.init_all().await.unwrap();
 
         // Middle event errors; the two good ones on either side must still apply.
-        let events = vec![ev("g1", "note_created"), ev("bad", "boom"), ev("g2", "note_updated")];
+        let events = vec![
+            ev("g1", "note_created"),
+            ev("bad", "boom"),
+            ev("g2", "note_updated"),
+        ];
         let failed = runner.apply_events_resilient(&events).await;
 
         assert_eq!(failed, 1, "one event should fail");
-        assert_eq!(applied.load(Ordering::SeqCst), 2, "both good events apply despite the bad one");
+        assert_eq!(
+            applied.load(Ordering::SeqCst),
+            2,
+            "both good events apply despite the bad one"
+        );
 
         // last_event_id parks on the last *successfully* applied event, not the failing tail-1.
         let mut resp = db

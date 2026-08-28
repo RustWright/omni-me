@@ -16,11 +16,11 @@
 
 use async_trait::async_trait;
 use base64::Engine;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{
-    parse_response, prompt_for, response_schema, DocumentExtractor, ExtractionError,
-    ExtractionHint, ExtractionResult,
+    DocumentExtractor, ExtractionError, ExtractionHint, ExtractionResult, parse_response,
+    prompt_for, response_schema,
 };
 
 /// Vision extractor for any OpenAI-compatible chat-completions endpoint.
@@ -152,10 +152,9 @@ impl DocumentExtractor for OpenAiCompatExtractor {
             .map_err(|e| ExtractionError::Upstream(e.without_url().to_string()))?;
 
         let status = response.status();
-        let response_body: Value = response
-            .json()
-            .await
-            .map_err(|e| ExtractionError::Parse(format!("parse response JSON: {}", e.without_url())))?;
+        let response_body: Value = response.json().await.map_err(|e| {
+            ExtractionError::Parse(format!("parse response JSON: {}", e.without_url()))
+        })?;
 
         if !status.is_success() {
             let msg = response_body["error"]["message"]
@@ -204,7 +203,10 @@ mod tests {
             .unwrap();
         assert_eq!(result.description.as_deref(), Some("Coffee"));
         assert_eq!(result.postings.len(), 1);
-        assert_eq!(result.postings[0].account_hint.as_deref(), Some("Expenses:Coffee"));
+        assert_eq!(
+            result.postings[0].account_hint.as_deref(),
+            Some("Expenses:Coffee")
+        );
         assert_eq!(result.confidence, 0.9);
         assert_eq!(result.model, "llava");
     }
@@ -231,7 +233,11 @@ mod tests {
     async fn unsupported_pdf_mime_rejected_without_call() {
         let ext = OpenAiCompatExtractor::new("http://127.0.0.1:1", "m", "");
         let err = ext
-            .extract(b"%PDF-1.7", "application/pdf", ExtractionHint::BankStatement)
+            .extract(
+                b"%PDF-1.7",
+                "application/pdf",
+                ExtractionHint::BankStatement,
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, ExtractionError::UnsupportedMime { .. }));
@@ -243,7 +249,8 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .respond_with(
-                ResponseTemplate::new(400).set_body_json(json!({ "error": { "message": "no vision" } })),
+                ResponseTemplate::new(400)
+                    .set_body_json(json!({ "error": { "message": "no vision" } })),
             )
             .mount(&server)
             .await;

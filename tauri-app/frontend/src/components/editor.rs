@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 
 use crate::bridge::{js_create_editor, js_destroy_editor};
 
@@ -36,7 +36,11 @@ fn editor_options(
         &JsValue::from_f64(initial_cursor as f64),
     );
     if let Some(date) = entry_date {
-        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("entryDate"), &JsValue::from_str(&date));
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("entryDate"),
+            &JsValue::from_str(&date),
+        );
     }
     obj
 }
@@ -46,7 +50,8 @@ fn editor_options(
 /// editor lives as long as the page, and a fresh editor is created per mount.
 fn attach_cursor_cb(obj: &js_sys::Object, on_cursor: Option<EventHandler<usize>>) {
     let Some(handler) = on_cursor else { return };
-    let closure = Closure::wrap(Box::new(move |pos: usize| handler.call(pos)) as Box<dyn Fn(usize)>);
+    let closure =
+        Closure::wrap(Box::new(move |pos: usize| handler.call(pos)) as Box<dyn Fn(usize)>);
     if let Some(f) = closure.as_ref().dyn_ref::<js_sys::Function>() {
         let _ = js_sys::Reflect::set(obj, &JsValue::from_str("onCursor"), f);
     }
@@ -64,12 +69,15 @@ pub fn Editor(
     /// The journal day being edited (YYYY-MM-DD), used by the reveal-on-select
     /// line timestamps to decide same-day vs cross-day display (#344). `None`
     /// for non-journal surfaces → the timestamp feature stays off.
-    #[props(default)] entry_date: Option<String>,
+    #[props(default)]
+    entry_date: Option<String>,
     /// Caret offset to restore on mount (1.8b). 0 = no restore.
-    #[props(default = 0)] initial_cursor: usize,
+    #[props(default = 0)]
+    initial_cursor: usize,
     /// Fired on every selection change so the page can keep the stored caret
     /// offset current. `None` = the surface doesn't track cursor position.
-    #[props(default)] on_cursor: Option<EventHandler<usize>>,
+    #[props(default)]
+    on_cursor: Option<EventHandler<usize>>,
 ) -> Element {
     let mut editor_ready = use_signal(|| false);
 
@@ -101,10 +109,11 @@ pub fn Editor(
             // Helper function to use `?` for early returns in Option context
             let setup_script_and_poll_editor = async || -> Option<()> {
                 // 1. Check for existing script to prevent duplicates on hot-reload
-                let existing_script = document.query_selector(&format!("script[src='{}']", script_src))
+                let existing_script = document
+                    .query_selector(&format!("script[src='{}']", script_src))
                     .ok()
                     .flatten();
-                
+
                 if existing_script.is_none() {
                     let script = document.create_element("script").ok()?;
                     script.set_attribute("src", script_src).ok()?;
@@ -126,9 +135,11 @@ pub fn Editor(
                 const POLL_INTERVAL_MS: u32 = 100;
 
                 while attempts < MAX_ATTEMPTS {
-                    let create_editor_is_defined = js_sys::Reflect::get(&window, &JsValue::from_str("createEditor"))
-                        .ok() // Option<JsValue>
-                        .and_then(|val| val.dyn_ref::<js_sys::Function>().map(|_| ())).is_some();
+                    let create_editor_is_defined =
+                        js_sys::Reflect::get(&window, &JsValue::from_str("createEditor"))
+                            .ok() // Option<JsValue>
+                            .and_then(|val| val.dyn_ref::<js_sys::Function>().map(|_| ()))
+                            .is_some();
 
                     if create_editor_is_defined {
                         break;
@@ -136,14 +147,21 @@ pub fn Editor(
 
                     attempts += 1;
                     let timeout_promise = js_sys::Promise::new(&mut |resolve, _| {
-                        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, POLL_INTERVAL_MS as i32);
+                        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                            &resolve,
+                            POLL_INTERVAL_MS as i32,
+                        );
                     });
                     // Convert JsFuture Result to Option for `?` compatibility
-                    wasm_bindgen_futures::JsFuture::from(timeout_promise).await.ok()?;
+                    wasm_bindgen_futures::JsFuture::from(timeout_promise)
+                        .await
+                        .ok()?;
                 }
 
                 if attempts == MAX_ATTEMPTS {
-                    web_sys::console::error_1(&JsValue::from_str("CodeMirror editor: createEditor still undefined after ~20s — editor.bundle.js likely failed to load (check the Network tab for a 404 or MIME error)."));
+                    web_sys::console::error_1(&JsValue::from_str(
+                        "CodeMirror editor: createEditor still undefined after ~20s — editor.bundle.js likely failed to load (check the Network tab for a 404 or MIME error).",
+                    ));
                     return None;
                 }
 
@@ -160,7 +178,8 @@ pub fn Editor(
                 on_change_closure.forget(); // Leak memory intentionally
 
                 // 4. Initialize the editor
-                let opts = editor_options(journal_mode, read_only, initial_cursor, entry_date.clone());
+                let opts =
+                    editor_options(journal_mode, read_only, initial_cursor, entry_date.clone());
                 attach_cursor_cb(&opts, on_cursor);
                 js_create_editor(
                     editor_container_id,

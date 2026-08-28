@@ -236,10 +236,7 @@ pub async fn list_journal_day_stats(
 
 // --- Generic notes ---
 
-pub async fn get_generic_note(
-    db: &Database,
-    id: &str,
-) -> Result<Option<GenericNoteRow>, DbError> {
+pub async fn get_generic_note(db: &Database, id: &str) -> Result<Option<GenericNoteRow>, DbError> {
     let mut resp = db
         .query(
             "SELECT meta::id(id) AS id, title, raw_text, tags, summary, legacy_properties,
@@ -533,9 +530,7 @@ pub async fn get_transaction(
     db: &Database,
     txn_id: &str,
 ) -> Result<Option<TransactionRow>, DbError> {
-    let q = format!(
-        "SELECT {TXN_FIELDS} FROM type::record('transactions', $txn_id)"
-    );
+    let q = format!("SELECT {TXN_FIELDS} FROM type::record('transactions', $txn_id)");
     let mut resp = db
         .query(q.as_str())
         .bind(("txn_id", txn_id.to_string()))
@@ -717,9 +712,7 @@ pub async fn list_cleared_transactions(
 /// can read `statement_source` (drives the clears-statement flag) and
 /// `description` (drives the description-similarity signal) in addition
 /// to the posting amounts.
-pub async fn list_unmatched_transactions(
-    db: &Database,
-) -> Result<Vec<TransactionRow>, DbError> {
+pub async fn list_unmatched_transactions(db: &Database) -> Result<Vec<TransactionRow>, DbError> {
     let mut resp = db
         .query(
             "SELECT id, date, description, postings, attachment, category,

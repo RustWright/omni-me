@@ -211,7 +211,10 @@ async fn offline_backlog_reaches_a_peer_whose_cursor_is_already_ahead() {
     // Device C publishes something current, so B's cursor advances to ~now.
     let db_c = device_db().await;
     let store_c = SurrealEventStore::new(db_c.clone());
-    store_c.append(sample_event("device-c", "current")).await.unwrap();
+    store_c
+        .append(sample_event("device-c", "current"))
+        .await
+        .unwrap();
     SyncClient::new(url.clone(), "device-c".into())
         .sync(&db_c)
         .await
@@ -220,7 +223,10 @@ async fn offline_backlog_reaches_a_peer_whose_cursor_is_already_ahead() {
     let db_b = device_db().await;
     let client_b = SyncClient::new(url.clone(), "device-b".into());
     let warmup = client_b.sync(&db_b).await.unwrap();
-    assert_eq!(warmup.pulled, 1, "B should pull C's event and move its cursor");
+    assert_eq!(
+        warmup.pulled, 1,
+        "B should pull C's event and move its cursor"
+    );
 
     // Device A pushes work it authored days ago while offline — all of it
     // stamped *before* B's cursor.
@@ -273,14 +279,20 @@ async fn one_rejected_event_does_not_wedge_the_rest_of_the_push() {
     let local = device_db().await;
     let store = SurrealEventStore::new(local.clone());
 
-    store.append(sample_event("device-a", "good-1")).await.unwrap();
+    store
+        .append(sample_event("device-a", "good-1"))
+        .await
+        .unwrap();
 
     // An event type the server's `EventType::from_str` will not accept.
     let mut poison = sample_event("device-a", "poison");
     poison.event_type = "definitely_not_a_real_event_type".into();
     store.append(poison).await.unwrap();
 
-    store.append(sample_event("device-a", "good-2")).await.unwrap();
+    store
+        .append(sample_event("device-a", "good-2"))
+        .await
+        .unwrap();
 
     let client = SyncClient::new(url.clone(), "device-a".into());
     let result = client.sync(&local).await.expect("push must not error out");
@@ -289,6 +301,12 @@ async fn one_rejected_event_does_not_wedge_the_rest_of_the_push() {
 
     // The queue drained: a second sync has nothing left to send, i.e. the
     // watermark advanced instead of sticking behind the poison event.
-    let again = client.sync(&local).await.expect("second sync must not error");
-    assert_eq!(again.pushed, 0, "push watermark stuck behind the rejected event");
+    let again = client
+        .sync(&local)
+        .await
+        .expect("second sync must not error");
+    assert_eq!(
+        again.pushed, 0,
+        "push watermark stuck behind the rejected event"
+    );
 }

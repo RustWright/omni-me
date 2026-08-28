@@ -15,8 +15,8 @@ use std::sync::Arc;
 use crate::llm::{GeminiClient, LlmClient};
 
 use super::{
-    parse_response, prompt_for, response_schema, DocumentExtractor, ExtractionError,
-    ExtractionHint, ExtractionResult,
+    DocumentExtractor, ExtractionError, ExtractionHint, ExtractionResult, parse_response,
+    prompt_for, response_schema,
 };
 
 /// Model id pinned to the POC-validated version. Override via `with_model` if
@@ -157,8 +157,14 @@ mod tests {
         });
         let result = parse_response(raw, "test-model").unwrap();
         assert_eq!(result.postings.len(), 2);
-        assert_eq!(result.postings[0].amount, Decimal::from_str("1234.56").unwrap());
-        assert_eq!(result.postings[1].amount, Decimal::from_str("-10.00").unwrap());
+        assert_eq!(
+            result.postings[0].amount,
+            Decimal::from_str("1234.56").unwrap()
+        );
+        assert_eq!(
+            result.postings[1].amount,
+            Decimal::from_str("-10.00").unwrap()
+        );
     }
 
     #[test]

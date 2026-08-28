@@ -125,7 +125,9 @@ pub fn Button(
         ButtonVariant::Secondary => {
             "bg-obsidian-surface text-obsidian-text border border-obsidian-border/10 hover:bg-white/5"
         }
-        ButtonVariant::Ghost => "text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5",
+        ButtonVariant::Ghost => {
+            "text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5"
+        }
         ButtonVariant::Danger => "bg-error/15 text-error border border-error/30 hover:bg-error/25",
     };
     let width = if full { "w-full" } else { "" };
@@ -168,7 +170,9 @@ pub fn IconButton(
         ButtonVariant::Secondary => {
             "bg-obsidian-surface text-obsidian-text border border-obsidian-border/10 hover:bg-white/5"
         }
-        ButtonVariant::Ghost => "text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5",
+        ButtonVariant::Ghost => {
+            "text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5"
+        }
         ButtonVariant::Danger => "text-error hover:bg-error/15",
     };
     rsx! {

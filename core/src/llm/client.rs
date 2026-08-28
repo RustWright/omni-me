@@ -28,11 +28,7 @@ pub trait LlmClient: Send + Sync {
     async fn complete(&self, prompt: &str) -> Result<String, LlmError>;
 
     /// Generate a structured JSON completion conforming to the given JSON Schema.
-    async fn complete_json(
-        &self,
-        prompt: &str,
-        schema: &Value,
-    ) -> Result<Value, LlmError>;
+    async fn complete_json(&self, prompt: &str, schema: &Value) -> Result<Value, LlmError>;
 
     /// Generate a completion that may include tool calls.
     async fn complete_with_tools(

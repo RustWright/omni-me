@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
-use crate::db::Database;
 use super::types::{EventType, TransactionRecordedPayload};
+use crate::db::Database;
 
 /// Error type for event store and projection operations.
 #[derive(Debug, thiserror::Error)]
@@ -198,7 +198,10 @@ impl SurrealEventStore {
 #[async_trait]
 impl EventStore for SurrealEventStore {
     async fn append(&self, event: NewEvent) -> Result<Event, EventError> {
-        let id = event.id.clone().unwrap_or_else(|| ulid::Ulid::new().to_string());
+        let id = event
+            .id
+            .clone()
+            .unwrap_or_else(|| ulid::Ulid::new().to_string());
         let ts_str = event.timestamp.to_rfc3339();
 
         // INSERT IGNORE silently skips if the record already exists (idempotent for sync).
@@ -220,8 +223,7 @@ impl EventStore for SurrealEventStore {
             .bind(("timestamp", ts_str))
             .bind(("device_id", event.device_id.clone()))
             .bind(("payload", event.payload.clone()))
-            .await
-?;
+            .await?;
 
         Ok(Event {
             id,
@@ -244,7 +246,10 @@ impl EventStore for SurrealEventStore {
         let mut result_events = Vec::with_capacity(events.len());
 
         for (i, event) in events.iter().enumerate() {
-            let id = event.id.clone().unwrap_or_else(|| ulid::Ulid::new().to_string());
+            let id = event
+                .id
+                .clone()
+                .unwrap_or_else(|| ulid::Ulid::new().to_string());
             query_parts.push(format!(
                 "INSERT INTO events {{
                     id: type::record('events', $id_{i}),
@@ -275,8 +280,14 @@ impl EventStore for SurrealEventStore {
             query = query
                 .bind((format!("id_{i}"), result_event.id.clone()))
                 .bind((format!("event_type_{i}"), result_event.event_type.clone()))
-                .bind((format!("aggregate_id_{i}"), result_event.aggregate_id.clone()))
-                .bind((format!("timestamp_{i}"), result_event.timestamp.to_rfc3339()))
+                .bind((
+                    format!("aggregate_id_{i}"),
+                    result_event.aggregate_id.clone(),
+                ))
+                .bind((
+                    format!("timestamp_{i}"),
+                    result_event.timestamp.to_rfc3339(),
+                ))
                 .bind((format!("device_id_{i}"), result_event.device_id.clone()))
                 .bind((format!("payload_{i}"), events[i].payload.clone()));
         }
@@ -320,12 +331,9 @@ impl EventStore for SurrealEventStore {
             .query(query)
             .bind(("since", since_str))
             .bind(("exclude_device", exclude))
-            .await
-?;
+            .await?;
 
-        let rows: Vec<EventRow> = response
-            .take(0)
-?;
+        let rows: Vec<EventRow> = response.take(0)?;
 
         rows.into_iter().map(Event::try_from).collect()
     }
@@ -351,12 +359,9 @@ impl EventStore for SurrealEventStore {
             )
             .bind(("since", since_str))
             .bind(("device", device))
-            .await
-?;
+            .await?;
 
-        let rows: Vec<EventRow> = response
-            .take(0)
-?;
+        let rows: Vec<EventRow> = response.take(0)?;
 
         rows.into_iter().map(Event::try_from).collect()
     }
@@ -376,12 +381,9 @@ impl EventStore for SurrealEventStore {
                  ORDER BY timestamp ASC, eid ASC",
             )
             .bind(("aggregate_id", agg_id))
-            .await
-?;
+            .await?;
 
-        let rows: Vec<EventRow> = response
-            .take(0)
-?;
+        let rows: Vec<EventRow> = response.take(0)?;
 
         rows.into_iter().map(Event::try_from).collect()
     }

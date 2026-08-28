@@ -45,7 +45,10 @@ pub async fn spawn_sources(
 ) {
     for source in sources {
         if paused.contains(source.name()) {
-            tracing::info!(source = source.name(), "auto-import source is paused — registering without spawning");
+            tracing::info!(
+                source = source.name(),
+                "auto-import source is paused — registering without spawning"
+            );
             // Register status-only (task = None), then flag it paused so the
             // snapshot shows the off state and `resume` can later re-arm it. The
             // interval still reflects the source's own override for the UI.

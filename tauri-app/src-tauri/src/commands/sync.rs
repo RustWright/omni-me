@@ -25,17 +25,28 @@ pub async fn trigger_sync(state: State<'_, AppState>) -> Result<SyncCommandResul
     // Best-effort: a single bad remote event is logged and skipped, never aborts
     // the batch (the events are durably stored, so a rebuild always recovers).
     if !result.pulled_events.is_empty() {
-        tracing::info!(pulled = result.pulled, "applying pulled events to projections");
+        tracing::info!(
+            pulled = result.pulled,
+            "applying pulled events to projections"
+        );
         let failed = state
             .projections
             .apply_events_resilient(&result.pulled_events)
             .await;
         if failed > 0 {
-            tracing::warn!(failed, pulled = result.pulled, "some pulled events failed to project");
+            tracing::warn!(
+                failed,
+                pulled = result.pulled,
+                "some pulled events failed to project"
+            );
         }
     }
 
-    tracing::info!(pulled = result.pulled, pushed = result.pushed, "sync complete");
+    tracing::info!(
+        pulled = result.pulled,
+        pushed = result.pushed,
+        "sync complete"
+    );
 
     Ok(SyncCommandResult {
         pulled: result.pulled,

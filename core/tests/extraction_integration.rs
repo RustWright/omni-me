@@ -24,8 +24,8 @@
 use std::path::PathBuf;
 
 use omni_me_core::extraction::{
-    gemini::GeminiExtractor, verify, DocumentExtractor, ExtractionHint,
-    DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, ExtractionHint, gemini::GeminiExtractor,
+    verify,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -37,8 +37,8 @@ fn fixture_path(name: &str) -> PathBuf {
 }
 
 fn make_extractor() -> GeminiExtractor {
-    let key = std::env::var("GEMINI_API_KEY")
-        .expect("GEMINI_API_KEY must be set for integration tests");
+    let key =
+        std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set for integration tests");
     GeminiExtractor::new(key)
 }
 
@@ -70,14 +70,25 @@ async fn receipt_extraction_passes_verification() {
     let result = extract_fixture("receipt.jpg", "image/jpeg", ExtractionHint::Receipt).await;
 
     // Sanity asserts — extraction returned *something*.
-    assert!(!result.postings.is_empty(), "receipt should yield at least one posting");
+    assert!(
+        !result.postings.is_empty(),
+        "receipt should yield at least one posting"
+    );
     assert!(result.date.is_some(), "receipt should yield a date");
 
     // Run the verifier; receipts should pass cleanly when extraction is good.
-    let report = verify(&result, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
+    let report = verify(
+        &result,
+        ExtractionHint::Receipt,
+        DEFAULT_CONFIDENCE_THRESHOLD,
+    );
     eprintln!("receipt verification: {report:?}");
-    eprintln!("receipt result: postings={}, total={:?}, confidence={}",
-        result.postings.len(), result.total, result.confidence);
+    eprintln!(
+        "receipt result: postings={}, total={:?}, confidence={}",
+        result.postings.len(),
+        result.total,
+        result.confidence
+    );
 
     // Don't strict-assert on needs_manual_review — the model's calibration
     // varies. Just print so a human running this can eyeball.
@@ -95,11 +106,20 @@ async fn brokerage_statement_extraction_yields_positions() {
         ExtractionHint::BrokerageStatement,
     )
     .await;
-    assert!(!result.postings.is_empty(), "brokerage should yield positions");
-    eprintln!("brokerage result: postings={}, confidence={}",
-        result.postings.len(), result.confidence);
+    assert!(
+        !result.postings.is_empty(),
+        "brokerage should yield positions"
+    );
+    eprintln!(
+        "brokerage result: postings={}, confidence={}",
+        result.postings.len(),
+        result.confidence
+    );
     for p in &result.postings {
-        eprintln!("  {:?} {} {} ({:?})", p.account_hint, p.amount, p.commodity, p.line_label);
+        eprintln!(
+            "  {:?} {} {} ({:?})",
+            p.account_hint, p.amount, p.commodity, p.line_label
+        );
     }
 }
 
@@ -111,8 +131,16 @@ async fn paystub_extraction_includes_gross_and_deductions() {
         result.postings.len() >= 2,
         "paystub should have at least gross + one deduction"
     );
-    let positive_count = result.postings.iter().filter(|p| p.amount.is_sign_positive()).count();
-    let negative_count = result.postings.iter().filter(|p| p.amount.is_sign_negative()).count();
+    let positive_count = result
+        .postings
+        .iter()
+        .filter(|p| p.amount.is_sign_positive())
+        .count();
+    let negative_count = result
+        .postings
+        .iter()
+        .filter(|p| p.amount.is_sign_negative())
+        .count();
     eprintln!("paystub: {positive_count} positive, {negative_count} negative postings");
     assert!(
         positive_count >= 1 && negative_count >= 1,
@@ -124,7 +152,10 @@ async fn paystub_extraction_includes_gross_and_deductions() {
 #[ignore = "hits real Gemini API; requires GEMINI_API_KEY + fixture files"]
 async fn email_body_extraction_handles_plain_text() {
     let result = extract_fixture("email.txt", "text/plain", ExtractionHint::EmailBody).await;
-    assert!(!result.postings.is_empty(), "email body should yield at least one posting");
+    assert!(
+        !result.postings.is_empty(),
+        "email body should yield at least one posting"
+    );
     eprintln!("email result: {result:?}");
 }
 

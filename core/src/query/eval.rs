@@ -2,7 +2,9 @@
 //! arrives as a [`QueryTxn`] slice, so the same code path serves the host-side
 //! Tauri command, workspace tests, and a future WASM demo island.
 
-use super::ast::{AccountMatch, CmpOp, Combinator, DateRange, Predicate, Query, QueryTxn, TagQuery};
+use super::ast::{
+    AccountMatch, CmpOp, Combinator, DateRange, Predicate, Query, QueryTxn, TagQuery,
+};
 use crate::events::Tag;
 use rust_decimal::Decimal;
 
@@ -185,7 +187,12 @@ mod tests {
                 "Food stamps credit",
                 &[],
                 vec![
-                    posting("Income:FoodStamps", "USD", "200.00", vec![Tag::Bare("gov".into())]),
+                    posting(
+                        "Income:FoodStamps",
+                        "USD",
+                        "200.00",
+                        vec![Tag::Bare("gov".into())],
+                    ),
                     posting("Assets:Bank", "USD", "-200.00", vec![]),
                 ],
             ),
@@ -220,7 +227,11 @@ mod tests {
     fn account_match_is_case_insensitive() {
         let f = fixtures();
         assert_eq!(run_dsl("account:expenses:food", &f).len(), 2);
-        assert!(account_matches("EXPENSES", AccountMatch::Subtree, "Expenses:Food"));
+        assert!(account_matches(
+            "EXPENSES",
+            AccountMatch::Subtree,
+            "Expenses:Food"
+        ));
     }
 
     #[test]
@@ -228,7 +239,11 @@ mod tests {
         let f = fixtures();
         for hit in run_dsl("account:Expenses:Food", &f) {
             assert!(hit.postings.iter().all(|p| p.account != "Expenses:Foodie"));
-            assert!(hit.postings.iter().all(|p| p.account != "Income:FoodStamps"));
+            assert!(
+                hit.postings
+                    .iter()
+                    .all(|p| p.account != "Income:FoodStamps")
+            );
         }
     }
 

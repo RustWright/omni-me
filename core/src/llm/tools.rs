@@ -132,7 +132,12 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["create_tag", "extract_task", "extract_date", "extract_expense"]
+            vec![
+                "create_tag",
+                "extract_task",
+                "extract_date",
+                "extract_expense"
+            ]
         );
     }
 
@@ -164,5 +169,4 @@ mod tests {
         let enum_vals = priority["enum"].as_array().unwrap();
         assert_eq!(enum_vals.len(), 3);
     }
-
 }

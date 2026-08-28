@@ -46,13 +46,7 @@ pub async fn update_journal_entry(
         "journal_id": journal_id,
         "raw_text": raw_text,
     });
-    append_and_apply(
-        &state,
-        EventType::JournalEntryUpdated,
-        journal_id,
-        payload,
-    )
-    .await
+    append_and_apply(&state, EventType::JournalEntryUpdated, journal_id, payload).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -77,13 +71,7 @@ pub async fn reopen_journal_entry(
 ) -> Result<(), String> {
     tracing::info!(journal_id = %journal_id, "reopen_journal_entry");
     let payload = serde_json::json!({ "journal_id": journal_id });
-    append_and_apply(
-        &state,
-        EventType::JournalEntryReopened,
-        journal_id,
-        payload,
-    )
-    .await
+    append_and_apply(&state, EventType::JournalEntryReopened, journal_id, payload).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -173,9 +161,7 @@ pub async fn get_generic_note(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn list_generic_notes(
-    state: State<'_, AppState>,
-) -> Result<Vec<GenericNoteRow>, String> {
+pub async fn list_generic_notes(state: State<'_, AppState>) -> Result<Vec<GenericNoteRow>, String> {
     queries::list_generic_notes(&state.db, 100, 0)
         .await
         .map_err(|e| e.to_string())
@@ -246,10 +232,7 @@ pub async fn process_note_llm(
     Ok(result)
 }
 
-async fn resolve_raw_text(
-    state: &AppState,
-    aggregate_id: &str,
-) -> Result<Option<String>, String> {
+async fn resolve_raw_text(state: &AppState, aggregate_id: &str) -> Result<Option<String>, String> {
     if let Some(journal) = queries::get_journal_by_id(&state.db, aggregate_id)
         .await
         .map_err(|e| e.to_string())?
@@ -278,16 +261,27 @@ async fn sync_back_after_llm(
     })?;
 
     if !result.pulled_events.is_empty() {
-        tracing::info!(pulled = result.pulled, "applying pulled events to projections");
+        tracing::info!(
+            pulled = result.pulled,
+            "applying pulled events to projections"
+        );
         let failed = state
             .projections
             .apply_events_resilient(&result.pulled_events)
             .await;
         if failed > 0 {
-            tracing::warn!(failed, pulled = result.pulled, "some pulled events failed to project after llm sync");
+            tracing::warn!(
+                failed,
+                pulled = result.pulled,
+                "some pulled events failed to project after llm sync"
+            );
         }
     }
 
-    tracing::info!(pulled = result.pulled, pushed = result.pushed, "sync complete");
+    tracing::info!(
+        pulled = result.pulled,
+        pushed = result.pushed,
+        "sync complete"
+    );
     Ok(())
 }

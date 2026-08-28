@@ -13,8 +13,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use chrono::Utc;
-use omni_me_core::db::queries;
 use omni_me_core::db::Database;
+use omni_me_core::db::queries;
 use omni_me_core::events::{EventStore, EventType, NewEvent, ProjectionRunner, SurrealEventStore};
 use omni_me_core::recurring;
 use omni_me_core::sync::PushDebouncer;
@@ -57,8 +57,8 @@ async fn run_one_scan(
     projections: &ProjectionRunner,
     device_id: &str,
 ) -> Result<usize, String> {
-    let cutoff = (chrono::Utc::now().date_naive() - chrono::Duration::days(LOOKBACK_DAYS))
-        .to_string();
+    let cutoff =
+        (chrono::Utc::now().date_naive() - chrono::Duration::days(LOOKBACK_DAYS)).to_string();
     let txn_rows = queries::list_transactions_since(db, &cutoff)
         .await
         .map_err(|e| e.to_string())?;
@@ -70,8 +70,7 @@ async fn run_one_scan(
     let existing_rows = queries::list_recurring_patterns(db, None)
         .await
         .map_err(|e| e.to_string())?;
-    let existing_ids: HashSet<String> =
-        existing_rows.iter().map(|r| r.id.clone()).collect();
+    let existing_ids: HashSet<String> = existing_rows.iter().map(|r| r.id.clone()).collect();
 
     let mut emitted = 0usize;
     for p in patterns {

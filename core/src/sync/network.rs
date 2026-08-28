@@ -91,7 +91,9 @@ impl NetworkMonitor {
             state: Mutex::new(NetworkState::Unknown),
             shutdown: tokio::sync::Notify::new(),
         });
-        let monitor = Self { inner: inner.clone() };
+        let monitor = Self {
+            inner: inner.clone(),
+        };
         let handle = tokio::spawn(probe_loop(inner));
         (monitor, handle)
     }
@@ -179,11 +181,8 @@ mod tests {
             }
         });
 
-        let (monitor, _h) = NetworkMonitor::spawn_with(
-            addr,
-            Duration::from_secs(60),
-            Duration::from_millis(500),
-        );
+        let (monitor, _h) =
+            NetworkMonitor::spawn_with(addr, Duration::from_secs(60), Duration::from_millis(500));
         let mut sub = monitor.subscribe();
 
         // Allow the initial probe to run.

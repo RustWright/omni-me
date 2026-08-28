@@ -5,8 +5,8 @@ use chrono::{Datelike, NaiveDate};
 use chrono_tz::Tz;
 use dioxus::prelude::*;
 use futures::StreamExt;
-use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 
 use crate::autosave::{self, SaveIndicator, SaveState};
 use crate::bridge;
@@ -17,10 +17,10 @@ use crate::components::primitives::{
     Banner, BannerKind, Button, ButtonSize, ButtonVariant, IconButton,
 };
 use crate::components::tag_editor::TagChipEditor;
-use crate::continuity::{session_is_recoverable, use_continuity, ContinuityKey, EditSession};
+use crate::continuity::{ContinuityKey, EditSession, session_is_recoverable, use_continuity};
 use crate::journal_template;
-use crate::note_frontmatter::{serialize_journal, split_journal, JournalProps};
-use crate::timer::{sleep_ms, AUTOSAVE_DEBOUNCE_MS};
+use crate::note_frontmatter::{JournalProps, serialize_journal, split_journal};
+use crate::timer::{AUTOSAVE_DEBOUNCE_MS, sleep_ms};
 use crate::types::JournalEntryItem;
 use crate::user_date::UserDate;
 
@@ -58,11 +58,21 @@ fn is_timestamp_token_inner(inner: &str) -> bool {
         return false;
     }
     let d = |i: usize| b[i].is_ascii_digit();
-    d(0) && d(1) && d(2) && d(3) && b[4] == b'-'
-        && d(5) && d(6) && b[7] == b'-'
-        && d(8) && d(9) && b[10] == b' '
-        && d(11) && d(12) && b[13] == b':'
-        && d(14) && d(15)
+    d(0) && d(1)
+        && d(2)
+        && d(3)
+        && b[4] == b'-'
+        && d(5)
+        && d(6)
+        && b[7] == b'-'
+        && d(8)
+        && d(9)
+        && b[10] == b' '
+        && d(11)
+        && d(12)
+        && b[13] == b':'
+        && d(14)
+        && d(15)
         && (b.len() == 16 || b[16] == b' ')
 }
 
@@ -88,7 +98,10 @@ fn strip_line_token(line: &str) -> &str {
 /// stamped line, never writing, so they must not surface in any raw-body
 /// consumer — here, the word/character count.
 fn strip_completion_tokens(body: &str) -> String {
-    body.split('\n').map(strip_line_token).collect::<Vec<_>>().join("\n")
+    body.split('\n')
+        .map(strip_line_token)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Word + character count for a note body (the calendar drawer's footer stats,
@@ -728,7 +741,8 @@ fn DayView(
                 if leaving {
                     let _ = tx.unbounded_send(());
                 }
-            }) as Box<dyn FnMut(web_sys::Event)>))
+            })
+                as Box<dyn FnMut(web_sys::Event)>))
         });
 
         use_effect({
@@ -1266,7 +1280,11 @@ fn CalendarDrawer(
     let month_label = anchor.read().format("%B %Y").to_string();
     let cells = build_month_cells(*anchor.read());
     let word_label = if words == 1 { "word" } else { "words" };
-    let char_label = if chars == 1 { "character" } else { "characters" };
+    let char_label = if chars == 1 {
+        "character"
+    } else {
+        "characters"
+    };
 
     // Scrim + panel are always rendered (class-toggled) so the slide animates.
     let scrim_class = if is_open {
@@ -1495,8 +1513,8 @@ mod tests {
     /// the pin below. Do not silence it by editing the pin alone.
     #[test]
     fn token_regex_in_editor_js_has_not_drifted() {
-        let js_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../assets/js/editor.js");
+        let js_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/js/editor.js");
         let js = std::fs::read_to_string(&js_path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", js_path.display()));
 
@@ -1511,8 +1529,7 @@ mod tests {
             .trim();
 
         assert_eq!(
-            literal,
-            r"/^⟦(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: ([^⟧]+))?⟧/",
+            literal, r"/^⟦(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: ([^⟧]+))?⟧/",
             "editor.js changed the completion-token format. Update \
              is_timestamp_token_inner in this file to match, then update this pin."
         );
@@ -1532,11 +1549,20 @@ mod tests {
     #[test]
     fn strip_line_token_leaves_real_prose_alone() {
         // Real text that merely starts with the bracket is NOT stripped.
-        assert_eq!(strip_line_token("⟦not a timestamp⟧ kept"), "⟦not a timestamp⟧ kept");
+        assert_eq!(
+            strip_line_token("⟦not a timestamp⟧ kept"),
+            "⟦not a timestamp⟧ kept"
+        );
         // Unclosed bracket: left as-is.
-        assert_eq!(strip_line_token("⟦2026-08-24 07:12 EDT no close"), "⟦2026-08-24 07:12 EDT no close");
+        assert_eq!(
+            strip_line_token("⟦2026-08-24 07:12 EDT no close"),
+            "⟦2026-08-24 07:12 EDT no close"
+        );
         // A well-formed token is removed, prose preserved verbatim.
-        assert_eq!(strip_line_token("⟦2026-08-24 07:12 EDT⟧the text"), "the text");
+        assert_eq!(
+            strip_line_token("⟦2026-08-24 07:12 EDT⟧the text"),
+            "the text"
+        );
         // No token at all.
         assert_eq!(strip_line_token("just prose"), "just prose");
     }

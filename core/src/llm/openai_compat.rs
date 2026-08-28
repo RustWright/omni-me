@@ -13,7 +13,7 @@
 //! vision support, so it needs its own graceful-degradation handling.
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::client::{LlmClient, LlmError};
 use super::tools::{LlmResponse, ToolCall, ToolDef};
@@ -123,11 +123,7 @@ impl OpenAiCompatClient {
                 Some(ToolCall { name, arguments })
             })
             .collect();
-        if calls.is_empty() {
-            None
-        } else {
-            Some(calls)
-        }
+        if calls.is_empty() { None } else { Some(calls) }
     }
 }
 
@@ -206,7 +202,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(chat_text_response("Hello world")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(chat_text_response("Hello world")),
+            )
             .mount(&server)
             .await;
 
@@ -273,7 +271,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(chat_text_response("just prose")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(chat_text_response("just prose")),
+            )
             .mount(&server)
             .await;
 

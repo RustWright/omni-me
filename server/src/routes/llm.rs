@@ -10,7 +10,7 @@
 //! Same unauthenticated MVP posture as the rest of the server (behind Tailscale,
 //! per [[project-auth-deferred]]).
 
-use axum::{http::StatusCode, routing::get, Json, Router};
+use axum::{Json, Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 
 use omni_me_core::credentials::{self, LlmProviderConfig};

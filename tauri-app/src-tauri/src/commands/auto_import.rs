@@ -22,8 +22,8 @@ use tauri::State;
 
 use omni_me_core::db::queries;
 use omni_me_core::events::{
-    AutoImportBatchCommittedPayload, AutoImportBatchDismissedPayload, DraftTransaction,
-    EventType, ExchangeRateRecordedPayload, NewEvent, TransactionRecordedPayload,
+    AutoImportBatchCommittedPayload, AutoImportBatchDismissedPayload, DraftTransaction, EventType,
+    ExchangeRateRecordedPayload, NewEvent, TransactionRecordedPayload,
 };
 
 use crate::AppState;
@@ -107,8 +107,7 @@ pub async fn trigger_auto_import_tick(
     if !status.is_success() {
         return Err(format!("server returned {status}: {body}"));
     }
-    serde_json::from_str::<TickResponse>(&body)
-        .map_err(|e| format!("auto-import tick decode: {e}"))
+    serde_json::from_str::<TickResponse>(&body).map_err(|e| format!("auto-import tick decode: {e}"))
 }
 
 /// Drive interactive re-auth for one source by relaying a one-time code to the
@@ -133,15 +132,11 @@ pub async fn reauth_source(
         .await
         .map_err(|e| format!("reauth request: {e}"))?;
     let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| format!("reauth body: {e}"))?;
+    let body = resp.text().await.map_err(|e| format!("reauth body: {e}"))?;
     if !status.is_success() {
         return Err(format!("server returned {status}: {body}"));
     }
-    serde_json::from_str::<serde_json::Value>(&body)
-        .map_err(|e| format!("reauth decode: {e}"))
+    serde_json::from_str::<serde_json::Value>(&body).map_err(|e| format!("reauth decode: {e}"))
 }
 
 /// Pause or resume a source's background polling (runtime off-switch, #367).
@@ -229,8 +224,7 @@ pub async fn add_source_config(
     if !status.is_success() {
         return Err(format!("server returned {status}: {body}"));
     }
-    serde_json::from_str::<serde_json::Value>(&body)
-        .map_err(|e| format!("add source decode: {e}"))
+    serde_json::from_str::<serde_json::Value>(&body).map_err(|e| format!("add source decode: {e}"))
 }
 
 /// `DELETE /auto_import/sources/{name}` — remove a definition.
@@ -336,8 +330,9 @@ pub async fn commit_batch(
         ));
     }
 
-    let drafts: Vec<DraftTransaction> = serde_json::from_value(row.draft_postings.into_json_value())
-        .map_err(|e| format!("decode draft_postings: {e}"))?;
+    let drafts: Vec<DraftTransaction> =
+        serde_json::from_value(row.draft_postings.into_json_value())
+            .map_err(|e| format!("decode draft_postings: {e}"))?;
 
     // fx_rate ↔ fx_commodity must both be Some or both None (the payload's
     // serde contract enforces this on the wire, but commands take String/String

@@ -117,5 +117,4 @@ mod tests {
 
         assert_eq!(count, Some(1));
     }
-
 }

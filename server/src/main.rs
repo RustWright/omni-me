@@ -10,7 +10,7 @@
 //! calls the same [`omni_me_server::run`].
 
 use omni_me_core::auto_import::config::{self, SourcesConfig};
-use omni_me_server::{run, RunConfig, SourceCtx, SourceFuture};
+use omni_me_server::{RunConfig, SourceCtx, SourceFuture, run};
 
 /// Config-driven source builder. Named (not an inline closure) so its explicit
 /// `SourceFuture` return type gives the `Box::pin(async {…})` a coercion site

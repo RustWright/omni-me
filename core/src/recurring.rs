@@ -235,26 +235,46 @@ mod tests {
     fn posting_in_pattern_mirrors_detector_grouping() {
         // Exact account + commodity + amount (with 2dp normalization) matches.
         assert!(posting_in_pattern(
-            "Expenses:Food:Coffee", "4.500", "CAD",
-            "Expenses:Food:Coffee", "4.50", "CAD"
+            "Expenses:Food:Coffee",
+            "4.500",
+            "CAD",
+            "Expenses:Food:Coffee",
+            "4.50",
+            "CAD"
         ));
         // Different account, amount, or commodity all reject.
         assert!(!posting_in_pattern(
-            "Expenses:Food:Groceries", "4.50", "CAD",
-            "Expenses:Food:Coffee", "4.50", "CAD"
+            "Expenses:Food:Groceries",
+            "4.50",
+            "CAD",
+            "Expenses:Food:Coffee",
+            "4.50",
+            "CAD"
         ));
         assert!(!posting_in_pattern(
-            "Expenses:Food:Coffee", "5.00", "CAD",
-            "Expenses:Food:Coffee", "4.50", "CAD"
+            "Expenses:Food:Coffee",
+            "5.00",
+            "CAD",
+            "Expenses:Food:Coffee",
+            "4.50",
+            "CAD"
         ));
         assert!(!posting_in_pattern(
-            "Expenses:Food:Coffee", "4.50", "USD",
-            "Expenses:Food:Coffee", "4.50", "CAD"
+            "Expenses:Food:Coffee",
+            "4.50",
+            "USD",
+            "Expenses:Food:Coffee",
+            "4.50",
+            "CAD"
         ));
         // Unparseable amount rejects rather than panics.
         assert!(!posting_in_pattern(
-            "Expenses:Food:Coffee", "n/a", "CAD",
-            "Expenses:Food:Coffee", "4.50", "CAD"
+            "Expenses:Food:Coffee",
+            "n/a",
+            "CAD",
+            "Expenses:Food:Coffee",
+            "4.50",
+            "CAD"
         ));
     }
 

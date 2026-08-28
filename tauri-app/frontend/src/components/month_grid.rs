@@ -80,8 +80,14 @@ mod tests {
     #[test]
     fn month_stepping_wraps_years() {
         let jan = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
-        assert_eq!(prev_month(jan), NaiveDate::from_ymd_opt(2025, 12, 1).unwrap());
+        assert_eq!(
+            prev_month(jan),
+            NaiveDate::from_ymd_opt(2025, 12, 1).unwrap()
+        );
         let dec = NaiveDate::from_ymd_opt(2026, 12, 1).unwrap();
-        assert_eq!(next_month(dec), NaiveDate::from_ymd_opt(2027, 1, 1).unwrap());
+        assert_eq!(
+            next_month(dec),
+            NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+        );
     }
 }

@@ -51,8 +51,8 @@ pub async fn take_pending_share_intent(
     let meta_raw = tokio::fs::read_to_string(&meta_path)
         .await
         .map_err(|e| format!("meta read: {e}"))?;
-    let meta: serde_json::Value = serde_json::from_str(&meta_raw)
-        .map_err(|e| format!("meta parse: {e}"))?;
+    let meta: serde_json::Value =
+        serde_json::from_str(&meta_raw).map_err(|e| format!("meta parse: {e}"))?;
     let mime = meta
         .get("mime")
         .and_then(|v| v.as_str())

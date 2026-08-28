@@ -21,9 +21,7 @@ pub async fn update_base_currency(
 ) -> Result<(), String> {
     let code = currency.trim().to_uppercase();
     if code.len() != 3 || !code.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Err(format!(
-            "'{currency}' is not a 3-letter ISO currency code"
-        ));
+        return Err(format!("'{currency}' is not a 3-letter ISO currency code"));
     }
     tracing::info!(base_currency = %code, "update_base_currency");
     let path = state.app_data_dir.join(crate::BASE_CURRENCY_FILE);

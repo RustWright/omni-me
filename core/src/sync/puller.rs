@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{Notify, broadcast};
 use tokio::task::JoinHandle;
 
 use crate::db::Database;
@@ -70,7 +70,13 @@ impl PullScheduler {
         db: Database,
         projections: ProjectionRunner,
     ) -> (Self, JoinHandle<()>) {
-        Self::spawn_with(client, db, projections, DEFAULT_PULL_INTERVAL, DEFAULT_PULL_WARMUP)
+        Self::spawn_with(
+            client,
+            db,
+            projections,
+            DEFAULT_PULL_INTERVAL,
+            DEFAULT_PULL_WARMUP,
+        )
     }
 
     /// Spawn with a custom interval + warm-up (tests use tiny values).
@@ -92,7 +98,9 @@ impl PullScheduler {
             interval,
             warmup,
         });
-        let scheduler = Self { inner: inner.clone() };
+        let scheduler = Self {
+            inner: inner.clone(),
+        };
         let handle = tokio::spawn(run_loop(inner));
         (scheduler, handle)
     }
@@ -138,7 +146,11 @@ async fn pull_once(inner: &Arc<Inner>) {
                 .apply_events_resilient(&outcome.pulled_events)
                 .await;
             if failed > 0 {
-                tracing::warn!(failed, pulled = outcome.pulled, "auto-pull: some events failed to project");
+                tracing::warn!(
+                    failed,
+                    pulled = outcome.pulled,
+                    "auto-pull: some events failed to project"
+                );
             } else {
                 tracing::info!(pulled = outcome.pulled, "auto-pull applied");
             }
@@ -153,7 +165,9 @@ async fn pull_once(inner: &Arc<Inner>) {
         Err(e) => {
             // Offline/unreachable is the common case — keep it quiet, retry next tick.
             tracing::debug!(error = %e, "auto-pull failed (retry next tick)");
-            let _ = inner.outcomes.send(PullEvent::Failed { error: e.to_string() });
+            let _ = inner.outcomes.send(PullEvent::Failed {
+                error: e.to_string(),
+            });
         }
     }
 }
@@ -243,7 +257,10 @@ mod tests {
                 }
             }
         }
-        assert!(failures >= 2, "loop keeps retrying after failures (saw {failures})");
+        assert!(
+            failures >= 2,
+            "loop keeps retrying after failures (saw {failures})"
+        );
         sched.shutdown();
     }
 

@@ -22,12 +22,11 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::auto_import::csv::{parse_amount, stable_hash};
 use crate::accounts::UNMATCHED_ACCOUNT;
+use crate::auto_import::csv::{parse_amount, stable_hash};
 use crate::auto_import::to_proposed_event;
 use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary};
 use crate::events::{DraftTransaction, EventStore, Posting, ProjectionRunner};
-
 
 /// Dotted-path field map: each value addresses a field inside one record (e.g.
 /// `"date"`, `"posted.amount"`). The empty string addresses the record itself.

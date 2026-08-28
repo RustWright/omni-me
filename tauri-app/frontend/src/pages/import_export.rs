@@ -42,7 +42,10 @@ enum ExportPhase {
     /// notes with no warning at all.
     Confirm(crate::types::ExportPreview),
     Exporting,
-    Done { written: usize, errors: usize },
+    Done {
+        written: usize,
+        errors: usize,
+    },
     Error(String),
 }
 
@@ -292,9 +295,15 @@ fn ImportPreviewRowItem(
     };
 
     let kind_badge_class = match row.kind.as_str() {
-        "journal" => "px-2 py-0.5 text-[10px] font-bold rounded bg-obsidian-accent/15 text-obsidian-accent border border-obsidian-accent/30 uppercase tracking-wide",
-        "generic" => "px-2 py-0.5 text-[10px] font-bold rounded bg-white/5 text-obsidian-text border border-white/10 uppercase tracking-wide",
-        _ => "px-2 py-0.5 text-[10px] font-bold rounded bg-red-900/30 text-red-400 border border-red-900/50 uppercase tracking-wide",
+        "journal" => {
+            "px-2 py-0.5 text-[10px] font-bold rounded bg-obsidian-accent/15 text-obsidian-accent border border-obsidian-accent/30 uppercase tracking-wide"
+        }
+        "generic" => {
+            "px-2 py-0.5 text-[10px] font-bold rounded bg-white/5 text-obsidian-text border border-white/10 uppercase tracking-wide"
+        }
+        _ => {
+            "px-2 py-0.5 text-[10px] font-bold rounded bg-red-900/30 text-red-400 border border-red-900/50 uppercase tracking-wide"
+        }
     };
 
     rsx! {

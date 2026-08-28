@@ -1,9 +1,4 @@
-use axum::{
-    Json,
-    Router,
-    extract::State,
-    routing::post,
-};
+use axum::{Json, Router, extract::State, routing::post};
 
 use axum::http::StatusCode;
 use omni_me_core::events::{EventStore, EventType, SurrealEventStore, validate_payload};
@@ -27,18 +22,22 @@ async fn push_handler(
     if body.events.len() > MAX_EVENTS_PER_PUSH {
         return Err((
             StatusCode::BAD_REQUEST,
-            format!("too many events: {} (max {})", body.events.len(), MAX_EVENTS_PER_PUSH),
+            format!(
+                "too many events: {} (max {})",
+                body.events.len(),
+                MAX_EVENTS_PER_PUSH
+            ),
         ));
     }
 
     // Validate all events before appending any
     for (i, event) in body.events.iter().enumerate() {
-        let event_type: EventType = event.event_type.parse().map_err(|e: String| {
-            (StatusCode::BAD_REQUEST, format!("event[{i}]: {e}"))
-        })?;
-        validate_payload(&event_type, &event.payload).map_err(|e| {
-            (StatusCode::BAD_REQUEST, format!("event[{i}]: {e}"))
-        })?;
+        let event_type: EventType = event
+            .event_type
+            .parse()
+            .map_err(|e: String| (StatusCode::BAD_REQUEST, format!("event[{i}]: {e}")))?;
+        validate_payload(&event_type, &event.payload)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("event[{i}]: {e}")))?;
     }
 
     let store = SurrealEventStore::new((*state.db).clone());
@@ -46,7 +45,10 @@ async fn push_handler(
 
     store.append_batch(body.events).await.map_err(|e| {
         tracing::warn!("failed to append events during push: {e}");
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to store events: {e}"))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to store events: {e}"),
+        )
     })?;
 
     Ok(Json(PushResponse { count }))

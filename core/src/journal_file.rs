@@ -256,8 +256,8 @@ impl Projection for JournalFile {
                     .await
             }
             "account_added" => {
-                let payload: AccountAddedPayload =
-                    serde_json::from_value(event.payload.clone()).map_err(|e| {
+                let payload: AccountAddedPayload = serde_json::from_value(event.payload.clone())
+                    .map_err(|e| {
                         EventError::Validation(format!("bad account_added payload: {e}"))
                     })?;
                 self.upsert_account(&payload.account, &render_account(&payload))
@@ -268,7 +268,8 @@ impl Projection for JournalFile {
                     serde_json::from_value(event.payload.clone()).map_err(|e| {
                         EventError::Validation(format!("bad exchange_rate_recorded payload: {e}"))
                     })?;
-                self.append_exchange_rate(&render_exchange_rate(&payload)).await
+                self.append_exchange_rate(&render_exchange_rate(&payload))
+                    .await
             }
             "transaction_updated" => {
                 let txn_id = event.payload["txn_id"]
@@ -545,7 +546,10 @@ fn find_account_block(content: &str, account: &str) -> Option<std::ops::Range<us
     let mut end_idx = start_idx + 1;
     // Indented continuation lines belong to the directive.
     while end_idx < lines.len() {
-        let text = lines[end_idx].1.strip_suffix('\n').unwrap_or(lines[end_idx].1);
+        let text = lines[end_idx]
+            .1
+            .strip_suffix('\n')
+            .unwrap_or(lines[end_idx].1);
         if text.starts_with(' ') || text.starts_with('\t') {
             end_idx += 1;
         } else {
@@ -555,7 +559,10 @@ fn find_account_block(content: &str, account: &str) -> Option<std::ops::Range<us
     // Absorb one trailing blank-line separator so the replacement's own trailing
     // blank line doesn't double up.
     if end_idx < lines.len() {
-        let text = lines[end_idx].1.strip_suffix('\n').unwrap_or(lines[end_idx].1);
+        let text = lines[end_idx]
+            .1
+            .strip_suffix('\n')
+            .unwrap_or(lines[end_idx].1);
         if text.trim().is_empty() {
             end_idx += 1;
         }
@@ -569,7 +576,10 @@ fn find_account_block(content: &str, account: &str) -> Option<std::ops::Range<us
 /// must be followed by whitespace or end-of-line so a shorter name can't match a
 /// longer account (`Assets:Cash` vs `Assets:Cash:USD`).
 fn is_account_directive(line: &str, account: &str) -> bool {
-    match line.strip_prefix("account ").and_then(|r| r.strip_prefix(account)) {
+    match line
+        .strip_prefix("account ")
+        .and_then(|r| r.strip_prefix(account))
+    {
         Some(after) => after.is_empty() || after.starts_with(char::is_whitespace),
         None => false,
     }
@@ -583,8 +593,9 @@ fn is_account_directive(line: &str, account: &str) -> bool {
 fn render_transaction_from_row(row: &TransactionRow) -> Result<String, EventError> {
     let postings: Vec<Posting> = serde_json::from_value(row.postings.clone().into_json_value())
         .map_err(|e| EventError::Validation(format!("bad postings for {}: {e}", row.id)))?;
-    let date = chrono::NaiveDate::parse_from_str(&row.date, "%Y-%m-%d")
-        .map_err(|e| EventError::Validation(format!("bad date {:?} for {}: {e}", row.date, row.id)))?;
+    let date = chrono::NaiveDate::parse_from_str(&row.date, "%Y-%m-%d").map_err(|e| {
+        EventError::Validation(format!("bad date {:?} for {}: {e}", row.date, row.id))
+    })?;
     let attachment: Option<AttachmentRef> = row
         .attachment
         .as_ref()
@@ -714,7 +725,11 @@ fn line_has_txn_id(line: &str, txn_id: &str) -> bool {
     let mut rest = line;
     while let Some(pos) = rest.find(&needle) {
         let after = &rest[pos + needle.len()..];
-        if after.chars().next().is_none_or(|c| !c.is_ascii_alphanumeric()) {
+        if after
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_ascii_alphanumeric())
+        {
             return true;
         }
         rest = &rest[pos + 1..];
@@ -756,7 +771,10 @@ mod tests {
             txn_id: "01JKTXN".into(),
             date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
             description: "Loblaws grocery run".into(),
-            postings: vec![cad("-87.42"), expense_posting("Expenses:Groceries", "87.42", vec![])],
+            postings: vec![
+                cad("-87.42"),
+                expense_posting("Expenses:Groceries", "87.42", vec![]),
+            ],
             tags: vec![],
             attachment: None,
             statement_source: None,
@@ -778,7 +796,10 @@ mod tests {
             txn_id: "01JKTXN".into(),
             date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
             description: "Loblaws".into(),
-            postings: vec![cad("-5.00"), expense_posting("Expenses:Snacks", "5.00", vec![])],
+            postings: vec![
+                cad("-5.00"),
+                expense_posting("Expenses:Snacks", "5.00", vec![]),
+            ],
             tags: vec![],
             attachment: Some(AttachmentRef {
                 sha256: "abc123".into(),
@@ -818,7 +839,10 @@ mod tests {
             }),
             tags: vec![],
         };
-        assert_eq!(render_posting(&p), "    Assets:Globepay:USD  -10.00 USD @ 1.37 CAD");
+        assert_eq!(
+            render_posting(&p),
+            "    Assets:Globepay:USD  -10.00 USD @ 1.37 CAD"
+        );
     }
 
     #[test]
@@ -866,7 +890,10 @@ account Assets:Northwind:Cash  ; commodity:CAD
             is_liquid: false,
         };
         let rendered = render_account(&a);
-        assert_eq!(rendered, "account Assets:Summit:Chequing  ; commodity:CAD\n\n");
+        assert_eq!(
+            rendered,
+            "account Assets:Summit:Chequing  ; commodity:CAD\n\n"
+        );
     }
 
     // --- account-directive upsert (dedup) ---
@@ -955,7 +982,10 @@ account Assets:Bank  ; commodity:CAD
             "re-emitted AccountAdded must not accrete duplicate directives"
         );
         assert!(contents.contains("note New Name"), "latest override wins");
-        assert!(!contents.contains("note Old Name"), "stale override replaced");
+        assert!(
+            !contents.contains("note Old Name"),
+            "stale override replaced"
+        );
     }
 
     #[tokio::test]
@@ -1001,7 +1031,10 @@ account Assets:Bank  ; commodity:CAD
         let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
         assert_eq!(contents.matches("account Assets:Cash  ").count(), 1);
         assert!(contents.contains("note Wallet"));
-        assert!(contents.contains("2026-05-16 Coffee"), "transaction survives the upsert");
+        assert!(
+            contents.contains("2026-05-16 Coffee"),
+            "transaction survives the upsert"
+        );
     }
 
     // --- Transaction in-place edit (pure block helpers) ---
@@ -1012,7 +1045,10 @@ account Assets:Bank  ; commodity:CAD
             txn_id: txn_id.into(),
             date: NaiveDate::from_ymd_opt(2026, 5, 16).unwrap(),
             description: desc.into(),
-            postings: vec![cad(amount), expense_posting("Expenses:Groceries", positive, vec![])],
+            postings: vec![
+                cad(amount),
+                expense_posting("Expenses:Groceries", positive, vec![]),
+            ],
             tags: vec![],
             attachment: None,
             statement_source: None,
@@ -1028,12 +1064,21 @@ account Assets:Bank  ; commodity:CAD
         );
         let updated = recorded_block("01AAA", "Coffee (large)", "-6.00");
         let out = replace_transaction_block(&journal, "01AAA", &updated);
-        assert!(out.contains("Coffee (large)"), "new render spliced in:\n{out}");
+        assert!(
+            out.contains("Coffee (large)"),
+            "new render spliced in:\n{out}"
+        );
         assert!(!out.contains("2026-05-16 Coffee\n"), "old header replaced");
-        assert!(out.contains("-6.00 CAD") && !out.contains("-5.25 CAD"), "amount swapped");
+        assert!(
+            out.contains("-6.00 CAD") && !out.contains("-5.25 CAD"),
+            "amount swapped"
+        );
         assert!(out.contains("Bagel"), "sibling entry untouched");
         assert_eq!(out.matches("txn_id:01AAA").count(), 1);
-        assert!(out.find("01AAA").unwrap() < out.find("01BBB").unwrap(), "order preserved");
+        assert!(
+            out.find("01AAA").unwrap() < out.find("01BBB").unwrap(),
+            "order preserved"
+        );
     }
 
     #[test]
@@ -1041,7 +1086,10 @@ account Assets:Bank  ; commodity:CAD
         let existing = recorded_block("01AAA", "Coffee", "-5.25");
         let block = recorded_block("01ZZZ", "New entry", "-1.00");
         let out = replace_transaction_block(&existing, "01ZZZ", &block);
-        assert!(out.starts_with(&existing), "existing content preserved verbatim");
+        assert!(
+            out.starts_with(&existing),
+            "existing content preserved verbatim"
+        );
         assert!(out.ends_with(&block), "new block appended");
         assert_eq!(out.matches("txn_id:").count(), 2);
     }
@@ -1052,7 +1100,10 @@ account Assets:Bank  ; commodity:CAD
         let journal = format!("{}{}", recorded_block("01AAA", "Coffee", "-5.25"), bagel);
         let out = remove_transaction_block(&journal, "01AAA");
         assert!(!out.contains("txn_id:01AAA") && !out.contains("Coffee"));
-        assert_eq!(out, bagel, "removing the first entry leaves exactly the survivor");
+        assert_eq!(
+            out, bagel,
+            "removing the first entry leaves exactly the survivor"
+        );
     }
 
     #[test]
@@ -1072,12 +1123,20 @@ account Assets:Bank  ; commodity:CAD
     #[test]
     fn replace_preserves_surrounding_account_and_price_directives() {
         let txn = recorded_block("01AAA", "Coffee", "-5.25");
-        let journal =
-            format!("account Assets:Cash\n\nP 2026-05-16 00:00:00 CAD 1.37 USD\n\n{txn}");
-        let out =
-            replace_transaction_block(&journal, "01AAA", &recorded_block("01AAA", "Coffee v2", "-6.00"));
-        assert!(out.contains("account Assets:Cash"), "account directive survives");
-        assert!(out.contains("P 2026-05-16 00:00:00 CAD 1.37 USD"), "price directive survives");
+        let journal = format!("account Assets:Cash\n\nP 2026-05-16 00:00:00 CAD 1.37 USD\n\n{txn}");
+        let out = replace_transaction_block(
+            &journal,
+            "01AAA",
+            &recorded_block("01AAA", "Coffee v2", "-6.00"),
+        );
+        assert!(
+            out.contains("account Assets:Cash"),
+            "account directive survives"
+        );
+        assert!(
+            out.contains("P 2026-05-16 00:00:00 CAD 1.37 USD"),
+            "price directive survives"
+        );
         assert!(out.contains("Coffee v2") && !out.contains("2026-05-16 Coffee\n"));
     }
 
@@ -1242,7 +1301,11 @@ account Assets:Bank  ; commodity:CAD
 
         let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
         assert_eq!(contents.matches("1.37").count(), 1, "duplicate rate line");
-        assert_eq!(contents.matches("1.39").count(), 1, "correction was dropped");
+        assert_eq!(
+            contents.matches("1.39").count(),
+            1,
+            "correction was dropped"
+        );
     }
 
     #[tokio::test]
@@ -1310,10 +1373,23 @@ account Assets:Bank  ; commodity:CAD
         proj.apply(&updated, &db).await.unwrap();
 
         let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
-        assert!(contents.contains("Coffee (large)"), "new description:\n{contents}");
-        assert!(!contents.contains("2026-05-16 Coffee\n"), "old header gone:\n{contents}");
-        assert!(contents.contains("-6.00 CAD") && !contents.contains("-5.25 CAD"), "amount edited");
-        assert_eq!(contents.matches("txn_id:01TXNAAA").count(), 1, "single entry:\n{contents}");
+        assert!(
+            contents.contains("Coffee (large)"),
+            "new description:\n{contents}"
+        );
+        assert!(
+            !contents.contains("2026-05-16 Coffee\n"),
+            "old header gone:\n{contents}"
+        );
+        assert!(
+            contents.contains("-6.00 CAD") && !contents.contains("-5.25 CAD"),
+            "amount edited"
+        );
+        assert_eq!(
+            contents.matches("txn_id:01TXNAAA").count(),
+            1,
+            "single entry:\n{contents}"
+        );
     }
 
     /// Deleting a transaction drops its entry from the journal file entirely.
@@ -1337,7 +1413,10 @@ account Assets:Bank  ; commodity:CAD
         bud.apply(&recorded, &db).await.unwrap();
         proj.apply(&recorded, &db).await.unwrap();
         assert!(
-            tokio::fs::read_to_string(&proj.path).await.unwrap().contains("txn_id:01TXNDEL"),
+            tokio::fs::read_to_string(&proj.path)
+                .await
+                .unwrap()
+                .contains("txn_id:01TXNDEL"),
             "precondition: entry present after record"
         );
 
@@ -1349,8 +1428,14 @@ account Assets:Bank  ; commodity:CAD
         proj.apply(&deleted, &db).await.unwrap();
 
         let contents = tokio::fs::read_to_string(&proj.path).await.unwrap();
-        assert!(!contents.contains("txn_id:01TXNDEL"), "entry removed:\n{contents}");
-        assert!(!contents.contains("Mistake"), "description gone:\n{contents}");
+        assert!(
+            !contents.contains("txn_id:01TXNDEL"),
+            "entry removed:\n{contents}"
+        );
+        assert!(
+            !contents.contains("Mistake"),
+            "description gone:\n{contents}"
+        );
     }
 
     #[test]
@@ -1422,7 +1507,10 @@ account Assets:Bank  ; commodity:CAD
             }),
         );
         proj.apply(&event, &db).await.unwrap();
-        assert!(!proj.path.exists(), "non-budget events must not touch the journal file");
+        assert!(
+            !proj.path.exists(),
+            "non-budget events must not touch the journal file"
+        );
     }
 
     #[tokio::test]
@@ -1505,6 +1593,9 @@ account Assets:Bank  ; commodity:CAD
         }
         let second = tokio::fs::read_to_string(&proj.path).await.unwrap();
 
-        assert_eq!(first, second, "replay must reproduce the file byte-for-byte");
+        assert_eq!(
+            first, second,
+            "replay must reproduce the file byte-for-byte"
+        );
     }
 }

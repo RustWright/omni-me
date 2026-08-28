@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use omni_me_core::auto_import::config::{self, SourceDef};
 use omni_me_core::auto_import::paused;
 use omni_me_core::auto_import_scheduler::{
-    ReauthOutcome, SourceStatus, classify_source_health, SourceHealth,
+    ReauthOutcome, SourceHealth, SourceStatus, classify_source_health,
 };
 
 use crate::AppState;
@@ -221,7 +221,9 @@ async fn add_source_handler(
             state.auto_import_registry.remove(&def.name).await;
         }
     }
-    Ok(Json(serde_json::json!({ "status": "saved", "applies": "live" })))
+    Ok(Json(
+        serde_json::json!({ "status": "saved", "applies": "live" }),
+    ))
 }
 
 /// `DELETE /auto_import/sources/{name}` — remove a definition. 404 if no such
@@ -244,7 +246,9 @@ async fn remove_source_handler(
     // surprise-paused at the next boot. Best-effort: a removed source is already
     // gone, so a paused-file hiccup shouldn't fail the remove.
     clear_persisted_pause(&name);
-    Ok(Json(serde_json::json!({ "status": "removed", "applies": "live" })))
+    Ok(Json(
+        serde_json::json!({ "status": "removed", "applies": "live" }),
+    ))
 }
 
 // =============================================================================
@@ -277,11 +281,16 @@ async fn pause_source_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     if !state.auto_import_registry.pause(&name).await {
-        return Err((StatusCode::NOT_FOUND, format!("no running source named '{name}'")));
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("no running source named '{name}'"),
+        ));
     }
     let path = paused::default_path().map_err(internal_err)?;
     paused::set_paused(&path, &name, true).map_err(internal_err)?;
-    Ok(Json(serde_json::json!({ "status": "paused", "applies": "live" })))
+    Ok(Json(
+        serde_json::json!({ "status": "paused", "applies": "live" }),
+    ))
 }
 
 /// `POST /auto_import/sources/{name}/resume` — re-spawn a paused source's
@@ -292,9 +301,14 @@ async fn resume_source_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     if !state.auto_import_registry.resume(&name).await {
-        return Err((StatusCode::NOT_FOUND, format!("no running source named '{name}'")));
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("no running source named '{name}'"),
+        ));
     }
     let path = paused::default_path().map_err(internal_err)?;
     paused::set_paused(&path, &name, false).map_err(internal_err)?;
-    Ok(Json(serde_json::json!({ "status": "resumed", "applies": "live" })))
+    Ok(Json(
+        serde_json::json!({ "status": "resumed", "applies": "live" }),
+    ))
 }

@@ -280,5 +280,4 @@ mod tests {
              they send the box an unauthenticated request: {offenders:#?}"
         );
     }
-
 }

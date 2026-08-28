@@ -292,7 +292,10 @@ async fn push_rejects_unknown_event_type() {
 
     assert_eq!(resp.status(), 400);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("unknown event type"), "expected unknown event type error, got: {body}");
+    assert!(
+        body.contains("unknown event type"),
+        "expected unknown event type error, got: {body}"
+    );
 }
 
 #[tokio::test]
@@ -327,7 +330,10 @@ async fn push_rejects_too_many_events() {
 
     assert_eq!(resp.status(), 400);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("too many events"), "expected too many events error, got: {body}");
+    assert!(
+        body.contains("too many events"),
+        "expected too many events error, got: {body}"
+    );
 }
 
 #[tokio::test]
@@ -355,5 +361,8 @@ async fn push_rejects_malformed_payload() {
 
     assert_eq!(resp.status(), 400);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("invalid payload"), "expected payload validation error, got: {body}");
+    assert!(
+        body.contains("invalid payload"),
+        "expected payload validation error, got: {body}"
+    );
 }

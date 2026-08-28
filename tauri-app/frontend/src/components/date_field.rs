@@ -233,6 +233,9 @@ mod tests {
     #[test]
     fn first_of_month_snaps_to_day_one() {
         let d = NaiveDate::from_ymd_opt(2026, 8, 23).unwrap();
-        assert_eq!(first_of_month(d), NaiveDate::from_ymd_opt(2026, 8, 1).unwrap());
+        assert_eq!(
+            first_of_month(d),
+            NaiveDate::from_ymd_opt(2026, 8, 1).unwrap()
+        );
     }
 }

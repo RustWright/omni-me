@@ -172,7 +172,10 @@ mod tests {
             .find_attachment("application/pdf")
             .expect("SC eml should have application/pdf attachment");
         // PDFs always start with %PDF-
-        assert!(pdf.bytes.starts_with(b"%PDF-"), "attachment bytes don't look like a PDF");
+        assert!(
+            pdf.bytes.starts_with(b"%PDF-"),
+            "attachment bytes don't look like a PDF"
+        );
         eprintln!(
             "SC parse: from={}, subject={}, body {} chars, {} attachments, pdf {} bytes",
             parsed.from,
@@ -198,10 +201,7 @@ mod tests {
             "from: {}",
             parsed.from
         );
-        assert!(
-            !parsed.body_text.is_empty(),
-            "audible body must yield text"
-        );
+        assert!(!parsed.body_text.is_empty(), "audible body must yield text");
         // Body should contain the order detail somewhere
         let body_lower = parsed.body_text.to_lowercase();
         assert!(

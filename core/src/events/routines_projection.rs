@@ -87,7 +87,10 @@ impl Projection for RoutinesProjection {
 
 impl RoutinesProjection {
     async fn on_group_created(&self, event: &Event, db: &Database) -> Result<(), EventError> {
-        let name = event.payload["name"].as_str().unwrap_or_default().to_string();
+        let name = event.payload["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let frequency = event.payload["frequency"]
             .as_str()
             .unwrap_or_default()
@@ -198,8 +201,14 @@ impl RoutinesProjection {
     }
 
     async fn on_item_added(&self, event: &Event, db: &Database) -> Result<(), EventError> {
-        let group_id = event.payload["group_id"].as_str().unwrap_or_default().to_string();
-        let name = event.payload["name"].as_str().unwrap_or_default().to_string();
+        let group_id = event.payload["group_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let name = event.payload["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let duration = event.payload["estimated_duration_min"]
             .as_u64()
             .unwrap_or(0) as i64;
@@ -232,12 +241,18 @@ impl RoutinesProjection {
             .to_string();
         let changes = &event.payload["changes"];
 
-        let name = changes.get("name").and_then(|v| v.as_str()).map(String::from);
+        let name = changes
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let duration = changes
             .get("estimated_duration_min")
             .and_then(|v| v.as_u64())
             .map(|n| n as i64);
-        let order = changes.get("order").and_then(|v| v.as_u64()).map(|n| n as i64);
+        let order = changes
+            .get("order")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as i64);
 
         // Collapse the conditional UPDATEs into one statement so the projection
         // state can never be partially applied (single statements are atomic;
@@ -314,16 +329,25 @@ impl RoutinesProjection {
                 estimated_duration_min = estimated_duration_min ?? 0,
                 order_num = order_num ?? 0",
         )
-            .bind(("item_id", item_id))
-            .await?;
+        .bind(("item_id", item_id))
+        .await?;
 
         Ok(())
     }
 
     async fn on_item_completed(&self, event: &Event, db: &Database) -> Result<(), EventError> {
-        let item_id = event.payload["item_id"].as_str().unwrap_or_default().to_string();
-        let group_id = event.payload["group_id"].as_str().unwrap_or_default().to_string();
-        let date = event.payload["date"].as_str().unwrap_or_default().to_string();
+        let item_id = event.payload["item_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let group_id = event.payload["group_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let date = event.payload["date"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let completed_at = event.payload["completed_at"]
             .as_str()
             .map(String::from)
@@ -355,9 +379,18 @@ impl RoutinesProjection {
     }
 
     async fn on_item_skipped(&self, event: &Event, db: &Database) -> Result<(), EventError> {
-        let item_id = event.payload["item_id"].as_str().unwrap_or_default().to_string();
-        let group_id = event.payload["group_id"].as_str().unwrap_or_default().to_string();
-        let date = event.payload["date"].as_str().unwrap_or_default().to_string();
+        let item_id = event.payload["item_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let group_id = event.payload["group_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let date = event.payload["date"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let reason = event.payload["reason"].as_str().map(String::from);
         let completion_id = completion_key(&item_id, &date, true);
         let ts = event.timestamp.to_rfc3339();
@@ -389,8 +422,14 @@ impl RoutinesProjection {
         db: &Database,
         skipped: bool,
     ) -> Result<(), EventError> {
-        let item_id = event.payload["item_id"].as_str().unwrap_or_default().to_string();
-        let date = event.payload["date"].as_str().unwrap_or_default().to_string();
+        let item_id = event.payload["item_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let date = event.payload["date"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let completion_id = completion_key(&item_id, &date, skipped);
 
         db.query("DELETE type::record('routine_completions', $completion_id)")
@@ -765,12 +804,12 @@ mod tests {
             .unwrap();
         runner.apply_events(&[undo]).await.unwrap();
 
-        let mut resp = db
-            .query("SELECT * FROM routine_completions")
-            .await
-            .unwrap();
+        let mut resp = db.query("SELECT * FROM routine_completions").await.unwrap();
         let rows: Vec<serde_json::Value> = resp.take(0).unwrap();
-        assert!(rows.is_empty(), "undo removes the completion row entirely, got: {rows:?}");
+        assert!(
+            rows.is_empty(),
+            "undo removes the completion row entirely, got: {rows:?}"
+        );
     }
 
     #[tokio::test]
@@ -816,7 +855,11 @@ mod tests {
             .await
             .unwrap();
         let total: Option<u32> = resp.take("total").unwrap();
-        assert_eq!(total, Some(2), "complete + skip rows live under separate keys");
+        assert_eq!(
+            total,
+            Some(2),
+            "complete + skip rows live under separate keys"
+        );
     }
 
     #[tokio::test]

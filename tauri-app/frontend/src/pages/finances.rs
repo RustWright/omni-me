@@ -28,14 +28,13 @@ use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{
     Button, ButtonSize, ButtonVariant, Card, PageHeader, SegmentedNav,
 };
-use crate::continuity::{use_continuity, CaptureDraft, ContinuityKey, ListState, PostingDraft};
+use crate::continuity::{CaptureDraft, ContinuityKey, ListState, PostingDraft, use_continuity};
 use crate::types::{
-    AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView,
-    AttachmentRef, BalanceCheckView, BudgetProgress,
-    BudgetRow, DashboardSummaryView, DraftTransactionView, ExtractedDraft, JournalImportPlan,
-    JournalImportPreview, JournalImportResult, MatchCandidateView, MonthlyTrendBucketView,
-    NetWorthPointView, NetWorthSeriesView, PendingBatchView, PendingShareCapture, PostingInput,
-    ReconciliationTxnPreview,
+    AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AttachmentRef,
+    BalanceCheckView, BudgetProgress, BudgetRow, DashboardSummaryView, DraftTransactionView,
+    ExtractedDraft, JournalImportPlan, JournalImportPreview, JournalImportResult,
+    MatchCandidateView, MonthlyTrendBucketView, NetWorthPointView, NetWorthSeriesView,
+    PendingBatchView, PendingShareCapture, PostingInput, ReconciliationTxnPreview,
     RecurringObligationView, RecurringPattern, ScanRecurringResult, TransactionFormDraft,
     TransactionView, TxnFilter,
 };
@@ -757,7 +756,11 @@ fn NetWorthChart(points: Vec<NetWorthPointView>, base_currency: String) -> Eleme
         line_d.push_str(&format!("{}{x:.2} {y:.2} ", if k == 0 { "M" } else { "L" }));
         area_d.push_str(&format!("L{x:.2} {y:.2} "));
     }
-    area_d.push_str(&format!("L{:.2} {:.2} Z", x_of(valid.last().unwrap().0), baseline));
+    area_d.push_str(&format!(
+        "L{:.2} {:.2} Z",
+        x_of(valid.last().unwrap().0),
+        baseline
+    ));
 
     let (end_i, end_v) = *valid.last().unwrap();
     let (end_x, end_y) = (x_of(end_i), y_of(end_v));
@@ -954,7 +957,11 @@ fn InstitutionsCard(
                 .map(|v| (g.value.clone(), v))
         })
         .collect();
-    let max = rows.iter().map(|(_, v)| v.abs()).fold(0.0_f64, f64::max).max(1.0);
+    let max = rows
+        .iter()
+        .map(|(_, v)| v.abs())
+        .fold(0.0_f64, f64::max)
+        .max(1.0);
 
     rsx! {
         button {
@@ -1060,7 +1067,11 @@ fn CashFlowCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String) -> 
             format_money(&format!("{inc:.2}"), &base_currency),
             format_money(&format!("{spend:.2}"), &base_currency),
             format_money(&format!("{net:.2}"), &base_currency),
-            if net >= 0.0 { "text-success" } else { "text-error" },
+            if net >= 0.0 {
+                "text-success"
+            } else {
+                "text-error"
+            },
         ))
     });
 
@@ -1157,8 +1168,11 @@ fn OverviewView(
     // 2×2 grid data: per-institution breakdown + the most recent transactions.
     let mut breakdown: Signal<Option<AccountTagBreakdownView>> =
         use_signal(|| store.cache_get::<AccountTagBreakdownView>("ov:inst"));
-    let mut recent: Signal<Vec<TransactionView>> =
-        use_signal(|| store.cache_get::<Vec<TransactionView>>("ov:recent").unwrap_or_default());
+    let mut recent: Signal<Vec<TransactionView>> = use_signal(|| {
+        store
+            .cache_get::<Vec<TransactionView>>("ov:recent")
+            .unwrap_or_default()
+    });
 
     // Re-run on mount and whenever a background pull lands (sync_refresh).
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
@@ -1197,7 +1211,8 @@ fn OverviewView(
     use_effect(move || {
         let _ = sync_epoch.read();
         spawn(async move {
-            if let Ok(b) = bridge::invoke_account_tag_breakdown("Assets", "institution", None).await {
+            if let Ok(b) = bridge::invoke_account_tag_breakdown("Assets", "institution", None).await
+            {
                 store.cache_put("ov:inst", &b);
                 breakdown.set(Some(b));
             }
@@ -1351,8 +1366,11 @@ fn AnalyzeHubView(
     let store = use_continuity();
     let mut summary: Signal<Option<DashboardSummaryView>> =
         use_signal(|| store.cache_get::<DashboardSummaryView>("ov:dash"));
-    let mut budgets: Signal<Vec<BudgetProgress>> =
-        use_signal(|| store.cache_get::<Vec<BudgetProgress>>("an:budgets").unwrap_or_default());
+    let mut budgets: Signal<Vec<BudgetProgress>> = use_signal(|| {
+        store
+            .cache_get::<Vec<BudgetProgress>>("an:budgets")
+            .unwrap_or_default()
+    });
 
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
@@ -2373,12 +2391,8 @@ fn batch_needs_manual_fx(batch: &PendingBatchView) -> Option<String> {
 }
 
 #[component]
-fn BatchListView(
-    on_back: EventHandler<()>,
-    on_open_batch: EventHandler<String>,
-) -> Element {
-    let mut batches: Signal<Option<Result<Vec<PendingBatchView>, String>>> =
-        use_signal(|| None);
+fn BatchListView(on_back: EventHandler<()>, on_open_batch: EventHandler<String>) -> Element {
+    let mut batches: Signal<Option<Result<Vec<PendingBatchView>, String>>> = use_signal(|| None);
 
     use_effect(move || {
         spawn(async move {
@@ -2527,9 +2541,10 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
             let source_label = pretty_source(&b.source).to_string();
             let row_count = b.draft_postings.len();
             let accepted_count = accepted.read().iter().filter(|x| **x).count();
-            let metadata_pretty = b.source_metadata.as_ref().and_then(|v| {
-                serde_json::to_string_pretty(v).ok()
-            });
+            let metadata_pretty = b
+                .source_metadata
+                .as_ref()
+                .and_then(|v| serde_json::to_string_pretty(v).ok());
 
             rsx! {
                 div { class: "flex items-center justify-between mb-4",
@@ -2743,10 +2758,7 @@ struct PostingRowView {
 /// inside both the list row (where parent clicks navigate to detail — chip
 /// click events must `stop_propagation`) and the detail body.
 #[component]
-fn EditableCategoryChip(
-    current: Option<String>,
-    on_save: EventHandler<String>,
-) -> Element {
+fn EditableCategoryChip(current: Option<String>, on_save: EventHandler<String>) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft = use_signal(|| current.clone().unwrap_or_default());
 
@@ -2825,10 +2837,7 @@ fn EditableCategoryChip(
 /// "+ tag" enters an input. Like the category chip, all interactions
 /// `stop_propagation` so the parent row's click handler doesn't fire.
 #[component]
-fn EditableTagList(
-    current: Vec<String>,
-    on_save: EventHandler<Vec<String>>,
-) -> Element {
+fn EditableTagList(current: Vec<String>, on_save: EventHandler<Vec<String>>) -> Element {
     let mut adding = use_signal(|| false);
     let mut draft = use_signal(String::new);
 
@@ -3854,11 +3863,9 @@ impl ObjectUrlGuard {
         parts.push(&arr.buffer());
         let opts = web_sys::BlobPropertyBag::new();
         opts.set_type(mime);
-        let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(
-            parts.unchecked_ref(),
-            &opts,
-        )
-        .map_err(|e| format!("blob construct: {e:?}"))?;
+        let blob =
+            web_sys::Blob::new_with_u8_array_sequence_and_options(parts.unchecked_ref(), &opts)
+                .map_err(|e| format!("blob construct: {e:?}"))?;
         let url = web_sys::Url::create_object_url_with_blob(&blob)
             .map_err(|e| format!("object url: {e:?}"))?;
         Ok(Self(url))
@@ -3991,7 +3998,10 @@ fn TransactionDetailBody(
     let mut deleting = use_signal(|| false);
     let snapshot = local.read().clone();
     let postings = posting_views(&snapshot.postings);
-    let attachment_meta = snapshot.attachment.as_ref().and_then(extract_attachment_meta);
+    let attachment_meta = snapshot
+        .attachment
+        .as_ref()
+        .and_then(extract_attachment_meta);
     let txn_id = snapshot.id.clone();
 
     let on_save_category = {
@@ -4218,13 +4228,19 @@ fn TransactionEditForm(
                 return;
             }
             if r.amount.trim().parse::<f64>().is_err() {
-                error.set(Some(format!("Row {}: '{}' is not a number.", i + 1, r.amount)));
+                error.set(Some(format!(
+                    "Row {}: '{}' is not a number.",
+                    i + 1,
+                    r.amount
+                )));
                 return;
             }
             postings_out.push(r.to_posting_json());
         }
         if postings_out.len() < 2 {
-            error.set(Some("At least two postings required (debit + credit).".into()));
+            error.set(Some(
+                "At least two postings required (debit + credit).".into(),
+            ));
             return;
         }
 
@@ -4414,14 +4430,19 @@ impl EditPosting {
     /// Rebuild the posting JSON: start from the original object (keeping fx_rate /
     /// tags) and overwrite the three user-editable fields.
     fn to_posting_json(&self) -> serde_json::Value {
-        let mut obj = self
-            .original
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-        obj.insert("account".into(), serde_json::Value::String(self.account.trim().to_string()));
-        obj.insert("commodity".into(), serde_json::Value::String(self.commodity.trim().to_string()));
-        obj.insert("amount".into(), serde_json::Value::String(self.amount.trim().to_string()));
+        let mut obj = self.original.as_object().cloned().unwrap_or_default();
+        obj.insert(
+            "account".into(),
+            serde_json::Value::String(self.account.trim().to_string()),
+        );
+        obj.insert(
+            "commodity".into(),
+            serde_json::Value::String(self.commodity.trim().to_string()),
+        );
+        obj.insert(
+            "amount".into(),
+            serde_json::Value::String(self.amount.trim().to_string()),
+        );
         serde_json::Value::Object(obj)
     }
 }
@@ -4858,11 +4879,7 @@ fn max_trend_magnitude(buckets: &[MonthlyTrendBucketView]) -> Option<f64> {
             ]
         })
         .fold(0.0_f64, f64::max);
-    if max <= 0.0 {
-        None
-    } else {
-        Some(max)
-    }
+    if max <= 0.0 { None } else { Some(max) }
 }
 
 /// Project a numeric string + scale onto a 0-100% bar height. Defensive on
@@ -4905,10 +4922,7 @@ fn cadence_label(days: u32) -> String {
 }
 
 #[component]
-fn DashboardView(
-    on_back: EventHandler<()>,
-    on_open_unmatched: EventHandler<()>,
-) -> Element {
+fn DashboardView(on_back: EventHandler<()>, on_open_unmatched: EventHandler<()>) -> Element {
     // Shares the Overview's cached dashboard payload (`ov:dash`) so opening the
     // Dashboard right after the Overview renders instantly (C3).
     let store = use_continuity();
@@ -6910,24 +6924,48 @@ mod tests {
 
     #[test]
     fn classify_share_mime_routes_known_image_subtypes() {
-        assert_eq!(classify_share_mime("image/jpeg", "r.jpg"), Some(DocumentKind::Photo));
-        assert_eq!(classify_share_mime("image/png", "r.png"), Some(DocumentKind::Photo));
-        assert_eq!(classify_share_mime("image/heic", "r.heic"), Some(DocumentKind::Photo));
-        assert_eq!(classify_share_mime("image/heif", "r.heif"), Some(DocumentKind::Photo));
-        assert_eq!(classify_share_mime("image/webp", "r.webp"), Some(DocumentKind::Photo));
+        assert_eq!(
+            classify_share_mime("image/jpeg", "r.jpg"),
+            Some(DocumentKind::Photo)
+        );
+        assert_eq!(
+            classify_share_mime("image/png", "r.png"),
+            Some(DocumentKind::Photo)
+        );
+        assert_eq!(
+            classify_share_mime("image/heic", "r.heic"),
+            Some(DocumentKind::Photo)
+        );
+        assert_eq!(
+            classify_share_mime("image/heif", "r.heif"),
+            Some(DocumentKind::Photo)
+        );
+        assert_eq!(
+            classify_share_mime("image/webp", "r.webp"),
+            Some(DocumentKind::Photo)
+        );
     }
 
     #[test]
     fn classify_share_mime_is_case_insensitive() {
-        assert_eq!(classify_share_mime("Image/JPEG", "r.jpg"), Some(DocumentKind::Photo));
-        assert_eq!(classify_share_mime("APPLICATION/PDF", "s"), Some(DocumentKind::Pdf));
+        assert_eq!(
+            classify_share_mime("Image/JPEG", "r.jpg"),
+            Some(DocumentKind::Photo)
+        );
+        assert_eq!(
+            classify_share_mime("APPLICATION/PDF", "s"),
+            Some(DocumentKind::Pdf)
+        );
     }
 
     #[test]
     fn classify_share_mime_accepts_well_declared_pdf_regardless_of_filename() {
         // application/pdf wins even when filename has no .pdf extension —
         // covers the renamed-PDF case.
-        assert_eq!(classify_share_mime("application/pdf", "statement"), Some(DocumentKind::Pdf));
+        assert_eq!(
+            classify_share_mime("application/pdf", "statement"),
+            Some(DocumentKind::Pdf)
+        );
     }
 
     #[test]
@@ -7010,7 +7048,10 @@ mod tests {
         use FinancesView::*;
         assert_eq!(finances_back_target(AddMenu, Overview), Some(Overview));
         assert_eq!(finances_back_target(BatchReview, Overview), Some(BatchList));
-        assert_eq!(finances_back_target(TransactionDetail, Overview), Some(TransactionList));
+        assert_eq!(
+            finances_back_target(TransactionDetail, Overview),
+            Some(TransactionList)
+        );
         assert_eq!(finances_back_target(Dashboard, Overview), Some(Analyze));
         assert_eq!(finances_back_target(Query, Overview), Some(Analyze));
     }
@@ -7022,7 +7063,10 @@ mod tests {
         // returns to whichever surface the user drilled in from (batch-2 fix).
         assert_eq!(finances_back_target(AccountList, Overview), Some(Overview));
         assert_eq!(finances_back_target(AccountList, Analyze), Some(Analyze));
-        assert_eq!(finances_back_target(Reconciliation, Dashboard), Some(Dashboard));
+        assert_eq!(
+            finances_back_target(Reconciliation, Dashboard),
+            Some(Dashboard)
+        );
     }
 
     // --- Phase 4.2 attachment-render classifier --------------------------
@@ -7036,15 +7080,27 @@ mod tests {
 
     #[test]
     fn classify_attachment_routes_pdf_variants_to_pdf_render() {
-        assert_eq!(classify_attachment("application/pdf"), AttachmentRender::Pdf);
-        assert_eq!(classify_attachment("APPLICATION/PDF"), AttachmentRender::Pdf);
-        assert_eq!(classify_attachment("application/x-pdf"), AttachmentRender::Pdf);
+        assert_eq!(
+            classify_attachment("application/pdf"),
+            AttachmentRender::Pdf
+        );
+        assert_eq!(
+            classify_attachment("APPLICATION/PDF"),
+            AttachmentRender::Pdf
+        );
+        assert_eq!(
+            classify_attachment("application/x-pdf"),
+            AttachmentRender::Pdf
+        );
     }
 
     #[test]
     fn classify_attachment_falls_back_to_other_for_unknown_mime() {
         assert_eq!(classify_attachment("text/plain"), AttachmentRender::Other);
-        assert_eq!(classify_attachment("application/zip"), AttachmentRender::Other);
+        assert_eq!(
+            classify_attachment("application/zip"),
+            AttachmentRender::Other
+        );
         assert_eq!(classify_attachment(""), AttachmentRender::Other);
     }
 
@@ -7070,7 +7126,10 @@ mod tests {
             "mime_type": "application/pdf",
             "size": 5000,
         });
-        assert!(extract_attachment_meta(&v).is_none(), "missing sha256 should fail");
+        assert!(
+            extract_attachment_meta(&v).is_none(),
+            "missing sha256 should fail"
+        );
     }
 
     // --- Phase 4.4 money formatter --------------------------------------
@@ -7187,7 +7246,10 @@ mod tests {
 
     #[test]
     fn normalize_category_trims_and_rejects_empty() {
-        assert_eq!(normalize_category("  Expenses:Groceries "), Some("Expenses:Groceries".to_string()));
+        assert_eq!(
+            normalize_category("  Expenses:Groceries "),
+            Some("Expenses:Groceries".to_string())
+        );
         assert_eq!(normalize_category(""), None);
         assert_eq!(normalize_category("   "), None);
     }

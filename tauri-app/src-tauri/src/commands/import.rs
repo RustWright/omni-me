@@ -930,7 +930,9 @@ mod tests {
     async fn test_db() -> omni_me_core::db::Database {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
-        let db = omni_me_core::db::connect(path.to_str().unwrap()).await.unwrap();
+        let db = omni_me_core::db::connect(path.to_str().unwrap())
+            .await
+            .unwrap();
         std::mem::forget(dir);
         db
     }

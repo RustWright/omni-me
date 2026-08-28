@@ -26,9 +26,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::auto_import::to_proposed_event;
-use crate::auto_import_scheduler::{
-    AutoImportSource, ImportError, ImportSummary, ReauthOutcome,
-};
+use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary, ReauthOutcome};
 use crate::events::{DraftTransaction, EventStore, ProjectionRunner};
 
 /// How long a helper may run before it is killed.
@@ -337,16 +335,16 @@ impl AutoImportSource for SubprocessSource {
             // registry can flip the source to AuthState::NeedsReauth (3.5a).
             // The scheduler still backs off on it — harmless, since the helper
             // returns fast without looping on login (no lockout risk).
-            HelperStatus::NeedsReauth => Err(ImportError::NeedsReauth(
-                response.message.unwrap_or_else(|| {
-                    format!("{} session expired — reconnect required", self.name)
-                }),
-            )),
-            HelperStatus::Error => Err(ImportError::Upstream(
-                response
-                    .message
-                    .unwrap_or_else(|| format!("{} reported an error", self.name)),
-            )),
+            HelperStatus::NeedsReauth => {
+                Err(ImportError::NeedsReauth(response.message.unwrap_or_else(
+                    || format!("{} session expired — reconnect required", self.name),
+                )))
+            }
+            HelperStatus::Error => {
+                Err(ImportError::Upstream(response.message.unwrap_or_else(
+                    || format!("{} reported an error", self.name),
+                )))
+            }
             // reauth-only outcomes can't answer a pull request.
             HelperStatus::ReauthOk | HelperStatus::InvalidOtp => Err(ImportError::Parse(format!(
                 "{} returned a reauth status to a pull request",
@@ -372,7 +370,11 @@ impl AutoImportSource for SubprocessSource {
             Ok(r) => r,
             // Spawn/transport failure (helper missing, crashed, bad JSON) —
             // report as an error outcome the route can render, not a panic.
-            Err(e) => return ReauthOutcome::Error { message: e.to_string() },
+            Err(e) => {
+                return ReauthOutcome::Error {
+                    message: e.to_string(),
+                };
+            }
         };
         match response.status {
             HelperStatus::ReauthOk => ReauthOutcome::Active,
@@ -414,16 +416,13 @@ mod tests {
         ))
     }
 
-    async fn test_db_and_runner() -> (
-        crate::db::Database,
-        Arc<dyn EventStore>,
-        ProjectionRunner,
-    ) {
+    async fn test_db_and_runner() -> (crate::db::Database, Arc<dyn EventStore>, ProjectionRunner) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         std::mem::forget(dir);
-        let store: Arc<dyn EventStore> = Arc::new(crate::events::SurrealEventStore::new(db.clone()));
+        let store: Arc<dyn EventStore> =
+            Arc::new(crate::events::SurrealEventStore::new(db.clone()));
         let runner = ProjectionRunner::new(
             db.clone(),
             vec![
@@ -441,7 +440,14 @@ mod tests {
         store: Arc<dyn EventStore>,
         projections: ProjectionRunner,
     ) -> SubprocessSource {
-        SubprocessSource::new("test-source", command, args, store, projections, "device-1".into())
+        SubprocessSource::new(
+            "test-source",
+            command,
+            args,
+            store,
+            projections,
+            "device-1".into(),
+        )
     }
 
     const ONE_DRAFT_OK: &str = r#"{"status":"ok","drafts":[{"external_id":"ws-t1","date":"2026-06-15","description":"Loblaws","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42"},{"account":"Unmatched","commodity":"CAD","amount":"87.42"}]}]}"#;
@@ -521,8 +527,7 @@ mod tests {
 
     #[tokio::test]
     async fn reauth_error_status_carries_message() {
-        let (_helper_dir, helper) =
-            emit_helper(r#"{"status":"error","message":"driver crashed"}"#);
+        let (_helper_dir, helper) = emit_helper(r#"{"status":"error","message":"driver crashed"}"#);
         let (_db, store, projections) = test_db_and_runner().await;
         let source = source_with(helper, vec![], store, projections);
 
@@ -535,9 +540,8 @@ mod tests {
     #[tokio::test]
     async fn reauth_sends_reauth_verb_with_otp_on_stdin() {
         // Capture stdin to prove the OTP rides the wire in the tagged form.
-        let (_helper_dir, helper) = write_shell_helper(
-            "#!/bin/bash\ncat > \"$1\"\necho '{\"status\":\"reauth_ok\"}'\n",
-        );
+        let (_helper_dir, helper) =
+            write_shell_helper("#!/bin/bash\ncat > \"$1\"\necho '{\"status\":\"reauth_ok\"}'\n");
         let captured = _helper_dir.path().join("stdin.txt");
         let (_db, store, projections) = test_db_and_runner().await;
         let source = source_with(
@@ -569,9 +573,8 @@ mod tests {
     async fn run_helper_sends_pull_verb_on_stdin() {
         // Helper writes whatever it reads on stdin to the file named by $1, then
         // emits a valid response. Lets us assert the request wire form.
-        let (_helper_dir, helper) = write_shell_helper(
-            "#!/bin/bash\ncat > \"$1\"\necho '{\"status\":\"ok\"}'\n",
-        );
+        let (_helper_dir, helper) =
+            write_shell_helper("#!/bin/bash\ncat > \"$1\"\necho '{\"status\":\"ok\"}'\n");
         let captured = _helper_dir.path().join("stdin.txt");
         let (_db, store, projections) = test_db_and_runner().await;
         let source = source_with(

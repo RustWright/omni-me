@@ -126,15 +126,30 @@ mod tests {
     fn groups_by_institution_and_ignores_other_accounts() {
         let txns = vec![
             txn(vec![
-                posting("Assets:NonRegistered:CAD", "CAD", "300.00", vec![kv("institution", "Summit")]),
+                posting(
+                    "Assets:NonRegistered:CAD",
+                    "CAD",
+                    "300.00",
+                    vec![kv("institution", "Summit")],
+                ),
                 posting("Expenses:Gift", "CAD", "-300.00", vec![]),
             ]),
             txn(vec![
-                posting("Assets:NonRegistered:CAD", "CAD", "-50.00", vec![kv("institution", "Summit")]),
+                posting(
+                    "Assets:NonRegistered:CAD",
+                    "CAD",
+                    "-50.00",
+                    vec![kv("institution", "Summit")],
+                ),
                 posting("Expenses:Food", "CAD", "50.00", vec![]),
             ]),
             txn(vec![
-                posting("Assets:NonRegistered:CAD", "CAD", "1000.00", vec![kv("institution", "Globepay")]),
+                posting(
+                    "Assets:NonRegistered:CAD",
+                    "CAD",
+                    "1000.00",
+                    vec![kv("institution", "Globepay")],
+                ),
                 posting("Income:Salary", "CAD", "-1000.00", vec![]),
             ]),
         ];
@@ -150,7 +165,12 @@ mod tests {
     #[test]
     fn untagged_postings_fall_into_unassigned_and_sort_last() {
         let txns = vec![
-            txn(vec![posting("Assets:NonRegistered:CAD", "CAD", "10.00", vec![])]),
+            txn(vec![posting(
+                "Assets:NonRegistered:CAD",
+                "CAD",
+                "10.00",
+                vec![],
+            )]),
             txn(vec![posting(
                 "Assets:NonRegistered:CAD",
                 "CAD",
@@ -184,16 +204,34 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(
             groups[0].amounts,
-            vec![("CAD".to_string(), dec("42.00")), ("USD".to_string(), dec("100.00"))]
+            vec![
+                ("CAD".to_string(), dec("42.00")),
+                ("USD".to_string(), dec("100.00"))
+            ]
         );
     }
 
     #[test]
     fn drops_zero_net_commodities_and_fully_zero_groups() {
         let txns = vec![
-            txn(vec![posting("Assets:NonRegistered:CAD", "CAD", "80.00", vec![kv("institution", "Summit")])]),
-            txn(vec![posting("Assets:NonRegistered:CAD", "CAD", "-80.00", vec![kv("institution", "Summit")])]),
-            txn(vec![posting("Assets:NonRegistered:CAD", "CAD", "15.00", vec![kv("institution", "Globepay")])]),
+            txn(vec![posting(
+                "Assets:NonRegistered:CAD",
+                "CAD",
+                "80.00",
+                vec![kv("institution", "Summit")],
+            )]),
+            txn(vec![posting(
+                "Assets:NonRegistered:CAD",
+                "CAD",
+                "-80.00",
+                vec![kv("institution", "Summit")],
+            )]),
+            txn(vec![posting(
+                "Assets:NonRegistered:CAD",
+                "CAD",
+                "15.00",
+                vec![kv("institution", "Globepay")],
+            )]),
         ];
         let groups = group_account_by_tag(&txns, "Assets:NonRegistered:CAD", "institution");
         // Summit nets to zero → dropped entirely; only Globepay remains.

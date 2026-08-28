@@ -58,10 +58,7 @@ pub fn statement_extraction_to_drafts(
             tags: vec![],
         };
         let mirror = make_unmatched_mirror(&real);
-        let line_desc = p
-            .line_label
-            .clone()
-            .unwrap_or_else(|| description.clone());
+        let line_desc = p.line_label.clone().unwrap_or_else(|| description.clone());
         drafts.push(DraftTransaction {
             external_id,
             date,
@@ -255,7 +252,10 @@ mod tests {
         let second = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD");
         let ids_first: Vec<_> = first.iter().map(|d| d.external_id.as_str()).collect();
         let ids_second: Vec<_> = second.iter().map(|d| d.external_id.as_str()).collect();
-        assert_eq!(ids_first, ids_second, "same input → same external_ids → dedup");
+        assert_eq!(
+            ids_first, ids_second,
+            "same input → same external_ids → dedup"
+        );
     }
 
     #[test]

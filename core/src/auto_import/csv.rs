@@ -174,8 +174,7 @@ fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Imp
 
     let mut drafts = Vec::new();
     for (row, rec) in rdr.records().enumerate() {
-        let rec =
-            rec.map_err(|e| ImportError::Parse(format!("{}: row {}: {e}", cfg.name, row)))?;
+        let rec = rec.map_err(|e| ImportError::Parse(format!("{}: row {}: {e}", cfg.name, row)))?;
 
         let date_raw = rec.get(date_idx).unwrap_or("").trim();
         let amount_raw = rec.get(amount_idx).unwrap_or("").trim();
@@ -366,10 +365,7 @@ mod tests {
         assert_eq!(d0.postings[1].account, "Unmatched");
         assert_eq!(d0.postings[1].amount, Decimal::from_str("87.42").unwrap());
         // Postings net to zero (balanced).
-        assert_eq!(
-            d0.postings[0].amount + d0.postings[1].amount,
-            Decimal::ZERO
-        );
+        assert_eq!(d0.postings[0].amount + d0.postings[1].amount, Decimal::ZERO);
     }
 
     #[test]
@@ -408,7 +404,10 @@ mod tests {
         let drafts = parse_csv(content, &cfg(&columns, false, DEFAULT_DATE_FORMAT)).unwrap();
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].description, "Loblaws");
-        assert_eq!(drafts[0].postings[0].amount, Decimal::from_str("-87.42").unwrap());
+        assert_eq!(
+            drafts[0].postings[0].amount,
+            Decimal::from_str("-87.42").unwrap()
+        );
     }
 
     #[test]
@@ -427,8 +426,7 @@ mod tests {
     #[test]
     fn unparseable_row_is_skipped_not_fatal() {
         // Row 2 has a bad date — it's skipped, the good rows still import.
-        let content =
-            "Date,Amount,Memo\n2026-06-15,-87.42,Good\nnot-a-date,10,Bad\n2026-06-17,5.00,AlsoGood\n";
+        let content = "Date,Amount,Memo\n2026-06-15,-87.42,Good\nnot-a-date,10,Bad\n2026-06-17,5.00,AlsoGood\n";
         let columns = cols(None);
         let drafts = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap();
         assert_eq!(drafts.len(), 2);
@@ -438,10 +436,22 @@ mod tests {
 
     #[test]
     fn amount_parsing_tolerates_commas_currency_and_parens() {
-        assert_eq!(parse_amount("1,234.56"), Some(Decimal::from_str("1234.56").unwrap()));
-        assert_eq!(parse_amount("$ 99.00"), Some(Decimal::from_str("99.00").unwrap()));
-        assert_eq!(parse_amount("(87.42)"), Some(Decimal::from_str("-87.42").unwrap()));
-        assert_eq!(parse_amount("  -5  "), Some(Decimal::from_str("-5").unwrap()));
+        assert_eq!(
+            parse_amount("1,234.56"),
+            Some(Decimal::from_str("1234.56").unwrap())
+        );
+        assert_eq!(
+            parse_amount("$ 99.00"),
+            Some(Decimal::from_str("99.00").unwrap())
+        );
+        assert_eq!(
+            parse_amount("(87.42)"),
+            Some(Decimal::from_str("-87.42").unwrap())
+        );
+        assert_eq!(
+            parse_amount("  -5  "),
+            Some(Decimal::from_str("-5").unwrap())
+        );
         assert_eq!(parse_amount(""), None);
         assert_eq!(parse_amount("abc"), None);
     }
@@ -451,13 +461,20 @@ mod tests {
         let content = "Date,Amount,Memo\n06/15/2026,-87.42,Loblaws\n";
         let columns = cols(None);
         let drafts = parse_csv(content, &cfg(&columns, true, "%m/%d/%Y")).unwrap();
-        assert_eq!(drafts[0].date, NaiveDate::from_ymd_opt(2026, 6, 15).unwrap());
+        assert_eq!(
+            drafts[0].date,
+            NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()
+        );
     }
 
     #[test]
     fn empty_file_yields_no_drafts() {
         let columns = cols(None);
-        let drafts = parse_csv("Date,Amount,Memo\n", &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap();
+        let drafts = parse_csv(
+            "Date,Amount,Memo\n",
+            &cfg(&columns, true, DEFAULT_DATE_FORMAT),
+        )
+        .unwrap();
         assert!(drafts.is_empty());
     }
 }

@@ -128,7 +128,10 @@ impl BudgetProjection {
             .as_str()
             .unwrap_or(&event.aggregate_id)
             .to_string();
-        let date = event.payload["date"].as_str().unwrap_or_default().to_string();
+        let date = event.payload["date"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let description = event.payload["description"]
             .as_str()
             .unwrap_or_default()
@@ -240,11 +243,7 @@ impl BudgetProjection {
         Ok(())
     }
 
-    async fn on_transaction_tagged(
-        &self,
-        event: &Event,
-        db: &Database,
-    ) -> Result<(), EventError> {
+    async fn on_transaction_tagged(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let txn_id = event.payload["txn_id"]
             .as_str()
             .unwrap_or(&event.aggregate_id)
@@ -282,11 +281,7 @@ impl BudgetProjection {
         Ok(())
     }
 
-    async fn on_transaction_updated(
-        &self,
-        event: &Event,
-        db: &Database,
-    ) -> Result<(), EventError> {
+    async fn on_transaction_updated(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let txn_id = event.payload["txn_id"]
             .as_str()
             .unwrap_or(&event.aggregate_id)
@@ -297,7 +292,10 @@ impl BudgetProjection {
             .get("description")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let date = changes.get("date").and_then(|v| v.as_str()).map(String::from);
+        let date = changes
+            .get("date")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         // Postings rewrite (Phase 5.7 no-match path) — replaces the full
         // `postings` array, used when the reconciliation review converts
         // an Unmatched leg into a real category leg.
@@ -341,7 +339,10 @@ impl BudgetProjection {
             "UPSERT type::record('transactions', $txn_id) SET {}",
             sets.join(", ")
         );
-        let mut q = db.query(query_str.as_str()).bind(("txn_id", txn_id)).bind(("ts", ts));
+        let mut q = db
+            .query(query_str.as_str())
+            .bind(("txn_id", txn_id))
+            .bind(("ts", ts));
         if let Some(d) = description {
             q = q.bind(("description", d));
         }
@@ -355,11 +356,7 @@ impl BudgetProjection {
         Ok(())
     }
 
-    async fn on_transaction_deleted(
-        &self,
-        event: &Event,
-        db: &Database,
-    ) -> Result<(), EventError> {
+    async fn on_transaction_deleted(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let txn_id = event.payload["txn_id"]
             .as_str()
             .unwrap_or(&event.aggregate_id)
@@ -383,11 +380,7 @@ impl BudgetProjection {
         Ok(())
     }
 
-    async fn on_transaction_cleared(
-        &self,
-        event: &Event,
-        db: &Database,
-    ) -> Result<(), EventError> {
+    async fn on_transaction_cleared(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let txn_id = event.payload["txn_id"]
             .as_str()
             .unwrap_or(&event.aggregate_id)
@@ -426,11 +419,7 @@ impl BudgetProjection {
         Ok(())
     }
 
-    async fn on_transactions_merged(
-        &self,
-        event: &Event,
-        db: &Database,
-    ) -> Result<(), EventError> {
+    async fn on_transactions_merged(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let primary_id = event.payload["primary_id"]
             .as_str()
             .unwrap_or_default()
@@ -566,8 +555,14 @@ impl BudgetProjection {
             .to_string();
         let changes = &event.payload["changes"];
 
-        let amount = changes.get("amount").and_then(|v| v.as_str()).map(String::from);
-        let period = changes.get("period").and_then(|v| v.as_str()).map(String::from);
+        let amount = changes
+            .get("amount")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let period = changes
+            .get("period")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let mut sets: Vec<&str> = Vec::new();
         if amount.is_some() {
@@ -606,11 +601,7 @@ impl BudgetProjection {
         Ok(())
     }
 
-    async fn on_recurring_detected(
-        &self,
-        event: &Event,
-        db: &Database,
-    ) -> Result<(), EventError> {
+    async fn on_recurring_detected(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let pattern_id = event.payload["pattern_id"]
             .as_str()
             .unwrap_or_default()
@@ -756,7 +747,11 @@ mod tests {
         let category: Option<String> = resp.take("category").unwrap();
         let removed: Option<bool> = resp.take("removed").unwrap();
         let cleared: Option<bool> = resp.take("cleared").unwrap();
-        assert_eq!(category.as_deref(), Some("Snacks"), "categorize must materialize the row");
+        assert_eq!(
+            category.as_deref(),
+            Some("Snacks"),
+            "categorize must materialize the row"
+        );
         assert_eq!(removed, Some(false), "SCHEMAFULL required field backfilled");
         assert_eq!(cleared, Some(false), "SCHEMAFULL required field backfilled");
 
@@ -790,7 +785,11 @@ mod tests {
             .await
             .unwrap();
         let total: Option<u32> = resp.take("total").unwrap();
-        assert_eq!(total, Some(4), "every orphaned content mutation materialized its row");
+        assert_eq!(
+            total,
+            Some(4),
+            "every orphaned content mutation materialized its row"
+        );
     }
 
     /// The recovered-create case: a mutation materialized a partial row first, then
@@ -825,7 +824,11 @@ mod tests {
             .unwrap();
         let description: Option<String> = resp.take("description").unwrap();
         let category: Option<String> = resp.take("category").unwrap();
-        assert_eq!(description.as_deref(), Some("Coffee"), "create fills the create-owned field");
+        assert_eq!(
+            description.as_deref(),
+            Some("Coffee"),
+            "create fills the create-owned field"
+        );
         assert_eq!(
             category.as_deref(),
             Some("Snacks"),
@@ -1062,7 +1065,9 @@ mod tests {
         assert_eq!(total, Some(1), "override must not duplicate the row");
 
         let mut resp = db
-            .query("SELECT display_name, hidden FROM type::record('accounts', 'Assets:Globepay:CAD')")
+            .query(
+                "SELECT display_name, hidden FROM type::record('accounts', 'Assets:Globepay:CAD')",
+            )
             .await
             .unwrap();
         let display: Option<String> = resp.take("display_name").unwrap();
@@ -1235,45 +1240,105 @@ mod tests {
         let (db, store, runner) = fixture().await;
 
         // Two raw transactions...
-        emit(&store, &runner, "transaction_recorded", "t1",
-             simple_txn_payload("t1", "Coffee", "5.25")).await;
-        emit(&store, &runner, "transaction_recorded", "t2",
-             simple_txn_payload("t2", "Bagel", "3.00")).await;
+        emit(
+            &store,
+            &runner,
+            "transaction_recorded",
+            "t1",
+            simple_txn_payload("t1", "Coffee", "5.25"),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "transaction_recorded",
+            "t2",
+            simple_txn_payload("t2", "Bagel", "3.00"),
+        )
+        .await;
 
         // ...one categorized, one tagged, one cleared
-        emit(&store, &runner, "transaction_categorized", "t1",
-             serde_json::json!({ "txn_id": "t1", "category": "Snacks" })).await;
-        emit(&store, &runner, "transaction_tagged", "t2",
-             serde_json::json!({ "txn_id": "t2", "tags": ["type:business"] })).await;
-        emit(&store, &runner, "transaction_cleared", "t1",
-             serde_json::json!({
-                 "txn_id": "t1",
-                 "statement_source": "summit-2026-05",
-                 "cleared_date": "2026-05-15"
-             })).await;
+        emit(
+            &store,
+            &runner,
+            "transaction_categorized",
+            "t1",
+            serde_json::json!({ "txn_id": "t1", "category": "Snacks" }),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "transaction_tagged",
+            "t2",
+            serde_json::json!({ "txn_id": "t2", "tags": ["type:business"] }),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "transaction_cleared",
+            "t1",
+            serde_json::json!({
+                "txn_id": "t1",
+                "statement_source": "summit-2026-05",
+                "cleared_date": "2026-05-15"
+            }),
+        )
+        .await;
 
         // Account lifecycle
-        emit(&store, &runner, "account_added", "Assets:Summit:Chequing",
-             serde_json::json!({
-                 "account": "Assets:Summit:Chequing",
-                 "commodity": "CAD",
-                 "display_name": "Summit Chequing"
-             })).await;
+        emit(
+            &store,
+            &runner,
+            "account_added",
+            "Assets:Summit:Chequing",
+            serde_json::json!({
+                "account": "Assets:Summit:Chequing",
+                "commodity": "CAD",
+                "display_name": "Summit Chequing"
+            }),
+        )
+        .await;
 
         // Budget set + revised
-        emit(&store, &runner, "budget_set", "Groceries",
-             serde_json::json!({ "category": "Groceries", "amount": "600.00", "period": "monthly" })).await;
-        emit(&store, &runner, "budget_updated", "Groceries",
-             serde_json::json!({ "category": "Groceries", "changes": { "amount": "650.00" } })).await;
+        emit(
+            &store,
+            &runner,
+            "budget_set",
+            "Groceries",
+            serde_json::json!({ "category": "Groceries", "amount": "600.00", "period": "monthly" }),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "budget_updated",
+            "Groceries",
+            serde_json::json!({ "category": "Groceries", "changes": { "amount": "650.00" } }),
+        )
+        .await;
 
         // Recurring detected + confirmed
-        emit(&store, &runner, "recurring_transaction_detected", "rec_netflix",
-             serde_json::json!({
-                 "pattern_id": "rec_netflix",
-                 "pattern": { "vendor": "Netflix", "amount": "16.99", "cadence_days": 30 }
-             })).await;
-        emit(&store, &runner, "recurring_transaction_confirmed", "rec_netflix",
-             serde_json::json!({ "pattern_id": "rec_netflix" })).await;
+        emit(
+            &store,
+            &runner,
+            "recurring_transaction_detected",
+            "rec_netflix",
+            serde_json::json!({
+                "pattern_id": "rec_netflix",
+                "pattern": { "vendor": "Netflix", "amount": "16.99", "cadence_days": 30 }
+            }),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "recurring_transaction_confirmed",
+            "rec_netflix",
+            serde_json::json!({ "pattern_id": "rec_netflix" }),
+        )
+        .await;
 
         let _ = store; // keep alive
         let before = snapshot(&db).await;
@@ -1289,20 +1354,38 @@ mod tests {
         // handler — make sure replay reconstructs the supersede chain.
         let (db, store, runner) = fixture().await;
 
-        emit(&store, &runner, "transaction_recorded", "t1",
-             simple_txn_payload("t1", "Northwind leg", "100.00")).await;
-        emit(&store, &runner, "transaction_recorded", "t2",
-             simple_txn_payload("t2", "Globepay leg", "100.00")).await;
-        emit(&store, &runner, "transactions_merged", "merge-1",
-             serde_json::json!({
-                 "primary_id": "t1",
-                 "merged_ids": ["t2"],
-                 "combined_postings": [
-                     { "account": "Assets:Northwind:Cash", "commodity": "CAD", "amount": "-100.00" },
-                     { "account": "Assets:Globepay:CAD", "commodity": "CAD", "amount": "100.00" }
-                 ],
-                 "combined_description": "Northwind → Globepay transfer"
-             })).await;
+        emit(
+            &store,
+            &runner,
+            "transaction_recorded",
+            "t1",
+            simple_txn_payload("t1", "Northwind leg", "100.00"),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "transaction_recorded",
+            "t2",
+            simple_txn_payload("t2", "Globepay leg", "100.00"),
+        )
+        .await;
+        emit(
+            &store,
+            &runner,
+            "transactions_merged",
+            "merge-1",
+            serde_json::json!({
+                "primary_id": "t1",
+                "merged_ids": ["t2"],
+                "combined_postings": [
+                    { "account": "Assets:Northwind:Cash", "commodity": "CAD", "amount": "-100.00" },
+                    { "account": "Assets:Globepay:CAD", "commodity": "CAD", "amount": "100.00" }
+                ],
+                "combined_description": "Northwind → Globepay transfer"
+            }),
+        )
+        .await;
 
         let _ = store;
         let before = snapshot(&db).await;
@@ -1345,9 +1428,36 @@ mod tests {
     async fn list_transactions_filter_by_date_range() {
         use crate::db::queries::{self, TxnFilter};
         let (db, store, runner) = fixture().await;
-        seed_txn(&store, &runner, "t1", "2026-05-01", "Old", "Expenses:Food", "10.00").await;
-        seed_txn(&store, &runner, "t2", "2026-05-15", "Mid", "Expenses:Food", "20.00").await;
-        seed_txn(&store, &runner, "t3", "2026-05-31", "New", "Expenses:Food", "30.00").await;
+        seed_txn(
+            &store,
+            &runner,
+            "t1",
+            "2026-05-01",
+            "Old",
+            "Expenses:Food",
+            "10.00",
+        )
+        .await;
+        seed_txn(
+            &store,
+            &runner,
+            "t2",
+            "2026-05-15",
+            "Mid",
+            "Expenses:Food",
+            "20.00",
+        )
+        .await;
+        seed_txn(
+            &store,
+            &runner,
+            "t3",
+            "2026-05-31",
+            "New",
+            "Expenses:Food",
+            "30.00",
+        )
+        .await;
 
         let rows = queries::list_transactions(
             &db,
@@ -1369,9 +1479,36 @@ mod tests {
     async fn list_transactions_filter_by_account_substring_case_insensitive() {
         use crate::db::queries::{self, TxnFilter};
         let (db, store, runner) = fixture().await;
-        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Groceries", "10.00").await;
-        seed_txn(&store, &runner, "t2", "2026-05-15", "B", "Expenses:Dining", "10.00").await;
-        seed_txn(&store, &runner, "t3", "2026-05-15", "C", "Assets:Chequing", "10.00").await;
+        seed_txn(
+            &store,
+            &runner,
+            "t1",
+            "2026-05-15",
+            "A",
+            "Expenses:Groceries",
+            "10.00",
+        )
+        .await;
+        seed_txn(
+            &store,
+            &runner,
+            "t2",
+            "2026-05-15",
+            "B",
+            "Expenses:Dining",
+            "10.00",
+        )
+        .await;
+        seed_txn(
+            &store,
+            &runner,
+            "t3",
+            "2026-05-15",
+            "C",
+            "Assets:Chequing",
+            "10.00",
+        )
+        .await;
 
         let rows = queries::list_transactions(
             &db,
@@ -1394,8 +1531,26 @@ mod tests {
     async fn list_transactions_filter_by_category_exact() {
         use crate::db::queries::{self, TxnFilter};
         let (db, store, runner) = fixture().await;
-        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Food", "10.00").await;
-        seed_txn(&store, &runner, "t2", "2026-05-15", "B", "Expenses:Food", "10.00").await;
+        seed_txn(
+            &store,
+            &runner,
+            "t1",
+            "2026-05-15",
+            "A",
+            "Expenses:Food",
+            "10.00",
+        )
+        .await;
+        seed_txn(
+            &store,
+            &runner,
+            "t2",
+            "2026-05-15",
+            "B",
+            "Expenses:Food",
+            "10.00",
+        )
+        .await;
         emit(
             &store,
             &runner,
@@ -1424,8 +1579,26 @@ mod tests {
     async fn list_transactions_filter_by_tag_membership() {
         use crate::db::queries::{self, TxnFilter};
         let (db, store, runner) = fixture().await;
-        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Food", "10.00").await;
-        seed_txn(&store, &runner, "t2", "2026-05-15", "B", "Expenses:Food", "10.00").await;
+        seed_txn(
+            &store,
+            &runner,
+            "t1",
+            "2026-05-15",
+            "A",
+            "Expenses:Food",
+            "10.00",
+        )
+        .await;
+        seed_txn(
+            &store,
+            &runner,
+            "t2",
+            "2026-05-15",
+            "B",
+            "Expenses:Food",
+            "10.00",
+        )
+        .await;
         emit(
             &store,
             &runner,
@@ -1454,8 +1627,26 @@ mod tests {
     async fn list_transactions_empty_filter_returns_all_visible() {
         use crate::db::queries::{self, TxnFilter};
         let (db, store, runner) = fixture().await;
-        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Food", "10.00").await;
-        seed_txn(&store, &runner, "t2", "2026-05-16", "B", "Expenses:Food", "10.00").await;
+        seed_txn(
+            &store,
+            &runner,
+            "t1",
+            "2026-05-15",
+            "A",
+            "Expenses:Food",
+            "10.00",
+        )
+        .await;
+        seed_txn(
+            &store,
+            &runner,
+            "t2",
+            "2026-05-16",
+            "B",
+            "Expenses:Food",
+            "10.00",
+        )
+        .await;
 
         let rows = queries::list_transactions(&db, TxnFilter::default(), 100, 0)
             .await
@@ -1467,7 +1658,16 @@ mod tests {
     async fn list_transactions_blank_strings_treated_as_unset() {
         use crate::db::queries::{self, TxnFilter};
         let (db, store, runner) = fixture().await;
-        seed_txn(&store, &runner, "t1", "2026-05-15", "A", "Expenses:Food", "10.00").await;
+        seed_txn(
+            &store,
+            &runner,
+            "t1",
+            "2026-05-15",
+            "A",
+            "Expenses:Food",
+            "10.00",
+        )
+        .await;
 
         let rows = queries::list_transactions(
             &db,

@@ -10,15 +10,15 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{Router, Json, routing::get};
+use axum::{Json, Router, routing::get};
 use chrono::Utc;
 use omni_me_core::db;
 use omni_me_core::events::{EventStore, NewEvent, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::GeminiClient;
 use omni_me_core::sync::{
-    NetworkMonitor, PushDebouncer, PushEvent, RetryEngine, RetryEvent, StatusReporter,
-    SyncClient, SyncStatus, wire_accelerator,
+    NetworkMonitor, PushDebouncer, PushEvent, RetryEngine, RetryEvent, StatusReporter, SyncClient,
+    SyncStatus, wire_accelerator,
 };
 use omni_me_server::{AppState, routes};
 
@@ -249,7 +249,10 @@ async fn kill_server_edit_queue_retry_recover() {
             break;
         }
     }
-    assert!(saw_recovered, "retry engine should report Recovered once server is back");
+    assert!(
+        saw_recovered,
+        "retry engine should report Recovered once server is back"
+    );
 
     // Status should return to Idle.
     // Allow a short moment for the status reporter to observe the recovery.
@@ -268,7 +271,11 @@ async fn kill_server_edit_queue_retry_recover() {
         .get_by_aggregate("journal-phase2-test")
         .await
         .unwrap();
-    assert_eq!(server_events.len(), 1, "event should be on the server after recovery");
+    assert_eq!(
+        server_events.len(),
+        1,
+        "event should be on the server after recovery"
+    );
     assert_eq!(server_events[0].device_id, "device-test");
 
     retry.shutdown();

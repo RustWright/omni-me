@@ -38,12 +38,8 @@ const OUTCOME_CHANNEL_CAPACITY: usize = 16;
 #[derive(Debug, Clone)]
 pub enum PushEvent {
     Started,
-    Succeeded {
-        pushed: usize,
-    },
-    Failed {
-        error: String,
-    },
+    Succeeded { pushed: usize },
+    Failed { error: String },
 }
 
 struct Inner {
@@ -84,7 +80,9 @@ impl PushDebouncer {
             last_known_events: Mutex::new(0),
             delay,
         });
-        let debouncer = Self { inner: inner.clone() };
+        let debouncer = Self {
+            inner: inner.clone(),
+        };
 
         let handle = tokio::spawn(run_loop(inner));
         (debouncer, handle)
@@ -135,7 +133,10 @@ async fn attempt_push(inner: &Arc<Inner>) {
     // that had just run — and hand it in as the push `since`, so local events at
     // or below the server cursor were never pushed by the background pusher.
     match inner.client.push_only(&inner.db).await {
-        Ok(PushOutcome { pushed, quarantined }) => {
+        Ok(PushOutcome {
+            pushed,
+            quarantined,
+        }) => {
             if quarantined > 0 {
                 tracing::warn!(
                     quarantined,
@@ -204,8 +205,8 @@ mod tests {
             "http://127.0.0.1:1".into(), // unreachable
             "device-x".into(),
         );
-        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client, db.clone(), Duration::from_millis(30),
-        );
+        let (pusher, _ph) =
+            PushDebouncer::spawn_with_delay(client, db.clone(), Duration::from_millis(30));
         let mut sub = pusher.subscribe();
 
         // Manually trigger — no need to go through the buffer.
@@ -223,7 +224,10 @@ mod tests {
                     PushEvent::Started => saw_started = true,
                     PushEvent::Failed { error } => {
                         saw_failed = true;
-                        assert!(error.contains("network"), "expected network error, got {error}");
+                        assert!(
+                            error.contains("network"),
+                            "expected network error, got {error}"
+                        );
                         break;
                     }
                     _ => {}
@@ -247,8 +251,7 @@ mod tests {
             .unwrap();
 
         let client = SyncClient::new("http://127.0.0.1:1".into(), "device-x".into());
-        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client, db, Duration::from_millis(80),
-        );
+        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client, db, Duration::from_millis(80));
         let mut sub = pusher.subscribe();
 
         for _ in 0..5 {

@@ -35,10 +35,10 @@ async fn forward_loop(mut rx: broadcast::Receiver<NetworkEvent>, engine: RetryEn
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::client::SyncClient;
     use super::super::pusher::PushDebouncer;
     use super::super::retry::{RetryEngine, RetryEvent};
+    use super::*;
     use crate::events::{EventStore, NewEvent, SurrealEventStore};
     use chrono::Utc;
     use std::time::Duration;
@@ -79,8 +79,8 @@ mod tests {
             .unwrap();
 
         let client = SyncClient::new("http://127.0.0.1:1".into(), "device-x".into());
-        let (pusher, _ph) = PushDebouncer::spawn_with_delay(client.clone(), db.clone(), Duration::from_millis(30),
-        );
+        let (pusher, _ph) =
+            PushDebouncer::spawn_with_delay(client.clone(), db.clone(), Duration::from_millis(30));
         let (retry, _rh) = RetryEngine::spawn_with(
             client,
             db,
@@ -98,11 +98,8 @@ mod tests {
             }
         });
 
-        let (monitor, _mh) = NetworkMonitor::spawn_with(
-            addr,
-            Duration::from_secs(60),
-            Duration::from_millis(500),
-        );
+        let (monitor, _mh) =
+            NetworkMonitor::spawn_with(addr, Duration::from_secs(60), Duration::from_millis(500));
 
         // Wire accelerator.
         let _wh = wire(&monitor, retry.clone());
@@ -125,7 +122,10 @@ mod tests {
                 break;
             }
         }
-        assert!(saw_hint, "HintReceived should fire after monitor reports Online");
+        assert!(
+            saw_hint,
+            "HintReceived should fire after monitor reports Online"
+        );
         retry.shutdown();
         pusher.shutdown();
         monitor.shutdown();

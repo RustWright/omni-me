@@ -44,7 +44,10 @@ pub enum MoneyDirection {
 pub enum CsvParseError {
     EmptyInput,
     /// Row index 0-based, plus the underlying reason.
-    BadRow { row: usize, reason: String },
+    BadRow {
+        row: usize,
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for CsvParseError {
