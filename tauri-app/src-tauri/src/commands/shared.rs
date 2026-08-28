@@ -111,8 +111,17 @@ mod tests {
     /// forgotten it: the Obsidian batch import, the hledger journal import, the
     /// recurring scanner, both wipe-path appends, and `dismiss_batch`. The
     /// helpers in this module pair the two operations; this test is what stops
-    /// a seventh. If you genuinely need a raw append, add the nudge and extend
-    /// the exemption list below with a reason.
+    /// a seventh.
+    ///
+    /// **Known blind spot, deliberately left open.** The scan matches the
+    /// literal `state.event_store.append`, so a function that receives the
+    /// store as a `&dyn EventStore` parameter is invisible to it. Exactly one
+    /// does: `import::commit_import_inner`, which threads the store *and* an
+    /// `Option<&PushDebouncer>` so its tests can run without an `AppState`, and
+    /// nudges by hand once the batch lands. Widening the needle to a bare
+    /// `event_store.append` would flag that correct site on every run, so the
+    /// audit lives here instead: a second parameter-threaded appender must nudge
+    /// the same way, and this note is what tells you the test won't catch it.
     #[test]
     fn no_command_appends_events_directly() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

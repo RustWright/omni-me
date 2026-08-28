@@ -25,6 +25,20 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# There is deliberately no `cargo fmt --check` step yet. As of 2026-08-28 the
+# tree does not satisfy rustfmt 1.9.0 (2026-05-25): `cargo fmt --all --check`
+# reports 396 hunks across 84 files. Spot-checking them shows normal formatting
+# that a newer rustfmt now lays out differently (a `#[error(...)]` attribute it
+# will no longer wrap, a `let` binding it now fits on one line) — toolchain
+# drift, not neglect, and nothing a reviewer would call wrong.
+#
+# Adding the step therefore means first landing a ~400-hunk mechanical reformat,
+# which would touch nearly every file currently under code review and make those
+# diffs unreadable. Trip-wire: once the pre-v1 review closes, run
+# `cargo fmt --all` as ONE standalone commit that changes nothing else, then add
+# the check step here. Do not fold that reformat into a commit carrying real
+# changes.
+
 jobs:
   # Compute which areas actually changed (robust git-diff, not substring matching)
   # so the expensive build jobs only run when their sources moved.
@@ -33,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      app: ${{ steps.filter.outputs.app }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - uses: actions/checkout@v4
@@ -48,12 +63,18 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - '.github/workflows/ci.yml'
+            app:
+              - 'core/**'
+              - 'tauri-app/src-tauri/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
             frontend:
               - 'tauri-app/frontend/**'
               - '.github/workflows/ci.yml'
 
   build-and-test:
-    name: Build & Test (Workspace)
+    name: Build & Test (core + server)
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
@@ -63,9 +84,20 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      # Naming both packages in ONE invocation is load-bearing, not cosmetic.
+      # `server` depends on `core` with `features = ["auto-import"]`, and cargo
+      # unifies features across a single invocation — so core is compiled WITH
+      # auto-import here and its ~97 IMAP / receipts / subprocess / CSV tests
+      # run. Split these into two commands and core silently drops to its
+      # default feature set (513 tests instead of 609) with no failure to notice.
+      - name: Clippy
+        run: cargo clippy -p omni-me-core -p omni-me-server --all-targets -- -D warnings
 
       - name: Run tests
         run: cargo test -p omni-me-core -p omni-me-server
@@ -73,8 +105,67 @@ jobs:
       - name: Build release
         run: cargo build --release -p omni-me-core -p omni-me-server
 
+  build-and-test-app:
+    name: Build & Test (Tauri app)
+    needs: changes
+    if: ${{ needs.changes.outputs.app == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # `omni-me-app` pulls webkit2gtk-sys / soup3-sys / gtk-sys /
+      # javascriptcore-rs-sys, which are pkg-config shims over system libraries.
+      # Without these the crate cannot compile at all — which is why it sat
+      # outside CI, leaving ~5,300 lines of command handlers unbuilt. It gets its
+      # own job rather than joining the backend one so core/server changes don't
+      # pay this apt cost, and so the two run in parallel.
+      #
+      # This list is deliberately shorter than the stock Tauri Linux
+      # prerequisites, and is derived rather than copied: the `-sys` crates in
+      # this tree declare exactly five pkg-config modules in their
+      # `package.metadata.system-deps` — webkit2gtk-4.1, javascriptcoregtk-4.1,
+      # libsoup-3.0 (all three satisfied by libwebkit2gtk-4.1-dev's own
+      # Depends), plus gtk+-3.0 and gdk-3.0 (libgtk-3-dev). The usual extras do
+      # not apply here: no appindicator (tauri is built with `features = []`, so
+      # no tray), no librsvg (bundling only — CI never bundles), and neither
+      # libxdo nor libssl, which `cargo tree -p omni-me-app -i` shows are absent
+      # from this crate's graph (reqwest is on rustls; openssl-sys enters the
+      # lockfile only through the server's auto-import native-tls path).
+      # Re-derive with that same `cargo tree -i` before adding to this list.
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy -p omni-me-app --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test -p omni-me-app
+
+      # `check --release`, not `build --release`. The defect class worth catching
+      # is cfg drift — code behind `cfg(debug_assertions)` that only the release
+      # profile compiles (a debug/release branch in `editor.rs` shipped a broken
+      # release build once). `check` evaluates those cfgs, and skips the LTO +
+      # codegen-units=1 link that the release profile would otherwise spend
+      # several minutes on. The shippable artifacts are produced by
+      # `tauri-app/scripts/{desktop,android}-build.sh`, not by CI.
+      - name: Check release profile
+        run: cargo check --release -p omni-me-app
+
   build-frontend:
-    name: Build Frontend (WASM)
+    name: Build & Test (Frontend)
     needs: changes
     if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
@@ -86,12 +177,37 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: tauri-app/frontend
           cache-bin: false
+
+      # `tauri-app/frontend` is `exclude`d from the root workspace AND declares
+      # its own bare `[workspace]` table, so no `--workspace` or `-p` flag from
+      # the repo root can ever reach it. Every frontend step must run from its
+      # own directory; that is permanent, not a temporary shortcut.
+      #
+      # These are plain host-native `#[test]`s (zero `wasm_bindgen_test`), so
+      # they need no browser and no wasm target and finish in well under a
+      # second. Browser-level interaction is verified through the Playwright MCP
+      # loop in UI_WORKFLOW.md, which is interactive and not a CI candidate.
+      - name: Run tests
+        working-directory: tauri-app/frontend
+        run: cargo test
+
+      # Both feature configs: `mock` swaps the whole Tauri IPC bridge for stubs,
+      # so each config compiles a different half of `bridge.rs` and a lint clean
+      # in one says nothing about the other.
+      - name: Clippy (mock)
+        working-directory: tauri-app/frontend
+        run: cargo clippy --target wasm32-unknown-unknown --features mock -- -D warnings
+
+      - name: Clippy (non-mock)
+        working-directory: tauri-app/frontend
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
 
       - name: Install dioxus-cli
         uses: cargo-bins/cargo-binstall@main
