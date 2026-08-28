@@ -129,4 +129,30 @@ for a reader to discover.
 
 ## License
 
-Not yet chosen.
+Licensed under either of
+
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option. Unless you explicitly state otherwise, any contribution
+intentionally submitted for inclusion in this work by you, as defined in the
+Apache-2.0 license, shall be dual licensed as above, without any additional terms
+or conditions.
+
+### Third-party notice
+
+That dual license covers **this repository's own source**. A build of it is not
+uniformly permissively licensed, and the difference is worth knowing before you
+redistribute a binary:
+
+**SurrealDB 3.0 is under the Business Source License 1.1**, which its own text
+states "is not an Open Source license." Its Additional Use Grant permits use for
+any purpose *except* offering the Licensed Work as a Database Service to third
+parties — running omni-me, self-hosting its server for yourself, forking it and
+building it are all well inside that grant. The BSL converts to Apache-2.0 on
+**2030-01-01**.
+
+The rest of the tree is conventional: of 894 dependency crates, 524 are dual
+MIT/Apache-2.0 and 210 are MIT. Eight are MPL-2.0, whose copyleft is per-file and
+applies only to modifications of those files — they are unmodified upstream
+dependencies here. There is no GPL or AGPL anywhere in the graph.

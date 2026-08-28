@@ -2,6 +2,7 @@
 name = "omni-me-app"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "omni_me_app"
