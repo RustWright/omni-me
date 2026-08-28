@@ -3,6 +3,20 @@
 //! Pattern mirror of `commands::routines`: each mutating command builds a
 //! payload, calls `append_and_apply`, optionally returns the projected row.
 //! Reads go through `core::db::queries`.
+//!
+//! **This file covers eight unrelated feature areas across ~30 commands and has
+//! no tests of its own.** Both halves of that sentence are deferrals, and the
+//! order they get fixed in matters.
+//!
+//! Splitting it by feature is worth doing, but not first. A refactor of
+//! untested code has nothing to tell you whether it preserved behaviour, and
+//! this file is reachable only through Tauri's IPC layer, so a mistake here
+//! surfaces as a screen that quietly stops working rather than as a failing
+//! build. Trip-wire: split it once it HAS tests — write those first, then move
+//! code with something watching. The commands are pure enough to test through
+//! their helpers (`check_wipe_confirmation` in `routines.rs` is the shape to
+//! copy: pull the logic out of the `#[tauri::command]` so it can be called
+//! without an `AppState`).
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};

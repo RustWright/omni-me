@@ -1,3 +1,30 @@
+//! The Tauri IPC boundary: one `invoke_*` wrapper per backend command, plus a
+//! complete `mock` implementation of the same surface for browser-only runs.
+//!
+//! **Two deferrals live here; only one of them is what it first looks like.**
+//!
+//! The first is size. An earlier review said to collapse these wrappers with a
+//! macro if the pattern count ever grew a lot. It grew a lot — and the remedy
+//! still does not fit, so it is being recorded as declined rather than left
+//! looking undone. The wrappers are not the bulk of this file; the mock
+//! fixtures are, and they are hand-written sample data (80-190 lines apiece)
+//! that a macro cannot generate. Trip-wire, re-scoped: extract the mock half
+//! into its own module when this file next needs restructuring for any other
+//! reason. Do not spend a release gate on it.
+//!
+//! The second is the real risk. Four `thread_local!` stores in the mock half —
+//! `MOCK_ACCOUNT_OVERRIDES`, `MOCK_PAUSED`, `MOCK_SOURCE_CONFIGS`,
+//! `MOCK_LLM_CONFIG` — do not merely return canned values. They re-implement
+//! backend CRUD and merge semantics a second time, in a second language of
+//! sorts, with no shared definition. Type drift between mock and real is caught
+//! by the compiler because both satisfy the same signature; BEHAVIOURAL drift
+//! is not caught by anything. When the mock's idea of "update an override"
+//! diverges from the backend's, the browser loop keeps looking correct and
+//! stops predicting what the device will do — which is the one thing the mock
+//! exists to do. Trip-wire: any change to the backend semantics behind those
+//! four must be mirrored here in the same commit; if that becomes hard to
+//! honour, delete the stateful mocks and let those flows be device-only.
+
 use wasm_bindgen::prelude::*;
 
 /// Marker string compiled into the WASM binary whenever the `mock` feature is

@@ -1,3 +1,24 @@
+//! The finances screen: Overview, Ledger and Analyze.
+//!
+//! **Deliberately still one 7,000-line file.** Splitting it three ways along the
+//! `surface_of()` seam below is the obvious move and is NOT being done yet, for
+//! a specific reason: that seam is the *output* of the finances IA rebuild, and
+//! the rebuild has not finished being verified. Its Overview / Ledger / Analyze
+//! structure has so far been exercised only against mock data in a browser —
+//! the end-to-end pass on a real device against real data is still queued
+//! behind a database reset.
+//!
+//! Split it before that pass and the pass stops being able to tell you
+//! anything: it would be testing a file layout no one has ever run, so any
+//! breakage it finds is ambiguous between the redesign and the split. Split it
+//! after and the two are independently attributable.
+//!
+//! Trip-wire: do this once the on-device real-data pass has come back clean.
+//! While splitting, also fix a drift this file has already accumulated —
+//! `StatementImportView` and `JournalImportView` are Overview surfaces
+//! according to `surface_of`, but physically sit down among the Analyze code.
+//! Group by surface, not by the order things happened to get written.
+
 use dioxus::prelude::*;
 
 use crate::bridge;

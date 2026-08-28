@@ -572,6 +572,18 @@ fn GroupListView(
                                             "{group.frequency}"
                                         }
                                         if is_pending {
+                                            // The arm → "Confirm?" / "Cancel" pair below is written
+                                            // out a second time further down this file, for routine
+                                            // *items* rather than groups. Same markup and same class
+                                            // strings; only the confirm handler differs. Left
+                                            // duplicated on purpose for now — folding it into a
+                                            // shared component is a visual change to a destructive
+                                            // control, so it needs a browser pass to land safely, and
+                                            // it buys nothing at a release gate. Trip-wire: extract it
+                                            // when a THIRD confirm-to-delete appears, or when either
+                                            // copy needs a behaviour change; two copies drifting in
+                                            // appearance is cosmetic, two copies drifting in what
+                                            // "confirm" does is not.
                                             button {
                                                 class: "px-2 py-1 bg-error text-obsidian-bg border border-error/60 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-error/90 transition-colors",
                                                 onclick: move |_| {

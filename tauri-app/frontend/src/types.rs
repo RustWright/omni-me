@@ -1,3 +1,21 @@
+//! Wire types for the Tauri IPC boundary.
+//!
+//! Every struct here hand-mirrors one the backend owns, and that IS the design
+//! — reviewed and kept, not an omission waiting to be generated away. The
+//! frontend compiles to wasm and deliberately does not depend on `omni-me-core`
+//! (pulling it in drags a database driver and its transitive dependencies into
+//! the browser bundle), so there is no shared crate for these to come from.
+//!
+//! What makes it safe is that the mirroring is enforced at the only place it
+//! can go wrong: `serde` deserialisation of the actual IPC payload. A renamed
+//! or retyped field fails at runtime on the first call, in development, on the
+//! screen that uses it. A review of all of these against their backend
+//! counterparts found no drift.
+//!
+//! Trip-wire: if drift ever DOES ship to a user, stop hand-mirroring and
+//! generate this file from the backend types instead. Until then, generating it
+//! would add a build step to solve a problem that has not occurred.
+
 use serde::{Deserialize, Serialize};
 
 /// A journal entry (one per day). Mirrors `JournalEntryRow` from the backend.

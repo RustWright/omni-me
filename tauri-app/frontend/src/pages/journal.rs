@@ -549,6 +549,15 @@ fn DayView(
             }
             // Closed journals must not auto-save (the manual Save button is
             // also disabled in this state).
+            //
+            // This `closed` check appears three times in this file and the
+            // repetition is deliberate — do not fold the copies together. They
+            // sit in three different control flows and cannot share an exit:
+            // this one returns before scheduling, the next re-checks AFTER the
+            // debounce wait because a Close Day click can land during it, and
+            // the third `continue`s inside a loop to drain nudges it must not
+            // act on. A single shared helper could return the boolean but not
+            // the control flow, which is the part that differs.
             if entry.read().as_ref().map(|e| e.closed).unwrap_or(false) {
                 return;
             }
