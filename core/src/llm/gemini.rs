@@ -88,10 +88,27 @@ impl GeminiClient {
     }
 
     /// Build the API endpoint URL.
+    ///
+    /// **The API key is deliberately NOT in this URL.** Gemini accepts the key
+    /// either as a `?key=` query parameter or as an `x-goog-api-key` header, and
+    /// this client sends the header (see `send_request`).
+    ///
+    /// A query string is the wrong place for a credential because of everywhere a
+    /// URL gets copied on its way to the wire and back: proxy and reverse-proxy
+    /// access logs record the full request target by default, as do most HTTP
+    /// error reporters and tracing exporters, and a `Referer` leaks it onward.
+    /// None of those places are covered by "we don't log the key" — they log the
+    /// URL, and the key was in the URL. Headers are not recorded by any of those
+    /// defaults.
+    ///
+    /// A previous review deferred this with the condition "verify the proxy
+    /// strips query strings from access logs." That is a mitigation resting on
+    /// remote configuration nobody re-checks, and it protects exactly one of the
+    /// hops above. Putting the key in a header removes the class instead.
     fn endpoint(&self) -> String {
         format!(
-            "{}/v1beta/models/{}:generateContent?key={}",
-            self.base_url, self.model, self.api_key
+            "{}/v1beta/models/{}:generateContent",
+            self.base_url, self.model
         )
     }
 
@@ -112,6 +129,8 @@ impl GeminiClient {
         let response = self
             .http
             .post(self.endpoint())
+            // Credential goes in a header, never the query string — see `endpoint`.
+            .header("x-goog-api-key", &self.api_key)
             .json(&body)
             .send()
             .await
@@ -250,7 +269,7 @@ impl LlmClient for GeminiClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{method, path_regex};
+    use wiremock::matchers::{header, method, path_regex};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn test_client(server: &MockServer) -> GeminiClient {
@@ -280,6 +299,44 @@ mod tests {
                 }
             }]
         })
+    }
+
+    /// The API key must travel in a header and must NOT appear anywhere in the
+    /// request target.
+    ///
+    /// Asserted against the bytes wiremock actually received, not against
+    /// `endpoint()`'s return value — a unit test of the formatter would keep
+    /// passing if someone later re-appended the key at the call site, which is
+    /// exactly how it got into the URL the first time.
+    #[tokio::test]
+    async fn api_key_is_sent_as_a_header_and_never_in_the_url() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path_regex(r"/v1beta/models/.+:generateContent"))
+            .and(header("x-goog-api-key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(gemini_text_response("ok")))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server);
+        let body = json!({ "contents": [{ "parts": [{ "text": "hi" }] }] });
+        client.send_request(body).await.unwrap();
+
+        // Re-read the recorded request: the header matcher above proves the key
+        // arrived, this proves it did not ALSO leak into the URL.
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "expected exactly one request");
+        let url = requests[0].url.as_str();
+        assert!(
+            !url.contains("test-key"),
+            "API key leaked into the request URL, where proxy and error logs \
+             record it: {url}"
+        );
+        assert!(
+            requests[0].url.query().is_none(),
+            "unexpected query string on the Gemini endpoint: {url}"
+        );
     }
 
     #[tokio::test]
