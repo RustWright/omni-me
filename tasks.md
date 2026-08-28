@@ -353,6 +353,17 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      `omni-me-private` after any `core::sync` / `SourceCtx` signature change; CI does not.
      Also queued: `cargo fmt --all` as one standalone commit once this review closes (396 hunks /
      84 files of rustfmt-1.9.0 drift), then add `cargo fmt --check` to CI.
+     **Gemini key finding CLOSED 2026-08-28** — the last open item across all four documents. Key
+     moved from the URL query string to an `x-goog-api-key` header, with a wire-level regression test
+     asserting against the bytes wiremock received (control-checked). The two `openai_compat` clients
+     already used bearer headers, so Gemini was the sole outlier; `extraction/gemini.rs` delegates to
+     the same client, so one change closed both paths.
+     **⚠ NEEDS A REDEPLOY TO TAKE EFFECT ON THE BOX.** Two server-side security fixes from this
+     review are code-only until the next image build + deploy: (a) this Gemini header change, and
+     (b) the `poppler-utils` runtime-image fix (security finding #27 — PDF extraction has never
+     actually worked on the box). Neither is live today. Fold both into the deployment that
+     accompanies the DB reset (roadmap steps 8-9) rather than making a special trip, and re-verify
+     PDF extraction end-to-end afterwards, since it has never once run successfully in production.
 
   **C. Email ingest prep:**
   6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
