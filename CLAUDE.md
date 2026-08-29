@@ -1,6 +1,6 @@
 # Claude Code Instructions
 
-This project follows the structured process defined in `PROJECT_PROCESS.md` (mirror of `setup_files/PROJECT_PROCESS.md`; the canonical source lives there).
+This project follows the structured process defined in `../../setup_files/PROJECT_PROCESS.md` — the single canonical copy, in the `productive_learning` workspace. There is no per-project mirror; read it there. (Later mentions of `PROJECT_PROCESS.md § …` on this page mean that file.)
 
 ## Session Management
 
