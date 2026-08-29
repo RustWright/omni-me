@@ -286,8 +286,12 @@ cycle-close review pass — it's synced for you.
 
 What remains yours, **every sitting** (not just at a phase boundary):
 
-0. **Rewrite `NEXT.md`.** This is the last thing you do before the session ends or
-   compacts. Rewrite it *wholesale* — it describes only *now*; the history already
+0. **Rewrite `NEXT.md`.** Do this the moment the "Next action" it names is finished,
+   abandoned, or redirected — *before* you report that work as done — and again at
+   wrap-up only if something changed since. Do not save it for the end of the session:
+   `SessionEnd`/`PreCompact` hooks commit files but never invoke the model, so a
+   sitting that ends mid-stretch commits the *stale* handoff and the `STALE` canary
+   only reports it one session later. Rewrite it *wholesale* — it describes only *now*; the history already
    lives in `project.md` and `logs/`. Max 40 lines, enforced by the hook. It holds the
    next action, the decisions in force **with their rationale**, what NOT to re-survey,
    and open threads. It is **never a state snapshot** — the next session re-verifies
