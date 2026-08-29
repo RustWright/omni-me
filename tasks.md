@@ -403,8 +403,33 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      Verified: core+server 617, app 68, frontend 85, clippy clean ×4 configs.
 
   **C. Email ingest prep:**
-  6. **Variation of #337 + #341** — prep ALL the user's email inboxes so the app cleanly ingests
-     everything it needs. Fix bugs / add necessary features *as they arise in the process*, ad hoc.
+  6. **~~Variation of #337 + #341~~ — ❌ CUT FROM v1 (user, 2026-08-29).** Was: prep ALL the user's
+     email inboxes so the app cleanly ingests everything it needs, ad hoc.
+     **Why cut:** the ingest *model* was rejected, not the pollers. Deciding which mail reaches the
+     extractor needs a `watched_label` per mailbox plus a `sender_patterns` list — **open-ended
+     config that grows once per service the user ever signs up for and can't be enumerated in
+     advance.** The overlay's API sources carry almost all day-to-day transactions, and their config
+     is *closed* (a currency map that changes with accounts, not with spending). Email was carrying
+     maintenance cost without carrying entries: the API feeds already report the transaction, and
+     the receipt only added merchant/itemization detail on top. User: *"if I had a choice between
+     ship something I don't like and isn't critical vs ship nothing at all, I would ship nothing."*
+     **Auto-import itself stays a v1 requirement** (user, same day) — via APIs only.
+     **What was actually cut:** the IMAP pollers, `ReceiptHandler`, and the overlay's compiled
+     statement handler (the one institution with no API — now manual statement import).
+     **Kept:** `EmailCapture` (`finances.rs:1826`), the manual paste-a-body flow — no labels, no
+     sender list, no polling, and `/documents/extract` works regardless of auto-import config
+     (`server/src/lib.rs:179`). Grabbing one receipt by hand is still three taps.
+     **How it's off:** gated at the private composition root behind `OMNI_ENABLE_IMAP=1`, *not* by
+     emptying the mailbox list — a stale `[imap.*]` entry must not be able to silently switch email
+     ingest back on. The engine keeps `ImapSource`/`ReceiptHandler`/`imap_real.rs` as an open-core
+     capability; this is a decision not to configure, not a deletion. Re-enabling needs no rebuild.
+     **Fell out for free:** `poppler-utils`-missing-from-the-production-image stops mattering —
+     `pdftotext` has exactly one caller in the codebase (`receipts.rs:117`, the email-attachment
+     path); UI-uploaded PDFs go to Gemini's multimodal path. And the sharpest security surface in
+     auto-import goes with it (`receipts.rs:216-231`: attacker-controlled body text, no SPF/DKIM on
+     `accepts()`, the review queue named as the sole control).
+     **Trip-wire:** revisit ONLY as part of the post-v1 auto-import model rethink (below). "The
+     pollers are failing" is *not* a reason to re-enable this.
 
   **D. Data catch-up (clean data BEFORE the wipe):**
   7. **Bring imports current** — the ledger import is months stale; use the **paisa process** to get it
@@ -708,6 +733,55 @@ build/test/publish of the bank-free image.
 
 ## Running friction log *(fill during dogfooding; triage into the live phase)*
 
+### 2026-08-29 — found while cutting email from v1
+
+- [x] **CRITICAL (private overlay) — an API auto-import source has been proposing zero drafts,
+  silently.** Surfaced by asking what breaks if email is cut: the answer was "not much, but the
+  fallback isn't running either." The overlay's composition root passed the source an **empty
+  account map**, and the adapter looks each balance's currency up in that map and *skips* the
+  transaction when it is missing. Empty map ⇒ every transaction skipped, so the source pulled
+  successfully, reported healthy, and imported nothing. **Failure mode is silence, not an error** —
+  nothing anywhere says "this source has never proposed anything." An existing test already pinned
+  the skip behavior; the *wiring* was what nobody checked.
+  **The comment above the call site actively misled** — it claimed the adapter "derives the account
+  from each balance's currency", which it does not; it looks the currency up. Exactly the class the
+  Phase A review named: a comment describing *code elsewhere* rots when that other file changes.
+  **Fix (2026-08-29):** the map moved into the private `credentials.toml` (config, not a const, so
+  adding a currency needs no rebuild), is threaded through at the composition root, and startup now
+  **warns loudly when it is empty** — empty stays legal, since the public engine and the adapter
+  tests rely on it. +2 tests pinning the config→struct seam; they do *not* cover the composition
+  wiring where the bug actually lived (no unit test reaches it), so the warning plus a live smoke
+  test are the real guard. Private overlay: 28 tests green, clippy clean.
+  **Full detail, real names and file anchors: `omni-me-private/tasks.md`** — private-overlay work is
+  tracked there per [[feedback-public-repo-keep-private-identity-out]]. **[USER] remaining:** one
+  config edit, described in that file.
+
+- **New known flake (private overlay), documented not chased:** a subprocess-source unit test failed
+  once in a full-suite run and passed on both re-runs plus 3/3 in isolation. Subprocess-exit timing
+  under parallel load; that file was untouched. Distinct from the public suite's SurrealDB tempfile
+  race. Chase only if it recurs; named in the overlay's tracker. [XS]
+- **NOT BUILT — account editor in `BatchReviewView`, and it should stay not-built.** The planned
+  fix was to reuse the `AccountInput` typeahead in the batch review screen, because drafts commit
+  with whatever `account_hint` they carry (`commit_batch` uses `draft.postings.clone()` verbatim —
+  no override channel) and correcting one means a separate `categorize_transaction` round-trip.
+  **The premise was email-shaped and died with email.** Checked before building
+  ([[feedback-verify-hypothesis-before-build]]): an API draft has exactly two postings — the real
+  account, which comes from a deterministic map and is right by construction
+  (from the overlay's currency map, and per `SUBPROCESS_SOURCE_CONTRACT.md:113` the helper owns
+  account mapping entirely — "the engine never reasons about accounts"), and an `Unmatched` mirror that is
+  **deliberately** a placeholder under the clearing-account pattern's balance-zero invariant.
+  Editing either at commit time is wrong: the first is already correct, and the second is what the
+  existing resolve-unmatched flow is *for* (`UnmatchedCard` :5028 / `NoMatchRowCard` :6322 /
+  `invoke_resolve_unmatched` :6210 — which already has the typeahead wired). Building it would
+  duplicate that flow in a second place and invite breaking the invariant. **The finding was real
+  for LLM-guessed `Expenses:*` categories on the email path; with email cut it has no caller.**
+- **NOT BUILT — wiring `verify()` into the auto-import path.** Same reason, sharper: with IMAP off,
+  **no auto-import source touches the extractor at all** (verified: `receipts.rs` was the only one).
+  `verify()` cross-checks an `ExtractionResult`'s posting sum against its stated total, and the API
+  sources produce no `ExtractionResult` and no confidence score. It would still add value on the
+  **manual capture** flows (photo / PDF / paste), which are now the extractor's only callers — but
+  that is a separate item about capture, not about auto-import. Filed, not done. [S]
+
 ### 2026-07-04 — cross-platform dogfooding (phone + laptop, both on the Hetzner box) — NEW, list incomplete ("...and it goes on")
 
 **CRITICAL — sync / data integrity:**
@@ -743,11 +817,14 @@ build/test/publish of the bank-free image.
 
 **2026-07-05 confirmation-pass — new items (user's pass over the pushed build):**
 - [x] **Desktop control contrast unreadable** in Settings — specifically the **default-currency picker** and the **LLM-provider selector** (checkbox/select controls). Low contrast against the dark theme; hard to read state. *User has 2 screenshots.* [S] — **DONE 2026-07-05 (c7215d1).** Root cause: no `color-scheme` was set, so Linux webkit2gtk painted native form controls (both `<select>`s + their dropdown popups, the vision `<checkbox>`, scrollbars) with the **light GTK system theme** over the app's dark bg → unreadable. Fix = one line: `color-scheme: dark` on `:root` in `input.css` — the spec-standard way to tell a WebView to render native controls in dark mode (app-wide, covers every native control, no control-replacement needed; same native-control family as the date-picker freeze). **Verified** via `dx serve` + Playwright at 1280px: both selects now render dark bg + light text + visible arrow (Chromium honors `color-scheme` identically to webkit2gtk, so the flip is faithful). Final webkit2gtk contrast confirmation rides the user's desktop pass (Chromium can't render the native GTK popup itself). **REOPENED 2026-07-06 (on-device pass):** the parenthetical assumption above was WRONG — webkit2gtk does **not** honor `color-scheme: dark` for native `<select>`s; the **closed picker box** stayed unreadable on the real desktop (user confirmed "closed picker box"). c7215d1's Playwright "verified" was Chromium-only theater for this exact control. **Real fix:** a global `select { -webkit-appearance:none; appearance:none; background-color; color; + chevron }` rule in `input.css` — webkit2gtk only honors CSS bg/color on a `<select>` once the native appearance is cleared. Kept `color-scheme: dark` for the other native controls (date picker, checkbox, scrollbars). This is **not** Playwright-verifiable (Chromium already rendered it fine) → pending the user's on-device confirm before re-closing. **RE-CLOSED 2026-07-06 (on-device confirmed):** user verified on the webkit2gtk desktop — both closed picker boxes now render dark bg + light readable text; the initial chevron/value overlap on the auto-width currency picker was fixed with `padding-right:2rem !important` (beats utility `px-*`). Shipped in the release-tier `desktop-build.sh release` binary. Fix lives in `input.css` (global `select` appearance:none rule). Lesson banked to the dx-workflow memory: native-control styling is not Playwright-verifiable — webkit2gtk ≠ Chromium for form controls.
-- [ ] **IMAP pollers fail — Gmail and Yahoo, for different reasons.** Both email pollers error (the two failure modes differ per provider — likely app-password / OAuth / IMAP-enabled / host+port). *User has a screenshot.* Diagnose per provider. [?]
+- [~] **IMAP pollers fail — Gmail and Yahoo, for different reasons.** Both email pollers error (the two failure modes differ per provider — likely app-password / OAuth / IMAP-enabled / host+port). *User has a screenshot.* Diagnose per provider. [?] — **🅿️ DEFERRED POST-v1 2026-08-29, WON'T DIAGNOSE.** Email ingest is cut from v1 (roadmap step 6 above); the pollers are now off behind `OMNI_ENABLE_IMAP`. Diagnosing connectivity for a path that isn't shipping is wasted work, and the model may not survive the post-v1 rethink anyway. Known symptoms preserved for whoever picks this up — from the 2026-05-18 device test (`project.md:448-452`): `gmail_work` + `yahoo` hit intermittent `save cursor: Connection uninitialised` (handlers consumed the events; only the cursor save failed), and `gmail_personal` returned HTTP 502 *after* successfully appending the batch. So this was never "email doesn't work" — yahoo produced a real draft on the box 2026-06-28.
 - **[private/live build — record] Default sync `server_url` → `http://omni-box-hetzner:3000`, not `localhost`.** The default the app ships with (on a fresh/empty settings DB) is localhost, so every reinstall the user re-points it by hand. Fine for debug copies, but the **personal/live build** (compiled + auto-updated on the server) should default to the box address so reinstalls need no manual reconfig. NOTE: `server_url` is a **persisted setting** (the desktop smoke-run read `omni-box-hetzner` from the *existing* local DB — that's the user's prior manual value, not the fresh-install default). Fix likely rides the private overlay's build-time `--config` injection (same channel as the OTA endpoint/minisign pubkey) or the hardcoded default const. (user, 2026-07-05) [private/config, S] — **DONE 2026-07-21 (fix implemented; on-device confirm pending).** Chosen shape = **public exposes a compile-time knob, private CI sets it**: `DEFAULT_SERVER_URL` (`tauri-app/src-tauri/src/lib.rs`) is now `option_env!("OMNI_DEFAULT_SERVER_URL")` (unset → `localhost` so the public zero-config build is unchanged; no box hostname in the public repo) + a `cargo:rerun-if-env-changed` in `build.rs`. Precedence preserved: persisted `server_url` file > runtime `OMNI_SERVER_URL` env > compile-time default > localhost. Private `app-release.yml` sets `OMNI_DEFAULT_SERVER_URL=http://<box>:3000` from `vars.HETZNER_BOX_HOST` in **both** build jobs (desktop extends the existing resolve step; android gets a mirror "Resolve box URL" step — env passes through to the nested cargo compile, so `android-build.sh` is untouched). **Bonus:** also fixes Android OTA discovery on a fresh install (`commands/update.rs:61` builds `{server_url}/updates/android/latest.json`). Verified: standalone rustc proves the const flows the env (unset→localhost, set→box); `cargo clippy -p omni-me-app` clean; `app-release.yml` YAML valid; public diff denylist-clean. **Remaining:** a billed `app-release` CI dispatch + on-device fresh-install confirm ([USER]).
 
 **FEATURE — IMAP email-parsing pollers, proper setup (own session, user 2026-07-05):**
-- [ ] **Set up the Gmail + Yahoo IMAP pollers to actually parse the user's emails** for the relevant transaction/receipt data. User estimates this needs **almost an entire session to itself** (per-provider auth, IMAP config, parsing rules, mapping to import drafts). Its own planning-first session — pairs with the IMAP-pollers-fail item above (fix connectivity first, then build the parsing). [L, → own session]
+- [~] **Set up the Gmail + Yahoo IMAP pollers to actually parse the user's emails** for the relevant transaction/receipt data. User estimates this needs **almost an entire session to itself** (per-provider auth, IMAP config, parsing rules, mapping to import drafts). Its own planning-first session — pairs with the IMAP-pollers-fail item above (fix connectivity first, then build the parsing). [L, → own session] — **🅿️ DEFERRED POST-v1 2026-08-29 (superseded).** The "parsing rules" this entry scopes are the `sender_patterns` list, and that open-ended config is precisely what the user rejected. Note the premise was already half-wrong: the LLM extractor *already* reads email bodies + PDF-attachment text and guesses `account_hint` (`receipts.rs:176-270`, prompt at `extraction/mod.rs:216-221`) — nothing was ever hand-classified per email. Only the gate was manual. Folded into the post-v1 rethink below.
+
+**POST-v1 DESIGN THREAD — rethink the IMAP-plus-API ingest model (user, 2026-08-29):**
+- [ ] The objection is **open-ended gate config**, not automation and not email as a source. Any replacement has to make "which mail is relevant" self-maintaining. Directions worth *only* a note until v1 ships — do not design these now: forward-to-a-dedicated-address push instead of polling (the user's filter action becomes the signal, no label to maintain); Gmail API query search instead of a maintained label; or drop email entirely and add API sources. Whatever replaces it inherits the constraint at `receipts.rs:216-231` — untrusted sender input reaching an LLM, with the pending-review queue as the only control. [→ own planning session, [[feedback-defer-major-phases-to-fresh-session]]]
 
 **FEATURE — journal line timestamps, redesign (design-first → own session, user 2026-07-05):**
 - [x] **Reveal-on-select line completion timestamps** (Teams-style). Supersedes the current inline-timestamp feature. [M/L] — **✅ BUILT + verified (2026-08-24, ef8a1df + journal-count fix).**

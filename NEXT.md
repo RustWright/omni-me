@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: roadmap step 6 — email ingest prep**, in a *fresh* context. Prep every email
-inbox so the app ingests it cleanly, fixing bugs and adding features ad hoc as they surface.
-Sequence in `tasks.md` § AGREED RELEASE ROADMAP + memory `project-v1-release-roadmap`; steps
-7–9 are import catch-up → box wipe → Phase 6 OTA, each its own push.
+**Next action: roadmap step 7 — bring imports current**, in a *fresh* context. The ledger import is
+months stale; use the paisa process to get it import-ready, same for the Obsidian journal (user will
+point to the current copy). Steps 8–9 are box wipe → Phase 6 OTA, each its own push.
+
+**Blocking [USER] first:** one config edit in the private overlay — an API source's currency→account
+map, spelled out in `omni-me-private/tasks.md` and its `credentials.toml.example`. Until it lands
+that source imports nothing; startup warns loudly.
 
 ## Decisions in force — inherit these, don't re-derive
 
-- **The pre-v1 code review is CLOSED** (2026-08-28, all four phases). It was the v1 gate; it
-  is not reopened by finding a new bug. File new bugs as ordinary work.
-- **One roadmap push per fresh context.** The user compacts between steps deliberately. Do the
-  current step and stop — do not run ahead into the next.
-- **`reviews/` is gitignored on purpose.** `project.md`'s session-log rows are the durable
-  record — its top three rows carry Phases C, B and D in full, for when the docs are gone.
-- **Two security fixes are code-only until the next image build + deploy** (Gemini header,
-  `poppler-utils`). Deliberate: they ride the deployment that accompanies the DB reset,
-  roadmap steps 8–9. Not an oversight, don't re-fix.
-- **Concepts post S2 ("what an ABI is") is held, not scheduled.** Trip-wire: a *second*
-  decision turning on ABI stability. Zero concepts posts is a normal cycle.
-- **`wireless-app-updates` logbook entry is blocked on the OTA device round-trip** (step 9).
-  The other three entries are written and live in `mylearnbase` as drafts; the user handles
-  reviewing and publishing them there, not in this repo.
-- **`budget.rs` must be covered before it is split** — refactoring untested code at a release
-  gate injects bugs into the thing the gate catches. Mutating path tested; read-side is the
-  trip-wire.
+- **Email ingest is CUT from v1** (user, 2026-08-29); roadmap step 6 is struck. What was rejected is
+  the ingest *model*: the gate needs a `watched_label` plus a `sender_patterns` list, config that is
+  open-ended — it grows once per service the user signs up for. IMAP is off behind
+  `OMNI_ENABLE_IMAP=1` at the private composition root (*not* by emptying the mailbox list — a stale
+  `[imap.*]` entry must not silently re-enable it). Rationale in `tasks.md` step 6. **Auto-import
+  itself stays a v1 requirement** — via APIs only. Do NOT re-enable IMAP to "fix the failing
+  pollers": symptoms are recorded and they were never the problem.
+- **`poppler-utils` no longer matters for v1** — `pdftotext` had exactly one caller, the email path.
+  The Gemini header fix is still code-only and rides steps 8–9; deliberate, don't re-fix.
+- **One roadmap push per fresh context.** Do the current step and stop. The pre-v1 code review is
+  **CLOSED** (2026-08-28) — file new bugs as ordinary work, as the overlay bug was. `reviews/` is
+  gitignored; `project.md`'s session-log rows are the durable record.
 
 ## Do NOT re-survey
 
-- The four Phase A perspective documents and their triage. Every finding is dispositioned with
-  a dated marker and every deferral carries a trip-wire. Re-reading them is the expensive
-  non-answer.
-- Formatting. Both workspaces are rustfmt-clean and CI now enforces it.
-- `project.md`'s Cycle 4 backlog line and the Phase 3 Known Gaps list — both swept 2026-08-28
-  for items that had shipped but were still listed open. They are current as of that sweep.
+- Whether an account editor belongs in `BatchReviewView`, or `verify()` wired into auto-import. Both
+  planned, checked against the code, **deliberately not built** — API drafts carry a deterministic
+  real account plus an intentional `Unmatched` mirror, and no auto-import source touches the
+  extractor once IMAP is off. Anchors in `tasks.md` 2026-08-29. Also: the four Phase A review
+  documents and their triage — every finding is dispositioned and dated.
+- Formatting: public workspaces rustfmt-clean (CI-enforced); the private overlay has pre-existing drift in no gate — leave it.
 
 ## Open threads
 
-- Known flake, documented not chased: a SurrealDB tempfile race in the suite — passes on
-  rerun, never once a product defect. `ui-checklist.md` is stale (describes a deleted nav).
+- Neither API source is confirmed proposing drafts in production — one was silently misconfigured
+  (now fixed, unverified against the live box), the other needs its helper binary locatable there or
+  it is skipped with only a warning. Both tracked in `omni-me-private/tasks.md`. Known flake: a
+  SurrealDB tempfile race in the suite, passes on rerun. `ui-checklist.md` is stale (deleted nav).
