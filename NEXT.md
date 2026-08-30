@@ -16,15 +16,14 @@ directory name repeats; the outer level also holds a stray `Attachments/` with 2
 
 - **Vault import design is settled in `headless_import.rs`** — filename-only (`classify_path`),
   frontmatter-`date:` fallback rejected, collisions demoted to Generic, `Templates/` skipped,
-  bad-frontmatter notes rescued. `scan_for_preview` differs on purpose (reasoning from it = the
-  mistake struck 2026-08-29).
-- **Idempotency is asymmetric** — financial skips on content-hash `txn_id`, journal UPSERTs by date,
-  generic notes mint a fresh ULID and **duplicate all 343**. Hence the deferred write.
+  bad-frontmatter rescued. `scan_for_preview` differs on purpose (reasoning from it = the mistake
+  struck 2026-08-29). **Idempotency is asymmetric** — financial skips on content-hash `txn_id`,
+  journal UPSERTs by date, generic notes mint a fresh ULID and **duplicate all 343**.
 - **Credentials live on the box** (`/etc/omni-me/credentials.toml`, `:ro`, read at boot; editing
   needs `compose restart`) and **`deploy.yml` builds the overlay against the *public* pushed ref**,
   so this repo pushes first. Port 3000 binds to the tailnet IP — `curl localhost:3000` → 000.
 - **Email ingest is CUT from v1** (the model, not the pollers); off behind `OMNI_ENABLE_IMAP=1`.
-- **One roadmap push per fresh context.** Pre-v1 review **CLOSED**.
+  **One roadmap push per fresh context.** Pre-v1 review **CLOSED**.
 
 ## Do NOT re-survey
 
