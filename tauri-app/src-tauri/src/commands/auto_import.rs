@@ -607,7 +607,10 @@ mod tests {
     fn commit_txn_id_keeps_multi_currency_legs_of_one_reference_distinct() {
         let usd = commit_txn_id(&draft("globepay-CARD-4252704654", "USD", "-13.12"));
         let cad = commit_txn_id(&draft("globepay-CARD-4252704654", "CAD", "-13.22"));
-        assert_ne!(usd, cad, "two legs of one charge must not collapse onto one id");
+        assert_ne!(
+            usd, cad,
+            "two legs of one charge must not collapse onto one id"
+        );
     }
 
     #[test]

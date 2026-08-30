@@ -526,7 +526,10 @@ pub async fn known_top_tag_values(db: &Database, key: &str) -> Result<HashSet<St
 ///
 /// Deliberately counts dismissed batches as proposed. Dismissing means "not
 /// wanted"; bringing the row back on the next tick is the behaviour being fixed.
-pub async fn proposed_external_ids(db: &Database, source: &str) -> Result<HashSet<String>, DbError> {
+pub async fn proposed_external_ids(
+    db: &Database,
+    source: &str,
+) -> Result<HashSet<String>, DbError> {
     let mut resp = db
         .query(
             "SELECT VALUE payload.draft_postings FROM events
