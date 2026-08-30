@@ -271,8 +271,16 @@ pub fn save(path: &Path, creds: &Credentials) -> Result<(), CredentialError> {
     Ok(())
 }
 
+/// Write `bytes` to `path` such that the file is **never** readable by other
+/// users, not even briefly.
+///
+/// The distinction matters: `std::fs::write` creates with `0666 & !umask`
+/// (usually `0644`) and a follow-up `set_permissions` only narrows it
+/// *afterwards*, leaving a window in which any local user can read the secret.
+/// Creating with `.mode(0o600)` closes that window. Public so every secret
+/// write in the workspace can share this one implementation.
 #[cfg(unix)]
-fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
+pub fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let mut f = std::fs::OpenOptions::new()
@@ -287,7 +295,7 @@ fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
 }
 
 #[cfg(not(unix))]
-fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
+pub fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     // Windows ACLs require a different API; rely on default user-private
     // permissions for the AppData folder on Windows installs.
     std::fs::write(path, bytes)?;

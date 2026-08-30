@@ -85,15 +85,13 @@ pub async fn update_server_token(
     // bug report.
     tracing::info!(cleared = server_token.is_empty(), "update_server_token");
     let path = state.app_data_dir.join(crate::SERVER_TOKEN_FILE);
-    std::fs::write(&path, &server_token).map_err(|e| {
+    // Create-with-mode rather than write-then-chmod: the latter leaves the
+    // token world-readable between the two syscalls, and a failed chmod is
+    // easy to swallow. `write_secret_file` is the single shared implementation.
+    omni_me_core::credentials::write_secret_file(&path, server_token.as_bytes()).map_err(|e| {
         tracing::warn!(error = %e, "failed to persist server_token");
         e.to_string()
     })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
     *state.server_token.write().await = server_token;
     Ok(())
 }
