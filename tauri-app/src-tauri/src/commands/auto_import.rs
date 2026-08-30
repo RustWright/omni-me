@@ -29,24 +29,52 @@ use omni_me_core::events::{
 
 use crate::AppState;
 
-/// Transaction id for a committed draft, derived from the source's stable
-/// `external_id` so committing the same draft twice is a no-op.
+/// Transaction id for a committed draft: the source's stable `external_id`
+/// **plus a hash of the draft's own content**, so committing the same draft
+/// twice is a no-op while genuinely different rows stay distinct.
 ///
 /// This used to be a fresh `Ulid` per accepted draft, which quietly defeated
 /// every downstream guard: the `transactions` projection UPSERTs on `txn_id`
 /// and `budget.journal` skips a `t:<txn_id>` anchor it already holds, so a
 /// stable id makes a duplicate commit collapse — while a random one wrote a
 /// second copy of the same upstream transaction and neither guard could tell.
-/// A source that yields no `external_id` keeps the random id, because there is
-/// nothing stable to key on and colliding every such draft onto one id would be
-/// far worse than duplicating them.
-fn commit_txn_id(external_id: &str) -> String {
-    let trimmed = external_id.trim();
-    if trimmed.is_empty() {
-        ulid::Ulid::new().to_string()
-    } else {
-        format!("auto-{trimmed}")
+///
+/// The content hash is **not** decoration: `external_id` alone is not unique
+/// per row. One upstream card charge can arrive as several drafts sharing a
+/// reference number — a multi-currency charge yields one leg per balance
+/// currency (observed live: `CARD-…` as both −13.12 USD and −13.22 CAD). Keying
+/// on the reference alone would UPSERT those onto one id and silently drop a
+/// leg, turning a duplicate-prevention fix into data loss.
+///
+/// A source that yields no `external_id` keeps a random id: there is nothing
+/// stable to key on, and colliding every such draft onto one id would be far
+/// worse than duplicating them.
+fn commit_txn_id(draft: &DraftTransaction) -> String {
+    let external_id = draft.external_id.trim();
+    if external_id.is_empty() {
+        return ulid::Ulid::new().to_string();
     }
+
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = FNV_OFFSET;
+    let mut eat = |s: &str| {
+        for &b in s.as_bytes() {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        hash ^= 0x1f;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    };
+    eat(&draft.date.to_string());
+    eat(draft.description.trim());
+    for posting in &draft.postings {
+        eat(&posting.account);
+        eat(&posting.commodity);
+        eat(&posting.amount.to_string());
+    }
+
+    format!("auto-{external_id}-{hash:016x}")
 }
 
 /// Base currency for manual-FX events recorded against this client.
@@ -387,7 +415,7 @@ pub async fn commit_batch(
     for &idx in &indices {
         let draft = &drafts[idx];
         accepted_dates.push(draft.date);
-        let txn_id = commit_txn_id(&draft.external_id);
+        let txn_id = commit_txn_id(draft);
         let mut payload = TransactionRecordedPayload::new(
             txn_id,
             draft.date,
@@ -537,29 +565,56 @@ mod tests {
         s.parse().unwrap()
     }
 
+    fn draft(external_id: &str, commodity: &str, amount: &str) -> DraftTransaction {
+        use omni_me_core::events::Posting;
+        DraftTransaction {
+            external_id: external_id.to_string(),
+            date: NaiveDate::from_ymd_opt(2026, 8, 28).unwrap(),
+            description: "Card transaction".into(),
+            postings: vec![Posting {
+                account: "Assets:NonRegistered".into(),
+                commodity: commodity.into(),
+                amount: Decimal::from_str(amount).unwrap(),
+                fx_rate: None,
+                tags: vec![],
+            }],
+        }
+    }
+
     /// Committing the same upstream row twice must land on one id, so the
     /// projection's UPSERT and the journal's anchor check both collapse it.
     #[test]
-    fn commit_txn_id_is_stable_for_the_same_external_id() {
+    fn commit_txn_id_is_stable_for_the_same_draft() {
         assert_eq!(
-            commit_txn_id("globepay-TRANSFER-123"),
-            commit_txn_id("globepay-TRANSFER-123")
+            commit_txn_id(&draft("globepay-TRANSFER-123", "CAD", "-13.22")),
+            commit_txn_id(&draft("globepay-TRANSFER-123", "CAD", "-13.22"))
         );
     }
 
     #[test]
     fn commit_txn_id_differs_across_external_ids() {
         assert_ne!(
-            commit_txn_id("globepay-TRANSFER-123"),
-            commit_txn_id("globepay-TRANSFER-124")
+            commit_txn_id(&draft("globepay-TRANSFER-123", "CAD", "-13.22")),
+            commit_txn_id(&draft("globepay-TRANSFER-124", "CAD", "-13.22"))
         );
+    }
+
+    /// The regression that nearly shipped: one upstream charge can arrive as
+    /// several drafts sharing a reference number — a multi-currency card charge
+    /// yields one leg per balance currency. Keying on the reference alone would
+    /// UPSERT them onto a single transaction and silently drop a leg.
+    #[test]
+    fn commit_txn_id_keeps_multi_currency_legs_of_one_reference_distinct() {
+        let usd = commit_txn_id(&draft("globepay-CARD-4252704654", "USD", "-13.12"));
+        let cad = commit_txn_id(&draft("globepay-CARD-4252704654", "CAD", "-13.22"));
+        assert_ne!(usd, cad, "two legs of one charge must not collapse onto one id");
     }
 
     #[test]
     fn commit_txn_id_ignores_surrounding_whitespace() {
         assert_eq!(
-            commit_txn_id("  globepay-TRANSFER-123  "),
-            commit_txn_id("globepay-TRANSFER-123")
+            commit_txn_id(&draft("  globepay-TRANSFER-123  ", "CAD", "-13.22")),
+            commit_txn_id(&draft("globepay-TRANSFER-123", "CAD", "-13.22"))
         );
     }
 
@@ -567,8 +622,8 @@ mod tests {
     /// such draft is its own transaction, so a random id is the correct answer.
     #[test]
     fn commit_txn_id_falls_back_to_a_unique_id_when_external_id_is_blank() {
-        let a = commit_txn_id("");
-        let b = commit_txn_id("   ");
+        let a = commit_txn_id(&draft("", "CAD", "-1.00"));
+        let b = commit_txn_id(&draft("   ", "CAD", "-1.00"));
         assert_ne!(a, b);
         assert!(!a.starts_with("auto-"));
     }

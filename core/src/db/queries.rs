@@ -514,6 +514,46 @@ pub async fn known_top_tag_values(db: &Database, key: &str) -> Result<HashSet<St
         .collect())
 }
 
+/// Every `external_id` this source has already offered for review, read from
+/// the `auto_import_batch_proposed` events in the log.
+///
+/// Complements [`known_top_tag_values`], which only sees rows that made it into
+/// the journal. Some upstream rows can never match a journal tag — the ledger
+/// records reference numbers for transfers and balance moves but not for card
+/// charges — so without this a polling source keeps re-offering them each time
+/// its lookback window shifts. Together the two give the semantic the review
+/// queue actually wants: **each upstream row is proposed at most once**.
+///
+/// Deliberately counts dismissed batches as proposed. Dismissing means "not
+/// wanted"; bringing the row back on the next tick is the behaviour being fixed.
+pub async fn proposed_external_ids(db: &Database, source: &str) -> Result<HashSet<String>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT VALUE payload.draft_postings FROM events
+             WHERE event_type = 'auto_import_batch_proposed'
+               AND payload.source = $source
+               AND payload.draft_postings IS NOT NONE",
+        )
+        .bind(("source", source.to_string()))
+        .await?;
+
+    let batches: Vec<DbValue> = resp.take(0)?;
+    let mut ids = HashSet::new();
+    for batch in batches {
+        let Some(drafts) = batch.into_json_value().as_array().cloned() else {
+            continue;
+        };
+        for draft in drafts {
+            if let Some(id) = draft.get("external_id").and_then(|v| v.as_str())
+                && !id.trim().is_empty()
+            {
+                ids.insert(id.trim().to_owned());
+            }
+        }
+    }
+    Ok(ids)
+}
+
 pub async fn list_transactions(
     db: &Database,
     filter: TxnFilter,
