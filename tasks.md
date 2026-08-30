@@ -487,9 +487,19 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      Email ingest is cut *in code only*; production disagrees until those commits ship. The "email is
      off" claim is currently false on the box.
      ⚠️ **Deploy ordering, found the same day:** `deploy.yml` takes a *public* omni-me ref (default
-     `main`) and builds the overlay against it — and this repo has **40 unpushed commits**. Deploying
-     without pushing here first would build new overlay code against 40-commits-stale core.
+     `main`) and builds the overlay against it — and this repo had **40 unpushed commits**. Deploying
+     without pushing here first would have built new overlay code against 40-commits-stale core.
      **Account naming** — institution-specific, so it lives in `omni-me-private/tasks.md`, not here.
+     **✅ ALL OF THE ABOVE RESOLVED 2026-08-30.** Public pushed (40 + docs; privacy-scanned first — 0
+     denylist hits, fictional roster intact), overlay pushed (3 + a correction), `deploy.yml` run
+     against the pinned public SHA: build 26m40s, deploy 51s, health gate passed. Box now runs
+     `sha-20a0ff8`, healthy. Config map added to the box file (append-only, backed up first, mode 600 /
+     uid 10001 preserved) and the container **restarted** — note `compose up -d` is a **no-op** for a
+     bind-mounted config change, `compose restart` is required. Startup then showed **no empty-map
+     warning** and an `auto-import tick … events=1` for that source — the first event it has ever
+     produced. Two sources spawned, **no IMAP**, so the email cut is now true in production as well as
+     in code. Health 200 over the tailnet (`3000` binds to the tailnet IP, not localhost — a
+     host-side `curl localhost:3000` returning 000 is expected, not a fault).
 
   **E. Box wipe + clean re-import:**
   8. **Wipe the box clean of everything** — current live data is deemed not worth sorting through;
