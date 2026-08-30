@@ -41,6 +41,16 @@ impl ProjectionRunner {
         }
     }
 
+    /// The database these projections write into.
+    ///
+    /// Exposed so an auto-import source can *read* the projections it feeds —
+    /// chiefly to ask what it has already contributed before proposing more.
+    /// Sources hold a `ProjectionRunner` already, so this avoids threading a
+    /// second `Database` through every source constructor.
+    pub fn db(&self) -> &Database {
+        &self.db
+    }
+
     /// Initialize all projection schemas and the projection_versions tracking table.
     pub async fn init_all(&self) -> Result<(), EventError> {
         self.db

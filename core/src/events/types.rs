@@ -586,6 +586,17 @@ pub struct ExchangeRateRecordedPayload {
 
 // Budget — auto-import batch review (Phase 3.10 / closes 2.12b)
 
+/// Transaction-level tag key recording which upstream row a committed
+/// auto-import draft came from, e.g. `autoimport-id:wise-TRANSFER-123`.
+///
+/// Lives here rather than beside either user because both sides need it and
+/// they cannot share a feature-gated module: the commit path is in the Tauri
+/// client (core without `auto-import`) while the sources that read it back are
+/// in the server overlay (core *with* `auto-import`). Two copies of the literal
+/// would drift silently — the writer would tag one way and the dedup filter
+/// would look for another, which reads exactly like the filter doing nothing.
+pub const AUTOIMPORT_TAG_KEY: &str = "autoimport-id";
+
 /// One row in a proposed auto-import batch — a single draft transaction the
 /// user will review, edit, accept, or skip. Mirrors `TransactionRecordedPayload`
 /// in shape (it becomes one on commit) but keeps `external_id` so the projection

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
@@ -464,6 +466,38 @@ impl TxnFilter {
         }
         self
     }
+}
+
+/// Every distinct value carried by a `key:value` transaction-level tag across
+/// visible transactions. `known_top_tag_values(db, "wise-id")` answers "which
+/// upstream reference numbers are already in the journal?".
+///
+/// This exists because a polling auto-import source otherwise has no way to ask
+/// what it has already contributed. Without it each tick re-proposes its whole
+/// lookback window — the rows are already in the ledger, but nothing downstream
+/// compares a draft against what is recorded, so the review queue grows forever.
+///
+/// Matching is on the `key:` prefix of a `tags_top` entry, which is the same
+/// shape the ledger importer writes for an inline header tag (`; wise-id: X`)
+/// and the shape [`TransactionRecordedPayload::with_tags`] renders.
+pub async fn known_top_tag_values(db: &Database, key: &str) -> Result<HashSet<String>, DbError> {
+    let prefix = format!("{key}:");
+    let mut resp = db
+        .query(
+            "SELECT VALUE tags_top FROM transactions
+             WHERE removed = false AND superseded_by IS NONE
+               AND array::any(tags_top, |$t| string::starts_with($t, $prefix))",
+        )
+        .bind(("prefix", prefix.clone()))
+        .await?;
+
+    let rows: Vec<Vec<String>> = resp.take(0)?;
+    Ok(rows
+        .into_iter()
+        .flatten()
+        .filter_map(|tag| tag.strip_prefix(prefix.as_str()).map(str::to_owned))
+        .filter(|value| !value.is_empty())
+        .collect())
 }
 
 pub async fn list_transactions(

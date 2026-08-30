@@ -22,11 +22,32 @@ use tauri::State;
 
 use omni_me_core::db::queries;
 use omni_me_core::events::{
-    AutoImportBatchCommittedPayload, AutoImportBatchDismissedPayload, DraftTransaction, EventType,
-    ExchangeRateRecordedPayload, NewEvent, TransactionRecordedPayload,
+    AUTOIMPORT_TAG_KEY, AutoImportBatchCommittedPayload, AutoImportBatchDismissedPayload,
+    DraftTransaction, EventType, ExchangeRateRecordedPayload, NewEvent, Tag,
+    TransactionRecordedPayload,
 };
 
 use crate::AppState;
+
+/// Transaction id for a committed draft, derived from the source's stable
+/// `external_id` so committing the same draft twice is a no-op.
+///
+/// This used to be a fresh `Ulid` per accepted draft, which quietly defeated
+/// every downstream guard: the `transactions` projection UPSERTs on `txn_id`
+/// and `budget.journal` skips a `t:<txn_id>` anchor it already holds, so a
+/// stable id makes a duplicate commit collapse — while a random one wrote a
+/// second copy of the same upstream transaction and neither guard could tell.
+/// A source that yields no `external_id` keeps the random id, because there is
+/// nothing stable to key on and colliding every such draft onto one id would be
+/// far worse than duplicating them.
+fn commit_txn_id(external_id: &str) -> String {
+    let trimmed = external_id.trim();
+    if trimmed.is_empty() {
+        ulid::Ulid::new().to_string()
+    } else {
+        format!("auto-{trimmed}")
+    }
+}
 
 /// Base currency for manual-FX events recorded against this client.
 /// Hard-coded rather than configurable: `ExchangeRateRecordedPayload.base`
@@ -366,13 +387,19 @@ pub async fn commit_batch(
     for &idx in &indices {
         let draft = &drafts[idx];
         accepted_dates.push(draft.date);
-        let txn_id = ulid::Ulid::new().to_string();
-        let payload = TransactionRecordedPayload::new(
+        let txn_id = commit_txn_id(&draft.external_id);
+        let mut payload = TransactionRecordedPayload::new(
             txn_id,
             draft.date,
             draft.description.clone(),
             draft.postings.clone(),
         );
+        if !draft.external_id.trim().is_empty() {
+            payload = payload.with_tags(vec![Tag::KeyValue {
+                key: AUTOIMPORT_TAG_KEY.to_string(),
+                value: draft.external_id.trim().to_string(),
+            }]);
+        }
         new_events.push(
             NewEvent::transaction_recorded(state.device_id.clone(), &payload)
                 .map_err(|e| e.to_string())?,
@@ -508,6 +535,42 @@ mod tests {
 
     fn dt(s: &str) -> DateTime<Utc> {
         s.parse().unwrap()
+    }
+
+    /// Committing the same upstream row twice must land on one id, so the
+    /// projection's UPSERT and the journal's anchor check both collapse it.
+    #[test]
+    fn commit_txn_id_is_stable_for_the_same_external_id() {
+        assert_eq!(
+            commit_txn_id("wise-TRANSFER-123"),
+            commit_txn_id("wise-TRANSFER-123")
+        );
+    }
+
+    #[test]
+    fn commit_txn_id_differs_across_external_ids() {
+        assert_ne!(
+            commit_txn_id("wise-TRANSFER-123"),
+            commit_txn_id("wise-TRANSFER-124")
+        );
+    }
+
+    #[test]
+    fn commit_txn_id_ignores_surrounding_whitespace() {
+        assert_eq!(
+            commit_txn_id("  wise-TRANSFER-123  "),
+            commit_txn_id("wise-TRANSFER-123")
+        );
+    }
+
+    /// A source with no stable id must NOT collapse onto a shared key — every
+    /// such draft is its own transaction, so a random id is the correct answer.
+    #[test]
+    fn commit_txn_id_falls_back_to_a_unique_id_when_external_id_is_blank() {
+        let a = commit_txn_id("");
+        let b = commit_txn_id("   ");
+        assert_ne!(a, b);
+        assert!(!a.starts_with("auto-"));
     }
 
     #[test]
