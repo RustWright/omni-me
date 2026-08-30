@@ -36,5 +36,8 @@ directory name repeats; the outer level also holds a stray `Attachments/` with 2
 
 ## Open threads
 
-- A few app-created / auto-imported transactions post-date the old ledger cut-off; the wipe drops
-  them — name them first. Plus: SurrealDB tempfile race, stale `ui-checklist.md`, big `MEMORY.md`.
+- **Two traps that silently no-op step 8** (memory `project-hetzner-db-reset-for-testing`): the wipe
+  MUST pass `OMNI_VOLUME=omni-deploy_omni_data` (the default empties a stray volume and still reports
+  success), and `push_local` is device-id-filtered — a clean single-id re-import is what avoids it.
+  Test events are **discard, not sort** (user, 2026-08-14). Plus: SurrealDB tempfile race, stale
+  `ui-checklist.md`, big `MEMORY.md`.
