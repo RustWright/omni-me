@@ -435,6 +435,61 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
   7. **Bring imports current** — the ledger import is months stale; use the **paisa process** to get it
      up to date and import-ready. Same for the **Obsidian journal** data (stale — user turned OFF Obsidian
      sync anticipating this; **user will provide / point to the most up-to-date journal data**).
+     **🔄 2026-08-29/30 — delta measured; both halves waiting on [USER].** Nothing here re-opens the
+     import design: `omni-me-private/examples/headless_import.rs` is the tool that did the real
+     ingestion and already settles it (classify by **filename only** via `classify_path` — the
+     frontmatter-`date:` fallback is deliberately rejected there, with the mis-promotion it causes named
+     in the comment; same-date collisions demote to Generic, canonical daily note wins; `Templates/`
+     skipped; other bad-frontmatter notes **rescued** best-effort). Do not re-derive any of that. **A
+     first pass this session wrongly re-surveyed it through `scan_for_preview` (the app's *preview*
+     path, which does use the frontmatter fallback) and filed three "decisions" that were already
+     made — struck.**
+     **Baseline, from the 2026-06-22 dry-run:** 10,207 transactions; **1,283 journal / 343 generic /
+     4 demoted / 19 scan errors**, vault file count 1,645, source `~/Documents/Obsidian Sync Vault`.
+     **Journal delta (measured 2026-08-30, read-only, replicating `headless_import::import_journal`
+     verbatim):** the imported copy `~/Documents/…` now holds 1,294 journal dates ending **2026-07-03**
+     (it stopped there — Obsidian sync is off); the pCloud copy holds 1,343 ending **2026-08-22** and is
+     a **strict superset** (0 dates present in Documents but absent from pCloud). **49 new journal
+     dates, `2026-07-04 .. 2026-08-22`** (one gap, `2026-08-09`). Generic 343, demoted 4, scan errors 19
+     and the single `Alton Hardin.md` rescue are **identical across both copies** → the new material is
+     purely new daily notes, **no new data issues to triage**. Tool + report in `.reference/`.
+     **Vault handoff protocol (user, 2026-08-30):** pCloud is the *delivery* method only. The vault goes
+     stale daily (active use, sync off), so **wait for the user to say the files are ready and that they
+     have made a local copy** — do not read the pCloud mount live as the import source, and re-measure
+     the delta against whatever local copy they hand over.
+     **Ledger:** paisa is imported through **2026-05-31** and **no June/July/August source files exist
+     on disk** — nothing regenerates until they are downloaded. Per-account download checklist (each
+     destination traced to the importer's own glob, not the `HANDOFF.md` §4 table, which deliberately
+     disagrees) written to `~/Documents/paisa/NEXT.md`; that catch-up needs a session rooted at
+     `~/Documents/paisa`.
+     **Credentials — where they actually live (2026-08-30, after getting this wrong once).** Neither
+     repo's `secrets/credentials.toml` is real: the public one is **all comments** (a template), the
+     private one has **zero sections**. Checking those and concluding "credentials missing" is the
+     error made and struck here. Real locations: **client** = `~/.config/omni-me/credentials.toml`
+     (`credentials::default_path`, XDG); **box** = `/etc/omni-me/credentials.toml`, mounted `:ro` into
+     the container by `docker-compose.prod.yml:45`. Since auto-import is server-side, **the box copy
+     governs the private overlay's sources**; it is read **only at boot**. Placed during the
+     2026-06-28 VPS deploy and untouched since (verified 2026-08-30, read-only, no values printed).
+     ⚠️ The client file was rewritten 2026-08-26 and **no longer carries the overlay's sections** — so
+     scp-ing it over the box's copy would wipe them.
+     **Still open, and narrower than first written:** the API source's config map is a **new key
+     introduced by the 2026-08-29 fix**; it could not have been configured earlier because it did not
+     exist. History confirms it was *never* populated — the pre-split field
+     (`core/src/auto_import/setup.rs:39` at that time) had **no call site**; `server/src/main.rs` built
+     it via `..SourceConfig::default()`. Empty since first wiring, which is the real cause of that
+     source proposing zero drafts, and it corrects the adapter comment's "preserving the pre-split
+     behavior": the pre-split behaviour was an empty map too.
+     ⚠️ **The config edit alone is a no-op right now.** The box runs image `sha-869e707`, up 6 days,
+     healthy — and the overlay's `origin/main` **is** `869e707`, with **three commits unpushed**. The
+     deployed binary does not know the new key and serde will ignore it. **Order: push → image build →
+     deploy → config edit takes effect.**
+     ⚠️ **Not previously recorded: the IMAP gate is undeployed too, so the box is STILL POLLING.**
+     Email ingest is cut *in code only*; production disagrees until those commits ship. The "email is
+     off" claim is currently false on the box.
+     ⚠️ **Deploy ordering, found the same day:** `deploy.yml` takes a *public* omni-me ref (default
+     `main`) and builds the overlay against it — and this repo has **40 unpushed commits**. Deploying
+     without pushing here first would build new overlay code against 40-commits-stale core.
+     **Account naming** — institution-specific, so it lives in `omni-me-private/tasks.md`, not here.
 
   **E. Box wipe + clean re-import:**
   8. **Wipe the box clean of everything** — current live data is deemed not worth sorting through;
