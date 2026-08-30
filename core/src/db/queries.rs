@@ -468,25 +468,39 @@ impl TxnFilter {
     }
 }
 
-/// Every distinct value carried by a `key:value` transaction-level tag across
-/// visible transactions. `known_top_tag_values(db, "globepay-id")` answers "which
-/// upstream reference numbers are already in the journal?".
+/// Every distinct value carried by a `key:value` transaction-level tag, read
+/// from the **event log**. `known_top_tag_values(db, "globepay-id")` answers
+/// "which upstream reference numbers has this ledger already recorded?".
 ///
 /// This exists because a polling auto-import source otherwise has no way to ask
 /// what it has already contributed. Without it each tick re-proposes its whole
 /// lookback window — the rows are already in the ledger, but nothing downstream
 /// compares a draft against what is recorded, so the review queue grows forever.
 ///
-/// Matching is on the `key:` prefix of a `tags_top` entry, which is the same
-/// shape the ledger importer writes for an inline header tag (`; globepay-id: X`)
-/// and the shape [`TransactionRecordedPayload::with_tags`] renders.
+/// **Reads `events`, not the `transactions` projection, and that is the whole
+/// point.** The only caller is an auto-import source, which runs in the server
+/// — and the server builds its `ProjectionRunner` with an empty projection list
+/// (`server/src/lib.rs`), because projecting is the clients' job. Querying the
+/// projection here returned an empty set on every real tick while passing a test
+/// whose harness happened to include `BudgetProjection`: a filter that looks
+/// correct, tests green, and silently does nothing in production. The event log
+/// is the one store both sides always have.
+///
+/// Matching is on the `key:` prefix of a `payload.tags` entry — the shape the
+/// ledger importer writes for an inline header tag (`; globepay-id: X`) and the
+/// shape [`TransactionRecordedPayload::with_tags`] renders.
+///
+/// Deliberately counts a transaction that was later removed as still "known":
+/// the log has no cheap notion of current visibility, and for a dedup filter
+/// re-proposing something the user deleted is the worse failure.
 pub async fn known_top_tag_values(db: &Database, key: &str) -> Result<HashSet<String>, DbError> {
     let prefix = format!("{key}:");
     let mut resp = db
         .query(
-            "SELECT VALUE tags_top FROM transactions
-             WHERE removed = false AND superseded_by IS NONE
-               AND array::any(tags_top, |$t| string::starts_with($t, $prefix))",
+            "SELECT VALUE payload.tags FROM events
+             WHERE event_type = 'transaction_recorded'
+               AND payload.tags IS NOT NONE
+               AND array::any(payload.tags, |$t| string::starts_with($t, $prefix))",
         )
         .bind(("prefix", prefix.clone()))
         .await?;
