@@ -469,7 +469,7 @@ impl TxnFilter {
 }
 
 /// Every distinct value carried by a `key:value` transaction-level tag across
-/// visible transactions. `known_top_tag_values(db, "wise-id")` answers "which
+/// visible transactions. `known_top_tag_values(db, "globepay-id")` answers "which
 /// upstream reference numbers are already in the journal?".
 ///
 /// This exists because a polling auto-import source otherwise has no way to ask
@@ -478,7 +478,7 @@ impl TxnFilter {
 /// compares a draft against what is recorded, so the review queue grows forever.
 ///
 /// Matching is on the `key:` prefix of a `tags_top` entry, which is the same
-/// shape the ledger importer writes for an inline header tag (`; wise-id: X`)
+/// shape the ledger importer writes for an inline header tag (`; globepay-id: X`)
 /// and the shape [`TransactionRecordedPayload::with_tags`] renders.
 pub async fn known_top_tag_values(db: &Database, key: &str) -> Result<HashSet<String>, DbError> {
     let prefix = format!("{key}:");

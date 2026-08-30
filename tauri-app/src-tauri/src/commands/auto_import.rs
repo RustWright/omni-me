@@ -542,24 +542,24 @@ mod tests {
     #[test]
     fn commit_txn_id_is_stable_for_the_same_external_id() {
         assert_eq!(
-            commit_txn_id("wise-TRANSFER-123"),
-            commit_txn_id("wise-TRANSFER-123")
+            commit_txn_id("globepay-TRANSFER-123"),
+            commit_txn_id("globepay-TRANSFER-123")
         );
     }
 
     #[test]
     fn commit_txn_id_differs_across_external_ids() {
         assert_ne!(
-            commit_txn_id("wise-TRANSFER-123"),
-            commit_txn_id("wise-TRANSFER-124")
+            commit_txn_id("globepay-TRANSFER-123"),
+            commit_txn_id("globepay-TRANSFER-124")
         );
     }
 
     #[test]
     fn commit_txn_id_ignores_surrounding_whitespace() {
         assert_eq!(
-            commit_txn_id("  wise-TRANSFER-123  "),
-            commit_txn_id("wise-TRANSFER-123")
+            commit_txn_id("  globepay-TRANSFER-123  "),
+            commit_txn_id("globepay-TRANSFER-123")
         );
     }
 

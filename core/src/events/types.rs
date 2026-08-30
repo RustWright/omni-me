@@ -587,7 +587,7 @@ pub struct ExchangeRateRecordedPayload {
 // Budget — auto-import batch review (Phase 3.10 / closes 2.12b)
 
 /// Transaction-level tag key recording which upstream row a committed
-/// auto-import draft came from, e.g. `autoimport-id:wise-TRANSFER-123`.
+/// auto-import draft came from, e.g. `autoimport-id:globepay-TRANSFER-123`.
 ///
 /// Lives here rather than beside either user because both sides need it and
 /// they cannot share a feature-gated module: the commit path is in the Tauri

@@ -37,7 +37,9 @@ pub mod subprocess;
 /// UPSERTs, so a *stable* key is what makes re-proposal idempotent. A key built
 /// from the wall clock defeats that by construction — it is unique every tick,
 /// so each poll adds another review row for data the user has already seen.
-/// That is not hypothetical: it is what a timestamp key did to the Wise source.
+/// That is not hypothetical: a timestamp key did exactly this to a polling
+/// source in production, adding a review row every tick for data already in
+/// the journal.
 ///
 /// Order-insensitive (the ids are sorted first) because upstream APIs do not
 /// promise a stable row order, and a reordered-but-identical window is the same
@@ -119,36 +121,36 @@ mod dedup_key_tests {
     /// row rather than stacking a new one every tick.
     #[test]
     fn same_drafts_yield_same_key() {
-        let a = content_dedup_key("wise", &[draft("wise-T1"), draft("wise-T2")]);
-        let b = content_dedup_key("wise", &[draft("wise-T1"), draft("wise-T2")]);
+        let a = content_dedup_key("globepay", &[draft("globepay-T1"), draft("globepay-T2")]);
+        let b = content_dedup_key("globepay", &[draft("globepay-T1"), draft("globepay-T2")]);
         assert_eq!(a, b);
     }
 
     #[test]
     fn order_does_not_change_the_key() {
-        let a = content_dedup_key("wise", &[draft("wise-T1"), draft("wise-T2")]);
-        let b = content_dedup_key("wise", &[draft("wise-T2"), draft("wise-T1")]);
+        let a = content_dedup_key("globepay", &[draft("globepay-T1"), draft("globepay-T2")]);
+        let b = content_dedup_key("globepay", &[draft("globepay-T2"), draft("globepay-T1")]);
         assert_eq!(a, b);
     }
 
     #[test]
     fn a_new_upstream_row_changes_the_key() {
-        let a = content_dedup_key("wise", &[draft("wise-T1")]);
-        let b = content_dedup_key("wise", &[draft("wise-T1"), draft("wise-T2")]);
+        let a = content_dedup_key("globepay", &[draft("globepay-T1")]);
+        let b = content_dedup_key("globepay", &[draft("globepay-T1"), draft("globepay-T2")]);
         assert_ne!(a, b);
     }
 
     /// Guards the separator: without it these two sets hash identically.
     #[test]
     fn boundary_between_ids_is_significant() {
-        let a = content_dedup_key("wise", &[draft("ab"), draft("c")]);
-        let b = content_dedup_key("wise", &[draft("a"), draft("bc")]);
+        let a = content_dedup_key("globepay", &[draft("ab"), draft("c")]);
+        let b = content_dedup_key("globepay", &[draft("a"), draft("bc")]);
         assert_ne!(a, b);
     }
 
     #[test]
     fn source_is_part_of_the_key() {
-        let a = content_dedup_key("wise", &[draft("T1")]);
+        let a = content_dedup_key("globepay", &[draft("T1")]);
         let b = content_dedup_key("northwind", &[draft("T1")]);
         assert_ne!(a, b);
     }
