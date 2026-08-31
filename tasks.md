@@ -191,20 +191,28 @@ the verification notes are in
   `App initialized server_url=http://omni-box-hetzner:3000` — which incidentally also confirms
   the CI-baked `OMNI_DEFAULT_SERVER_URL` reaches a fresh install. The user's real
   `~/.local/share/com.omni-me.app` was confirmed untouched by mtime before and after. [BUG, high]
-- [ ] **Desktop splash + `backgroundColor` are STILL visually unverified — now genuinely
-  blocked on this machine, not merely deferred.** The 1.0.0 AppImage finally *runs* (see
-  above), so the check is possible for the first time — but nothing on this session can film a
-  cold boot. Confirmed with two independent mechanisms, not one: `grim` fails because Mutter
-  does not implement `wlr-screencopy`, and GNOME's own
-  `org.gnome.Shell.Screenshot` DBus method returns `AccessDenied: Screenshot is not allowed`
-  (restricted to portal callers, which need interactive consent). `Xvfb`/`xvfb-run` are not
-  installed, and installing them is a system change not worth making unprompted.
-  **So this is a [USER] visual check on a launched AppImage:** does the window paint charcoal
-  `#1e1e1e` with no white flash, and is the correct tab up on first paint? What *is* already
-  known: the config key is real and typo-proof (`WindowConfig` is `deny_unknown_fields`, so a
-  bad key fails the build) and the shared splash/boot-gate code carries no platform gating, so
-  the enso and correct-tab-first behaviour are compiled in. The unknown is purely whether
-  webkit2gtk honours `backgroundColor`. [XS, USER]
+- [ ] **Desktop DOES flash white for ~320ms — but `backgroundColor` is NOT the culprit and the
+  fix is a different layer.** Filmed at last (user installed `Xvfb` 2026-08-31; `grim` fails
+  because Mutter lacks `wlr-screencopy`, and GNOME's `org.gnome.Shell.Screenshot` DBus method
+  returns `AccessDenied` — portal-callers only). Recorded a cold boot on a virtual display and
+  measured the window area frame-by-frame at 25fps:
+  **window appears already charcoal → pure white `#fffcff` from t=2.84s to t=3.12s (~320ms) →
+  charcoal + the enso splash renders correctly.**
+  **So `app.windows[0].backgroundColor` WORKS** — the native window paints `#1e1e1e` from the
+  first frame, which is exactly what it was added for. The white is the **WebView**, a separate
+  surface: in `tauri-runtime-wry-2.10.1/src/lib.rs:920` the config colour is applied to the
+  *tao window* builder only, while the webview's own `set_background_color` (`:3747`) defaults
+  to **`(255,255,255,255)`** when unset. The config doc-comment claims "window and webview", but
+  on GTK only the window layer is wired from config at build time. **This is the identical bug
+  Android had**, fixed there natively in `MainActivity.onWebViewCreate` — two surfaces, and only
+  one was covered.
+  **Likely fix:** call `set_background_color` on the `WebviewWindow` in `lib.rs` setup (desktop
+  cfg), so the webview surface matches before first paint. Would make `#1e1e1e` a FIFTH place
+  that must stay in sync — better to derive all of them from one constant while touching this.
+  **Caveat before building:** this was filmed under Xvfb **software** rendering (`libEGL
+  warning: DRI3 error` in the log), so confirm the flash on the real display first — the
+  compositing path may differ on a GPU. **Deferred past v1 per the settled splash scope**; the
+  Android flash (the one that actually bit) is fixed. [S, deferred]
 - [ ] **The pipeline cannot tell a launchable release from an unlaunchable one.** The bug above
   survived two months because "published + correct sha + valid signature" was the whole
   acceptance test. Worth a headless smoke step in `app-release.yml` that runs the built
