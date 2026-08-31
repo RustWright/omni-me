@@ -187,11 +187,15 @@ class MainActivity : TauriActivity() {
     private fun bridgeDir(): File = dataDir
 
     private fun checkInstallRequest() {
-        // Read the canonical location, but tolerate a file left in the legacy
-        // one — a request written by an older build survives the update that
-        // fixes this, instead of being stranded forever.
-        val req = File(bridgeDir(), INSTALL_REQUEST_FILE).takeIf { it.exists() }
-            ?: File(filesDir, INSTALL_REQUEST_FILE)
+        // Single location, deliberately. An earlier draft of this fix also
+        // checked `filesDir` as a "legacy fallback", but the Rust side has
+        // written this file to `app_local_data_dir()` (= `dataDir`) since the
+        // OTA feature landed and never once wrote to `filesDir` — so that
+        // branch was unreachable, and its comment claimed a history that did
+        // not exist. Only the READER was ever on the wrong path. A plausible
+        // comment covering dead code is exactly what caused this bug in the
+        // first place; two are not better than one.
+        val req = File(bridgeDir(), INSTALL_REQUEST_FILE)
         if (!req.exists()) return
         android.util.Log.i("OmniMe", "install request found at ${req.absolutePath}")
         val apkPath = try {
