@@ -3955,7 +3955,7 @@ dependencies = [
 
 [[package]]
 name = "omni-me-app"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3979,7 +3979,7 @@ dependencies = [
 
 [[package]]
 name = "omni-me-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4011,7 +4011,7 @@ dependencies = [
 
 [[package]]
 name = "omni-me-server"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "axum",
  "chrono",
