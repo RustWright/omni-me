@@ -36,6 +36,15 @@ const OUTCOME_CHANNEL_CAPACITY: usize = 16;
 /// Outcome of a pull attempt, broadcast to consumers.
 #[derive(Debug, Clone)]
 pub enum PullEvent {
+    /// A pull fetched `pulled` new events and is **about to project them**.
+    /// Emitted before the (potentially long) apply, so a UI can say so while it
+    /// runs — [`Applied`](Self::Applied) is too late for that by construction,
+    /// since it reports work already finished.
+    ///
+    /// This matters on a fresh or just-wiped device, where the first backfill
+    /// *is* the app appearing: tens of thousands of events project behind a UI
+    /// that would otherwise show an empty screen and a "Synced" chip.
+    Applying { pulled: usize },
     /// A pull applied `pulled` new events (only emitted when `pulled > 0`), with
     /// `failed` of them failing to project. Consumers refetch on this.
     Applied { pulled: usize, failed: usize },
@@ -141,6 +150,11 @@ async fn run_loop(inner: Arc<Inner>) {
 async fn pull_once(inner: &Arc<Inner>) {
     match inner.client.pull_only(&inner.db).await {
         Ok(outcome) if outcome.pulled > 0 => {
+            // Announce the batch BEFORE projecting it. The apply below is the
+            // slow part on a backfill, and `Applied` only fires once it's done.
+            let _ = inner.outcomes.send(PullEvent::Applying {
+                pulled: outcome.pulled,
+            });
             let failed = inner
                 .projections
                 .apply_events_resilient(&outcome.pulled_events)

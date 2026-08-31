@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: step 8 — wipe the box, then one clean re-import.** Step 7 is DONE: both handoffs
-landed 2026-08-30, a dry-run into a throwaway DB passed all four gates. Only the write remains.
-**Order is not the obvious one.** Wipe the box **first** (or keep the app closed until it is) — a
-freshly wiped `local.db` re-pulls the box's old data on next open and undoes the clean slate. Then
-move `local.db` aside (don't delete until the new one validates) → one `headless_import` →
-`dump_balances` + `probe_realdb` → open the app and let it push. Recipe in `tasks.md` step 8;
-assertions in `omni-me-private/examples/README.md` § Expected output. Two traps: **`OMNI_DEVICE_ID`
-is not optional** (omitting it strands the import behind a phantom id — the "absent on mobile" bug),
-and **`OMNI_VAULT` is the NESTED path** (the directory name repeats; the outer level also holds a
-stray `Attachments/` with 2 orphan PDFs).
+**Next action: build a release APK, confirm the splash on the test phone, then Phase 6 (step 9).**
+Boot splash + readiness gate written and web-verified (up ~280ms, gone by ~623ms with the app
+rendered; 723 tests green; clippy clean both frontend configs). **Nothing native is verified** —
+Playwright is Chromium, and cold-boot ordering is the whole point. `scripts/android-build.sh release`
+(the APK EMBEDS `frontendDist`), force-stop, cold open from a saved **Finances** tab: expect no white
+flash, no Journal frame, animated enso, app already built; repeat from **Journal** for the editor
+hold. Then step 9: Phase 6 (branch-gate, v1 tag, doc archive) → updatable app → OTA round-trip.
 
 ## Decisions in force — inherit these, don't re-derive
 
-- **Vault import design is settled in `headless_import.rs`** — filename-only (`classify_path`),
-  frontmatter-`date:` fallback rejected, collisions demoted to Generic, `Templates/` skipped,
-  bad-frontmatter rescued. `scan_for_preview` differs on purpose (reasoning from it = the mistake
-  struck 2026-08-29). **Idempotency is asymmetric** — financial skips on content-hash `txn_id`,
-  journal UPSERTs by date, generic notes mint a fresh ULID and **duplicate all 343**.
-- **Credentials live on the box** (`:ro`, read at boot — editing needs `compose restart`) and
-  **`deploy.yml` builds the overlay against the *public* pushed ref**, so this repo pushes first.
-- **Email ingest is CUT from v1** (the model, not the pollers); off behind `OMNI_ENABLE_IMAP=1`.
-  **One roadmap push per fresh context.** Pre-v1 review **CLOSED**.
+- **Splash scope settled (user, 2026-08-31): Rust splash + charcoal native `windowBackground`.** A
+  custom `index.html` and Android 12+'s `SplashScreen` API were **deferred past v1**; revisit only on
+  a fresh complaint. "Don't get side tracked; release at its best state as soon as we can" is the
+  standing steer for everything below.
+- **Everything stays disposable until daily use on the PERSONAL phone**, after OTA is confirmed on
+  the test phone; that handover's wipe is **total, no backups kept**. Until the phone has the new
+  APK, **dismiss auto-import batches, never commit them** (`commit_txn_id` is client-side).
+- **Credentials live on the box** (`:ro`, read at boot); `deploy.yml` builds the overlay against the
+  **public** pushed ref, so this repo pushes first, and public CI gates on `cargo fmt`. **Email
+  ingest is CUT from v1.** One roadmap push per fresh context. Pre-v1 review **CLOSED**.
 
 ## Do NOT re-survey
 
-- **The data.** Vault is a strict superset (+58 contiguous daily notes, 0 lost), other counts
-  unchanged → no new issues; ledger clean through 2026-08-28 (`.reference/`).
-- **`ledger bal --flat` is INCLUSIVE, the app EXCLUSIVE** — one account has both own postings and
-  children, so a naive diff shows a spurious 2-row mismatch. Not a parser bug (private
-  `examples/README.md` § Gotchas). Sitting-1's "verify before steps 7–8" Critical is **fixed**.
+- **The splash + its two paid-for traps** (bundle preload must stay hoisted to app mount or the gate
+  serializes what used to overlap; `PullEvent::Applied` fires *after* the projection, hence the new
+  pre-apply `Applying`). Write-up: `tasks.md` 2026-08-31 entry. 96/144/192px compared — 144 won.
+- **The import and the seed.** Every figure reproduced; box verified by pulling all 12277 events back
+  under a throwaway device id. **`OMNI_VOLUME`** resolves from the running container
+  (`deploy/lib-volume.sh`). **Naive cold-open indexes** — disproven; SurrealDB 3.0.4 won't serve it.
 
 ## Open threads
 
-- **Two traps that silently no-op step 8** (memory `project-hetzner-db-reset-for-testing`): the wipe
-  MUST pass `OMNI_VOLUME=omni-deploy_omni_data` (the default empties a stray volume and still reports
-  success), and `push_local` is device-id-filtered — a clean single-id re-import is what avoids it.
-  Test events are **discard, not sort** (user, 2026-08-14). Also open: SurrealDB tempfile race,
-  stale `ui-checklist.md`, `MEMORY.md` past its load cap.
+- **Auto-import filter attribution still OPEN.** Ticks report `events=0` but `filtered rows already
+  in the journal` has never appeared — the API returned nothing, rather than the filter suppressing
+  rows. Watch for that line on a tick that returns data.
+- The brokerage source needs an OTP Reconnect (the wipe took its saved session file).
+- Box runs **unauthenticated** (`[server].auth_token` unset); decide before the personal phone. The
+  privacy guard cannot catch "wise" (substring of "otherwise") — hand-grep public commits.

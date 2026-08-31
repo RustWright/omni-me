@@ -60,6 +60,95 @@ fn attach_cursor_cb(obj: &js_sys::Object, on_cursor: Option<EventHandler<usize>>
 
 const EDITOR_CONTAINER_ID: &str = "editor-container";
 
+/// `<script src>` for the bundled CodeMirror build.
+const EDITOR_BUNDLE_SRC: &str = "/assets/js/editor.bundle.js";
+
+/// Inject `editor.bundle.js` (once) and resolve when `window.createEditor` is
+/// defined. Returns `false` if it never appeared within the polling window.
+///
+/// **Why this is separate from [`Editor`], and why the root calls it too.**
+/// This used to run only on Editor mount, which meant the ~1 MB bundle didn't
+/// start downloading until a page containing an editor rendered. That was fine
+/// while the app painted Journal immediately — the bundle parsed *in parallel*
+/// with the continuity store's boot read. Once `main.rs` gained the boot gate
+/// (no page mounts until the restored tab is known), mounting became the thing
+/// that gates the injection, so the two costs would have run back to back
+/// instead of overlapping — a straight regression on the Journal path, and the
+/// code below is explicit that a cold parse can exceed 5s.
+///
+/// So the root warms the bundle at app mount, independent of which tab wins the
+/// restore, and this function dedupes: the Editor's own call finds the script
+/// already in the DOM and usually finds `createEditor` already defined, so it
+/// proceeds straight to creating the editor.
+pub async fn ensure_editor_bundle() -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let Some(document) = window.document() else {
+        return false;
+    };
+
+    // Dedupe by `src` so repeated mounts (and the root warm-up) don't stack
+    // copies of the bundle.
+    let existing = document
+        .query_selector(&format!("script[src='{EDITOR_BUNDLE_SRC}']"))
+        .ok()
+        .flatten();
+    if existing.is_none() {
+        let inject = || -> Option<()> {
+            let script = document.create_element("script").ok()?;
+            script.set_attribute("src", EDITOR_BUNDLE_SRC).ok()?;
+            script.set_attribute("async", "").ok()?;
+            document.body()?.append_child(&script).ok()?;
+            Some(())
+        };
+        if inject().is_none() {
+            return false;
+        }
+    }
+
+    // POLL for `window.createEditor` rather than awaiting `script.onload`. The
+    // old release-only onload path could hang forever in an embedded Tauri
+    // webview (the script loads, but the awaited onload never resolved),
+    // stranding the editor on "Initializing…". Polling is robust across dx
+    // serve, embedded release builds, and Android. One path for all build modes
+    // — the previous `cfg(debug_assertions)` split meant the release path was
+    // never exercised until a real desktop webview ran it.
+    //
+    // The window must be GENEROUS: on a cold first launch (empty webview cache,
+    // the ~1 MB bundle parsed for the first time while the wasm frontend and DB
+    // init compete for the main thread) the embedded webkit webview can take
+    // well over 5s to define createEditor. The old 5s cap stranded the editor on
+    // "Initializing…" on first launch, yet worked on relaunch once webkit had
+    // cached the bundle. ~20s covers the cold case; a remount (navigate away +
+    // back) re-runs the Editor effect as a backstop.
+    const MAX_ATTEMPTS: u8 = 200;
+    const POLL_INTERVAL_MS: i32 = 100;
+
+    for _ in 0..MAX_ATTEMPTS {
+        let defined = js_sys::Reflect::get(&window, &JsValue::from_str("createEditor"))
+            .ok()
+            .and_then(|val| val.dyn_ref::<js_sys::Function>().map(|_| ()))
+            .is_some();
+        if defined {
+            return true;
+        }
+
+        let timeout = js_sys::Promise::new(&mut |resolve, _| {
+            let _ = window
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, POLL_INTERVAL_MS);
+        });
+        if wasm_bindgen_futures::JsFuture::from(timeout).await.is_err() {
+            return false;
+        }
+    }
+
+    web_sys::console::error_1(&JsValue::from_str(
+        "CodeMirror editor: createEditor still undefined after ~20s — editor.bundle.js likely failed to load (check the Network tab for a 404 or MIME error).",
+    ));
+    false
+}
+
 #[component]
 pub fn Editor(
     initial_content: String,
@@ -78,94 +167,28 @@ pub fn Editor(
     /// offset current. `None` = the surface doesn't track cursor position.
     #[props(default)]
     on_cursor: Option<EventHandler<usize>>,
+    /// Fired once, when CodeMirror has actually been created and the surface is
+    /// typeable. The boot splash uses this (via `main.rs::use_boot_hold`) to
+    /// avoid revealing a half-built editor; it stays `None` for surfaces that
+    /// don't gate anything on it.
+    #[props(default)]
+    on_ready: Option<EventHandler<()>>,
 ) -> Element {
     let mut editor_ready = use_signal(|| false);
 
-    // Load the CodeMirror bundle, then POLL for `window.createEditor` rather than
-    // awaiting `script.onload`. The old release-only onload path could hang
-    // forever in an embedded Tauri webview (the script loads, but the awaited
-    // onload never resolved), stranding the editor on "Initializing…". Polling is
-    // robust across dx serve, embedded release builds, and Android, and dedupes
-    // the injected script so repeated mounts don't stack copies. One path for all
-    // build modes — the previous `cfg(debug_assertions)` split meant the release
-    // path was never exercised until a real desktop webview ran it.
+    // Wait for the CodeMirror bundle (see `ensure_editor_bundle` — the root
+    // warms it at app mount, so this usually resolves immediately), then create
+    // the editor instance for this mount.
     use_effect(move || {
         let initial = initial_content.clone();
         let entry_date = entry_date.clone();
 
         spawn(async move {
-            let window = match web_sys::window() {
-                Some(w) => w,
-                None => return,
-            };
-            let document = match window.document() {
-                Some(d) => d,
-                None => return,
-            };
+            if !ensure_editor_bundle().await {
+                return;
+            }
 
-            let script_src = "/assets/js/editor.bundle.js";
-            let editor_container_id = EDITOR_CONTAINER_ID;
-
-            // Helper function to use `?` for early returns in Option context
-            let setup_script_and_poll_editor = async || -> Option<()> {
-                // 1. Check for existing script to prevent duplicates on hot-reload
-                let existing_script = document
-                    .query_selector(&format!("script[src='{}']", script_src))
-                    .ok()
-                    .flatten();
-
-                if existing_script.is_none() {
-                    let script = document.create_element("script").ok()?;
-                    script.set_attribute("src", script_src).ok()?;
-                    script.set_attribute("async", "").ok()?;
-                    document.body()?.append_child(&script).ok()?;
-                }
-
-                // 2. Poll for window.createEditor to be defined. The window must
-                // be GENEROUS: on a cold first launch (empty webview cache, the
-                // ~1 MB bundle parsed for the first time while the wasm frontend
-                // and DB init compete for the main thread) the embedded webkit
-                // webview can take well over 5s to define createEditor. The old
-                // 5s cap stranded the editor on "Initializing…" on first launch,
-                // yet worked on relaunch once webkit had cached the bundle. ~20s
-                // covers the cold case; a remount (navigate away + back) re-runs
-                // this effect as a backstop.
-                let mut attempts = 0;
-                const MAX_ATTEMPTS: u8 = 200;
-                const POLL_INTERVAL_MS: u32 = 100;
-
-                while attempts < MAX_ATTEMPTS {
-                    let create_editor_is_defined =
-                        js_sys::Reflect::get(&window, &JsValue::from_str("createEditor"))
-                            .ok() // Option<JsValue>
-                            .and_then(|val| val.dyn_ref::<js_sys::Function>().map(|_| ()))
-                            .is_some();
-
-                    if create_editor_is_defined {
-                        break;
-                    }
-
-                    attempts += 1;
-                    let timeout_promise = js_sys::Promise::new(&mut |resolve, _| {
-                        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                            &resolve,
-                            POLL_INTERVAL_MS as i32,
-                        );
-                    });
-                    // Convert JsFuture Result to Option for `?` compatibility
-                    wasm_bindgen_futures::JsFuture::from(timeout_promise)
-                        .await
-                        .ok()?;
-                }
-
-                if attempts == MAX_ATTEMPTS {
-                    web_sys::console::error_1(&JsValue::from_str(
-                        "CodeMirror editor: createEditor still undefined after ~20s — editor.bundle.js likely failed to load (check the Network tab for a 404 or MIME error).",
-                    ));
-                    return None;
-                }
-
-                // 3. Setup the JS callback
+            let create = || -> Option<()> {
                 let on_change_closure = Closure::wrap(Box::new(move |content: String| {
                     on_change.call(content);
                 }) as Box<dyn Fn(String)>);
@@ -177,22 +200,24 @@ pub fn Editor(
 
                 on_change_closure.forget(); // Leak memory intentionally
 
-                // 4. Initialize the editor
                 let opts =
                     editor_options(journal_mode, read_only, initial_cursor, entry_date.clone());
                 attach_cursor_cb(&opts, on_cursor);
                 js_create_editor(
-                    editor_container_id,
+                    EDITOR_CONTAINER_ID,
                     &initial,
                     Some(&on_change_fn),
                     opts.into(),
                 );
 
-                Some(()) // Indicates success
+                Some(())
             };
 
-            if setup_script_and_poll_editor().await.is_some() {
+            if create().is_some() {
                 editor_ready.set(true);
+                if let Some(handler) = on_ready {
+                    handler.call(());
+                }
             }
         });
     });

@@ -1,0 +1,10 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      Night variant — deliberately identical to `res/values/themes.xml`. The app
+      is dark-only, so both configurations get the same charcoal window
+      background; see that file for why this override exists at all.
+    -->
+    <style name="Theme.omni_me_app" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowBackground">#1e1e1e</item>
+    </style>
+</resources>

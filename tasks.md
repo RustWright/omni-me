@@ -545,20 +545,121 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
   **E. Box wipe + clean re-import:**
   8. **Wipe the box clean of everything** — current live data is deemed not worth sorting through;
      re-import from the clean data produced in step 7.
-     **Ordering matters, and it is not the obvious one.** Wipe the box **before** the local clean
-     import, or move `local.db` aside with the app kept closed until the box is wiped — a freshly
-     wiped `local.db` re-pulls the box's old data on the next app open and undoes the clean slate.
-     Recipe: wipe box → move `local.db` aside (do not delete until the new one validates) → single
-     `headless_import` run with **`OMNI_DEVICE_ID=$(cat <app_data>/device_id)`** (omitting it strands
-     the whole import behind a phantom device id) → re-run `dump_balances` + `probe_realdb` against
-     the real DB → open the app and let it push. Step 7 measured the exact figures it must reproduce;
-     they are the assertions in the private `examples/README.md` § Expected output. Name the handful
-     of app-created / auto-imported transactions the wipe drops before wiping.
+     **✅ DONE 2026-08-30 (desktop + box; test-phone confirmation outstanding).** Box wiped with the
+     mandatory `OMNI_VOLUME=omni-deploy_omni_data` override, verified by *state* rather than by the
+     script's success line: `/data` went **159.8M → 64K** and the safety snapshot came out **52MB**,
+     not the 87-byte empty-directory tarballs that three earlier "wipes" produced (proof they had
+     all no-opped on the stray `omni_data` volume). Desktop `local.db` + `budget.journal` moved aside
+     as `.PREWIPE-20260830-145323`; one `headless_import` under
+     `OMNI_DEVICE_ID=01KWVHDSCPYBDRAXY7T8YV4M6Y`; all four gates reproduced **exactly** (10582 parsed
+     / 0 errors / 0 balance failures, committed 10582 skipped 0; 1352 journal + 343 generic + 4
+     demoted + 19 scan errors + 0 read errors; balances 112 inclusive oracle rows → 111 exclusive vs
+     the app's 111 with **0 diffs**; `ALL ANCHORS MATCH`, net worth 83290.52 CAD over 17 roster
+     accounts, 2 dropped, 0 partials). Seeded the box with `push_local` → **12277 events**, verified
+     independently by pulling them back as a throwaway device id: the box holds 12277 under the one
+     desktop id plus 1 post-wipe poller event, and nothing else.
+     **Two recipe corrections found in the code and folded into the private `examples/README.md`:**
+     `budget.journal` must move aside too (the projection dedupes against the anchors already in that
+     file, so a fresh import beside the old journal writes almost nothing), and the app does **not**
+     push a pre-existing log on open (`PushDebouncer` fires only on a new event) — `push_local` is the
+     seeding tool, not "open the app and let it push". Also fixed a silent no-op in `push_local`: it
+     cleared `last_push_watermark`, the *method* name, where the column is `last_push_received_at`.
+     **The two dropped transactions, named:** `2026-07-11 Walmart` 109.77 CAD is already in the fresh
+     ledger as `Walmart.ca` → `Expenses:Food:Groceries` (superseded, better categorized, nothing
+     lost); `2026-06-07 MANUAL transaction sync entry` 50 CAD was a test artifact → discarded.
+     **Expected side effect:** the wipe took the brokerage source's saved session file with it, so
+     that source halted with `OTP required` and resumes on Reconnect through the in-app OTP flow.
+     The REST-API source is unaffected.
+     **Outstanding:** test-phone in-app wipe (`wipe everything zkqp`) → sync, as the end-to-end
+     confirmation; then the `.PREWIPE-*` copies become deletable.
+     **✅ TEST-PHONE PASS 2026-08-30 — the seed is good, and it surfaced three findings.** The phone
+     wiped, re-pulled the clean seed and populated correctly (financial first, then journal/notes —
+     the order `headless_import` wrote them). Findings, in order of severity:
+     1. **Wise auto-import was proposing duplicates every tick — REAL BUG, now fixed.** Server-side,
+        so unrelated to the phone's app version. Three compounding causes: the source built its
+        `dedup_key` from `Utc::now().timestamp_millis()`, which is unique per tick and therefore
+        defeated the projection's `source-dedup_key` UPSERT *by construction* (a new review row every
+        30 min instead of one updating row); `pull()` re-proposed its whole `lookback_days` window
+        with **no filter against transactions already in the journal**; and the safety net the code
+        claimed — "row-level dedup at commit time uses the stable external_id" — **did not exist**:
+        `commit_batch` minted a fresh `Ulid` per accepted draft and never read `external_id`, so
+        committing a stale batch would have written duplicate transactions that collided with
+        nothing (the ledger import uses content-hash ids, a different id space entirely).
+        Fix, all three layers: `core::auto_import::content_dedup_key` (FNV-1a over sorted external
+        ids, order-insensitive, stable across restarts — `DefaultHasher` explicitly is not);
+        `queries::known_top_tag_values` + a `ProjectionRunner::db()` accessor so a source can read
+        back what it already contributed, and the overlay filters drafts against both the ledger
+        importer's `wise-id:` header tag (**150** such transactions exist on the box) and its own new
+        `AUTOIMPORT_TAG_KEY` provenance tag; and `commit_txn_id` deriving `auto-{external_id}` so a
+        duplicate commit collapses through the projection UPSERT + journal anchor instead of
+        duplicating. The const lives in `core::events` because the writer (Tauri client, core
+        *without* `auto-import`) and the readers (server overlay, core *with* it) cannot share a
+        feature-gated module — two copies of that literal would drift silently.
+        Verified: the new `repeat_pull_over_unchanged_data_does_not_stack_pending_rows` test was
+        confirmed to **fail** against the old timestamp key (two rows, 38 ms apart) before being made
+        to pass; `pull_filters_rows_already_recorded_in_the_journal` covers the filter half and
+        exercises the new query against a real SurrealDB.
+     2. **Restore-after-wipe has no progress signal (open).** `SyncStatusIndicator` has Idle/Syncing/
+        Retrying/Error but no count, so projecting 12k events reads as a blank, broken app. This is
+        exactly the path the **personal** phone takes at handover — the one first impression that is
+        not disposable. Worth fixing before that.
+     3. **1–2 s cold opens (expected, on the plan).** Matches the measured profile (`list_transactions`
+        ~250–330 ms, cold `parse_artifacts` ~70 ms) against 10.5k real transactions; the Stage-C
+        read-cache is why revisits are instant. This is the finances plan's remaining "on-device
+        real-data pass", which was gated on having real data on a device — true only as of today.
+        Note the naive-index route is already disproven: SurrealDB 3.0.4 won't index-serve the
+        `ORDER BY date DESC` + LIMIT.
+     ⚠️ **Until the phone gets a new app build, dismiss auto-import batches — do not commit them.**
+     `commit_txn_id` ships in the *client*, so the old APK still mints random ids.
+     ⚠️ **Public-repo privacy:** the first version of this fix put the real institution name into
+     public doc comments and test literals. The pre-commit guard cannot catch it — "wise" is a
+     substring of "otherwise" — so it was caught by hand-audit and scrubbed to the neutral roster
+     (`[fix]: use neutral roster in auto-import docs`). Check this by eye on any auto-import change.
+     **Two false verifications en route, both of the same shape — a green signal over a thing that
+     was not running.** (a) The first deploy of the fix left the filter **inert**: it queried the
+     `transactions` projection, but `server/src/lib.rs` builds `ProjectionRunner::new(db, Vec::new())`
+     — the server runs **zero** projections, because projecting is the clients' job. The unit test
+     passed only because its harness included `BudgetProjection`. Fixed by reading the **event log**
+     (`payload.tags` on `transaction_recorded`), the one store both sides always have, and by
+     rebuilding the test harness with no projections. (b) `commit_txn_id` keyed on `external_id`
+     alone would have **collapsed two legs of one multi-currency card charge onto a single txn_id**
+     and silently dropped one — found by reading the actual proposed batch off the box
+     (`CARD-…` present as both −13.12 USD and −13.22 CAD). Now `auto-{external_id}-{content_hash}`.
+     Both regression tests were confirmed to fail against the broken version before being made green.
+     **Production attribution is still OPEN:** the box shows `auto-import tick source="wise"
+     events=0`, but the `filtered rows already in the journal` line has never appeared, meaning the
+     API returned nothing on those ticks rather than the filter suppressing rows. The filter is
+     proven by test + by the box's event log demonstrably containing the reference it looks for.
+     **Watch for that log line on a future tick to close the loop.**
+
+  8b. **Deploy safety was broken in the same way — found because three deploys in one day finally
+     tripped it (2026-08-30).** A deploy failed at the pre-deploy snapshot with `rm: cannot remove
+     …: Permission denied`: `snapshot.sh` prunes to the newest 5, snapshots are written root-owned
+     by a `docker run`, and `remote-deploy.sh` runs as `deploy` — so the first prune that ever fired
+     died under `set -e` and took the deploy with it. Production was untouched (the failure precedes
+     any container change). **The bigger finding underneath:** every script defaulted to
+     `OMNI_VOLUME=omni_data` while Compose namespaces the real volume `omni-deploy_omni_data`, and a
+     stray empty `omni_data` existed — so *every* pre-deploy safety snapshot was an **87-byte tarball
+     of an empty directory** (verified: `tar tzf` lists only `./`). The health-gated auto-rollback
+     had nothing to restore and reported success regardless. Fixes: prune is now never fatal (it
+     falls back to `sudo`, then warns); new `deploy/lib-volume.sh` resolves the volume from the
+     **running container's actual `/data` mount** (verified live → `omni-deploy_omni_data`), falls
+     back to the Compose-derived name, and `omni_require_volume` aborts rather than let Docker
+     silently create an empty volume. Six empty snapshots deleted after confirming each held only
+     `./`; the two real ones kept. Note `deploy` **is** in the docker group (plain `docker` works) —
+     the older memory saying otherwise is stale; only the root-owned `rm` needed sudo.
 
   **F. Phase 6 full release:**
   9. Phase 6 polish (6.2 branch-gate, 6.3 v1 semver + tag, 6.4 archive/reset the bloated docs) →
      ship an **updatable app on mobile + desktop** → make a **trivial change and test the update path
      end-to-end**; fix it if the OTA path is broken.
+     **Final go-live wipe = TOTAL, no retention (user, 2026-08-30).** Everything stays disposable and
+     resettable until the app is installed and in active daily use on the user's **personal** phone —
+     which comes *after* the OTA/update path is confirmed on the test phone. At that handover, wipe
+     the box to a genuine fresh slate and **delete the accumulated backups rather than keeping them**:
+     `/var/omni-snapshots/*` on the box (incl. the three 87-byte no-op tarballs and the stray empty
+     `omni_data` volume) and the `~/.local/share/com.omni-me.app/{local.db,budget.journal}.PREWIPE-*`
+     / `.bak-*` copies plus the `_backup_pre_*` dirs. The old data is not useful and is only noise.
 
   **POST-RELEASE (explicitly gated — only after the core app is solid on journal + routines + finances):**
   - LLM Chat (the main way to get data/insights out).
@@ -847,6 +948,86 @@ build/test/publish of the bank-free image.
 ---
 
 ## Running friction log *(fill during dogfooding; triage into the live phase)*
+
+### 2026-08-31 — first dogfooding on the clean seed
+
+- [x] **Boot shows the WRONG page building, then corrects — add a splash that holds until the app is
+  actually ready.** (user, 2026-08-31, on the test phone.) **This reframes the "1–2 s cold open" item:
+  the delay is not the complaint, the *visible half-built editor* is.** The user's words: seeing an
+  incomplete editor is "a constant reminder that I could be typing now", and they were dumped on
+  Journal for ~2 s — editor initializing — before being auto-navigated to Finances, the tab they had
+  actually closed on. So the wait is paid **twice**: watch the wrong page initialize, then the right
+  one.
+  **Root cause is exact and already located — do not re-derive it.** `frontend/src/main.rs:257`
+  ("1.8b: restore the last-open tab once the store's disk snapshot has loaded"): the app mounts with
+  `active_tab` at its **default (Journal)** and renders it immediately, while a `use_future` polls
+  `continuity_store.loaded_peek()` every 20 ms and only *then* sets `active_tab` to the restored tab.
+  First paint therefore always shows Journal, whatever tab you left from. The nav restore itself is
+  correct (Cycle 4 Phase 1 state-continuity) — it is just running *after* first paint instead of
+  gating it.
+  **Wanted (explicit reference: Obsidian):** a splash holding the logo — *moving*, "doing something",
+  enough to distract — from launch until the correct page is genuinely ready, so the user never sees
+  a partial editor. Assets exist: `tauri-app/branding/omni-me-fg.svg` is the transparent enso mark,
+  and an **open brush ring is close to ideal for a stroke-draw or rotation animation** (see 6.1 for
+  the identity system). Prefer animating the existing mark over inventing new art.
+  **Two gaps, and the user is complaining about the second — cover both or say which is deferred:**
+  (1) native app-start → WebView ready (Android 12+ `SplashScreen` API / window background);
+  (2) WebView ready → continuity restored + the landed page's first data in hand. Gate (2) on the
+  same `loaded_peek()` signal that already exists, plus ideally the page's first fetch, then fade out.
+  **Care needed:** the pending-share intake immediately below the restore block sets Finances
+  explicitly and must still win; and don't let the splash outlive a genuine failure (bound it, then
+  reveal the app anyway rather than hanging on a spinner forever).
+  **Related, same family:** the restore-after-wipe blank screen (12 k events projecting behind an
+  empty UI) — one coherent "the app is working, here's proof" story rather than two separate fixes.
+  **✅ DONE 2026-08-31 (web-verified; on-device confirmation rides the next APK).** Gap (2) is
+  covered; gap (1) is covered only as far as the window background — scope call by the user, who
+  chose the Rust splash + charcoal native background and explicitly deferred a custom `index.html`
+  and the Android 12+ `SplashScreen` API to *after* v1 ("I really don't want to get side tracked").
+  What shipped:
+  - **Render gate** — `main.rs` mounts no page until `continuity_store.is_loaded()`, so first paint
+    is already the restored tab instead of Journal-then-correct. `BootGate` + `use_boot_hold(ready)`
+    let a page hold the splash past that; `DayView` holds until `!loading && editor_built`, fed by a
+    new `Editor { on_ready }`. Wired for **Journal only** — Notes and Finances land on lists and
+    skeletons, not a half-built control; Finances is 7345 lines with no single first-fetch site.
+  - **6s wall-clock deadline** disarms the gate, which both lifts the splash and *opens the render
+    gate* — so a boot read that never finishes degrades to a visible app, never a hanging spinner.
+  - **`ensure_editor_bundle` hoisted out of `Editor` and warmed at app mount.** This is the
+    non-obvious part and it is load-bearing: the ~1 MB CodeMirror bundle used to be injected on
+    Editor *mount*, which under the old paint-Journal-first behaviour parsed **in parallel** with
+    the continuity boot read. Gating the mount would have serialized them — boot read, then a cold
+    parse the code itself says can exceed 5s — so the splash would have covered a *longer* wait than
+    the half-built editor it replaced. Caught by the user asking "what will I be looking at when the
+    editor is being built?" before it shipped.
+  - **Splash** (`components/splash.rs` + `input.css`) — the enso from `branding/omni-me-fg.svg`
+    inlined, ring rotating so the brush gap sweeps, core dot breathing, 200ms fade, `prefers-
+    reduced-motion` respected. 144px chosen against rendered 96/144/192 candidates: 96 reads as a
+    generic spinner, 192 dominates a phone. `z-[200]`, above the NavDrawer's `z-[140]`/`z-[150]`.
+  - **Native**: `android-overrides/res/values{,-night}/themes.xml` set `windowBackground` to
+    `#1e1e1e`, added to `build.rs`'s copy list. Verified the override landed in `gen/android/`.
+    That hex must stay equal to `--color-bg`; the invisible handover is the whole point.
+  Measured on a fresh load (Playwright, 390×844): splash visible at t≈280ms → fade → unmounted at
+  t≈623ms with the app rendered, mark 144px, `z=200`, page bg `rgb(30,30,30)`. Full suite 723 tests
+  green; clippy clean in both mock and non-mock frontend configs.
+  **Still unverified — needs the device:** webkit2gtk and Android Chromium rendering of the
+  animation (Playwright is Chromium and is not faithful for this app's native layer), the real cold
+  Android boot ordering, and whether 6s is the right cap on a genuinely cold first launch.
+  [S/M, frontend — perceived-latency fix, not a perf fix]
+
+- [x] **Restore-after-wipe has no progress signal.** (Was finding 2 in the step-8 test-phone pass.)
+  **✅ DONE 2026-08-31 — but the obvious fix was wrong and is worth recording.** The plan was to
+  plumb the count already emitted on `sync:applied` through to the sync chip. That count is useless
+  for this: `pull_once` (`core/src/sync/puller.rs`) sends `PullEvent::Applied` **after**
+  `apply_events_resilient` returns, so it reports work already finished — the indicator would have
+  lit up once the blank-screen window had closed. Fixed at the source instead: new
+  `PullEvent::Applying { pulled }` emitted *before* the projection runs, bridged as a `sync:restoring`
+  Tauri event (and re-emitted as 0 on completion), read by a new payload-carrying
+  `bridge::listen_backend_event_count` — the existing listener drops payloads by design — into a
+  `RestoreProgress` context that `SyncStatusIndicator` shows as "Restoring N events…", taking
+  precedence over the polled push status. That precedence is the point: `core::sync::status` watches
+  pushes and retries only, so it sits at `Idle` and the chip says "Synced" while a backfill projects.
+  **Unverified:** the on-device numbers. Exercise it with a throwaway device id against the box, or
+  it gets its real test at the personal-phone handover — which is exactly the impression this exists
+  to protect. [S, frontend + core]
 
 ### 2026-08-29 — found while cutting email from v1
 

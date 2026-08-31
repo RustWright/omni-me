@@ -83,6 +83,7 @@ extern "C" {
 ///
 /// The payload is ignored on purpose: callers use the event only as a "something
 /// changed, re-read" nudge, so a bare `impl FnMut()` keeps the call sites clean.
+/// Use [`listen_backend_event_count`] when the emitted value itself matters.
 pub fn listen_backend_event(event: &str, on_event: impl FnMut() + 'static) {
     #[cfg(feature = "mock")]
     {
@@ -93,6 +94,38 @@ pub fn listen_backend_event(event: &str, on_event: impl FnMut() + 'static) {
         let mut on_event = on_event;
         let cb =
             Closure::wrap(Box::new(move |_evt: JsValue| on_event()) as Box<dyn FnMut(JsValue)>);
+        let _ = tauri_listen(event, cb.as_ref().unchecked_ref());
+        cb.forget();
+    }
+}
+
+/// Subscribe to a backend event that carries a numeric payload (e.g.
+/// `sync:restoring`), invoking `on_event` with the value. A payload that isn't a
+/// number arrives as `None` rather than being silently coerced.
+///
+/// Tauri delivers `{ event, id, payload }` to the JS handler, so the emitted
+/// value is the `payload` **field** of the object handed to the closure — not
+/// the object itself. Reading the wrong field here fails silently (every emit
+/// looks like `None`), which is indistinguishable from a backend that never
+/// sends anything, so this is worth checking against the running app rather than
+/// against memory.
+///
+/// Same fire-and-forget lifetime as [`listen_backend_event`]: one listener per
+/// app session, registered at the root, closure leaked. No-op under `mock`.
+pub fn listen_backend_event_count(event: &str, on_event: impl FnMut(Option<f64>) + 'static) {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (event, on_event);
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        let mut on_event = on_event;
+        let cb = Closure::wrap(Box::new(move |evt: JsValue| {
+            let payload = js_sys::Reflect::get(&evt, &JsValue::from_str("payload"))
+                .ok()
+                .and_then(|v| v.as_f64());
+            on_event(payload);
+        }) as Box<dyn FnMut(JsValue)>);
         let _ = tauri_listen(event, cb.as_ref().unchecked_ref());
         cb.forget();
     }

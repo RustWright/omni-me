@@ -113,6 +113,79 @@ pub fn use_page_back(depth: impl Fn() -> u32 + Copy + 'static, on_pop: impl FnMu
     });
 }
 
+/// Boot-time readiness gate sitting behind the splash (`components::splash`).
+///
+/// The app used to mount at `Tab::Journal` and paint it immediately, then switch
+/// to the restored tab once the continuity store's disk snapshot arrived. So
+/// every cold open showed the *wrong* page building — a half-built CodeMirror
+/// editor — before correcting, and the wait was paid twice: watch one page
+/// initialize, then watch the right one. Now no page mounts until the restored
+/// tab is known, and the splash covers the gap.
+///
+/// Pages extend that cover with [`use_boot_hold`]: a page that is mounted but
+/// still showing its own loader holds the splash down until it has real content.
+///
+/// Holds are **one-shot**. Once the splash lifts, `armed` goes false, every
+/// outstanding hold releases and no new one is taken — so a later tab switch can
+/// never bring the splash back mid-session.
+#[derive(Clone, Copy)]
+pub struct BootGate {
+    /// Outstanding holds. The splash waits for this to reach 0.
+    pending: Signal<u32>,
+    /// False once the splash has lifted (normally, or on the deadline).
+    armed: Signal<bool>,
+}
+
+/// Hold the boot splash down until `ready()` returns true.
+///
+/// Call near the top of a page whose first paint would otherwise be a loader or
+/// a half-built control. `ready` is read reactively, so it re-evaluates as the
+/// page's signals change.
+///
+/// No-op once the splash has lifted, so it costs nothing after boot. A holder
+/// that unmounts without ever becoming ready cannot strand the splash either:
+/// the wall-clock deadline in [`App`] lifts it regardless, and disarming
+/// releases every hold.
+pub fn use_boot_hold(ready: impl Fn() -> bool + Copy + 'static) {
+    let gate = use_context::<BootGate>();
+    let mut pending = gate.pending;
+    let armed = gate.armed;
+
+    // Whether *this* caller is currently counted in `pending`.
+    let mut holding = use_signal(|| false);
+
+    // An effect, not a render-time write: effects run after the first render, so
+    // the count changes in a frame the root can observe. The lift loop in `App`
+    // waits out a settle window before trusting `pending == 0` precisely because
+    // this lands one frame after the page mounts.
+    use_effect(move || {
+        let want_hold = *armed.read() && !ready();
+        let held = *holding.peek();
+        if want_hold && !held {
+            holding.set(true);
+            *pending.write() += 1;
+        } else if !want_hold && held {
+            holding.set(false);
+            *pending.write() -= 1;
+        }
+    });
+}
+
+/// How many inbound events the background puller is currently projecting, for
+/// the sync chip to report. `0` = nothing in flight.
+///
+/// The push-side `StatusReporter` (`core::sync::status`) cannot cover this: it
+/// watches pushes and retries, so it sits at `Idle` — chip reading "Synced" —
+/// while a large inbound backfill projects. On a fresh or just-wiped device that
+/// backfill *is* the app appearing, and showing nothing while it runs makes a
+/// working app look broken. That's the path the user's personal phone takes at
+/// handover, which is the one first impression that isn't disposable.
+///
+/// Fed by `sync:restoring`, which the backend emits *before* projecting a batch
+/// (`core::sync::puller::PullEvent::Applying`) and again with 0 once it's done.
+#[derive(Clone, Copy)]
+pub struct RestoreProgress(pub Signal<u64>);
+
 /// Left-edge strip width (CSS px) within which a touch may begin a drawer-open
 /// swipe (1.12). The matching native `setSystemGestureExclusionRects` keeps
 /// Android's back-gesture from stealing swipes in this strip.
@@ -154,6 +227,85 @@ fn App() -> Element {
     // survives page unmount on tab switch. Pages read it via `use_continuity`.
     let continuity_store = continuity::use_continuity_provider();
 
+    // Boot splash + readiness gate (see `BootGate`). `boot_armed` doubles as the
+    // render gate's fail-open: pages mount once the restored tab is known *or*
+    // once the gate disarms, so a backend that never answers degrades to a
+    // visible app rather than an empty screen behind a spinner.
+    let boot_pending = use_signal(|| 0u32);
+    let mut boot_armed = use_signal(|| true);
+    use_context_provider(|| BootGate {
+        pending: boot_pending,
+        armed: boot_armed,
+    });
+    // Split from `boot_armed` so the fade can play *after* the gate opens: the
+    // app paints underneath, then the splash dissolves off it.
+    let mut splash_fading = use_signal(|| false);
+    let mut splash_mounted = use_signal(|| true);
+
+    // Start the ~1 MB CodeMirror bundle downloading at app mount, before any
+    // page exists.
+    //
+    // This is load-bearing for the render gate above, not an optimization. The
+    // bundle used to be injected by the `Editor` component on mount, which under
+    // the old always-paint-Journal-first behavior meant it parsed *in parallel*
+    // with the continuity store's boot read. Gating the mount would have made
+    // those two costs serial — the boot read, and only then a cold bundle parse
+    // that `ensure_editor_bundle` documents as capable of exceeding 5s — so the
+    // splash would have covered a *longer* wait than the half-built editor it
+    // replaced. Warming here restores the overlap.
+    //
+    // Fire-and-forget: `ensure_editor_bundle` dedupes by script `src`, so the
+    // Editor's own call later finds the script present and usually finds
+    // `createEditor` already defined.
+    use_future(|| async move {
+        components::editor::ensure_editor_bundle().await;
+    });
+
+    use_future(move || async move {
+        // Wall-clock cap. The splash must never outlive a genuine failure — if
+        // the boot read hangs or a page never reports ready, reveal the app
+        // anyway. 6s rather than something tighter because the CodeMirror
+        // bundle's cold first parse can run long (see `ensure_editor_bundle`),
+        // and a few extra seconds of animated logo is the complaint's *lesser*
+        // half: what the user objected to was seeing the half-built editor.
+        const DEADLINE_MS: i32 = 6_000;
+        const POLL_MS: i32 = 40;
+        // One settle window after the restored tab mounts, before we trust
+        // `pending == 0`. `use_boot_hold` registers from an effect, which lands
+        // a frame after the page's first render — without this, the loop could
+        // conclude "nothing is holding" in the gap.
+        const SETTLE_MS: i32 = 120;
+        // Must match the `duration-200` transition on the splash root.
+        const FADE_MS: i32 = 200;
+
+        // Counted rather than clock-read: `timer::sleep_ms` is a no-op off wasm
+        // (it exists so the parent workspace's `cargo check` passes), so a real
+        // clock would make this loop meaningless there. Approximate is fine —
+        // it's a safety cap, not a schedule.
+        let mut waited = 0;
+
+        // 1. Wait for the restored tab to be known. Nothing has mounted yet.
+        while !continuity_store.loaded_peek() && waited < DEADLINE_MS {
+            timer::sleep_ms(POLL_MS).await;
+            waited += POLL_MS;
+        }
+        // 2. Let the landed page mount and register any hold.
+        timer::sleep_ms(SETTLE_MS).await;
+        waited += SETTLE_MS;
+        // 3. Wait out the holds.
+        while *boot_pending.peek() > 0 && waited < DEADLINE_MS {
+            timer::sleep_ms(POLL_MS).await;
+            waited += POLL_MS;
+        }
+
+        // Disarm before fading: releases every outstanding hold, stops new ones
+        // being taken, and opens the render gate on the failure path.
+        boot_armed.set(false);
+        splash_fading.set(true);
+        timer::sleep_ms(FADE_MS).await;
+        splash_mounted.set(false);
+    });
+
     // Hardware/gesture-back plumbing (#372). The active page reports its
     // drill-down depth into `page_depth` and pops one level when `pop_seq`
     // bumps; the root orchestrates below. Provided as `BackNav` context.
@@ -172,6 +324,26 @@ fn App() -> Element {
     // `use_sync_epoch`, so they re-fetch automatically when a pull lands.
     let mut sync_epoch = use_signal(|| 0u64);
     use_context_provider(|| SyncRefresh(sync_epoch));
+
+    // Inbound-restore progress (see `RestoreProgress`). Separate listener from
+    // `sync:applied` below because the two answer different questions: this one
+    // says "a batch is projecting right now", that one says "it finished, go
+    // re-read". Same channel→spawn pattern — the JS callback fires outside any
+    // Dioxus scope, where a direct signal write would panic.
+    let mut restoring = use_signal(|| 0u64);
+    use_context_provider(|| RestoreProgress(restoring));
+    use_hook(move || {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<u64>();
+        bridge::listen_backend_event_count("sync:restoring", move |payload| {
+            let _ = tx.unbounded_send(payload.unwrap_or(0.0).max(0.0) as u64);
+        });
+        spawn(async move {
+            while let Some(count) = rx.next().await {
+                restoring.set(count);
+            }
+        });
+    });
+
     use_hook(move || {
         // The JS event callback fires outside any Dioxus scope, where writing a
         // signal directly would panic — so it only nudges an unbounded channel.
@@ -254,12 +426,23 @@ fn App() -> Element {
         page_depth.set(0);
     });
 
+    // Set by the pending-share intake below when a capture is waiting, so the
+    // tab restore yields to it. Both are bare futures that can resolve in either
+    // order: the intake awaits an invoke, the restore awaits the disk snapshot.
+    // The intake was documented as the winner but only actually won when it
+    // happened to resolve *last* — landing first, it had its Finances switch
+    // silently overwritten by the restore.
+    let mut share_claimed_tab = use_signal(|| false);
+
     // 1.8b: restore the last-open tab once the store's disk snapshot has loaded.
-    // Runs before any user interaction. The pending-share intake below still
-    // wins when a capture is waiting — it sets Finances explicitly.
+    // Runs before any user interaction, and now *before first paint* — no page
+    // mounts until this has had its say (see `BootGate`).
     use_future(move || async move {
         while !continuity_store.loaded_peek() {
             timer::sleep_ms(20).await;
+        }
+        if *share_claimed_tab.peek() {
+            return;
         }
         if let Some(tab) = continuity_store
             .nav_peek()
@@ -291,6 +474,9 @@ fn App() -> Element {
     use_future(move || async move {
         if let Ok(Some(capture)) = bridge::invoke_take_pending_share_intent().await {
             pending_share_mut.set(Some(capture));
+            // Claim before switching, so a tab restore that resolves *after*
+            // this can't overwrite the capture's destination.
+            share_claimed_tab.set(true);
             active_tab.set(Tab::Finances);
         }
     });
@@ -409,12 +595,21 @@ fn App() -> Element {
                         }
                         last_scroll_top.set(cur);
                     },
-                    match *active_tab.read() {
-                        Tab::Journal => rsx! { JournalPage {} },
-                        Tab::Notes => rsx! { NotesPage {} },
-                        Tab::Routines => rsx! { RoutinesPage {} },
-                        Tab::Finances => rsx! { FinancesPage {} },
-                        Tab::Settings => rsx! { SettingsPage {} },
+                    // Render gate (see `BootGate`): nothing mounts until the
+                    // restored tab is known, so first paint is already the tab
+                    // the user closed on rather than Journal-then-correct. The
+                    // `!armed` arm is the fail-open — if the boot read never
+                    // finishes, the deadline disarms the gate and the app
+                    // appears anyway (on its default tab) instead of staying
+                    // blank behind a lifted splash.
+                    if continuity_store.is_loaded() || !*boot_armed.read() {
+                        match *active_tab.read() {
+                            Tab::Journal => rsx! { JournalPage {} },
+                            Tab::Notes => rsx! { NotesPage {} },
+                            Tab::Routines => rsx! { RoutinesPage {} },
+                            Tab::Finances => rsx! { FinancesPage {} },
+                            Tab::Settings => rsx! { SettingsPage {} },
+                        }
                     }
                 }
             }
@@ -428,6 +623,12 @@ fn App() -> Element {
                     continuity_store.update_nav(|n| n.tab = Some(tab.as_key().to_string()));
                 },
                 on_close: move |_| drawer_open.set(false),
+            }
+
+            // Boot splash — last child so it stacks above the drawer even
+            // before z-index is considered. Unmounted once the fade completes.
+            if *splash_mounted.read() {
+                components::splash::Splash { fading: *splash_fading.read() }
             }
         }
     }

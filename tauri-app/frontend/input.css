@@ -81,6 +81,51 @@ select {
     padding-right: 2rem !important;
 }
 
+/* ── Boot splash ────────────────────────────────────────────────────────────
+ * Markup in `components/splash.rs`; lift logic in `main.rs` (`BootGate`).
+ *
+ * Colors come from the design tokens above so the splash tracks any future
+ * theme swap — and, more importantly, so the charcoal here stays identical to
+ * the Android `windowBackground` in
+ * `src-tauri/android-overrides/res/values/themes.xml`. Those two being the same
+ * color is what makes the native→WebView handover invisible; if one changes,
+ * change both.
+ *
+ * `transform` on the whole <svg> element (an HTML element as far as CSS is
+ * concerned), never on nodes inside it — see the note in `splash.rs`. */
+.splash-ring {
+    fill: rgb(var(--color-accent));
+    animation: splash-sweep 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.splash-core {
+    fill: rgb(var(--color-text));
+    transform-origin: center;
+    animation: splash-breathe 2.6s ease-in-out infinite;
+}
+
+@keyframes splash-sweep {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+@keyframes splash-breathe {
+    0%, 100% { opacity: 0.5; transform: scale(0.85); }
+    50%      { opacity: 1;   transform: scale(1.1); }
+}
+
+/* Reduced motion: keep the mark and the charcoal hold — the splash still does
+ * its job of not showing a half-built UI — but stop moving it. */
+@media (prefers-reduced-motion: reduce) {
+    .splash-ring,
+    .splash-core {
+        animation: none;
+    }
+    .splash-core {
+        opacity: 1;
+    }
+}
+
 /* Mobile content bottom padding. Since the bottom tab bar was replaced by the
  * slide-in drawer (1.11) there's no fixed bar to clear — just the Android
  * gesture/system-nav inset, the keyboard inset (so the IME has scroll room to

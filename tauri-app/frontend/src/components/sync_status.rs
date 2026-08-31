@@ -27,6 +27,23 @@ pub fn SyncStatusIndicator() -> Element {
         }
     });
 
+    // Inbound restore takes precedence over the polled push status. The two
+    // report different pipelines, and during a backfill the push side is
+    // genuinely `Idle` — so without this the chip cheerfully says "Synced" while
+    // 12k events project behind an empty UI. See `main.rs::RestoreProgress`.
+    let restoring = *use_context::<crate::RestoreProgress>().0.read();
+    if restoring > 0 {
+        return rsx! {
+            div {
+                class: "flex items-center gap-2 text-xs font-medium",
+                title: "Restoring data from the server",
+                aria_label: "Restoring {restoring} events",
+                span { class: "w-2 h-2 rounded-full bg-obsidian-accent animate-pulse" }
+                span { class: "text-obsidian-accent", "Restoring {restoring} events…" }
+            }
+        };
+    }
+
     let snap = snapshot.read();
     let current = snap.status;
     let (label, dot_class, text_class, animated) = match current {

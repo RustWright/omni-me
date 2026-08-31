@@ -40,6 +40,10 @@ fn apply_android_overrides() {
             "java/com/omni_me/app/InsetBridge.kt",
         ),
         ("res/xml/file_paths.xml", "res/xml/file_paths.xml"),
+        // Charcoal `windowBackground` so the launcher→WebView gap isn't a white
+        // flash. Both configurations, because the app is dark-only.
+        ("res/values/themes.xml", "res/values/themes.xml"),
+        ("res/values-night/themes.xml", "res/values-night/themes.xml"),
     ];
 
     generate_dev_flags(&gen_main);

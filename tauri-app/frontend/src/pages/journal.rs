@@ -353,6 +353,22 @@ fn DayView(
 ) -> Element {
     let mut entry = use_signal(|| None::<JournalEntryItem>);
     let mut loading = use_signal(|| true);
+    // True once CodeMirror has actually been built for this day (fed by the
+    // `Editor`'s `on_ready`). Only the boot splash consumes it — see the
+    // `use_boot_hold` below.
+    let mut editor_built = use_signal(|| false);
+    // Hold the boot splash until this day is *typeable*, not merely mounted.
+    //
+    // The two conditions are separate on purpose: `loading` covers the entry
+    // fetch, and the `Editor` is not even rendered until that resolves, so a
+    // hold keyed on the editor alone would be registered too late — the splash
+    // would already have lifted onto the "Loading..." state. This is the exact
+    // thing the user reported: the visible half-built editor, not the wait.
+    //
+    // Journal only. Notes and Finances land on lists and skeletons rather than a
+    // half-built control, so they lift with the restored tab; add the same line
+    // there if either turns out to read badly on-device.
+    crate::use_boot_hold(move || !*loading.read() && *editor_built.read());
     let mut saving = use_signal(|| false);
     let mut error_msg = use_signal(|| None::<String>);
     let mut save_status = use_signal(|| None::<String>);
@@ -1067,6 +1083,7 @@ fn DayView(
                                 entry_date: date.clone(),
                                 initial_cursor: *cursor.peek(),
                                 on_cursor: move |p: usize| cursor.set(p),
+                                on_ready: move |_| editor_built.set(true),
                             }
                         }
                     }

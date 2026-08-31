@@ -499,8 +499,18 @@ pub fn run() {
                     tokio::spawn(async move {
                         loop {
                             match pull_rx.recv().await {
+                                Ok(PullEvent::Applying { pulled }) => {
+                                    // Before the projection runs, so the UI can
+                                    // show it while it does — on a fresh device
+                                    // this batch is the whole app arriving.
+                                    tracing::info!(pulled, "auto-pull projecting batch");
+                                    let _ = emit_handle.emit("sync:restoring", pulled);
+                                }
                                 Ok(PullEvent::Applied { pulled, failed }) => {
                                     tracing::info!(pulled, failed, "auto-pull applied; nudging UI refetch");
+                                    // 0 clears the restoring indicator; the
+                                    // refetch nudge rides the same event.
+                                    let _ = emit_handle.emit("sync:restoring", 0usize);
                                     let _ = emit_handle.emit("sync:applied", pulled);
                                 }
                                 Ok(_) => {}
