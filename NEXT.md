@@ -31,8 +31,8 @@ Done this session: 6.2, 6.3 (`v1.0.0` tagged), 6.4, and the bug below.
 
 ## Open threads
 
-- **Desktop splash visual is [USER]-blocked, not deferred** — the AppImage runs now, but nothing
-  here can film a cold boot (`grim` fails, GNOME DBus `AccessDenied`, no `Xvfb`).
+- **Desktop splash visual is [USER]-blocked** — AppImage runs, but nothing here can film a cold
+  boot (`grim` fails, GNOME DBus `AccessDenied`, no `Xvfb`).
 - **The pipeline can't tell a launchable release from an unlaunchable one** — how the AppImage bug
   survived two months. An `xvfb-run` smoke step would catch the class; filed, not built.
 - **Auto-import filter attribution OPEN** — ticks report `events=0`, but `filtered rows already in
