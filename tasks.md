@@ -153,6 +153,43 @@ the verification notes are in
 
 ## Running friction log *(fill during dogfooding; triage into the live phase)*
 
+### 2026-08-31 — found by the OTA round-trip (step 9)
+
+- [x] **Every CI desktop AppImage since 0.2.0 PANICKED ON STARTUP — the desktop release has
+  never once run.** Found the moment the 1.0.0 AppImage was actually launched (isolated
+  `XDG_DATA_HOME`, user data untouched):
+  `PluginInitialization("updater", "The configured updater endpoint must use a secure protocol
+  like `https`.")` — a panic before any window appears. **Reproduced on 0.2.0 too**, so it is
+  pre-existing from 2026-06-29, not introduced by the v1.0.0 work.
+  **Root cause, from the plugin source (`tauri-plugin-updater-2.10.1/src/config.rs`,
+  `validate_endpoints`):** a non-https updater endpoint is `#[cfg(debug_assertions)]` → *warn*,
+  `#[cfg(not(debug_assertions))]` → *hard error*. The private CI injects
+  `http://<box>:3000/updates/desktop/latest.json`. So the defect is **invisible to
+  `cargo tauri dev` and fatal in exactly the artifact CI produces** — which is why months of
+  desktop development never hit it.
+  **Why the 2026-06-29 "verified over the tailnet" check missed it:** that check confirmed the
+  AppImage was *served* (HTTP 200 + valid sig). Nothing in the pipeline ever *launched* it.
+  The lesson is [[feedback-smoke-run-binaries-before-handoff]] applied to CI artifacts, not
+  just local builds — a release that has never been executed is not verified.
+  **Fix (private `app-release.yml`, one key):** `dangerousInsecureTransportProtocol:true` in
+  the `--config` updater block. **Verified at the library level before rebuilding** with a
+  standalone probe pinned to `=2.10.1` and `debug-assertions = false`: http without the flag →
+  REJECTED with the identical error, http with the flag → ACCEPTED, and a *typo'd* key →
+  REJECTED (proving the name is load-bearing rather than silently ignored — the failure mode
+  [[verify-syntax-before-writing]] warns about).
+  **Security note (user-approved 2026-08-31):** the flag relaxes the *transport* requirement
+  only. Both properties https would supply are already provided independently — the tailnet is
+  a WireGuard tunnel (encrypted + authenticated, no middleman position), and the artifact is
+  minisign-verified against a mandatory pubkey whose private half lives only in Actions
+  secrets. **Revisit if `/updates` ever leaves the tailnet**; on a public endpoint the flag
+  becomes genuinely unsafe. Rationale is recorded in full at the injection site. [BUG, high]
+- [ ] **The pipeline cannot tell a launchable release from an unlaunchable one.** The bug above
+  survived two months because "published + correct sha + valid signature" was the whole
+  acceptance test. Worth a headless smoke step in `app-release.yml` that runs the built
+  AppImage under `xvfb-run` and fails the job if it exits non-zero within a few seconds. Would
+  have caught this exact class on the first release. (Android can't be smoke-run in CI the same
+  way — an emulator boot is a much bigger lift — so the APK stays device-verified.) [S, CI]
+
 ### 2026-08-30 — noticed during the on-device splash verification
 
 - [x] **`unused_mut` warning on every Android build — DONE 2026-08-31.**
