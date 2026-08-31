@@ -461,6 +461,30 @@ the verification notes are in
 
 ### 2026-08-31 — first dogfooding on the clean seed
 
+- [x] **Every CI desktop AppImage was unrunnable on the go-live desktop — glibc floor set by the
+  build host. FIXED 2026-08-31.** `surface` (Ubuntu 22.04, glibc 2.35) rejected the 1.0.3 AppImage
+  with `GLIBC_2.3x not found` for several libraries. An AppImage bundles the app's own libraries
+  but **never glibc**, so the build host's version becomes the artifact's minimum — and
+  `build-desktop` ran on `ubuntu-latest` (24.04, glibc 2.39). **Invisible from the dev laptop,
+  which is also 24.04**, so every local launch test passed; this is the same acceptance-test gap
+  as the "pipeline cannot tell a launchable release from an unlaunchable one" item below.
+  **Fix: pin `build-desktop` to `ubuntu-22.04`** (Android is unaffected — an APK has no glibc
+  dependency, and that job still uses `ubuntu-latest`).
+  **Two follow-on defects surfaced while fixing it, both worth keeping:**
+  (1) `dx` publishes **only `-gnu` archives** built against a newer glibc and has no musl variant,
+  so binstall's `dx` itself died with `GLIBC_2.38 not found` on the pinned runner — it is now
+  compiled from source there. `cargo-tauri`'s prebuilt binary is fine.
+  (2) That fix was then **silently defeated by the cache**: `Swatinem/rust-cache` caches
+  `~/.cargo/bin` and keys on `Linux-x64` **without the Ubuntu version**, so the job restored a
+  24.04-built `dx` and `cargo install` reported "already installed" and no-op'd in ~1s. Fixed with
+  `--force` plus a cache key namespaced to the runner image, and a `dx --version` guard so a
+  non-running CLI fails at the install step instead of surfacing later as an opaque
+  `beforeBuildCommand` error.
+  **Verified at the binary level, not by CI going green** — precisely the acceptance test that let
+  this through: the published 1.0.3 AppImage's highest required symbol is `GLIBC_2.35` (bundled
+  libs top out at 2.34), and it then installed and ran on `surface`. Cost accepted: `--force`
+  makes every desktop release recompile `dx` (~10 min); droppable now the guard exists. [S, CI]
+
 - [x] **Wise proposed 4 rows already in the ledger — NOT a dedup bug. A wipe-sequencing artifact,
   and the runbook lesson is the keeper.** Reported from the review inbox: one correct new row
   (2026-08-31 transfer) alongside four already-recorded ones from 2026-08-28 and earlier.
@@ -535,9 +559,15 @@ the verification notes are in
   wrong for a journal. `editor.js` sets none of them, so nothing in this app overrode the default;
   the app's other inputs that disable autocomplete (`settings.rs`, `account_input.rs`) are
   unrelated fields.
-  **Fix candidate** (documented API, confirmed against the CM6 docs): add
+  **FIXED + SHIPPED IN 1.0.4 (2026-08-31); on-device verification still owed.** `editor.js` gained
+  a `proseInputAttributes` extension —
   `EditorView.contentAttributes.of({autocorrect: "on", autocapitalize: "sentences", spellcheck:
-  "true"})` to the editor's extensions.
+  "true"})` — added to the single `createEditor` extensions array (checked: there is only one
+  `new EditorView` site, so this is not a one-of-N fix). `translate: "no"` is deliberately left at
+  CodeMirror's default; a note should not be machine-translated in place.
+  **Verified in a real browser before shipping**, not assumed: the rebuilt bundle was served to a
+  harness page and the live DOM read back `autocorrect="on" autocapitalize="sentences"
+  spellcheck="true"` on `.cm-content`, so the override does beat CodeMirror's defaults.
   **What is NOT yet established:** that flipping the attributes is *sufficient*. CM6 also has a
   long history of Android IME **composition** edge cases, so the keyboard may still fail to commit
   even with the attributes on. Verify on the device — drive the live WebView over adb with CDP

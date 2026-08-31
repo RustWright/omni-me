@@ -13,8 +13,12 @@ on both mobile and desktop**. The **final go-live wipe ran 2026-08-31** — the 
 was emptied to a genuine clean slate (`/data` 21M → 64K), every snapshot and local
 backup deleted, and real data put back by a **fresh import from the canonical
 ledger + vault**, reconciling to **0 diffs** against `ledger bal` and seeding the
-box with 12 277 events. What remains before daily use is the handover itself:
-installing on the personal phone and on `surface`, the Linux desktop.
+box with 12 277 events. **Both personal devices are installed and syncing** — the
+phone and `surface`, the Linux desktop — so the app is in real daily use.
+**v1.0.4 is released** (published for both platforms), carrying a mobile
+prose-typing fix for the note editor and a CI change that makes the desktop
+AppImage runnable on older glibc. What remains is confirming the 1.0.3 → 1.0.4
+OTA update on both devices, the brokerage reconnect, and box auth.
 
 **Last Updated:** 2026-08-31
 
