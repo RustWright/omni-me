@@ -52,5 +52,49 @@ else
   echo ">> OMNI_BUILD_MEM_SAFE=0 — full release profile (LTO, opt-level=3); needs RAM"
 fi
 
+# Regenerate the launcher icons before building.
+#
+# `cargo tauri android init` writes Tauri's DEFAULT icons into
+# `gen/android/app/src/main/res/mipmap-*/`, and that whole tree is gitignored —
+# so the enso icons only ever existed on whichever machine last ran
+# `cargo tauri icon`. CI inits the Android project from scratch on every run and
+# therefore shipped the **generic Tauri logo** in every release APK (found
+# on-device 2026-08-31, v1.0.0/v1.0.1).
+#
+# `android-overrides/` can't solve this the way it does for MainActivity/themes:
+# it copies single files, and this is ~63 generated PNGs across every density.
+# Regenerating from the tracked SVG source is better than committing binaries —
+# `branding/logo-manifest.json` + its SVGs are in git, so the icons are derived,
+# not stored, and can never drift from the source of truth.
+#
+# Runs here rather than in the CI workflow because CI invokes THIS script after
+# `android init`, so one call fixes the local and CI paths together. Idempotent
+# and quick; it also refreshes the tracked desktop icons under `icons/`, which
+# is harmless (identical bytes unless the branding SVGs changed).
+echo ">> regenerating launcher icons from branding/logo-manifest.json"
+
+# `cargo tauri icon` also rewrites the TRACKED desktop icons under `icons/`, and
+# `icon.icns` does not pack deterministically — identical input, identical size,
+# different bytes every run. Left alone this dirties a tracked file on every
+# build, which is the same trap `gen/schemas/` set: churn that invites an
+# accidental commit. Only `gen/android/` (gitignored) actually needs refreshing
+# here, so snapshot the tracked dir and put it back afterwards.
+ICONS_BACKUP="$(mktemp -d)"
+trap 'rm -rf "$ICONS_BACKUP"' EXIT
+cp -a icons/. "$ICONS_BACKUP"/
+
+cargo tauri icon ../branding/logo-manifest.json
+
+rm -rf icons && cp -a "$ICONS_BACKUP" icons
+
+# Fail loudly rather than ship the default robot again: after a real icon
+# generation the adaptive-icon foreground must exist. A silent miss here is
+# exactly how v1.0.0 and v1.0.1 shipped the stock Tauri logo.
+ICON_CHECK="gen/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png"
+if [ -d gen/android ] && [ ! -f "$ICON_CHECK" ]; then
+  echo "icon generation did not produce $ICON_CHECK" >&2
+  exit 1
+fi
+
 cargo tauri android build --apk --target aarch64 \
   --config "{\"build\":{\"frontendDist\":\"${FRONTEND_DIST}\"}}"
