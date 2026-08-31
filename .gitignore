@@ -2,6 +2,12 @@
 target/
 node_modules/
 tauri-app/src-tauri/gen/android/
+# Build-generated and PER-TARGET, which made them actively dangerous to track:
+# an Android build drops the `updater` key from acl-manifests.json (the plugin is
+# `#[cfg(desktop)]`) and never writes the desktop/linux schemas, so committing
+# after an APK build silently removed the desktop updater's manifest entry.
+# tauri-build regenerates whatever the current target needs on every build.
+tauri-app/src-tauri/gen/schemas/
 *.apk
 *.db
 *.db-*

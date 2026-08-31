@@ -318,6 +318,9 @@ pub fn run() {
     // before registering config-driven plugins.
     let context = tauri::generate_context!();
 
+    // Only the `#[cfg(desktop)]` block below reassigns this, so on Android the
+    // `mut` is genuinely unused and every APK build warned about it.
+    #[cfg_attr(not(desktop), allow(unused_mut))]
     let mut builder = tauri::Builder::default();
     // Desktop self-update via the Tauri updater plugin. pubkey + endpoint are
     // injected at build time by the private CI's --config; local/dev builds omit
