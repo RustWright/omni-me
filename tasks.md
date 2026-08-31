@@ -178,7 +178,11 @@ the verification notes are in
   desktop `icons/icon.icns`, and that file does not pack deterministically — same input, same
   size, different bytes every run. Left alone it dirties a tracked file on every build, the same
   trap `gen/schemas/` set. The script now snapshots and restores `icons/` around the call, so
-  only the gitignored Android tree changes; confirmed zero tracked churn. [BUG, high]
+  only the gitignored Android tree changes; confirmed zero tracked churn.
+  **VERIFIED ON-DEVICE 2026-08-31:** App info for the installed 1.0.2 renders the enso — blue
+  open brush ring with the core dot on charcoal — instead of the stock Tauri mark. (APK resource
+  names are AAPT2-mangled, so byte-comparing inside the archive is unreliable; what the system
+  actually draws is the check that counts.) [DONE]
 
 - [x] **DESKTOP OTA ROUND-TRIP: PROVEN END-TO-END.** Driven headlessly on a persistent `Xvfb :99`
   with `xdotool` (user installed it on request), against an **absolutely**-pathed isolated
@@ -236,7 +240,21 @@ the verification notes are in
   **Verification needs TWO releases and that is unavoidable:** 1.0.2 carries the fix, so it
   cannot be delivered by the path it repairs — it goes on by cable/browser, and 1.0.3 exists for
   it to update *to*. `is_newer` is strictly-greater and fails closed on downgrades, so there is
-  no way to re-test against an older build. [BUG, high — code fixed, device-verify pending]
+  no way to re-test against an older build.
+  **BRIDGE FIX VERIFIED ON-DEVICE 2026-08-31 — by the best evidence available.** On its first
+  boot, 1.0.2's fixed poller picked up the install request **1.0.0 had stranded** hours earlier
+  (written by Rust to `dataDir`, invisible to the old Kotlin reading `filesDir`) and fired the
+  system installer unprompted. The log lines added with the fix name the exact path:
+  `install request found at /data/user/0/com.omni_me.app/install_request`, then
+  `install intent fired for .../cache/omni-me-update.apk`. That is precisely the file the broken
+  reader could not see, found where Rust has always written it — and it confirms the removed
+  `filesDir` fallback was unreachable. The offered APK was the stale cached 1.0.1 (a downgrade),
+  so it was cancelled rather than installed.
+  **Still owed: the clean 1.0.2 → 1.0.3 round-trip, run with `REQUEST_INSTALL_PACKAGES` reset to
+  `default`.** During diagnosis that appop was granted via `adb appops set … allow`; it made no
+  difference then (the path bug was the real cause), but it is a workaround the user must not
+  need on their personal phone, so the final proof has to run without it. Reset to `default`
+  before the round-trip. [BUG, high — bridge verified; stock-permission round-trip pending]
 
 - [ ] **ANDROID SHOWS THE WRONG DAY: "Today" resolves to the UTC date, not the local one.**
   Caught by comparing the two platforms side by side at 23:42 CDT on 2026-08-30 — both devices
@@ -277,7 +295,18 @@ the verification notes are in
   boot path is untouched, and a new `invoke_get_timezone_timed` uses it behind the same
   bounded-retry loop `continuity.rs` uses (500 ms/attempt, 100 ms gap, 15 s fail-open cap).
   **Use `invoke_timed` for anything fired during boot** — that guidance is on the helper.
-  [BUG, high — code fixed, device-verify pending]
+  **VERIFIED ON-DEVICE 2026-08-31 (1.0.0 vs 1.0.2, same phone, same data).** The natural window
+  had passed — after midnight CDT local and UTC agree, so a buggy build looks correct — so the
+  divergence was forced through the app's OWN timezone override rather than by touching system
+  settings. No root required, and it reproduces at **any** hour: set Timezone to
+  `Pacific/Honolulu` (UTC-10), restart, compare.
+  **1.0.0:** backend logged `timezone=Pacific/Honolulu`, app showed **"Today 2026-08-31"** (the
+  UTC date) — reproduced on demand. That also *disproved* the re-anchor-guard hypothesis: the
+  backend had the right zone all along; the frontend simply never received it.
+  **1.0.2:** same override, same phone (`adb install -r`, so data and override carried over) →
+  **"Today 2026-08-30"**, with `file_path: 2026/August/W36/2026-08-30-note` confirming the entry
+  files under the correct day. Keep this override trick — it is the only way to test this bug
+  outside the ~19:00–24:00 local window. [DONE]
 
 - [x] **Android baseline installed from CI and fully verified on-device (S9).** `adb uninstall`
   → `adb install` of the release-signed 1.0.0 APK (versionCode 1000 → 1000000). **The cert
