@@ -254,7 +254,21 @@ the verification notes are in
   `default`.** During diagnosis that appop was granted via `adb appops set … allow`; it made no
   difference then (the path bug was the real cause), but it is a workaround the user must not
   need on their personal phone, so the final proof has to run without it. Reset to `default`
-  before the round-trip. [BUG, high — bridge verified; stock-permission round-trip pending]
+  before the round-trip.
+  **ROUND-TRIP COMPLETE UNDER STOCK PERMISSIONS — ANDROID OTA IS PROVEN (2026-08-31).** Appop
+  reset to `default` first, then `1.0.2 → 1.0.3` entirely in-app: manifest fetched, update
+  offered with notes, APK downloaded + sha-verified, request found at `dataDir`, intent fired,
+  and the phone ended on **versionCode 1000003 / versionName 1.0.3** with device id, sync and
+  settings all intact.
+  **What the user must tap on a fresh phone — two one-time Android prompts, no adb, no
+  workaround:** (1) *"your phone is not allowed to install unknown apps from this source"* →
+  **Settings** → **Allow from this source** → back; Android returns straight to the install
+  dialog. (2) **Google Play Protect** *"App scan recommended"*, which offers only *Scan app* /
+  *Don't install app* up front — **"Install without scanning" is hidden behind the "More
+  details" expander.** That matters for privacy: *Scan app* uploads the APK to Google, and these
+  APKs bake the box hostname, so **"Install without scanning" is the right choice** and is worth
+  writing into the install guide. Neither prompt can be pre-granted by the app; both are normal
+  Android sideload behaviour and both are one-time per source. [DONE]
 
 - [ ] **ANDROID SHOWS THE WRONG DAY: "Today" resolves to the UTC date, not the local one.**
   Caught by comparing the two platforms side by side at 23:42 CDT on 2026-08-30 — both devices
