@@ -957,6 +957,12 @@ build/test/publish of the bank-free image.
   every APK build prints the warning. Cosmetic, pre-existing, unrelated to the splash work — left
   alone deliberately rather than trigger another rebuild mid-verification. Fix is a
   `#[cfg_attr(not(desktop), allow(unused_mut))]` on the binding. [XS]
+- [ ] **An Android build dirties a TRACKED generated file, and committing it would be a silent
+  regression.** `gen/schemas/acl-manifests.json` is regenerated per-target; an Android build drops
+  the **`updater`** key (the plugin is `#[cfg(desktop)]`), so the file shows as modified after every
+  local APK build. Committing that quietly removes the desktop updater's manifest entry. **Revert
+  it** (`git checkout --`) rather than commit; it flips back on the next desktop build. Same
+  `cfg(desktop)` root as the warning above. Worth either gitignoring or regenerating in CI. [XS]
 
 ### 2026-08-31 — first dogfooding on the clean seed
 
