@@ -6,12 +6,15 @@ event-sourced store, with an LLM deriving structure from raw notes. Tauri v2
 Open-core: the bank-free engine is public, a private overlay carries real
 sources and credentials.
 
-**Status:** **v1.0.0 tagged 2026-08-31.** Cycle 4 (Polish → Stable v1) is at its
-close-out: the pre-v1 code review is closed, real data is imported and live on
-the box, and Phase 6's branch-gate + version stamp are done. The one remaining
-gate before daily use on the personal phone is the **OTA update round-trip** —
-proving a released build can pull the next one down and install it over itself,
-on both mobile and desktop.
+**Status:** **v1.0.0 tagged 2026-08-31; v1.0.3 published.** Cycle 4 (Polish →
+Stable v1) is at its close-out: the pre-v1 code review is closed, Phase 6's
+branch-gate + version stamp are done, and the **OTA update round-trip is proven
+on both mobile and desktop**. The **final go-live wipe ran 2026-08-31** — the box
+was emptied to a genuine clean slate (`/data` 21M → 64K), every snapshot and local
+backup deleted, and real data put back by a **fresh import from the canonical
+ledger + vault**, reconciling to **0 diffs** against `ledger bal` and seeding the
+box with 12 277 events. What remains before daily use is the handover itself:
+installing on the personal phone and on `surface`, the Linux desktop.
 
 **Last Updated:** 2026-08-31
 

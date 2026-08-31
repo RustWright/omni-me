@@ -25076,6 +25076,11 @@
       whiteSpace: "nowrap"
     }
   });
+  var proseInputAttributes = EditorView.contentAttributes.of({
+    autocorrect: "on",
+    autocapitalize: "sentences",
+    spellcheck: "true"
+  });
   var editorView = null;
   var timestampFlush = null;
   var isDirty = false;
@@ -25546,6 +25551,7 @@
       minimalSetup,
       markdown(),
       EditorView.lineWrapping,
+      proseInputAttributes,
       omniEditorTheme,
       autoWrapFilter,
       checkboxPlugin

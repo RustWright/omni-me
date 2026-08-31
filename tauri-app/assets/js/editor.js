@@ -71,6 +71,22 @@ const omniEditorTheme = EditorView.theme({
   },
 });
 
+// CodeMirror is a CODE editor, so by default it stamps `autocorrect: "off"`,
+// `autocapitalize: "off"` and `spellcheck: "false"` onto its content element
+// (see the contentAttributes defaults in @codemirror/view). Correct for source;
+// wrong for a journal. Those are precisely the attributes a mobile keyboard
+// consults before auto-committing a predictive suggestion, so with them off every
+// word has to be typed out in full — which is what made writing here measurably
+// slower than Obsidian on the phone, reported on the first day of real use.
+//
+// `translate: "no"` is deliberately left at CodeMirror's default: a note should
+// not be machine-translated in place.
+const proseInputAttributes = EditorView.contentAttributes.of({
+  autocorrect: "on",
+  autocapitalize: "sentences",
+  spellcheck: "true",
+});
+
 let editorView = null;
 // Set when a journal editor is created (#344): stamps the final in-progress line
 // on teardown, before the view is destroyed. null for non-journal editors.
@@ -784,6 +800,7 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
     minimalSetup,
     markdown(),
     EditorView.lineWrapping,
+    proseInputAttributes,
     omniEditorTheme,
     autoWrapFilter,
     checkboxPlugin,

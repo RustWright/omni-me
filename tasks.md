@@ -29,14 +29,34 @@ the archive. Step 9 is below.
   9. Phase 6 polish (6.2 branch-gate ✅, 6.3 v1 semver + tag ✅, 6.4 archive the bloated docs ✅)
      → ship an **updatable app on mobile + desktop** → make a **trivial change and test the
      update path end-to-end**; fix it if the OTA path is broken.
-     **Final go-live wipe = TOTAL, no retention (user, 2026-08-30).** Everything stays
-     disposable and resettable until the app is installed and in active daily use on the
-     user's **personal** phone — which comes *after* the OTA/update path is confirmed on the
-     test phone. At that handover, wipe the box to a genuine fresh slate and **delete the
-     accumulated backups rather than keeping them**: `/var/omni-snapshots/*` on the box (incl.
-     the three 87-byte no-op tarballs and the stray empty `omni_data` volume) and the
-     `~/.local/share/com.omni-me.app/{local.db,budget.journal}.PREWIPE-*` / `.bak-*` copies
-     plus the `_backup_pre_*` dirs. The old data is not useful and is only noise.
+     **Final go-live wipe = TOTAL, no retention (user, 2026-08-30) — EXECUTED 2026-08-31.**
+     Everything stayed disposable until the OTA path was confirmed on the test phone; with that
+     cleared, the box was wiped to a genuine fresh slate and every accumulated backup deleted
+     rather than kept.
+     **What ran, in order, and how each step was verified by state rather than by an exit line:**
+     (1) **Dry-run first, before anything was destroyed** — `headless_import` into a throwaway DB,
+     then `reconcile.py` against the `ledger bal` oracle: 111 rows, **0 diffs**. That gate is what
+     made the deletions safe, since the only thing standing behind them is the reproducibility of
+     the import from `main.ledger` + the vault.
+     (2) **Box wipe** with `OMNI_DEPLOY_DIR=/home/deploy/omni-deploy` (root has no `~/omni-deploy`,
+     so the script's default resolves nothing) — `/data` **21M → 64K**, with the image's skeleton
+     dotfiles reappearing, the documented signature of a real emptying. All **4** snapshots then
+     deleted (the 3 old ones plus the safety snapshot the wipe itself took, held only until the
+     wipe was verified); `/var/omni-snapshots` is empty. `/var/omni-updates`,
+     `/etc/omni-me/credentials.toml` and `/opt/omni-ws` kept — data went, config didn't.
+     (3) **Local reset** — live `local.db` / `budget.journal` / `workspace.json` plus all 10 backup
+     items deleted: **213M → 776K**. `device_id`, `server_url`, `base_currency`, `timezone` kept.
+     (4) **Fresh import** under the real `OMNI_DEVICE_ID`, reproducing the 2026-08-30 corpus
+     exactly: 10582 txns / 0 parse errors / 0 balance failures, 1352 journal + 343 generic + 4
+     collisions + 19 scan errors. Reconcile **0 diffs** again on the real DB; `probe_realdb` all
+     anchors OK, net worth **83 290.52 CAD** over 17 accounts, the same 2 known drops, 0 partials.
+     (5) **Seed** — `push_local` sent **12 277**; an independent `/sync/pull` probe reads **12 278**
+     on the box under a single device id. The extra is genuine: the Wise poller proposed a real
+     draft seconds after the container restarted. No test-phone events, no stale poller events.
+     The brokerage source correctly reports `needs_reauth` — `ws-session.json` lived on the volume,
+     so it needs an in-app **Reconnect** with the OTP once the phone is up.
+     **Remaining:** install on `surface` (Linux desktop) and the personal phone — both user-run,
+     assistant-guided — then the brokerage Reconnect, then box auth.
 
   **POST-RELEASE (explicitly gated — only after the core app is solid on journal + routines + finances):**
   - LLM Chat (the main way to get data/insights out).
@@ -440,6 +460,32 @@ the verification notes are in
   churn). Same `cfg(desktop)` root as the warning above. [XS]
 
 ### 2026-08-31 — first dogfooding on the clean seed
+
+- [ ] **Android: the keyboard's predictive-text suggestions are never auto-accepted while typing,
+  so writing in the app is slower than in Obsidian.** Reported by the user within minutes of the
+  personal-phone install, while closing out the 2026-08-30 journal entry in omni-me instead of
+  Obsidian — i.e. the very first real writing session on the go-live data, which makes it a
+  daily-use friction item rather than a nice-to-have. In Obsidian, typing a word and hitting
+  space commits the keyboard's suggestion; in omni-me it does not, so every word has to be
+  typed out or tapped manually.
+  **MECHANISM FOUND, from the installed source rather than inferred.** CodeMirror 6 sets these on
+  its content element by default (`node_modules/@codemirror/view/dist/index.js`):
+  `autocapitalize: "off"`, `autocorrect: "off"`, `spellcheck: "false"`, `translate: "no"`. Those
+  are the exact attributes an Android keyboard reads to decide whether to offer and auto-commit a
+  suggestion, so the behaviour is CM6 being a **code** editor by default — sensible for source,
+  wrong for a journal. `editor.js` sets none of them, so nothing in this app overrode the default;
+  the app's other inputs that disable autocomplete (`settings.rs`, `account_input.rs`) are
+  unrelated fields.
+  **Fix candidate** (documented API, confirmed against the CM6 docs): add
+  `EditorView.contentAttributes.of({autocorrect: "on", autocapitalize: "sentences", spellcheck:
+  "true"})` to the editor's extensions.
+  **What is NOT yet established:** that flipping the attributes is *sufficient*. CM6 also has a
+  long history of Android IME **composition** edge cases, so the keyboard may still fail to commit
+  even with the attributes on. Verify on the device — drive the live WebView over adb with CDP
+  ([[reference-android-webview-devtools-over-adb]]) and watch `compositionstart` /
+  `compositionupdate` / `compositionend` / `beforeinput` while typing a word and pressing space —
+  rather than declaring it fixed because the attribute changed. Shipping it to the phone needs a
+  version bump (`is_newer` is strictly-greater), so it rides a 1.0.4. [editor, S–M]
 
 ### 2026-08-29 — found while cutting email from v1
 
