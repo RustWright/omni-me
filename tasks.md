@@ -155,6 +155,25 @@ the verification notes are in
 
 ### 2026-08-31 — found by the OTA round-trip (step 9)
 
+- [x] **DESKTOP OTA ROUND-TRIP: PROVEN END-TO-END.** Driven headlessly on a persistent `Xvfb :99`
+  with `xdotool` (user installed it on request), against an **absolutely**-pathed isolated
+  `XDG_DATA_HOME`; the real `~/.local/share/com.omni-me.app` mtime was identical before and
+  after, so nothing touched user data. Sequence, all verified by screenshot:
+  1. Fresh 1.0.0 install → backfilled **12315 events** and rendered real synced journal content;
+     the **"Restoring N events…"** chip works on desktop.
+  2. Settings → App Updates shows **"Desktop · automatic self-update"**; *Check for updates*
+     offers **`1.0.0 → 1.0.1`** with the release notes.
+  3. *Update & restart* → "Downloading & installing…" → the AppImage **replaced itself in place**:
+     sha `68871ebf…` → `56371c2a…`, which is **byte-identical to the published
+     `omni-me_1.0.1_amd64.AppImage`** on the box (full sha compared, not a prefix). Minisign
+     verification is mandatory in the plugin, so a valid replacement is also proof the signature
+     checked out.
+  4. App **relaunched by itself** (new pid) and *Check for updates* now returns
+     **"You're on the latest version (1.0.1)."**
+  Note this also re-confirms the `dangerousInsecureTransportProtocol` fix in a way the earlier
+  launch test could not: the updater plugin didn't merely initialize, it actually *fetched and
+  installed* over the plain-http tailnet endpoint. Desktop is DONE. [DONE]
+
 - [ ] **ANDROID OTA INSTALL IS BROKEN — Rust and Kotlin write/read DIFFERENT directories.**
   This is the defect step 9 existed to find ("fix it if the OTA path is broken"). Everything up
   to the handoff works: the manifest is fetched, `1.0.0 → 1.0.1` is offered with notes, the APK

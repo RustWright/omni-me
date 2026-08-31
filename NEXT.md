@@ -1,48 +1,40 @@
 # NEXT
 
-**Next action: the OTA round-trip — baseline PUBLISHED, both artifacts now good.** Android +
-desktop **1.0.0** are on the box. Remaining: **install the baseline** ([USER] — Android needs an
-UNINSTALL first), then ship **1.0.1** and prove the update path end-to-end on both platforms.
-Done this session: 6.2, 6.3 (`v1.0.0` tagged), 6.4, and the bug below.
+**Next action: fix the ANDROID OTA install bridge, then re-run the phone round-trip.**
+**Desktop OTA is DONE and proven** (1.0.0 → 1.0.1 self-update, byte-identical to the published
+artifact, relaunched, reports 1.0.1). Android downloads + sha-verifies, then **silently fails to
+hand off to the installer**. v1.0.0 + v1.0.1 tagged and published for both platforms.
 
 ## Decisions in force — inherit these, don't re-derive
 
-- **The desktop AppImage had NEVER run — fixed 2026-08-31.** `tauri-plugin-updater` hard-errors on
-  a non-https endpoint in release and only *warns* in dev, so every AppImage from 0.2.0 on
-  panicked at startup and `cargo tauri dev` could never show it. Fixed with
-  `dangerousInsecureTransportProtocol:true` in the private CI's injected updater config; rebuilt
-  and confirmed launching. Relaxes transport only — WireGuard + minisign already cover it.
-  **Revisit if `/updates` ever leaves the tailnet.**
-- **Branch gate = safety-rails, deliberately NOT PR-gating (user).** **Never add
-  `required_status_checks`** — verified to gate DIRECT pushes too, which breaks `session-end.sh`.
-- **Phone app is DEBUG-keystore signed, CI signs with the RELEASE key, and Android refuses
-  install-over across differing certs.** Baseline needs an **uninstall** (total phone wipe) → CI
-  APK → ~12k-event re-sync (also exercises the "Restoring N…" chip). Local APK = **throwaway**.
-- **Everything stays disposable until daily use on the PERSONAL phone**; that wipe is **total, no
-  backups**. Until the phone has a CI APK, **dismiss auto-import batches, never commit them**.
+- **ANDROID OTA BUG, root-caused, fix NOT applied.** Rust `request_android_install` writes the
+  side-file to `app_local_data_dir()` → Tauri `getDataDir` → **`activity.dataDir`**
+  (`PathPlugin.kt:64`); Kotlin `checkInstallRequest` reads **`File(filesDir, …)`** =
+  `dataDir/files`. Different dirs → poller finds nothing → silent return (no dialog, no log).
+  **Preferred fix: point Kotlin at `dataDir` for BOTH channels.** `share_intent.rs:33` asserts
+  they're the same dir — **that comment is FALSE**, so share-target has the same bug: fix both
+  and **retest share-target on-device**. Ruled out: the `REQUEST_INSTALL_PACKAGES` appop
+  (granting changed nothing); overrides ARE in the CI APK; the poller was running.
+- **The desktop AppImage had NEVER run before today** — `tauri-plugin-updater` hard-errors on a
+  non-https endpoint in release, warns in dev. Fixed with
+  `dangerousInsecureTransportProtocol:true`. Revisit if `/updates` leaves the tailnet.
+- **Branch gate = safety-rails, NOT PR-gating: never add `required_status_checks`** — it gates
+  DIRECT pushes too, breaking `session-end.sh`. **Android refuses install-over across differing
+  signing certs** (proven), so a cert change means a wipe. **Box auth is deferred until AFTER
+  the personal phone is set up (user)**, so a token problem can't look like a backfill failure.
 
 ## Do NOT re-survey
 
-- **The branch gate, the doc archive** (history in `.archive/v1.0.0/`; `tasks.md` is open work
-  only), **the splash code** (Android-verified), **the import/seed** (12277 events back), and the
-  **release-only-config sweep** — the updater was the *only* hard-fail of that class. Traps in
-  `tasks.md`: editor-bundle preload stays hoisted to app mount; `PullEvent::Applied` fires *after*
-  the projection; **`#1e1e1e` is in FOUR files that must match**.
+- **Desktop OTA, the branch gate, the doc archive, the Android baseline** (12314 events, 0
+  failures; Settings shows the CI-baked `server_url`, closing the 2026-07-21 item), and the
+  **release-only-config sweep**. Techniques: persistent `Xvfb :99` as a background task +
+  `xdotool`; `adb exec-out screencap` + `input tap`. **`XDG_DATA_HOME` MUST be absolute** —
+  relative is silently ignored and the app falls back to real user data; prove isolation by mtime.
 
 ## Open threads
-
-- **Desktop splash visual is [USER]-blocked** — nothing here can film a cold boot.
-- **The pipeline can't tell a launchable release from an unlaunchable one** — how the AppImage bug
-  survived two months. An `xvfb-run` smoke step would catch the class; filed, not built.
-- **Auto-import filter attribution OPEN** — ticks report `events=0`, but `filtered rows already in
-  the journal` has never appeared. Watch for that line on a tick that returns data.
-- **Box runs FULLY unauthenticated — closing it is scheduled AFTER the personal phone is set up
-  (user, 2026-08-31).** Proven: `/sync/pull`, `/auto_import/status`, `/llm/config` all answer 200
-  with no credentials, and an audit pull retrieved all 12314 events with a made-up device id.
-  Deliberately deferred so a token problem can't masquerade as a failure of the personal phone's
-  initial backfill. **Zero-downtime order when done:** set token in Settings on every device →
-  **restart each app** (background sync builds its client at boot, `lib.rs:465`; only manual sync
-  reads it live) → then add `[server].auth_token` to the box + redeploy. The server prints a
-  ready-made token on every boot. CI runners join the tailnet, so they are in scope too.
-- Brokerage source needs an OTP Reconnect. Privacy guard can't catch "wise"; hand-grep public
-  commits.
+- **Android "Today" is the UTC date, not local** — at 23:42 CDT the phone said 2026-08-31,
+  desktop correctly 2026-08-30, so evening entries file under tomorrow. `journal.rs:175-200`
+  describes this failure and its re-anchor; it isn't holding on Android. **Daily-use blocker.**
+- **Desktop flashes white ~320ms** (WebView surface, not the window; confirm on a real GPU) ·
+  **CI can't tell a launchable release from an unlaunchable one** — `xvfb-run` smoke step, user
+  says **after** the round-trip · brokerage source needs an OTP Reconnect.
