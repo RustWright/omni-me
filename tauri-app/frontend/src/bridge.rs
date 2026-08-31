@@ -222,6 +222,51 @@ async fn invoke_unit(cmd: &str, args: &impl serde::Serialize) -> Result<(), Stri
     Ok(())
 }
 
+/// `invoke`, but bounded: resolves to `Err` if the promise has not settled
+/// within `timeout_ms`.
+///
+/// **Use this for anything fired during app boot.** On Android's cold
+/// first-open an invoke issued before Tauri's native IPC handler is ready is
+/// silently **dropped** — its promise never resolves *and* never rejects, so
+/// awaiting it parks the caller forever. That has now bitten this codebase
+/// twice: it hung the fresh-install boot on `get_workspace` (root-caused
+/// on-device 2026-07-05), and it froze `tz_signal` at its `Tz::UTC` default on
+/// `get_timezone`, which made every "today" resolve to the UTC date (found
+/// on-device 2026-08-31). Both were invisible on desktop.
+///
+/// Racing the invoke against a `setTimeout` turns "never settles" into an
+/// ordinary `Err`, which callers can retry or fail open on.
+#[cfg(not(feature = "mock"))]
+async fn invoke_timed<T: serde::de::DeserializeOwned>(
+    cmd: &str,
+    args: &impl serde::Serialize,
+    timeout_ms: i32,
+) -> Result<T, String> {
+    let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
+    let invoke_promise = tauri_invoke(cmd, args_js);
+
+    // A promise that rejects once `timeout_ms` elapses. `once_into_js` keeps
+    // the callback alive until it fires exactly once (no `forget` leak).
+    let timeout_promise = js_sys::Promise::new(&mut |_resolve, reject| {
+        let cb = Closure::once_into_js(move || {
+            let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("__ipc_timeout__"));
+        });
+        if let Some(win) = web_sys::window() {
+            let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                cb.unchecked_ref(),
+                timeout_ms,
+            );
+        }
+    });
+
+    // Whichever settles first wins; a never-settling invoke loses to the timeout.
+    let race = js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
+    let result = wasm_bindgen_futures::JsFuture::from(race)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+}
+
 // -----------------------------------------------------------------------------
 // Journal entries (date-keyed, one-per-day)
 // -----------------------------------------------------------------------------
@@ -1144,30 +1189,30 @@ pub async fn invoke_get_workspace_timed(timeout_ms: i32) -> Result<String, Strin
     {
         #[derive(serde::Serialize)]
         struct Args {}
-        let args_js =
-            serde_wasm_bindgen::to_value(&Args {}).map_err(|e| format!("serialize args: {e}"))?;
-        let invoke_promise = tauri_invoke("get_workspace", args_js);
+        invoke_timed("get_workspace", &Args {}, timeout_ms).await
+    }
+}
 
-        // A promise that rejects once `timeout_ms` elapses. `once_into_js` keeps
-        // the callback alive until it fires exactly once (no `forget` leak).
-        let timeout_promise = js_sys::Promise::new(&mut |_resolve, reject| {
-            let cb = Closure::once_into_js(move || {
-                let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("__ipc_timeout__"));
-            });
-            if let Some(win) = web_sys::window() {
-                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    cb.unchecked_ref(),
-                    timeout_ms,
-                );
-            }
-        });
-
-        // Whichever settles first wins; a never-settling invoke loses to the timeout.
-        let race = js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
-        let result = wasm_bindgen_futures::JsFuture::from(race)
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+/// The user's timezone, bounded like `invoke_get_workspace_timed`.
+///
+/// Fired during boot, so it is exposed to the dropped-invoke race described on
+/// `invoke_timed`. Using the plain `invoke` here is what left `tz_signal` at
+/// `Tz::UTC` for the whole session on Android and filed every evening journal
+/// entry under tomorrow's date.
+pub async fn invoke_get_timezone_timed(timeout_ms: i32) -> Result<TimezoneInfo, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = timeout_ms;
+        Ok(TimezoneInfo {
+            timezone: "UTC".to_string(),
+            is_override: false,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke_timed("get_timezone", &Args {}, timeout_ms).await
     }
 }
 

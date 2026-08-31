@@ -475,13 +475,43 @@ fn App() -> Element {
     });
 
     // Timezone: default to UTC, load from backend on mount.
+    //
+    // RETRIED, and the retry is load-bearing — not defensive padding. This fires
+    // in the cold-open window where Android silently DROPS invokes issued before
+    // the native IPC handler is ready (see `bridge::invoke_timed`). A dropped
+    // invoke's promise never settles, so the old plain-`invoke` version parked
+    // this future forever and left `tz_signal` at `Tz::UTC` for the entire
+    // session. Every `UserDate::today` then resolved to the UTC date: at 23:42
+    // CDT the phone showed "Today 2026-08-31" while desktop correctly showed
+    // 2026-08-30, so evening entries were filed under *tomorrow* — wrong `date:`
+    // in frontmatter, wrong calendar cell, and divergence from the same day's
+    // entry on desktop (found on-device 2026-08-31).
+    //
+    // Same shape as the continuity boot loop: bound each attempt, retry, and cap
+    // the whole thing so a genuinely broken backend degrades to UTC rather than
+    // spinning. Journal's re-anchor effect (`journal.rs`) picks the correct date
+    // up as soon as this lands.
     let mut tz_signal = use_signal(|| Tz::UTC);
     use_context_provider(|| tz_signal);
     use_future(move || async move {
-        if let Ok(info) = bridge::invoke_get_timezone().await
-            && let Ok(tz) = info.timezone.parse::<Tz>()
-        {
-            tz_signal.set(tz);
+        const ATTEMPT_TIMEOUT_MS: i32 = 500;
+        const RETRY_GAP_MS: i32 = 100;
+        const DEADLINE_MS: i32 = 15_000;
+        let mut spent = 0i32;
+        loop {
+            if let Ok(info) = bridge::invoke_get_timezone_timed(ATTEMPT_TIMEOUT_MS).await {
+                if let Ok(tz) = info.timezone.parse::<Tz>() {
+                    tz_signal.set(tz);
+                }
+                // A reply that failed to parse is a backend/data problem, not an
+                // IPC drop — retrying cannot fix it, so stop either way.
+                break;
+            }
+            spent += ATTEMPT_TIMEOUT_MS + RETRY_GAP_MS;
+            if spent >= DEADLINE_MS {
+                break;
+            }
+            crate::timer::sleep_ms(RETRY_GAP_MS).await;
         }
     });
 
