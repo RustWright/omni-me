@@ -36,5 +36,13 @@ Done this session: 6.2, 6.3 (`v1.0.0` tagged), 6.4, and the bug below.
   survived two months. An `xvfb-run` smoke step would catch the class; filed, not built.
 - **Auto-import filter attribution OPEN** — ticks report `events=0`, but `filtered rows already in
   the journal` has never appeared. Watch for that line on a tick that returns data.
-- Brokerage source needs an OTP Reconnect. Box runs **unauthenticated** — decide before the
-  personal phone. Privacy guard can't catch "wise"; hand-grep public commits.
+- **Box runs FULLY unauthenticated — closing it is scheduled AFTER the personal phone is set up
+  (user, 2026-08-31).** Proven: `/sync/pull`, `/auto_import/status`, `/llm/config` all answer 200
+  with no credentials, and an audit pull retrieved all 12314 events with a made-up device id.
+  Deliberately deferred so a token problem can't masquerade as a failure of the personal phone's
+  initial backfill. **Zero-downtime order when done:** set token in Settings on every device →
+  **restart each app** (background sync builds its client at boot, `lib.rs:465`; only manual sync
+  reads it live) → then add `[server].auth_token` to the box + redeploy. The server prints a
+  ready-made token on every boot. CI runners join the tailnet, so they are in scope too.
+- Brokerage source needs an OTP Reconnect. Privacy guard can't catch "wise"; hand-grep public
+  commits.

@@ -155,6 +155,52 @@ the verification notes are in
 
 ### 2026-08-31 — found by the OTA round-trip (step 9)
 
+- [ ] **ANDROID SHOWS THE WRONG DAY: "Today" resolves to the UTC date, not the local one.**
+  Caught by comparing the two platforms side by side at 23:42 CDT on 2026-08-30 — both devices
+  report `America/Winnipeg`, both agree at the OS level (`adb shell date` → `Sun Aug 30 23:42
+  CDT 2026`), but:
+  **phone app "Today" = `2026-08-31`** (the UTC date) vs **desktop app "Today" = `2026-08-30`**
+  (correct). So from ~19:00 local onward, every journal entry written on the phone is filed
+  under *tomorrow* — wrong `date:` in frontmatter, wrong calendar cell, wrong day-complete, and
+  it diverges from the same day's entry on desktop.
+  **This is a known-and-supposedly-fixed failure mode whose fix is not holding on Android.**
+  `frontend/src/pages/journal.rs:175-200` carries a long comment describing precisely this:
+  `UserDate::today` runs on the first render while `tz_signal` still holds the `Tz::UTC` default
+  (`main.rs:269` — `invoke_get_timezone` is async and cannot have resolved yet), `use_signal`
+  freezes that seed, and a `use_effect` is meant to re-anchor once the real zone arrives. The
+  comment even predicts the compounding: the bad date is written straight into nav by the
+  write-through effect, so the next launch restores it and "the error outlived the fix."
+  **Not yet root-caused — do not assume which half fails.** Candidates, in order: (1) the
+  frontend `tz_signal` never resolves on Android, so the re-anchor has nothing to fire on — note
+  the BACKEND does know the zone (`App initialized ... timezone=America/Winnipeg` in logcat), so
+  the gap would be the invoke, not detection; (2) the re-anchor fires but the
+  `selected_date.peek() == anchor` guard declines to move it; (3) nav restore re-seeds the bad
+  date before the effect runs. Diagnose live with WebView DevTools over adb
+  ([[reference-android-webview-devtools-over-adb]]) and read `tz_signal` directly rather than
+  reasoning from the code.
+  **Priority: this is a daily-use blocker for evening journaling on the PERSONAL phone**, which
+  is the next milestone. The user journals at night — this session is itself at 23:42. [BUG, high]
+
+- [x] **Android baseline installed from CI and fully verified on-device (S9).** `adb uninstall`
+  → `adb install` of the release-signed 1.0.0 APK (versionCode 1000 → 1000000). **The cert
+  mismatch was proven, not assumed:** a plain `adb install -r` over the debug build first
+  returned `INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match`, leaving the phone
+  untouched — so the uninstall really was required.
+  **Fresh-install results:** new `device_id`, `ever_synced=false, total=0` at boot, then
+  **`auto-pull applied; pulled=12314, failed=0`** — the entire box contents backfilled with zero
+  failures. UI confirmed by screenshot: journal renders, header shows **"Synced"** green, the
+  daily-note template and tags are intact, no crash or panic in logcat.
+  **This closes the long-pending `OMNI_DEFAULT_SERVER_URL` item** (open since 2026-07-21 as
+  "[USER] on-device fresh-install confirm"): Settings shows **Sync Server Address =
+  `http://omni-box-hetzner:3000`** on a device with no persisted value, proving the compile-time
+  default injected by private CI reaches a genuinely fresh install.
+  **Android update-CHECK path proven too:** Settings → App Updates → *Check for updates* against
+  a box serving 1.0.0 returns **"You're on the latest version (1.0.0)"** — so manifest fetch,
+  parse, and the `is_newer` comparison all work over the tailnet. The download+install half
+  awaits 1.0.1. **Data note:** the phone held 30 own events vs 28 on the box; the 2 unsynced
+  were journal edits / batch dismissals and the user chose to accept the loss (test-phone data
+  is disposable by standing decision).
+
 - [x] **Every CI desktop AppImage since 0.2.0 PANICKED ON STARTUP — the desktop release has
   never once run.** Found the moment the 1.0.0 AppImage was actually launched (isolated
   `XDG_DATA_HOME`, user data untouched):
@@ -213,6 +259,17 @@ the verification notes are in
   warning: DRI3 error` in the log), so confirm the flash on the real display first — the
   compositing path may differ on a GPU. **Deferred past v1 per the settled splash scope**; the
   Android flash (the one that actually bit) is fixed. [S, deferred]
+  **Trap worth keeping — `XDG_DATA_HOME` MUST be absolute.** The capture script set it from
+  `SP="$(dirname "$0")"` while being invoked as `./film-splash.sh`, so `$SP` was `.` and the
+  variable held a **relative** path. The XDG spec says relative values are invalid and must be
+  ignored, so the app silently fell back to the real `~/.local/share/com.omni-me.app` — the run
+  was NOT isolated, despite the script reading as though it were. Nothing was damaged (it read
+  the DB, cleared a stale `LOCK`, touched `workspace.json`, authored no events) and it made the
+  film a *warm* boot against real data rather than a fresh one, which is arguably the more
+  representative test. But the failure was **silent**: no warning, no error, and the isolation
+  claim looked true. Tells that caught it: a "stale SurrealKV LOCK" in a supposedly fresh dir,
+  and a `device_id` older than one from an earlier run. Always pass an absolute path, and
+  verify isolation by the dir's mtime rather than by reading the script.
 - [ ] **The pipeline cannot tell a launchable release from an unlaunchable one.** The bug above
   survived two months because "published + correct sha + valid signature" was the whole
   acceptance test. Worth a headless smoke step in `app-release.yml` that runs the built
