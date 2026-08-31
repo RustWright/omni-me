@@ -155,6 +155,31 @@ the verification notes are in
 
 ### 2026-08-31 — found by the OTA round-trip (step 9)
 
+- [x] **Every CI release APK shipped the STOCK TAURI LOGO instead of the enso — fixed in 1.0.2,
+  on-device verify pending.** Spotted by the user on the installed v1.0.1. **Root cause:**
+  `cargo tauri icon` writes the Android launcher set into
+  `gen/android/app/src/main/res/mipmap-*/`, and **that whole tree is gitignored**. CI runs
+  `cargo tauri android init` from scratch on every release, which lays down Tauri's *default*
+  icons; the enso only ever existed on whichever machine had last run the icon command locally.
+  Desktop was never affected — its icons live in the tracked `src-tauri/icons/` and are wired
+  through `bundle.icon`, which is why the AppImage always looked right and nobody caught it.
+  Note `android-overrides/` could not have covered this: it copies single named files
+  (manifest, MainActivity, themes), and this is ~60 generated PNGs across every density.
+  **Fix:** `scripts/android-build.sh` regenerates the icons from
+  `branding/logo-manifest.json` before building. The branding SVGs and manifest are tracked, so
+  the icons stay **derived, not stored** — no binaries in git and no way for them to drift from
+  the source of truth. It lives in the build script rather than the CI workflow because CI
+  invokes that script *after* `android init`, so one change fixes the local and CI paths at once.
+  A guard fails the build if the adaptive foreground is missing afterwards, rather than silently
+  shipping the robot a third time.
+  **Verified locally without a full build:** deleted the mipmaps to simulate a fresh `init`, ran
+  the regeneration, and the result is **byte-identical** to the known-good enso.
+  **Second-order problem caught while testing:** `cargo tauri icon` also rewrites the *tracked*
+  desktop `icons/icon.icns`, and that file does not pack deterministically — same input, same
+  size, different bytes every run. Left alone it dirties a tracked file on every build, the same
+  trap `gen/schemas/` set. The script now snapshots and restores `icons/` around the call, so
+  only the gitignored Android tree changes; confirmed zero tracked churn. [BUG, high]
+
 - [x] **DESKTOP OTA ROUND-TRIP: PROVEN END-TO-END.** Driven headlessly on a persistent `Xvfb :99`
   with `xdotool` (user installed it on request), against an **absolutely**-pathed isolated
   `XDG_DATA_HOME`; the real `~/.local/share/com.omni-me.app` mtime was identical before and
@@ -197,10 +222,21 @@ the verification notes are in
   version. Kotlin writes share bytes to `filesDir`; Rust reads `dataDir`. Share-target was
   verified on-device in Cycle 3, so either it regressed with a Tauri upgrade or the earlier
   `getDataDir` returned `filesDir`. **Do not assume either way — retest share-target on-device.**
-  **Fix options (not yet chosen):** (a) point the Kotlin side at `dataDir` for BOTH channels, so
-  Rust keeps using the documented Tauri API — smallest change, two spots in `MainActivity.kt`;
-  (b) have Rust join `files/`, which hardcodes Android's layout and is fragile. Prefer (a).
-  Whichever is chosen, **fix both channels together** and re-verify share-target. [BUG, high]
+  **FIXED in 1.0.2 (code) — on-device verification pending 1.0.3.** Took option (a): Kotlin gains
+  a `bridgeDir()` helper returning **`dataDir`**, used for BOTH channels, so Rust keeps the
+  documented Tauri API and the two sides agree. The share-target write moved with it, fixing that
+  channel in the same stroke. The false comment in `share_intent.rs` is corrected to state what
+  `app_local_data_dir()` actually resolves to on Android, with a note that changing one side
+  requires changing the other. Added `Log.i` on both *request found* and *intent fired* so this
+  can never fail silently again — the absence of any log was the hardest part of diagnosing it.
+  **A first draft of the fix also carried a `filesDir` "legacy fallback"; it was removed after
+  checking the history** — Rust has written this file to `app_local_data_dir()` since the OTA
+  feature landed and never once wrote to `filesDir`, so that branch was unreachable and its
+  comment described a history that never happened. Exactly the failure mode being fixed.
+  **Verification needs TWO releases and that is unavoidable:** 1.0.2 carries the fix, so it
+  cannot be delivered by the path it repairs — it goes on by cable/browser, and 1.0.3 exists for
+  it to update *to*. `is_newer` is strictly-greater and fails closed on downgrades, so there is
+  no way to re-test against an older build. [BUG, high — code fixed, device-verify pending]
 
 - [ ] **ANDROID SHOWS THE WRONG DAY: "Today" resolves to the UTC date, not the local one.**
   Caught by comparing the two platforms side by side at 23:42 CDT on 2026-08-30 — both devices
@@ -226,7 +262,22 @@ the verification notes are in
   ([[reference-android-webview-devtools-over-adb]]) and read `tz_signal` directly rather than
   reasoning from the code.
   **Priority: this is a daily-use blocker for evening journaling on the PERSONAL phone**, which
-  is the next milestone. The user journals at night — this session is itself at 23:42. [BUG, high]
+  is the next milestone. The user journals at night — this session is itself at 23:42.
+  **ROOT-CAUSED + FIXED in 1.0.2; on-device verify pending.** It is the **same dropped-invoke
+  race** that hung the fresh-install boot in July, in a second place. `invoke_get_timezone` used
+  the plain `invoke(...)`, and on Android's cold open an invoke issued before the native IPC
+  handler is ready is silently dropped — the promise never resolves *and* never rejects. The
+  `use_future` therefore parked forever, `tz_signal` stayed at its `Tz::UTC` seed for the whole
+  session, and every `UserDate::today` returned the UTC date. Candidate (2), the re-anchor
+  guard, was wrong: the effect never had anything to fire on. Desktop was immune because the
+  race is Android-only.
+  **Fix:** since this is the *second* instance of the class, the timed-invoke logic was
+  generalized into `bridge::invoke_timed` (racing the invoke against a `setTimeout`);
+  `invoke_get_workspace_timed` now delegates to it with an unchanged signature so the proven
+  boot path is untouched, and a new `invoke_get_timezone_timed` uses it behind the same
+  bounded-retry loop `continuity.rs` uses (500 ms/attempt, 100 ms gap, 15 s fail-open cap).
+  **Use `invoke_timed` for anything fired during boot** — that guidance is on the helper.
+  [BUG, high — code fixed, device-verify pending]
 
 - [x] **Android baseline installed from CI and fully verified on-device (S9).** `adb uninstall`
   → `adb install` of the release-signed 1.0.0 APK (versionCode 1000 → 1000000). **The cert
