@@ -31,9 +31,14 @@ pub async fn take_pending_share_intent(
     _state: State<'_, AppState>,
 ) -> Result<Option<PendingShareIntent>, String> {
     // `path().app_local_data_dir()` is the Tauri-managed app data root on
-    // every platform. On Android this resolves to the same `filesDir` that
-    // `MainActivity.kt` writes to, so the Kotlin side and this command
-    // agree on where the side-files live.
+    // every platform. On Android it resolves via `PathPlugin.getDataDir` to
+    // **`activity.dataDir`** (`/data/user/0/<pkg>`) — NOT `filesDir`, which is
+    // `dataDir/files`. An earlier version of this comment claimed the two were
+    // the same directory; they are not, and `MainActivity.kt` was writing to
+    // `filesDir` on that assumption, so the bytes landed where this command
+    // never looked. Kotlin now writes via its `bridgeDir()` helper, which
+    // returns `dataDir` to match this call. Change one side and you must change
+    // the other — the failure mode is silent on both channels.
     let dir = app
         .path()
         .app_local_data_dir()

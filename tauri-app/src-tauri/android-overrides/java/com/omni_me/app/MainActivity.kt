@@ -170,9 +170,30 @@ class MainActivity : TauriActivity() {
         installHandler.removeCallbacks(installPoll)
     }
 
+    /// Directory shared with the Rust side for the side-file channels.
+    ///
+    /// **This MUST match what Tauri's `app_local_data_dir()` returns**, because
+    /// that is what `commands/update.rs` and `commands/share_intent.rs` use.
+    /// Tauri resolves it via `PathPlugin.getDataDir` → **`activity.dataDir`**
+    /// (`/data/user/0/<pkg>`), NOT `filesDir` (`/data/user/0/<pkg>/files`).
+    ///
+    /// Both channels previously used `filesDir` here, so Rust wrote to one
+    /// directory and Kotlin read from another. The install poller simply never
+    /// found the request and returned silently — the OTA update downloaded and
+    /// sha256-verified, the UI said "Follow the system prompt", and then nothing
+    /// happened, with no exception and no log line (found on-device 2026-08-31,
+    /// v1.0.1). A comment in `share_intent.rs` asserted the two were the same
+    /// directory; that was simply wrong.
+    private fun bridgeDir(): File = dataDir
+
     private fun checkInstallRequest() {
-        val req = File(filesDir, INSTALL_REQUEST_FILE)
+        // Read the canonical location, but tolerate a file left in the legacy
+        // one — a request written by an older build survives the update that
+        // fixes this, instead of being stranded forever.
+        val req = File(bridgeDir(), INSTALL_REQUEST_FILE).takeIf { it.exists() }
+            ?: File(filesDir, INSTALL_REQUEST_FILE)
         if (!req.exists()) return
+        android.util.Log.i("OmniMe", "install request found at ${req.absolutePath}")
         val apkPath = try {
             req.readText().trim()
         } catch (e: Exception) {
@@ -189,6 +210,7 @@ class MainActivity : TauriActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
+            android.util.Log.i("OmniMe", "install intent fired for $apkPath")
         } catch (e: Exception) {
             android.util.Log.w("OmniMe", "install intent failed for $apkPath", e)
         }
@@ -200,7 +222,11 @@ class MainActivity : TauriActivity() {
         val mime = intent.type ?: contentResolver.getType(uri) ?: "application/octet-stream"
 
         try {
-            val bytesFile = File(filesDir, SHARE_BYTES_FILE)
+            // `bridgeDir()`, not `filesDir` — same fix as the install poller.
+            // `share_intent.rs` reads `app_local_data_dir()` (= `dataDir`), so
+            // writing to `filesDir` here left every shared file somewhere the
+            // Rust side never looked.
+            val bytesFile = File(bridgeDir(), SHARE_BYTES_FILE)
             contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(bytesFile).use { output -> input.copyTo(output) }
             } ?: return
@@ -211,7 +237,8 @@ class MainActivity : TauriActivity() {
                 put("filename", filename)
                 put("size", bytesFile.length())
             }
-            File(filesDir, SHARE_META_FILE).writeText(meta.toString())
+            File(bridgeDir(), SHARE_META_FILE).writeText(meta.toString())
+            android.util.Log.i("OmniMe", "share captured to ${bytesFile.absolutePath} ($mime)")
         } catch (e: Exception) {
             android.util.Log.w("OmniMe", "share intent capture failed", e)
         }
