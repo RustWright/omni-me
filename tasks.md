@@ -461,6 +461,65 @@ the verification notes are in
 
 ### 2026-08-31 — first dogfooding on the clean seed
 
+- [x] **Wise proposed 4 rows already in the ledger — NOT a dedup bug. A wipe-sequencing artifact,
+  and the runbook lesson is the keeper.** Reported from the review inbox: one correct new row
+  (2026-08-31 transfer) alongside four already-recorded ones from 2026-08-28 and earlier.
+  **What the timestamps prove:** the poller ticked at **06:41:11**, seconds after the container
+  restarted on the freshly wiped volume, when the box held **zero** events. The imported ledger
+  did not land until **06:55:36** (the seed push). So all three of the source's dedup filters were
+  blind by construction — no `wise-id:` tags yet, no `autoimport-id:` provenance, no prior
+  proposals (the wipe erased those). The **08:41:18 tick appended 0 events**, confirming dedup
+  works now that the 150 `wise-id`-tagged transactions are present.
+  **RUNBOOK — for any future wipe: pause the auto-import sources before wiping, or seed the box
+  before the first poll.** The gap between "container healthy" and "seed pushed" was ~14 minutes,
+  and a source on a 30-min interval fires inside it. The health gate passing is not the same as
+  the box being ready for a poller.
+  **Two dead ends recorded so they are not re-walked.** (1) `budget.journal` shows only 5
+  `wise-id` strings against 155 in the ledger, which looks exactly like the importer dropping
+  header tags — it is not: the rendered projection simply does not emit top-level tags, and the DB
+  is the artifact that matters. Verified in the event payloads: `tags:
+  ["wise-id:BALANCE-5957939544"]`, **150** events carrying a `wise-id` top tag, matching the count
+  `wise.rs` documents. (2) The repeated `BALANCE-…`/`CARD-…` external ids in one batch are not
+  duplicates but the **two legs** of currency-crossing transactions (`-404.83 USD` / `+559.47 CAD`;
+  a card charge funded from both balances). Each leg is a real balance movement.
+  **Latent risk worth keeping in view:** dedup keys on the *reference number*, which multi-leg
+  transactions share. If one leg becomes "known" while the other has not been recorded, the second
+  leg is silently filtered out. Not observed yet — flagged because the failure mode is a missing
+  transaction, not a visible duplicate. [watch]
+
+- [ ] **A "fresh install" on a machine that ran an older build silently inherits that build's
+  state, and there is no in-app way to reset it.** Hit on the go-live desktop (`surface`) minutes
+  after installing 1.0.3: the app opened onto a **garbage note from April** and reported the
+  **wrong box address**. Both traced to files the installer never touches, in
+  `~/.local/share/com.omni-me.app/`: a `server_url` holding **`http://localhost:3000`** from a
+  March prototype run, and a March-era `local.db`. The persisted `server_url` **takes precedence
+  over the compile-time `OMNI_DEFAULT_SERVER_URL`**, so the machine could never reach the box —
+  which is also why it pushed nothing and the freshly-seeded box stayed uncontaminated (verified:
+  only the import device and the phone appear on it).
+  **Fix applied for now = delete the app data dir and relaunch.** Proven on `surface`: new
+  `device_id`, `ever_synced=false, total=0` at boot, and a `server_url` resolved from the
+  CI-baked default (the real box, not localhost), then a clean backfill. Note a pure backfill
+  writes **no** events, so
+  the box shows nothing from that device — absence there is not evidence of failure.
+  **The product gap is the real item.** Anyone onboarding a second device that ever ran an older
+  build hits this, with no affordance short of `rm -rf` on a path they have to know. Worth an
+  in-app **reset local data + re-sync** action (Settings), and worth deciding whether a persisted
+  `server_url` should really outrank a compile-time default that changed under it. [S–M]
+
+- [ ] **Credential artifacts live OUTSIDE the app data dir, so the go-live clean slate missed
+  them.** The same inventory found `~/.config/omni-me/credentials.toml` (bank credentials, Jun 14)
+  and `~/.local/share/omni-me/ws-session.json` (brokerage session, Jun 15) sitting on the desktop
+  machine — both from prototype-era local auto-import runs. In the current architecture these
+  belong **only on the box** (`/etc/omni-me/credentials.toml`, mounted read-only and uid-locked;
+  the session file on the server volume): auto-import is server-side, so a client has no use for
+  either. Deleted on the user's instruction 2026-08-31, along with a dead `com.omni-me.poc` cache
+  dir — and **the desktop app was confirmed still running normally afterwards**, which turns "the
+  client doesn't need these" from an architectural claim into an observed fact. Contents were
+  never opened — credential files are not inspected, even diagnostically.
+  **Keep for the wipe runbook:** a clean-slate scope written as "the app data dir + the box"
+  is incomplete. `core::credentials::default_path` and `auto_import::config` resolve under
+  `$XDG_CONFIG_HOME/omni-me/`, which no data wipe touches. [XS, doc + runbook]
+
 - [ ] **Android: the keyboard's predictive-text suggestions are never auto-accepted while typing,
   so writing in the app is slower than in Obsidian.** Reported by the user within minutes of the
   personal-phone install, while closing out the 2026-08-30 journal entry in omni-me instead of
