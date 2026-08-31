@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: fix the ANDROID OTA install bridge, then re-run the phone round-trip.**
-**Desktop OTA is DONE and proven** (1.0.0 → 1.0.1 self-update, byte-identical to the published
-artifact, relaunched, reports 1.0.1). Android downloads + sha-verifies, then **silently fails to
-hand off to the installer**. v1.0.0 + v1.0.1 tagged and published for both platforms.
+**Next action: the FINAL go-live wipe, then install on the personal devices.** Its gate — "after
+the OTA/update path is confirmed on the test phone" — **cleared 2026-08-31**: Android and desktop
+OTA are both proven end-to-end. **Do the wipe in a fresh session (user)** — a distinct
+destructive push.
 
 ## Decisions in force — inherit these, don't re-derive
-
-- **ANDROID OTA BUG, root-caused, fix NOT applied.** Rust `request_android_install` writes the
-  side-file to `app_local_data_dir()` → Tauri `getDataDir` → **`activity.dataDir`**
-  (`PathPlugin.kt:64`); Kotlin `checkInstallRequest` reads **`File(filesDir, …)`** =
-  `dataDir/files`. Different dirs → poller finds nothing → silent return (no dialog, no log).
-  **Preferred fix: point Kotlin at `dataDir` for BOTH channels.** `share_intent.rs:33` asserts
-  they're the same dir — **that comment is FALSE**, so share-target has the same bug: fix both
-  and **retest share-target on-device**. Ruled out: the `REQUEST_INSTALL_PACKAGES` appop
-  (granting changed nothing); overrides ARE in the CI APK; the poller was running.
-- **The desktop AppImage had NEVER run before today** — `tauri-plugin-updater` hard-errors on a
-  non-https endpoint in release, warns in dev. Fixed with
-  `dangerousInsecureTransportProtocol:true`. Revisit if `/updates` leaves the tailnet.
-- **Branch gate = safety-rails, NOT PR-gating: never add `required_status_checks`** — it gates
-  DIRECT pushes too, breaking `session-end.sh`. **Android refuses install-over across differing
-  signing certs** (proven), so a cert change means a wipe. **Box auth is deferred until AFTER
-  the personal phone is set up (user)**, so a token problem can't look like a backfill failure.
+- **Wipe scope is in `tasks.md` step 9** — box to a fresh slate, and **delete** rather than keep:
+  `/var/omni-snapshots/*`, the stray empty `omni_data` volume, and locally
+  `~/.local/share/com.omni-me.app/{local.db,budget.journal}.PREWIPE-*` / `.bak-*` plus
+  `_backup_pre_*` (**178 MB / 10 items**, inventoried 2026-08-31).
+- **SETTLE FIRST — ask, do not assume:** the box's 12 277 events under `01KWVHDSCPYBDRAXY7T8YV4M6Y`
+  are the **real imported ledger + journal** (of 12 315; rest = 28 test-phone, 10 auto-import).
+  "Fresh slate" means either (a) wipe then re-import cleanly from `omni-me-private/examples/`,
+  or (b) genuinely start empty. **(a) is the likely intent** — "the old data is not useful"
+  refers to the *backups* in that sentence — but it is the user's call and it is irreversible.
+- **Use `db-ops.yml` (mode `wipe`), NOT ssh.** SSH from this laptop is refused: *"tailnet policy
+  does not permit you to SSH to this node"*. A wipe also needs the `OMNI_VOLUME` override plus a
+  size check ([[project-hetzner-db-reset-for-testing]]).
+- **Box auth stays deferred until AFTER the personal phone is set up (user)** — so a token
+  problem can't masquerade as a failure of that phone's initial backfill. It is fully
+  unauthenticated today; zero-downtime order is in `tasks.md`.
+- **Install guide is in the private overlay README**, including the two one-time Android prompts
+  and why **"Install without scanning"** (behind *More details*) is right — *Scan app* uploads
+  the APK, and these builds bake the box hostname.
 
 ## Do NOT re-survey
-
-- **Desktop OTA, the branch gate, the doc archive, the Android baseline** (12314 events, 0
-  failures; Settings shows the CI-baked `server_url`, closing the 2026-07-21 item), and the
-  **release-only-config sweep**. Techniques: persistent `Xvfb :99` as a background task +
-  `xdotool`; `adb exec-out screencap` + `input tap`. **`XDG_DATA_HOME` MUST be absolute** —
-  relative is silently ignored and the app falls back to real user data; prove isolation by mtime.
+- **All four fixes are verified on-device and shipped in v1.0.3** (correct local date, OTA
+  install bridge, real enso icon, desktop AppImage that runs at all), plus the branch gate, doc
+  archive, and Android baseline. Techniques recorded in `tasks.md`: persistent `Xvfb` +
+  `xdotool`; `adb exec-out screencap` + `input tap`; the **`Pacific/Honolulu` override**, the
+  only way to test the date bug outside the 19:00–24:00 window. **`XDG_DATA_HOME` must be
+  absolute**; prove isolation by mtime.
 
 ## Open threads
-- **Android "Today" is the UTC date, not local** — at 23:42 CDT the phone said 2026-08-31,
-  desktop correctly 2026-08-30, so evening entries file under tomorrow. `journal.rs:175-200`
-  describes this failure and its re-anchor; it isn't holding on Android. **Daily-use blocker.**
-- **Desktop flashes white ~320ms** (WebView surface, not the window; confirm on a real GPU) ·
-  **CI can't tell a launchable release from an unlaunchable one** — `xvfb-run` smoke step, user
-  says **after** the round-trip · brokerage source needs an OTP Reconnect.
+- Desktop flashes white ~320ms (WebView surface, not the window; confirm on a real GPU) · CI
+  can't tell a launchable release from an unlaunchable one — an `xvfb-run` smoke step catches
+  that class, and the user said **after** the round-trip, which is now · brokerage source needs
+  an OTP Reconnect · privacy guard can't catch "wise", so hand-grep public commits.
