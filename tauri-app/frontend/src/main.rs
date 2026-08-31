@@ -169,6 +169,26 @@ pub fn use_boot_hold(ready: impl Fn() -> bool + Copy + 'static) {
             *pending.write() -= 1;
         }
     });
+
+    // Release the hold if this caller is unmounted while still holding.
+    //
+    // The effect above only runs while mounted, so without this a page that
+    // mounts holding and is then swapped out leaves `pending` stuck above zero
+    // — and the lift loop in [`App`] waits out the whole wall-clock deadline
+    // instead of the real readiness signal.
+    //
+    // That is not hypothetical, and it is not rare: the render gate opens on
+    // `is_loaded()`, but `active_tab` is restored by a *separate* future one
+    // 20ms poll later, so every boot onto a non-default tab mounts the default
+    // page (Journal) for a frame first. Journal is the one page that takes a
+    // hold, so restoring to Notes/Routines/Finances/Settings leaked one every
+    // time — measured on-device as a 6.3s splash on those four tabs versus
+    // 0.3s on Journal, until this drop was added.
+    use_drop(move || {
+        if *holding.peek() {
+            *pending.write() -= 1;
+        }
+    });
 }
 
 /// How many inbound events the background puller is currently projecting, for

@@ -10,9 +10,16 @@
       window with the platform default — WHITE on a light-mode phone. That reads
       as a flash of a different app before the charcoal UI appears.
 
-      #1e1e1e is the app's `--color-bg` token (see `frontend/input.css`). Keep the
-      two in sync: the point is that the native window and the web page are the
-      same color, so the handover is invisible.
+      #1e1e1e is the app's `color-bg` CSS custom property (see
+      `frontend/input.css`). Keep the two in sync: the point is that the native
+      window and the web page are the same color, so the handover is invisible.
+
+      Do NOT write that token with its literal CSS double-hyphen prefix here.
+      XML forbids the string "- -" (without the space) anywhere inside a
+      comment, and aapt enforces it: `:app:mergeUniversalReleaseResources`
+      fails the whole build on it. Nothing catches this earlier, because
+      `build.rs` only COPIES this file into `gen/android/` — the copy succeeds
+      and the file is only ever parsed later, by gradle.
 
       The night variant (`res/values-night/themes.xml`) is identical on purpose —
       the app is dark-only (`color-scheme: dark`), so it must not follow the
