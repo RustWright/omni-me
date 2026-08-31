@@ -13,7 +13,8 @@
       {
         "title": "omni-me",
         "width": 1024,
-        "height": 768
+        "height": 768,
+        "backgroundColor": "#1e1e1e"
       }
     ],
     "withGlobalTauri": true,

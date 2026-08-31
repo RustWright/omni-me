@@ -951,6 +951,24 @@ build/test/publish of the bank-free image.
 
 ### 2026-08-30 — noticed during the on-device splash verification
 
+- [x] **Desktop had the splash but none of the anti-flash work — one config key added, UNVERIFIED.**
+  (user question, 2026-08-30: "does the desktop version have an equivalent, and should it?") The
+  answer splits: `splash.rs` and the boot gate carry **no platform gating**, so the desktop build
+  already renders the same enso and the same correct-tab-first behaviour — nobody has looked at it
+  on webkit2gtk, but it is running. The *anti-flash* half was entirely Android-native, though
+  (`themes.xml` + `MainActivity.onWebViewCreate`), and `tauri.conf.json` set no background at all,
+  so both desktop layers fell back to platform defaults and the same white flash is likely.
+  **Added `app.windows[0].backgroundColor: "#1e1e1e"`** — `WindowConfig::background_color`
+  (tauri-utils 2.8.3) documents itself as setting *"the window and webview background color"*, i.e.
+  one key for both layers that Android needed two mechanisms for. **This hex is now in FOUR places
+  that must stay equal:** `tauri.conf.json`, `android-overrides/res/values{,-night}/themes.xml`,
+  `MainActivity.BACKGROUND_COLOR`, `--color-bg` in `input.css`. JSON takes no comments, hence this
+  note. Key name confirmed real rather than silently ignored: `WindowConfig` is
+  `#[serde(rename_all = "camelCase", deny_unknown_fields)]`, so a typo fails the build, and
+  `cargo check -p omni-me-app` (which parses the config via `generate_context!`) passes.
+  **NOT verified visually** — `grim` cannot screenshot this GNOME/Mutter Wayland session (see #370),
+  so there is no way to film a desktop cold boot here. Rides step 9's AppImage. [XS]
+
 - [ ] **`unused_mut` warning on every Android build.** `tauri-app/src-tauri/src/lib.rs:321`
   (`let mut builder = tauri::Builder::default()`) only needs `mut` on desktop, where the
   `#[cfg(desktop)]` updater-plugin block reassigns it; on Android that block is compiled out, so

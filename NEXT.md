@@ -1,17 +1,15 @@
 # NEXT
 
 **Next action: step 9 — Phase 6 (6.2 branch-gate, 6.3 v1 tag, 6.4 doc archive) → updatable app →
-trivial-change OTA round-trip end to end.** The splash is **done and device-verified** (Samsung
-SM-G960W, Android 10): no white flash, correct tab on first paint, splash 300–900ms. Three defects
-found on-device, two fixed — write-up in `tasks.md`'s 2026-08-31 splash entry. **3 commits are
-unpushed**; push the public repo *before* dispatching `app-release`, which builds from that ref.
+trivial-change OTA round-trip.** Splash **done + Android-verified**: no white flash, correct tab on
+first paint, 300–900ms, user confirms it looks right; three defects found on-device, two fixed (see
+`tasks.md`). **Push the public repo before dispatching `app-release`** — it builds from that ref.
 
 ## Decisions in force — inherit these, don't re-derive
 
-- **The phone's app is DEBUG-keystore signed, CI signs with the RELEASE keystore, and Android
-  refuses install-over across differing certs.** So the OTA baseline needs an **uninstall** (total
-  phone-data wipe) → CI APK → ~12k-event re-sync from the box; that belongs to step 9 and also
-  exercises the unverified "Restoring N events…" indicator. Today's local APK is a **throwaway**.
+- **Phone app is DEBUG-keystore signed, CI signs with the RELEASE key, and Android refuses
+  install-over across differing certs.** OTA baseline needs an **uninstall** (total phone wipe) → CI
+  APK → ~12k-event re-sync (also exercises the "Restoring N…" chip). Local APK = **throwaway**.
 - **Splash scope stays settled (user, 2026-08-31):** Rust splash + charcoal native background; a
   custom `index.html` and Android 12+'s `SplashScreen` API stay **deferred past v1** — the white
   flash was fixed without either. "Don't get side tracked" still stands.
@@ -23,17 +21,19 @@ unpushed**; push the public repo *before* dispatching `app-release`, which build
 
 ## Do NOT re-survey
 
-- **The splash.** Verified end to end; both fixes committed. Traps in `tasks.md`: the editor-bundle
-  preload stays hoisted to app mount; `PullEvent::Applied` fires *after* the projection; and
-  **`#1e1e1e` lives in three files that must stay equal** (`themes.xml`, `MainActivity`, `--color-bg`).
-- **The import and the seed.** Every figure reproduced; all 12277 events pulled back under a
-  throwaway device id. **`OMNI_VOLUME`** resolves from the running container. **Naive cold-open
-  indexes** — disproven; SurrealDB 3.0.4 won't serve it.
+- **The splash.** Android-verified; user confirms animation and size. Traps in `tasks.md`: the
+  editor-bundle preload stays hoisted to app mount; `PullEvent::Applied` fires *after* the
+  projection; **`#1e1e1e` is in FOUR files that must stay equal** (conf, themes, MainActivity, css).
+- **The import and the seed.** Every figure reproduced; 12277 events pulled back under a throwaway
+  device id. **`OMNI_VOLUME`** resolves from the running container. Naive cold-open indexes: disproven.
 
 ## Open threads
 
-- **Needs the user's eyes:** splash smoothness in the hand, and whether 144px reads right. The 6s
-  cap is now untested — nothing reaches it on this device.
+- **Desktop splash is UNVERIFIED** — same shared code, plus a new `backgroundColor` config key that
+  no one has seen render (webkit2gtk, and `grim` can't film this Wayland session). Check at step 9's
+  AppImage. The 6s cap is likewise untested now — nothing reaches it on Android.
+- **The black gap before the logo (~700ms) is the deferred `index.html`**, not a bug: the enso is
+  wasm-rendered, so nothing can paint it sooner. Fix only if it grates after weeks of use.
 - **Auto-import filter attribution OPEN** — ticks report `events=0`, but `filtered rows already in
   the journal` has never appeared. Watch for that line on a tick that returns data.
 - Brokerage source needs an OTP Reconnect. Box runs **unauthenticated** — decide before the
