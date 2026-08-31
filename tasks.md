@@ -182,7 +182,29 @@ the verification notes are in
   a WireGuard tunnel (encrypted + authenticated, no middleman position), and the artifact is
   minisign-verified against a mandatory pubkey whose private half lives only in Actions
   secrets. **Revisit if `/updates` ever leaves the tailnet**; on a public endpoint the flag
-  becomes genuinely unsafe. Rationale is recorded in full at the injection site. [BUG, high]
+  becomes genuinely unsafe. Rationale is recorded in full at the injection site.
+  **FIX VERIFIED on the rebuilt artifact (2026-08-31).** Desktop-only rebuild of 1.0.0 (the
+  public source at `v1.0.0` was never wrong — the defect was entirely in the private CI's
+  injected config — so the version stays matched to the source tag rather than burning a 1.0.1
+  on it). Downloaded the republished AppImage and ran it against an isolated `XDG_DATA_HOME`:
+  **no panic, process stayed alive**, and the log shows a clean
+  `App initialized server_url=http://omni-box-hetzner:3000` — which incidentally also confirms
+  the CI-baked `OMNI_DEFAULT_SERVER_URL` reaches a fresh install. The user's real
+  `~/.local/share/com.omni-me.app` was confirmed untouched by mtime before and after. [BUG, high]
+- [ ] **Desktop splash + `backgroundColor` are STILL visually unverified — now genuinely
+  blocked on this machine, not merely deferred.** The 1.0.0 AppImage finally *runs* (see
+  above), so the check is possible for the first time — but nothing on this session can film a
+  cold boot. Confirmed with two independent mechanisms, not one: `grim` fails because Mutter
+  does not implement `wlr-screencopy`, and GNOME's own
+  `org.gnome.Shell.Screenshot` DBus method returns `AccessDenied: Screenshot is not allowed`
+  (restricted to portal callers, which need interactive consent). `Xvfb`/`xvfb-run` are not
+  installed, and installing them is a system change not worth making unprompted.
+  **So this is a [USER] visual check on a launched AppImage:** does the window paint charcoal
+  `#1e1e1e` with no white flash, and is the correct tab up on first paint? What *is* already
+  known: the config key is real and typo-proof (`WindowConfig` is `deny_unknown_fields`, so a
+  bad key fails the build) and the shared splash/boot-gate code carries no platform gating, so
+  the enso and correct-tab-first behaviour are compiled in. The unknown is purely whether
+  webkit2gtk honours `backgroundColor`. [XS, USER]
 - [ ] **The pipeline cannot tell a launchable release from an unlaunchable one.** The bug above
   survived two months because "published + correct sha + valid signature" was the whole
   acceptance test. Worth a headless smoke step in `app-release.yml` that runs the built
