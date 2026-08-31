@@ -155,6 +155,34 @@ the verification notes are in
 
 ### 2026-08-31 — found by the OTA round-trip (step 9)
 
+- [ ] **ANDROID OTA INSTALL IS BROKEN — Rust and Kotlin write/read DIFFERENT directories.**
+  This is the defect step 9 existed to find ("fix it if the OTA path is broken"). Everything up
+  to the handoff works: the manifest is fetched, `1.0.0 → 1.0.1` is offered with notes, the APK
+  downloads, the sha256 verifies, and the UI advances to *"Follow the system prompt to finish
+  installing."* Then **nothing happens** — no installer dialog, no exception, no log line.
+  **Root cause (from source, not inferred):**
+  - Rust `request_android_install` writes the side-file to `app_local_data_dir()`, which Tauri
+    resolves on Android via `getDataDir` → **`activity.dataDir`** = `/data/user/0/<pkg>`
+    (`tauri-2.10.3/mobile/android/src/main/java/app/tauri/PathPlugin.kt:64-69`).
+  - Kotlin `checkInstallRequest` reads **`File(filesDir, "install_request")`** =
+    `/data/user/0/<pkg>/files/install_request`.
+  - `getFilesDir()` is `getDataDir()/files` — a *different* directory. The poller runs correctly
+    every 1500ms, finds no file, and `return`s silently. Hence zero diagnostics.
+  **Ruled out along the way:** the `REQUEST_INSTALL_PACKAGES` appop was at `default` and
+  granting it (`adb shell appops set ... allow`) changed nothing — a red herring. The
+  android-overrides ARE in the CI APK (the manifest-declared permission proves `build.rs`
+  applied them). The app was foregrounded/resumed, so `onResume` had started the poller.
+  **⚠️ THE SHARE-TARGET CHANNEL SHARES THIS ASSUMPTION AND MAY BE BROKEN TOO.**
+  `commands/share_intent.rs:33-37` carries a comment asserting "on Android this resolves to the
+  same `filesDir` that `MainActivity.kt` writes to" — that assertion is **false** for this Tauri
+  version. Kotlin writes share bytes to `filesDir`; Rust reads `dataDir`. Share-target was
+  verified on-device in Cycle 3, so either it regressed with a Tauri upgrade or the earlier
+  `getDataDir` returned `filesDir`. **Do not assume either way — retest share-target on-device.**
+  **Fix options (not yet chosen):** (a) point the Kotlin side at `dataDir` for BOTH channels, so
+  Rust keeps using the documented Tauri API — smallest change, two spots in `MainActivity.kt`;
+  (b) have Rust join `files/`, which hardcodes Android's layout and is fragile. Prefer (a).
+  Whichever is chosen, **fix both channels together** and re-verify share-target. [BUG, high]
+
 - [ ] **ANDROID SHOWS THE WRONG DAY: "Today" resolves to the UTC date, not the local one.**
   Caught by comparing the two platforms side by side at 23:42 CDT on 2026-08-30 — both devices
   report `America/Winnipeg`, both agree at the OS level (`adb shell date` → `Sun Aug 30 23:42
