@@ -1295,7 +1295,11 @@ fn CalendarDrawer(
                                 let (words, _chars) = body_stats(&s.raw_text);
                                 (
                                     s.date,
-                                    DayStat { complete: s.complete, closed: s.closed, words },
+                                    DayStat {
+                                        complete: s.complete,
+                                        closed: s.closed,
+                                        words,
+                                    },
                                 )
                             })
                             .collect(),
@@ -1673,19 +1677,34 @@ mod tests {
     fn every_fill_level_has_a_distinct_class() {
         assert_eq!(day_fill_class(0), "");
         let fills: Vec<&str> = (1..=WORD_LEVELS.len() + 1).map(day_fill_class).collect();
-        assert!(fills.iter().all(|c| !c.is_empty()), "a level has no fill: {fills:?}");
+        assert!(
+            fills.iter().all(|c| !c.is_empty()),
+            "a level has no fill: {fills:?}"
+        );
         let mut unique = fills.clone();
         unique.sort_unstable();
         unique.dedup();
-        assert_eq!(unique.len(), fills.len(), "two levels share a shade: {fills:?}");
+        assert_eq!(
+            unique.len(),
+            fills.len(),
+            "two levels share a shade: {fills:?}"
+        );
     }
 
     /// The anomaly the calendar exists to surface: complete but never closed on
     /// a past day means auto-close did not run. The two must stay independent.
     #[test]
     fn complete_and_closed_are_independent_signals() {
-        let stalled = DayStat { complete: true, closed: false, words: 300 };
-        let healthy = DayStat { complete: true, closed: true, words: 300 };
+        let stalled = DayStat {
+            complete: true,
+            closed: false,
+            words: 300,
+        };
+        let healthy = DayStat {
+            complete: true,
+            closed: true,
+            words: 300,
+        };
         assert_ne!(stalled, healthy);
         // Same volume, so the fill cannot be what distinguishes them.
         assert_eq!(word_level(stalled.words), word_level(healthy.words));

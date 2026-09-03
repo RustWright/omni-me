@@ -29,9 +29,7 @@ pub struct RuntimeProfileView {
 /// Deliberately cheap and local — no network, no DB — because the banner renders
 /// on every screen and must never be the reason a screen is slow to appear.
 #[tauri::command(rename_all = "snake_case")]
-pub async fn get_runtime_profile(
-    state: State<'_, AppState>,
-) -> Result<RuntimeProfileView, String> {
+pub async fn get_runtime_profile(state: State<'_, AppState>) -> Result<RuntimeProfileView, String> {
     Ok(RuntimeProfileView {
         non_production: state.non_production,
         data_dir: state.app_data_dir.to_string_lossy().to_string(),

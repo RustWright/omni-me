@@ -300,7 +300,12 @@ const CURRENCY_CODES: &[&str] = &["CAD", "USD", "EUR", "GBP", "AED", "AUD", "JPY
 /// Editor body text size. Sizes are px values, not vague labels, because the
 /// setting maps to one CSS variable the editor theme reads — naming the number
 /// keeps the control honest about what it does.
-const EDITOR_FONT_SIZES: [(u32, &str); 4] = [(14, "Small"), (16, "Default"), (18, "Large"), (21, "Larger")];
+const EDITOR_FONT_SIZES: [(u32, &str); 4] = [
+    (14, "Small"),
+    (16, "Default"),
+    (18, "Large"),
+    (21, "Larger"),
+];
 
 #[component]
 fn EditorSection() -> Element {

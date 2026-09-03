@@ -6089,14 +6089,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                     return;
                 }
             };
-            match bridge::invoke_import_chequing_csv(
-                &csv_text,
-                &src,
-                &label,
-                Some(&comm),
-            )
-            .await
-            {
+            match bridge::invoke_import_chequing_csv(&csv_text, &src, &label, Some(&comm)).await {
                 Ok(result) => {
                     // Remember only on success. A label typed into an import that
                     // then failed is not one worth restoring next month.
@@ -7474,7 +7467,10 @@ mod tests {
     /// A label with no period suffix keeps its whole text and gains one.
     #[test]
     fn label_without_a_period_gains_one() {
-        assert_eq!(roll_statement_label("chequing", sep_2026()), "chequing-2026-09");
+        assert_eq!(
+            roll_statement_label("chequing", sep_2026()),
+            "chequing-2026-09"
+        );
     }
 
     /// Institutions are distinguished by the account key, but the stem itself

@@ -121,7 +121,12 @@ fn resolve_server_url(app_data: &Path, non_production: bool) -> String {
         return choose_server_url(None, env_url.as_deref(), true, DEFAULT_SERVER_URL);
     }
     let persisted = std::fs::read_to_string(app_data.join(SERVER_URL_FILE)).ok();
-    let chosen = choose_server_url(persisted.as_deref(), env_url.as_deref(), false, DEFAULT_SERVER_URL);
+    let chosen = choose_server_url(
+        persisted.as_deref(),
+        env_url.as_deref(),
+        false,
+        DEFAULT_SERVER_URL,
+    );
     // Preserve `load_or_create`'s write-back: a fresh install records the default
     // it resolved. An env-supplied value is never written (see
     // `load_with_env_override`), so unsetting the env restores the saved value.
@@ -887,7 +892,12 @@ mod runtime_profile_tests {
     /// previously won unconditionally and could only be changed by `rm -rf`.
     #[test]
     fn env_outranks_the_persisted_file_in_production() {
-        let url = choose_server_url(Some("http://old:3000"), Some("http://new:3000"), false, BOX_URL);
+        let url = choose_server_url(
+            Some("http://old:3000"),
+            Some("http://new:3000"),
+            false,
+            BOX_URL,
+        );
         assert_eq!(url, "http://new:3000");
     }
 
@@ -910,7 +920,10 @@ mod runtime_profile_tests {
             choose_server_url(Some("  "), Some("   "), false, BOX_URL),
             BOX_URL
         );
-        assert_eq!(choose_server_url(None, Some(""), true, BOX_URL), NON_PRODUCTION_SERVER_URL);
+        assert_eq!(
+            choose_server_url(None, Some(""), true, BOX_URL),
+            NON_PRODUCTION_SERVER_URL
+        );
     }
 
     // --- data root --------------------------------------------------------
@@ -919,7 +932,10 @@ mod runtime_profile_tests {
     fn data_dir_override_flags_non_production() {
         let (dir, non_prod) = choose_app_data(PathBuf::from("/live"), Some("/tmp/dev"));
         assert_eq!(dir, PathBuf::from("/tmp/dev"));
-        assert!(non_prod, "an overridden data root is non-production by definition");
+        assert!(
+            non_prod,
+            "an overridden data root is non-production by definition"
+        );
     }
 
     #[test]

@@ -468,7 +468,11 @@ pub async fn invoke_list_journal_day_stats(
         // encodes so a mock run can actually show the design: fill intensity
         // (word volume), the complete glyph, and the closed ring.
         let today = chrono::Utc::now().date_naive();
-        let day = |n: u64| (today - chrono::Days::new(n)).format("%Y-%m-%d").to_string();
+        let day = |n: u64| {
+            (today - chrono::Days::new(n))
+                .format("%Y-%m-%d")
+                .to_string()
+        };
         let words = |n: usize| "word ".repeat(n);
         Ok(vec![
             // Today: light fill, no glyph — started writing, nothing finished.
