@@ -208,13 +208,24 @@ pub async fn list_journal_entries(
     Ok(rows)
 }
 
-/// One day's calendar-widget stats: the entry exists (it's in the result set)
-/// and whether it's `complete`. Drives the calendar's per-day activity dot +
-/// day-complete check.
+/// One day's calendar-widget stats. Presence in the result set means an entry
+/// exists; the fields carry what the calendar encodes on each cell.
+///
+/// `raw_text` is returned deliberately rather than a pre-computed word count.
+/// Counting means stripping the `⟦timestamp⟧` line tokens first, and the only
+/// reader of that format lives in the frontend (`journal.rs`), guarded by a
+/// drift test whose whole point is that nothing links the JS writer to its Rust
+/// reader. Counting here would create a *third* copy of that format knowledge
+/// and a third thing to drift. The frontend counts with the reader it already
+/// has and keeps only the resulting number.
 #[derive(Debug, Clone, Serialize, SurrealValue)]
 pub struct JournalDayStat {
     pub date: String,
     pub complete: bool,
+    /// Whether the day has been closed (auto-close or by hand). Distinct from
+    /// `complete`: a complete-but-open past day means auto-close did not run.
+    pub closed: bool,
+    pub raw_text: String,
 }
 
 pub async fn list_journal_day_stats(
@@ -224,7 +235,7 @@ pub async fn list_journal_day_stats(
 ) -> Result<Vec<JournalDayStat>, DbError> {
     let mut resp = db
         .query(
-            "SELECT date, complete FROM journal_entries
+            "SELECT date, complete, closed, raw_text FROM journal_entries
              WHERE date >= $from_date AND date <= $to_date
              ORDER BY date ASC",
         )
@@ -804,19 +815,107 @@ pub async fn list_cleared_transactions(
 /// `description` (drives the description-similarity signal) in addition
 /// to the posting amounts.
 pub async fn list_unmatched_transactions(db: &Database) -> Result<Vec<TransactionRow>, DbError> {
-    let mut resp = db
-        .query(
-            "SELECT id, date, description, postings, attachment, category,
-                    tags_top, removed, superseded_by, merged_ids,
-                    balancing_posting, cleared, statement_source, cleared_date,
-                    created_at, updated_at
-             FROM transactions
-             WHERE removed = false
-               AND superseded_by IS NONE
-               AND array::any(postings, |$p| $p.account = 'Unmatched')
-             ORDER BY date ASC",
-        )
-        .await?;
+    // MUST use `TXN_FIELDS`, never a hand-written field list. This query
+    // previously spelled the columns out and so selected a raw `id` (a
+    // SurrealDB record id) into `TransactionRow.id: String`, plus raw datetimes
+    // into two `String` fields — three deserialize failures that took down the
+    // whole reconciliation screen. The constant carries the `meta::id(id)` and
+    // `<string>` casts that make the row shape match the struct.
+    let q = format!(
+        "SELECT {TXN_FIELDS} FROM transactions
+         WHERE removed = false
+           AND superseded_by IS NONE
+           AND array::any(postings, |$p| $p.account = 'Unmatched')
+         ORDER BY date ASC"
+    );
+    let mut resp = db.query(q.as_str()).await?;
     let rows: Vec<TransactionRow> = resp.take(0)?;
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::{BudgetProjection, Projection};
+
+    /// Temp DB with the `transactions` table defined. Uses the real projection
+    /// schema rather than a hand-written DEFINE, so a schema change that breaks
+    /// a row shape shows up here instead of only in production.
+    async fn txn_db() -> (tempfile::TempDir, Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+        BudgetProjection.init_schema(&db).await.unwrap();
+        (dir, db)
+    }
+
+    async fn insert_txn(db: &Database, id: &str, account: &str) {
+        db.query(
+            format!(
+                "CREATE transactions:{id} CONTENT {{
+                    date: '2026-09-01',
+                    description: 'test txn',
+                    postings: [{{ account: '{account}', amount: '10.00', commodity: 'CAD' }}],
+                    category: NONE,
+                    tags_top: [],
+                    removed: false,
+                    superseded_by: NONE,
+                    merged_ids: [],
+                    cleared: false,
+                    statement_source: NONE,
+                    cleared_date: NONE,
+                    created_at: d'2026-09-01T00:00:00Z',
+                    updated_at: d'2026-09-01T00:00:00Z'
+                }}"
+            )
+            .as_str(),
+        )
+        .await
+        .unwrap();
+    }
+
+    /// The regression guard for the reconciliation-screen crash.
+    ///
+    /// The bug was a hand-written field list selecting a raw record id into
+    /// `TransactionRow.id: String`. Asserting the id has **no** `transactions:`
+    /// prefix is what pins the `meta::id(id)` projection in place — a plain
+    /// "does it return a row" assertion would pass with the raw id and miss it.
+    #[tokio::test]
+    async fn list_unmatched_transactions_returns_bare_ids() {
+        let (_dir, db) = txn_db().await;
+        insert_txn(&db, "u1", "Unmatched").await;
+
+        let rows = list_unmatched_transactions(&db).await.unwrap();
+
+        assert_eq!(rows.len(), 1, "the Unmatched-leg txn should be returned");
+        assert_eq!(rows[0].id, "u1", "id must be bare, not a record id");
+        assert!(
+            !rows[0].id.contains(':'),
+            "id still carries a table prefix: {}",
+            rows[0].id
+        );
+        // `created_at`/`updated_at` are `datetime` in the schema but `String` on
+        // the row, so they need the `<string>` cast the constant carries. Without
+        // it these fail to convert exactly like `id` did.
+        assert!(
+            rows[0].created_at.contains("2026-09-01"),
+            "created_at did not round-trip as a string: {}",
+            rows[0].created_at
+        );
+        assert!(rows[0].updated_at.contains("2026-09-01"));
+    }
+
+    /// A transaction with no `Unmatched` leg must not appear — otherwise the
+    /// reconciliation screen would propose pairs for already-matched rows.
+    #[tokio::test]
+    async fn list_unmatched_transactions_skips_matched_rows() {
+        let (_dir, db) = txn_db().await;
+        insert_txn(&db, "matched", "Assets:Chequing").await;
+        insert_txn(&db, "unmatched", "Unmatched").await;
+
+        let rows = list_unmatched_transactions(&db).await.unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "unmatched");
+    }
 }

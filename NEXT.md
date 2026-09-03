@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: OTA-update both personal devices 1.0.3 → 1.0.4 — itself the update-path test on
-real hardware.** Both run 1.0.3; **1.0.4 is published for both**. Phone: Settings → App Updates →
-*Check for updates* (the two Android prompts reappear — the app is the installing source), then
-**type a sentence and see whether the keyboard commits predictive suggestions** — the fix 1.0.4
-exists for, **unconfirmed on-device**. Then brokerage **Reconnect** in-app, then box auth.
+**Next action: the batched on-device pass — everything else here is green.**
+802 tests pass, 0 failures. Stages 1, 1b, 2, 4, 5 done; 3 all but swipe. 6/7 need sessions.
 
 ## Decisions in force — inherit these, don't re-derive
-- **Go-live is DONE (2026-08-31):** box wiped total, fresh import from the canonical ledger +
-  vault, seeded, both personal devices installed and syncing. This laptop is the **dev/import
-  machine only**; `surface` is the go-live Linux desktop.
-- **Desktop AppImages MUST build on the oldest supported target.** `build-desktop` is pinned to
-  `ubuntu-22.04`: an AppImage never bundles glibc, so `ubuntu-latest` (2.39) shipped a binary that
-  would not start on `surface` (2.35) — invisible from this 24.04 laptop. `dx` has **no musl
-  build** so it compiles from source there, and `rust-cache` keys on `Linux-x64` without the
-  Ubuntu version, so that job's cache is namespaced or it restores a 24.04 `dx`. 1.0.3 was
-  verified to need only `GLIBC_2.35`; 1.0.4 is inferred from the same job, not checked.
-- **Pause auto-import sources before any wipe** — a 30-min source fired in the 14-min seed gap.
+- **The plan is `~/.claude/plans/i-m-not-sure-what-s-elegant-firefly.md`** — seven tiers
+  from the 2026-09-03 feedback + the route to the AI milestone. Read it before replanning.
+- **Confidence before AI.** Stages 1, 1b and 2 gate the LLM push; Stage 6 (statements)
+  should land before it too — a `Statement` entity is churn LLM tools mustn't chase.
+- **Dev never writes to the box (user)** — live use means a test write leaves
+  indistinguishable fake rows in the real ledger. `OMNI_DATA_DIR` overrides the data root;
+  under it the persisted `server_url` is IGNORED — only `OMNI_SERVER_URL` moves it (9 tests).
+- **Swipe-between-finances-tabs is HELD (user)** — the sticky sub-nav ships first and the
+  device trial decides. Rationale: side-nav-swipe vs section-swipe is a real conflict, so
+  if sticky suffices the ambiguity never needs adjudicating. Don't add it speculatively.
+- **Font size is EDITOR-ONLY (user).** App-wide is blocked on converting 106 px-based text
+  utilities (81 are `text-[10px]`) to rem, else the smallest labels freeze while body grows.
+- **Statement labels remember per account** (the path can't identify an institution).
+- **"Complete" = the three reflection keys** — the scheduler was wrong, not the predicate.
+- **Calendar:** fill = volume, ✓ = complete, ring = closed. Thresholds NOT settled —
+  250-word steps is provisional; re-derive from live data after `JournalDayStat` widens.
 
-## Do NOT re-survey
-- **The wipe→import→seed chain is verified.** `/data` 21M → 64K, 4 snapshots deleted, local reset
-  213M → 776K, import reproduced the 2026-08-30 corpus exactly, **0 diffs** vs `ledger bal`
-  (twice), net worth **83 290.52 CAD**, pushed **12 277**.
-- **The Wise "duplicate transactions" investigation is CLOSED — not a bug**, just the poller
-  ticking before the seed landed; two dead ends are written up in `tasks.md` so they are not
-  re-walked. In the review inbox commit only the 2026-08-31 transfer (per-row selection exists);
-  the other four are already in the ledger and won't be re-proposed.
+## Corrections to earlier handoffs — verified live
+- **This host IS `surface` and holds live data** (42M `local.db`). 7GB RAM ⇒
+  `CARGO_BUILD_JOBS=1`. The 32GB box is gone indefinitely — but **releases build in CI**
+  (`app-release.yml`), so only local release builds are lost.
+- **Watch `df -h`** — `target/` grew 1.1G → 30G in one session, filled the disk, and caused
+  every "background task killed" plus a linker failure. ~41G reclaimed.
+- `editor.js` edits need `npm run build:editor`; the app loads `editor.bundle.js`.
+
+## Batched on-device checklist (device unplugged — do ALL in one connection)
+Android API level (decides the caret fix; `ime()` needs API 30+, target may be 29) ·
+scroll/keyboard · selection contrast · strikethrough · auto-close catch-up on open ·
+**sticky sub-nav: does it remove the need for swipe?** · drawer: caret gone (expected) AND
+keyboard dismissed (UNKNOWN — if the IME stays up, focus a non-editable element instead).
 
 ## Open threads
-- Editor fix: DOM attributes verified in a browser, **on-device behaviour unconfirmed** (CM6's
-  Android IME composition handling could still block commit) · no in-app "reset local data": a
-  device that ran an older build inherits a stale `server_url` outranking the compile-time
-  default, and only `rm -rf` fixes it (bit `surface`).
-- Dedup keys on the reference number, which multi-leg transactions share → a second leg could be
-  silently dropped, and the failure mode is a *missing* transaction · `--force` recompiles `dx`
-  every desktop release (~10 min), droppable now the guard exists · owed: the `xvfb-run` smoke
-  step · desktop white flash on a real GPU.
-- **On a NEW device run `omni-me-private/privacy-guard/install.sh` before committing here** — a
-  fresh clone of this PUBLIC repo has no guard, and the session hooks auto-commit and push.
+- Undecided: branch *naming* convention (dev-writes-to-box is settled: never).
+- Filed: statement imports capture no institution tag — fold into Stage 6.

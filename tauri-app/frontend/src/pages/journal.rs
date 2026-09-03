@@ -1259,8 +1259,8 @@ fn CalendarDrawer(
         NaiveDate::from_ymd_opt(today_date.year(), today_date.month(), 1).unwrap();
 
     let mut anchor = use_signal(|| today_month_first);
-    // date -> `complete`. Presence in the map = the day has an entry.
-    let mut day_stats = use_signal(HashMap::<String, bool>::new);
+    // date -> encoded stats. Presence in the map = the day has an entry.
+    let mut day_stats = use_signal(HashMap::<String, DayStat>::new);
     let mut fetch_error = use_signal(|| None::<String>);
 
     // Fetch the visible month's stats whenever the drawer is open (fresh data on
@@ -1286,7 +1286,20 @@ fn CalendarDrawer(
         spawn(async move {
             match bridge::invoke_list_journal_day_stats(&from_s, &to_s).await {
                 Ok(stats) => {
-                    day_stats.set(stats.into_iter().map(|s| (s.date, s.complete)).collect());
+                    // Count here, with the same reader the editor footer uses,
+                    // then drop `raw_text` — the map keeps numbers, not bodies.
+                    day_stats.set(
+                        stats
+                            .into_iter()
+                            .map(|s| {
+                                let (words, _chars) = body_stats(&s.raw_text);
+                                (
+                                    s.date,
+                                    DayStat { complete: s.complete, closed: s.closed, words },
+                                )
+                            })
+                            .collect(),
+                    );
                 }
                 Err(e) => fetch_error.set(Some(e)),
             }
@@ -1384,8 +1397,9 @@ fn CalendarDrawer(
                         {
                             let date_str = cell.date.format("%Y-%m-%d").to_string();
                             let stats = day_stats.read();
-                            let has_entry = stats.contains_key(&date_str);
-                            let is_complete = stats.get(&date_str).copied().unwrap_or(false);
+                            let stat = stats.get(&date_str).copied();
+                            let has_entry = stat.is_some();
+                            let is_complete = stat.is_some_and(|s| s.complete);
                             let is_today = date_str == today;
                             let is_selected = date_str == selected;
                             let classes = day_cell_class(
@@ -1393,6 +1407,7 @@ fn CalendarDrawer(
                                 is_selected,
                                 has_entry,
                                 cell.in_current_month,
+                                stat,
                             );
                             let day_num = cell.date.day();
                             rsx! {
@@ -1428,6 +1443,47 @@ fn CalendarDrawer(
 /// The per-day activity marker under the day number: a check when the entry is
 /// complete, a filled dot when there's an entry, else an empty spacer (keeps
 /// every cell the same height so the grid doesn't jitter).
+/// What the calendar encodes for one day. Derived at fetch time so the entry's
+/// `raw_text` is counted once and then dropped rather than held in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct DayStat {
+    complete: bool,
+    closed: bool,
+    words: usize,
+}
+
+/// Word-count thresholds for the calendar's fill intensity.
+///
+/// Derived from the user's own journal history — 1,244 entries, 2022-07 →
+/// 2026-05: all-time median 448, trailing-12-month median 317. 250-word steps
+/// spread that across all three fills without saturating either end; 500-word
+/// steps would have put roughly 80% of recent entries in the lightest band and
+/// made the channel say almost nothing.
+///
+/// **PROVISIONAL.** That sample ended ~110 days before this shipped, and it came
+/// from the Obsidian vault rather than the live store. If most cells land in one
+/// shade, move these numbers — this constant is the single place to do it.
+const WORD_LEVELS: [usize; 2] = [250, 500];
+
+/// `0` = nothing written, `1..=3` = increasing fill.
+fn word_level(words: usize) -> usize {
+    if words == 0 {
+        return 0;
+    }
+    WORD_LEVELS.iter().filter(|t| words >= **t).count() + 1
+}
+
+/// Background tint for a fill level. Volume rides the background so it costs no
+/// extra marks — the glyph slot stays free for state.
+fn day_fill_class(level: usize) -> &'static str {
+    match level {
+        1 => "bg-obsidian-accent/10",
+        2 => "bg-obsidian-accent/20",
+        3 => "bg-obsidian-accent/35",
+        _ => "",
+    }
+}
+
 fn day_marker(has_entry: bool, is_complete: bool) -> Element {
     if is_complete {
         rsx! {
@@ -1463,6 +1519,7 @@ fn day_cell_class(
     is_selected: bool,
     has_entry: bool,
     in_current_month: bool,
+    stat: Option<DayStat>,
 ) -> String {
     let base = "aspect-square flex flex-col items-center justify-center rounded-md text-center transition-colors cursor-pointer";
     let text_class = if !in_current_month {
@@ -1474,14 +1531,25 @@ fn day_cell_class(
     } else {
         "text-obsidian-text-muted"
     };
+    // Selection and today are *states* and own the background outright; the
+    // volume fill only paints when neither applies, so a selected day never
+    // reads as a heavier writing day than it was.
     let bg_class = if is_selected {
-        "bg-obsidian-accent/20 border border-obsidian-accent/40"
+        "bg-obsidian-accent/20 border border-obsidian-accent/40".to_string()
     } else if is_today {
-        "bg-obsidian-sidebar border border-obsidian-accent/30"
+        "bg-obsidian-sidebar border border-obsidian-accent/30".to_string()
     } else {
-        "hover:bg-white/5 border border-transparent"
+        let fill = day_fill_class(stat.map_or(0, |s| word_level(s.words)));
+        format!("hover:bg-white/5 border border-transparent {fill}")
     };
-    format!("{base} {text_class} {bg_class}")
+    // Closed rides a ring — a third channel, so it stacks with fill and glyph
+    // instead of competing for either.
+    let ring_class = if stat.is_some_and(|s| s.closed) {
+        "ring-1 ring-inset ring-obsidian-accent/50"
+    } else {
+        ""
+    };
+    format!("{base} {text_class} {bg_class} {ring_class}")
 }
 
 #[cfg(test)]
@@ -1582,5 +1650,44 @@ mod tests {
         );
         // No token at all.
         assert_eq!(strip_line_token("just prose"), "just prose");
+    }
+
+    #[test]
+    fn word_level_maps_counts_to_fills() {
+        // A day with no text is level 0 — blank, not the lightest fill, so
+        // "wrote nothing" and "wrote a little" stay visually distinct.
+        assert_eq!(word_level(0), 0);
+        assert_eq!(word_level(1), 1);
+        assert_eq!(word_level(249), 1);
+        // Boundaries are inclusive at the threshold.
+        assert_eq!(word_level(250), 2);
+        assert_eq!(word_level(499), 2);
+        assert_eq!(word_level(500), 3);
+        assert_eq!(word_level(10_000), 3);
+    }
+
+    /// Every level must map to a distinct class, and level 0 to none — a
+    /// duplicate would silently collapse two buckets into one shade and make
+    /// the channel quietly useless.
+    #[test]
+    fn every_fill_level_has_a_distinct_class() {
+        assert_eq!(day_fill_class(0), "");
+        let fills: Vec<&str> = (1..=WORD_LEVELS.len() + 1).map(day_fill_class).collect();
+        assert!(fills.iter().all(|c| !c.is_empty()), "a level has no fill: {fills:?}");
+        let mut unique = fills.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), fills.len(), "two levels share a shade: {fills:?}");
+    }
+
+    /// The anomaly the calendar exists to surface: complete but never closed on
+    /// a past day means auto-close did not run. The two must stay independent.
+    #[test]
+    fn complete_and_closed_are_independent_signals() {
+        let stalled = DayStat { complete: true, closed: false, words: 300 };
+        let healthy = DayStat { complete: true, closed: true, words: 300 };
+        assert_ne!(stalled, healthy);
+        // Same volume, so the fill cannot be what distinguishes them.
+        assert_eq!(word_level(stalled.words), word_level(healthy.words));
     }
 }

@@ -167,6 +167,55 @@ pub fn set_can_go_back(can: bool) {
     }
 }
 
+/// Set the editor body font size, in px, as a CSS variable on `:root`.
+///
+/// `None` clears it, falling back to the stylesheet's own 16px. Applied as a
+/// variable rather than by rebuilding the CodeMirror theme because recreating
+/// the editor to restyle it would discard the undo history and caret position.
+pub fn set_editor_font_px(px: Option<u32>) {
+    use wasm_bindgen::JsCast;
+    let Some(root) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+    else {
+        return;
+    };
+    let Some(style) = root.dyn_ref::<web_sys::HtmlElement>().map(|e| e.style()) else {
+        return;
+    };
+    match px {
+        Some(px) => {
+            let _ = style.set_property("--editor-font-size", &format!("{px}px"));
+        }
+        None => {
+            let _ = style.remove_property("--editor-font-size");
+        }
+    }
+}
+
+/// Drop focus from whatever currently holds it.
+///
+/// Used when the nav drawer opens over the editor. CodeMirror keeps DOM focus
+/// and keeps painting its caret at the editor's own stacking level, so the
+/// caret blinks straight through the drawer's scrim. Nothing in the app blurs
+/// it — there is no `.blur()` call anywhere else — and the drawer is a
+/// `fixed`-positioned panel rather than a real modal, so the browser will not
+/// move focus on its own either.
+///
+/// Deliberately blurs the *active element* rather than reaching into the editor:
+/// it needs no new JS export, so it works identically in `mock` builds, and it
+/// also covers a focused input on any other page the drawer opens over.
+pub fn blur_active_element() {
+    use wasm_bindgen::JsCast;
+    if let Some(el) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = el.blur();
+    }
+}
+
 // CodeMirror interop
 #[wasm_bindgen]
 extern "C" {
@@ -415,18 +464,41 @@ pub async fn invoke_list_journal_day_stats(
     #[cfg(feature = "mock")]
     {
         let _ = (from_date, to_date);
-        // Two recent days so the mock calendar shows both states: today has an
-        // entry (incomplete dot), yesterday is complete (check).
+        // Four recent days, chosen to exercise every channel the calendar
+        // encodes so a mock run can actually show the design: fill intensity
+        // (word volume), the complete glyph, and the closed ring.
         let today = chrono::Utc::now().date_naive();
-        let yesterday = today - chrono::Days::new(1);
+        let day = |n: u64| (today - chrono::Days::new(n)).format("%Y-%m-%d").to_string();
+        let words = |n: usize| "word ".repeat(n);
         Ok(vec![
+            // Today: light fill, no glyph — started writing, nothing finished.
             JournalDayStat {
-                date: today.format("%Y-%m-%d").to_string(),
+                date: day(0),
                 complete: false,
+                closed: false,
+                raw_text: words(120),
             },
+            // Complete AND closed, heavy fill — the healthy finished day.
             JournalDayStat {
-                date: yesterday.format("%Y-%m-%d").to_string(),
+                date: day(1),
                 complete: true,
+                closed: true,
+                raw_text: words(600),
+            },
+            // Complete but still OPEN on a past day — the anomaly the ring
+            // exists to surface (auto-close should have caught this one).
+            JournalDayStat {
+                date: day(2),
+                complete: true,
+                closed: false,
+                raw_text: words(300),
+            },
+            // Mid fill, nothing finished.
+            JournalDayStat {
+                date: day(3),
+                complete: false,
+                closed: false,
+                raw_text: words(260),
             },
         ])
     }
@@ -1234,6 +1306,26 @@ pub async fn invoke_save_workspace(json: &str) -> Result<(), String> {
 }
 
 /// Base currency used by dashboard / accounts FX aggregation (Phase 7.3).
+pub async fn invoke_get_runtime_profile() -> Result<crate::types::RuntimeProfile, String> {
+    #[cfg(feature = "mock")]
+    {
+        // Mock builds are non-production by definition — there is no backend at
+        // all — so the banner shows in UI-development runs too. That is wanted:
+        // a screenshot taken from a mock build should be self-identifying.
+        Ok(crate::types::RuntimeProfile {
+            non_production: true,
+            data_dir: "(mock build — no backend)".to_string(),
+            server_url: "(none)".to_string(),
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("get_runtime_profile", &Args {}).await
+    }
+}
+
 pub async fn invoke_get_base_currency() -> Result<String, String> {
     #[cfg(feature = "mock")]
     {

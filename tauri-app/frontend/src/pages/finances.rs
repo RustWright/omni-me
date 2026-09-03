@@ -394,7 +394,12 @@ pub fn FinancesPage() -> Element {
             // Persistent finances sub-nav — shown only at the surface
             // roots; deeper/modal sub-routes carry their own back navigation.
             if show_subnav {
-                div { class: "flex items-center justify-between gap-3 mb-4",
+                // Sticky so switching surfaces never requires scrolling back to
+                // the top. The negative margins + matching padding let the
+                // background span the scroll column's own `p-4`/`md:p-6` gutter,
+                // otherwise content shows through at the sides as it passes
+                // under. `z-30` stays well below the nav drawer (140/150).
+                div { class: "sticky top-0 z-30 flex items-center justify-between gap-3 mb-4 -mx-4 px-4 md:-mx-6 md:px-6 py-2 bg-obsidian-bg/95 backdrop-blur-sm",
                     SegmentedNav {
                         items: vec![
                             ("overview".to_string(), "Overview".to_string()),
@@ -2420,7 +2425,7 @@ fn BatchListView(on_back: EventHandler<()>, on_open_batch: EventHandler<String>)
             },
             Some(Ok(rows)) if rows.is_empty() => rsx! {
                 div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
-                    "No pending auto-import batches. Captured transactions and confirmed batches show up in Recent (Phase 4)."
+                    "No pending auto-import batches. Captured transactions and confirmed batches appear under Recent."
                 }
             },
             Some(Ok(rows)) => rsx! {
@@ -5179,7 +5184,7 @@ fn RecurringCard(recurring: Vec<RecurringObligationView>, base_currency: String)
             }
             if recurring.is_empty() {
                 div { class: "text-sm text-obsidian-text-muted text-center py-4",
-                    "No confirmed recurring patterns yet. Phase 5.3 detection scanner will populate this."
+                    "No recurring patterns confirmed yet. Patterns you confirm from detected transactions appear here."
                 }
             } else {
                 div { class: "space-y-1",
@@ -5962,17 +5967,59 @@ fn RecurringRowCard(
 // Statement CSV import (Phase 5.5) — Summit chequing.
 // -----------------------------------------------------------------------------
 
-/// Default statement_source label for a Summit chequing import based on
-/// today's calendar year + month. Format `"summit-chequing-YYYY-MM"`,
-/// matching the convention used in the event-validation tests and in
-/// the reconciliation review's expected source-tag shape.
+/// Default statement_source label — the current year and month, `"YYYY-MM"`.
+///
+/// Institution-neutral on purpose. This previously defaulted to a specific
+/// bank name, which contradicted the no-bank-specific-default rule stated at
+/// the call site: the public engine ships zero declared accounts, so it has no
+/// business guessing where a statement came from. Callers who want an
+/// institution prefix type one — the placeholder shows the shape.
 fn default_statement_source_label() -> String {
-    let today = chrono::Utc::now().date_naive();
+    current_statement_period(chrono::Utc::now().date_naive())
+}
+
+/// `YYYY-MM` for a date. The period suffix every statement label carries.
+fn current_statement_period(today: chrono::NaiveDate) -> String {
     format!(
-        "summit-chequing-{}-{:02}",
+        "{}-{:02}",
         chrono::Datelike::year(&today),
         chrono::Datelike::month(&today)
     )
+}
+
+/// Strip a trailing `-YYYY-MM` from a label, returning the institution stem.
+///
+/// Returns `""` when the label was *only* a period (the neutral default), and
+/// the label unchanged when it carries no period suffix at all.
+fn statement_label_stem(label: &str) -> &str {
+    let Some((head, mm)) = label.rsplit_once('-') else {
+        return label;
+    };
+    if mm.len() != 2 || !mm.chars().all(|c| c.is_ascii_digit()) {
+        return label;
+    }
+    match head.rsplit_once('-') {
+        Some((stem, yyyy)) if yyyy.len() == 4 && yyyy.chars().all(|c| c.is_ascii_digit()) => stem,
+        // `head` is itself the year, so the whole label was just a period.
+        None if head.len() == 4 && head.chars().all(|c| c.is_ascii_digit()) => "",
+        _ => label,
+    }
+}
+
+/// Roll a remembered label onto the current period: `ws-tfsa-2026-08` +
+/// September ⇒ `ws-tfsa-2026-09`.
+///
+/// The period is **replaced**, not appended — appending would grow the label a
+/// little longer every month (`ws-tfsa-2026-08-2026-09`), and the drift would
+/// only be noticed once the labels were already in the ledger.
+fn roll_statement_label(remembered: &str, today: chrono::NaiveDate) -> String {
+    let period = current_statement_period(today);
+    let stem = statement_label_stem(remembered.trim());
+    if stem.is_empty() {
+        period
+    } else {
+        format!("{stem}-{period}")
+    }
 }
 
 #[component]
@@ -5982,6 +6029,31 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
     let mut source_account: Signal<String> = use_signal(String::new);
     let mut statement_source: Signal<String> = use_signal(default_statement_source_label);
     let mut commodity: Signal<String> = use_signal(|| "CAD".to_string());
+    let store = use_continuity();
+    // True once the user edits the label by hand. After that the account-change
+    // effect stops touching it — silently rewriting something someone just typed
+    // is worse than showing a stale default.
+    let mut label_edited: Signal<bool> = use_signal(|| false);
+
+    // Seed the label from whatever this account used last time, rolled onto the
+    // current period. Keyed by account rather than derived from the account path
+    // because the path cannot identify an institution — the grammar is
+    // `Assets:<Registration>:<Commodity>`, so two institutions holding the same
+    // registration would otherwise collide on one label.
+    use_effect(move || {
+        let account = source_account.read().trim().to_string();
+        // `peek`, not `read`: this effect must re-run when the ACCOUNT changes,
+        // never because the user typed in the label field it writes to.
+        if *label_edited.peek() || account.is_empty() {
+            return;
+        }
+        let today = chrono::Utc::now().date_naive();
+        let seeded = match store.statement_label_peek(&account) {
+            Some(remembered) => roll_statement_label(&remembered, today),
+            None => current_statement_period(today),
+        };
+        statement_source.set(seeded);
+    });
     let mut status: Signal<Option<String>> = use_signal(|| None);
     let mut error: Signal<Option<String>> = use_signal(|| None);
     let mut importing: Signal<bool> = use_signal(|| false);
@@ -6025,10 +6097,20 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
             )
             .await
             {
-                Ok(result) => status.set(Some(format!(
-                    "Imported {} transactions. Each lands in Unmatched, ready for reconciliation review.",
-                    result.imported
-                ))),
+                Ok(result) => {
+                    // Remember only on success. A label typed into an import that
+                    // then failed is not one worth restoring next month.
+                    if !src.trim().is_empty() && !label.trim().is_empty() {
+                        store.remember_statement_label(
+                            src.trim().to_string(),
+                            label.trim().to_string(),
+                        );
+                    }
+                    status.set(Some(format!(
+                        "Imported {} transactions. Each lands in Unmatched, ready for reconciliation review.",
+                        result.imported
+                    )));
+                }
                 Err(e) => error.set(Some(format!("Import failed: {e}"))),
             }
             importing.set(false);
@@ -6063,10 +6145,14 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         "Statement label"
                     }
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
                         r#type: "text",
+                        placeholder: "chequing-2026-09",
                         value: "{statement_source.read()}",
-                        oninput: move |e| statement_source.set(e.value()),
+                        oninput: move |e| {
+                            label_edited.set(true);
+                            statement_source.set(e.value());
+                        },
                     }
                 }
                 div {
@@ -6168,10 +6254,20 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
                 Ok(rows) => candidates.set(rows),
                 Err(e) => load_error.set(Some(e)),
             }
-            // No-match rows load is best-effort — if it fails, the
-            // matched pairs section still renders.
-            if let Ok(rows) = bridge::invoke_list_unmatched_without_candidates(Some(7)).await {
-                no_match_rows.set(rows);
+            // No-match rows are best-effort: a failure here must not blank the
+            // matched-pairs section. But it must not be SILENT either. Both
+            // commands read the same underlying query, so when that query was
+            // returning a deserialize error this arm swallowed it — leaving a
+            // half-empty screen with no explanation of what went wrong.
+            match bridge::invoke_list_unmatched_without_candidates(Some(7)).await {
+                Ok(rows) => no_match_rows.set(rows),
+                Err(e) => {
+                    let msg = match load_error.peek().clone() {
+                        Some(prev) => format!("{prev}\nNo-match rows failed to load: {e}"),
+                        None => format!("No-match rows failed to load: {e}"),
+                    };
+                    load_error.set(Some(msg));
+                }
             }
             loading.set(false);
         });
@@ -6253,10 +6349,12 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
             div { class: "p-6 text-center text-obsidian-text-muted text-sm",
                 "Loading candidates…"
             }
-        } else if visible.is_empty() {
-            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
-                "No reconciliation candidates. Import a statement or wait for more auto-imported transactions to accumulate."
-            }
+        // No empty state here on purpose. "Nothing to reconcile" is owned by the
+        // block further down, which also knows whether the no-match list is
+        // empty. An empty-state arm here fired at the same time as that one
+        // (`visible.is_empty()` and `visible_empty` are the same value), so the
+        // message printed twice — and it printed wrongly whenever there were
+        // no-match rows to show but no matched pairs.
         } else if !visible_empty {
             div { class: "space-y-3",
                 for c in visible {
@@ -7341,5 +7439,59 @@ mod tests {
         assert!(confidence_color_class(0.95).contains("emerald"));
         assert!(confidence_color_class(0.7).contains("amber"));
         assert!(confidence_color_class(0.4).contains("muted"));
+    }
+
+    fn sep_2026() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap()
+    }
+
+    /// The behaviour the feature exists for: type the institution once, and next
+    /// month only the period moves.
+    #[test]
+    fn rolls_remembered_label_onto_current_period() {
+        assert_eq!(
+            roll_statement_label("ws-tfsa-2026-08", sep_2026()),
+            "ws-tfsa-2026-09"
+        );
+    }
+
+    /// The regression that would otherwise creep in silently: appending instead
+    /// of replacing grows the label by one period every single month.
+    #[test]
+    fn rolling_replaces_the_period_it_does_not_append() {
+        let once = roll_statement_label("ws-tfsa-2026-08", sep_2026());
+        let twice = roll_statement_label(&once, sep_2026());
+        assert_eq!(once, twice, "rolling twice must be idempotent");
+        assert_eq!(twice.matches("2026").count(), 1);
+    }
+
+    /// A label that is only a period (the neutral default) must not grow a stem.
+    #[test]
+    fn bare_period_label_stays_bare() {
+        assert_eq!(roll_statement_label("2026-08", sep_2026()), "2026-09");
+    }
+
+    /// A label with no period suffix keeps its whole text and gains one.
+    #[test]
+    fn label_without_a_period_gains_one() {
+        assert_eq!(roll_statement_label("chequing", sep_2026()), "chequing-2026-09");
+    }
+
+    /// Institutions are distinguished by the account key, but the stem itself
+    /// must survive intact — including internal hyphens.
+    #[test]
+    fn multi_hyphen_stems_survive() {
+        assert_eq!(
+            roll_statement_label("sc-ngn-savings-2026-01", sep_2026()),
+            "sc-ngn-savings-2026-09"
+        );
+    }
+
+    #[test]
+    fn stem_extraction_rejects_non_period_suffixes() {
+        // "chequing-08" is not a period — two digits but no four-digit year.
+        assert_eq!(statement_label_stem("chequing-08"), "chequing-08");
+        // A year-like tail alone is not a period either.
+        assert_eq!(statement_label_stem("acct-2026"), "acct-2026");
     }
 }

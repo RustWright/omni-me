@@ -36,6 +36,25 @@ const DEFAULT_SERVER_URL: &str = match option_env!("OMNI_DEFAULT_SERVER_URL") {
     Some(url) => url,
     None => "http://localhost:3000",
 };
+/// Runtime override for the whole app-data root. Every stateful path —
+/// `local.db`, `budget.journal`, `attachments/`, and each scalar config file —
+/// hangs off this one directory, so overriding it is the single interception
+/// point that redirects a build onto throwaway data.
+///
+/// Setting it also puts the app in a **non-production posture**: the sync server
+/// is forced to `NON_PRODUCTION_SERVER_URL` unless `OMNI_SERVER_URL` says
+/// otherwise, and the UI shows a permanent banner. Without that coupling a dev
+/// build would happily backfill and then push to the live box.
+const DATA_DIR_ENV: &str = "OMNI_DATA_DIR";
+/// Runtime override for the sync server. Outranks the persisted `server_url`
+/// file (see `resolve_server_url`).
+const SERVER_URL_ENV: &str = "OMNI_SERVER_URL";
+/// Where a non-production run points when `OMNI_SERVER_URL` is unset.
+///
+/// Deliberately NOT `DEFAULT_SERVER_URL`: the private overlay's CI bakes that to
+/// the box address, so reusing it would make the safety default point at live
+/// data on exactly the builds that matter.
+const NON_PRODUCTION_SERVER_URL: &str = "http://localhost:3000";
 const TIMEZONE_FILE: &str = "timezone";
 const BASE_CURRENCY_FILE: &str = "base_currency";
 const WORKSPACE_FILE: &str = "workspace.json";
@@ -57,6 +76,86 @@ fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> 
     let val = default_fn();
     let _ = std::fs::write(&path, &val);
     val
+}
+
+/// Resolve the app-data root, honouring [`DATA_DIR_ENV`].
+///
+/// Returns the path **and** whether it came from the override, because that flag
+/// is what drives the non-production posture. Callers must not re-derive it by
+/// comparing paths — a dev root that happens to equal the default would then be
+/// silently treated as production.
+fn resolve_app_data(default_dir: PathBuf) -> (PathBuf, bool) {
+    choose_app_data(default_dir, std::env::var(DATA_DIR_ENV).ok().as_deref())
+}
+
+/// Pure half of [`resolve_app_data`] — no env access, so it can be tested.
+fn choose_app_data(default_dir: PathBuf, env_dir: Option<&str>) -> (PathBuf, bool) {
+    match env_dir.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(dir) => (PathBuf::from(dir), true),
+        None => (default_dir, false),
+    }
+}
+
+/// Resolve the sync server URL for this run.
+///
+/// In production this is `OMNI_SERVER_URL` → persisted file → build-time default.
+///
+/// Under a data-dir override the persisted file is **ignored**, and only an
+/// explicit `OMNI_SERVER_URL` can move the target off localhost. That asymmetry
+/// is intentional: a dev data root is very often a *copy* of the live one, and
+/// honouring the copied `server_url` would aim a dev build straight at the box —
+/// the exact accident this whole mechanism exists to prevent.
+/// An explicitly-set `OMNI_SERVER_URL` outranks the persisted file — and is
+/// deliberately **not** written back to it, so unsetting the env restores the
+/// saved value instead of having silently rewritten it.
+///
+/// The old order (file first, env consulted only as a fresh-install default)
+/// meant a device that had ever run an older build was pinned to that build's
+/// server URL with no recovery short of deleting the app-data dir. That is the
+/// bug that bit this user's desktop.
+fn resolve_server_url(app_data: &Path, non_production: bool) -> String {
+    let env_url = std::env::var(SERVER_URL_ENV).ok();
+    if non_production {
+        // No disk read at all: the persisted file is not merely outranked here,
+        // it is not consulted.
+        return choose_server_url(None, env_url.as_deref(), true, DEFAULT_SERVER_URL);
+    }
+    let persisted = std::fs::read_to_string(app_data.join(SERVER_URL_FILE)).ok();
+    let chosen = choose_server_url(persisted.as_deref(), env_url.as_deref(), false, DEFAULT_SERVER_URL);
+    // Preserve `load_or_create`'s write-back: a fresh install records the default
+    // it resolved. An env-supplied value is never written (see
+    // `load_with_env_override`), so unsetting the env restores the saved value.
+    let nothing_persisted = persisted.as_deref().map(str::trim).unwrap_or("").is_empty();
+    if nothing_persisted && env_url.is_none() {
+        let _ = std::fs::write(app_data.join(SERVER_URL_FILE), &chosen);
+    }
+    chosen
+}
+
+/// Pure half of [`resolve_server_url`]: precedence only, no env and no disk.
+///
+/// The asymmetry between the two modes is the safety property worth testing —
+/// under `non_production` a persisted value can never win, because a dev data
+/// root is usually a copy of the live one and would otherwise carry the box's
+/// address straight into a test run.
+fn choose_server_url(
+    persisted: Option<&str>,
+    env_url: Option<&str>,
+    non_production: bool,
+    build_default: &str,
+) -> String {
+    let env_url = env_url.map(str::trim).filter(|v| !v.is_empty());
+    if non_production {
+        return env_url.unwrap_or(NON_PRODUCTION_SERVER_URL).to_string();
+    }
+    if let Some(url) = env_url {
+        return url.to_string();
+    }
+    persisted
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(build_default)
+        .to_string()
 }
 
 /// Load the account roster — one account name per line; `#` comments and blank
@@ -91,6 +190,13 @@ pub struct AppState {
     /// screen. The real roster is supplied by the private overlay.
     pub roster: tokio::sync::RwLock<Vec<String>>,
     pub app_data_dir: std::path::PathBuf,
+    /// True when the app-data root came from [`DATA_DIR_ENV`] rather than the OS
+    /// default — i.e. this run is deliberately NOT on the user's real data.
+    ///
+    /// Read by `commands::settings::get_runtime_profile` so the UI can say so
+    /// permanently. A dev build that looks identical to the live one is how test
+    /// data ends up in a real ledger.
+    pub non_production: bool,
     /// Local LRU mirror of `/blobs/<sha256>` — see `commands::attachments`.
     pub attachment_cache_dir: std::path::PathBuf,
     pub http: reqwest::Client,
@@ -293,17 +399,54 @@ fn probe_target_from_url(url: &str) -> String {
 /// Remove stale SurrealKV LOCK file if the owning process is no longer alive.
 /// SurrealKV writes the PID to a LOCK file and doesn't clean it up on unclean
 /// shutdown (SIGKILL, crash, etc.), which blocks subsequent opens.
+/// Remove a SurrealKV `LOCK` left behind by a process that is gone.
+///
+/// The subtlety is the **self-restart** case, and it is why a single liveness
+/// probe is not enough. `app.restart()` (see `commands::update`) spawns the
+/// replacement process *before* the outgoing one has finished exiting, so at
+/// this point `/proc/<old pid>` normally still exists. The old code concluded
+/// the lock was held and left it; `db::connect` then blocked on a lock whose
+/// owner was milliseconds from disappearing. Because this whole init runs inside
+/// `block_on` on the main thread, the GTK loop never ran again — the window kept
+/// painting its last frame, the splash. That is exactly the reported "stuck on
+/// the splash screen after updating; closing and reopening fixed it", and why
+/// reopening fixed it: by then the old process was gone.
+///
+/// So a live pid is treated as *probably exiting*, not as final: wait a bounded
+/// moment for it to go, and only give up if it outlives the wait — which means a
+/// genuinely concurrent instance, whose database we must not steal.
 fn clear_stale_lock(db_path: &Path) {
+    const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+    const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
     let lock_path = db_path.join("LOCK");
-    if let Ok(contents) = std::fs::read_to_string(&lock_path)
-        && let Ok(pid) = contents.trim().parse::<u32>()
-    {
-        let alive = Path::new(&format!("/proc/{}", pid)).exists();
-        if !alive {
-            tracing::warn!(pid, "Removing stale SurrealKV LOCK (pid not running)");
-            let _ = std::fs::remove_file(&lock_path);
-        }
+    let Ok(contents) = std::fs::read_to_string(&lock_path) else {
+        return;
+    };
+    let Ok(pid) = contents.trim().parse::<u32>() else {
+        return;
+    };
+    if pid == std::process::id() {
+        return;
     }
+
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    while pid_is_alive(pid) {
+        if std::time::Instant::now() >= deadline {
+            // Outlived the wait: a real concurrent instance. Leave its lock
+            // alone and let `db::connect` fail loudly rather than opening a
+            // database another process is actively writing.
+            tracing::warn!(pid, "SurrealKV LOCK held by a live process — not removing");
+            return;
+        }
+        std::thread::sleep(LOCK_POLL);
+    }
+    tracing::warn!(pid, "Removing stale SurrealKV LOCK (pid not running)");
+    let _ = std::fs::remove_file(&lock_path);
+}
+
+fn pid_is_alive(pid: u32) -> bool {
+    Path::new(&format!("/proc/{pid}")).exists()
 }
 
 pub fn run() {
@@ -341,8 +484,19 @@ pub fn run() {
             // Store DB in the OS app data dir (e.g. ~/.local/share/com.omni-me.app/)
             // instead of inside src-tauri/ where Tauri's file watcher would trigger
             // infinite rebuild loops on every LOCK/WAL write.
-            let app_data = app.path().app_data_dir()
-                .expect("failed to resolve app data directory");
+            let (app_data, non_production) = resolve_app_data(
+                app.path().app_data_dir()
+                    .expect("failed to resolve app data directory"),
+            );
+            if non_production {
+                // Loud on purpose. This line is the first thing in the log of any
+                // run that is NOT touching the user's real data, and its absence
+                // is how you tell you are on live data.
+                tracing::warn!(
+                    data_dir = %app_data.display(),
+                    "NON-PRODUCTION RUN: app-data root overridden via {DATA_DIR_ENV}"
+                );
+            }
             std::fs::create_dir_all(&app_data).ok();
             let db_path = app_data.join(DB_NAME);
 
@@ -382,9 +536,7 @@ pub fn run() {
                 let device_id = load_or_create(&app_data, DEVICE_ID_FILE, || {
                     ulid::Ulid::new().to_string()
                 });
-                let server_url = load_or_create(&app_data, SERVER_URL_FILE, || {
-                    std::env::var("OMNI_SERVER_URL").unwrap_or(DEFAULT_SERVER_URL.to_string())
-                });
+                let server_url = resolve_server_url(&app_data, non_production);
                 let server_token =
                     load_or_create(&app_data, SERVER_TOKEN_FILE, String::new);
                 let timezone = load_or_create(&app_data, TIMEZONE_FILE, || {
@@ -396,7 +548,7 @@ pub fn run() {
 
                 // `has_server_token`, never the token itself — this line is the first
                 // thing in every log the user might paste into an issue.
-                tracing::info!(device_id = %device_id, server_url = %server_url, has_server_token = !server_token.trim().is_empty(), timezone = %timezone, roster_len = roster.len(), "App initialized");
+                tracing::info!(device_id = %device_id, server_url = %server_url, has_server_token = !server_token.trim().is_empty(), timezone = %timezone, roster_len = roster.len(), non_production, "App initialized");
 
                 // Durability guardrail 3: audit the local event log's device_id
                 // distribution. Always logged (so any future sync investigation has
@@ -445,14 +597,6 @@ pub fn run() {
 
                 let timezone_shared = Arc::new(tokio::sync::RwLock::new(timezone));
 
-                auto_close_scheduler::spawn(
-                    db.clone(),
-                    event_store.clone(),
-                    projections.clone(),
-                    device_id.clone(),
-                    timezone_shared.clone(),
-                );
-
                 // Auto-import runs server-side (per `feedback_llm_server_side.md`).
                 // Tauri client just projects synced events into its local DB +
                 // journal file via the BudgetProjection + JournalFile entries in
@@ -484,6 +628,20 @@ pub fn run() {
                     event_store.clone(),
                     projections.clone(),
                     device_id.clone(),
+                    push_debouncer.clone(),
+                );
+
+                // MUST stay below `push_debouncer`'s construction. This used to
+                // spawn further up, before the debouncer existed, so it could
+                // not be given one — and an auto-closed note therefore projected
+                // locally but never synced, reading closed on this device and
+                // open on every other.
+                auto_close_scheduler::spawn(
+                    db.clone(),
+                    event_store.clone(),
+                    projections.clone(),
+                    device_id.clone(),
+                    timezone_shared.clone(),
                     push_debouncer.clone(),
                 );
 
@@ -537,6 +695,7 @@ pub fn run() {
                     base_currency: tokio::sync::RwLock::new(base_currency),
                     roster: tokio::sync::RwLock::new(roster),
                     app_data_dir: app_data,
+                    non_production,
                     attachment_cache_dir,
                     http: omni_me_core::http::client(),
                     server_token: tokio::sync::RwLock::new(server_token.clone()),
@@ -598,6 +757,7 @@ pub fn run() {
             // Timezone
             commands::timezone::get_timezone,
             commands::timezone::update_timezone,
+            commands::settings::get_runtime_profile,
             commands::settings::get_base_currency,
             commands::settings::update_base_currency,
             // Workspace continuity persistence (1.8a)
@@ -682,4 +842,92 @@ pub fn run() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn mobile_entry_point() {
     run();
+}
+
+#[cfg(test)]
+mod runtime_profile_tests {
+    use super::*;
+
+    const BOX_URL: &str = "http://box.example:3000";
+
+    // --- the safety property ---------------------------------------------
+
+    /// **The test this whole mechanism exists for.** A dev data root is usually
+    /// a *copy* of the live one, so it carries the live `server_url` file. That
+    /// file must not be able to point a test build at the real box — the user
+    /// is using the app live, and a test write would land indistinguishable
+    /// fake rows in the real ledger.
+    #[test]
+    fn non_production_ignores_a_copied_server_url_file() {
+        let url = choose_server_url(Some(BOX_URL), None, true, BOX_URL);
+        assert_eq!(url, NON_PRODUCTION_SERVER_URL);
+    }
+
+    /// Reaching the box must require saying so out loud, never happen by default.
+    #[test]
+    fn non_production_defaults_to_localhost_not_the_build_default() {
+        // `DEFAULT_SERVER_URL` is baked to the box address by the overlay's CI,
+        // so falling back to it would defeat the whole safeguard.
+        let url = choose_server_url(None, None, true, BOX_URL);
+        assert_eq!(url, NON_PRODUCTION_SERVER_URL);
+        assert_ne!(url, BOX_URL);
+    }
+
+    /// An explicit env var is still honoured — the mechanism restricts defaults,
+    /// it does not forbid a deliberate choice.
+    #[test]
+    fn non_production_honours_an_explicit_env_url() {
+        let url = choose_server_url(Some(BOX_URL), Some("http://dev:3000"), true, BOX_URL);
+        assert_eq!(url, "http://dev:3000");
+    }
+
+    // --- production precedence -------------------------------------------
+
+    /// The stale-`server_url` fix: env now outranks the persisted file, which
+    /// previously won unconditionally and could only be changed by `rm -rf`.
+    #[test]
+    fn env_outranks_the_persisted_file_in_production() {
+        let url = choose_server_url(Some("http://old:3000"), Some("http://new:3000"), false, BOX_URL);
+        assert_eq!(url, "http://new:3000");
+    }
+
+    #[test]
+    fn persisted_file_outranks_the_build_default_in_production() {
+        let url = choose_server_url(Some("http://saved:3000"), None, false, BOX_URL);
+        assert_eq!(url, "http://saved:3000");
+    }
+
+    #[test]
+    fn falls_back_to_the_build_default_when_nothing_is_set() {
+        assert_eq!(choose_server_url(None, None, false, BOX_URL), BOX_URL);
+    }
+
+    /// Blank and whitespace-only values are absent, not empty overrides — an
+    /// exported-but-unset env var must not blank the server URL.
+    #[test]
+    fn blank_values_are_treated_as_absent() {
+        assert_eq!(
+            choose_server_url(Some("  "), Some("   "), false, BOX_URL),
+            BOX_URL
+        );
+        assert_eq!(choose_server_url(None, Some(""), true, BOX_URL), NON_PRODUCTION_SERVER_URL);
+    }
+
+    // --- data root --------------------------------------------------------
+
+    #[test]
+    fn data_dir_override_flags_non_production() {
+        let (dir, non_prod) = choose_app_data(PathBuf::from("/live"), Some("/tmp/dev"));
+        assert_eq!(dir, PathBuf::from("/tmp/dev"));
+        assert!(non_prod, "an overridden data root is non-production by definition");
+    }
+
+    #[test]
+    fn absent_or_blank_data_dir_keeps_the_os_default_and_stays_production() {
+        for env in [None, Some(""), Some("   ")] {
+            let (dir, non_prod) = choose_app_data(PathBuf::from("/live"), env);
+            assert_eq!(dir, PathBuf::from("/live"), "env={env:?}");
+            assert!(!non_prod, "env={env:?} must not flip the profile");
+        }
+    }
 }

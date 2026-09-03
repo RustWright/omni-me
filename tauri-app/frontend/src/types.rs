@@ -34,12 +34,19 @@ pub struct JournalEntryItem {
     pub updated_at: String,
 }
 
-/// One day's calendar-widget stats. Mirrors `JournalDayStat` from the backend:
-/// the day has an entry (it's in the result set) and whether it's `complete`.
+/// One day's calendar-widget stats. Mirrors `JournalDayStat` from the backend.
+///
+/// `raw_text` arrives unprocessed on purpose — the word count is derived here,
+/// with the same token-stripping reader the editor footer uses, so the two can
+/// never disagree. See the backend type for why it is not counted there.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JournalDayStat {
     pub date: String,
     pub complete: bool,
+    #[serde(default)]
+    pub closed: bool,
+    #[serde(default)]
+    pub raw_text: String,
 }
 
 /// A free-form (generic) note. Mirrors `GenericNoteRow` from the backend.
@@ -111,6 +118,17 @@ pub struct SyncInfo {
     /// (same rule as the LLM key's `has_key`).
     #[serde(default)]
     pub has_server_token: bool,
+}
+
+/// Which data this run is pointed at. Drives the non-production banner.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeProfile {
+    /// True when the app-data root was overridden via `OMNI_DATA_DIR`, i.e. this
+    /// build is deliberately NOT on real data.
+    #[serde(default)]
+    pub non_production: bool,
+    pub data_dir: String,
+    pub server_url: String,
 }
 
 /// Dry run of an Obsidian export — what it would overwrite, before it does.

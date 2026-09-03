@@ -25031,7 +25031,11 @@
   var omniEditorTheme = EditorView.theme({
     "&": {
       flex: "1 0 auto",
-      fontSize: "16px",
+      // Driven by a CSS variable so the size setting can change it live, without
+      // rebuilding the theme or recreating the editor (which would lose the
+      // undo history and the caret position). The fallback keeps a stock 16px
+      // for any surface that never sets the variable.
+      fontSize: "var(--editor-font-size, 16px)",
       color: "#dcddde"
     },
     ".cm-scroller": {
@@ -25057,9 +25061,41 @@
     ".cm-content .cm-line span": {
       textDecoration: "none"
     },
+    // ...but put it back for strikethrough. The blanket rule above is why
+    // enabling GFM alone did not make `~~text~~` render struck: the parser
+    // produced the mark and this rule immediately erased its line. Specificity
+    // here is (0,3,1) against the blanket rule's (0,2,1), so it wins without
+    // `!important`. The class comes from `omniHighlight` below — CodeMirror's
+    // own token classes are generated and unstable, so they cannot be targeted.
+    ".cm-content .cm-line span.cm-omni-strike": {
+      textDecoration: "line-through",
+      opacity: "0.65"
+    },
     ".cm-cursor, .cm-dropCursor": {
       borderLeftColor: "#448aff",
       borderLeftWidth: "2px"
+    },
+    // Selection colors, and the reason they are spelled out rather than inherited.
+    //
+    // This theme is declared `{ dark: true }` below. Without that flag CodeMirror
+    // stamped `cm-light` on the editor and applied its LIGHT selection defaults
+    // (#d9d9d9 unfocused, #d7d4f0 focused) underneath #dcddde text — a near-white
+    // band under near-white glyphs, which is the "highlight unreadable in dark
+    // mode" report.
+    //
+    // Setting the flag alone is not enough: CM's dark defaults are #222/#233,
+    // which against this editor's #1e1e1e ground are almost invisible. So the
+    // band is the app accent at low alpha — clearly present, still letting the
+    // text carry the contrast.
+    //
+    // The focused selector mirrors the base theme's own child-combinator shape so
+    // specificity matches and theme order decides the winner. Shortening it loses
+    // to the base rule and the selection silently reverts.
+    ".cm-selectionBackground": {
+      background: "rgba(68, 138, 255, 0.25)"
+    },
+    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
+      background: "rgba(68, 138, 255, 0.38)"
     },
     // #344 reveal-on-select line completion time: floated to the right edge of the
     // active line, small and muted so it reads as metadata, never selectable.
@@ -25075,7 +25111,10 @@
       pointerEvents: "none",
       whiteSpace: "nowrap"
     }
-  });
+  }, { dark: true });
+  var omniHighlight = HighlightStyle.define([
+    { tag: tags.strikethrough, class: "cm-omni-strike" }
+  ]);
   var proseInputAttributes = EditorView.contentAttributes.of({
     autocorrect: "on",
     autocapitalize: "sentences",
@@ -25508,13 +25547,18 @@
       const coords = editorView.coordsAtPos(head);
       if (!coords) return;
       const margin = 24;
+      const scroller = findScrollParent(editorView.dom);
+      const scrollBy = (dy) => {
+        if (!dy) return;
+        if (scroller) scroller.scrollTop += dy;
+        else window.scrollBy(0, dy);
+      };
+      const visibleTop = (window.visualViewport?.offsetTop ?? 0) + margin;
       const visibleBottom = window.innerHeight - kb;
-      const overflow = coords.bottom - (visibleBottom - margin);
-      if (overflow > 0) {
-        const scroller = findScrollParent(editorView.dom);
-        if (scroller) scroller.scrollTop += overflow;
-        else window.scrollBy(0, overflow);
-      }
+      const overflowBottom = coords.bottom - (visibleBottom - margin);
+      const overflowTop = visibleTop - coords.top;
+      if (overflowBottom > 0) scrollBy(overflowBottom);
+      else if (overflowTop > 0) scrollBy(-overflowTop);
     });
   }
   if (window.visualViewport) {
@@ -25549,8 +25593,17 @@
     const initialCursor = options && Number.isFinite(options.initialCursor) ? options.initialCursor : 0;
     const extensions = [
       minimalSetup,
-      markdown(),
+      // `markdown()` with no args uses the plain CommonMark grammar, which has no
+      // strikethrough (nor tables/tasklists/autolinks). `markdownLanguage` is the
+      // GFM-configured variant that ships in the same package — it was already in
+      // the bundle, simply never selected.
+      markdown({ base: markdownLanguage }),
+      syntaxHighlighting(omniHighlight),
       EditorView.lineWrapping,
+      // Keep CodeMirror's OWN `scrollIntoView` from parking the caret flush
+      // against an edge, where the auto-hiding header animating back in would
+      // immediately cover it.
+      EditorView.scrollMargins.of(() => ({ top: 48, bottom: 48 })),
       proseInputAttributes,
       omniEditorTheme,
       autoWrapFilter,

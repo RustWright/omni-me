@@ -155,6 +155,23 @@ pub struct PersistedWorkspace {
     /// `#[serde(default)]` so a pre-1.8b blob (no `nav` key) still loads.
     #[serde(default)]
     pub nav: NavState,
+    /// Last statement label used per source account, so a monthly import
+    /// prefills `<remembered prefix>-<current period>` instead of asking the
+    /// user to retype it. Keyed by account because the account *path* cannot
+    /// identify an institution here — the grammar is
+    /// `Assets:<Registration>:<Commodity>` with institutions in posting tags,
+    /// so two institutions holding the same registration share a path.
+    ///
+    /// `#[serde(default)]` for the same reason as `nav`: older blobs lack the key.
+    #[serde(default)]
+    pub statement_labels: Vec<(String, String)>,
+    /// Editor body font size in px. `None` ⇒ the stylesheet default (16px).
+    ///
+    /// Lives here rather than in a backend config file because it is a pure
+    /// display preference: no projection reads it, and keeping it frontend-side
+    /// means changing it needs no Tauri command round-trip.
+    #[serde(default)]
+    pub editor_font_px: Option<u32>,
 }
 
 /// Does this session hold anything a reader would act on?
@@ -185,6 +202,11 @@ pub struct ContinuityStore {
     lists: Signal<HashMap<ContinuityKey, ListState>>,
     /// Last navigation position (1.8b), restored at boot.
     nav: Signal<NavState>,
+    /// Remembered statement label per source account. Persisted — the whole
+    /// point is that it survives to the *next* month's import.
+    statement_labels: Signal<HashMap<String, String>>,
+    /// Editor body font size in px; `None` ⇒ stylesheet default.
+    editor_font_px: Signal<Option<u32>>,
     /// Flips true once the boot disk-read finishes (1.8a/1.8b). Pages gate their
     /// first hydration on this so the initially-open page sees a disk-restored
     /// session instead of racing the load and falling back to the backend copy.
@@ -390,6 +412,13 @@ impl ContinuityStore {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             nav: self.nav.peek().clone(),
+            statement_labels: self
+                .statement_labels
+                .peek()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            editor_font_px: *self.editor_font_px.peek(),
         }
     }
 
@@ -399,10 +428,42 @@ impl ContinuityStore {
         let mut captures = self.captures;
         let mut lists = self.lists;
         let mut nav = self.nav;
+        let mut statement_labels = self.statement_labels;
         *sessions.write() = w.sessions.into_iter().collect();
         *captures.write() = w.captures.into_iter().collect();
         *lists.write() = w.lists.into_iter().collect();
         *nav.write() = w.nav;
+        *statement_labels.write() = w.statement_labels.into_iter().collect();
+        let mut editor_font_px = self.editor_font_px;
+        *editor_font_px.write() = w.editor_font_px;
+    }
+
+    /// Editor font size in px, or `None` for the stylesheet default.
+    pub fn editor_font_px(&self) -> Option<u32> {
+        *self.editor_font_px.read()
+    }
+
+    /// Set (or clear, with `None`) the editor font size.
+    pub fn set_editor_font_px(&self, px: Option<u32>) {
+        let mut sig = self.editor_font_px;
+        sig.set(px);
+        self.bump();
+    }
+
+    /// The label last used for `account`, if any. Non-subscribing: the import
+    /// form reads it once to seed a field, and must not re-render on every
+    /// unrelated workspace mutation.
+    pub fn statement_label_peek(&self, account: &str) -> Option<String> {
+        self.statement_labels.peek().get(account).cloned()
+    }
+
+    /// Remember the label used for `account`. Called after a successful import,
+    /// not on every keystroke — a label the user abandoned mid-edit is not one
+    /// worth restoring next month.
+    pub fn remember_statement_label(&self, account: String, label: String) {
+        let mut labels = self.statement_labels;
+        labels.write().insert(account, label);
+        self.bump();
     }
 }
 
@@ -413,6 +474,8 @@ pub fn use_continuity_provider() -> ContinuityStore {
     let captures = use_signal(HashMap::<ContinuityKey, CaptureDraft>::new);
     let lists = use_signal(HashMap::<ContinuityKey, ListState>::new);
     let nav = use_signal(NavState::default);
+    let statement_labels = use_signal(HashMap::<String, String>::new);
+    let editor_font_px = use_signal(|| None::<u32>);
     let reads = use_signal(HashMap::<String, serde_json::Value>::new);
     let revision = use_signal(|| 0u64);
     // `loaded` gates the persistence writer until the boot read finishes (1.8a)
@@ -430,6 +493,8 @@ pub fn use_continuity_provider() -> ContinuityStore {
         captures,
         lists,
         nav,
+        statement_labels,
+        editor_font_px,
         loaded,
         reads,
         revision,

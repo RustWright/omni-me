@@ -1,10 +1,16 @@
-//! Background scheduler that wakes around local midnight and invokes
+//! Background scheduler that invokes
 //! `omni_me_core::auto_close::auto_close_stale_journals`.
 //!
-//! Timing: on start, sleep until `next_local_midnight + GRACE_SECONDS`. After
-//! a tick fires, sleep until the next local midnight. If the timezone string
-//! can't be parsed, fall back to UTC and log a warning — the app should never
-//! panic on a bad timezone setting.
+//! Timing: a **catch-up tick shortly after start**, then one per local
+//! midnight (`+ GRACE_SECONDS`, to avoid racing a midnight-adjacent write). If
+//! the timezone string can't be parsed, fall back to UTC and log a warning —
+//! the app should never panic on a bad timezone setting.
+//!
+//! The startup tick is load-bearing, not belt-and-braces. Sleeping until the
+//! next midnight *first* meant the app had to be alive at 00:00:30 for
+//! auto-close to fire at all, which on a phone is essentially never — the
+//! process is backgrounded or killed long before. Sweeping at startup instead
+//! makes the scheduler catch up on whatever it missed while the app was shut.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,10 +22,17 @@ use tokio::sync::RwLock;
 use omni_me_core::auto_close::auto_close_stale_journals;
 use omni_me_core::db::Database;
 use omni_me_core::events::{ProjectionRunner, SurrealEventStore};
+use omni_me_core::sync::PushDebouncer;
 
 /// Offset past midnight before the tick fires — avoids race with any
 /// midnight-adjacent write.
 const GRACE_SECONDS: i64 = 30;
+
+/// Delay before the catch-up tick. Short on purpose: the projections are
+/// already initialised before this task spawns, so this is only about not
+/// competing with first paint — and a long delay would miss the many app
+/// sessions that last under a minute.
+const CATCHUP_DELAY: Duration = Duration::from_secs(15);
 
 /// Spawn the auto-close scheduler on the Tauri async runtime. Returns
 /// immediately; the task lives as long as the runtime.
@@ -29,29 +42,40 @@ pub fn spawn(
     projections: ProjectionRunner,
     device_id: String,
     timezone: Arc<RwLock<String>>,
+    push_debouncer: PushDebouncer,
 ) {
     tauri::async_runtime::spawn(async move {
+        // Catch-up sweep before the first sleep. `auto_close_stale_journals` is
+        // driven by a `complete = true AND closed = false AND date <= yesterday`
+        // query, so it is idempotent: a tick with nothing to do is a cheap
+        // no-op, and a tick after a week offline closes the whole backlog.
+        tokio::time::sleep(CATCHUP_DELAY).await;
+
         loop {
-            let tz_name = timezone.read().await.clone();
-            let now_utc = Utc::now();
-            let sleep_for = duration_until_next_tick(&tz_name, now_utc, GRACE_SECONDS);
-
-            tracing::debug!(
-                tz = %tz_name,
-                sleep_secs = sleep_for.as_secs(),
-                "auto-close scheduler: sleeping until next local midnight",
-            );
-            tokio::time::sleep(sleep_for).await;
-
             let tz_name = timezone.read().await.clone();
             let today = today_in_tz(&tz_name, Utc::now());
             match auto_close_stale_journals(&db, &event_store, &projections, &device_id, today)
                 .await
             {
                 Ok(0) => tracing::debug!("auto-close: no stale journals"),
-                Ok(n) => tracing::info!(closed = n, "auto-close: closed stale journals"),
+                Ok(n) => {
+                    // Nudge the pusher, or these closes sit unsynced until an
+                    // unrelated edit happens to wake it — so the note would
+                    // read closed on this device and open on every other one.
+                    push_debouncer.trigger();
+                    tracing::info!(closed = n, "auto-close: closed stale journals");
+                }
                 Err(e) => tracing::warn!(error = %e, "auto-close: tick failed"),
             }
+
+            let tz_name = timezone.read().await.clone();
+            let sleep_for = duration_until_next_tick(&tz_name, Utc::now(), GRACE_SECONDS);
+            tracing::debug!(
+                tz = %tz_name,
+                sleep_secs = sleep_for.as_secs(),
+                "auto-close scheduler: sleeping until next local midnight",
+            );
+            tokio::time::sleep(sleep_for).await;
         }
     });
 }

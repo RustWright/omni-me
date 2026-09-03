@@ -155,12 +155,19 @@ mod tests {
             }
         };
         let parsed = parse_eml(&bytes).expect("SC eml parses");
+        // Institution-agnostic ON PURPOSE. This assertion used to list expected
+        // sender domains, but the fixture in `.reference/` is a REAL email while
+        // the expected domains were fictionalized to keep the institution out of
+        // this public repo. The two could never agree: the test skipped on CI
+        // (no fixture) and failed on any machine that had real samples, so it
+        // sat red locally and green in CI.
+        //
+        // Naming the real domain here would fix the test by leaking exactly what
+        // the fictionalization protects. The sender is not what this test is
+        // about anyway — parsing an .eml and recovering its PDF is.
         assert!(
-            parsed.from.contains("@meridian.example")
-                || parsed.from.contains("amazonses")
-                || parsed.from.to_lowercase().contains("standard"),
-            "unexpected From: {}",
-            parsed.from
+            parsed.from.contains('@'),
+            "From header did not parse into an address"
         );
         assert!(
             parsed.subject.to_lowercase().contains("estatement")
@@ -176,10 +183,11 @@ mod tests {
             pdf.bytes.starts_with(b"%PDF-"),
             "attachment bytes don't look like a PDF"
         );
+        // Shapes only — no `from`, and no subject. This runs against a real
+        // email, and test output is the kind of thing that gets pasted into an
+        // issue or a log.
         eprintln!(
-            "SC parse: from={}, subject={}, body {} chars, {} attachments, pdf {} bytes",
-            parsed.from,
-            parsed.subject,
+            "statement parse: body {} chars, {} attachments, pdf {} bytes",
             parsed.body_text.len(),
             parsed.attachments.len(),
             pdf.bytes.len()

@@ -3,8 +3,9 @@ use dioxus::prelude::*;
 
 use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{
-    Banner, BannerKind, Button, ButtonSize, ButtonVariant, INPUT_CLASS, PageHeader,
+    Banner, BannerKind, Button, ButtonSize, ButtonVariant, INPUT_CLASS, PageHeader, SegmentedNav,
 };
+use crate::continuity::use_continuity;
 use crate::{
     bridge,
     types::{AutoImportSourceView, SyncStatus},
@@ -246,6 +247,9 @@ pub fn SettingsPage() -> Element {
             // --- Base Currency (Phase 7.3) ---
             BaseCurrencySection {}
 
+            // --- Editor appearance ---
+            EditorSection {}
+
             // --- Obsidian Import / Export ---
             super::import_export::ImportExportSection {}
 
@@ -293,6 +297,49 @@ const CURRENCY_CODES: &[&str] = &["CAD", "USD", "EUR", "GBP", "AED", "AUD", "JPY
 
 /// Base-currency picker (Phase 7.3). The selection persists server-side and is
 /// read by the dashboard / accounts / budget aggregation as the FX base.
+/// Editor body text size. Sizes are px values, not vague labels, because the
+/// setting maps to one CSS variable the editor theme reads — naming the number
+/// keeps the control honest about what it does.
+const EDITOR_FONT_SIZES: [(u32, &str); 4] = [(14, "Small"), (16, "Default"), (18, "Large"), (21, "Larger")];
+
+#[component]
+fn EditorSection() -> Element {
+    let store = use_continuity();
+    // `None` in the store means "stylesheet default", which is 16px — resolve it
+    // here so the control always shows a concrete selection rather than nothing.
+    let current_px = store.editor_font_px().unwrap_or(16);
+
+    rsx! {
+        div { class: "mb-10 space-y-6",
+            div { class: "border-b border-white/5 pb-2 mb-4",
+                h2 { class: "text-lg font-bold text-obsidian-text", "Editor" }
+            }
+            div {
+                label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                    "Body text size"
+                }
+                SegmentedNav {
+                    items: EDITOR_FONT_SIZES
+                        .iter()
+                        .map(|(px, label)| (px.to_string(), (*label).to_string()))
+                        .collect::<Vec<_>>(),
+                    active: current_px.to_string(),
+                    on_select: move |key: String| {
+                        if let Ok(px) = key.parse::<u32>() {
+                            // Store `None` for the default so a workspace that
+                            // never touched this setting stays free of it.
+                            store.set_editor_font_px(if px == 16 { None } else { Some(px) });
+                        }
+                    },
+                }
+                p { class: "text-xs text-obsidian-text-muted mt-2",
+                    "Applies to the note and journal editors. Takes effect immediately."
+                }
+            }
+        }
+    }
+}
+
 #[component]
 fn BaseCurrencySection() -> Element {
     let mut current = use_signal(|| "CAD".to_string());
@@ -1110,8 +1157,14 @@ fn AccountOverrideRow(
                         }
                     },
                 }
-                div { class: "flex items-center gap-1.5 mt-0.5",
-                    span { class: "font-mono text-[10px] text-obsidian-text-muted/70 truncate", "{account}" }
+                // `min-w-0` on BOTH the flex row and the truncating span. A flex
+                // item defaults to `min-width: auto`, which refuses to shrink
+                // below its content's intrinsic width — and `truncate` does not
+                // change that, it only clips once the box is already narrow. So
+                // a long real account name pushed this row wider than its parent
+                // and shoved the badge under the buttons instead of ellipsising.
+                div { class: "flex items-center gap-1.5 mt-0.5 min-w-0",
+                    span { class: "font-mono text-[10px] text-obsidian-text-muted/70 truncate min-w-0", "{account}" }
                     if is_liquid {
                         span { class: "shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide bg-success/15 text-success",
                             "Liquid"
@@ -1340,10 +1393,10 @@ fn AutoImportRow(
         div { class: "p-4 bg-obsidian-sidebar/60 border border-white/5 rounded-lg",
             div { class: "flex items-start justify-between gap-4 mb-2",
                 div { class: "min-w-0 flex-1",
-                    div { class: "flex items-center gap-2 mb-1",
-                        span { class: "font-mono text-sm text-obsidian-text truncate", "{source.name}" }
+                    div { class: "flex items-center gap-2 mb-1 min-w-0",
+                        span { class: "font-mono text-sm text-obsidian-text truncate min-w-0", "{source.name}" }
                         span {
-                            class: "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border {badge_classes}",
+                            class: "shrink-0 text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border {badge_classes}",
                             "{label}"
                         }
                         if paused {
@@ -1556,11 +1609,11 @@ fn ConfiguredSourceRow(
         div { class: "p-3 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
             div { class: "flex items-center justify-between gap-2",
                 div { class: "min-w-0",
-                    div { class: "flex items-center gap-2",
-                        span { class: "font-mono text-sm text-obsidian-text truncate", "{name}" }
-                        span { class: "text-[10px] px-1.5 py-0.5 rounded {badge_classes}", "{badge_label}" }
+                    div { class: "flex items-center gap-2 min-w-0",
+                        span { class: "font-mono text-sm text-obsidian-text truncate min-w-0", "{name}" }
+                        span { class: "shrink-0 text-[10px] px-1.5 py-0.5 rounded {badge_classes}", "{badge_label}" }
                         if !enabled {
-                            span { class: "text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-obsidian-text-muted",
+                            span { class: "shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-obsidian-text-muted",
                                 "disabled"
                             }
                         }

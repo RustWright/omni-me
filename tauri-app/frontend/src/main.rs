@@ -217,6 +217,22 @@ const EDGE_SWIPE_OPEN_PX: f64 = 48.0;
 /// the guaranteed fallback).
 const EDGE_SWIPE_CLOSE_PX: f64 = 48.0;
 
+/// Quiet period after a header toggle during which scrolling cannot toggle it
+/// again. **Must exceed the header's 300ms CSS transition.**
+///
+/// Toggling animates the header's height, and every frame of that animation
+/// reflows the scroll column and fires `onscroll`. The direction logic reads
+/// those synthetic events as real scrolling and toggles again — the header
+/// drives its own next toggle. The existing `< 150` scroll-range guard only
+/// covers barely-scrollable pages; on a long note the loop still ran, and the
+/// soft keyboard (which resizes the column via `.pb-mobile-nav`) kicked it off.
+const HEADER_TOGGLE_COOLDOWN_MS: i64 = 400;
+
+/// Scroll distance required to toggle the header. Raised from 6px: the reflow
+/// nudges that fed the loop are small, so a wider band ignores them outright
+/// while a deliberate scroll clears it easily.
+const HEADER_TOGGLE_DELTA_PX: f64 = 12.0;
+
 fn main() {
     dioxus::launch(App);
 }
@@ -242,6 +258,18 @@ fn App() -> Element {
     // 1.12 edge-swipe) brings the nav back.
     let mut header_hidden = use_signal(|| false);
     let mut last_scroll_top = use_signal(|| 0.0_f64);
+    // Wall-clock ms of the last header toggle — see `HEADER_TOGGLE_COOLDOWN_MS`.
+    let mut header_toggled_at = use_signal(|| 0_i64);
+
+    // Which data this run is pointed at. Fetched once — the profile is fixed at
+    // process start and cannot change without a restart, so there is nothing to
+    // poll. Feeds the non-production strip below.
+    let mut runtime_profile = use_signal(|| None::<types::RuntimeProfile>);
+    use_future(move || async move {
+        if let Ok(profile) = bridge::invoke_get_runtime_profile().await {
+            runtime_profile.set(Some(profile));
+        }
+    });
 
     // Continuity store (Phase 1.1): root-held per-page editing state that
     // survives page unmount on tab switch. Pages read it via `use_continuity`.
@@ -424,6 +452,25 @@ fn App() -> Element {
         bridge::set_can_go_back(can);
     });
 
+    // Push the saved editor font size into the CSS variable the editor theme
+    // reads. Reactive, so changing it in Settings applies live rather than at
+    // the next restart — and it re-applies after the boot rehydrate, which is
+    // when the persisted value actually arrives.
+    use_effect(move || {
+        bridge::set_editor_font_px(continuity_store.editor_font_px());
+    });
+
+    // Drop editor focus when the drawer opens. CodeMirror otherwise keeps focus
+    // and keeps blinking its caret through the drawer's scrim, because the caret
+    // is painted at the editor's stacking level and the scrim is only a
+    // translucent overlay. Blurring also dismisses the soft keyboard, which is
+    // what you want the moment a nav panel takes over the screen.
+    use_effect(move || {
+        if *drawer_open.read() {
+            bridge::blur_active_element();
+        }
+    });
+
     // Known-account suggestions: the shared `known_accounts` union behind every
     // `AccountInput` typeahead. Registered *after* the `SyncRefresh` provider
     // above so it can subscribe to `sync_epoch` and re-fetch when a pull lands —
@@ -590,6 +637,17 @@ fn App() -> Element {
             // Bottom padding only applies on mobile so the bottom nav doesn't
             // overlap the last item.
             main { class: "flex-1 flex flex-col overflow-hidden",
+                // Non-production strip. Deliberately OUTSIDE the auto-hiding
+                // header and never animated: a safety indicator that disappears
+                // when you scroll is not a safety indicator. `shrink-0` so it
+                // cannot be squeezed away by a tall content column either.
+                if let Some(profile) = runtime_profile.read().clone().filter(|p| p.non_production) {
+                    div {
+                        class: "shrink-0 px-3 py-1.5 bg-warn/20 border-b border-warn/40 text-warn text-[11px] font-semibold uppercase tracking-wide text-center",
+                        title: "data: {profile.data_dir} · sync: {profile.server_url}",
+                        "Non-production data — not your live app"
+                    }
+                }
                 // Auto-hiding header (#7): collapses its height + padding (not just
                 // a transform) so the content reclaims the strip. `overflow-hidden`
                 // keeps the chip clipped mid-collapse; the border fades with it.
@@ -635,13 +693,31 @@ fn App() -> Element {
                             last_scroll_top.set(cur);
                             return;
                         }
+                        // Inside the cooldown, track position but never toggle —
+                        // this is what stops the header's own 300ms height
+                        // animation from driving the next toggle.
+                        let now_ms = chrono::Utc::now().timestamp_millis();
+                        if now_ms - *header_toggled_at.peek() < HEADER_TOGGLE_COOLDOWN_MS {
+                            last_scroll_top.set(cur);
+                            return;
+                        }
                         let last = *last_scroll_top.peek();
-                        if cur <= 8.0 {
-                            header_hidden.set(false);
-                        } else if cur - last > 6.0 {
-                            header_hidden.set(true);
-                        } else if last - cur > 6.0 {
-                            header_hidden.set(false);
+                        let want_hidden = if cur <= 8.0 {
+                            Some(false)
+                        } else if cur - last > HEADER_TOGGLE_DELTA_PX {
+                            Some(true)
+                        } else if last - cur > HEADER_TOGGLE_DELTA_PX {
+                            Some(false)
+                        } else {
+                            None
+                        };
+                        // Stamp only on a real change, so a stream of same-value
+                        // sets can't hold the cooldown open indefinitely.
+                        if let Some(hidden) = want_hidden
+                            && *header_hidden.peek() != hidden
+                        {
+                            header_hidden.set(hidden);
+                            header_toggled_at.set(now_ms);
                         }
                         last_scroll_top.set(cur);
                     },
