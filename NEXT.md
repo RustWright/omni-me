@@ -11,9 +11,10 @@ silently dropped**; matching legs come from receipts (purchases) and paystubs (s
 > any importer, mapping, or box assumption; the ledger's `CONVENTIONS.md` is CANONICAL.
 
 ## Decisions in force — inherit these
-- **The brokerage subprocess source is verified but deliberately NOT enabled.** A dry run
-  proved the mapping (150 new + 145 pre-cutoff = 295, correctly tagged); it stays off until
-  reconciliation can verify it — 150 rows can't be hand-reviewed and would be rubber-stamped.
+- **BOTH bank sources are OFF (user, 2026-09-04)** — account maps removed, which is the only
+  durable hold. The ledger import AND the auto-import must both match the established
+  conventions before either runs again; the user does not currently trust the financial data.
+  UI polish on the finances screens is explicitly shelved behind this.
 - **Acceptance test for a bulk import: replay the statements; COUNT and CLOSING BALANCE must
   match per statement.** `bal=0` never proves no loss (always 0 in double-entry), and an
   un-emitted row is invisible to `bal -B` and to a file manifest — only closing-balance
@@ -23,10 +24,10 @@ silently dropped**; matching legs come from receipts (purchases) and paystubs (s
 - 1.0.5 shipped. Ledger-refresh fix committed, awaiting the next release.
 
 ## Findings 2026-09-04 — verified, not inferred (detail in the private docs)
-- **Paystub expansion stops 2023-11-30.** Later deposits record NET pay as gross; ~2.7 yrs of
-  payroll deductions absent, and 66 source PDFs sit unused. **The gap is upstream, in the
-  ledger project — not in omni-me's import.**
-- **Two accounts the conventions doc describes have never existed in any ledger file.**
+- **Upstream (ledger project, NOT omni-me's import):** paystub expansion stops 2023-11-30, so
+  ~2.7 yrs of payroll deductions are absent and 66 source PDFs sit unused; and two accounts
+  the conventions doc describes have never existed in any ledger file. Detail in that
+  project's memory (`project_ledger_completeness_gaps`).
 - **One statement source maps to an account tree with 0 occurrences.** Fix needs config AND
   tags together — `statement_extraction_to_drafts` emits `tags: vec![]`, so the pooled
   account would otherwise make that money unattributable.
@@ -35,7 +36,13 @@ silently dropped**; matching legs come from receipts (purchases) and paystubs (s
   its account map. **Edit box config with `cp`, never `sed -i`** (single-file bind mount:
   an inode swap makes the edit invisible to the container until a restart).
 
+- **The other bank source diverges too** — no institution/product tags, and fees as a tag
+  instead of an expense posting. 10 rows already committed that way. Held off, but note it
+  reports `success`/0 silently with an empty map, so a healthy status proves nothing.
+
 ## Open threads
-Mobile keyboard/scroll + floating insertion handle (Android 15 disproves the API-29 theory;
-the test phone IS API 29, so both must work) · contextual format bar on selection ·
-engine-side dedup for subprocess sources · global rules tier is 152/150 lines.
+Mobile keyboard/scroll + floating insertion handle — **ask the user to connect the test phone
+in-session**, else defer to a session where they have it (Android 15 disproves the API-29
+theory; the test phone IS API 29, so both must work) · format bar SHELVED behind finances ·
+engine-side dedup for subprocess sources · rules tier 152/150 · ledger-level verification
+needs the `ledger` binary installed (it lived on the offline device; importers are Python).
