@@ -2505,6 +2505,15 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
     let mut fx_rate_input: Signal<String> = use_signal(String::new);
     let mut busy: Signal<bool> = use_signal(|| false);
     let mut feedback: Signal<Option<String>> = use_signal(|| None);
+    // Committing a batch writes transactions the Ledger is already showing a
+    // cached page of. That list re-fetches on three triggers — a filter Apply,
+    // an inbound `sync:applied`, and the detail pane's own `refresh_epoch` — and
+    // a commit from THIS view is none of them, so the approved rows stayed
+    // invisible until the user pressed Apply. `refresh_epoch` can't help here:
+    // it is a signal local to `LedgerView`, unreachable from the review inbox.
+    // Bumping the app-wide epoch instead fixes the whole class in one place,
+    // since every read view already subscribes to it.
+    let mut sync_epoch = crate::sync_refresh::use_sync_epoch();
 
     use_effect(move || {
         let id = batch_id_for_resource.clone();
@@ -2647,7 +2656,14 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                     .await;
                                     busy.set(false);
                                     match res {
-                                        Ok(_) => on_done.call(()),
+                                        Ok(_) => {
+                                            // Before `on_done`, which unmounts this view:
+                                            // tell every subscribed read view that the
+                                            // ledger changed underneath it.
+                                            let next = sync_epoch.peek().wrapping_add(1);
+                                            sync_epoch.set(next);
+                                            on_done.call(())
+                                        }
                                         Err(e) => feedback.set(Some(format!("Commit failed: {e}"))),
                                     }
                                 });

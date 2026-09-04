@@ -9,7 +9,15 @@
 //! the shared epoch signal held here.
 //!
 //! Read views subscribe by reading [`use_sync_epoch`] inside their fetch
-//! `use_effect`, so a pull makes them re-query automatically. Active editors
+//! `use_effect`, so a pull makes them re-query automatically.
+//!
+//! Despite the name, the epoch means "**the local DB changed under you**", not
+//! strictly "a pull landed". A LOCAL write bumps it too when it commits data
+//! another mounted view is already displaying — the review inbox does this after
+//! committing a batch, because the Ledger's cached page would otherwise keep
+//! showing pre-approval rows until a filter Apply. Prefer this over threading a
+//! bespoke signal between two views: any read view that subscribes gets every
+//! source of change for free. Active editors
 //! deliberately do NOT subscribe — re-loading an open note mid-edit would
 //! clobber unsaved keystrokes, so open-entry live-update is left to a manual
 //! navigation / save (a deliberate follow-up, not this wiring).
