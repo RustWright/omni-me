@@ -16,29 +16,24 @@ silently dropped**; matching legs come from receipts (purchases) and paystubs (s
   conventions before either runs again; the user does not currently trust the financial data.
   UI polish on the finances screens is explicitly shelved behind this.
 - **Acceptance test for a bulk import: replay the statements; COUNT and CLOSING BALANCE must
-  match per statement.** `bal=0` never proves no loss (always 0 in double-entry), and an
-  un-emitted row is invisible to `bal -B` and to a file manifest — only closing-balance
-  reconciliation catches it. (Learned in the ledger project; re-derived today.)
-- **Fix the class, not the instance** — now a global rule. Exactly one bank source dedups
-  against the ledger; every other source has no dedup at all.
-- 1.0.5 shipped. Ledger-refresh fix committed, awaiting the next release.
+  match per statement.** `bal=0` never proves no loss (always 0 in double-entry) and an
+  un-emitted row is invisible to `bal -B` and to a file manifest.
+- **Fix the class, not the instance** — now a global rule. One bank source dedups against the
+  ledger; every other source has none. 1.0.5 shipped; ledger-refresh fix awaits a release.
 
-## Findings 2026-09-04 — verified, not inferred (detail in the private docs)
-- **Upstream (ledger project, NOT omni-me's import):** paystub expansion stops 2023-11-30, so
-  ~2.7 yrs of payroll deductions are absent and 66 source PDFs sit unused; and two accounts
-  the conventions doc describes have never existed in any ledger file. Detail in that
-  project's memory (`project_ledger_completeness_gaps`).
-- **One statement source maps to an account tree with 0 occurrences.** Fix needs config AND
-  tags together — `statement_extraction_to_drafts` emits `tags: vec![]`, so the pooled
-  account would otherwise make that money unattributable.
+## Findings 2026-09-04 — verified (detail in the private docs)
+- **Upstream, in the ledger project — NOT omni-me's import:** paystub expansion stops
+  2023-11-30 (~2.7 yrs of payroll deductions absent, 66 PDFs unused), and two accounts the
+  conventions doc describes exist in no ledger file. See `project_ledger_completeness_gaps`.
+- **Both bank sources emit non-conventional postings**: one maps to an account tree with 0
+  occurrences; the other omits institution/product tags and records fees as a tag rather than
+  an expense posting (10 rows already committed). Fixes need config AND tags together —
+  `statement_extraction_to_drafts` emits `tags: vec![]`.
 - **Security/crypto orders arrive as the CASH leg** — security balances never update.
-- **`pause` is not durable** (500; read-only config mount) — hold a source off by removing
-  its account map. **Edit box config with `cp`, never `sed -i`** (single-file bind mount:
-  an inode swap makes the edit invisible to the container until a restart).
-
-- **The other bank source diverges too** — no institution/product tags, and fees as a tag
-  instead of an expense posting. 10 rows already committed that way. Held off, but note it
-  reports `success`/0 silently with an empty map, so a healthy status proves nothing.
+- **`pause` is not durable** (500; read-only mount) — hold a source off by removing its
+  account map, but note the second source then reports `success`/0 **silently**.
+  **Edit box config with `cp`, never `sed -i`** (single-file bind mount; an inode swap makes
+  the edit invisible to the container until a restart).
 
 ## Open threads
 Mobile keyboard/scroll + floating insertion handle — **ask the user to connect the test phone
