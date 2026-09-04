@@ -14,7 +14,6 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
     routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -84,19 +83,18 @@ struct TickQuery {
     source: String,
 }
 
-#[derive(Serialize)]
-struct TickResponseOk {
-    events_appended: usize,
-}
-
+/// The manual-tick response is the whole [`ImportSummary`], not a single count.
+///
+/// A manual tick is what a user runs to answer "did that work?", so collapsing
+/// the disposition to `events_appended` answered it wrongly whenever rows were
+/// dropped: the endpoint returned `{"events_appended": 0}` for both a healthy
+/// up-to-date source and one discarding every row it fetched.
 async fn tick_handler(
     State(state): State<AppState>,
     Query(q): Query<TickQuery>,
-) -> Result<Json<TickResponseOk>, (StatusCode, String)> {
+) -> Result<Json<omni_me_core::auto_import_scheduler::ImportSummary>, (StatusCode, String)> {
     match state.auto_import_registry.trigger_manual(&q.source).await {
-        Ok(summary) => Ok(Json(TickResponseOk {
-            events_appended: summary.events_appended,
-        })),
+        Ok(summary) => Ok(Json(summary)),
         Err(omni_me_core::auto_import_scheduler::ImportError::NotConfigured(msg)) => {
             Err((StatusCode::NOT_FOUND, msg))
         }
@@ -122,12 +120,6 @@ fn upstream_err(
         StatusCode::BAD_GATEWAY,
         format!("auto-import {op} failed for '{source}' — see server logs"),
     )
-}
-
-impl IntoResponse for TickResponseOk {
-    fn into_response(self) -> axum::response::Response {
-        Json(self).into_response()
-    }
 }
 
 /// `POST /auto_import/reauth` — drive interactive re-auth for one source. The

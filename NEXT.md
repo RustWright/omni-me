@@ -1,37 +1,40 @@
 # NEXT
 
-**Next action: a planning-first session on finance data integrity** — cross-cutting (possible
-finance-event reset, statement reconciliation, receipt/paystub matching legs), so it gets its
-own session. Do NOT start it piecemeal. **Requirement, in the user's words:** auto-import must
-emit entries matching the established ledger conventions, with confidence that **nothing is
-silently dropped**; matching legs come from receipts (purchases) and paystubs (salary).
+**Next action: Push 2 of finance integrity — convention conformance.** Push 1 (make drops loud
++ build and run the statement verifier) is DONE; Push 2 fixes what sources *emit* now that what
+they *drop* is visible. Agreed for a fresh session (user, 2026-09-04).
 
-> **Institution detail lives in the PRIVATE overlay** — this repo is public and uses
-> fictional names. Read `omni-me-private/ACCOUNT_MAPPING.md` and `SETUP.md` before touching
-> any importer, mapping, or box assumption; the ledger's `CONVENTIONS.md` is CANONICAL.
+> **This repo is public (fictional names); institution detail is in the overlay.** Read
+> `omni-me-private/ACCOUNT_MAPPING.md` + `SETUP.md` before any importer/mapping work; the
+> ledger's `CONVENTIONS.md` is CANONICAL.
 
 ## Decisions in force — inherit these
-- **BOTH bank sources are OFF (user, 2026-09-04)** — account maps removed, which is the only
-  durable hold. The ledger import AND the auto-import must both match the established
-  conventions before either runs again; the user does not currently trust the financial data.
-  UI polish on the finances screens is explicitly shelved behind this.
-- **Acceptance test for a bulk import: replay the statements; COUNT and CLOSING BALANCE must
-  match per statement.** `bal=0` never proves no loss (always 0 in double-entry) and an
-  un-emitted row is invisible to `bal -B` and to a file manifest.
-- **Fix the class, not the instance** — now a global rule. One bank source dedups against the
-  ledger; every other source has none. 1.0.5 shipped; ledger-refresh fix awaits a release.
+- **BOTH bank sources stay OFF** — re-enabling is pointless while the imported base has holes.
+- **The blocker is UPSTREAM in paisa, not omni-me** — paystub expansion stops 2023-11-30 (~2.7
+  years of CPP/EI/tax absent, 66 PDFs unimported); `Assets:Pension:DC` exists only in
+  `CONVENTIONS.md`. **That work belongs to `Documents-paisa`.**
+- **Acceptance test = replay the statement: count AND closing balance.** Built in
+  `core/src/statement/`, proven on real files, needs no `ledger` binary. Result: 10 of 12
+  brokerage statements clean on both halves, all 5 transfer statements clean on balance.
+- **Finance events CAN be wiped independently** — projections are domain-scoped, budget event
+  types a closed set; only a type-filtered purge is missing. ⚠️ The hazard is **sync**, not the
+  delete: last-write-wins, no tombstones, so another device re-seeds a wiped one.
 
-## Do NOT re-survey — it is already written down
-The 2026-09-04 findings (what each source emits wrongly, the dedup limits, the box-edit
-pitfalls, the verified-but-held config) are in `ACCOUNT_MAPPING.md`. The upstream ledger gaps
-are in the ledger project's memory (`project_ledger_completeness_gaps`). Read, don't rederive.
+## Do NOT re-survey
+Verified statement→account mapping: `omni-me-private/examples/statement_audit_manifest.toml`
+(joined on the `account:` posting tag = the id in brokerage filenames). Engine row-accounting
+contract: `SUBPROCESS_SOURCE_CONTRACT.md` § disposition.
+
+## Push 2 scope
+1. **`institution`/`product` tags** on every source still emitting `tags: vec![]` —
+   `auto_import/csv.rs`, `rest.rs`, `import_chequing_csv` in the app's `budget.rs`.
+2. **Transfer-service fees — the open question is ANSWERED.** Statement lists the fee as its own
+   row, amount **exclusive** of it; the ledger records it **net**, no `Expenses:Fees` posting.
+   Verified: `-30.02` + `-0.42` = the `-30.44` recorded. Every count mismatch there is this.
+3. **Startup validation of configured accounts against the real roster** — the "known gap" in
+   `ACCOUNT_MAPPING.md`; makes a wrong account name loud rather than silent.
 
 ## Open threads
-**Finish the memory prune** (118 files / 295KB; the 143-line index is paid every session and
-is the retrieval surface, so stale lines misdirect). Judge by CONTENT — notes that look like
-repo duplicates by name are often non-derivable design records.
-Mobile keyboard/scroll + floating insertion handle — **ask the user to connect the test phone
-in-session**, else defer to a session where they have it (Android 15 disproves the API-29
-theory; the test phone IS API 29, so both must work) · format bar SHELVED behind finances ·
-engine-side dedup for subprocess sources · rules tier 152/150 · ledger-level verification
-needs the `ledger` binary installed (it lived on the offline device; importers are Python).
+**Crypto is modelled monthly — ask whether that is intended** before changing it: ~60 daily
+statement rows vs 4 monthly ledger aggregates, balances exact, only counts differ. · Memory
+prune owed · mobile keyboard/scroll needs the test phone · format bar SHELVED behind finances.

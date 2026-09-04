@@ -344,7 +344,7 @@ pub struct AutoImportSourceView {
     pub last_tick_at: Option<String>,
     /// Last tick outcome — tagged enum on the wire:
     /// `{ "kind": "not_yet_run" }` |
-    /// `{ "kind": "success", "events_appended": N }` |
+    /// `{ "kind": "success", "summary": { "fetched": N, "appended": N, … } }` |
     /// `{ "kind": "failure", "error": "..." }`.
     pub last_outcome: serde_json::Value,
     pub interval_secs: u64,

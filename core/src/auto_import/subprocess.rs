@@ -26,7 +26,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::auto_import::to_proposed_event;
-use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary, ReauthOutcome};
+use crate::auto_import_scheduler::{
+    AutoImportSource, DropReason, ImportError, ImportSummary, ImportTally, ReauthOutcome,
+};
 use crate::events::{DraftTransaction, EventStore, ProjectionRunner};
 
 /// How long a helper may run before it is killed.
@@ -91,10 +93,15 @@ pub enum HelperStatus {
 
 /// Helper → engine response: one JSON line on the helper's stdout.
 ///
-/// `#[serde(default)]` on every field but `status` means a terse helper can emit
-/// `{"status":"ok"}` and still deserialize — the forgiving contract the doc
-/// promises third-party plugin authors. The engine ignores unknown fields, so a
+/// `#[serde(default)]` on every field but `status` keeps the shape forgiving at
+/// the *deserialization* layer, and the engine ignores unknown fields, so a
 /// helper may carry extra keys without breaking older engines.
+///
+/// Forgiveness stops at [`Self::disposition`]. A successful pull must account
+/// for its rows: `{"status":"ok"}` alone used to be a valid "nothing happened"
+/// response, which is indistinguishable from "I discarded everything I fetched"
+/// — the ambiguity this whole type now exists to remove. It deserializes, then
+/// fails at ingest with an error naming what is missing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelperResponse {
     pub status: HelperStatus,
@@ -109,9 +116,64 @@ pub struct HelperResponse {
     /// Opaque JSON the review screen can render; engine stores but never reads.
     #[serde(default)]
     pub source_metadata: Option<serde_json::Value>,
+    /// The helper's row accounting. **Required when `status == ok`** — see
+    /// [`HelperDisposition`] for why it is typed rather than left in
+    /// `source_metadata`.
+    ///
+    /// Optional at the serde layer only so that a helper which omits it fails
+    /// with a contract error naming the problem, instead of a raw
+    /// missing-field deserialization error thirty lines from the cause.
+    #[serde(default)]
+    pub disposition: Option<HelperDisposition>,
     /// Human-readable detail; required when `status == Error`.
     #[serde(default)]
     pub message: Option<String>,
+}
+
+/// A helper's account of what it did with every row it fetched.
+///
+/// This is the process-boundary half of the [`ImportTally`] invariant. It has
+/// to be a typed field rather than a corner of `source_metadata` because the
+/// engine must *read* it: the brokerage helper had been reporting
+/// `skipped_unmapped_ids` in opaque metadata since the open-core split, and
+/// since the contract says the engine "stores but never reads" that blob, 295
+/// dropped rows a tick surfaced nowhere. Typing it is what turns the helper's
+/// self-report into something the engine can act on.
+///
+/// The helper reports counts; the engine re-derives the identity
+/// (`fetched == drafts + drops`) rather than trusting it, so a helper that
+/// miscounts is caught at the boundary instead of propagating a plausible
+/// number.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HelperDisposition {
+    /// Rows the upstream handed the helper, before any filtering.
+    pub fetched: usize,
+    #[serde(default)]
+    pub deduped: usize,
+    /// Rows below the helper's `import_since` floor.
+    #[serde(default)]
+    pub out_of_window: usize,
+    /// Upstream keys with no account mapping — **one entry per dropped row**,
+    /// repeats included. The engine counts these against its row identity, so
+    /// collapsing to a distinct set here would report 6 unmapped rows for 295
+    /// dropped ones and break the arithmetic. Consumers that want the distinct
+    /// list (to paste into a config map) use [`ImportSummary::unmapped_ids`],
+    /// which de-duplicates for display.
+    ///
+    /// Carried as ids rather than a bare count because the count alone leaves
+    /// the fix undiscoverable: these keys are upstream-internal and appear
+    /// nowhere else the user can reach.
+    #[serde(default)]
+    pub unmapped_ids: Vec<String>,
+    /// Rows the helper could not turn into a draft, as `[id, reason]` pairs.
+    #[serde(default)]
+    pub failures: Vec<HelperFailure>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HelperFailure {
+    pub id: String,
+    pub reason: String,
 }
 
 /// A source whose work is delegated to an external helper executable over the
@@ -281,9 +343,40 @@ impl SubprocessSource {
     /// Wrap helper-supplied drafts into a single `AutoImportBatchProposed` event
     /// and project it — the generic tail that used to live in each bank adapter.
     async fn ingest(&self, response: HelperResponse) -> Result<ImportSummary, ImportError> {
-        if response.drafts.is_empty() {
-            return Ok(ImportSummary { events_appended: 0 });
+        // Contract v2: an `ok` response must account for its rows. Absence is a
+        // hard error rather than an assumed-zero, because "the helper didn't say"
+        // and "the helper dropped nothing" are exactly the two states that were
+        // indistinguishable before, and assuming the benign one is what let the
+        // original incident run for months.
+        let disposition = response.disposition.ok_or_else(|| {
+            ImportError::Parse(format!(
+                "{} returned ok without a `disposition` — the subprocess contract \
+                 requires row accounting on every successful pull",
+                self.name
+            ))
+        })?;
+
+        let mut tally = ImportTally::new(disposition.fetched);
+        for _ in 0..disposition.deduped {
+            tally.dropped(format!("{}-deduped", self.name), DropReason::Deduped);
         }
+        for _ in 0..disposition.out_of_window {
+            tally.dropped(format!("{}-out-of-window", self.name), DropReason::OutOfWindow);
+        }
+        for id in &disposition.unmapped_ids {
+            tally.dropped(id.clone(), DropReason::Unmapped);
+        }
+        for f in &disposition.failures {
+            tally.failed(f.id.clone(), f.reason.clone());
+        }
+
+        if response.drafts.is_empty() {
+            // Still finishes the tally: "no drafts" must prove it accounted for
+            // the fetched rows. A helper that fetched 295 and produced zero
+            // drafts now fails here instead of returning a tidy zero.
+            return tally.finish();
+        }
+        let draft_count = response.drafts.len();
 
         // Helper-supplied dedup_key wins; else a per-tick timestamp (matches the
         // old WS polling behavior — row-level dedup still rides each draft's
@@ -311,9 +404,13 @@ impl SubprocessSource {
             .await
             .map_err(|e| ImportError::Upstream(format!("project: {e}")))?;
 
-        Ok(ImportSummary {
-            events_appended: appended.len(),
-        })
+        // Counts **drafts**, not `appended.len()`. The batch is a single
+        // `AutoImportBatchProposed` event carrying N drafts, so the old
+        // `events_appended: appended.len()` reported 1 for a 150-row pull — a
+        // number that could never be reconciled against a statement's row count.
+        // The tally's unit is the upstream row throughout.
+        tally.appended(draft_count);
+        tally.finish()
     }
 }
 
@@ -450,7 +547,7 @@ mod tests {
         )
     }
 
-    const ONE_DRAFT_OK: &str = r#"{"status":"ok","drafts":[{"external_id":"ws-t1","date":"2026-06-15","description":"Loblaws","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42"},{"account":"Unmatched","commodity":"CAD","amount":"87.42"}]}]}"#;
+    const ONE_DRAFT_OK: &str = r#"{"status":"ok","disposition":{"fetched":1},"drafts":[{"external_id":"ws-t1","date":"2026-06-15","description":"Loblaws","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42"},{"account":"Unmatched","commodity":"CAD","amount":"87.42"}]}]}"#;
 
     #[tokio::test]
     async fn pull_projects_drafts_from_helper() {
@@ -459,7 +556,9 @@ mod tests {
         let source = source_with(helper, vec![], store, projections);
 
         let summary = source.pull().await.unwrap();
-        assert_eq!(summary.events_appended, 1);
+        assert_eq!(summary.fetched, 1);
+        assert_eq!(summary.appended, 1);
+        assert_eq!(summary.lost(), 0);
 
         // The drafts landed as one pending batch with the postings intact —
         // proving the generic ingest tail wraps helper output identically to
@@ -480,16 +579,77 @@ mod tests {
         assert_eq!(postings[1]["account"], "Unmatched");
     }
 
+    /// The contract deliberately stopped being forgiving here.
+    ///
+    /// `{"status":"ok"}` with no `disposition` used to parse as a clean
+    /// zero-event tick. That is precisely the response an unconfigured source
+    /// produces while discarding every row it fetched, so accepting it is what
+    /// made the original data loss invisible. A helper that will not say what it
+    /// did with its rows is now a failed tick.
     #[tokio::test]
-    async fn pull_with_terse_ok_response_appends_nothing() {
-        // The forgiving-contract case: a helper that emits only `{"status":"ok"}`
-        // (no drafts) must parse and count as a clean zero-event tick.
+    async fn pull_without_a_disposition_is_a_contract_error() {
         let (_helper_dir, helper) = emit_helper(r#"{"status":"ok"}"#);
         let (_db, store, projections) = test_db_and_runner().await;
         let source = source_with(helper, vec![], store, projections);
 
+        let err = source.pull().await.unwrap_err();
+        assert!(
+            matches!(err, ImportError::Parse(ref m) if m.contains("disposition")),
+            "expected a contract error naming the missing disposition, got {err:?}"
+        );
+    }
+
+    /// A helper that genuinely had nothing to fetch reports `fetched: 0` and is
+    /// a clean tick — the legitimate quiet case the strictness above must not
+    /// break.
+    #[tokio::test]
+    async fn pull_with_zero_fetched_is_a_clean_empty_tick() {
+        let (_helper_dir, helper) = emit_helper(r#"{"status":"ok","disposition":{"fetched":0}}"#);
+        let (_db, store, projections) = test_db_and_runner().await;
+        let source = source_with(helper, vec![], store, projections);
+
         let summary = source.pull().await.unwrap();
-        assert_eq!(summary.events_appended, 0);
+        assert_eq!(summary.fetched, 0);
+        assert_eq!(summary.appended, 0);
+        assert_eq!(summary.lost(), 0);
+    }
+
+    /// The original incident, as a test: the helper fetched real rows and mapped
+    /// none of them. This must be an error, not a tidy `0 events` success.
+    #[tokio::test]
+    async fn pull_that_maps_nothing_is_an_error_naming_the_ids() {
+        let (_helper_dir, helper) = emit_helper(
+            r#"{"status":"ok","disposition":{"fetched":3,"unmapped_ids":["acct-a","acct-a","acct-b"]}}"#,
+        );
+        let (_db, store, projections) = test_db_and_runner().await;
+        let source = source_with(helper, vec![], store, projections);
+
+        let err = source.pull().await.unwrap_err();
+        match err {
+            ImportError::NothingMapped { fetched, ids } => {
+                assert_eq!(fetched, 3);
+                assert_eq!(ids, vec!["acct-a".to_string(), "acct-b".to_string()]);
+            }
+            other => panic!("expected NothingMapped, got {other:?}"),
+        }
+    }
+
+    /// A helper whose counts do not add up is an engine-visible bug rather than
+    /// a number to be trusted and passed along.
+    #[tokio::test]
+    async fn pull_with_unbalanced_accounting_is_rejected() {
+        // Claims 9 fetched, accounts for 1 draft and nothing else.
+        let (_helper_dir, helper) = emit_helper(
+            r#"{"status":"ok","disposition":{"fetched":9},"drafts":[{"external_id":"x","date":"2026-06-15","description":"d","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-1"},{"account":"Unmatched","commodity":"CAD","amount":"1"}]}]}"#,
+        );
+        let (_db, store, projections) = test_db_and_runner().await;
+        let source = source_with(helper, vec![], store, projections);
+
+        let err = source.pull().await.unwrap_err();
+        assert!(
+            matches!(err, ImportError::Unaccounted { fetched: 9, accounted: 1 }),
+            "expected Unaccounted{{9,1}}, got {err:?}"
+        );
     }
 
     #[tokio::test]
@@ -573,8 +733,9 @@ mod tests {
     async fn run_helper_sends_pull_verb_on_stdin() {
         // Helper writes whatever it reads on stdin to the file named by $1, then
         // emits a valid response. Lets us assert the request wire form.
-        let (_helper_dir, helper) =
-            write_shell_helper("#!/bin/bash\ncat > \"$1\"\necho '{\"status\":\"ok\"}'\n");
+        let (_helper_dir, helper) = write_shell_helper(
+            "#!/bin/bash\ncat > \"$1\"\necho '{\"status\":\"ok\",\"disposition\":{\"fetched\":0}}'\n",
+        );
         let captured = _helper_dir.path().join("stdin.txt");
         let (_db, store, projections) = test_db_and_runner().await;
         let source = source_with(

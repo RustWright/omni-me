@@ -3023,7 +3023,7 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
             AutoImportSourceView {
                 name: "globepay".into(),
                 last_tick_at: Some(two_min_ago.to_rfc3339()),
-                last_outcome: serde_json::json!({ "kind": "success", "events_appended": 0 }),
+                last_outcome: serde_json::json!({ "kind": "success", "summary": { "fetched": 0, "appended": 0 } }),
                 interval_secs: 1800,
                 health: "healthy".into(),
                 auth_state: serde_json::json!({ "kind": "active" }),
@@ -3093,7 +3093,7 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
                 sources.push(AutoImportSourceView {
                     name,
                     last_tick_at: Some(two_min_ago.to_rfc3339()),
-                    last_outcome: serde_json::json!({ "kind": "success", "events_appended": 0 }),
+                    last_outcome: serde_json::json!({ "kind": "success", "summary": { "fetched": 0, "appended": 0 } }),
                     interval_secs: interval,
                     health: "healthy".into(),
                     auth_state: serde_json::json!({ "kind": "active" }),
@@ -3123,9 +3123,31 @@ pub async fn invoke_list_auto_import_sources() -> Result<Vec<AutoImportSourceVie
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+/// Mirrors the server's `ImportSummary` (see the Tauri `TickResponse`).
+///
+/// Every field defaults so an older server decodes rather than erroring; a
+/// response that carries none of them shows as `fetched: 0`, which the UI
+/// reports as unknown rather than as a clean tick.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct ManualTickResult {
-    pub events_appended: usize,
+    #[serde(default)]
+    pub fetched: usize,
+    #[serde(default)]
+    pub appended: usize,
+    // `deduped` / `out_of_window` / `ignored` are deliberately not mirrored:
+    // serde ignores unknown fields, and carrying counts nothing renders is how
+    // a struct accumulates dead weight. Add one when a surface shows it.
+    #[serde(default)]
+    pub unmapped: usize,
+    #[serde(default)]
+    pub failed: usize,
+}
+
+impl ManualTickResult {
+    /// Rows discarded for a reason the user must act on.
+    pub fn lost(&self) -> usize {
+        self.unmapped + self.failed
+    }
 }
 
 pub async fn invoke_trigger_auto_import_tick(source: &str) -> Result<ManualTickResult, String> {
@@ -3133,7 +3155,11 @@ pub async fn invoke_trigger_auto_import_tick(source: &str) -> Result<ManualTickR
     {
         let _ = source;
         crate::timer::sleep_ms(900).await;
-        Ok(ManualTickResult { events_appended: 3 })
+        Ok(ManualTickResult {
+            fetched: 3,
+            appended: 3,
+            ..Default::default()
+        })
     }
     #[cfg(not(feature = "mock"))]
     {

@@ -24,8 +24,8 @@ use std::time::Duration;
 
 use crate::accounts::UNMATCHED_ACCOUNT;
 use crate::auto_import::csv::{parse_amount, stable_hash};
-use crate::auto_import::to_proposed_event;
-use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary};
+use crate::auto_import::{ParseOutcome, to_proposed_event};
+use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary, ImportTally};
 use crate::events::{DraftTransaction, EventStore, Posting, ProjectionRunner};
 
 /// Dotted-path field map: each value addresses a field inside one record (e.g.
@@ -216,7 +216,7 @@ fn json_str(v: &Value) -> Option<String> {
 /// that fails date/amount mapping is skipped (logged), not fatal — one weird
 /// record shouldn't block an otherwise-good import, and the user reviews before
 /// commit anyway.
-fn parse_json(body: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, ImportError> {
+fn parse_json(body: &str, cfg: &ParseCfg) -> Result<ParseOutcome, ImportError> {
     let root: Value = serde_json::from_str(body)
         .map_err(|e| ImportError::Parse(format!("{}: invalid JSON: {e}", cfg.name)))?;
 
@@ -236,8 +236,9 @@ fn parse_json(body: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Impor
         }
     };
 
-    let mut drafts = Vec::new();
+    let mut out = ParseOutcome::default();
     for (i, rec) in records.iter().enumerate() {
+        out.rows_seen += 1;
         let date_raw = pluck(rec, &cfg.fields.date)
             .and_then(json_str)
             .unwrap_or_default();
@@ -250,6 +251,10 @@ fn parse_json(body: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Impor
                     date = date_raw,
                     "skipping REST record: unparseable/missing date"
                 );
+                out.failures.push((
+                    format!("record {i}"),
+                    format!("unparseable/missing date {date_raw:?}"),
+                ));
                 continue;
             }
         };
@@ -261,6 +266,8 @@ fn parse_json(body: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Impor
                     record = i,
                     "skipping REST record: unparseable/missing amount"
                 );
+                out.failures
+                    .push((format!("record {i}"), "unparseable/missing amount".to_string()));
                 continue;
             }
         };
@@ -302,7 +309,7 @@ fn parse_json(body: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Impor
             },
         ];
 
-        drafts.push(DraftTransaction {
+        out.drafts.push(DraftTransaction {
             external_id,
             date,
             description,
@@ -310,7 +317,7 @@ fn parse_json(body: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Impor
         });
     }
 
-    Ok(drafts)
+    Ok(out)
 }
 
 #[async_trait]
@@ -348,16 +355,26 @@ impl AutoImportSource for RestSource {
             .await
             .map_err(|e| ImportError::Upstream(format!("{}: read body: {e}", self.name)))?;
 
-        let drafts = parse_json(&body, &self.parse_cfg())?;
-        if drafts.is_empty() {
-            return Ok(ImportSummary { events_appended: 0 });
+        let parsed = parse_json(&body, &self.parse_cfg())?;
+        let mut tally = ImportTally::new(parsed.rows_seen);
+        for (id, reason) in &parsed.failures {
+            tally.failed(id.clone(), reason.clone());
         }
+        if parsed.drafts.is_empty() {
+            return tally.finish();
+        }
+        let draft_count = parsed.drafts.len();
 
         // Whole-response content hash → batch is idempotent while the response
         // is unchanged (projection UPSERTs on source+dedup_key).
         let dedup_key = format!("{}-{:x}", self.name, stable_hash(&[&body]));
-        let proposed =
-            to_proposed_event(&self.name, dedup_key, drafts, None, self.device_id.clone());
+        let proposed = to_proposed_event(
+            &self.name,
+            dedup_key,
+            parsed.drafts,
+            None,
+            self.device_id.clone(),
+        );
 
         let appended = self
             .store
@@ -369,9 +386,8 @@ impl AutoImportSource for RestSource {
             .await
             .map_err(|e| ImportError::Upstream(format!("project: {e}")))?;
 
-        Ok(ImportSummary {
-            events_appended: appended.len(),
-        })
+        tally.appended(draft_count);
+        tally.finish()
     }
 }
 
@@ -412,7 +428,7 @@ mod tests {
             }
         }"#;
         let f = fields(Some("ref"));
-        let drafts = parse_json(body, &cfg(&f, "data.transactions")).unwrap();
+        let drafts = parse_json(body, &cfg(&f, "data.transactions")).unwrap().drafts;
 
         assert_eq!(drafts.len(), 2);
         let d0 = &drafts[0];
@@ -435,7 +451,7 @@ mod tests {
     fn empty_records_path_treats_body_as_the_array() {
         let body = r#"[{"date": "2026-06-15", "amount": -5, "memo": "Coffee"}]"#;
         let f = fields(None);
-        let drafts = parse_json(body, &cfg(&f, "")).unwrap();
+        let drafts = parse_json(body, &cfg(&f, "")).unwrap().drafts;
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].description, "Coffee");
     }
@@ -444,8 +460,8 @@ mod tests {
     fn fallback_external_id_is_stable_without_id_field() {
         let body = r#"[{"date": "2026-06-15", "amount": "-87.42", "memo": "Loblaws"}]"#;
         let f = fields(None);
-        let a = parse_json(body, &cfg(&f, "")).unwrap();
-        let b = parse_json(body, &cfg(&f, "")).unwrap();
+        let a = parse_json(body, &cfg(&f, "")).unwrap().drafts;
+        let b = parse_json(body, &cfg(&f, "")).unwrap().drafts;
         assert_eq!(a[0].external_id, b[0].external_id);
         assert!(a[0].external_id.starts_with("my-rest-"));
     }
@@ -458,7 +474,7 @@ mod tests {
             {"date": "2026-06-17", "amount": -3, "memo": "AlsoGood"}
         ]"#;
         let f = fields(None);
-        let drafts = parse_json(body, &cfg(&f, "")).unwrap();
+        let drafts = parse_json(body, &cfg(&f, "")).unwrap().drafts;
         assert_eq!(drafts.len(), 2);
         assert_eq!(drafts[0].description, "Good");
         assert_eq!(drafts[1].description, "AlsoGood");

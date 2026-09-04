@@ -65,15 +65,53 @@ One line of JSON on the helper's **stdout**:
   "drafts": [ /* DraftTransaction objects — see below */ ],
   "dedup_key": "globepay-watermark-8841",   // optional
   "source_metadata": { "...": "..." },   // optional, opaque
+  "disposition": { /* REQUIRED when status = "ok" — see below */ },
   "message": "human-readable detail"     // optional; required when status = "error"
 }
 ```
+
+### `disposition` — the row accounting (REQUIRED on `ok`)
+
+A helper must account for **every row it fetched**. This is the one field the engine reads and
+validates rather than passing through.
+
+```json
+"disposition": {
+  "fetched": 295,                       // upstream rows, BEFORE any filtering
+  "deduped": 0,                         // already present upstream-side
+  "out_of_window": 145,                 // below the helper's import_since floor
+  "unmapped_ids": ["acct-a", "acct-a"], // ONE ENTRY PER DROPPED ROW, repeats included
+  "failures": [{ "id": "row-9", "reason": "no amount" }]
+}
+```
+
+The engine checks this identity and **fails the tick** if it does not hold:
+
+```
+fetched == drafts.length + deduped + out_of_window + unmapped_ids.length + failures.length
+```
+
+Two rules follow from it, both deliberately unforgiving:
+
+- **Omitting `disposition` on an `ok` response is an error.** It used to be legal, and
+  `{"status":"ok"}` meant "nothing happened" — indistinguishable from "I discarded everything
+  I fetched". A helper that will not say what it did with its rows is not reporting success.
+- **`fetched > 0` with every row unmapped is an error** (`NothingMapped`), raised by the engine
+  with the offending ids in the message. A *partial* mapping gap is not fatal — real rows still
+  flow — but it forces the source's health to `dropping` rather than `healthy`.
+
+`unmapped_ids` carries one entry per dropped **row**, not per distinct account: collapsing to a
+distinct set reports 6 unmapped rows for 295 dropped ones and breaks the arithmetic. The engine
+de-duplicates for display.
+
+Put identifying keys here, not in `source_metadata` — the engine stores that blob but never reads
+it, so anything a user needs to *act* on (the ids to add to an account map) is invisible there.
 
 ### `status` values
 
 | status         | meaning                                                              | engine reaction |
 |----------------|----------------------------------------------------------------------|-----------------|
-| `ok`           | success; `drafts` may be empty (no new data is **not** a failure)     | wrap + append + project the drafts; record a successful tick |
+| `ok`           | success; `drafts` may be empty (no new data is **not** a failure) — but `disposition` is **required** | validate the row accounting, then wrap + append + project the drafts; record a successful tick |
 | `needs_reauth` | the stored credential is expired/invalid; the helper did **not** loop on login | degrade this source (surface as needing re-auth); do **not** hammer login. Other sources unaffected |
 | `reauth_ok`    | `reauth` succeeded; credential refreshed and persisted               | return the source to `Active`; the client clears the Reconnect prompt |
 | `invalid_otp`  | `reauth` ran but the code was wrong                                  | tell the client the code was rejected; the source stays `NeedsReauth` |
@@ -145,6 +183,11 @@ No version field today (single producer + consumer, pre-daily-use). The first **
 `"v"` field to the request and a minimum-version check in `SubprocessSource`. Additive changes
 (new optional response fields, new `status` values a helper opts into) do not bump the version — consumers
 ignore unknown fields and treat unknown statuses as `error`.
+
+**Required `disposition` is a breaking change**, taken deliberately without a version field because the
+only producer is in-tree and the failure it prevents is silent data loss. A pre-existing helper now fails
+its tick with a message naming the missing field — which is the intended outcome: a helper that cannot
+account for its rows should stop, not keep reporting clean zeroes.
 
 ## See also
 

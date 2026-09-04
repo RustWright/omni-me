@@ -17,7 +17,9 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary};
+use crate::auto_import_scheduler::{
+    AutoImportSource, DropReason, ImportError, ImportSummary, ImportTally,
+};
 use crate::db::Database;
 use crate::events::{EventStore, ProjectionRunner};
 
@@ -138,17 +140,30 @@ impl AutoImportSource for ImapSource {
 
     async fn pull(&self) -> Result<ImportSummary, ImportError> {
         let cursor_snapshot = self.cursor.lock().await.clone();
-        let (events, next_cursor) =
-            poll_once(self.fetcher.as_ref(), &self.handlers, &cursor_snapshot).await?;
+        let outcome = poll_once(self.fetcher.as_ref(), &self.handlers, &cursor_snapshot).await?;
+        let next_cursor = outcome.next_cursor.clone();
 
-        let mut appended_count = 0usize;
-        if !events.is_empty() {
+        // The accounting unit here is the **message**, not the event: one
+        // statement email can yield many transactions, so counting events would
+        // make the identity unbalanceable against what the mailbox handed us.
+        let mut tally = ImportTally::new(outcome.messages_seen);
+        for uid in &outcome.unrouted {
+            tally.dropped(format!("uid {uid}"), DropReason::Ignored);
+        }
+        for (uid, err) in &outcome.failed {
+            tally.failed(format!("uid {uid}"), err.clone());
+        }
+        // A handler that succeeds but yields no events still *processed* its
+        // message, so it counts here. The claim being made is "this message was
+        // handled as intended", which is exactly what the identity needs.
+        tally.appended(outcome.messages_seen - outcome.unrouted.len() - outcome.failed.len());
+
+        if !outcome.events.is_empty() {
             let appended = self
                 .store
-                .append_batch(events)
+                .append_batch(outcome.events)
                 .await
                 .map_err(|e| ImportError::Upstream(format!("append batch: {e}")))?;
-            appended_count = appended.len();
             self.projections
                 .apply_events(&appended)
                 .await
@@ -161,9 +176,7 @@ impl AutoImportSource for ImapSource {
             cs.save(&self.name, uid).await?;
         }
 
-        Ok(ImportSummary {
-            events_appended: appended_count,
-        })
+        tally.finish()
     }
 }
 
@@ -250,7 +263,8 @@ mod tests {
         .unwrap();
 
         let summary = source.pull().await.unwrap();
-        assert_eq!(summary.events_appended, 2);
+        assert_eq!(summary.appended, 2, "two messages handled");
+        assert_eq!(summary.lost(), 0);
         assert_eq!(cursor_store.load("gmail").await.unwrap(), Some(102));
     }
 

@@ -30,6 +30,29 @@ pub mod rest;
 pub mod setup;
 pub mod subprocess;
 
+/// What a record-oriented parse produced, including what it could **not**
+/// parse.
+///
+/// Returning a bare `Vec<DraftTransaction>` is what made row loss invisible in
+/// the file/HTTP sources: a row with an unparseable date was logged at `warn!`
+/// and dropped, so `drafts.len()` was the only number the caller ever saw and
+/// there was nothing to compare it against. Carrying `rows_seen` alongside the
+/// drafts gives the caller both sides of the identity.
+///
+/// Note that a per-row parse failure stays non-fatal — one malformed row should
+/// not block an otherwise-good import, and the user reviews before commit. The
+/// change is that it is now *counted and named* rather than only logged.
+#[derive(Debug, Default)]
+pub struct ParseOutcome {
+    /// Records the reader yielded, before any filtering.
+    pub rows_seen: usize,
+    pub drafts: Vec<DraftTransaction>,
+    /// `(row identity, reason)` for each row that could not become a draft.
+    /// The identity is positional (`row 12`) when the source has no id column,
+    /// which is still enough to find it in the file.
+    pub failures: Vec<(String, String)>,
+}
+
 /// A `dedup_key` derived from the drafts themselves, so a polling source that
 /// re-fetches an overlapping window collapses onto the row it already proposed.
 ///

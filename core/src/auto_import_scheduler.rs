@@ -24,16 +24,250 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone, PartialEq)]
+/// Why a fetched row did not become an event. Every row a source pulls must
+/// land in exactly one of these, which is what makes a silent drop impossible
+/// to write (see [`ImportTally`]).
+///
+/// The variants are separated by **what the user would have to do about it**,
+/// not by where in the code the row was discarded — `Deduped` and
+/// `OutOfWindow` are both "working as intended", `Unmapped` is a config fix,
+/// `Failed` is a bug or bad upstream data. Blurring them is what let a
+/// completely unconfigured source read as "up to date" for months.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DropReason {
+    /// Already present — matched an existing external id or ledger-side tag.
+    Deduped,
+    /// Older than the source's `import_since` floor, so covered by the
+    /// imported history by definition.
+    OutOfWindow,
+    /// Examined and correctly not ours — an IMAP message no handler claims is
+    /// ordinary unrelated mail. Distinct from `Unmapped`, which is *our* data
+    /// that we failed to place: conflating the two would either bury real
+    /// config gaps in noise or make every personal email look like lost money.
+    Ignored,
+    /// No account mapping for this row's key. **A configuration gap, not a
+    /// no-op** — the row is real money the ledger will never see.
+    Unmapped,
+    /// Fetched but could not be turned into a draft (parse failure, missing
+    /// field, arithmetic that didn't balance).
+    Failed,
+}
+
+/// One dropped row, kept with enough identity to act on it.
+///
+/// `id` is the upstream key — the thing you would put in a config map or grep
+/// the source for. Counting drops alone was not enough in practice: knowing
+/// that 295 rows were unmapped left the account ids discoverable only by
+/// re-running the driver by hand on the box.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DroppedRow {
+    pub id: String,
+    pub reason: DropReason,
+    /// Free-text detail for `Failed`; `None` for the self-explanatory reasons.
+    pub detail: Option<String>,
+}
+
+/// What a source did with every row it fetched.
+///
+/// The invariant this type exists to enforce:
+///
+/// ```text
+/// fetched == appended + deduped + out_of_window + ignored + unmapped + failed
+/// ```
+///
+/// Before this, `ImportSummary` was a single `events_appended: usize`. A source
+/// that fetched 295 rows and mapped none of them returned `0` — bit-identical
+/// to a source that was simply up to date. That ambiguity is the root cause
+/// behind every incident recorded in the overlay's `ACCOUNT_MAPPING.md`, so the
+/// fix is to remove the *ability* to under-report rather than to audit each
+/// source for the discipline to self-report.
+///
+/// Construct via [`ImportTally`] — the identity is checked at `finish()`, so a
+/// row that is never classified fails loudly instead of disappearing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImportSummary {
-    /// Number of events the source actually appended in this tick. Zero is
-    /// not a failure — it just means "no new data."
-    pub events_appended: usize,
+    /// Rows the upstream actually handed us this tick. Recorded **independently**
+    /// of the classification loop (from the raw response length), which is what
+    /// makes the identity a real check rather than a tautology — deriving it as
+    /// the sum of the parts would make an unclassified row invisible again.
+    pub fetched: usize,
+    /// Rows that became events. Zero is legitimate: nothing new upstream.
+    pub appended: usize,
+    pub deduped: usize,
+    pub out_of_window: usize,
+    /// Correctly-discarded non-transactions (see [`DropReason::Ignored`]).
+    pub ignored: usize,
+    pub unmapped: usize,
+    pub failed: usize,
+    /// The dropped rows themselves, so the status surface can name what is
+    /// missing without shell access to the box.
+    pub dropped: Vec<DroppedRow>,
+}
+
+impl ImportSummary {
+    /// Rows discarded for a reason the user must fix — a missing mapping or an
+    /// outright failure. Deliberately excludes `deduped` / `out_of_window`,
+    /// which are the source working correctly.
+    pub fn lost(&self) -> usize {
+        self.unmapped + self.failed
+    }
+
+    /// The distinct upstream keys with no account mapping, sorted. This is the
+    /// list a user pastes into the account map to close the gap.
+    pub fn unmapped_ids(&self) -> BTreeSet<&str> {
+        self.dropped
+            .iter()
+            .filter(|d| d.reason == DropReason::Unmapped)
+            .map(|d| d.id.as_str())
+            .collect()
+    }
+
+    /// A summary for a source where every fetched row became an event — no
+    /// dedup, no window, nothing dropped. Trivially satisfies the identity.
+    pub fn all_appended(n: usize) -> Self {
+        Self {
+            fetched: n,
+            appended: n,
+            ..Self::empty()
+        }
+    }
+
+    /// A summary for a source that had nothing to fetch. The only shape where
+    /// skipping the tally is safe, because there are no rows to account for.
+    pub fn empty() -> Self {
+        Self {
+            fetched: 0,
+            appended: 0,
+            deduped: 0,
+            out_of_window: 0,
+            ignored: 0,
+            unmapped: 0,
+            failed: 0,
+            dropped: Vec::new(),
+        }
+    }
+}
+
+/// Accumulator that forces a source to account for every row it fetched.
+///
+/// Usage is: record `fetched` from the upstream response, classify each row
+/// exactly once as it is processed, then `finish()`. The classification calls
+/// are the only way to increment anything, so the arithmetic cannot be talked
+/// out of — a `continue` that skips classification shows up as an
+/// `Unaccounted` error naming the shortfall.
+#[derive(Debug, Clone)]
+pub struct ImportTally {
+    fetched: usize,
+    appended: usize,
+    dropped: Vec<DroppedRow>,
+}
+
+impl ImportTally {
+    /// `fetched` is the upstream row count, taken before any filtering.
+    pub fn new(fetched: usize) -> Self {
+        Self {
+            fetched,
+            appended: 0,
+            dropped: Vec::new(),
+        }
+    }
+
+    /// Record rows that became events. Called with the append count rather than
+    /// per row because the append itself is batched.
+    pub fn appended(&mut self, n: usize) {
+        self.appended += n;
+    }
+
+    /// Record one dropped row. `id` should be the upstream key; for
+    /// [`DropReason::Unmapped`] that means the key the account map is keyed by,
+    /// since that is the value the fix needs.
+    pub fn dropped(&mut self, id: impl Into<String>, reason: DropReason) {
+        self.dropped.push(DroppedRow {
+            id: id.into(),
+            reason,
+            detail: None,
+        });
+    }
+
+    /// Record a row that could not be turned into a draft, with the reason.
+    pub fn failed(&mut self, id: impl Into<String>, detail: impl Into<String>) {
+        self.dropped.push(DroppedRow {
+            id: id.into(),
+            reason: DropReason::Failed,
+            detail: Some(detail.into()),
+        });
+    }
+
+    /// Check the identity and produce the summary.
+    ///
+    /// Two distinct failures, both of which used to be silent successes:
+    ///
+    /// - **`Unaccounted`** — the classifications don't sum to `fetched`. This is
+    ///   an engine bug (a code path that discards a row without saying so), and
+    ///   it is worth failing the tick over: the alternative is shipping a count
+    ///   the user is being asked to trust.
+    /// - **`NothingMapped`** — rows were fetched and *every one* of them lacked
+    ///   an account mapping. Always a misconfiguration, never a legitimate
+    ///   quiet tick, so it must not be reported as success. Previously this
+    ///   guard existed in one source's helper binary only; hoisting it here
+    ///   gives it to every source, per the fix-the-class rule.
+    ///
+    /// A *partial* unmapped count is not an error — real data is still flowing
+    /// and halting would make things worse — but it does force the source out
+    /// of `Healthy` (see [`classify_source_health`]).
+    pub fn finish(self) -> Result<ImportSummary, ImportError> {
+        let mut deduped = 0;
+        let mut out_of_window = 0;
+        let mut ignored = 0;
+        let mut unmapped = 0;
+        let mut failed = 0;
+        for d in &self.dropped {
+            match d.reason {
+                DropReason::Deduped => deduped += 1,
+                DropReason::OutOfWindow => out_of_window += 1,
+                DropReason::Ignored => ignored += 1,
+                DropReason::Unmapped => unmapped += 1,
+                DropReason::Failed => failed += 1,
+            }
+        }
+        let accounted = self.appended + deduped + out_of_window + ignored + unmapped + failed;
+        if accounted != self.fetched {
+            return Err(ImportError::Unaccounted {
+                fetched: self.fetched,
+                accounted,
+            });
+        }
+        if self.fetched > 0 && unmapped == self.fetched {
+            let ids: Vec<String> = self
+                .dropped
+                .iter()
+                .filter(|d| d.reason == DropReason::Unmapped)
+                .map(|d| d.id.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            return Err(ImportError::NothingMapped {
+                fetched: self.fetched,
+                ids,
+            });
+        }
+        Ok(ImportSummary {
+            fetched: self.fetched,
+            appended: self.appended,
+            deduped,
+            out_of_window,
+            ignored,
+            unmapped,
+            failed,
+            dropped: self.dropped,
+        })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -53,6 +287,18 @@ pub enum ImportError {
     Parse(String),
     #[error("io error: {0}")]
     Io(String),
+    /// The source's row accounting did not balance: it fetched `fetched` rows
+    /// but only classified `accounted` of them. An engine bug in that source,
+    /// surfaced as a tick failure because the alternative is reporting a count
+    /// the user is being asked to trust.
+    #[error("row accounting did not balance: fetched {fetched} but accounted for {accounted}")]
+    Unaccounted { fetched: usize, accounted: usize },
+    /// Rows were fetched and every one lacked an account mapping. Always a
+    /// misconfiguration — the ids are carried so the fix needs no shell access.
+    #[error(
+        "fetched {fetched} row(s) but none are mapped — add these ids to the account map: {ids:?}"
+    )]
+    NothingMapped { fetched: usize, ids: Vec<String> },
 }
 
 /// Whether a source can refresh an expired credential interactively, and — once
@@ -149,11 +395,7 @@ pub fn spawn(source: Arc<dyn AutoImportSource>, interval: Duration) -> tokio::ta
         loop {
             match source.pull().await {
                 Ok(summary) => {
-                    tracing::info!(
-                        source = source.name(),
-                        events = summary.events_appended,
-                        "auto-import tick"
-                    );
+                    log_tick(source.name(), &summary);
                     backoff = INITIAL_BACKOFF;
                     tokio::time::sleep(interval).await;
                 }
@@ -200,7 +442,11 @@ pub fn next_backoff(current: Duration) -> Duration {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TickOutcome {
     NotYetRun,
-    Success { events_appended: usize },
+    /// Carries the whole [`ImportSummary`], not just the append count. The
+    /// status surface is the only place a partial drop can be noticed without
+    /// reading container logs, so it has to see the disposition rather than a
+    /// single number that looks the same whether rows were lost or not.
+    Success { summary: ImportSummary },
     Failure { error: String },
 }
 
@@ -456,9 +702,7 @@ impl SourceRegistry {
             r.status.last_tick_at = Some(Utc::now());
             match outcome {
                 Ok(s) => {
-                    r.status.last_outcome = TickOutcome::Success {
-                        events_appended: s.events_appended,
-                    };
+                    r.status.last_outcome = TickOutcome::Success { summary: s.clone() };
                     // A clean tick means the credential works — clear any prior
                     // reconnect requirement (covers a local re-prime too).
                     r.status.auth_state = AuthState::Active;
@@ -500,11 +744,7 @@ pub fn spawn_with_registry(
             registry.record_tick(source.name(), &result).await;
             match result {
                 Ok(summary) => {
-                    tracing::info!(
-                        source = source.name(),
-                        events = summary.events_appended,
-                        "auto-import tick"
-                    );
+                    log_tick(source.name(), &summary);
                     backoff = INITIAL_BACKOFF;
                     tokio::time::sleep(interval).await;
                 }
@@ -537,6 +777,37 @@ pub fn spawn_with_registry(
     })
 }
 
+/// Log one tick's outcome at a severity matching what it actually did.
+///
+/// A tick that discarded rows the user must act on is logged at `warn!`, not
+/// `info!`. The previous `events = N` line was `info!` unconditionally, so the
+/// months of 295-row drops appeared in the logs as routine chatter — technically
+/// present, practically invisible. Severity is the only thing that separates
+/// "nothing new upstream" from "money went missing" when both print a zero.
+fn log_tick(source: &str, summary: &ImportSummary) {
+    if summary.lost() > 0 {
+        tracing::warn!(
+            source,
+            fetched = summary.fetched,
+            appended = summary.appended,
+            unmapped = summary.unmapped,
+            failed = summary.failed,
+            unmapped_ids = ?summary.unmapped_ids(),
+            "auto-import tick DROPPED rows — they are not in the ledger",
+        );
+    } else {
+        tracing::info!(
+            source,
+            fetched = summary.fetched,
+            appended = summary.appended,
+            deduped = summary.deduped,
+            out_of_window = summary.out_of_window,
+            ignored = summary.ignored,
+            "auto-import tick",
+        );
+    }
+}
+
 /// Health classification for a source. `Healthy` = recent success;
 /// `Stale` = succeeded once but hasn't ticked in a while; `Degraded` = last
 /// tick was a failure; `Unknown` = never ticked. The cutoff between Healthy
@@ -548,14 +819,22 @@ pub enum SourceHealth {
     Healthy,
     Stale,
     Degraded,
+    /// Last tick succeeded but discarded rows the user must act on (unmapped
+    /// or failed). Ranks above `Degraded` in urgency terms even though the tick
+    /// "worked": a failing source is loud and retries, whereas a dropping one
+    /// looks fine while money goes missing. Kept distinct from `Degraded` so
+    /// the badge can say *which* thing is wrong.
+    Dropping,
 }
 
 /// Classify a source's health from its current status snapshot.
 ///
 /// Policy: the UI uses this to render the dot/badge next to each source
 /// (green/yellow/red/grey). The classification deliberately ignores
-/// `events_appended` — zero events is a legitimate Healthy outcome (no new
-/// data upstream).
+/// `appended` — zero events is a legitimate Healthy outcome (no new data
+/// upstream) — but it does **not** ignore `lost()`. A tick that succeeded
+/// while discarding rows for want of a mapping is precisely the state that
+/// previously rendered green for months, so it gets its own badge.
 ///
 /// `now` is injected so tests can pin time without freezing the clock; in
 /// production callers pass `Utc::now()`.
@@ -568,8 +847,11 @@ pub fn classify_source_health(status: &SourceStatus, now: DateTime<Utc>) -> Sour
     match &status.last_outcome {
         TickOutcome::NotYetRun => SourceHealth::Unknown,
         TickOutcome::Failure { .. } => SourceHealth::Degraded,
-        TickOutcome::Success { .. } => match status.last_tick_at {
+        TickOutcome::Success { summary } => match status.last_tick_at {
             None => SourceHealth::Unknown,
+            // Checked before staleness: a source that is both stale and losing
+            // rows should report the loss, since that is the actionable half.
+            Some(_) if summary.lost() > 0 => SourceHealth::Dropping,
             Some(at) => {
                 let stale_after =
                     chrono::Duration::seconds((status.interval_secs * STALE_MULTIPLIER) as i64);
@@ -649,7 +931,7 @@ pub mod null {
         async fn pull(&self) -> Result<ImportSummary, ImportError> {
             *self.call_count.lock().unwrap() += 1;
             let next = self.scripted.lock().unwrap().pop_front();
-            next.unwrap_or(Ok(ImportSummary { events_appended: 0 }))
+            next.unwrap_or(Ok(ImportSummary::empty()))
         }
 
         fn poll_interval(&self) -> Option<Duration> {
@@ -698,39 +980,39 @@ mod tests {
     async fn null_source_returns_default_when_unscripted() {
         let src = null::NullSource::new("test");
         let result = src.pull().await.unwrap();
-        assert_eq!(result.events_appended, 0);
+        assert_eq!(result.appended, 0);
         assert_eq!(src.call_count(), 1);
     }
 
     #[tokio::test]
     async fn null_source_returns_scripted_sequence() {
         let src = null::NullSource::new("test").with_script(vec![
-            Ok(ImportSummary { events_appended: 5 }),
+            Ok(ImportSummary::all_appended(5)),
             Err(ImportError::Upstream("oh no".into())),
-            Ok(ImportSummary { events_appended: 2 }),
+            Ok(ImportSummary::all_appended(2)),
         ]);
 
         let first = src.pull().await.unwrap();
-        assert_eq!(first.events_appended, 5);
+        assert_eq!(first.appended, 5);
 
         let second = src.pull().await;
         assert!(second.is_err());
 
         let third = src.pull().await.unwrap();
-        assert_eq!(third.events_appended, 2);
+        assert_eq!(third.appended, 2);
 
         // Past the scripted end → defaults to Ok(0).
         let fourth = src.pull().await.unwrap();
-        assert_eq!(fourth.events_appended, 0);
+        assert_eq!(fourth.appended, 0);
     }
 
     #[tokio::test(start_paused = true)]
     async fn scheduler_calls_source_repeatedly_on_success() {
         // start_paused lets us advance virtual time without real sleeping.
         let src = Arc::new(null::NullSource::new("happy-path").with_script(vec![
-            Ok(ImportSummary { events_appended: 1 }),
-            Ok(ImportSummary { events_appended: 1 }),
-            Ok(ImportSummary { events_appended: 1 }),
+            Ok(ImportSummary::all_appended(1)),
+            Ok(ImportSummary::all_appended(1)),
+            Ok(ImportSummary::all_appended(1)),
         ]));
         let handle = spawn(src.clone(), Duration::from_secs(60));
 
@@ -775,7 +1057,9 @@ mod tests {
     fn health_healthy_when_recent_success() {
         let now = Utc::now();
         let s = status_with(
-            TickOutcome::Success { events_appended: 0 },
+            TickOutcome::Success {
+                summary: ImportSummary::all_appended(0),
+            },
             Some(now - chrono::Duration::seconds(60)),
             1800,
         );
@@ -783,6 +1067,95 @@ mod tests {
             classify_source_health(&s, now),
             SourceHealth::Healthy,
             "a success 60s ago with a 30min interval should be Healthy — zero events is fine"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // The row-accounting identity. These are the tests that make a silent
+    // drop unwritable, so they are deliberately about the *failure* shapes.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn tally_balances_when_every_row_is_classified() {
+        let mut t = ImportTally::new(5);
+        t.appended(2);
+        t.dropped("a", DropReason::Deduped);
+        t.dropped("b", DropReason::OutOfWindow);
+        t.dropped("c", DropReason::Unmapped);
+        let s = t.finish().expect("2 + 1 + 1 + 1 == 5");
+        assert_eq!(s.fetched, 5);
+        assert_eq!(s.appended, 2);
+        assert_eq!(s.unmapped, 1);
+        assert_eq!(s.lost(), 1, "unmapped is a loss; deduped/out-of-window are not");
+    }
+
+    /// The whole point of the type: a code path that discards a row without
+    /// classifying it cannot produce a summary at all.
+    #[test]
+    fn tally_rejects_an_unclassified_row() {
+        let mut t = ImportTally::new(10);
+        t.appended(9); // the tenth row went somewhere unnamed
+        match t.finish() {
+            Err(ImportError::Unaccounted { fetched, accounted }) => {
+                assert_eq!((fetched, accounted), (10, 9));
+            }
+            other => panic!("expected Unaccounted, got {other:?}"),
+        }
+    }
+
+    /// The original incident in miniature. Every fetched row unmapped must be
+    /// an error — reporting it as a successful zero-append tick is exactly how
+    /// 295 dropped transactions a tick stayed invisible for months.
+    #[test]
+    fn tally_rejects_a_pull_that_mapped_nothing() {
+        let mut t = ImportTally::new(3);
+        t.dropped("acct-1", DropReason::Unmapped);
+        t.dropped("acct-1", DropReason::Unmapped);
+        t.dropped("acct-2", DropReason::Unmapped);
+        match t.finish() {
+            Err(ImportError::NothingMapped { fetched, ids }) => {
+                assert_eq!(fetched, 3);
+                assert_eq!(ids, vec!["acct-1".to_string(), "acct-2".to_string()],
+                    "ids are de-duplicated and sorted so the message is pasteable");
+            }
+            other => panic!("expected NothingMapped, got {other:?}"),
+        }
+    }
+
+    /// A source that is genuinely up to date fetches rows and appends none.
+    /// This must stay a clean success, or the guard above would make every
+    /// quiet tick an error.
+    #[test]
+    fn tally_allows_an_all_deduped_tick() {
+        let mut t = ImportTally::new(4);
+        for i in 0..4 {
+            t.dropped(format!("row-{i}"), DropReason::Deduped);
+        }
+        let s = t.finish().expect("all-deduped is the up-to-date case");
+        assert_eq!(s.appended, 0);
+        assert_eq!(s.lost(), 0);
+    }
+
+    /// A *partial* mapping gap must not halt the source — real rows are still
+    /// flowing — but it must not read as healthy either.
+    #[test]
+    fn partial_unmapped_succeeds_but_reports_dropping() {
+        let mut t = ImportTally::new(3);
+        t.appended(2);
+        t.dropped("acct-x", DropReason::Unmapped);
+        let summary = t.finish().expect("partial drops are not fatal");
+        assert_eq!(summary.lost(), 1);
+
+        let now = Utc::now();
+        let s = status_with(
+            TickOutcome::Success { summary },
+            Some(now - chrono::Duration::seconds(30)),
+            1800,
+        );
+        assert_eq!(
+            classify_source_health(&s, now),
+            SourceHealth::Dropping,
+            "a tick that lost rows must never render as Healthy",
         );
     }
 
@@ -809,7 +1182,9 @@ mod tests {
         // Last success was 3 hours ago; interval is 30 minutes. That's
         // 6× the interval — definitely past any reasonable Healthy window.
         let s = status_with(
-            TickOutcome::Success { events_appended: 7 },
+            TickOutcome::Success {
+                summary: ImportSummary::all_appended(7),
+            },
             Some(now - chrono::Duration::hours(3)),
             1800,
         );
@@ -840,20 +1215,22 @@ mod tests {
         let registry = SourceRegistry::new();
         let src = Arc::new(
             null::NullSource::new("manual-src")
-                .with_script(vec![Ok(ImportSummary { events_appended: 4 })]),
+                .with_script(vec![Ok(ImportSummary::all_appended(4))]),
         );
         registry
             .register(src.clone(), Duration::from_secs(60))
             .await;
 
         let outcome = registry.trigger_manual("manual-src").await.unwrap();
-        assert_eq!(outcome.events_appended, 4);
+        assert_eq!(outcome.appended, 4);
         assert_eq!(src.call_count(), 1);
 
         let snap = registry.snapshot().await;
         assert_eq!(
             snap[0].last_outcome,
-            TickOutcome::Success { events_appended: 4 }
+            TickOutcome::Success {
+                summary: ImportSummary::all_appended(4),
+            }
         );
         assert!(snap[0].last_tick_at.is_some());
     }
@@ -1103,7 +1480,7 @@ mod tests {
         // out of band / a local re-prime).
         let src = Arc::new(null::NullSource::new("northwind").with_script(vec![
             Err(ImportError::NeedsReauth("expired".into())),
-            Ok(ImportSummary { events_appended: 3 }),
+            Ok(ImportSummary::all_appended(3)),
         ]));
         registry.register(src, Duration::from_secs(60)).await;
 

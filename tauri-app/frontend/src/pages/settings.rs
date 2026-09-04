@@ -751,12 +751,17 @@ fn format_relative_time(iso: Option<&str>) -> String {
 }
 
 /// Map the wire-format `health` string to a (label, badge-classes) pair.
-/// `wire_health` is one of `"healthy" | "stale" | "degraded" | "unknown"`.
+/// `wire_health` is one of
+/// `"healthy" | "stale" | "degraded" | "dropping" | "unknown"`.
 fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
     match wire_health {
         "healthy" => ("Healthy", "bg-success/15 text-success border-success/30"),
         "stale" => ("Stale", "bg-warn/15 text-warn border-warn/30"),
         "degraded" => ("Degraded", "bg-error/15 text-error border-error/30"),
+        // The tick *worked* and still lost rows. Shown in the error colour
+        // rather than the warning one on purpose: a failing source is loud and
+        // retries, whereas a dropping one looks fine while money goes missing.
+        "dropping" => ("Dropping rows", "bg-error/15 text-error border-error/30"),
         _ => (
             "Unknown",
             "bg-white/5 text-obsidian-text-muted border-white/10",
@@ -765,17 +770,36 @@ fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
 }
 
 /// Render the one-line subtitle: outcome digest + relative tick time.
+///
+/// A successful tick now reports its **disposition**, not just an append count.
+/// The previous version read `events_appended` and printed "no new events" on
+/// zero — which is the same line a source shows while discarding every row it
+/// fetched. Rows the user must act on are called out explicitly, and an absent
+/// disposition reads as unknown rather than as a clean tick.
 fn outcome_summary(outcome: &serde_json::Value) -> String {
     match outcome.get("kind").and_then(|k| k.as_str()) {
         Some("success") => {
-            let n = outcome
-                .get("events_appended")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            if n == 0 {
-                "Last tick: no new events".into()
+            let Some(sum) = outcome.get("summary") else {
+                return "Last tick: succeeded (no detail reported)".into();
+            };
+            let num = |k: &str| sum.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+            let (fetched, appended) = (num("fetched"), num("appended"));
+            let lost = num("unmapped") + num("failed");
+            if lost > 0 {
+                // Deliberately alarming: this is the state that used to render
+                // as a routine "no new events".
+                return format!(
+                    "Last tick: DROPPED {lost} of {fetched} row(s) — not in the ledger"
+                );
+            }
+            if appended == 0 {
+                if fetched == 0 {
+                    "Last tick: no new data".into()
+                } else {
+                    format!("Last tick: {fetched} row(s), all already recorded")
+                }
             } else {
-                format!("Last tick: {n} events appended")
+                format!("Last tick: {appended} of {fetched} row(s) appended")
             }
         }
         Some("failure") => {
@@ -1001,9 +1025,14 @@ fn AutoImportSection() -> Element {
                                                 spawn(async move {
                                                     let result = bridge::invoke_trigger_auto_import_tick(&name).await;
                                                     match result {
+                                                        Ok(r) if r.lost() > 0 => loading_msg.set(Some(format!(
+                                                            "Manual tick on '{name}' DROPPED {} of {} row(s) — check the account map.",
+                                                            r.lost(),
+                                                            r.fetched
+                                                        ))),
                                                         Ok(r) => loading_msg.set(Some(format!(
-                                                            "Manual tick on '{name}' appended {} events.",
-                                                            r.events_appended
+                                                            "Manual tick on '{name}' appended {} of {} row(s).",
+                                                            r.appended, r.fetched
                                                         ))),
                                                         Err(e) => loading_msg.set(Some(format!(
                                                             "Manual tick on '{name}' failed: {e}"

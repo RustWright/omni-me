@@ -103,20 +103,23 @@ pub fn dispatch_to<'a>(
         .map(|h| h.as_ref())
 }
 
-/// Run one polling pass for one account: fetch new messages, dispatch each
-/// to the first willing handler, return the (events, advanced cursor) pair.
-/// The caller is responsible for persisting the cursor + appending events —
-/// keeps this function pure-ish + testable without an EventStore handle.
+/// Run one polling pass for one account: fetch new messages, dispatch each to
+/// the first willing handler, and return a [`PollOutcome`] accounting for every
+/// message fetched. The caller is responsible for persisting the cursor +
+/// appending events — keeps this function pure-ish + testable without an
+/// EventStore handle.
 pub async fn poll_once(
     fetcher: &dyn ImapFetcher,
     handlers: &[Box<dyn ImapHandler>],
     cursor: &FetchCursor,
-) -> Result<(Vec<NewEvent>, FetchCursor), ImportError> {
+) -> Result<PollOutcome, ImportError> {
     let (messages, max_uid) = fetcher.fetch_new(cursor).await?;
     let mut events = Vec::new();
-    let mut unrouted = 0usize;
-
-    let mut failed = 0usize;
+    // Identities, not just counts: a mailbox that silently discards a
+    // statement needs to name the message, since the uid is the only handle
+    // the user has for finding it again.
+    let mut unrouted: Vec<u32> = Vec::new();
+    let mut failed: Vec<(u32, String)> = Vec::new();
 
     for msg in &messages {
         match dispatch_to(msg, handlers) {
@@ -139,7 +142,7 @@ pub async fn poll_once(
                 // and moved on. A message a handler claimed but choked on is no
                 // more re-processable than one nobody wanted.
                 Err(e) => {
-                    failed += 1;
+                    failed.push((msg.uid, e.to_string()));
                     tracing::warn!(
                         account = fetcher.name(),
                         uid = msg.uid,
@@ -151,21 +154,21 @@ pub async fn poll_once(
                 }
             },
             None => {
-                unrouted += 1;
+                unrouted.push(msg.uid);
             }
         }
     }
-    if unrouted > 0 {
+    if !unrouted.is_empty() {
         tracing::debug!(
             account = fetcher.name(),
-            count = unrouted,
+            count = unrouted.len(),
             "imap: messages with no handler match (likely unrelated mail)",
         );
     }
-    if failed > 0 {
+    if !failed.is_empty() {
         tracing::warn!(
             account = fetcher.name(),
-            count = failed,
+            count = failed.len(),
             total = messages.len(),
             "imap: some messages failed to process and were skipped",
         );
@@ -176,7 +179,36 @@ pub async fn poll_once(
     let next_cursor = FetchCursor {
         last_seen_uid: max_uid.or(cursor.last_seen_uid),
     };
-    Ok((events, next_cursor))
+    Ok(PollOutcome {
+        messages_seen: messages.len(),
+        events,
+        unrouted,
+        failed,
+        next_cursor,
+    })
+}
+
+/// One IMAP pass, with every fetched message accounted for.
+///
+/// `poll_once` used to return `(events, cursor)`, which made two very different
+/// mailboxes indistinguishable: one with no new mail, and one where every
+/// message failed to parse and was skipped. Both yielded an empty `events`.
+/// The counts existed already — they were computed and then dropped into a log
+/// line — so this returns them rather than deriving anything new.
+///
+/// `unrouted` is deliberately *not* a loss: mail no handler claims is unrelated
+/// mail, and reading-but-discarding it is the privacy design. It is reported so
+/// the distinction stays visible, but the caller counts it as `Deduped`-style
+/// noise rather than as a dropped transaction.
+#[derive(Debug)]
+pub struct PollOutcome {
+    pub messages_seen: usize,
+    pub events: Vec<NewEvent>,
+    /// UIDs no handler claimed.
+    pub unrouted: Vec<u32>,
+    /// `(uid, error)` for messages a handler claimed but could not process.
+    pub failed: Vec<(u32, String)>,
+    pub next_cursor: FetchCursor,
 }
 
 #[cfg(test)]
@@ -340,7 +372,10 @@ mod tests {
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
         };
-        let (events, next) = poll_once(&fetcher, &handlers, &cursor).await.unwrap();
+        let outcome = poll_once(&fetcher, &handlers, &cursor)
+            .await
+            .unwrap();
+        let (events, next) = (outcome.events, outcome.next_cursor);
         assert_eq!(events.len(), 2, "two messages routed to handlers");
         assert_eq!(next.last_seen_uid, Some(103));
     }
@@ -355,7 +390,10 @@ mod tests {
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
         };
-        let (events, next) = poll_once(&fetcher, &[], &cursor).await.unwrap();
+        let outcome = poll_once(&fetcher, &[], &cursor)
+            .await
+            .unwrap();
+        let (events, next) = (outcome.events, outcome.next_cursor);
         assert!(events.is_empty());
         assert_eq!(next.last_seen_uid, Some(101));
     }
@@ -367,7 +405,10 @@ mod tests {
         let cursor = FetchCursor {
             last_seen_uid: Some(500),
         };
-        let (events, next) = poll_once(&fetcher, &[], &cursor).await.unwrap();
+        let outcome = poll_once(&fetcher, &[], &cursor)
+            .await
+            .unwrap();
+        let (events, next) = (outcome.events, outcome.next_cursor);
         assert!(events.is_empty());
         assert_eq!(
             next.last_seen_uid,
@@ -397,9 +438,10 @@ mod tests {
             last_seen_uid: Some(100),
         };
 
-        let (events, next) = poll_once(&fetcher, &handlers, &cursor)
+        let outcome = poll_once(&fetcher, &handlers, &cursor)
             .await
             .expect("a per-message handler failure must not fail the whole pass");
+        let (events, next) = (outcome.events, outcome.next_cursor);
 
         assert!(events.is_empty(), "the failing handler produced nothing");
         assert_eq!(
@@ -436,7 +478,10 @@ mod tests {
             last_seen_uid: Some(100),
         };
 
-        let (events, next) = poll_once(&fetcher, &handlers, &cursor).await.unwrap();
+        let outcome = poll_once(&fetcher, &handlers, &cursor)
+            .await
+            .unwrap();
+        let (events, next) = (outcome.events, outcome.next_cursor);
 
         assert_eq!(
             events.len(),

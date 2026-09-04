@@ -30,8 +30,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::accounts::UNMATCHED_ACCOUNT;
-use crate::auto_import::to_proposed_event;
-use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary};
+use crate::auto_import::{ParseOutcome, to_proposed_event};
+use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary, ImportTally};
 use crate::events::{DraftTransaction, EventStore, Posting, ProjectionRunner};
 
 /// chrono format used when a source doesn't override `date_format`.
@@ -146,9 +146,13 @@ fn resolve_col(spec: &str, header: Option<&csv::StringRecord>) -> Result<usize, 
 
 /// Parse `content` into drafts. A malformed CSV *structure* is a hard
 /// `Parse` error; a single row that fails date/amount parsing is skipped
-/// (logged) rather than failing the whole batch — one weird row shouldn't
-/// block an otherwise-good import, and the user reviews before commit anyway.
-fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, ImportError> {
+/// rather than failing the whole batch — one weird row shouldn't block an
+/// otherwise-good import, and the user reviews before commit anyway.
+///
+/// Skipped rows are **returned** in [`ParseOutcome::failures`], not just
+/// logged: a `warn!` in a container log is not an accounting, and the caller
+/// needs the count to close the row identity.
+fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<ParseOutcome, ImportError> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(cfg.has_header)
         .flexible(true)
@@ -172,8 +176,9 @@ fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Imp
         None => None,
     };
 
-    let mut drafts = Vec::new();
+    let mut out = ParseOutcome::default();
     for (row, rec) in rdr.records().enumerate() {
+        out.rows_seen += 1;
         let rec = rec.map_err(|e| ImportError::Parse(format!("{}: row {}: {e}", cfg.name, row)))?;
 
         let date_raw = rec.get(date_idx).unwrap_or("").trim();
@@ -189,6 +194,10 @@ fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Imp
                     date = date_raw,
                     "skipping CSV row: unparseable date"
                 );
+                out.failures.push((
+                    format!("row {row}"),
+                    format!("unparseable date {date_raw:?} for format {:?}", cfg.date_format),
+                ));
                 continue;
             }
         };
@@ -201,6 +210,8 @@ fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Imp
                     amount = amount_raw,
                     "skipping CSV row: unparseable amount"
                 );
+                out.failures
+                    .push((format!("row {row}"), format!("unparseable amount {amount_raw:?}")));
                 continue;
             }
         };
@@ -233,7 +244,7 @@ fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Imp
             },
         ];
 
-        drafts.push(DraftTransaction {
+        out.drafts.push(DraftTransaction {
             external_id,
             date,
             description,
@@ -241,7 +252,7 @@ fn parse_csv(content: &str, cfg: &ParseCfg) -> Result<Vec<DraftTransaction>, Imp
         });
     }
 
-    Ok(drafts)
+    Ok(out)
 }
 
 /// Parse a money cell: tolerates surrounding whitespace, thousands commas, a
@@ -298,16 +309,26 @@ impl AutoImportSource for CsvSource {
             .await
             .map_err(|e| ImportError::Io(format!("read {}: {e}", self.path.display())))?;
 
-        let drafts = parse_csv(&content, &self.parse_cfg())?;
-        if drafts.is_empty() {
-            return Ok(ImportSummary { events_appended: 0 });
+        let parsed = parse_csv(&content, &self.parse_cfg())?;
+        let mut tally = ImportTally::new(parsed.rows_seen);
+        for (id, reason) in &parsed.failures {
+            tally.failed(id.clone(), reason.clone());
         }
+        if parsed.drafts.is_empty() {
+            return tally.finish();
+        }
+        let draft_count = parsed.drafts.len();
 
         // Whole-file content hash → batch is idempotent while the file is
         // unchanged (projection UPSERTs on source+dedup_key).
         let dedup_key = format!("{}-{:x}", self.name, stable_hash(&[&content]));
-        let proposed =
-            to_proposed_event(&self.name, dedup_key, drafts, None, self.device_id.clone());
+        let proposed = to_proposed_event(
+            &self.name,
+            dedup_key,
+            parsed.drafts,
+            None,
+            self.device_id.clone(),
+        );
 
         let appended = self
             .store
@@ -319,9 +340,8 @@ impl AutoImportSource for CsvSource {
             .await
             .map_err(|e| ImportError::Upstream(format!("project: {e}")))?;
 
-        Ok(ImportSummary {
-            events_appended: appended.len(),
-        })
+        tally.appended(draft_count);
+        tally.finish()
     }
 }
 
@@ -353,7 +373,7 @@ mod tests {
     fn header_mapped_rows_become_balanced_drafts() {
         let content = "Date,Amount,Memo\n2026-06-15,-87.42,Loblaws\n2026-06-16,1200.00,Paycheck\n";
         let columns = cols(None);
-        let drafts = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap();
+        let drafts = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap().drafts;
 
         assert_eq!(drafts.len(), 2);
         let d0 = &drafts[0];
@@ -377,7 +397,7 @@ mod tests {
             description: "Memo".into(),
             id: Some("Ref".into()),
         };
-        let drafts = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap();
+        let drafts = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap().drafts;
         assert_eq!(drafts[0].external_id, "my-csv-TXN-001");
     }
 
@@ -385,8 +405,8 @@ mod tests {
     fn external_id_is_stable_across_reparse_without_id_column() {
         let content = "Date,Amount,Memo\n2026-06-15,-87.42,Loblaws\n";
         let columns = cols(None);
-        let a = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap();
-        let b = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap();
+        let a = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap().drafts;
+        let b = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap().drafts;
         // Same content → same fallback external_id (so a re-read dedups).
         assert_eq!(a[0].external_id, b[0].external_id);
         assert!(a[0].external_id.starts_with("my-csv-"));
@@ -401,7 +421,7 @@ mod tests {
             description: "2".into(),
             id: None,
         };
-        let drafts = parse_csv(content, &cfg(&columns, false, DEFAULT_DATE_FORMAT)).unwrap();
+        let drafts = parse_csv(content, &cfg(&columns, false, DEFAULT_DATE_FORMAT)).unwrap().drafts;
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].description, "Loblaws");
         assert_eq!(
@@ -428,7 +448,7 @@ mod tests {
         // Row 2 has a bad date — it's skipped, the good rows still import.
         let content = "Date,Amount,Memo\n2026-06-15,-87.42,Good\nnot-a-date,10,Bad\n2026-06-17,5.00,AlsoGood\n";
         let columns = cols(None);
-        let drafts = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap();
+        let drafts = parse_csv(content, &cfg(&columns, true, DEFAULT_DATE_FORMAT)).unwrap().drafts;
         assert_eq!(drafts.len(), 2);
         assert_eq!(drafts[0].description, "Good");
         assert_eq!(drafts[1].description, "AlsoGood");
@@ -460,7 +480,7 @@ mod tests {
     fn custom_date_format_is_honored() {
         let content = "Date,Amount,Memo\n06/15/2026,-87.42,Loblaws\n";
         let columns = cols(None);
-        let drafts = parse_csv(content, &cfg(&columns, true, "%m/%d/%Y")).unwrap();
+        let drafts = parse_csv(content, &cfg(&columns, true, "%m/%d/%Y")).unwrap().drafts;
         assert_eq!(
             drafts[0].date,
             NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()
@@ -474,7 +494,7 @@ mod tests {
             "Date,Amount,Memo\n",
             &cfg(&columns, true, DEFAULT_DATE_FORMAT),
         )
-        .unwrap();
+        .unwrap().drafts;
         assert!(drafts.is_empty());
     }
 }

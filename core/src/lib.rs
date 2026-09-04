@@ -23,5 +23,6 @@ pub mod query;
 pub mod reconciliation;
 pub mod recurring;
 pub mod routines;
+pub mod statement;
 pub mod statement_csv;
 pub mod sync;

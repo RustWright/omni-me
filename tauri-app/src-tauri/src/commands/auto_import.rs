@@ -131,9 +131,38 @@ pub async fn list_auto_import_sources(
         .map_err(|e| format!("auto-import status decode: {e}"))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Wire mirror of the server's `ImportSummary`.
+///
+/// A *mirror* rather than the real type because the Tauri client builds
+/// `omni-me-core` without the `auto-import` feature (it keeps `openssl-sys` out
+/// of the Android dependency tree), so `auto_import_scheduler` is not compiled
+/// here at all. The client only ever proxies these numbers.
+///
+/// Every field defaults, so an older server that still returns the single
+/// `events_appended` shape decodes rather than erroring — but it decodes as
+/// `fetched: 0`, which the UI renders as "server did not report", not as a
+/// clean tick.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TickResponse {
-    pub events_appended: usize,
+    #[serde(default)]
+    pub fetched: usize,
+    #[serde(default)]
+    pub appended: usize,
+    #[serde(default)]
+    pub deduped: usize,
+    #[serde(default)]
+    pub out_of_window: usize,
+    #[serde(default)]
+    pub ignored: usize,
+    /// Rows with no account mapping — a configuration gap, and real money the
+    /// ledger will never see.
+    #[serde(default)]
+    pub unmapped: usize,
+    #[serde(default)]
+    pub failed: usize,
+    /// The dropped rows themselves, so the client can name what is missing.
+    #[serde(default)]
+    pub dropped: Vec<serde_json::Value>,
 }
 
 #[tauri::command(rename_all = "snake_case")]
