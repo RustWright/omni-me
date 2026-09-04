@@ -26,16 +26,10 @@ The 2026-09-04 findings (what each source emits wrongly, the dedup limits, the b
 pitfalls, the verified-but-held config) are in `ACCOUNT_MAPPING.md`. The upstream ledger gaps
 are in the ledger project's memory (`project_ledger_completeness_gaps`). Read, don't rederive.
 
-## Owed: finish the memory prune pass
-Project memory is **118 files / 295KB**; the 143-line index is paid EVERY session and is the
-retrieval surface, so stale lines actively misdirect (one told sessions to build on a machine
-that no longer exists). Started 2026-09-04: one genuine duplicate shrunk 16KB→1KB, two
-dangerous stale entries fixed, three index lines dropped. **Judge by CONTENT, not filename or
-size** — three notes that looked like repo duplicates turned out to be non-derivable design
-records. The remaining work is per-note: does the repo already own this, and what decision
-survives deleting it?
-
 ## Open threads
+**Finish the memory prune** (118 files / 295KB; the 143-line index is paid every session and
+is the retrieval surface, so stale lines misdirect). Judge by CONTENT — notes that look like
+repo duplicates by name are often non-derivable design records.
 Mobile keyboard/scroll + floating insertion handle — **ask the user to connect the test phone
 in-session**, else defer to a session where they have it (Android 15 disproves the API-29
 theory; the test phone IS API 29, so both must work) · format bar SHELVED behind finances ·
