@@ -21,19 +21,19 @@ silently dropped**; matching legs come from receipts (purchases) and paystubs (s
 - **Fix the class, not the instance** — now a global rule. One bank source dedups against the
   ledger; every other source has none. 1.0.5 shipped; ledger-refresh fix awaits a release.
 
-## Findings 2026-09-04 — verified (detail in the private docs)
-- **Upstream, in the ledger project — NOT omni-me's import:** paystub expansion stops
-  2023-11-30 (~2.7 yrs of payroll deductions absent, 66 PDFs unused), and two accounts the
-  conventions doc describes exist in no ledger file. See `project_ledger_completeness_gaps`.
-- **Both bank sources emit non-conventional postings**: one maps to an account tree with 0
-  occurrences; the other omits institution/product tags and records fees as a tag rather than
-  an expense posting (10 rows already committed). Fixes need config AND tags together —
-  `statement_extraction_to_drafts` emits `tags: vec![]`.
-- **Security/crypto orders arrive as the CASH leg** — security balances never update.
-- **`pause` is not durable** (500; read-only mount) — hold a source off by removing its
-  account map, but note the second source then reports `success`/0 **silently**.
-  **Edit box config with `cp`, never `sed -i`** (single-file bind mount; an inode swap makes
-  the edit invisible to the container until a restart).
+## Do NOT re-survey — it is already written down
+The 2026-09-04 findings (what each source emits wrongly, the dedup limits, the box-edit
+pitfalls, the verified-but-held config) are in `ACCOUNT_MAPPING.md`. The upstream ledger gaps
+are in the ledger project's memory (`project_ledger_completeness_gaps`). Read, don't rederive.
+
+## Owed: finish the memory prune pass
+Project memory is **118 files / 295KB**; the 143-line index is paid EVERY session and is the
+retrieval surface, so stale lines actively misdirect (one told sessions to build on a machine
+that no longer exists). Started 2026-09-04: one genuine duplicate shrunk 16KB→1KB, two
+dangerous stale entries fixed, three index lines dropped. **Judge by CONTENT, not filename or
+size** — three notes that looked like repo duplicates turned out to be non-derivable design
+records. The remaining work is per-note: does the repo already own this, and what decision
+survives deleting it?
 
 ## Open threads
 Mobile keyboard/scroll + floating insertion handle — **ask the user to connect the test phone
