@@ -7525,8 +7525,8 @@ mod tests {
     #[test]
     fn multi_hyphen_stems_survive() {
         assert_eq!(
-            roll_statement_label("sc-ngn-savings-2026-01", sep_2026()),
-            "sc-ngn-savings-2026-09"
+            roll_statement_label("globepay-ngn-savings-2026-01", sep_2026()),
+            "globepay-ngn-savings-2026-09"
         );
     }
 
