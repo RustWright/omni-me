@@ -323,6 +323,7 @@ pub fn build_app(
         .merge(routes::documents_routes())
         .merge(routes::statement_routes())
         .merge(routes::auto_import_routes())
+        .merge(routes::feedback_routes())
         .merge(routes::llm_routes());
 
     if let Some(token) = auth_token {

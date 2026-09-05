@@ -49,6 +49,7 @@ pub fn NavDrawer(
     open: bool,
     on_switch: EventHandler<Tab>,
     on_close: EventHandler<()>,
+    on_feedback: EventHandler<()>,
 ) -> Element {
     let row_class = move |tab: Tab| -> String {
         let is_active = active == tab;
@@ -108,6 +109,46 @@ pub fn NavDrawer(
                     }
                 }
             }
+
+            FeedbackRow {
+                on_activate: move |_| {
+                    // Close the drawer first: it is a fixed overlay at z-150 and
+                    // the modal sits above it, but leaving it open behind the
+                    // scrim means dismissing the modal reveals the drawer rather
+                    // than the screen the report was about.
+                    on_close.call(());
+                    on_feedback.call(());
+                },
+            }
+        }
+    }
+}
+
+/// "Report a problem", pinned to the foot of either nav.
+///
+/// **Deliberately not a sixth entry in `ALL_TABS`.** It does not navigate — it
+/// opens a modal over wherever the user already is, which is the whole point,
+/// since the report's value is the screen underneath. Putting it in the tab loop
+/// would give it the active-state styling and teach the eye to read it as a
+/// destination. `mt-auto` pushes it to the bottom of the flex column, which on
+/// mobile also lands it in thumb reach at the base of the drawer.
+#[component]
+fn FeedbackRow(on_activate: EventHandler<()>) -> Element {
+    rsx! {
+        button {
+            class: "mt-auto flex items-center gap-3 px-3 py-2 pt-3 border-t border-white/5 rounded-lg \
+                    bg-transparent text-obsidian-text-muted font-medium text-sm cursor-pointer \
+                    hover:bg-white/5 hover:text-obsidian-text transition-all duration-150",
+            onclick: move |_| on_activate.call(()),
+            svg { class: "w-5 h-5 shrink-0", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
+                path {
+                    stroke_linecap: "round",
+                    stroke_linejoin: "round",
+                    stroke_width: "2",
+                    d: "M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9",
+                }
+            }
+            span { class: "flex-1 text-left", "Report a problem" }
         }
     }
 }
@@ -117,7 +158,11 @@ pub fn NavDrawer(
 /// Rendered as a left-rail with icon + label rows. Uses the same active-state
 /// color rule as the bottom nav (obsidian-sidebar fill + accent text).
 #[component]
-pub fn SideNav(active: Tab, on_switch: EventHandler<Tab>) -> Element {
+pub fn SideNav(
+    active: Tab,
+    on_switch: EventHandler<Tab>,
+    on_feedback: EventHandler<()>,
+) -> Element {
     let row_class = move |tab: Tab| -> String {
         let is_active = active == tab;
         if is_active {
@@ -150,6 +195,8 @@ pub fn SideNav(active: Tab, on_switch: EventHandler<Tab>) -> Element {
                     }
                 }
             }
+
+            FeedbackRow { on_activate: move |_| on_feedback.call(()) }
         }
     }
 }

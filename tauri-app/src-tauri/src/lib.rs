@@ -765,6 +765,9 @@ pub fn run() {
             commands::settings::get_runtime_profile,
             commands::settings::get_base_currency,
             commands::settings::update_base_currency,
+            // Feedback capture
+            commands::feedback::get_app_context,
+            commands::feedback::submit_feedback,
             // Workspace continuity persistence (1.8a)
             commands::workspace::get_workspace,
             commands::workspace::save_workspace,

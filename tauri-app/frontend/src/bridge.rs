@@ -1331,6 +1331,71 @@ pub async fn invoke_get_runtime_profile() -> Result<crate::types::RuntimeProfile
     }
 }
 
+/// Build + installation identity for the capture modal's context list.
+pub async fn invoke_get_app_context() -> Result<crate::types::AppContext, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(crate::types::AppContext {
+            app_version: "0.0.0-mock".to_string(),
+            platform: "web".to_string(),
+            device_id: "mock-device".to_string(),
+            server_url: "(none)".to_string(),
+            non_production: true,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("get_app_context", &Args {}).await
+    }
+}
+
+/// File one problem report. Returns its id.
+///
+/// The context arguments are exactly the fields the frontend alone can know.
+/// Build, device and sync target are filled in by the backend, which cannot be
+/// stale about them in the way a long-open frontend can.
+pub async fn invoke_submit_feedback(
+    body: &str,
+    screen: Option<&str>,
+    screen_ref: Option<&str>,
+    screen_data: Option<&str>,
+    recent_errors: &[String],
+) -> Result<String, String> {
+    #[cfg(feature = "mock")]
+    {
+        // Deliberately does NOT accumulate reports: the mock is for looking at
+        // the UI, and a fake report list would be state the browser loop invents
+        // and the device does not have — the behavioural-drift trap this file's
+        // header warns about.
+        let _ = (body, screen, screen_ref, screen_data, recent_errors);
+        Ok("01MOCKFEEDBACKID0000000000".to_string())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            body: &'a str,
+            screen: Option<&'a str>,
+            screen_ref: Option<&'a str>,
+            screen_data: Option<&'a str>,
+            recent_errors: &'a [String],
+        }
+        invoke(
+            "submit_feedback",
+            &Args {
+                body,
+                screen,
+                screen_ref,
+                screen_data,
+                recent_errors,
+            },
+        )
+        .await
+    }
+}
+
 pub async fn invoke_get_base_currency() -> Result<String, String> {
     #[cfg(feature = "mock")]
     {

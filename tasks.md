@@ -47,10 +47,11 @@ These still bind; the rest of that header is in the post-v1 archive.
 Set after the user stopped work on finances. **Each gets planning before building**, per the
 defer-major-phases rule; do not run ahead to the next one.
 
-1. **Feedback capture** — plan, then address. Capture at the point of friction with app
-   context attached, stored pluggably. Detail in "Open — from daily use" below. This is
-   first because it is how every later item gets its bug reports, and because the current
-   method (a long unstructured dump per session) costs the user the writing.
+1. **Feedback capture** — planned and **Stage 1 built 2026-09-05**. Capture at the point of
+   friction with app context attached; stored as a `FeedbackCaptured` event, read back over
+   `GET /feedback`. Detail in "Open — from daily use" below. This was first because it is how
+   every later item gets its bug reports. **Still open under it:** Stage 2 (the diagnostic
+   ring buffer) and the live-box end-to-end.
 2. **Generalization** — plan, then decide *or* address. The open-core engine still carries
    the user's own choices as hardcoded structure: the journal template's three reflection
    keys, the statement layout strings, `FORCE_GENERIC_DIRS`. A decision to defer is a valid
@@ -201,35 +202,48 @@ parser built 2026-09-05 would close the gap. Never checked.
   real-shaped data without writing to production — export real data to test against is
   acceptable; writing back is not. **This is infrastructure, not a feature**, and it gates
   how safely everything else on this list can be fixed. [M]
-- [ ] **In-app feedback capture from the page where the issue happens** (user, 2026-09-03).
-  **= ITEM 1 of the agreed sequence. Its planning session has NOT happened** — the user
-  deferred the design decision to a fresh session on 2026-09-05. Do not start building.
-  Today the user writes a long unstructured dump per session, which loses page context and
-  costs them the writing. Wants capture at the point of friction, with app context attached
-  (version, device, current screen, recent events), stored somewhere **pluggable** —
-  defaulting to the private overlay for their own instance, since the feedback is often
-  instance-specific, and pointable elsewhere by another deployment. Follows the existing
-  extensibility pattern (subprocess plugins + config-selection, registry in
-  `server/src/main.rs`). [M]
+- [~] **In-app feedback capture from the page where the issue happens** (user, 2026-09-03).
+  **= ITEM 1 of the agreed sequence. Planned and BUILT (Stage 1) 2026-09-05.** Plan:
+  `~/.claude/plans/lets-continue-eventual-aurora.md`. Remaining: Stage 2 below, and the
+  live-box end-to-end.
 
-  **Survey done 2026-09-05 — do NOT redo it:**
-  - **Nothing exists.** No feedback plumbing anywhere in `core/`, `server/`, or the app.
-  - **Every existing `EventType` is a DOMAIN event** — journal, routines, transactions, all
-    about the user's *content*. Feedback is about the *app*, so it is a new category however
-    it is stored. That is the tension the design call turns on.
-  - ⭐ **The user's current workaround is the strongest design input:** they wrote a feedback
-    dump **on mobile and copy-pasted it from desktop** — i.e. they are already using
-    note-sync as a feedback transport. Whatever ships should make that first-class rather
-    than replace it with something used less.
-  - **Ruled out:** a separate feedback channel straight to the box. It needs its own offline
-    queue, retry and sync — rebuilding machinery already proven at 12k events.
-  - **The open fork** (user deferred deciding): (a) feedback as a **tagged note** — inherits
-    offline, sync, the editor, search and export for free, context into frontmatter beside the
-    existing reflection keys, cheapest by far, but sits among real notes; (b) a **new
-    `FeedbackCaptured` event type** with its own projection and review screen — conceptually
-    cleaner and supports triage states, costs a projection + a UI surface; (c) (a) now and
-    promote to (b) if volume hurts, migration-in-one-direction. Claude's recommendation was
-    (a); the user has not chosen.
+  **The design fork is CLOSED — feedback is an event.** `EventType::FeedbackCaptured` +
+  `FeedbackCapturedPayload` (only `feedback_id` and `body` required, so capture can never fail
+  validation mid-friction), **no projection** — every projection ignores it via `_ => Ok(())`.
+  Read back by `queries::list_feedback`, served as markdown by `GET /feedback`, pulled by
+  `scripts/pull-feedback.sh`. The tagged-note option was rejected on merits, not cost: a note
+  lands in the notes list, note search, the Obsidian export and the LLM derive pass, and
+  `generic_notes.tags` is written **only** by `on_llm_processed` — so a typed `tags: [feedback]`
+  is not queryable at all. "Pluggable" needed no plugin seam: the destination is whatever calls
+  the read endpoint.
+
+  ⚠️ **The 2026-09-05 survey's "strongest design input" — that the user copy-pastes a dump from
+  mobile — was RETIRED by the user the same day**: it was a crutch for having no system, not a
+  requirement. Do not reinstate note-sync-as-transport reasoning from the archived survey.
+
+  **Screen context is describe-on-demand** (`frontend/src/screen_context.rs`), not a widened
+  continuity store: the store persists what would be *lost*, a report wants what was *shown*.
+  Journal and Notes publish describers; other pages report position only until they adopt one.
+  **Rule: describers summarise, never quote** — Settings must report its section and nothing
+  else, since it holds the server-token field.
+
+  **Verified:** 38 core tests, 4 route tests, 94 frontend tests, 3 src-tauri architectural
+  guards, both wasm clippy configs, and a Playwright pass at 390 + 1280 with **0 console
+  errors** — modal opens over the live page, context list renders screen + build + unsaved-draft
+  length, the draft line drops and restores, send returns an id. [M]
+
+- [ ] **Stage 2 — the diagnostic ring buffer.** A report that says "it broke" with no error trail
+  is barely better than the dump it replaces. Nothing records panics, console errors or failed
+  `invoke` calls today; `tracing_subscriber::fmt()` goes to stdout, which on Android is logcat —
+  invisible in-app and gone when the process dies. Needs: a bounded (~50) frontend ring buffer
+  fed by a wasm panic hook, a `console.error`/`warn` tap and a failed-`invoke` tap; plus
+  `get_recent_events(limit)` (`EventStore` has `get_since`/`get_since_by_device`/
+  `get_by_aggregate` — none answer "last N by timestamp for this device"). The payload fields
+  `recent_errors` / `recent_events` already exist, so this is not a wire-format change. [M]
+
+- [ ] **Feedback end-to-end against a live box.** Everything so far ran against the mock bridge.
+  The cross-device leg is the only part that proves the loop: capture on the phone, then
+  `GET /feedback` from the desktop and see that report. [S]
 
 ### Release engineering
 - [ ] **Desktop DOES flash white for ~320ms — but `backgroundColor` is NOT the culprit and the

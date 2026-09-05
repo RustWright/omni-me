@@ -20,6 +20,7 @@ use crate::components::tag_editor::TagChipEditor;
 use crate::continuity::{ContinuityKey, EditSession, session_is_recoverable, use_continuity};
 use crate::journal_template;
 use crate::note_frontmatter::{JournalProps, serialize_journal, split_journal};
+use crate::screen_context::{ScreenReport, describe_len, use_publish_screen_report};
 use crate::timer::{AUTOSAVE_DEBOUNCE_MS, sleep_ms};
 use crate::types::JournalEntryItem;
 use crate::user_date::UserDate;
@@ -209,6 +210,30 @@ pub fn JournalPage() -> Element {
         }
         let date = selected_date.read().clone();
         store.update_nav(|n| n.journal_date = Some(date));
+    });
+
+    // Describe this screen for problem reports. The calendar drawer is reported
+    // as its own surface rather than as a flag on the day view: from a reader's
+    // side "the calendar was open" and "I was editing the day" are different
+    // reports, and the drawer covers the editor while it is up.
+    use_publish_screen_report(move || {
+        let date = selected_date.read().clone();
+        let sub = if *calendar_open.read() {
+            "calendar"
+        } else {
+            "day"
+        };
+        // Only unsaved bodies appear here — see the note in `notes.rs`:
+        // `ContinuityStore::put` evicts clean sessions, so a session that exists
+        // is a draft by construction.
+        let detail = store
+            .get(&ContinuityKey::Journal(date.clone()))
+            .and_then(|session| describe_len("journal body, UNSAVED", &session.content));
+        ScreenReport {
+            screen: format!("journal:{sub}"),
+            screen_ref: Some(date),
+            detail,
+        }
     });
 
     rsx! {

@@ -131,6 +131,20 @@ pub struct RuntimeProfile {
     pub server_url: String,
 }
 
+/// Build + installation identity, shown in the capture modal so a user can see
+/// what a problem report will carry before sending it. Distinct from
+/// [`RuntimeProfile`], which is on the render path of a banner drawn on every
+/// screen and deliberately carries nothing it does not need.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppContext {
+    pub app_version: String,
+    pub platform: String,
+    pub device_id: String,
+    pub server_url: String,
+    #[serde(default)]
+    pub non_production: bool,
+}
+
 /// Dry run of an Obsidian export — what it would overwrite, before it does.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExportPreview {

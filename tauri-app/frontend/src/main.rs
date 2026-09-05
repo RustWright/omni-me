@@ -7,6 +7,7 @@ mod journal_template;
 mod note_frontmatter;
 mod pages;
 mod reorder;
+mod screen_context;
 mod sync_refresh;
 mod timer;
 mod types;
@@ -22,6 +23,7 @@ use pages::journal::JournalPage;
 use pages::notes::NotesPage;
 use pages::routines::RoutinesPage;
 use pages::settings::SettingsPage;
+use screen_context::{ScreenContext, ScreenReport};
 use sync_refresh::SyncRefresh;
 
 /// Top-level feature tabs. Order matches the nav display order.
@@ -373,6 +375,13 @@ fn App() -> Element {
     let mut sync_epoch = use_signal(|| 0u64);
     use_context_provider(|| SyncRefresh(sync_epoch));
 
+    // What the open screen is showing, for problem reports. Memory-only and
+    // written by whichever page is mounted; read only when the capture modal
+    // opens. See `screen_context` for why this is not the continuity store.
+    let screen_report = use_signal(ScreenReport::default);
+    use_context_provider(|| ScreenContext(screen_report));
+    let mut feedback_open = use_signal(|| false);
+
     // Inbound-restore progress (see `RestoreProgress`). Separate listener from
     // `sync:applied` below because the two answer different questions: this one
     // says "a batch is projecting right now", that one says "it finished, go
@@ -631,6 +640,7 @@ fn App() -> Element {
                     active_tab.set(tab);
                     continuity_store.update_nav(|n| n.tab = Some(tab.as_key().to_string()));
                 },
+                on_feedback: move |_| feedback_open.set(true),
             }
 
             // Main column: sticky header (sync chip) + scrollable content.
@@ -749,6 +759,16 @@ fn App() -> Element {
                     continuity_store.update_nav(|n| n.tab = Some(tab.as_key().to_string()));
                 },
                 on_close: move |_| drawer_open.set(false),
+                on_feedback: move |_| feedback_open.set(true),
+            }
+
+            // Capture modal. Mounted only while open — mounting IS the snapshot
+            // of the screen underneath, so a report cannot drift onto a page the
+            // user navigated to after deciding to file it.
+            if *feedback_open.read() {
+                components::feedback::FeedbackModal {
+                    on_close: move |_| feedback_open.set(false),
+                }
             }
 
             // Boot splash — last child so it stacks above the drawer even

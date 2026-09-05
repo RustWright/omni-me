@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: a FRESH PLANNING SESSION for feedback capture** — item 1 of three set by the
-user 2026-09-05, who deferred the design call to that session. **Do not build, and do not
-re-run the survey** — it is banked in `tasks.md` (open fork: tagged-note vs. new event type).
-The sequence, one at a time: **1. feedback capture · 2. generalization (decide *or* address) ·
-3. AI/LLM/ML — how to integrate, host and securely use it for best value at least cost.**
-Framing in `tasks.md` § The agreed sequence. Do not run ahead.
+**Next action: Stage 2 of feedback capture — the diagnostic ring buffer.** Stage 1 is built and
+verified; Stage 2 is in the same approved plan and is what makes a report actionable. Nothing in
+the app records panics, console errors or failed `invoke` calls today, and `tracing_subscriber`
+writes to stdout — logcat on Android, gone with the process. Then item 2. **Sequence unchanged:
+1. feedback capture · 2. generalization · 3. AI/LLM/ML.** Do not run ahead.
 
 ## Decisions in force — inherit these
-- ⛔ **FINANCES ARE DEFERRED INDEFINITELY** (user, 2026-09-05). They stopped using the section;
-  what exists ships as-is. **Do not start finance work, propose it, or "just fix" an item.**
-  This *overrides* THE BAR rather than clearing it — only the state survives: tab offline,
-  both bank sources OFF, categorization deferred to `Unmatched`.
-- **The "nothing new until finances work end-to-end" gate is SUPERSEDED** — it would have
-  blocked the sequence forever. Journal and routines are end-to-end and in daily use, which
-  was the part that mattered.
-- ⚠️ `DocumentExtractor`/Gemini is queued for re-evaluation — that re-examination *is* item 3.
-  Do not treat today's LLM design as settled just because it exists and compiles.
-- **Almost none of the statement work was bank-specific** (user's question, 2026-09-05) —
-  layout shapes and checks generalize; column *words*, dates and the password rule don't.
-  A live input to item 2.
-- ⚠️ **"Nothing failed" ≠ "verified"** — a format with nothing to check clears every gate by
-  offering none; `Verifiability` says so in words. Never collapse it into a tick.
-
-> **Public repo — fictional names only; real balances/institutions never enter it.** Institution
-> detail lives in the overlay (`CONVENTIONS.md` is CANONICAL). The privacy guard is an **ingress
-> filter, not an audit** — it sees only newly staged lines.
+- ⛔ **FINANCES ARE DEFERRED INDEFINITELY** (user, 2026-09-05). Do not start it, propose it, or
+  "just fix" an item. Only the state survives: tab offline, both bank sources OFF, categorization
+  deferred to `Unmatched`.
+- **Feedback is an EVENT — not a note, not a projection** (decided and built 2026-09-05).
+  `FeedbackCaptured` + one query; no projection handler (projections ignore it via `_ => Ok(())`).
+  A note was rejected on merits: it would land in the notes list, search, the Obsidian export and
+  the LLM derive pass — and `generic_notes.tags` is written **only** by `on_llm_processed`, so a
+  typed `tags: [feedback]` is not queryable.
+- **Screen context is DESCRIBE-ON-DEMAND, not the continuity store.** The store persists what
+  would be *lost*; a report wants what was *shown*. `screen_context.rs` is a memory-only signal
+  pages publish into. **Rule: a describer summarises, never quotes** — Settings reports its
+  section and nothing else (it holds the server-token field). The editor buffer is the one
+  exception, and is the line the modal lets the user drop before sending.
+- **`ContinuityStore` holds ONLY unsaved sessions** — `put` evicts any where
+  `content == last_saved_content`, so a "saved" branch reading it is unreachable. Don't add one.
+- **No plugin seam for "pluggable" storage.** Storage is the event log; the destination is
+  whatever calls `GET /feedback`. Straight-to-GitHub from the app was rejected (write-scoped
+  token on the phone, no offline queue, no replication) and never to the public repo.
+- ⚠️ `DocumentExtractor`/Gemini re-evaluation **is** item 3 — not settled just because it exists.
 
 ## Do NOT re-survey
-**All three on-device confirmations are CLOSED** (user, from real use). **The Cycle 3 code
-review owed-item was struck** — the pre-v1 gate was a full end-to-end pass and is closed, so it
-double-counted. **Feedback-capture survey is banked in `tasks.md`.** `probe_realdb.rs`'s clippy
-lint predates you.
+**Feedback storage fork is CLOSED** — decided, built, tested. All three on-device confirmations
+are closed. Cycle 3 review item struck. `probe_realdb.rs` is **not in this repo** (overlay-side).
 
 ## Open threads
-⚠️ **OOM-killed a shell this session** — 7.2GB RAM, 1.9GB swap: `CARGO_BUILD_JOBS=1`, one crate
-at a time, never two cargo processes. · Statement upload is **untried against a live box** —
-finished work, not a task. · Curiosities→concepts pass owed at cycle close · memory prune owed
-· `server_url` precedence question still open.
+⚠️ **Stage 1 is UNVERIFIED against a live box.** Capture → sync → `GET /feedback` has run only
+against the mock bridge; the cross-device leg is the one part that proves the loop. ·
+`npm run copy:editor:dev` must be re-run after every dx rebuild or CodeMirror 404s in dev. ·
+7.2GB RAM: `CARGO_BUILD_JOBS=1`, one crate at a time, never two cargo processes. · Only Journal
+and Notes publish describers; other pages report position only. · Curiosities→concepts pass owed
+at cycle close · memory prune owed · `server_url` precedence question still open.

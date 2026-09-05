@@ -24,6 +24,7 @@ pub mod attachments;
 pub mod auto_import;
 pub mod budget;
 pub mod extract;
+pub mod feedback;
 pub mod import;
 pub mod journal_import;
 pub mod llm;

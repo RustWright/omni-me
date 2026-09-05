@@ -11,6 +11,7 @@ use crate::components::primitives::{
 use crate::components::tag_editor::TagChipEditor;
 use crate::continuity::{ContinuityKey, EditSession, session_is_recoverable, use_continuity};
 use crate::note_frontmatter::{NoteProps, serialize_note, split_note};
+use crate::screen_context::{ScreenReport, describe_len, use_publish_screen_report};
 use crate::timer::{AUTOSAVE_DEBOUNCE_MS, sleep_ms};
 use crate::types::GenericNoteItem;
 
@@ -90,6 +91,40 @@ pub fn NotesPage() -> Element {
             n.notes_edit_id = eid;
             n.notes_subtab = Some(sub.to_string());
         });
+    });
+
+    // Describe this screen for problem reports. Reads the same continuity
+    // session the editor writes, so a report about an unsaved note quotes the
+    // buffer the user is actually looking at rather than the last saved copy.
+    use_publish_screen_report(move || {
+        let (sub, screen_ref, key) = match &*view.read() {
+            NotesView::List => (
+                match *sub_tab.read() {
+                    NotesSubTab::Recent => "list",
+                    NotesSubTab::Search => "search",
+                },
+                None,
+                None,
+            ),
+            NotesView::New => ("new", None, Some(ContinuityKey::NewNote)),
+            NotesView::Edit(id) => (
+                "edit",
+                Some(id.clone()),
+                Some(ContinuityKey::Note(id.clone())),
+            ),
+        };
+        // A present session is definitionally UNSAVED: `ContinuityStore::put`
+        // evicts any session where `content == last_saved_content`, so the store
+        // holds drafts and nothing else. Do not add a "saved" branch here — it
+        // cannot be reached, and it would read as though it could.
+        let detail = key
+            .and_then(|k| store.get(&k))
+            .and_then(|session| describe_len("note body, UNSAVED", &session.content));
+        ScreenReport {
+            screen: format!("notes:{sub}"),
+            screen_ref,
+            detail,
+        }
     });
 
     rsx! {

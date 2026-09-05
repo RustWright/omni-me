@@ -1,6 +1,7 @@
 pub mod account_input;
 pub mod date_field;
 pub mod editor;
+pub mod feedback;
 pub mod month_grid;
 // `icon` keeps an `allow(dead_code)` for exactly one reason: six glyphs
 // (Menu, Link, ChartBar, Wallet, ArrowUp, ArrowDown) exist in the set while

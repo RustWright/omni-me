@@ -833,6 +833,91 @@ pub async fn list_unmatched_transactions(db: &Database) -> Result<Vec<Transactio
     Ok(rows)
 }
 
+// ---------------------------------------------------------------------------
+// Feedback
+// ---------------------------------------------------------------------------
+
+/// Internal row shape for the feedback query. `payload` stays a native
+/// SurrealDB value and is converted with `into_json_value()` — the FLEXIBLE
+/// object rule.
+#[derive(Debug, SurrealValue)]
+struct FeedbackEventRow {
+    eid: String,
+    device_id: String,
+    ts: String,
+    payload: DbValue,
+}
+
+/// One filed problem report: the event envelope's identity and clock, plus the
+/// decoded payload.
+#[derive(Debug, Clone, Serialize)]
+pub struct FeedbackReport {
+    /// Event id. Distinct from `payload.feedback_id`, which the client minted —
+    /// both are kept because a mismatch between them is itself a finding.
+    pub id: String,
+    pub device_id: String,
+    pub timestamp: String,
+    pub report: crate::events::FeedbackCapturedPayload,
+}
+
+/// Problem reports, newest first.
+///
+/// **This is the one query in this module that reads the `events` log directly
+/// rather than a projection**, and that is the design rather than a shortcut:
+/// feedback has no projection because nothing derives state from it (see
+/// `FeedbackCapturedPayload`). With no derived table there is nothing for a
+/// direct read to disagree with.
+///
+/// A report whose payload will not decode is **skipped, not fatal** — one
+/// malformed row must not hide every other report from the reader. The count of
+/// skipped rows is returned alongside so the caller can say so out loud instead
+/// of silently serving a partial list.
+pub async fn list_feedback(
+    db: &Database,
+    since: Option<&str>,
+    limit: u32,
+) -> Result<(Vec<FeedbackReport>, usize), DbError> {
+    let base = "SELECT meta::id(id) AS eid, device_id,
+                       <string> timestamp AS ts, payload
+                FROM events
+                WHERE event_type = 'feedback_captured'";
+    let rows: Vec<FeedbackEventRow> = match since {
+        Some(s) => {
+            let mut resp = db
+                .query(format!(
+                    "{base} AND timestamp > type::datetime($since)
+                     ORDER BY timestamp DESC LIMIT $limit"
+                ))
+                .bind(("since", s.to_string()))
+                .bind(("limit", limit))
+                .await?;
+            resp.take(0)?
+        }
+        None => {
+            let mut resp = db
+                .query(format!("{base} ORDER BY timestamp DESC LIMIT $limit"))
+                .bind(("limit", limit))
+                .await?;
+            resp.take(0)?
+        }
+    };
+
+    let mut reports = Vec::with_capacity(rows.len());
+    let mut skipped = 0usize;
+    for row in rows {
+        match serde_json::from_value(row.payload.into_json_value()) {
+            Ok(report) => reports.push(FeedbackReport {
+                id: row.eid,
+                device_id: row.device_id,
+                timestamp: row.ts,
+                report,
+            }),
+            Err(_) => skipped += 1,
+        }
+    }
+    Ok((reports, skipped))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -55,6 +55,8 @@ pub enum EventType {
     AutoImportBatchDismissed,
     // Meta
     DataWiped,
+    // Feedback — the one event about the *app* rather than the user's content
+    FeedbackCaptured,
 }
 
 impl fmt::Display for EventType {
@@ -97,6 +99,7 @@ impl fmt::Display for EventType {
             EventType::AutoImportBatchCommitted => "auto_import_batch_committed",
             EventType::AutoImportBatchDismissed => "auto_import_batch_dismissed",
             EventType::DataWiped => "data_wiped",
+            EventType::FeedbackCaptured => "feedback_captured",
         };
         write!(f, "{s}")
     }
@@ -144,6 +147,7 @@ impl FromStr for EventType {
             "auto_import_batch_committed" => Ok(EventType::AutoImportBatchCommitted),
             "auto_import_batch_dismissed" => Ok(EventType::AutoImportBatchDismissed),
             "data_wiped" => Ok(EventType::DataWiped),
+            "feedback_captured" => Ok(EventType::FeedbackCaptured),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -679,6 +683,73 @@ pub struct DataWipedPayload {
     pub device_id: String,
 }
 
+// Feedback
+
+/// A problem report filed from inside the app at the moment of friction.
+///
+/// **This is the only event about the app rather than about the user's own
+/// content**, and that difference is why it has no projection: nothing derives
+/// state from it, and its only reader is a query that renders markdown for a
+/// person. Storing it as an event anyway buys the offline queue, retry, dedup
+/// and cross-device replication that the write path already provides — the
+/// alternative was rebuilding all four for a handful of rows a week.
+///
+/// **Only `feedback_id` and `body` are required.** Every context field is
+/// optional and defaults, so a screen that declines to describe itself costs
+/// the report a line rather than costing the user their report. Capture that
+/// can fail validation is capture that gets abandoned mid-friction, which is
+/// exactly the moment it is most needed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FeedbackCapturedPayload {
+    /// Stable id for this report. `aggregate_id` mirrors it, per the factory
+    /// discipline the create-event constructors follow.
+    pub feedback_id: String,
+    /// What the user typed.
+    pub body: String,
+
+    // --- Where it happened (free: already persisted by `NavState`) ---
+    /// Tab plus sub-position, e.g. `notes:edit`, `finances:ledger`,
+    /// `journal:calendar`. Flat string because `NavState` itself stores the
+    /// position as strings, keeping that module dependency-free.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<String>,
+    /// The identity the screen was addressing, when it has one: a note ULID, a
+    /// journal date. Separate from `screen` so a reader can look it up directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_ref: Option<String>,
+    /// What was on screen, rendered to text by the capturing page from whatever
+    /// it holds in the continuity store — the unsaved editor buffer, the
+    /// half-filled transaction form, the loaded ledger rows and their filter.
+    ///
+    /// Deliberately opaque text rather than a typed union: the shape differs per
+    /// page, no code parses it, and a union would need widening every time a
+    /// page learned to describe itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_data: Option<String>,
+
+    // --- Which build (identifies the report against a release) ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    /// Resolved sync target and sandbox flag, from `get_runtime_profile`. Both
+    /// matter because a report from a throwaway data root describes different
+    /// behaviour than one from the real box.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
+    #[serde(default)]
+    pub non_production: bool,
+
+    // --- What went wrong (populated once the diagnostic buffer exists) ---
+    /// Recent panics, console errors and failed command calls, newest last.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_errors: Vec<String>,
+    /// Recent events authored on this device, newest last, as
+    /// `<timestamp> <event_type> <aggregate_id>` lines.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_events: Vec<String>,
+}
+
 /// Validate that a payload JSON value matches the expected shape for the given event type.
 pub fn validate_payload(
     event_type: &EventType,
@@ -800,6 +871,9 @@ pub fn validate_payload(
         EventType::DataWiped => {
             serde_json::from_value::<DataWipedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::FeedbackCaptured => {
+            serde_json::from_value::<FeedbackCapturedPayload>(payload.clone()).map(|_| ())
+        }
     };
 
     result.map_err(|e| {
@@ -851,6 +925,7 @@ mod tests {
             EventType::AutoImportBatchCommitted,
             EventType::AutoImportBatchDismissed,
             EventType::DataWiped,
+            EventType::FeedbackCaptured,
         ];
 
         for t in &types {
@@ -1327,6 +1402,58 @@ mod tests {
             "device_id": "device-a"
         });
         assert!(validate_payload(&EventType::DataWiped, &payload).is_ok());
+    }
+
+    /// The design guarantee: a report with nothing but an id and a sentence is
+    /// valid. Capture happens mid-friction, and a validation failure there costs
+    /// the report entirely — so every context field must be droppable.
+    #[test]
+    fn validate_feedback_captured_with_no_context() {
+        let payload = serde_json::json!({
+            "feedback_id": "01HF2K3M4N5P6Q7R8S9TVWXYZA",
+            "body": "cursor jumped behind the keyboard"
+        });
+        assert!(validate_payload(&EventType::FeedbackCaptured, &payload).is_ok());
+    }
+
+    #[test]
+    fn feedback_captured_payload_roundtrips_through_validation() {
+        let payload = FeedbackCapturedPayload {
+            feedback_id: "01HF2K3M4N5P6Q7R8S9TVWXYZA".into(),
+            body: "swiping between Ledger and Analyze does nothing".into(),
+            screen: Some("finances:ledger".into()),
+            screen_ref: None,
+            screen_data: Some("42 rows loaded, filter=uncleared".into()),
+            app_version: Some("1.0.5".into()),
+            platform: Some("android".into()),
+            server_url: Some("http://box:3000".into()),
+            non_production: false,
+            recent_errors: vec!["invoke list_transactions failed: timeout".into()],
+            recent_events: vec!["2026-09-05T12:00:00Z transaction_cleared t_91".into()],
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert!(validate_payload(&EventType::FeedbackCaptured, &json).is_ok());
+
+        let back: FeedbackCapturedPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back.screen.as_deref(), Some("finances:ledger"));
+        assert_eq!(back.recent_errors.len(), 1);
+    }
+
+    /// Empty context collections are skipped on the wire rather than serialized
+    /// as `[]`, keeping a bare report small — it is one row of a log that every
+    /// device replicates.
+    #[test]
+    fn feedback_captured_omits_empty_context_fields() {
+        let payload = FeedbackCapturedPayload {
+            feedback_id: "01HF2K3M4N5P6Q7R8S9TVWXYZA".into(),
+            body: "typo on the settings page".into(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(!obj.contains_key("screen"));
+        assert!(!obj.contains_key("recent_errors"));
+        assert!(obj.contains_key("body"));
     }
 
     #[test]

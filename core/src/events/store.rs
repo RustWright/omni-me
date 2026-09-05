@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
-use super::types::{EventType, TransactionRecordedPayload};
+use super::types::{EventType, FeedbackCapturedPayload, TransactionRecordedPayload};
 use crate::db::Database;
 
 /// Error type for event store and projection operations.
@@ -149,6 +149,26 @@ impl NewEvent {
             device_id: device_id.into(),
             payload,
         }
+    }
+
+    /// Envelope for a `FeedbackCaptured` event. `aggregate_id == payload.feedback_id`,
+    /// same derivation discipline as the other create factories.
+    ///
+    /// Returns `Result` rather than panicking on a serialization failure, matching
+    /// [`NewEvent::transaction_recorded`] — the typed-payload factories serialize a
+    /// struct and so can fail in principle, while the `json!`-literal ones cannot.
+    pub fn feedback_captured(
+        device_id: impl Into<String>,
+        payload: &FeedbackCapturedPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::FeedbackCaptured.to_string(),
+            aggregate_id: payload.feedback_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
     }
 }
 
