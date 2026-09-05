@@ -24,18 +24,24 @@
 
 use chrono::{NaiveDate, Utc};
 
-use crate::accounts::make_unmatched_mirror;
-use crate::events::{DraftTransaction, Posting};
+use crate::accounts::{CounterLeg, CounterLegContext, make_counter_leg, make_unmatched_mirror};
+use crate::events::{DraftTransaction, Posting, Tag};
 
 use super::{ExtractedPosting, ExtractionResult};
 
 /// Statement-flavored draft mapping: one draft per result.posting, signed from
 /// the bank's perspective. Uses `bank_account` for every draft's real posting.
+///
+/// `tags` are the institution / product attribution for the bank-side posting
+/// (build them with `accounts::institution_tags`); `counter_leg` is the tier-2
+/// resolver, `None` leaving every balancing leg on `Unmatched`.
 pub fn statement_extraction_to_drafts(
     result: &ExtractionResult,
     source_prefix: &str,
     bank_account: &str,
     bank_commodity: &str,
+    tags: &[Tag],
+    counter_leg: Option<&dyn CounterLeg>,
 ) -> Vec<DraftTransaction> {
     let date = result.date.unwrap_or_else(fallback_date);
     let description = result
@@ -55,21 +61,35 @@ pub fn statement_extraction_to_drafts(
             },
             amount: p.amount,
             fx_rate: None,
-            tags: vec![],
+            tags: tags.to_vec(),
         };
-        let mirror = make_unmatched_mirror(&real);
         let line_desc = p.line_label.clone().unwrap_or_else(|| description.clone());
+        let counter = make_counter_leg(
+            &real,
+            &CounterLegContext {
+                date,
+                description: &line_desc,
+                real: &real,
+            },
+            counter_leg,
+        );
         drafts.push(DraftTransaction {
             external_id,
             date,
             description: line_desc,
-            postings: vec![real, mirror],
+            postings: vec![real, counter],
         });
     }
     drafts
 }
 
 /// Receipt-flavored draft mapping: one draft per line item with positive cost.
+///
+/// Deliberately takes **no** counter-leg resolver. The receipt's `Unmatched`
+/// leg is not a gap waiting to be filled — it is the thing that *cancels*
+/// against the bank row's `Unmatched` so `reconciliation::find_match_candidates`
+/// can pair the two. Resolving it to a real account here would leave nothing to
+/// match on and break the pairing this whole flavor exists to feed.
 pub fn receipt_extraction_to_drafts(
     result: &ExtractionResult,
     source_prefix: &str,
@@ -184,6 +204,8 @@ mod tests {
             "meridian-aed-uid-14272",
             "Assets:Summit:USD",
             "USD",
+            &[],
+            None,
         );
         assert_eq!(drafts.len(), 2);
         // Both external ids follow the prefix-index convention
@@ -248,8 +270,8 @@ mod tests {
             Some("test"),
             vec![posting(None, "USD", "10.00"), posting(None, "USD", "20.00")],
         );
-        let first = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD");
-        let second = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD");
+        let first = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD", &[], None);
+        let second = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD", &[], None);
         let ids_first: Vec<_> = first.iter().map(|d| d.external_id.as_str()).collect();
         let ids_second: Vec<_> = second.iter().map(|d| d.external_id.as_str()).collect();
         assert_eq!(
@@ -261,7 +283,7 @@ mod tests {
     #[test]
     fn empty_postings_yields_no_drafts() {
         let result = result_with(None, None, vec![]);
-        let drafts = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD");
+        let drafts = statement_extraction_to_drafts(&result, "src", "Assets:X", "USD", &[], None);
         assert!(drafts.is_empty());
         let drafts2 = receipt_extraction_to_drafts(&result, "src");
         assert!(drafts2.is_empty());

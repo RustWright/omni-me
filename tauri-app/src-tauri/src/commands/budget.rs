@@ -345,6 +345,28 @@ fn effective_roster(
         .map(|a| a.id.clone())
         .collect();
     let mut roster = balances::auto_roster_from(&artifacts.balance, declared, &hidden);
+
+    // A roster entry naming an account nothing posts to is a bug, and a silent
+    // one: the name is well-formed, so it simply renders an empty row forever.
+    // The way it happens is the grammar move — institutions left the account
+    // path for posting tags, so every `Assets:<Institution>:<Commodity>` entry
+    // kept parsing and stopped matching. Checked here rather than at file load
+    // because this is the first point that holds both halves.
+    let known: std::collections::HashSet<&str> = artifacts
+        .balance
+        .account_balances
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let stale = accounts::unknown_accounts(file_roster.iter().map(String::as_str), &known);
+    if !stale.is_empty() {
+        tracing::warn!(
+            accounts = ?stale,
+            "roster names accounts with no postings — stale entries render as \
+             empty rows; check them against the account grammar",
+        );
+    }
+
     for extra in file_roster {
         if balances::is_balance_bearing(extra) && !hidden.contains(extra) && !roster.contains(extra)
         {
@@ -1177,6 +1199,8 @@ pub async fn import_chequing_csv(
     source_account: String,
     statement_source: String,
     commodity: Option<String>,
+    institution: Option<String>,
+    product: Option<String>,
 ) -> Result<ImportStatementCsvResult, String> {
     let commodity = commodity.unwrap_or_else(|| "CAD".to_string());
     let parsed =
@@ -1194,6 +1218,21 @@ pub async fn import_chequing_csv(
     // now aborts before anything is written, instead of leaving the first N-1
     // rows committed under a returned Err. `commit_batch` next door already
     // works this way.
+    // Attribution for every row in this batch. A statement is one account at
+    // one institution by definition, so it is a batch-level fact rather than a
+    // per-row one. Absent it, the rows import into a pooled account with
+    // nothing to tell them apart from another institution's — worth a warning,
+    // not a refusal, since the label still identifies the batch to a human.
+    let tags = accounts::institution_tags(institution.as_deref(), product.as_deref());
+    if tags.is_empty() {
+        tracing::warn!(
+            account = %source_account,
+            statement_source = %statement_source,
+            "statement import has no institution attribution — its rows will not \
+             be separable inside the pooled account",
+        );
+    }
+
     let mut events = Vec::with_capacity(parsed.len());
     for row in &parsed {
         // Sign convention: Outflow = money leaving source (debit column on
@@ -1209,7 +1248,7 @@ pub async fn import_chequing_csv(
             commodity: commodity.clone(),
             amount: signed_amount,
             fx_rate: None,
-            tags: vec![],
+            tags: tags.clone(),
         };
         let unmatched_posting = accounts::make_unmatched_mirror(&source_posting);
 

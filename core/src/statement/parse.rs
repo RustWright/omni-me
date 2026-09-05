@@ -111,7 +111,76 @@ pub fn parse_brokerage_statement(csv: &str) -> Result<StatementParse, String> {
 /// `TransferWise ID` and a `Running Balance`, so it supports identity-based
 /// dedup *and* the closing-balance check. Only the columns needed are read; the
 /// rest are ignored by name lookup, so added columns are harmless.
+/// Fold each `FEE-<parent_id>` row into the transaction it belongs to.
+///
+/// The transfer service bills a service fee as a **separate statement row**
+/// whose id is the parent's id with a `FEE-` prefix
+/// (`FEE-CARD-1234` → `CARD-1234`), and reports the parent row
+/// exclusive of it. The books record one transaction carrying both — an
+/// `Expenses:Fees` posting alongside the category, with the asset leg net. So
+/// left alone, every fee costs the count check exactly one false extra while
+/// the balance check stays clean, which is precisely the "counts differ,
+/// balances agree" verdict these statements were producing.
+///
+/// The join is exact rather than heuristic — a literal prefix strip against
+/// ids the export itself assigns — so this cannot quietly merge two unrelated
+/// rows. An orphan `FEE-*` whose parent is not in the file (a period boundary
+/// splitting the pair) keeps its own row rather than vanishing.
+///
+/// The parent keeps its `running_balance`, which assumes the fee is charged
+/// *before* its transaction (true in every pair observed). That assumption is
+/// self-checking: if it is ever wrong, `verify_running_balance` fails loudly
+/// rather than the statement quietly reconciling against the wrong figure.
+///
+/// Folded rows move to `structural` — they are not transactions of their own,
+/// and the `lines_seen == rows + structural + skipped` identity has to hold.
+fn fold_fee_rows(parse: &mut StatementParse) {
+    let parent_of = |id: &str| id.strip_prefix("FEE-").map(str::to_string);
+
+    // Index the rows that can *be* parents, so the fold is one pass.
+    let index: std::collections::HashMap<String, usize> = parse
+        .rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| {
+            let id = r.external_id.as_deref()?;
+            (!id.starts_with("FEE-")).then(|| (id.to_string(), i))
+        })
+        .collect();
+
+    // Decide first, mutate second: the fold reads one row and writes another,
+    // which a single borrowing pass cannot express. A `FEE-*` with no parent
+    // simply produces no entry here and survives as its own row.
+    let folds: Vec<(usize, usize, Decimal)> = parse
+        .rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| {
+            let parent_id = r.external_id.as_deref().and_then(parent_of)?;
+            Some((i, *index.get(&parent_id)?, r.amount))
+        })
+        .collect();
+
+    let mut folded = vec![false; parse.rows.len()];
+    for (i, parent, fee) in folds {
+        parse.rows[parent].amount += fee;
+        folded[i] = true;
+    }
+
+    let mut keep = folded.iter();
+    parse
+        .rows
+        .retain(|_| !keep.next().copied().unwrap_or(false));
+    parse.structural += folded.iter().filter(|f| **f).count();
+}
+
 pub fn parse_transfer_statement(csv: &str) -> Result<StatementParse, String> {
+    let mut parse = parse_transfer_rows(csv)?;
+    fold_fee_rows(&mut parse);
+    Ok(parse)
+}
+
+fn parse_transfer_rows(csv: &str) -> Result<StatementParse, String> {
     parse_with(csv, &["date", "amount", "running balance"], |header| {
         Ok(ColumnMap {
             date: col(header, "date").ok_or_else(|| missing("date", header))?,
@@ -364,6 +433,91 @@ mod tests {
         );
         assert_eq!(p.closing_balance(), Some(d("210.00")));
         assert!(p.verify_running_balance().is_empty());
+    }
+
+    /// Shape taken from a real export (values fictionalised): newest row
+    /// first, each `FEE-*` row directly below the transaction it belongs to,
+    /// and the fee charged *before* its parent — so the parent's running
+    /// balance is already the post-both figure.
+    const TRANSFER_WITH_FEES: &str = "\
+\"TransferWise ID\",Date,Amount,Currency,Description,\"Running Balance\"
+\"CARD-3\",\"04-09-2026\",\"-20.00\",\"USD\",\"Hosting\",\"500.00\"
+\"CARD-2\",\"03-09-2026\",\"-30.00\",\"USD\",\"Barber\",\"520.00\"
+\"FEE-CARD-2\",\"03-09-2026\",\"-0.50\",\"USD\",\"Card fee\",\"550.00\"
+\"CARD-1\",\"02-09-2026\",\"-100.00\",\"USD\",\"Grocer\",\"550.50\"
+\"FEE-CARD-1\",\"02-09-2026\",\"-2.00\",\"USD\",\"Card fee\",\"650.50\"
+";
+
+    /// The count check is the whole point: three transactions, five rows. Left
+    /// unfolded this statement reports two false extras against books that
+    /// record the fee inside its parent transaction.
+    #[test]
+    fn fee_rows_fold_into_their_parent_transaction() {
+        let p = parse_transfer_statement(TRANSFER_WITH_FEES).unwrap();
+
+        assert_eq!(
+            p.rows.len(),
+            3,
+            "five statement rows are three transactions"
+        );
+        assert!(
+            p.rows
+                .iter()
+                .all(|r| !r.external_id.as_deref().unwrap_or("").starts_with("FEE-")),
+            "no fee row survives as a transaction of its own",
+        );
+
+        let by_id = |id: &str| {
+            p.rows
+                .iter()
+                .find(|r| r.external_id.as_deref() == Some(id))
+                .unwrap()
+        };
+        assert_eq!(by_id("CARD-2").amount, d("-30.50"), "-30.00 + -0.50");
+        assert_eq!(by_id("CARD-1").amount, d("-102.00"), "-100.00 + -2.00");
+        assert_eq!(
+            by_id("CARD-3").amount,
+            d("-20.00"),
+            "a fee-free row is untouched",
+        );
+
+        // The balance half must survive the fold, not just the count half.
+        assert!(
+            p.verify_running_balance().is_empty(),
+            "folding must keep the running-balance chain intact",
+        );
+        assert_eq!(p.closing_balance(), Some(d("500.00")));
+    }
+
+    /// Folded rows are reclassified, not discarded — the
+    /// `lines_seen == rows + structural + skipped` identity is what makes this
+    /// parse usable as an oracle at all.
+    #[test]
+    fn folded_fee_rows_stay_accounted_for() {
+        let p = parse_transfer_statement(TRANSFER_WITH_FEES).unwrap();
+        assert!(p.check_accounting().is_ok(), "{:?}", p.check_accounting());
+        assert_eq!(p.structural, 2, "two folded fee rows became structural");
+        assert!(p.skipped.is_empty());
+    }
+
+    /// A period boundary can put a fee in one file and its transaction in
+    /// another. Silently dropping it would understate the count on both sides.
+    #[test]
+    fn an_orphan_fee_row_keeps_its_own_row() {
+        const ORPHAN: &str = "\
+\"TransferWise ID\",Date,Amount,Currency,Description,\"Running Balance\"
+\"CARD-9\",\"04-09-2026\",\"-10.00\",\"USD\",\"Thing\",\"90.00\"
+\"FEE-CARD-8\",\"03-09-2026\",\"-0.50\",\"USD\",\"Card fee\",\"100.00\"
+";
+        let p = parse_transfer_statement(ORPHAN).unwrap();
+        assert_eq!(p.rows.len(), 2, "no parent in this file, so no fold");
+        assert!(
+            p.rows
+                .iter()
+                .any(|r| r.external_id.as_deref() == Some("FEE-CARD-8")),
+            "the orphan survives as its own row rather than vanishing",
+        );
+        assert!(p.check_accounting().is_ok());
     }
 
     /// A day-first date that is *also* valid month-first is the ambiguity that

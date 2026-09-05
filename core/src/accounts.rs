@@ -14,9 +14,10 @@
 //! the import rewriter walks parsed postings, strips that segment, and
 //! emits the tag.
 
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 
-use crate::events::{FxRate, Posting};
+use crate::events::{FxRate, Posting, Tag};
 
 pub const BUSINESS_HIERARCHY_PREFIX: &str = "Expenses:Business:";
 
@@ -120,6 +121,112 @@ pub fn unmatched_posting(amount: Decimal, commodity: &str) -> Posting {
     }
 }
 
+/// Build the `institution` / `product` posting tags.
+///
+/// One helper rather than five hand-rolled `Tag::KeyValue` literals, because
+/// the tag *spelling* is load-bearing: under the MECE grammar
+/// (`Assets:<Registration>:<Commodity>`) one balance-bearing account pools
+/// every institution's money, and these tags are the only thing that can
+/// separate it again. A source that spells the key differently doesn't fail —
+/// it silently drops out of the per-institution drill-down.
+///
+/// Empty / whitespace-only values are skipped rather than emitted blank.
+pub fn institution_tags(institution: Option<&str>, product: Option<&str>) -> Vec<Tag> {
+    [("institution", institution), ("product", product)]
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let value = value?.trim();
+            (!value.is_empty()).then(|| Tag::KeyValue {
+                key: key.to_string(),
+                value: value.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// What a counter-leg resolver gets to classify on.
+///
+/// Deliberately not a `DraftTransaction`: the draft does not exist yet at the
+/// point the balancing leg is built, and description + signed real posting is
+/// the whole of what a classifier needs (the sign carries direction, which is
+/// what makes an incoming payment `Income:` rather than `Expenses:`).
+pub struct CounterLegContext<'a> {
+    pub date: NaiveDate,
+    pub description: &'a str,
+    pub real: &'a Posting,
+}
+
+/// The seam for deciding an auto-imported transaction's balancing leg.
+///
+/// Three tiers eventually fill that leg, and this trait is only the second:
+///
+/// 1. **Receipts** pair *asynchronously* — a receipt draft carries its own
+///    `Unmatched` leg that cancels against the bank row's, and
+///    `reconciliation::find_match_candidates` merges them. Nothing here.
+/// 2. **Determinate at import** — fees, interest, transfers between the user's
+///    own accounts. No receipt exists or ever will, and the account is knowable
+///    from the transaction itself. That is what an implementation of this trait
+///    decides.
+/// 3. **The no-receipt residue** — open, and downstream of the LLM work.
+///
+/// No implementation ships today; every source passes `None` and every
+/// balancing leg is `Unmatched`, exactly as before the trait existed. It is
+/// here so tier 2 lands in one place instead of reopening five emitters.
+pub trait CounterLeg: Send + Sync {
+    /// Account for the balancing leg, or `None` to leave it `Unmatched`.
+    fn resolve(&self, ctx: &CounterLegContext<'_>) -> Option<String>;
+}
+
+/// Build the balancing leg for an auto-imported posting, consulting `resolver`
+/// (the tier-2 seam) and falling back to `Unmatched`.
+///
+/// Sign, commodity and FX handling are identical to [`make_unmatched_mirror`];
+/// only the account name can differ. Tags stay empty either way — they carry
+/// the user's intent, and a resolved account is still a machine's guess until
+/// the review step confirms it.
+pub fn make_counter_leg(
+    real: &Posting,
+    ctx: &CounterLegContext<'_>,
+    resolver: Option<&dyn CounterLeg>,
+) -> Posting {
+    let account = resolver
+        .and_then(|r| r.resolve(ctx))
+        .unwrap_or_else(|| UNMATCHED_ACCOUNT.to_string());
+    Posting {
+        account,
+        commodity: real.commodity.clone(),
+        amount: -real.amount,
+        fx_rate: real.fx_rate.clone(),
+        tags: vec![],
+    }
+}
+
+/// Configured account names that no real posting uses.
+///
+/// The failure this exists to catch is **silent**: an account name is just a
+/// string, so a stale one stays well-formed and simply matches nothing. It
+/// surfaces as an empty row on a screen, or as a source importing into a name
+/// no report reads — never as an error. The pattern that produces it is the
+/// grammar move: when institutions left the account path for posting tags,
+/// every configured `Assets:<Institution>:<Commodity>` name kept parsing and
+/// stopped matching, because the real history had become
+/// `Assets:<Registration>:<Commodity>` plus an `institution:` tag.
+///
+/// Pure and set-based so the caller decides what a miss means — a boot-time
+/// `warn!` for a roster the user can fix, a hard error for a source about to
+/// import into nowhere.
+pub fn unknown_accounts<'a>(
+    configured: impl IntoIterator<Item = &'a str>,
+    known: &std::collections::HashSet<&str>,
+) -> Vec<String> {
+    configured
+        .into_iter()
+        .map(str::trim)
+        .filter(|a| !a.is_empty() && !known.contains(a))
+        .map(String::from)
+        .collect()
+}
+
 /// Stable predicate so query / projection code reads `is_unmatched(p)` instead
 /// of repeating the string comparison. Centralizes "what counts as Unmatched"
 /// — important if we ever sub-namespace (`Unmatched:Northwind`, `Unmatched:Globepay`, etc).
@@ -141,6 +248,125 @@ pub fn fx_rate_into_base(rate: Decimal, base: &str) -> FxRate {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    // Fictional institutions only (public-repo privacy discipline).
+
+    fn tag_strings(tags: &[Tag]) -> Vec<String> {
+        tags.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn institution_tags_emit_both_keys_in_order() {
+        assert_eq!(
+            tag_strings(&institution_tags(Some("Summit"), Some("chequing"))),
+            vec!["institution:Summit", "product:chequing"],
+        );
+    }
+
+    /// A blank value is worse than an absent one — `institution:` with nothing
+    /// after it still groups, into a bucket named nothing.
+    #[test]
+    fn institution_tags_skip_absent_and_blank_values() {
+        assert_eq!(
+            tag_strings(&institution_tags(Some("Summit"), None)),
+            vec!["institution:Summit"],
+        );
+        assert_eq!(
+            tag_strings(&institution_tags(Some("  "), Some(""))),
+            Vec::<String>::new(),
+        );
+    }
+
+    fn real_posting() -> Posting {
+        Posting {
+            account: "Assets:NonRegistered:CAD".into(),
+            commodity: "CAD".into(),
+            amount: Decimal::from_str("-23.65").unwrap(),
+            fx_rate: None,
+            tags: institution_tags(Some("Summit"), Some("chequing")),
+        }
+    }
+
+    fn ctx_for(real: &Posting) -> CounterLegContext<'_> {
+        CounterLegContext {
+            date: NaiveDate::from_ymd_opt(2026, 9, 3).unwrap(),
+            description: "Barber",
+            real,
+        }
+    }
+
+    /// The default has to stay byte-identical to the old hardcoded mirror —
+    /// the seam exists to be filled later, not to change anything now.
+    #[test]
+    fn counter_leg_without_a_resolver_is_the_unmatched_mirror() {
+        let real = real_posting();
+        let counter = make_counter_leg(&real, &ctx_for(&real), None);
+        let mirror = make_unmatched_mirror(&real);
+        assert_eq!(counter.account, mirror.account);
+        assert_eq!(counter.amount, mirror.amount);
+        assert_eq!(counter.commodity, mirror.commodity);
+        assert_eq!(counter.tags.len(), mirror.tags.len());
+        assert_eq!(counter.account, UNMATCHED_ACCOUNT);
+    }
+
+    struct AlwaysGroceries;
+    impl CounterLeg for AlwaysGroceries {
+        fn resolve(&self, _ctx: &CounterLegContext<'_>) -> Option<String> {
+            Some("Expenses:Food:Groceries".to_string())
+        }
+    }
+
+    struct Declines;
+    impl CounterLeg for Declines {
+        fn resolve(&self, _ctx: &CounterLegContext<'_>) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_resolver_names_the_balancing_account_but_changes_nothing_else() {
+        let real = real_posting();
+        let counter = make_counter_leg(&real, &ctx_for(&real), Some(&AlwaysGroceries));
+        assert_eq!(counter.account, "Expenses:Food:Groceries");
+        assert_eq!(counter.amount, -real.amount, "still balances");
+        assert_eq!(counter.commodity, real.commodity);
+        assert!(
+            counter.tags.is_empty(),
+            "attribution belongs to the real posting, not the balancing leg",
+        );
+    }
+
+    /// A resolver that declines is not an error — it is the normal answer for
+    /// anything a receipt will pair later.
+    #[test]
+    fn a_declining_resolver_falls_back_to_unmatched() {
+        let real = real_posting();
+        let counter = make_counter_leg(&real, &ctx_for(&real), Some(&Declines));
+        assert_eq!(counter.account, UNMATCHED_ACCOUNT);
+    }
+
+    #[test]
+    fn unknown_accounts_reports_only_names_with_no_postings() {
+        let known: std::collections::HashSet<&str> =
+            ["Assets:NonRegistered:CAD", "Liabilities:Credit"]
+                .into_iter()
+                .collect();
+        let stale = unknown_accounts(
+            [
+                "Assets:NonRegistered:CAD",
+                "  Liabilities:Credit  ",
+                "Assets:Summit:Cash",
+                "",
+            ],
+            &known,
+        );
+        assert_eq!(
+            stale,
+            vec!["Assets:Summit:Cash"],
+            "whitespace is trimmed, blanks ignored, and only the pre-grammar \
+             institution-in-path name is reported",
+        );
+    }
 
     #[test]
     fn strips_top_level_business_account() {

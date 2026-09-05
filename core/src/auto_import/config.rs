@@ -147,6 +147,22 @@ pub struct SourceDef {
     /// Name of the secret (in `credentials.toml` `[secrets]`) used as the auth value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_ref: Option<String>,
+
+    // --- attribution (all source kinds) ---
+    /// Institution whose money this source reports, e.g. `"Summit"`. Stamped on
+    /// every real posting as an `institution:` tag.
+    ///
+    /// Not cosmetic: under the MECE account grammar
+    /// (`Assets:<Registration>:<Commodity>`) one balance-bearing account
+    /// deliberately pools every institution, so this tag is the only thing that
+    /// can separate them again in the Accounts drill-down. A source that omits
+    /// it imports money that cannot be attributed to anyone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub institution: Option<String>,
+    /// Product within the institution, e.g. `"chequing"` / `"crypto"`. Stamped
+    /// as a `product:` tag alongside `institution`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -282,7 +298,8 @@ pub fn build_one(
                     projections.clone(),
                     device_id.to_string(),
                 )
-                .with_schedule_secs(def.schedule_secs),
+                .with_schedule_secs(def.schedule_secs)
+                .with_attribution(def.institution.clone(), def.product.clone()),
             )
         }
         "subprocess" => Arc::new(
@@ -324,7 +341,8 @@ pub fn build_one(
                     def.auth_prefix.clone(),
                     def.secret_ref.clone(),
                 )
-                .with_schedule_secs(def.schedule_secs),
+                .with_schedule_secs(def.schedule_secs)
+                .with_attribution(def.institution.clone(), def.product.clone()),
             )
         }
         // validate() already rejected unknown types.
@@ -379,6 +397,8 @@ mod tests {
             auth_header: None,
             auth_prefix: None,
             secret_ref: None,
+            institution: None,
+            product: None,
         }
     }
 
@@ -509,6 +529,8 @@ mod tests {
             auth_header: None,
             auth_prefix: None,
             secret_ref: None,
+            institution: None,
+            product: None,
         };
         assert!(validate(&d).unwrap_err().contains("command"));
     }

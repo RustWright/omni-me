@@ -6045,6 +6045,11 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
     let mut source_account: Signal<String> = use_signal(String::new);
     let mut statement_source: Signal<String> = use_signal(default_statement_source_label);
     let mut commodity: Signal<String> = use_signal(|| "CAD".to_string());
+    // Free-text, and NOT yet remembered per account the way the label is —
+    // which it should be, since it is a stable property of where the statement
+    // came from and retyping it monthly is how it ends up blank. Wiring it into
+    // the continuity store is follow-up work.
+    let mut institution: Signal<String> = use_signal(String::new);
     let store = use_continuity();
     // True once the user edits the label by hand. After that the account-change
     // effect stops touching it — silently rewriting something someone just typed
@@ -6082,6 +6087,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
         let src = source_account.read().clone();
         let label = statement_source.read().clone();
         let comm = commodity.read().clone();
+        let inst = institution.read().trim().to_string();
         importing.set(true);
         error.set(None);
         status.set(None);
@@ -6105,7 +6111,17 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                     return;
                 }
             };
-            match bridge::invoke_import_chequing_csv(&csv_text, &src, &label, Some(&comm)).await {
+            let inst = (!inst.is_empty()).then_some(inst.as_str());
+            match bridge::invoke_import_chequing_csv(
+                &csv_text,
+                &src,
+                &label,
+                Some(&comm),
+                inst,
+                None,
+            )
+            .await
+            {
                 Ok(result) => {
                     // Remember only on success. A label typed into an import that
                     // then failed is not one worth restoring next month.
@@ -6173,6 +6189,21 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         r#type: "text",
                         value: "{commodity.read()}",
                         oninput: move |e| commodity.set(e.value()),
+                    }
+                }
+                // The account path cannot carry this: the grammar is
+                // `Assets:<Registration>:<Commodity>`, so one account pools
+                // every institution and only this tag separates them again.
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1",
+                        "Institution"
+                    }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
+                        r#type: "text",
+                        placeholder: "who holds it",
+                        value: "{institution.read()}",
+                        oninput: move |e| institution.set(e.value()),
                     }
                 }
             }

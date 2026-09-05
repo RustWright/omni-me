@@ -22,7 +22,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::accounts::UNMATCHED_ACCOUNT;
+use crate::accounts::{CounterLeg, CounterLegContext, institution_tags, make_counter_leg};
 use crate::auto_import::csv::{parse_amount, stable_hash};
 use crate::auto_import::{ParseOutcome, to_proposed_event};
 use crate::auto_import_scheduler::{AutoImportSource, ImportError, ImportSummary, ImportTally};
@@ -70,6 +70,11 @@ pub struct RestSource {
     /// Per-source poll interval (from `sources.toml` `schedule_secs`). `None`
     /// inherits the engine's global interval.
     schedule_secs: Option<u64>,
+    /// Institution / product attribution stamped onto every real posting.
+    institution: Option<String>,
+    product: Option<String>,
+    /// Tier-2 counter-leg resolver; `None` ⇒ every balancing leg is `Unmatched`.
+    counter_leg: Option<Arc<dyn CounterLeg>>,
 }
 
 impl RestSource {
@@ -99,6 +104,9 @@ impl RestSource {
             projections,
             device_id: device_id.into(),
             schedule_secs: None,
+            institution: None,
+            product: None,
+            counter_leg: None,
         }
     }
 
@@ -130,6 +138,25 @@ impl RestSource {
         self
     }
 
+    /// Declare the institution / product this source's account belongs to.
+    /// Chained by the config builder from `SourceDef`.
+    pub fn with_attribution(
+        mut self,
+        institution: Option<String>,
+        product: Option<String>,
+    ) -> Self {
+        self.institution = institution;
+        self.product = product;
+        self
+    }
+
+    /// Install a counter-leg resolver. `None` (the default) leaves every
+    /// balancing leg on `Unmatched` for reconciliation to pair later.
+    pub fn with_counter_leg(mut self, counter_leg: Option<Arc<dyn CounterLeg>>) -> Self {
+        self.counter_leg = counter_leg;
+        self
+    }
+
     fn parse_cfg(&self) -> ParseCfg<'_> {
         ParseCfg {
             name: &self.name,
@@ -138,6 +165,9 @@ impl RestSource {
             records_path: &self.records_path,
             date_format: &self.date_format,
             fields: &self.fields,
+            institution: self.institution.as_deref(),
+            product: self.product.as_deref(),
+            counter_leg: self.counter_leg.as_deref(),
         }
     }
 
@@ -175,6 +205,9 @@ struct ParseCfg<'a> {
     records_path: &'a str,
     date_format: &'a str,
     fields: &'a RestFields,
+    institution: Option<&'a str>,
+    product: Option<&'a str>,
+    counter_leg: Option<&'a dyn CounterLeg>,
 }
 
 /// Navigate a dotted `path` into a JSON value — `"posted.amount"` descends two
@@ -293,23 +326,26 @@ fn parse_json(body: &str, cfg: &ParseCfg) -> Result<ParseOutcome, ImportError> {
         };
 
         // Balanced two-posting draft: the real account gets the record's
-        // amount, the Unmatched clearing account gets its mirror.
-        let postings = vec![
-            Posting {
-                account: cfg.account.to_string(),
-                commodity: cfg.commodity.to_string(),
-                amount,
-                fx_rate: None,
-                tags: Vec::new(),
+        // amount and the institution attribution, the balancing leg gets its
+        // mirror. Attribution goes on the real posting only — the clearing leg
+        // is a placeholder, not a claim about whose money it is.
+        let real = Posting {
+            account: cfg.account.to_string(),
+            commodity: cfg.commodity.to_string(),
+            amount,
+            fx_rate: None,
+            tags: institution_tags(cfg.institution, cfg.product),
+        };
+        let counter = make_counter_leg(
+            &real,
+            &CounterLegContext {
+                date,
+                description: &description,
+                real: &real,
             },
-            Posting {
-                account: UNMATCHED_ACCOUNT.to_string(),
-                commodity: cfg.commodity.to_string(),
-                amount: -amount,
-                fx_rate: None,
-                tags: Vec::new(),
-            },
-        ];
+            cfg.counter_leg,
+        );
+        let postings = vec![real, counter];
 
         out.drafts.push(DraftTransaction {
             external_id,
@@ -416,6 +452,9 @@ mod tests {
             records_path,
             date_format: DEFAULT_DATE_FORMAT,
             fields,
+            institution: Some("Summit"),
+            product: Some("chequing"),
+            counter_leg: None,
         }
     }
 

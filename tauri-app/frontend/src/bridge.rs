@@ -2517,10 +2517,19 @@ pub async fn invoke_import_chequing_csv(
     source_account: &str,
     statement_source: &str,
     commodity: Option<&str>,
+    institution: Option<&str>,
+    product: Option<&str>,
 ) -> Result<ImportStatementCsvResult, String> {
     #[cfg(feature = "mock")]
     {
-        let _ = (csv_text, source_account, statement_source, commodity);
+        let _ = (
+            csv_text,
+            source_account,
+            statement_source,
+            commodity,
+            institution,
+            product,
+        );
         Ok(ImportStatementCsvResult {
             imported: 3,
             skipped_zero_rows: 0,
@@ -2534,6 +2543,8 @@ pub async fn invoke_import_chequing_csv(
             source_account: &'a str,
             statement_source: &'a str,
             commodity: Option<&'a str>,
+            institution: Option<&'a str>,
+            product: Option<&'a str>,
         }
         invoke(
             "import_chequing_csv",
@@ -2542,6 +2553,8 @@ pub async fn invoke_import_chequing_csv(
                 source_account,
                 statement_source,
                 commodity,
+                institution,
+                product,
             },
         )
         .await
