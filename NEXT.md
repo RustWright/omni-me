@@ -1,12 +1,11 @@
 # NEXT
 
-**Next action: a FRESH PLANNING SESSION for feedback capture** — item 1 of three the user set
-2026-09-05. They deferred the design call to that session; **do not build, and do not re-run
-the survey** — it is already in `tasks.md` (nothing exists; every event type is a domain event;
-the user's mobile-write/desktop-read workaround is the key input; the open fork is
-tagged-note vs. new event type). The sequence, in order, one at a time: **1. feedback capture ·
-2. generalization (decide *or* address) · 3. AI/LLM/ML integration — how to integrate, host and
-securely use it for best value at least cost.** Framing in `tasks.md`. Do not run ahead.
+**Next action: a FRESH PLANNING SESSION for feedback capture** — item 1 of three set by the
+user 2026-09-05, who deferred the design call to that session. **Do not build, and do not
+re-run the survey** — it is banked in `tasks.md` (open fork: tagged-note vs. new event type).
+The sequence, one at a time: **1. feedback capture · 2. generalization (decide *or* address) ·
+3. AI/LLM/ML — how to integrate, host and securely use it for best value at least cost.**
+Framing in `tasks.md` § The agreed sequence. Do not run ahead.
 
 ## Decisions in force — inherit these
 - ⛔ **FINANCES ARE DEFERRED INDEFINITELY** (user, 2026-09-05). The user stopped using the
