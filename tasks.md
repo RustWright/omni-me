@@ -245,6 +245,23 @@ parser built 2026-09-05 would close the gap. Never checked.
   The cross-device leg is the only part that proves the loop: capture on the phone, then
   `GET /feedback` from the desktop and see that report. [S]
 
+- [ ] **Feedback close-out audit — deferred items** (2026-09-05). Two findings were fixed the
+  same session: `data_dir` was specified in the plan but never wired (`non_production` says *a*
+  sandbox, `data_dir` says which one), and `render_markdown` printed only the client-minted id
+  while its own doc comment claimed both were kept so a divergence would show. Still open:
+  **(a)** Notes *search* publishes only the `notes:search` coordinate — not the query text or
+  result count, which is what makes a "search found nothing" report actionable; the query lives
+  in a child component. **(b)** The 390px Playwright pass covered modal-open and drawer-close
+  only; the send flow, context list and drop toggle were verified at 1280 alone. **(c)** No
+  screenshots exist for this work — both `browser_take_screenshot` calls reported success but no
+  PNG landed, so the visual record is accessibility-tree assertions only, and a logbook post on
+  this has no assets. [S]
+
+- [ ] **`project.md`'s Status block is stale** — it describes the Cycle 4 close-out at "v1.0.0
+  tagged / v1.0.3 published" while this file says v1.0.5 in daily use. Predates the feedback
+  work. Note there is no session-log section to append to; the file's own "Where the history
+  went" heading says history moved out, so fix the Status field rather than inventing a log. [XS]
+
 ### Release engineering
 - [ ] **Desktop DOES flash white for ~320ms — but `backgroundColor` is NOT the culprit and the
   fix is a different layer.** Filmed at last (user installed `Xvfb` 2026-08-31; `grim` fails

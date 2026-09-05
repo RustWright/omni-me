@@ -143,6 +143,10 @@ pub struct AppContext {
     pub server_url: String,
     #[serde(default)]
     pub non_production: bool,
+    /// Which app-data root this run is on. Shown in the modal only when
+    /// `non_production` is set — on a real run the path is noise.
+    #[serde(default)]
+    pub data_dir: String,
 }
 
 /// Dry run of an Obsidian export — what it would overwrite, before it does.

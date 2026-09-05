@@ -1341,6 +1341,7 @@ pub async fn invoke_get_app_context() -> Result<crate::types::AppContext, String
             device_id: "mock-device".to_string(),
             server_url: "(none)".to_string(),
             non_production: true,
+            data_dir: "(mock build — no backend)".to_string(),
         })
     }
     #[cfg(not(feature = "mock"))]

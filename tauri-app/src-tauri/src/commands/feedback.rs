@@ -30,6 +30,9 @@ pub struct AppContextView {
     pub device_id: String,
     pub server_url: String,
     pub non_production: bool,
+    /// Which app-data root this run is on. `non_production` says a sandbox;
+    /// this says which one.
+    pub data_dir: String,
 }
 
 /// Build + installation identity, for display in the capture modal so the user
@@ -49,6 +52,7 @@ pub async fn get_app_context(
         device_id: state.device_id.clone(),
         server_url: state.server_url.read().await.clone(),
         non_production: state.non_production,
+        data_dir: state.app_data_dir.to_string_lossy().to_string(),
     })
 }
 
@@ -90,6 +94,7 @@ pub async fn submit_feedback(
         platform: Some(platform_name().to_string()),
         server_url: Some(state.server_url.read().await.clone()),
         non_production: state.non_production,
+        data_dir: Some(state.app_data_dir.to_string_lossy().to_string()),
         recent_errors,
         // Filled once `get_recent_events` exists; the field is already on the
         // payload so adding it later is not a wire-format change.

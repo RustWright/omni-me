@@ -109,7 +109,10 @@ fn render_markdown(reports: &[FeedbackReport], skipped: usize) -> String {
             r.device_id
         ));
         if p.non_production {
-            out.push_str("- **⚠️ Sandbox run** — not the live data root\n");
+            match &p.data_dir {
+                Some(dir) => out.push_str(&format!("- **⚠️ Sandbox run** — data root `{dir}`\n")),
+                None => out.push_str("- **⚠️ Sandbox run** — not the live data root\n"),
+            }
         }
         if let Some(url) = &p.server_url {
             out.push_str(&format!("- **Sync target:** `{url}`\n"));
@@ -129,7 +132,14 @@ fn render_markdown(reports: &[FeedbackReport], skipped: usize) -> String {
                 out.push_str(&format!("  - `{e}`\n"));
             }
         }
-        out.push_str(&format!("- **Report id:** `{}`\n", p.feedback_id));
+        // Both ids, always. The client mints `feedback_id` and the store assigns
+        // the event id; keeping only one would make a divergence between them
+        // invisible in the view people actually read, which is exactly the
+        // symptom a duplicated or replayed append would produce.
+        out.push_str(&format!(
+            "- **Report id:** `{}` · **event:** `{}`\n",
+            p.feedback_id, r.id
+        ));
     }
 
     out
@@ -178,10 +188,33 @@ mod tests {
         assert!(!md.contains("**On screen:**"));
     }
 
+    /// A sandbox report must name *which* data root. The flag alone says "a
+    /// sandbox", and a test run is usually one of several.
     #[test]
-    fn sandbox_runs_are_flagged() {
+    fn sandbox_runs_name_the_data_root() {
+        let mut r = report("looked wrong");
+        r.report.non_production = true;
+        r.report.data_dir = Some("/tmp/omni-test-3".into());
+        let md = render_markdown(&[r], 0);
+        assert!(md.contains("Sandbox run"));
+        assert!(md.contains("/tmp/omni-test-3"));
+    }
+
+    /// An older report predating `data_dir` still renders the flag rather than
+    /// dropping the sandbox warning entirely.
+    #[test]
+    fn sandbox_without_a_data_root_still_warns() {
         let mut r = report("looked wrong");
         r.report.non_production = true;
         assert!(render_markdown(&[r], 0).contains("Sandbox run"));
+    }
+
+    /// Both ids render. The client mints one and the store assigns the other, so
+    /// showing a single id would hide a divergence between them.
+    #[test]
+    fn both_the_report_id_and_the_event_id_render() {
+        let md = render_markdown(&[report("cursor jumped")], 0);
+        assert!(md.contains("`fb1`"), "missing client-minted id: {md}");
+        assert!(md.contains("`ev1`"), "missing event id: {md}");
     }
 }

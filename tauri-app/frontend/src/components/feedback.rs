@@ -73,8 +73,12 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
     }
     if let Some(c) = &ctx_snapshot {
         let mut build = format!("v{} · {} · {}", c.app_version, c.platform, c.device_id);
+        // Name the sandbox, don't just flag it — a test run is usually one of
+        // several, and "which data root" is the first thing a reader asks. On a
+        // real run the path is noise, so it stays hidden.
         if c.non_production {
-            build.push_str(" · SANDBOX");
+            build.push_str(" · SANDBOX ");
+            build.push_str(&c.data_dir);
         }
         lines.push(ContextLine {
             text: build,

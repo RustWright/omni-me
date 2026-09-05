@@ -739,6 +739,11 @@ pub struct FeedbackCapturedPayload {
     pub server_url: Option<String>,
     #[serde(default)]
     pub non_production: bool,
+    /// Absolute app-data root. Carried in addition to `non_production` because
+    /// that flag only says a sandbox, while this says *which* one — and a test
+    /// run is usually one of several.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_dir: Option<String>,
 
     // --- What went wrong (populated once the diagnostic buffer exists) ---
     /// Recent panics, console errors and failed command calls, newest last.
@@ -1428,6 +1433,7 @@ mod tests {
             platform: Some("android".into()),
             server_url: Some("http://box:3000".into()),
             non_production: false,
+            data_dir: Some("/home/u/.local/share/com.omni-me.app".into()),
             recent_errors: vec!["invoke list_transactions failed: timeout".into()],
             recent_events: vec!["2026-09-05T12:00:00Z transaction_cleared t_91".into()],
         };
