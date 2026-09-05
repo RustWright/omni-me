@@ -32,11 +32,11 @@ use crate::continuity::{CaptureDraft, ContinuityKey, ListState, PostingDraft, us
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AttachmentRef,
     BalanceCheckView, BudgetProgress, BudgetRow, DashboardSummaryView, DraftTransactionView,
-    ExtractedDraft, JournalImportPlan, JournalImportPreview, JournalImportResult,
-    MatchCandidateView, MonthlyTrendBucketView, NetWorthPointView, NetWorthSeriesView,
-    PendingBatchView, PendingShareCapture, PostingInput, ReconciliationTxnPreview,
-    RecurringObligationView, RecurringPattern, ScanRecurringResult, TransactionFormDraft,
-    TransactionView, TxnFilter,
+    ExtractedDraft, ImportStatementCsvResult, JournalImportPlan, JournalImportPreview,
+    JournalImportResult, MatchCandidateView, MonthlyTrendBucketView, NetWorthPointView,
+    NetWorthSeriesView, PendingBatchView, PendingShareCapture, PostingInput,
+    ReconciliationTxnPreview, RecurringObligationView, RecurringPattern, ScanRecurringResult,
+    TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -6050,6 +6050,13 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
     // came from and retyping it monthly is how it ends up blank. Wiring it into
     // the continuity store is follow-up work.
     let mut institution: Signal<String> = use_signal(String::new);
+    // Which parser reads the file. Defaults to the headerless chequing shape,
+    // the only format this screen could import before the others were wired.
+    let mut format: Signal<String> = use_signal(|| "chequing".to_string());
+    // The full result, kept so the skip ledger and the balance verdict survive
+    // past the one-line status message. A count of unread lines is not
+    // actionable without the lines themselves.
+    let mut last_result: Signal<Option<ImportStatementCsvResult>> = use_signal(|| None);
     let store = use_continuity();
     // True once the user edits the label by hand. After that the account-change
     // effect stops touching it — silently rewriting something someone just typed
@@ -6088,9 +6095,11 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
         let label = statement_source.read().clone();
         let comm = commodity.read().clone();
         let inst = institution.read().trim().to_string();
+        let fmt = format.read().clone();
         importing.set(true);
         error.set(None);
         status.set(None);
+        last_result.set(None);
         spawn(async move {
             let bytes = match file.read_bytes().await {
                 Ok(b) => b.to_vec(),
@@ -6119,6 +6128,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                 Some(&comm),
                 inst,
                 None,
+                Some(&fmt),
             )
             .await
             {
@@ -6135,8 +6145,12 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         "Imported {} transactions. Each lands in Unmatched, ready for reconciliation review.",
                         result.imported
                     )));
+                    last_result.set(Some(result));
                 }
-                Err(e) => error.set(Some(format!("Import failed: {e}"))),
+                Err(e) => {
+                    last_result.set(None);
+                    error.set(Some(format!("Import failed: {e}")));
+                }
             }
             importing.set(false);
         });
@@ -6206,6 +6220,23 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         oninput: move |e| institution.set(e.value()),
                     }
                 }
+                // Picking the parser rather than sniffing the file. A wrong
+                // guess here fails loudly on the first row; a sniffer that
+                // guesses wrong reads real columns as the wrong fields and
+                // succeeds, which is far worse.
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1",
+                        "Statement format"
+                    }
+                    select {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        value: "{format.read()}",
+                        onchange: move |e| format.set(e.value()),
+                        option { value: "chequing", "Chequing (no header row)" }
+                        option { value: "brokerage", "Brokerage monthly export" }
+                        option { value: "transfer", "Transfer service export" }
+                    }
+                }
             }
 
             div {
@@ -6231,6 +6262,71 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
         if let Some(msg) = status.read().clone() {
             div { class: "mb-4 p-4 bg-emerald-950/30 border border-emerald-500/30 rounded-lg text-sm text-emerald-200",
                 "{msg}"
+            }
+        }
+
+        // What the parser could NOT read, and how far the statement checked out.
+        // A parser that refuses to skip silently is worth nothing if this panel
+        // does not exist — the guarantee only reaches the user here.
+        if let Some(result) = last_result.read().clone() {
+            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+                div { class: "text-sm font-semibold text-obsidian-text", "Import report" }
+
+                div { class: "text-xs text-obsidian-text-muted",
+                    "{result.imported} rows imported · {result.structural} non-transaction lines (blank, header, totals)"
+                    if result.skipped_zero_rows > 0 {
+                        " · {result.skipped_zero_rows} zero-amount row(s) read but not recorded"
+                    }
+                }
+
+                // Unavailable and passed are different claims. A format with no
+                // running-balance column cannot be balance-checked at all, and
+                // showing that as a tick would be a lie of omission.
+                match result.self_check_failures {
+                    None => rsx! {
+                        div { class: "text-xs text-obsidian-text-muted",
+                            span { class: "text-amber-300", "Balance check unavailable" }
+                            " — this format carries no running-balance column, so the row count and the unread-line list below are the only checks."
+                        }
+                    },
+                    Some(0) => rsx! {
+                        div { class: "text-xs text-emerald-300",
+                            "Balance check passed — every row agrees with the statement's own running balance."
+                            if let Some(cb) = result.closing_balance.clone() {
+                                " Closing balance {cb}."
+                            }
+                        }
+                    },
+                    Some(n) => rsx! {
+                        div { class: "text-xs text-red-300",
+                            "Balance check FAILED on {n} row(s) — the statement disagrees with its own running balance, so this import should not be trusted."
+                        }
+                    },
+                }
+
+                if result.skipped.is_empty() {
+                    div { class: "text-xs text-emerald-300",
+                        "Every line was accounted for."
+                    }
+                } else {
+                    div { class: "space-y-2",
+                        div { class: "text-xs text-red-300 font-semibold",
+                            "{result.skipped.len()} line(s) could not be read and were NOT imported:"
+                        }
+                        div { class: "overflow-x-auto",
+                            for line in result.skipped.iter() {
+                                div { class: "text-xs font-mono whitespace-pre bg-obsidian-bg border border-red-500/20 rounded px-2 py-1 mb-1",
+                                    span { class: "text-obsidian-text-muted", "line {line.line_no}: " }
+                                    span { class: "text-obsidian-text", "{line.raw}" }
+                                    div { class: "text-red-300/80", "{line.reason}" }
+                                }
+                            }
+                        }
+                        div { class: "text-xs text-obsidian-text-muted",
+                            "Check each one against the statement. If any is a real transaction, it is missing from your books."
+                        }
+                    }
+                }
             }
         }
 

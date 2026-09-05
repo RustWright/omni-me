@@ -60,7 +60,8 @@ use crate::types::{
 #[cfg(feature = "mock")]
 use crate::types::{
     AccountTagGroupView, AttachmentRef, CommodityBalanceView, ExtractedPostingView,
-    MonthlyTrendBucketView, NetWorthPointView, RecurringObligationView, TaskResult,
+    MonthlyTrendBucketView, NetWorthPointView, RecurringObligationView, SkippedLineView,
+    TaskResult,
 };
 
 // Tauri IPC
@@ -2509,7 +2510,8 @@ pub async fn invoke_confirm_recurring(pattern_id: &str) -> Result<(), String> {
 }
 
 // -----------------------------------------------------------------------------
-// Statement CSV import (Phase 5.5) — Summit chequing today, more formats later.
+// Statement import (Phase 5.5) — chequing, brokerage and transfer formats, all
+// through `core::statement::parse`, which accounts for every line it reads.
 // -----------------------------------------------------------------------------
 
 pub async fn invoke_import_chequing_csv(
@@ -2519,6 +2521,7 @@ pub async fn invoke_import_chequing_csv(
     commodity: Option<&str>,
     institution: Option<&str>,
     product: Option<&str>,
+    format: Option<&str>,
 ) -> Result<ImportStatementCsvResult, String> {
     #[cfg(feature = "mock")]
     {
@@ -2529,32 +2532,54 @@ pub async fn invoke_import_chequing_csv(
             commodity,
             institution,
             product,
+            format,
         );
+        // The mock returns a skipped line and no balance on purpose: those are
+        // the states the UI has to render correctly, and a mock that always
+        // reports a clean import never exercises them.
         Ok(ImportStatementCsvResult {
             imported: 3,
-            skipped_zero_rows: 0,
+            skipped_zero_rows: 1,
+            skipped: vec![SkippedLineView {
+                line_no: 4,
+                raw: "2026-05-18,MYSTERY ROW,not-a-number,".to_string(),
+                reason: "unparseable amount".to_string(),
+            }],
+            structural: 1,
+            closing_balance: None,
+            self_check_failures: None,
         })
     }
     #[cfg(not(feature = "mock"))]
     {
+        // Mirrors `commands::budget::ImportStatementOptions` — one statement is
+        // one account, one institution, one currency, one format.
         #[derive(serde::Serialize)]
-        struct Args<'a> {
-            csv_text: &'a str,
+        struct Opts<'a> {
             source_account: &'a str,
             statement_source: &'a str,
             commodity: Option<&'a str>,
             institution: Option<&'a str>,
             product: Option<&'a str>,
+            format: Option<&'a str>,
+        }
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            csv_text: &'a str,
+            opts: Opts<'a>,
         }
         invoke(
             "import_chequing_csv",
             &Args {
                 csv_text,
-                source_account,
-                statement_source,
-                commodity,
-                institution,
-                product,
+                opts: Opts {
+                    source_account,
+                    statement_source,
+                    commodity,
+                    institution,
+                    product,
+                    format,
+                },
             },
         )
         .await

@@ -48,7 +48,7 @@ use omni_me_core::ledger::JournalArtifacts;
 use omni_me_core::query::{self, QueryPosting, QueryTxn};
 use omni_me_core::reconciliation::{self, UnmatchedTxn};
 use omni_me_core::recurring;
-use omni_me_core::statement_csv::{self, MoneyDirection};
+use omni_me_core::statement;
 use rust_decimal::Decimal;
 
 use super::shared::{append_and_apply, append_batch_and_apply, append_new_and_apply};
@@ -1176,14 +1176,63 @@ pub async fn scan_recurring(
     })
 }
 
-/// Result of a Summit chequing CSV import.
+/// One line the parser could not read, carried to the UI with its raw text.
+///
+/// The raw line is the point. A count alone is not actionable — the user has to
+/// see the text to judge whether it was a footer or a transaction that just
+/// went missing from their import.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedLineView {
+    pub line_no: usize,
+    pub raw: String,
+    pub reason: String,
+}
+
+/// How to read one statement file, and what to attribute its rows to.
+///
+/// Grouped rather than passed as loose parameters because they are one
+/// decision: a statement is one account, at one institution, in one currency,
+/// in one format. Splitting them across six arguments invites a call site that
+/// gets two of them from different places.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImportStatementOptions {
+    pub source_account: String,
+    pub statement_source: String,
+    pub commodity: Option<String>,
+    pub institution: Option<String>,
+    pub product: Option<String>,
+    /// `chequing` (default), `brokerage`, or `transfer`.
+    pub format: Option<String>,
+}
+
+/// Result of a statement import, including what the parser *refused* to read.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportStatementCsvResult {
     pub imported: usize,
+    /// Rows read correctly but carrying an amount of exactly zero, so not
+    /// recorded. Reported rather than dropped quietly — "excluded on a stated
+    /// rule" and "vanished" have to stay distinguishable.
     pub skipped_zero_rows: usize,
+    /// Lines that looked like transactions but could not be read. Non-empty
+    /// means the import is incomplete, whatever the other numbers say.
+    pub skipped: Vec<SkippedLineView>,
+    /// Lines deliberately not treated as transactions — blanks, headers,
+    /// footers. Counted rather than discarded so every line is accounted for.
+    pub structural: usize,
+    /// The statement's own closing balance, when the format carries a running
+    /// balance column.
+    ///
+    /// `None` means the check is **unavailable**, not that it passed — the
+    /// chequing format has no balance column at all. Callers must render those
+    /// two states differently; collapsing them reports an unchecked import as a
+    /// verified one.
+    pub closing_balance: Option<String>,
+    /// Rows disagreeing with the statement's own running balance. `Some(0)` is
+    /// a pass; `None` is the same unavailability as above.
+    pub self_check_failures: Option<usize>,
 }
 
-/// Import a Summit chequing CSV export — each parsed row becomes a
+/// Import a statement export — each parsed row becomes a
 /// `TransactionRecorded` event with one posting on `source_account` and a
 /// balancing `Unmatched` placeholder. `statement_source` tags the events
 /// for the 5.7 reconciliation review (which uses it to mark cleared
@@ -1191,20 +1240,40 @@ pub struct ImportStatementCsvResult {
 ///
 /// Commodity defaults to CAD; the user picks the source account, which
 /// implicitly fixes the currency for this batch (mixing currencies in a
-/// single statement isn't a Summit export shape).
+/// single statement isn't a shape any of these exports produce).
+///
+/// `format` selects the parser: `chequing` (headerless debit/credit),
+/// `brokerage`, or `transfer`. All three come from `core::statement::parse`,
+/// which accounts for every line it reads — so a row that cannot be parsed
+/// reaches the caller in [`ImportStatementCsvResult::skipped`] instead of
+/// disappearing. The parser this replaced split on bare commas and silently
+/// dropped anything it did not understand.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn import_chequing_csv(
     state: State<'_, AppState>,
     csv_text: String,
-    source_account: String,
-    statement_source: String,
-    commodity: Option<String>,
-    institution: Option<String>,
-    product: Option<String>,
+    opts: ImportStatementOptions,
 ) -> Result<ImportStatementCsvResult, String> {
+    let ImportStatementOptions {
+        source_account,
+        statement_source,
+        commodity,
+        institution,
+        product,
+        format,
+    } = opts;
     let commodity = commodity.unwrap_or_else(|| "CAD".to_string());
-    let parsed =
-        statement_csv::parse_chequing_csv(&csv_text).map_err(|e| format!("csv parse: {e}"))?;
+    let format = format.unwrap_or_else(|| "chequing".to_string());
+    let parsed = match format.as_str() {
+        "chequing" => statement::parse::parse_chequing_statement(&csv_text),
+        "brokerage" => statement::parse::parse_brokerage_statement(&csv_text),
+        "transfer" => statement::parse::parse_transfer_statement(&csv_text),
+        other => Err(format!(
+            "unknown statement format {other:?} \
+             (expected \"chequing\", \"brokerage\" or \"transfer\")"
+        )),
+    }
+    .map_err(|e| format!("statement parse: {e}"))?;
 
     // Collected, not appended per row. `append_new_and_apply` costs an
     // event-store round trip *plus* a bookmark advance *plus* a debouncer nudge
@@ -1233,20 +1302,28 @@ pub async fn import_chequing_csv(
         );
     }
 
-    let mut events = Vec::with_capacity(parsed.len());
-    for row in &parsed {
-        // Sign convention: Outflow = money leaving source (debit column on
-        // chequing, charge on credit card). Negate for outflow, pass for
-        // inflow — works uniformly for Assets and Liabilities accounts
-        // since hledger's liability-is-negative convention is preserved.
-        let signed_amount = match row.direction {
-            MoneyDirection::Outflow => -row.amount,
-            MoneyDirection::Inflow => row.amount,
-        };
+    let mut events = Vec::with_capacity(parsed.rows.len());
+    let mut skipped_zero_rows = 0usize;
+    for row in &parsed.rows {
+        // Zero-amount rows are read faithfully by the parser — the replay layer
+        // counts them as `informational_rows` and wants them present — but they
+        // are not transactions worth recording: each would sit in `Unmatched`
+        // forever with nothing to reconcile against. Skipped here and reported,
+        // never silently dropped.
+        if row.amount.is_zero() {
+            skipped_zero_rows += 1;
+            continue;
+        }
+        // `StatementRow::amount` is already signed from the account's
+        // perspective — negative means money left it — because every parser
+        // normalises that at the boundary. Re-deriving a sign convention here
+        // is exactly what the shared row type exists to prevent, and it holds
+        // uniformly for Assets and Liabilities since hledger's
+        // liability-is-negative convention is preserved.
         let source_posting = Posting {
             account: source_account.clone(),
             commodity: commodity.clone(),
-            amount: signed_amount,
+            amount: row.amount,
             fx_rate: None,
             tags: tags.clone(),
         };
@@ -1267,11 +1344,42 @@ pub async fn import_chequing_csv(
     }
 
     let imported = events.len();
+
+    // Read the diagnostics off the parse before the events are consumed, so the
+    // report describes the batch that was actually written.
+    let skipped: Vec<SkippedLineView> = parsed
+        .skipped
+        .iter()
+        .map(|s| SkippedLineView {
+            line_no: s.line_no,
+            raw: s.raw.clone(),
+            reason: s.reason.clone(),
+        })
+        .collect();
+    // `None` throughout when the format carries no running balance: the check
+    // is unavailable, which is not the same as passing.
+    let has_balances = parsed.rows.iter().any(|r| r.running_balance.is_some());
+    let closing_balance = parsed.closing_balance().map(|b| b.to_string());
+    let self_check_failures = has_balances.then(|| parsed.verify_running_balance().len());
+
+    if !skipped.is_empty() {
+        tracing::warn!(
+            account = %source_account,
+            statement_source = %statement_source,
+            skipped = skipped.len(),
+            "statement import could not read every line — the import is incomplete",
+        );
+    }
+
     append_batch_and_apply(&state, events).await?;
 
     Ok(ImportStatementCsvResult {
         imported,
-        skipped_zero_rows: 0, // parser already filtered these; surfaced for symmetry
+        skipped_zero_rows,
+        skipped,
+        structural: parsed.structural,
+        closing_balance,
+        self_check_failures,
     })
 }
 

@@ -338,10 +338,15 @@ fn read_amount<'a>(
         AmountCols::DebitCredit { debit, credit } => {
             let d = parse_money(get(debit))?;
             let c = parse_money(get(credit))?;
+            // Magnitudes, not the cell's own sign. The *column* already states
+            // the direction, so a bank writing `-42.18` under Debit is being
+            // redundant, not describing an inflow. Negating it verbatim would
+            // turn a payment into a deposit — a silent sign flip that balances
+            // perfectly and reads as a plausible row.
             match (d, c) {
                 (None, None) => Ok(None),
-                (Some(d), None) => Ok(Some(-d)),
-                (None, Some(c)) => Ok(Some(c)),
+                (Some(d), None) => Ok(Some(-d.abs())),
+                (None, Some(c)) => Ok(Some(c.abs())),
                 (Some(d), Some(c)) => Err(format!(
                     "row has both a debit ({d}) and a credit ({c}); \
                      this format fills exactly one, so the columns are misidentified"
@@ -870,6 +875,23 @@ Date,Description,Debit,Credit
         let p = parse_chequing_statement(csv).unwrap();
         assert_eq!(p.rows.len(), 1);
         assert_eq!(p.rows[0].date, date("2026-05-15"));
+    }
+
+    /// The column names the direction, so a redundant minus sign inside a
+    /// debit/credit cell must not flip it. Getting this wrong turns a payment
+    /// into a deposit, and the row still balances and still looks reasonable.
+    #[test]
+    fn ported_a_signed_cell_does_not_flip_its_column_direction() {
+        let signed = parse_chequing_statement("2026-05-16,Grocer,-42.18,").unwrap();
+        let unsigned = parse_chequing_statement("2026-05-16,Grocer,42.18,").unwrap();
+        assert_eq!(signed.rows[0].amount, d("-42.18"), "debit is money out");
+        assert_eq!(
+            signed.rows[0].amount, unsigned.rows[0].amount,
+            "a signed and unsigned debit of the same size must agree"
+        );
+
+        let credit = parse_chequing_statement("2026-05-16,Refund,,-10.00").unwrap();
+        assert_eq!(credit.rows[0].amount, d("10.00"), "credit is money in");
     }
 
     /// A bad date on a row that *does* carry money stays a finding — the narrow

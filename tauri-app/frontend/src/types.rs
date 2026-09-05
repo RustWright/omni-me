@@ -606,11 +606,28 @@ pub struct ScanRecurringResult {
 }
 
 /// Result of a Summit chequing CSV import. Mirrors
+/// One line the parser refused to read. Mirrors
+/// `commands::budget::SkippedLineView`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SkippedLineView {
+    pub line_no: usize,
+    pub raw: String,
+    pub reason: String,
+}
+
 /// `commands::budget::ImportStatementCsvResult`.
+///
+/// ⚠️ `closing_balance` and `self_check_failures` are `None` when the format
+/// carries no running balance — the check is *unavailable*, not passed. Render
+/// those two states differently.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImportStatementCsvResult {
     pub imported: usize,
     pub skipped_zero_rows: usize,
+    pub skipped: Vec<SkippedLineView>,
+    pub structural: usize,
+    pub closing_balance: Option<String>,
+    pub self_check_failures: Option<usize>,
 }
 
 /// Compact preview for one side of a reconciliation pair (Phase 5.7).
