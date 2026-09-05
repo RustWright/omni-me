@@ -6,28 +6,31 @@ event-sourced store, with an LLM deriving structure from raw notes. Tauri v2
 Open-core: the bank-free engine is public, a private overlay carries real
 sources and credentials.
 
-**Status:** **v1.0.0 tagged 2026-08-31; v1.0.3 published.** Cycle 4 (Polish →
-Stable v1) is at its close-out: the pre-v1 code review is closed, Phase 6's
-branch-gate + version stamp are done, and the **OTA update round-trip is proven
-on both mobile and desktop**. The **final go-live wipe ran 2026-08-31** — the box
-was emptied to a genuine clean slate (`/data` 21M → 64K), every snapshot and local
-backup deleted, and real data put back by a **fresh import from the canonical
-ledger + vault**, reconciling to **0 diffs** against `ledger bal` and seeding the
-box with 12 277 events. **Both personal devices are installed and syncing** — the
-phone and `surface`, the Linux desktop — so the app is in real daily use.
-**v1.0.4 is released** (published for both platforms), carrying a mobile
-prose-typing fix for the note editor and a CI change that makes the desktop
-AppImage runnable on older glibc. What remains is confirming the 1.0.3 → 1.0.4
-OTA update on both devices, the brokerage reconnect, and box auth.
+**Status:** **v1.0.5 released and in real daily use** on both personal devices —
+the phone and `surface`, the Linux desktop — syncing against the box. Cycle 4's
+build work is done: the pre-v1 review is closed, the branch gate and version stamp
+are in place, and the OTA round-trip is proven on both platforms. What the cycle
+still owes is its **close-out** — the curiosities→concepts pass and a memory prune.
+**All three on-device confirmations are closed** (user, 2026-09-05, from real use
+rather than a staged test): note and journal body edits propagate across devices,
+ledger transaction edits do too, and Android predictive text commits on space.
 
-**The finance tab is deliberately offline** (user, 2026-09-04) until statement
-import here beats the system it replaces, and **both bank auto-import sources are
-off**. Journal and routines are unaffected and in daily use. Progress since: the
-old comma-splitting importer is gone and every import runs through a parser that
-accounts for each line it reads; statements that arrive as rendered PDFs now parse
-in both layouts and check themselves against the totals they declare, verified
-across 136 real files with zero failures. Categorization stays deferred to
-`Unmatched` — amounts are externally verified, categories by nothing.
+Work now follows a **three-item sequence set by the user 2026-09-05, taken one at a
+time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.** Item 1's
+Stage 1 is built — problem reports are captured in-app as a `FeedbackCaptured` event
+carrying screen and build context, and read back over `GET /feedback`. Its Stage 2
+(a diagnostic ring buffer, so a report carries the error trail) and a live-box
+end-to-end run are still open.
+
+⛔ **Finances are deferred indefinitely** (user, 2026-09-05). This **supersedes** the
+earlier "offline until statement import beats the system it replaces" gate rather
+than clearing it: the user stopped using the section, and there is no intent to
+reopen it. Only the *state* survives — the finance tab stays offline, both bank
+auto-import sources stay off, and categorization stays deferred to `Unmatched`.
+What was built before the stop still stands: every import runs through a parser that
+accounts for each line it reads, and rendered-PDF statements parse in both layouts
+and check themselves against the totals they declare, verified across 136 real files
+with zero failures. Journal and routines are unaffected and in daily use.
 
 **Last Updated:** 2026-09-05
 
