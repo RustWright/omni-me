@@ -803,6 +803,7 @@ pub fn run() {
             commands::budget::list_recurring,
             commands::budget::list_recurring_matches,
             commands::budget::import_chequing_csv,
+            commands::budget::import_statement_document,
             commands::budget::list_match_candidates,
             commands::budget::list_unmatched_without_candidates,
             commands::budget::merge_transactions,

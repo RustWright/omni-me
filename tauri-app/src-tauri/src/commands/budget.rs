@@ -41,7 +41,7 @@ use omni_me_core::db::queries::{
     self, AccountRow, BudgetRow, RecurringPatternRow, TransactionRow, TxnFilter,
 };
 use omni_me_core::events::{
-    AttachmentRef, EventType, NewEvent, Posting, TransactionRecordedPayload,
+    AttachmentRef, EventType, NewEvent, Posting, Tag, TransactionRecordedPayload,
     TransactionsMergedPayload,
 };
 use omni_me_core::ledger::JournalArtifacts;
@@ -1232,6 +1232,66 @@ pub struct ImportStatementCsvResult {
     pub self_check_failures: Option<usize>,
 }
 
+/// Turn parsed statement rows into events, returning them alongside the count
+/// of zero-amount rows deliberately left out.
+///
+/// Shared by every statement import path rather than written per format. What
+/// a row *becomes* — one posting on the source account, a balancing
+/// `Unmatched` mirror, batch attribution, the statement-source tag — is a
+/// property of statement import itself, not of the file it arrived in, and a
+/// second copy would be free to drift on the sign convention or forget the
+/// mirror.
+fn build_statement_events(
+    device_id: &str,
+    rows: &[statement::StatementRow],
+    source_account: &str,
+    commodity: &str,
+    statement_source: &str,
+    tags: &[Tag],
+) -> Result<(Vec<NewEvent>, usize), String> {
+    let mut events = Vec::with_capacity(rows.len());
+    let mut skipped_zero_rows = 0usize;
+    for row in rows {
+        // Zero-amount rows are read faithfully by the parser — the replay layer
+        // counts them as `informational_rows` and wants them present — but they
+        // are not transactions worth recording: each would sit in `Unmatched`
+        // forever with nothing to reconcile against. Skipped here and reported,
+        // never silently dropped.
+        if row.amount.is_zero() {
+            skipped_zero_rows += 1;
+            continue;
+        }
+        // `StatementRow::amount` is already signed from the account's
+        // perspective — negative means money left it — because every parser
+        // normalises that at the boundary. Re-deriving a sign convention here
+        // is exactly what the shared row type exists to prevent, and it holds
+        // uniformly for Assets and Liabilities since hledger's
+        // liability-is-negative convention is preserved.
+        let source_posting = Posting {
+            account: source_account.to_string(),
+            commodity: commodity.to_string(),
+            amount: row.amount,
+            fx_rate: None,
+            tags: tags.to_vec(),
+        };
+        let unmatched_posting = accounts::make_unmatched_mirror(&source_posting);
+
+        let txn_id = ulid::Ulid::new().to_string();
+        let payload = TransactionRecordedPayload::new(
+            txn_id,
+            row.date,
+            row.description.clone(),
+            vec![source_posting, unmatched_posting],
+        )
+        .with_statement_source(Some(statement_source.to_string()));
+        events.push(
+            NewEvent::transaction_recorded(device_id.to_string(), &payload)
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok((events, skipped_zero_rows))
+}
+
 /// Import a statement export — each parsed row becomes a
 /// `TransactionRecorded` event with one posting on `source_account` and a
 /// balancing `Unmatched` placeholder. `statement_source` tags the events
@@ -1302,46 +1362,14 @@ pub async fn import_chequing_csv(
         );
     }
 
-    let mut events = Vec::with_capacity(parsed.rows.len());
-    let mut skipped_zero_rows = 0usize;
-    for row in &parsed.rows {
-        // Zero-amount rows are read faithfully by the parser — the replay layer
-        // counts them as `informational_rows` and wants them present — but they
-        // are not transactions worth recording: each would sit in `Unmatched`
-        // forever with nothing to reconcile against. Skipped here and reported,
-        // never silently dropped.
-        if row.amount.is_zero() {
-            skipped_zero_rows += 1;
-            continue;
-        }
-        // `StatementRow::amount` is already signed from the account's
-        // perspective — negative means money left it — because every parser
-        // normalises that at the boundary. Re-deriving a sign convention here
-        // is exactly what the shared row type exists to prevent, and it holds
-        // uniformly for Assets and Liabilities since hledger's
-        // liability-is-negative convention is preserved.
-        let source_posting = Posting {
-            account: source_account.clone(),
-            commodity: commodity.clone(),
-            amount: row.amount,
-            fx_rate: None,
-            tags: tags.clone(),
-        };
-        let unmatched_posting = accounts::make_unmatched_mirror(&source_posting);
-
-        let txn_id = ulid::Ulid::new().to_string();
-        let payload = TransactionRecordedPayload::new(
-            txn_id,
-            row.date,
-            row.description.clone(),
-            vec![source_posting, unmatched_posting],
-        )
-        .with_statement_source(Some(statement_source.clone()));
-        events.push(
-            NewEvent::transaction_recorded(state.device_id.clone(), &payload)
-                .map_err(|e| e.to_string())?,
-        );
-    }
+    let (events, skipped_zero_rows) = build_statement_events(
+        &state.device_id,
+        &parsed.rows,
+        &source_account,
+        &commodity,
+        &statement_source,
+        &tags,
+    )?;
 
     let imported = events.len();
 
@@ -1381,6 +1409,232 @@ pub async fn import_chequing_csv(
         closing_balance,
         self_check_failures,
     })
+}
+
+/// Wire shape of `POST /statements/parse`. Mirrors
+/// `omni_me_server::routes::statements::ParseResponse`.
+#[derive(Debug, Clone, Deserialize)]
+struct StatementParseWire {
+    rows: Vec<StatementRowWire>,
+    skipped: Vec<SkippedLineWire>,
+    structural: usize,
+    #[allow(dead_code)]
+    lines_seen: usize,
+    self_check_failures: Vec<String>,
+    #[allow(dead_code)]
+    opening_balance: Option<String>,
+    closing_balance: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StatementRowWire {
+    date: String,
+    description: String,
+    amount: String,
+    running_balance: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SkippedLineWire {
+    line_no: usize,
+    raw: String,
+    reason: String,
+}
+
+/// Result of uploading a statement document.
+///
+/// Carries `self_check_failures` as the **messages**, not a count, because
+/// this path's checks are specific enough to act on ("credits sum to X but the
+/// statement declares Y" names the discrepancy). A number would tell the user
+/// something is wrong without telling them what.
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportStatementDocResult {
+    /// Rows written. Zero when the statement failed its own checks and was
+    /// refused — `refused` says which case this is.
+    pub imported: usize,
+    /// True when nothing was written because the statement did not verify.
+    pub refused: bool,
+    pub skipped_zero_rows: usize,
+    pub skipped: Vec<SkippedLineView>,
+    pub structural: usize,
+    pub rows_parsed: usize,
+    pub closing_balance: Option<String>,
+    pub self_check_failures: Vec<String>,
+}
+
+/// Import a statement that arrives as a **document** rather than an export —
+/// a PDF, possibly encrypted.
+///
+/// Parsing runs on the server, which is where the credentials live: the client
+/// sends bytes and the *name* of a secret, never a password. That also keeps
+/// `poppler` a server-side dependency rather than something every device needs.
+///
+/// ## This path refuses to import a statement that fails its own checks
+///
+/// Unlike the CSV formats, a rendered statement declares figures about itself —
+/// totals, transaction counts, opening and closing balances — so "did we read
+/// this correctly" has a real answer before anything is written. When the
+/// answer is no, writing the rows anyway would put money into the ledger that
+/// the statement itself contradicts, and the reconciliation view would then be
+/// measuring the books against a file we already know we misread.
+///
+/// `force` exists for the case where the user has read the failures and judges
+/// them benign. It is deliberately not a default: the whole value of the check
+/// is that clearing it takes a decision.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn import_statement_document(
+    state: State<'_, AppState>,
+    bytes: Vec<u8>,
+    opts: ImportStatementOptions,
+    password_secret: Option<String>,
+    force: Option<bool>,
+) -> Result<ImportStatementDocResult, String> {
+    let ImportStatementOptions {
+        source_account,
+        statement_source,
+        commodity,
+        institution,
+        product,
+        format: _,
+    } = opts;
+    let commodity = commodity.unwrap_or_else(|| "CAD".to_string());
+    let force = force.unwrap_or(false);
+
+    let mut path = "/statements/parse".to_string();
+    if let Some(name) = &password_secret {
+        // The secret's *name* is user-chosen config and could contain
+        // characters that change the query's meaning, so it is encoded rather
+        // than interpolated raw.
+        path.push_str(&format!("?password_secret={}", urlencode(name)));
+    }
+    tracing::info!(
+        bytes = bytes.len(),
+        account = %source_account,
+        "import_statement_document",
+    );
+
+    let resp = state
+        .box_request(reqwest::Method::POST, &path)
+        .await
+        .header(reqwest::header::CONTENT_TYPE, "application/pdf")
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("server returned {status}: {body}"));
+    }
+
+    let wire: StatementParseWire = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse response: {e}"))?;
+
+    let skipped: Vec<SkippedLineView> = wire
+        .skipped
+        .iter()
+        .map(|s| SkippedLineView {
+            line_no: s.line_no,
+            raw: s.raw.clone(),
+            reason: s.reason.clone(),
+        })
+        .collect();
+
+    // A line the parser could not read is as disqualifying as a failed
+    // arithmetic check: either way the row list is not known to be complete,
+    // and an incomplete statement import is the exact failure this whole
+    // module exists to prevent.
+    let unverified = !wire.self_check_failures.is_empty() || !skipped.is_empty();
+    if unverified && !force {
+        tracing::warn!(
+            account = %source_account,
+            statement_source = %statement_source,
+            failures = wire.self_check_failures.len(),
+            skipped = skipped.len(),
+            "statement did not verify against its own figures — refusing to import",
+        );
+        return Ok(ImportStatementDocResult {
+            imported: 0,
+            refused: true,
+            skipped_zero_rows: 0,
+            skipped,
+            structural: wire.structural,
+            rows_parsed: wire.rows.len(),
+            closing_balance: wire.closing_balance,
+            self_check_failures: wire.self_check_failures,
+        });
+    }
+
+    let rows = wire
+        .rows
+        .iter()
+        .map(parse_wire_row)
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let tags = accounts::institution_tags(institution.as_deref(), product.as_deref());
+    let (events, skipped_zero_rows) = build_statement_events(
+        &state.device_id,
+        &rows,
+        &source_account,
+        &commodity,
+        &statement_source,
+        &tags,
+    )?;
+    let imported = events.len();
+    append_batch_and_apply(&state, events).await?;
+
+    Ok(ImportStatementDocResult {
+        imported,
+        refused: false,
+        skipped_zero_rows,
+        skipped,
+        structural: wire.structural,
+        rows_parsed: wire.rows.len(),
+        closing_balance: wire.closing_balance,
+        self_check_failures: wire.self_check_failures,
+    })
+}
+
+/// Rebuild a `StatementRow` from the wire.
+///
+/// Amounts and dates are re-parsed rather than trusted: they crossed a process
+/// boundary as strings, and a malformed one must fail here rather than become
+/// a wrong number in the ledger.
+fn parse_wire_row(r: &StatementRowWire) -> Result<statement::StatementRow, String> {
+    Ok(statement::StatementRow {
+        date: NaiveDate::parse_from_str(&r.date, "%Y-%m-%d")
+            .map_err(|e| format!("statement row has an unreadable date {:?}: {e}", r.date))?,
+        description: r.description.clone(),
+        amount: r
+            .amount
+            .parse::<Decimal>()
+            .map_err(|e| format!("statement row has an unreadable amount {:?}: {e}", r.amount))?,
+        running_balance: r
+            .running_balance
+            .as_deref()
+            .map(|b| {
+                b.parse::<Decimal>()
+                    .map_err(|e| format!("statement row has an unreadable balance {b:?}: {e}"))
+            })
+            .transpose()?,
+        external_id: None,
+    })
+}
+
+/// Percent-encode a query-string value. Small and local rather than a new
+/// dependency — the only values passed here are short config-chosen names.
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// Compact preview of one side of a reconciliation pair — just enough

@@ -51,7 +51,8 @@ pub static OMNI_MOCK_BUILD_SENTINEL: &[u8; 32] = b"OMNI_MOCK_BUILD__DO_NOT_SHIP_
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AutoImportSourceView, BalanceCheckView,
     BudgetProgress, BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView,
-    ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementCsvResult, JournalDayStat,
+    ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementCsvResult,
+    ImportStatementDocResult, JournalDayStat,
     JournalEntryItem, LlmResult, MatchCandidateView, NetWorthSeriesView, PendingBatchView,
     PendingShareCapture, ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem,
     ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
@@ -2580,6 +2581,126 @@ pub async fn invoke_import_chequing_csv(
                     product,
                     format,
                 },
+            },
+        )
+        .await
+    }
+}
+
+/// Where a statement's rows are going, and what to attribute them to.
+///
+/// One statement is one account, at one institution, in one currency — so
+/// these travel together. Grouped for the same reason the backend groups them:
+/// six loose string parameters invite a call site that sources two of them
+/// from different places, and they are all `&str`, so the compiler would not
+/// notice a swap.
+#[derive(Debug, Clone, Copy)]
+pub struct StatementTarget<'a> {
+    pub source_account: &'a str,
+    pub statement_source: &'a str,
+    pub commodity: Option<&'a str>,
+    pub institution: Option<&'a str>,
+    pub product: Option<&'a str>,
+}
+
+/// Upload a statement **document** (a PDF, possibly encrypted) rather than an
+/// export. Parsing happens on the server, where the credentials are.
+///
+/// `password_secret` names an entry in the server's credentials `secrets` map;
+/// no password ever reaches the client. `force` overrides the refusal that
+/// fires when a statement fails its own declared checks — see
+/// `commands::budget::import_statement_document` for why that refusal is the
+/// default.
+pub async fn invoke_import_statement_document(
+    bytes: Vec<u8>,
+    target: StatementTarget<'_>,
+    password_secret: Option<&str>,
+    force: bool,
+) -> Result<ImportStatementDocResult, String> {
+    #[cfg(feature = "mock")]
+    {
+        // Destructured rather than discarded whole: borrowing the struct
+        // leaves its fields technically unread, and a field nothing reads is
+        // one that can be silently dropped from the real call too.
+        let StatementTarget {
+            source_account,
+            statement_source,
+            commodity,
+            institution,
+            product,
+        } = target;
+        let _ = (
+            &bytes,
+            source_account,
+            statement_source,
+            commodity,
+            institution,
+            product,
+            password_secret,
+        );
+        // The mock refuses unless forced, so the UI's refusal path — the one
+        // that actually protects the ledger — is what gets exercised by
+        // default. A mock that always succeeds would leave it untested.
+        if !force {
+            return Ok(ImportStatementDocResult {
+                imported: 0,
+                refused: true,
+                skipped_zero_rows: 0,
+                skipped: vec![],
+                structural: 34,
+                rows_parsed: 5,
+                closing_balance: Some("1240.55".to_string()),
+                self_check_failures: vec![
+                    "parsed 2 debit row(s) but the statement declares 3".to_string(),
+                    "debits sum to 1050.00 but the statement declares 23850.00".to_string(),
+                ],
+            });
+        }
+        Ok(ImportStatementDocResult {
+            imported: 5,
+            refused: false,
+            skipped_zero_rows: 0,
+            skipped: vec![],
+            structural: 34,
+            rows_parsed: 5,
+            closing_balance: Some("1240.55".to_string()),
+            self_check_failures: vec![],
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Opts<'a> {
+            source_account: &'a str,
+            statement_source: &'a str,
+            commodity: Option<&'a str>,
+            institution: Option<&'a str>,
+            product: Option<&'a str>,
+            /// Unused on this path — a document's layout is detected, not
+            /// declared — but the options struct is shared with the CSV import.
+            format: Option<&'a str>,
+        }
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            bytes: Vec<u8>,
+            opts: Opts<'a>,
+            password_secret: Option<&'a str>,
+            force: bool,
+        }
+        invoke(
+            "import_statement_document",
+            &Args {
+                bytes,
+                opts: Opts {
+                    source_account: target.source_account,
+                    statement_source: target.statement_source,
+                    commodity: target.commodity,
+                    institution: target.institution,
+                    product: target.product,
+                    format: None,
+                },
+                password_secret,
+                force,
             },
         )
         .await

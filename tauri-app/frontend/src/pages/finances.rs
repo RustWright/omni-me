@@ -32,7 +32,8 @@ use crate::continuity::{CaptureDraft, ContinuityKey, ListState, PostingDraft, us
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AttachmentRef,
     BalanceCheckView, BudgetProgress, BudgetRow, DashboardSummaryView, DraftTransactionView,
-    ExtractedDraft, ImportStatementCsvResult, JournalImportPlan, JournalImportPreview,
+    ExtractedDraft, ImportStatementCsvResult, ImportStatementDocResult, JournalImportPlan,
+    JournalImportPreview,
     JournalImportResult, MatchCandidateView, MonthlyTrendBucketView, NetWorthPointView,
     NetWorthSeriesView, PendingBatchView, PendingShareCapture, PostingInput,
     ReconciliationTxnPreview, RecurringObligationView, RecurringPattern, ScanRecurringResult,
@@ -6057,6 +6058,18 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
     // past the one-line status message. A count of unread lines is not
     // actionable without the lines themselves.
     let mut last_result: Signal<Option<ImportStatementCsvResult>> = use_signal(|| None);
+    // The document path's own result. Separate from the CSV one rather than
+    // unified: it carries failure *messages* and a refusal flag the CSV shape
+    // has no room for, and collapsing them would mean rendering the weaker of
+    // the two everywhere.
+    let mut last_doc_result: Signal<Option<ImportStatementDocResult>> = use_signal(|| None);
+    // Names an entry in the server's credentials `secrets` map. The password
+    // itself never reaches this process — the client only ever knows the name.
+    let mut password_secret: Signal<String> = use_signal(String::new);
+    // Set only after the user has read a refusal and chosen to override it.
+    // Reset on every new file, so an override never silently carries forward to
+    // a statement nobody has looked at.
+    let mut force_import: Signal<bool> = use_signal(|| false);
     let store = use_continuity();
     // True once the user edits the label by hand. After that the account-change
     // effect stops touching it — silently rewriting something someone just typed
@@ -6086,6 +6099,68 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
     let mut error: Signal<Option<String>> = use_signal(|| None);
     let mut importing: Signal<bool> = use_signal(|| false);
 
+    // Re-runnable so the "import anyway" button can replay the same file
+    // without asking the user to pick it again. Holding the bytes rather than
+    // the file handle matters: the picker's handle does not survive the
+    // element re-rendering after a refusal.
+    let mut pending_bytes: Signal<Option<Vec<u8>>> = use_signal(|| None);
+
+    let mut run_document_import = move |bytes: Vec<u8>, force: bool| {
+        let src = source_account.read().clone();
+        let label = statement_source.read().clone();
+        let comm = commodity.read().clone();
+        let inst = institution.read().trim().to_string();
+        let secret = password_secret.read().trim().to_string();
+        importing.set(true);
+        error.set(None);
+        status.set(None);
+        last_doc_result.set(None);
+        spawn(async move {
+            let inst = (!inst.is_empty()).then_some(inst.as_str());
+            let secret = (!secret.is_empty()).then_some(secret.as_str());
+            match bridge::invoke_import_statement_document(
+                bytes,
+                bridge::StatementTarget {
+                    source_account: &src,
+                    statement_source: &label,
+                    commodity: Some(&comm),
+                    institution: inst,
+                    product: None,
+                },
+                secret,
+                force,
+            )
+            .await
+            {
+                Ok(result) => {
+                    if result.refused {
+                        // Deliberately not an `error`: nothing went wrong, the
+                        // statement simply did not verify. The panel below
+                        // explains what failed and offers the override.
+                        status.set(None);
+                    } else {
+                        if !src.trim().is_empty() && !label.trim().is_empty() {
+                            store.remember_statement_label(
+                                src.trim().to_string(),
+                                label.trim().to_string(),
+                            );
+                        }
+                        status.set(Some(format!(
+                            "Imported {} transactions. Each lands in Unmatched, ready for reconciliation review.",
+                            result.imported
+                        )));
+                    }
+                    last_doc_result.set(Some(result));
+                }
+                Err(e) => {
+                    last_doc_result.set(None);
+                    error.set(Some(format!("Import failed: {e}")));
+                }
+            }
+            importing.set(false);
+        });
+    };
+
     let on_file_picked = move |evt: Event<FormData>| {
         let files = evt.files();
         let Some(file) = files.into_iter().next() else {
@@ -6100,6 +6175,10 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
         error.set(None);
         status.set(None);
         last_result.set(None);
+        last_doc_result.set(None);
+        // A fresh file starts unforced, whatever the previous one needed.
+        force_import.set(false);
+        pending_bytes.set(None);
         spawn(async move {
             let bytes = match file.read_bytes().await {
                 Ok(b) => b.to_vec(),
@@ -6109,6 +6188,14 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                     return;
                 }
             };
+            // A document is not decoded here at all — it is binary, and the
+            // server owns both the decryption key and the extractor.
+            if fmt == "document" {
+                pending_bytes.set(Some(bytes.clone()));
+                importing.set(false);
+                run_document_import(bytes, false);
+                return;
+            }
             let csv_text = match String::from_utf8(bytes) {
                 Ok(s) => s,
                 Err(_) => {
@@ -6235,18 +6322,41 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         option { value: "chequing", "Chequing (no header row)" }
                         option { value: "brokerage", "Brokerage monthly export" }
                         option { value: "transfer", "Transfer service export" }
+                        option { value: "document", "Statement PDF" }
+                    }
+                }
+            }
+
+            // Only meaningful for the document path, and only when the file is
+            // encrypted. Shown conditionally rather than always: an unexplained
+            // credential field on a CSV import invites someone to type a real
+            // password into a box that would ship it nowhere useful.
+            if *format.read() == "document" {
+                div {
+                    label { class: "block text-xs text-obsidian-text-muted mb-1",
+                        "Password secret name (leave blank if the PDF is not encrypted)"
+                    }
+                    input {
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
+                        r#type: "text",
+                        placeholder: "name of an entry in the server's secrets",
+                        value: "{password_secret.read()}",
+                        oninput: move |e| password_secret.set(e.value()),
+                    }
+                    p { class: "mt-1 text-xs text-obsidian-text-muted",
+                        "This is the secret's name, not the password. The value stays on the server."
                     }
                 }
             }
 
             div {
                 label { class: "block text-xs text-obsidian-text-muted mb-1",
-                    "CSV file"
+                    if *format.read() == "document" { "Statement PDF" } else { "CSV file" }
                 }
                 input {
                     class: "w-full text-sm text-obsidian-text file:mr-3 file:px-3 file:py-1.5 file:bg-obsidian-accent/90 file:hover:bg-obsidian-accent file:text-black file:rounded file:border-none file:text-xs file:font-semibold disabled:opacity-50",
                     r#type: "file",
-                    accept: ".csv,text/csv",
+                    accept: if *format.read() == "document" { ".pdf,application/pdf" } else { ".csv,text/csv" },
                     disabled: *importing.read(),
                     onchange: on_file_picked,
                 }
@@ -6256,6 +6366,62 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
         if let Some(msg) = error.read().clone() {
             div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
                 "{msg}"
+            }
+        }
+
+        // The document path's verdict. Rendered before the success banner
+        // because a refusal is the more important thing on the screen: nothing
+        // was written, and the user has a decision to make.
+        if let Some(doc) = last_doc_result.read().clone() {
+            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg text-sm space-y-3",
+                div { class: "font-semibold text-obsidian-text", "Statement check" }
+                div { class: "text-obsidian-text-muted",
+                    "Read {doc.rows_parsed} transaction rows from {doc.structural} lines of statement layout."
+                }
+                if let Some(bal) = doc.closing_balance.clone() {
+                    div { class: "text-obsidian-text-muted", "Closing balance: {bal}" }
+                }
+
+                if doc.self_check_failures.is_empty() && doc.skipped.is_empty() {
+                    div { class: "text-emerald-300",
+                        "This statement agrees with every figure it states about itself."
+                    }
+                } else {
+                    div { class: "p-3 bg-red-950/30 border border-red-500/30 rounded space-y-2",
+                        div { class: "font-semibold text-red-300",
+                            if doc.refused {
+                                "Not imported — this statement does not add up."
+                            } else {
+                                "Imported despite failing its own checks."
+                            }
+                        }
+                        for failure in doc.self_check_failures.iter() {
+                            div { class: "text-red-200 text-xs", "• {failure}" }
+                        }
+                        for skip in doc.skipped.iter() {
+                            div { class: "text-red-200 text-xs",
+                                "• line {skip.line_no} could not be read ({skip.reason}): "
+                                span { class: "font-mono opacity-80", "{skip.raw}" }
+                            }
+                        }
+                        if doc.refused {
+                            div { class: "text-red-200/80 text-xs pt-1",
+                                "Importing anyway would put figures into your ledger that the statement itself contradicts."
+                            }
+                            button {
+                                class: "mt-1 px-3 py-1.5 bg-red-900/60 hover:bg-red-900 border border-red-500/40 rounded text-xs text-red-100 disabled:opacity-50",
+                                disabled: *importing.read(),
+                                onclick: move |_| {
+                                    if let Some(bytes) = pending_bytes.read().clone() {
+                                        force_import.set(true);
+                                        run_document_import(bytes, true);
+                                    }
+                                },
+                                "Import anyway"
+                            }
+                        }
+                    }
+                }
             }
         }
 

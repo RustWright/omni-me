@@ -630,6 +630,26 @@ pub struct ImportStatementCsvResult {
     pub self_check_failures: Option<usize>,
 }
 
+/// `commands::budget::ImportStatementDocResult` — the document (PDF) path.
+///
+/// Differs from its CSV sibling in two ways worth knowing at the call site.
+/// `self_check_failures` holds the failure **messages**, not a count, because
+/// this format declares enough about itself for the failures to name what is
+/// wrong. And `refused` can be true with `imported: 0` — a statement that did
+/// not verify is not imported at all, so an empty result here is a deliberate
+/// refusal rather than an empty file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportStatementDocResult {
+    pub imported: usize,
+    pub refused: bool,
+    pub skipped_zero_rows: usize,
+    pub skipped: Vec<SkippedLineView>,
+    pub structural: usize,
+    pub rows_parsed: usize,
+    pub closing_balance: Option<String>,
+    pub self_check_failures: Vec<String>,
+}
+
 /// Compact preview for one side of a reconciliation pair (Phase 5.7).
 /// Mirrors `commands::budget::ReconciliationTxnPreview`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
