@@ -14,8 +14,8 @@ Framing in `tasks.md` § The agreed sequence. Do not run ahead.
   survives: finance tab offline, both bank sources OFF, categorization deferred to
   `Unmatched`. The parser work that landed 2026-09-05 is done and verified; it stops there.
 - **The "nothing new until finances work end-to-end" gate is SUPERSEDED** — it would have
-  blocked the sequence above forever. Journal and routines are end-to-end and in daily use,
-  which was the part that mattered.
+  blocked the sequence forever. Journal and routines are end-to-end and in daily use, which
+  was the part that mattered.
 - ⚠️ `DocumentExtractor`/Gemini is queued for re-evaluation — that re-examination *is* item 3.
   Do not treat today's LLM design as settled just because it exists and compiles.
 - **Almost none of the statement work was bank-specific** (user's question, 2026-09-05) —
@@ -36,6 +36,6 @@ lint predates you.
 
 ## Open threads
 ⚠️ **OOM-killed a shell this session** — 7.2GB RAM, 1.9GB swap: `CARGO_BUILD_JOBS=1`, one crate
-at a time, never two cargo processes. · Statement upload is **untried against a live box** and
-needs a `[secrets]` entry — finished work, not a task. · Curiosities→concepts pass owed at
-cycle close · memory prune owed · `server_url` precedence question still open.
+at a time, never two cargo processes. · Statement upload is **untried against a live box** —
+finished work, not a task. · Curiosities→concepts pass owed at cycle close · memory prune owed
+· `server_url` precedence question still open.
