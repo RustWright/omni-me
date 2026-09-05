@@ -22,15 +22,15 @@ Audit: overlay `cargo run --example statement_audit`. **NOT next: generalizabili
   the old system's (user). Auto-import ticks are NOT the near path. Parity: overlay `IMPORT_PARITY.md`.
 - ⚠️ **The ledger is NOT labelled training data** — its categories are the OUTPUT of the rules
   under suspicion (~1% hand-pinned). Training on them learns the errors; evaluating certifies.
-- **Trust boundary: amounts externally verified, categories by NOTHING.**
-- **ABSTENTION, not accuracy.** Solution space is OPEN, LLM not required.
+- **Trust boundary: amounts externally verified, categories by NOTHING.** **ABSTENTION, not
+  accuracy** — solution space is OPEN, LLM not required.
 - **Deferral has a VERIFIED exit — overlay `CATEGORIZATION_DEFERRAL.md`.** ⚠️ **No classifier
   without provenance.** **BOTH bank sources stay OFF.**
 
 ## Do NOT re-survey
 Parser rules were validated against all 136 real files before being written, and again after.
-Statements: pCloud `Backups/paisa-ledger/`; backlog: `tasks.md`, not the logs;
-`probe_realdb.rs`'s clippy `type_complexity` is pre-existing, untouched, not yours.
+Statements: pCloud `Backups/paisa-ledger/`; backlog: `tasks.md`, not the logs. `probe_realdb.rs`'s
+clippy `type_complexity` is pre-existing, untouched, not yours.
 
 ## Open threads
 **B3's fork:** the server has NO route-extension seam (`RunConfig` carries only
