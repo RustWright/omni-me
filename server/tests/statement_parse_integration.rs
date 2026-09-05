@@ -121,8 +121,15 @@ async fn a_consistent_statement_parses_and_reports_no_failures() {
     let v: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["rows"].as_array().unwrap().len(), 4);
     assert!(v["skipped"].as_array().unwrap().is_empty());
+    assert!(v["blockers"].as_array().unwrap().is_empty(), "{body}");
+    // This format declares its own figures, so a clean result here is a real
+    // verification rather than the absence of anything to check — which the
+    // wording has to convey, since the client renders it verbatim.
     assert!(
-        v["self_check_failures"].as_array().unwrap().is_empty(),
+        v["verifiability"]
+            .as_str()
+            .unwrap()
+            .contains("agrees with every figure"),
         "{body}"
     );
     // Closing comes from the summary block: the last row of this statement
@@ -155,7 +162,7 @@ async fn a_statement_that_does_not_add_up_reports_which_figures_disagree() {
         v["skipped"].as_array().unwrap().is_empty(),
         "and it left no skip behind — which is exactly why the declared checks matter"
     );
-    let failures = v["self_check_failures"].to_string();
+    let failures = v["blockers"].to_string();
     assert!(failures.contains("declares 3"), "{failures}");
     assert!(failures.contains("debits sum to"), "{failures}");
 }

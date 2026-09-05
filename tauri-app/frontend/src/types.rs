@@ -615,39 +615,26 @@ pub struct SkippedLineView {
     pub reason: String,
 }
 
-/// `commands::budget::ImportStatementCsvResult`.
+/// `commands::budget::ImportStatementResult` — one shape for every statement
+/// format, CSV export or rendered PDF alike.
 ///
-/// ⚠️ `closing_balance` and `self_check_failures` are `None` when the format
-/// carries no running balance — the check is *unavailable*, not passed. Render
-/// those two states differently.
+/// ⚠️ **Empty `blockers` does not mean verified.** A format carrying no balance
+/// and declaring no totals has nothing to fail, so it clears the gate by
+/// offering no gate — `verifiability` carries that distinction in words, and
+/// the UI must show it rather than inferring a clean bill from an empty list.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ImportStatementCsvResult {
+pub struct ImportStatementResult {
     pub imported: usize,
-    pub skipped_zero_rows: usize,
-    pub skipped: Vec<SkippedLineView>,
-    pub structural: usize,
-    pub closing_balance: Option<String>,
-    pub self_check_failures: Option<usize>,
-}
-
-/// `commands::budget::ImportStatementDocResult` — the document (PDF) path.
-///
-/// Differs from its CSV sibling in two ways worth knowing at the call site.
-/// `self_check_failures` holds the failure **messages**, not a count, because
-/// this format declares enough about itself for the failures to name what is
-/// wrong. And `refused` can be true with `imported: 0` — a statement that did
-/// not verify is not imported at all, so an empty result here is a deliberate
-/// refusal rather than an empty file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ImportStatementDocResult {
-    pub imported: usize,
+    /// True when nothing was written because the statement did not check out.
+    /// `imported: 0` alone is ambiguous — an empty statement produces it too.
     pub refused: bool,
     pub skipped_zero_rows: usize,
     pub skipped: Vec<SkippedLineView>,
     pub structural: usize,
     pub rows_parsed: usize,
     pub closing_balance: Option<String>,
-    pub self_check_failures: Vec<String>,
+    pub blockers: Vec<String>,
+    pub verifiability: String,
 }
 
 /// Compact preview for one side of a reconciliation pair (Phase 5.7).

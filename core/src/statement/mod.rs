@@ -76,6 +76,46 @@ pub struct SkippedLine {
     pub reason: String,
 }
 
+/// How much a statement allowed itself to be checked.
+///
+/// Exists so "we checked and it passed" and "there was nothing to check" stay
+/// separate all the way to the screen. Collapsing them is the specific mistake
+/// that lets an unverified import read as a verified one, and the chequing
+/// export makes it easy: it carries no balance column at all, so it clears
+/// every check by offering none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verifiability {
+    /// The statement declares totals, counts, or period balances — the
+    /// strongest available, because the figures come from the bank rather than
+    /// from arithmetic over the rows we just parsed.
+    AgainstDeclaredFigures,
+    /// A running balance per row, so the chain can be walked.
+    AgainstOwnRunningBalance,
+    /// Nothing beyond "every line parsed". A clean result here means the
+    /// parser did not choke, and nothing more.
+    NotVerifiable,
+}
+
+impl Verifiability {
+    /// One line for a report, phrased so a clean-but-uncheckable statement
+    /// cannot be mistaken for a verified one.
+    pub fn describe(self, clean: bool) -> &'static str {
+        match (self, clean) {
+            (Verifiability::NotVerifiable, _) => {
+                "This format carries no balance or totals, so nothing could be checked \
+                 beyond every line parsing."
+            }
+            (Verifiability::AgainstOwnRunningBalance, true) => {
+                "Every row agrees with the statement's own running balance."
+            }
+            (Verifiability::AgainstDeclaredFigures, true) => {
+                "This statement agrees with every figure it states about itself."
+            }
+            (_, false) => "This statement does not agree with its own figures.",
+        }
+    }
+}
+
 /// The result of parsing a statement: what was read, and what was not.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StatementParse {
@@ -203,6 +243,54 @@ impl StatementParse {
         problems
     }
 
+    /// Every reason this parse must not be imported, in plain language.
+    ///
+    /// Empty means "nothing this format can check came back wrong" — which is
+    /// **not** the same as "verified". A format carrying no running balance and
+    /// declaring no totals has nothing to fail, so it clears this gate by
+    /// having no gate to clear. [`Self::verifiability`] is what distinguishes
+    /// the two, and a caller reporting a result must not collapse them.
+    ///
+    /// Centralised here rather than at each import site because it is a policy
+    /// question — *when is a statement too suspect to write into the books* —
+    /// and the answer must not depend on which file format it arrived in. Two
+    /// call sites answering it separately is how one path ends up quietly
+    /// writing rows another would have refused.
+    pub fn import_blockers(&self) -> Vec<String> {
+        let mut blockers = Vec::new();
+
+        // A line that looked like a transaction and could not be read means the
+        // row list is incomplete, whatever else checks out. This is the only
+        // check available to every format.
+        for s in &self.skipped {
+            blockers.push(format!(
+                "line {} could not be read ({}): {}",
+                s.line_no, s.reason, s.raw
+            ));
+        }
+
+        for (i, delta) in self.verify_running_balance() {
+            blockers.push(format!(
+                "row {i} disagrees with the statement's own running balance by {delta}"
+            ));
+        }
+
+        blockers.extend(self.declared_check_failures.iter().cloned());
+        blockers
+    }
+
+    /// What the statement made it possible to check — so a caller can say
+    /// "verified" only when something was.
+    pub fn verifiability(&self) -> Verifiability {
+        let has_running_balance = self.rows.iter().any(|r| r.running_balance.is_some());
+        let has_declared = self.declared_opening.is_some() || self.declared_closing.is_some();
+        match (has_declared, has_running_balance) {
+            (true, _) => Verifiability::AgainstDeclaredFigures,
+            (false, true) => Verifiability::AgainstOwnRunningBalance,
+            (false, false) => Verifiability::NotVerifiable,
+        }
+    }
+
     /// Rows falling within `[from, to]` inclusive. Statements occasionally
     /// carry a few days either side of their nominal period.
     pub fn rows_in(&self, from: NaiveDate, to: NaiveDate) -> Vec<&StatementRow> {
@@ -308,6 +396,72 @@ mod tests {
             problems[0].1,
             d("30.00"),
             "claimed +15 where -15 was needed"
+        );
+    }
+
+    /// The gate must fire on a broken balance chain even when the file itself
+    /// parsed perfectly — that is the whole point of it.
+    #[test]
+    fn import_blockers_catch_a_balance_chain_that_does_not_add_up() {
+        let p = StatementParse {
+            rows: vec![
+                row("2026-06-01", "-10.00", Some("90.00")),
+                row("2026-06-02", "15.00", Some("75.00")),
+            ],
+            structural: 0,
+            skipped: vec![],
+            declared_check_failures: vec![],
+            declared_opening: None,
+            declared_closing: None,
+            lines_seen: 2,
+        };
+        let blockers = p.import_blockers();
+        assert_eq!(blockers.len(), 1, "{blockers:?}");
+        assert!(blockers[0].contains("running balance"), "{blockers:?}");
+        assert_eq!(p.verifiability(), Verifiability::AgainstOwnRunningBalance);
+    }
+
+    /// An unreadable line blocks import on its own. It is the only check the
+    /// balance-free formats have, so it has to be enough by itself.
+    #[test]
+    fn import_blockers_catch_an_unreadable_line_with_no_balance_to_check() {
+        let p = StatementParse {
+            rows: vec![row("2026-06-01", "-10.00", None)],
+            structural: 0,
+            skipped: vec![SkippedLine {
+                line_no: 7,
+                raw: "2026-06-02,MYSTERY,not-a-number,".to_string(),
+                reason: "unparseable amount".to_string(),
+            }],
+            declared_check_failures: vec![],
+            declared_opening: None,
+            declared_closing: None,
+            lines_seen: 2,
+        };
+        let blockers = p.import_blockers();
+        assert_eq!(blockers.len(), 1);
+        assert!(blockers[0].contains("line 7"), "{blockers:?}");
+        assert!(blockers[0].contains("MYSTERY"), "raw text must survive to the user");
+    }
+
+    /// The distinction the whole `Verifiability` type exists for: this parse
+    /// has no blockers and is also not verified.
+    #[test]
+    fn a_clean_parse_of_an_uncheckable_format_does_not_claim_to_be_verified() {
+        let p = StatementParse {
+            rows: vec![row("2026-06-01", "-10.00", None)],
+            structural: 0,
+            skipped: vec![],
+            declared_check_failures: vec![],
+            declared_opening: None,
+            declared_closing: None,
+            lines_seen: 1,
+        };
+        assert!(p.import_blockers().is_empty(), "nothing failed");
+        assert_eq!(p.verifiability(), Verifiability::NotVerifiable);
+        assert!(
+            p.verifiability().describe(true).contains("nothing could be checked"),
+            "a clean-but-uncheckable result must not read as verified"
         );
     }
 

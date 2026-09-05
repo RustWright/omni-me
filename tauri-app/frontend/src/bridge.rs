@@ -51,8 +51,7 @@ pub static OMNI_MOCK_BUILD_SENTINEL: &[u8; 32] = b"OMNI_MOCK_BUILD__DO_NOT_SHIP_
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AutoImportSourceView, BalanceCheckView,
     BudgetProgress, BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView,
-    ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementCsvResult,
-    ImportStatementDocResult, JournalDayStat,
+    ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementResult, JournalDayStat,
     JournalEntryItem, LlmResult, MatchCandidateView, NetWorthSeriesView, PendingBatchView,
     PendingShareCapture, ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem,
     ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
@@ -2517,15 +2516,19 @@ pub async fn invoke_confirm_recurring(pattern_id: &str) -> Result<(), String> {
 
 pub async fn invoke_import_chequing_csv(
     csv_text: &str,
-    source_account: &str,
-    statement_source: &str,
-    commodity: Option<&str>,
-    institution: Option<&str>,
-    product: Option<&str>,
+    target: StatementTarget<'_>,
     format: Option<&str>,
-) -> Result<ImportStatementCsvResult, String> {
+    force: bool,
+) -> Result<ImportStatementResult, String> {
     #[cfg(feature = "mock")]
     {
+        let StatementTarget {
+            source_account,
+            statement_source,
+            commodity,
+            institution,
+            product,
+        } = target;
         let _ = (
             csv_text,
             source_account,
@@ -2535,20 +2538,41 @@ pub async fn invoke_import_chequing_csv(
             product,
             format,
         );
-        // The mock returns a skipped line and no balance on purpose: those are
-        // the states the UI has to render correctly, and a mock that always
-        // reports a clean import never exercises them.
-        Ok(ImportStatementCsvResult {
+        // The mock refuses on an unreadable line and reports a format that
+        // could not be checked at all — the two states the UI most has to get
+        // right, and the two a mock reporting a clean import never exercises.
+        if !force {
+            return Ok(ImportStatementResult {
+                imported: 0,
+                refused: true,
+                skipped_zero_rows: 0,
+                skipped: vec![SkippedLineView {
+                    line_no: 4,
+                    raw: "2026-05-18,MYSTERY ROW,not-a-number,".to_string(),
+                    reason: "unparseable amount".to_string(),
+                }],
+                structural: 1,
+                rows_parsed: 3,
+                closing_balance: None,
+                blockers: vec![
+                    "line 4 could not be read (unparseable amount):                      2026-05-18,MYSTERY ROW,not-a-number,"
+                        .to_string(),
+                ],
+                verifiability: "This format carries no balance or totals, so nothing could be                                 checked beyond every line parsing."
+                    .to_string(),
+            });
+        }
+        Ok(ImportStatementResult {
             imported: 3,
+            refused: false,
             skipped_zero_rows: 1,
-            skipped: vec![SkippedLineView {
-                line_no: 4,
-                raw: "2026-05-18,MYSTERY ROW,not-a-number,".to_string(),
-                reason: "unparseable amount".to_string(),
-            }],
+            skipped: vec![],
             structural: 1,
+            rows_parsed: 4,
             closing_balance: None,
-            self_check_failures: None,
+            blockers: vec![],
+            verifiability: "This format carries no balance or totals, so nothing could be                             checked beyond every line parsing."
+                .to_string(),
         })
     }
     #[cfg(not(feature = "mock"))]
@@ -2568,19 +2592,21 @@ pub async fn invoke_import_chequing_csv(
         struct Args<'a> {
             csv_text: &'a str,
             opts: Opts<'a>,
+            force: bool,
         }
         invoke(
             "import_chequing_csv",
             &Args {
                 csv_text,
                 opts: Opts {
-                    source_account,
-                    statement_source,
-                    commodity,
-                    institution,
-                    product,
+                    source_account: target.source_account,
+                    statement_source: target.statement_source,
+                    commodity: target.commodity,
+                    institution: target.institution,
+                    product: target.product,
                     format,
                 },
+                force,
             },
         )
         .await
@@ -2616,7 +2642,7 @@ pub async fn invoke_import_statement_document(
     target: StatementTarget<'_>,
     password_secret: Option<&str>,
     force: bool,
-) -> Result<ImportStatementDocResult, String> {
+) -> Result<ImportStatementResult, String> {
     #[cfg(feature = "mock")]
     {
         // Destructured rather than discarded whole: borrowing the struct
@@ -2642,7 +2668,7 @@ pub async fn invoke_import_statement_document(
         // that actually protects the ledger — is what gets exercised by
         // default. A mock that always succeeds would leave it untested.
         if !force {
-            return Ok(ImportStatementDocResult {
+            return Ok(ImportStatementResult {
                 imported: 0,
                 refused: true,
                 skipped_zero_rows: 0,
@@ -2650,13 +2676,14 @@ pub async fn invoke_import_statement_document(
                 structural: 34,
                 rows_parsed: 5,
                 closing_balance: Some("1240.55".to_string()),
-                self_check_failures: vec![
+                blockers: vec![
                     "parsed 2 debit row(s) but the statement declares 3".to_string(),
                     "debits sum to 1050.00 but the statement declares 23850.00".to_string(),
                 ],
+                verifiability: "This statement does not agree with its own figures.".to_string(),
             });
         }
-        Ok(ImportStatementDocResult {
+        Ok(ImportStatementResult {
             imported: 5,
             refused: false,
             skipped_zero_rows: 0,
@@ -2664,7 +2691,9 @@ pub async fn invoke_import_statement_document(
             structural: 34,
             rows_parsed: 5,
             closing_balance: Some("1240.55".to_string()),
-            self_check_failures: vec![],
+            blockers: vec![],
+            verifiability: "This statement agrees with every figure it states about itself."
+                .to_string(),
         })
     }
     #[cfg(not(feature = "mock"))]

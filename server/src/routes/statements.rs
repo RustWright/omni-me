@@ -12,8 +12,10 @@
 //!
 //! So this route runs no model. It extracts layout-preserved text, parses by
 //! column position, and returns the rows **together with everything it could
-//! not read and every self-check that failed**. The client decides whether to
-//! import; the route never decides on its behalf.
+//! not read and every check that failed**. It does not write anything — the
+//! caller decides — but it does state whether the statement is fit to import,
+//! because that judgement belongs with the parser rather than being re-derived
+//! by each client from the raw fields.
 //!
 //! ## Why the password is a name, not a value
 //!
@@ -75,9 +77,9 @@ pub struct ParsedSkip {
 
 /// What the parse found, and — just as important — what it could not.
 ///
-/// `skipped` and `self_check_failures` are not diagnostics for a log. They are
-/// the reason a caller is allowed to import at all: both empty is the only
-/// state in which the row list is known to be complete.
+/// `blockers` is not a diagnostic for a log. It is the reason a caller is
+/// allowed to import at all: empty is the only state in which the row list is
+/// known to be complete, and `verifiability` says how much that is worth.
 #[derive(Debug, Serialize)]
 pub struct ParseResponse {
     pub rows: Vec<ParsedRow>,
@@ -87,9 +89,17 @@ pub struct ParseResponse {
     /// holds and nothing falls out of the loop unclassified.
     pub structural: usize,
     pub lines_seen: usize,
-    /// Ways the statement disagrees with figures it declares about itself.
-    /// Non-empty means the file must not be imported.
-    pub self_check_failures: Vec<String>,
+    /// Every reason this statement must not be imported, in plain language.
+    ///
+    /// The engine decides this, not the client. Policy about *when a statement
+    /// is too suspect to write into the books* has to have one home, or two
+    /// callers answer it differently and one of them starts writing rows the
+    /// other would have refused.
+    pub blockers: Vec<String>,
+    /// What this format made checkable at all, phrased for a report. Empty
+    /// `blockers` plus "nothing could be checked" is a real and common state,
+    /// and it must not read as a clean bill.
+    pub verifiability: String,
     pub opening_balance: Option<String>,
     pub closing_balance: Option<String>,
 }
@@ -133,6 +143,8 @@ async fn parse_handler(
     let parsed = parse_rendered_statement(&text)
         .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e))?;
 
+    let blockers = parsed.import_blockers();
+
     Ok(Json(ParseResponse {
         rows: parsed
             .rows
@@ -155,15 +167,11 @@ async fn parse_handler(
             .collect(),
         structural: parsed.structural,
         lines_seen: parsed.lines_seen,
-        // Both self-checks, reported as one list: rows that break the
-        // statement's own running balance, and figures it declares that the
-        // parse does not reproduce. They answer the same question.
-        self_check_failures: parsed
-            .verify_running_balance()
-            .iter()
-            .map(|(i, delta)| format!("row {i} is off by {delta} against the running balance"))
-            .chain(parsed.declared_check_failures.iter().cloned())
-            .collect(),
+        verifiability: parsed
+            .verifiability()
+            .describe(blockers.is_empty())
+            .to_string(),
+        blockers,
         opening_balance: parsed.opening_balance().map(|b| b.to_string()),
         closing_balance: parsed.closing_balance().map(|b| b.to_string()),
     }))

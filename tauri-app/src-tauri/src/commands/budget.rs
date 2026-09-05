@@ -1205,31 +1205,40 @@ pub struct ImportStatementOptions {
     pub format: Option<String>,
 }
 
-/// Result of a statement import, including what the parser *refused* to read.
+/// Result of a statement import — one shape for every format.
+///
+/// Deliberately not split per source. The two paths had drifted into different
+/// report shapes and, with them, different *behaviour*: one refused a suspect
+/// statement and the other wrote it and mentioned the problem afterwards. One
+/// type is what keeps that from happening again, since a new format cannot
+/// quietly inherit the weaker half.
 #[derive(Debug, Clone, Serialize)]
-pub struct ImportStatementCsvResult {
+pub struct ImportStatementResult {
     pub imported: usize,
+    /// True when nothing was written because the statement did not check out.
+    /// `imported: 0` alone is ambiguous — it is also what an empty statement
+    /// produces — so the refusal is stated rather than inferred.
+    pub refused: bool,
     /// Rows read correctly but carrying an amount of exactly zero, so not
     /// recorded. Reported rather than dropped quietly — "excluded on a stated
     /// rule" and "vanished" have to stay distinguishable.
     pub skipped_zero_rows: usize,
-    /// Lines that looked like transactions but could not be read. Non-empty
-    /// means the import is incomplete, whatever the other numbers say.
+    /// Lines that looked like transactions but could not be read.
     pub skipped: Vec<SkippedLineView>,
     /// Lines deliberately not treated as transactions — blanks, headers,
     /// footers. Counted rather than discarded so every line is accounted for.
     pub structural: usize,
-    /// The statement's own closing balance, when the format carries a running
-    /// balance column.
-    ///
-    /// `None` means the check is **unavailable**, not that it passed — the
-    /// chequing format has no balance column at all. Callers must render those
-    /// two states differently; collapsing them reports an unchecked import as a
-    /// verified one.
+    /// Transaction rows the parser found, before zero-amount rows are dropped.
+    pub rows_parsed: usize,
     pub closing_balance: Option<String>,
-    /// Rows disagreeing with the statement's own running balance. `Some(0)` is
-    /// a pass; `None` is the same unavailability as above.
-    pub self_check_failures: Option<usize>,
+    /// Every reason this statement should not be imported, in plain language.
+    /// Empty means nothing failed — which is not the same as verified; see
+    /// `verifiability`.
+    pub blockers: Vec<String>,
+    /// What the format made checkable at all, and the one-line phrasing for it.
+    /// Carries the distinction between "checked and passed" and "nothing to
+    /// check", which the chequing export makes easy to lose.
+    pub verifiability: String,
 }
 
 /// Turn parsed statement rows into events, returning them alongside the count
@@ -1305,15 +1314,23 @@ fn build_statement_events(
 /// `format` selects the parser: `chequing` (headerless debit/credit),
 /// `brokerage`, or `transfer`. All three come from `core::statement::parse`,
 /// which accounts for every line it reads — so a row that cannot be parsed
-/// reaches the caller in [`ImportStatementCsvResult::skipped`] instead of
+/// reaches the caller in [`ImportStatementResult::skipped`] instead of
 /// disappearing. The parser this replaced split on bare commas and silently
 /// dropped anything it did not understand.
+///
+/// Like the document path, this **refuses to write anything** when
+/// `StatementParse::import_blockers` is non-empty, unless `force` is set. Note
+/// what that is worth per format: the chequing export carries no balance
+/// column, so its only blocker is an unreadable line — `verifiability` on the
+/// result says so, and a caller must not present a clean result here as a
+/// verified one.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn import_chequing_csv(
     state: State<'_, AppState>,
     csv_text: String,
     opts: ImportStatementOptions,
-) -> Result<ImportStatementCsvResult, String> {
+    force: Option<bool>,
+) -> Result<ImportStatementResult, String> {
     let ImportStatementOptions {
         source_account,
         statement_source,
@@ -1373,9 +1390,39 @@ pub async fn import_chequing_csv(
 
     let imported = events.len();
 
-    // Read the diagnostics off the parse before the events are consumed, so the
-    // report describes the batch that was actually written.
-    let skipped: Vec<SkippedLineView> = parsed
+    let blockers = parsed.import_blockers();
+    if !blockers.is_empty() && !force.unwrap_or(false) {
+        tracing::warn!(
+            account = %source_account,
+            statement_source = %statement_source,
+            blockers = blockers.len(),
+            "statement did not check out — refusing to import",
+        );
+        return Ok(refusal_result(&parsed, blockers));
+    }
+
+    append_batch_and_apply(&state, events).await?;
+
+    Ok(ImportStatementResult {
+        imported,
+        refused: false,
+        skipped_zero_rows,
+        skipped: skipped_views(&parsed),
+        structural: parsed.structural,
+        rows_parsed: parsed.rows.len(),
+        closing_balance: parsed.closing_balance().map(|b| b.to_string()),
+        verifiability: parsed
+            .verifiability()
+            .describe(blockers.is_empty())
+            .to_string(),
+        blockers,
+    })
+}
+
+/// The diagnostics half of a result, shared by the refusal and success paths so
+/// a refused import reports exactly what an accepted one would have.
+fn skipped_views(parsed: &statement::StatementParse) -> Vec<SkippedLineView> {
+    parsed
         .skipped
         .iter()
         .map(|s| SkippedLineView {
@@ -1383,32 +1430,25 @@ pub async fn import_chequing_csv(
             raw: s.raw.clone(),
             reason: s.reason.clone(),
         })
-        .collect();
-    // `None` throughout when the format carries no running balance: the check
-    // is unavailable, which is not the same as passing.
-    let has_balances = parsed.rows.iter().any(|r| r.running_balance.is_some());
-    let closing_balance = parsed.closing_balance().map(|b| b.to_string());
-    let self_check_failures = has_balances.then(|| parsed.verify_running_balance().len());
+        .collect()
+}
 
-    if !skipped.is_empty() {
-        tracing::warn!(
-            account = %source_account,
-            statement_source = %statement_source,
-            skipped = skipped.len(),
-            "statement import could not read every line — the import is incomplete",
-        );
-    }
-
-    append_batch_and_apply(&state, events).await?;
-
-    Ok(ImportStatementCsvResult {
-        imported,
-        skipped_zero_rows,
-        skipped,
+/// A result describing a statement that was parsed but deliberately not written.
+fn refusal_result(
+    parsed: &statement::StatementParse,
+    blockers: Vec<String>,
+) -> ImportStatementResult {
+    ImportStatementResult {
+        imported: 0,
+        refused: true,
+        skipped_zero_rows: 0,
+        skipped: skipped_views(parsed),
         structural: parsed.structural,
-        closing_balance,
-        self_check_failures,
-    })
+        rows_parsed: parsed.rows.len(),
+        closing_balance: parsed.closing_balance().map(|b| b.to_string()),
+        verifiability: parsed.verifiability().describe(false).to_string(),
+        blockers,
+    }
 }
 
 /// Wire shape of `POST /statements/parse`. Mirrors
@@ -1420,7 +1460,8 @@ struct StatementParseWire {
     structural: usize,
     #[allow(dead_code)]
     lines_seen: usize,
-    self_check_failures: Vec<String>,
+    blockers: Vec<String>,
+    verifiability: String,
     #[allow(dead_code)]
     opening_balance: Option<String>,
     closing_balance: Option<String>,
@@ -1439,27 +1480,6 @@ struct SkippedLineWire {
     line_no: usize,
     raw: String,
     reason: String,
-}
-
-/// Result of uploading a statement document.
-///
-/// Carries `self_check_failures` as the **messages**, not a count, because
-/// this path's checks are specific enough to act on ("credits sum to X but the
-/// statement declares Y" names the discrepancy). A number would tell the user
-/// something is wrong without telling them what.
-#[derive(Debug, Clone, Serialize)]
-pub struct ImportStatementDocResult {
-    /// Rows written. Zero when the statement failed its own checks and was
-    /// refused — `refused` says which case this is.
-    pub imported: usize,
-    /// True when nothing was written because the statement did not verify.
-    pub refused: bool,
-    pub skipped_zero_rows: usize,
-    pub skipped: Vec<SkippedLineView>,
-    pub structural: usize,
-    pub rows_parsed: usize,
-    pub closing_balance: Option<String>,
-    pub self_check_failures: Vec<String>,
 }
 
 /// Import a statement that arrives as a **document** rather than an export —
@@ -1488,7 +1508,7 @@ pub async fn import_statement_document(
     opts: ImportStatementOptions,
     password_secret: Option<String>,
     force: Option<bool>,
-) -> Result<ImportStatementDocResult, String> {
+) -> Result<ImportStatementResult, String> {
     let ImportStatementOptions {
         source_account,
         statement_source,
@@ -1543,20 +1563,20 @@ pub async fn import_statement_document(
         })
         .collect();
 
-    // A line the parser could not read is as disqualifying as a failed
-    // arithmetic check: either way the row list is not known to be complete,
-    // and an incomplete statement import is the exact failure this whole
-    // module exists to prevent.
-    let unverified = !wire.self_check_failures.is_empty() || !skipped.is_empty();
-    if unverified && !force {
+    // The server already ran `import_blockers` over the parse — it holds the
+    // policy, and re-deriving it here from the wire fields is how the two paths
+    // drifted apart the first time. An unreadable line counts alongside a
+    // failed arithmetic check: either way the row list is not known to be
+    // complete.
+    let blockers = wire.blockers.clone();
+    if !blockers.is_empty() && !force {
         tracing::warn!(
             account = %source_account,
             statement_source = %statement_source,
-            failures = wire.self_check_failures.len(),
-            skipped = skipped.len(),
-            "statement did not verify against its own figures — refusing to import",
+            blockers = blockers.len(),
+            "statement did not check out — refusing to import",
         );
-        return Ok(ImportStatementDocResult {
+        return Ok(ImportStatementResult {
             imported: 0,
             refused: true,
             skipped_zero_rows: 0,
@@ -1564,7 +1584,8 @@ pub async fn import_statement_document(
             structural: wire.structural,
             rows_parsed: wire.rows.len(),
             closing_balance: wire.closing_balance,
-            self_check_failures: wire.self_check_failures,
+            verifiability: wire.verifiability,
+            blockers,
         });
     }
 
@@ -1586,7 +1607,7 @@ pub async fn import_statement_document(
     let imported = events.len();
     append_batch_and_apply(&state, events).await?;
 
-    Ok(ImportStatementDocResult {
+    Ok(ImportStatementResult {
         imported,
         refused: false,
         skipped_zero_rows,
@@ -1594,7 +1615,8 @@ pub async fn import_statement_document(
         structural: wire.structural,
         rows_parsed: wire.rows.len(),
         closing_balance: wire.closing_balance,
-        self_check_failures: wire.self_check_failures,
+        verifiability: wire.verifiability,
+        blockers,
     })
 }
 
