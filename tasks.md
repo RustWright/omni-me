@@ -3,7 +3,9 @@
 **Status:** v1.0.5, released and in real daily use on the personal phone and `surface`
 (the Linux desktop). Both devices sync against the Hetzner box.
 
-**Reconciled against git 2026-09-05.** This file carries **open work only**. Everything
+**Reconciled against git 2026-09-05** (twice — the second pass closed the three on-device
+items, deferred finances indefinitely, and set the three-item sequence). This file carries
+**open work only**. Everything
 closed in that pass — including its original verification notes — is in
 [`.archive/post-v1/tasks-completed.md`](.archive/post-v1/tasks-completed.md); work up to
 the v1.0.0 cut is in [`.archive/v1.0.0/tasks-completed.md`](.archive/v1.0.0/tasks-completed.md).
@@ -27,46 +29,71 @@ Size tags: [XS] ≤30min · [S] ~1h · [M] ~2-3h · [L] ~4-6h · [USER] user act
 Carried out of the old header, where they were buried under finished roadmap narrative.
 These still bind; the rest of that header is in the post-v1 archive.
 
-- **Nothing new at the top level until journal, routines and finances work end-to-end.**
-  LLM chat, task/project tracking and inbox monitoring are all explicitly gated behind
-  that, in that order.
+- ~~**Nothing new at the top level until journal, routines and finances work end-to-end.**~~
+  **Superseded 2026-09-05.** That rule gated LLM chat behind finances, and finances is now
+  deferred indefinitely — so the gate could never open and would have blocked the user's own
+  stated direction forever. Journal and routines *are* working end-to-end and in daily use;
+  they were the part of the rule that mattered. Replaced by the sequence below.
 - **Dogfooding is the test harness.** Real daily friction is the primary bug-finder, and
   scope creep from it is expected and has a home in this file.
 - **Sequential work, no parallel worktrees** — one three-agent run cost ~$40 and 17GB.
-  Throttle workspace cargo with `CARGO_BUILD_JOBS=2`; the 32GB workstation is gone and
-  releases build in CI.
+  Releases build in CI; ⚠️ **this box OOM-kills even dev builds** — `CARGO_BUILD_JOBS=1`, one
+  crate at a time, never two cargo processes at once.
 
 ---
 
-## Awaiting on-device confirmation — only the user can close these
+## The agreed sequence (user, 2026-09-05) — in order, one at a time
 
-The code fix has landed and is reasoned about; the behaviour has not been seen working on
-real hardware. **Git cannot settle these**, which is why they look identical to open bugs
-and kept getting re-litigated. The resolved narrative for each is in the post-v1 archive.
+Set after the user stopped work on finances. **Each gets planning before building**, per the
+defer-major-phases rule; do not run ahead to the next one.
 
-- [ ] **Note and journal body edits materialize on the receiving device.** Code-fixed in
-  `d049f1e` — journal/generic update handlers became UPSERTs, so a body edit materializes
-  even on a device that never saw the create. Confirm by editing a note body on one device
-  and watching the text (not just the empty note) appear on the other.
-- [ ] **Ledger transaction edits propagate across devices.** Code-fixed in `c5e55a6` — the
-  four `transactions` mutation handlers UPSERT-materialize instead of issuing a bare
-  `UPDATE`, which silently no-ops in SurrealDB when the row is absent. Confirm by editing a
-  transaction on one device and reading it back on the other.
-- [ ] **Android predictive-text suggestions commit on space.** The CodeMirror 6 defaults
-  (`autocorrect: off`, `autocapitalize: off`, `spellcheck: false`) that suppressed them were
-  overridden in `a771838` and shipped in 1.0.4. **Needs the test phone** — the personal
-  phone is the go-live device and the S9 test phone runs Android 10 / One UI 2.5, which is
-  where pre-release testing belongs.
+1. **Feedback capture** — plan, then address. Capture at the point of friction with app
+   context attached, stored pluggably. Detail in "Open — from daily use" below. This is
+   first because it is how every later item gets its bug reports, and because the current
+   method (a long unstructured dump per session) costs the user the writing.
+2. **Generalization** — plan, then decide *or* address. The open-core engine still carries
+   the user's own choices as hardcoded structure: the journal template's three reflection
+   keys, the statement layout strings, `FORCE_GENERIC_DIRS`. A decision to defer is a valid
+   outcome here; what is not valid is leaving it undecided.
+3. **AI / LLM / ML integration — detailed planning and rethinking.** How to integrate, host
+   and *securely* use AI in this app for the best value at the least cost. Explicitly a
+   re-examination, not an implementation of the existing design: `DocumentExtractor`/Gemini
+   was queued for re-evaluation on 2026-09-05 rather than accepted. Related backlog: LLM chat
+   that executes commands (Cycle 5 filing), feature toggles, `llm/` as it stands today.
 
 ---
 
-## Finance integrity — THE BAR
+## Awaiting on-device confirmation — none open
 
-**The finance tab stays offline until statement import through omni-me meets and exceeds
-paisa's** (user, 2026-09-04). Auto-import ticks are **not** the near path, and **both bank
-sources stay OFF**. The full decision set — trust boundary, the abstention requirement, the
-categorization deferral and its verified exit — is in `NEXT.md` and the overlay's
-`CATEGORIZATION_DEFERRAL.md`. Do not re-derive it here.
+All three cleared by the user on 2026-09-05, from real use rather than a staged test:
+note/journal body edits and ledger transaction edits both propagate across devices (the
+session's own feedback dump was written on mobile and copy-pasted from desktop; committed
+Unmatched auto-import transactions showed as committed on the other device), and Android
+predictive text commits on space. The resolved narratives are in the post-v1 archive.
+
+---
+
+## Finances — DEFERRED INDEFINITELY (user, 2026-09-05)
+
+⛔ **Do not start finance work. Do not propose it. Do not "just fix" an item below.**
+The user stopped using the finances section and has deferred all further work on it with no
+date. What exists **ships as-is**; nothing here is a bug queue awaiting attention.
+
+This overrides THE BAR rather than satisfying it: the earlier rule ("the finance tab stays
+offline until import beats the old system's") described a gate to be *cleared*, and there is
+now no intent to clear it. What survives from that decision set is only the **state** — the
+finance tab stays offline, both bank sources stay OFF, categorization stays deferred to
+`Unmatched`. Nothing turns on without the user saying so.
+
+The items below are kept **as a record of where the work stopped**, not as a backlog, so that
+whoever picks it up later — possibly with the LLM push, which may change the shape of the
+problem entirely — starts from what was established rather than re-deriving it. The full
+decision set is in the overlay's `CATEGORIZATION_DEFERRAL.md` and `IMPORT_PARITY.md`.
+
+**Known gap at the stopping point:** the CIBC CSV format (highest transaction volume, four
+accounts) has **no oracle at all** — its export carries no balance column. Each of the four
+CIBC dirs in the pCloud backup holds 2 unexamined PDFs; if those are statements, the rendered
+parser built 2026-09-05 would close the gap. Never checked.
 
 - [ ] **Reach import parity with paisa's seven importers.** Parity map is written (overlay
   `IMPORT_PARITY.md`; institution names are private). **Four of the seven are now covered**
@@ -281,8 +308,10 @@ categorization deferral and its verified exit — is in `NEXT.md` and the overla
 
 ## Owed at cycle close
 
-- **Cycle 3 code review + curiosities→concepts pass** — deferred once already; do not skip
-  again at Cycle 4 close.
+- **Curiosities→concepts pass** — deferred once already; do not skip again at cycle close.
+  (The *code review* half of this item was struck 2026-09-05: the pre-v1 gate was a full
+  end-to-end read-the-code pass and it is closed, which subsumes Cycle 3's code. The item had
+  been double-counting a review that already happened.)
 - **Memory prune pass** — `MEMORY.md` index is the retrieval surface and is near its cap.
   Content-first, per note; classifying by filename is what went wrong last attempt.
 - **Session-start staleness signal for artifacts beyond `NEXT.md`** — queued by the user
