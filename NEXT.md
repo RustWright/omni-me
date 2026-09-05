@@ -31,9 +31,9 @@ securely use it for best value at least cost.** Framing in `tasks.md`. Do not ru
 
 ## Do NOT re-survey
 **All three on-device confirmations are CLOSED** (user, from real use). **The Cycle 3 code
-review owed-item was struck** — the pre-v1 gate was a full end-to-end read-the-code pass and is
-closed, so it double-counted. Statement parser rules were validated against 136 real files,
-twice. Backlog: `tasks.md`; `probe_realdb.rs`'s clippy lint predates you.
+review owed-item was struck** — the pre-v1 gate was a full end-to-end pass and is closed, so it
+double-counted. **Feedback-capture survey is banked in `tasks.md`.** `probe_realdb.rs`'s clippy
+lint predates you.
 
 ## Open threads
 ⚠️ **OOM-killed a shell this session** — 7.2GB RAM, 1.9GB swap: `CARGO_BUILD_JOBS=1`, one crate
