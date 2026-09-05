@@ -1,38 +1,40 @@
 # NEXT
 
-**Next action: the finance work below — start with the paisa parity map** (user).
-✅ `tasks.md` reconciled 2026-09-05 (685→286 lines, every item checked against code/git; resolved
-work in `.archive/post-v1/`). Trust its `Reconciled against git` date, not its prose. Still queued:
-a staleness signal for artifacts beyond `NEXT.md`. **NOT next: the generalizability conversation.**
+**Next action: Part B — the third statement parser** (plan `lets-continue-mellow-bunny.md`; the
+institution is named in the overlay's `IMPORT_PARITY.md`, never here).
+✅ Part A landed 2026-09-05: all statement imports now run through `core::statement::parse`, which
+accounts for every line it reads. ✅ `tasks.md` reconciled 2026-09-05 (685→286 lines; resolved
+work in `.archive/post-v1/`) — trust its `Reconciled against git` date, not its prose.
+**NOT next: the generalizability conversation** — immediately before the LLM push only.
 
 > **Public repo — fictional names only; real balances/institutions never enter it.** The overlay
 > has institution detail: `ACCOUNT_MAPPING.md` + `SETUP.md`; `CONVENTIONS.md` is CANONICAL.
+> The pre-commit privacy guard is an **ingress filter, not an audit** — it only sees newly staged
+> lines, so moving old text into a new file trips it. Scan the whole tree to actually check.
 
 ## Decisions in force — inherit these
+- ⚠️ **NO LLM in the statement path** (user, 2026-09-05). `DocumentExtractor`/Gemini is itself
+  queued for re-evaluation *as part of* the LLM push; routing SC through it starts that push
+  through a side door. Parsing is deterministic; **classification** is where intelligence belongs
+  and is already deferred. Do not reintroduce it.
+- **SC arrives by manual upload, not email.** IMAP ingest stays off at the composition root; the
+  open-ended "which mail is relevant" objection never reopens.
 - **THE BAR: finance tab stays offline until statement import through omni-me meets and exceeds
-  paisa's** (user). Auto-import ticks are NOT the near path. ⚠️ `core/src/statement/parse.rs` is
-  **VERIFICATION ONLY** — the only importer is `parse_chequing_csv`, one format vs paisa's 7.
-- **First move is a PARITY MAP, not code** — paisa's 7 importers
-  (`~/pCloudDrive/Backups/paisa-ledger/importers/`) vs omni-me's 3 parsers: per format, what they
-  handle that we don't. Lands in the overlay. **The user picks which ships first.**
+  paisa's** (user). Auto-import ticks are NOT the near path. Parity map: overlay `IMPORT_PARITY.md`.
 - ⚠️ **The ledger is NOT labelled training data** — its categories are the OUTPUT of the rules
   under suspicion (~1% hand-pinned). Training on them learns the errors; evaluating certifies.
 - **Trust boundary: amounts externally verified, categories by NOTHING** — balances/net-worth
   usable today; anything sliced by category or `kind` is not.
-- **Audit the RULES, not the rows** — errors clump (one rule made all 162 mis-tags); 206 of 230
-  fire, top 10 cover 64%. Cheap diagnostic, no ML: flag rules with *heterogeneous* matches.
 - **ABSTENTION, not accuracy** — a rule confident by construction; the replay can't see it.
   **Solution space is OPEN, LLM not required**: rules+precedent → embeddings → classifier.
-- **Deferral has a VERIFIED exit — overlay `CATEGORIZATION_DEFERRAL.md`** (read it before any
-  classifier work): append `TransactionUpdated` with a full `postings` array — no schema change,
-  no client update, sync-safe. ⚠️ **No classifier ships without posting provenance.**
-- **BOTH bank sources stay OFF** — Push 2 fixed what they *emit*, not whether they run; Wise
-  never ran a live tick. **Upstream blocker in paisa**: paystubs stop 2023-11-30 (~2.7y
-  CPP/EI/tax, 66 PDFs) — **`Documents-paisa`.** Wise's fee-by-channel semantics live in `wise.rs`.
+- **Deferral has a VERIFIED exit — overlay `CATEGORIZATION_DEFERRAL.md`**: append
+  `TransactionUpdated` with a full `postings` array. ⚠️ **No classifier without provenance.**
+- **BOTH bank sources stay OFF.** Wise never ran a live tick. **Upstream blocker in paisa**:
+  paystubs stop 2023-11-30 (~2.7y CPP/EI/tax, 66 PDFs) — **`Documents-paisa`**.
 
 ## Do NOT re-survey
 Audit: **19 clean / 2 findings**, both the crypto question below. Statements live in pCloud
-`Backups/paisa-ledger/` — symlink into one dir. Backlog reconciled: read `tasks.md`, not the logs.
+`Backups/paisa-ledger/`. Backlog reconciled: read `tasks.md`, not the logs.
 
 ## Open threads
 **Crypto modelled monthly — ask whether intended**: 60/62 daily rows vs 4 monthly aggregates,
