@@ -22,8 +22,7 @@ Audit: overlay `cargo run --example statement_audit`. **NOT next: generalizabili
   the old system's (user). Auto-import ticks are NOT the near path. Parity: overlay `IMPORT_PARITY.md`.
 - ⚠️ **The ledger is NOT labelled training data** — its categories are the OUTPUT of the rules
   under suspicion (~1% hand-pinned). Training on them learns the errors; evaluating certifies.
-- **Trust boundary: amounts externally verified, categories by NOTHING.** **ABSTENTION, not
-  accuracy** — solution space is OPEN, LLM not required.
+- **Amounts externally verified; categories by NOTHING. ABSTENTION over accuracy** — space is OPEN.
 - **Deferral has a VERIFIED exit — overlay `CATEGORIZATION_DEFERRAL.md`.** ⚠️ **No classifier
   without provenance.** **BOTH bank sources stay OFF.**
 
