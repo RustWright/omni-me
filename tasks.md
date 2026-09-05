@@ -75,10 +75,11 @@ categorization deferral and its verified exit — is in `NEXT.md` and the overla
   files with zero self-check failures. Remaining: the two other CSV institutions and the
   investment/holdings shape, which is a genuinely different problem (positions, not cash
   rows). paisa's importers are in the pCloud backup with the corpus in sibling dirs. [M]
-- [ ] **Decide whether CSV import should adopt the document path's refusal gate.** The PDF
-  path refuses to import a statement that fails its own declared checks; the CSV path still
-  imports and reports afterwards. Same class of risk, two behaviours — deliberate, so the
-  working path was not changed underneath the user, but it should not stay split. [S, question]
+- [x] **CSV import adopts the document path's refusal gate.** Done 2026-09-05 (user chose to
+  unify). `StatementParse::import_blockers` is the single policy, one `ImportStatementResult`
+  serves every format, and the UI has one report panel. A new `Verifiability` keeps "checked
+  and passed" separate from "nothing to check" — the chequing export has no balance column, so
+  it clears the gate by offering none, and the panel says so in words.
 - [ ] **Statements as the source-of-truth health check** (user, 2026-09-03). End-of-month
   statements are definitive for account state, so ingesting them gives a closing-balance
   oracle to assert auto-pulled data against — catching reversed or missed transactions that

@@ -1,10 +1,10 @@
 # NEXT
 
 **Next action: try it — Import statement → "Statement PDF", pick a file.** Needs a `[secrets]`
-entry on the box for the password (none here — see threads). ✅ Part B code-complete 2026-09-05:
-parser (both layouts) → `POST /statements/parse` → Tauri command → UI refusal gate. **136 real
-files: 0 failed self-checks, 0 replay findings**; counts match the old system's exactly. Untried
-against a live box. **NOT next: generalizability.**
+entry on the box for the password (none here — see threads). ✅ Part B done 2026-09-05: parser
+(both layouts) → `POST /statements/parse` → Tauri command → one refusal gate shared by every
+format. **136 real files: 0 failed self-checks, 0 replay findings**; counts match the old
+system's exactly. Untried against a live box. **NOT next: generalizability.**
 
 > **Public repo — fictional names only; real balances/institutions never enter it.** Institution
 > detail is in the overlay (`ACCOUNT_MAPPING.md`, `SETUP.md`; `CONVENTIONS.md` is CANONICAL).
@@ -19,19 +19,21 @@ against a live box. **NOT next: generalizability.**
   declared-figure checks generalize; only column *words*, date formats and the password rule
   don't — so the password is a **named entry in the existing `[secrets]` map** (no new seam),
   and layout strings stay hardcoded pending the generalizability talk.
-- **A statement failing its own checks is NOT imported** (document path); `force` sits behind a
-  read-the-failures button. ⚠️ The **CSV path still imports then reports** — same class, left
-  as-is deliberately; decide whether to unify.
-- **An unavailable check is a FAILURE, not a pass** — hence declared opening/closing on the parse.
+- **A statement failing its own checks is NOT imported — every format** (user chose to unify,
+  2026-09-05). One policy in `StatementParse::import_blockers`, one result type, one UI panel;
+  `force` sits behind a read-the-failures button.
+- ⚠️ **"Nothing failed" ≠ "verified."** The chequing export has no balance column, so it clears
+  the gate by offering nothing to check; `Verifiability` carries that distinction in words all
+  the way to the screen. Never collapse it into a tick.
 - **THE BAR: finance tab offline until import here beats the old system's** (user). Auto-import
   ticks are NOT the near path. Parity: overlay `IMPORT_PARITY.md`.
 - ⚠️ **Ledger categories are NOT labels** — they're the OUTPUT of the rules under suspicion.
-  **Amounts externally verified; categories by NOTHING. ABSTENTION over accuracy.** Exit:
-  overlay `CATEGORIZATION_DEFERRAL.md`. ⚠️ **No classifier without provenance. Sources stay OFF.**
+  **Amounts externally verified; categories by NOTHING.** Exit: overlay
+  `CATEGORIZATION_DEFERRAL.md`. **No classifier without provenance. Sources stay OFF.**
 
 ## Do NOT re-survey
-Parser rules were validated against all 136 real files, twice. Statements: pCloud
-`Backups/paisa-ledger/`; backlog: `tasks.md`. `probe_realdb.rs`'s clippy lint predates you.
+Parser rules validated against all 136 real files, twice. Statements: pCloud
+`Backups/paisa-ledger/`; backlog `tasks.md`; `probe_realdb.rs`'s clippy lint predates you.
 
 ## Open threads
 ⚠️ **OOM-killed a shell this session** — 7.2GB RAM, 1.9GB swap: `CARGO_BUILD_JOBS=1`, one crate
