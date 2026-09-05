@@ -68,14 +68,17 @@ sources stay OFF**. The full decision set — trust boundary, the abstention req
 categorization deferral and its verified exit — is in `NEXT.md` and the overlay's
 `CATEGORIZATION_DEFERRAL.md`. Do not re-derive it here.
 
-- [ ] **Reach import parity with paisa's seven importers.** omni-me's only *import* path is
-  `core/src/statement_csv.rs::parse_chequing_csv` — one format, reached from
-  `tauri-app/src-tauri/src/commands/budget.rs`. `core/src/statement/` (`parse.rs`,
-  `replay.rs`) is **verification only**: nothing imports through it. paisa has seven
-  importers (`cdc`, `cibc`, `sc`, `wise`, `ws_csv`, `ws_invest`, `ws_pdf`; ~2,650 lines of
-  Python) in the pCloud backup, with the statement corpus in sibling directories.
-  **First move is a parity map, not code** — per format, what paisa handles that omni-me
-  does not. Lands in the overlay; institution names are private. [L]
+- [ ] **Reach import parity with paisa's seven importers.** Parity map is written (overlay
+  `IMPORT_PARITY.md`; institution names are private). **Four of the seven are now covered**
+  as of 2026-09-05: the old comma-splitting `statement_csv.rs` is deleted, imports run
+  through `core/src/statement/`, and both rendered-PDF layouts parse — verified over 136 real
+  files with zero self-check failures. Remaining: the two other CSV institutions and the
+  investment/holdings shape, which is a genuinely different problem (positions, not cash
+  rows). paisa's importers are in the pCloud backup with the corpus in sibling dirs. [M]
+- [ ] **Decide whether CSV import should adopt the document path's refusal gate.** The PDF
+  path refuses to import a statement that fails its own declared checks; the CSV path still
+  imports and reports afterwards. Same class of risk, two behaviours — deliberate, so the
+  working path was not changed underneath the user, but it should not stay split. [S, question]
 - [ ] **Statements as the source-of-truth health check** (user, 2026-09-03). End-of-month
   statements are definitive for account state, so ingesting them gives a closing-balance
   oracle to assert auto-pulled data against — catching reversed or missed transactions that
@@ -88,7 +91,8 @@ categorization deferral and its verified exit — is in `NEXT.md` and the overla
   not accuracy. ⚠️ The existing ledger is **not** labelled training data. [L, gated]
 - [ ] **Crypto is modelled monthly — ask whether that was intended.** The statement audit
   found 60 of 62 daily rows against 4 monthly aggregates; balances are exact but counts
-  differ. One of only two findings in a 19-clean audit. [XS, question]
+  differ. Still the only open finding; the audit now covers 24 CSV + 136 rendered statements
+  and everything else is clean. [XS, question]
 
 ---
 

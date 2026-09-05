@@ -20,7 +20,16 @@ prose-typing fix for the note editor and a CI change that makes the desktop
 AppImage runnable on older glibc. What remains is confirming the 1.0.3 → 1.0.4
 OTA update on both devices, the brokerage reconnect, and box auth.
 
-**Last Updated:** 2026-08-31
+**The finance tab is deliberately offline** (user, 2026-09-04) until statement
+import here beats the system it replaces, and **both bank auto-import sources are
+off**. Journal and routines are unaffected and in daily use. Progress since: the
+old comma-splitting importer is gone and every import runs through a parser that
+accounts for each line it reads; statements that arrive as rendered PDFs now parse
+in both layouts and check themselves against the totals they declare, verified
+across 136 real files with zero failures. Categorization stays deferred to
+`Unmatched` — amounts are externally verified, categories by nothing.
+
+**Last Updated:** 2026-09-05
 
 > **What's next lives in [`NEXT.md`](NEXT.md)** — the next action and the
 > decisions in force, rewritten at every completion. Open work lives in
