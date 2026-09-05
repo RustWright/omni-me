@@ -8,11 +8,10 @@ The sequence, one at a time: **1. feedback capture · 2. generalization (decide 
 Framing in `tasks.md` § The agreed sequence. Do not run ahead.
 
 ## Decisions in force — inherit these
-- ⛔ **FINANCES ARE DEFERRED INDEFINITELY** (user, 2026-09-05). The user stopped using the
-  section. What exists ships as-is. **Do not start finance work, do not propose it, do not
-  "just fix" an item.** This *overrides* THE BAR rather than clearing it — only the state
-  survives: finance tab offline, both bank sources OFF, categorization deferred to
-  `Unmatched`. The parser work that landed 2026-09-05 is done and verified; it stops there.
+- ⛔ **FINANCES ARE DEFERRED INDEFINITELY** (user, 2026-09-05). They stopped using the section;
+  what exists ships as-is. **Do not start finance work, propose it, or "just fix" an item.**
+  This *overrides* THE BAR rather than clearing it — only the state survives: tab offline,
+  both bank sources OFF, categorization deferred to `Unmatched`.
 - **The "nothing new until finances work end-to-end" gate is SUPERSEDED** — it would have
   blocked the sequence forever. Journal and routines are end-to-end and in daily use, which
   was the part that mattered.
