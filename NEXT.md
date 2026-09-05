@@ -1,11 +1,10 @@
 # NEXT
 
-**Next action: B3, the upload path — and it opens with a DECISION, not code** (see Open
-threads). ✅ 2026-09-05: the third statement parser landed, both layouts, proven over the
-whole corpus — **136 files, 0 failed self-checks, 76 clean / 60 with no activity, 0 replay
-findings**; row counts match the old system's exactly, and the 41 older-layout files (the two
-years the previous importer silently dropped) parse. Audit: `cargo run --example
-statement_audit` in the overlay. **NOT next: generalizability.**
+**Next action: B3, the upload path — it opens with a DECISION, not code** (see Open threads).
+✅ 2026-09-05: the third statement parser landed, both layouts, proven over the whole corpus —
+**136 files, 0 failed self-checks, 76 clean / 60 with no activity, 0 replay findings**; counts
+match the old system's exactly, and the 41 older-layout files it silently dropped now parse.
+Audit: overlay `cargo run --example statement_audit`. **NOT next: generalizability.**
 
 > **Public repo — fictional names only; real balances/institutions never enter it.** The overlay
 > has institution detail: `ACCOUNT_MAPPING.md` + `SETUP.md`; `CONVENTIONS.md` is CANONICAL.
@@ -30,13 +29,13 @@ statement_audit` in the overlay. **NOT next: generalizability.**
 
 ## Do NOT re-survey
 Parser rules were validated against all 136 real files before being written, and again after.
-Statements: pCloud `Backups/paisa-ledger/`. Backlog: read `tasks.md`, not the logs.
-`probe_realdb.rs`'s clippy `type_complexity` is pre-existing — untouched, not yours.
+Statements: pCloud `Backups/paisa-ledger/`; backlog: `tasks.md`, not the logs;
+`probe_realdb.rs`'s clippy `type_complexity` is pre-existing, untouched, not yours.
 
 ## Open threads
 **B3's fork:** the server has NO route-extension seam (`RunConfig` carries only
 `source_builder`), so "decrypt server-side" needs one added — ask before building it.
 · **No `credentials.toml` on this machine**, so encrypted files can't be opened here; the audit
-takes already-extracted `.txt` for exactly this reason. · **Crypto modelled monthly — ask whether
-intended** (60/62 daily rows vs 4 monthly aggregates, balances exact). · Institution not
-remembered per account in the import form. · 3 items need the **test phone** · Memory prune owed.
+takes already-extracted `.txt` for that reason. · **Crypto modelled monthly — ask whether
+intended** (60/62 daily rows vs 4 monthly, balances exact). · Institution not remembered per
+account in the import form · 3 need the **test phone** · Memory prune owed.
