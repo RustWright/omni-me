@@ -97,7 +97,9 @@ pub fn parse_brokerage_statement(csv: &str) -> Result<StatementParse, String> {
         Ok(ColumnMap {
             date: col(header, "date").ok_or_else(|| missing("date", header))?,
             description: col(header, "description"),
-            amount: col(header, "amount").ok_or_else(|| missing("amount", header))?,
+            amount: AmountCols::Signed(
+                col(header, "amount").ok_or_else(|| missing("amount", header))?,
+            ),
             balance: col(header, "balance"),
             external_id: None,
             date_formats: &["%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y"],
@@ -185,7 +187,9 @@ fn parse_transfer_rows(csv: &str) -> Result<StatementParse, String> {
         Ok(ColumnMap {
             date: col(header, "date").ok_or_else(|| missing("date", header))?,
             description: col(header, "description"),
-            amount: col(header, "amount").ok_or_else(|| missing("amount", header))?,
+            amount: AmountCols::Signed(
+                col(header, "amount").ok_or_else(|| missing("amount", header))?,
+            ),
             balance: col(header, "running balance"),
             external_id: col(header, "transferwise id"),
             // This export writes day-first (`31-07-2026`); listing it ahead
@@ -196,10 +200,79 @@ fn parse_transfer_rows(csv: &str) -> Result<StatementParse, String> {
     })
 }
 
+/// Parse a chequing-account CSV export.
+///
+/// `Date, Description, Debit, Credit` with **no header row**, so the columns
+/// are read positionally — forced by the format, not chosen. Exactly one of
+/// Debit / Credit carries a value per row; see [`AmountCols::DebitCredit`] for
+/// why the sign falls out of which one.
+///
+/// This replaces an earlier parser that split on bare commas and silently
+/// `continue`d past any line it could not read. Both defects mattered on real
+/// files: descriptions routinely contain commas, and a silent skip on a
+/// statement import means money vanishing with no trace anywhere. Rows that
+/// cannot be read now land in [`StatementParse::skipped`] with their raw text.
+///
+/// ⚠️ **This format carries no running-balance column**, so `running_balance`
+/// is `None` on every row and the closing-balance half of the oracle is
+/// *unavailable* here — which [`crate::statement::replay`] reports as `None`
+/// rather than as a pass. The count check and the skip ledger are the whole
+/// check for this format. Do not let a caller render that as a clean bill.
+pub fn parse_chequing_statement(csv: &str) -> Result<StatementParse, String> {
+    let parse = parse_chequing_rows(csv)?;
+    // A file that yielded nothing is an error, not an empty success — matching
+    // the sibling parsers, where `parse_with` fails on a missing header line.
+    // There is no equivalent tripwire on the headerless path, so it is explicit
+    // here: silently importing zero rows from a statement the user just chose
+    // looks exactly like a statement with no activity.
+    if parse.rows.is_empty() && parse.skipped.is_empty() {
+        return Err("statement file has no readable transaction rows".to_string());
+    }
+    Ok(parse)
+}
+
+fn parse_chequing_rows(csv: &str) -> Result<StatementParse, String> {
+    parse_fixed(
+        csv,
+        &ColumnMap {
+            date: 0,
+            description: Some(1),
+            amount: AmountCols::DebitCredit {
+                debit: 2,
+                credit: 3,
+            },
+            balance: None,
+            external_id: None,
+            // ISO first: it is what the current exports write. The month-first
+            // form is kept for older hand-saved files, and is unambiguous here
+            // only because no day-first variant of this export exists — adding
+            // one later would need the same care the transfer parser documents.
+            date_formats: &["%Y-%m-%d", "%m/%d/%Y"],
+        },
+    )
+}
+
+/// How a format expresses the amount.
+///
+/// Two shapes exist in the real exports and they are not interchangeable, so
+/// the difference is modelled rather than normalised away at each call site.
+enum AmountCols {
+    /// One column, already signed from the account's perspective.
+    Signed(usize),
+    /// Separate debit and credit columns, at most one populated per row.
+    ///
+    /// `amount = credit - debit`, applied uniformly to asset and liability
+    /// accounts alike. The canonical ledger's conventions record that a
+    /// liability-negation special case was tried here and **reverted** —
+    /// credit-normal accounts use the same formula, and the sign falls out of
+    /// which column the bank filled.
+    DebitCredit { debit: usize, credit: usize },
+}
+
 struct ColumnMap {
     date: usize,
     description: Option<usize>,
-    amount: usize,
+    amount: AmountCols,
     balance: Option<usize>,
     external_id: Option<usize>,
     date_formats: &'static [&'static str],
@@ -223,6 +296,72 @@ fn parse_with(
     let map = build_map(&header)
         .map_err(|e| format!("{e} (expected a statement with columns like {expected:?})"))?;
 
+    // `lines` has already yielded the header, so the loop below sees data only.
+    parse_rows(lines, &map)
+}
+
+/// Parse a format that carries **no header row**, against a caller-supplied
+/// column map.
+///
+/// Positional reading is a liability — [`parse_with`] exists because a bank
+/// that reorders its columns otherwise returns confident nonsense — so this is
+/// only for formats that genuinely ship without a header and therefore offer
+/// nothing to match on.
+///
+/// The distinction is load-bearing rather than cosmetic: [`parse_with`]
+/// *consumes* the first non-blank line, so pointing it at a headerless export
+/// would silently eat that file's first transaction. Losing a row without a
+/// trace is the one thing this module exists to prevent, and it would be
+/// especially hard to spot here — the count is off by one and every remaining
+/// row is perfectly correct.
+fn parse_fixed(csv: &str, map: &ColumnMap) -> Result<StatementParse, String> {
+    parse_rows(csv.lines().enumerate(), map)
+}
+
+/// Read one row's amount, whichever shape the format uses.
+///
+/// `Ok(None)` means "no amount on this row" — the caller decides whether that
+/// is a footer or a finding. An unparseable *value* is an `Err`, which is a
+/// different thing from an absent one and must never be collapsed into it.
+///
+/// A debit/credit row with **both** columns populated is an error rather than a
+/// subtraction. The formats in use fill exactly one, so both being present
+/// means the column map is wrong for this file — and quietly netting them would
+/// turn a misread layout into a plausible number, which is the failure mode
+/// this module is built to refuse.
+fn read_amount<'a>(
+    cols: &AmountCols,
+    get: impl Fn(usize) -> &'a str,
+) -> Result<Option<Decimal>, String> {
+    match *cols {
+        AmountCols::Signed(i) => parse_money(get(i)),
+        AmountCols::DebitCredit { debit, credit } => {
+            let d = parse_money(get(debit))?;
+            let c = parse_money(get(credit))?;
+            match (d, c) {
+                (None, None) => Ok(None),
+                (Some(d), None) => Ok(Some(-d)),
+                (None, Some(c)) => Ok(Some(c)),
+                (Some(d), Some(c)) => Err(format!(
+                    "row has both a debit ({d}) and a credit ({c}); \
+                     this format fills exactly one, so the columns are misidentified"
+                )),
+            }
+        }
+    }
+}
+
+/// The shared row loop. Takes an iterator already positioned at the first data
+/// line, so both the header and headerless entry points share one
+/// implementation of the skip ledger and the accounting identity.
+///
+/// `idx` is the 0-based line index in the *whole file* in both cases, so
+/// `line_no` is the number an editor shows regardless of whether a header was
+/// consumed first.
+fn parse_rows<'a>(
+    lines: impl Iterator<Item = (usize, &'a str)>,
+    map: &ColumnMap,
+) -> Result<StatementParse, String> {
     let mut out = StatementParse::default();
     for (idx, line) in lines {
         let line_no = idx + 1; // 1-based, matching what an editor shows.
@@ -247,7 +386,16 @@ fn parse_with(
             // or a continuation line; one with an unreadable *value* is a real
             // problem. Distinguishing them keeps `skipped` meaningful — a skip
             // ledger full of footers is one nobody reads.
-            if date_raw.is_empty() {
+            //
+            // A line carrying **no readable money either** is the same case by
+            // a stated rule rather than a guess: whatever it is, it cannot be a
+            // transaction, because nothing on it could supply an amount. That
+            // covers headers a user pasted onto a headerless export, section
+            // titles and rules. It is deliberately narrow — a line with a bad
+            // date but a real amount stays a finding, because that one *is* a
+            // transaction we failed to read.
+            let carries_money = matches!(read_amount(&map.amount, get), Ok(Some(_)));
+            if date_raw.is_empty() || !carries_money {
                 out.structural += 1;
             } else {
                 out.skipped.push(SkippedLine {
@@ -262,7 +410,7 @@ fn parse_with(
             continue;
         };
 
-        let amount = match parse_money(get(map.amount)) {
+        let amount = match read_amount(&map.amount, get) {
             Ok(Some(a)) => a,
             Ok(None) => {
                 out.skipped.push(SkippedLine {
@@ -337,6 +485,10 @@ mod tests {
 
     fn d(s: &str) -> Decimal {
         s.parse().unwrap()
+    }
+
+    fn date(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
     }
 
     // Fixtures are fictional throughout — real statements live outside the repo
@@ -578,5 +730,157 @@ mod tests {
         assert_eq!(parse_money("$2,000.00").unwrap(), Some(d("2000.00")));
         assert_eq!(parse_money("").unwrap(), None);
         assert!(parse_money("abc").is_err());
+    }
+
+    // --- chequing (headerless, debit/credit) ---------------------------------
+
+    /// The guard for the whole headerless path. `parse_with` consumes the first
+    /// non-blank line as a header, so routing this format through it would eat
+    /// one real transaction and leave a file that looks entirely correct.
+    #[test]
+    fn headerless_first_line_is_data_not_a_header() {
+        let csv = "2026-01-05,FIRST ROW,10.00,\n2026-01-06,SECOND ROW,,20.00\n";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert_eq!(p.rows.len(), 2, "first line must not be eaten as a header");
+        assert_eq!(p.rows[0].description, "FIRST ROW");
+        assert_eq!(p.rows[0].amount, d("-10.00"), "debit is money out");
+        assert_eq!(p.rows[1].amount, d("20.00"), "credit is money in");
+        assert!(p.skipped.is_empty());
+    }
+
+    /// The reason the old parser was replaced rather than kept. It split on
+    /// bare commas, so a quoted description containing one shifted every later
+    /// column: the amount was read out of the description's tail.
+    #[test]
+    fn quoted_description_containing_a_comma_does_not_shift_columns() {
+        let csv = "2026-02-01,\"COFFEE, TEA AND SPICE\",12.34,\n";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert_eq!(p.rows.len(), 1);
+        assert_eq!(p.rows[0].description, "COFFEE, TEA AND SPICE");
+        assert_eq!(p.rows[0].amount, d("-12.34"));
+    }
+
+    /// A line that cannot be read is retained with its raw text, never dropped.
+    /// The accounting identity is what makes that guarantee checkable.
+    #[test]
+    fn unreadable_row_is_recorded_not_skipped_silently() {
+        let csv = "2026-03-01,GOOD,1.00,\n2026-03-02,BAD,not-a-number,\n";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert_eq!(p.rows.len(), 1);
+        assert_eq!(p.skipped.len(), 1);
+        assert_eq!(p.skipped[0].line_no, 2, "1-based, as an editor shows it");
+        assert!(p.skipped[0].raw.contains("BAD"));
+        assert_eq!(p.lines_seen, p.rows.len() + p.structural + p.skipped.len());
+    }
+
+    /// Both columns populated means the map is wrong for this file. Netting
+    /// them would turn a misread layout into a plausible number.
+    #[test]
+    fn debit_and_credit_together_is_an_error_not_a_subtraction() {
+        let csv = "2026-04-01,AMBIGUOUS,5.00,3.00\n";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert!(p.rows.is_empty());
+        assert_eq!(p.skipped.len(), 1);
+        assert!(p.skipped[0].reason.contains("misidentified"));
+    }
+
+    /// This format has no balance column, so the closing-balance check is
+    /// *unavailable* rather than passing — a distinction the replay layer
+    /// preserves and callers must not flatten.
+    #[test]
+    fn chequing_rows_carry_no_running_balance() {
+        let csv = "2026-05-01,ANYTHING,1.00,\n";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert!(p.rows[0].running_balance.is_none());
+    }
+
+    // --- equivalence with the parser this replaces ---------------------------
+    //
+    // Ported from `statement_csv::tests` so the swap is demonstrably an upgrade
+    // rather than a lateral move: every behaviour the old parser was relied on
+    // for still holds, and the cases it got wrong now pass.
+
+    #[test]
+    fn ported_basic_rows_match_the_old_parser() {
+        let csv = "\
+2026-05-15,Loblaws Groceries,42.18,
+2026-05-16,Payroll Deposit,,2500.00
+2026-05-17,Hydro Bill,87.50,";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert_eq!(p.rows.len(), 3);
+        assert_eq!(p.rows[0].date, date("2026-05-15"));
+        // The old parser returned a magnitude plus a direction enum; the signed
+        // amount carries both, which is why the replacement needs no `Outflow`.
+        assert_eq!(p.rows[0].amount, d("-42.18"));
+        assert_eq!(p.rows[1].amount, d("2500.00"));
+        assert_eq!(p.rows[2].description, "Hydro Bill");
+        assert!(p.skipped.is_empty());
+    }
+
+    #[test]
+    fn ported_empty_input_is_an_error() {
+        assert!(parse_chequing_statement("").is_err());
+        assert!(parse_chequing_statement("\n\n\n").is_err());
+    }
+
+    /// The old parser dropped a pasted header silently. It is now *counted* as
+    /// structural — same outcome for the user, but the line is accounted for.
+    #[test]
+    fn ported_pasted_header_row_is_structural_not_a_finding() {
+        let csv = "\
+Date,Description,Debit,Credit
+2026-05-15,Loblaws,42.18,";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert_eq!(p.rows.len(), 1);
+        assert!(
+            p.skipped.is_empty(),
+            "a header carries no money, so it is structure, not a failure"
+        );
+        assert_eq!(p.structural, 1);
+        assert_eq!(p.lines_seen, p.rows.len() + p.structural + p.skipped.len());
+    }
+
+    /// A **dated** row with no amount is a finding, not structure — deliberately
+    /// unlike the old parser, which dropped it silently as a closing-balance
+    /// marker. A date is what makes a line look like a transaction, so an
+    /// amount-less one is exactly the shape of a row we failed to read. The user
+    /// sees the raw line and confirms it is a footer; the alternative is a
+    /// parser that decides that for them and is sometimes wrong in the
+    /// direction of losing money.
+    ///
+    /// Contrast `ported_pasted_header_row_is_structural_not_a_finding`: no date
+    /// *and* no amount is structure, because nothing about it reads as a
+    /// transaction.
+    #[test]
+    fn ported_dated_row_without_an_amount_is_a_finding() {
+        let csv = "\
+2026-05-15,Closing Balance,,
+2026-05-15,Real Transaction,10.00,";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert_eq!(p.rows.len(), 1);
+        assert_eq!(p.rows[0].description, "Real Transaction");
+        assert_eq!(p.skipped.len(), 1);
+        assert!(p.skipped[0].reason.contains("empty amount"));
+        assert_eq!(p.lines_seen, p.rows.len() + p.structural + p.skipped.len());
+    }
+
+    #[test]
+    fn ported_legacy_us_date_format_still_parses() {
+        let csv = "05/15/2026,Legacy Row,42.18,";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert_eq!(p.rows.len(), 1);
+        assert_eq!(p.rows[0].date, date("2026-05-15"));
+    }
+
+    /// A bad date on a row that *does* carry money stays a finding — the narrow
+    /// edge of the structural rule above. This is a transaction we failed to
+    /// read, not a piece of layout.
+    #[test]
+    fn a_bad_date_with_a_real_amount_is_still_a_finding() {
+        let csv = "2026-05-15,Good,1.00,\nnot-a-date,Bad,99.99,";
+        let p = parse_chequing_statement(csv).unwrap();
+        assert_eq!(p.rows.len(), 1);
+        assert_eq!(p.skipped.len(), 1, "money present ⇒ probable transaction");
+        assert!(p.skipped[0].reason.contains("unparseable date"));
     }
 }
