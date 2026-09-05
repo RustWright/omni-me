@@ -1,16 +1,14 @@
 # NEXT
 
-**Next action: Part B — the third statement parser** (plan `lets-continue-mellow-bunny.md`; the
-institution is named in the overlay's `IMPORT_PARITY.md`, never here).
-✅ Part A landed 2026-09-05: all statement imports now run through `core::statement::parse`, which
-accounts for every line it reads. ✅ `tasks.md` reconciled 2026-09-05 (685→286 lines; resolved
-work in `.archive/post-v1/`) — trust its `Reconciled against git` date, not its prose.
-**NOT next: the generalizability conversation** — immediately before the LLM push only.
+**Next action: Part B — the third statement parser** (plan `lets-continue-mellow-bunny.md`;
+institution named in the overlay's `IMPORT_PARITY.md`, never here). ✅ Part A landed 2026-09-05:
+imports run through `core::statement::parse`, which accounts for every line. ✅ `tasks.md`
+reconciled (685→286 lines; resolved work in `.archive/post-v1/`) — trust its `Reconciled against
+git` date, not its prose. **NOT next: generalizability** — immediately before the LLM push only.
 
 > **Public repo — fictional names only; real balances/institutions never enter it.** The overlay
 > has institution detail: `ACCOUNT_MAPPING.md` + `SETUP.md`; `CONVENTIONS.md` is CANONICAL.
-> The pre-commit privacy guard is an **ingress filter, not an audit** — it only sees newly staged
-> lines, so moving old text into a new file trips it. Scan the whole tree to actually check.
+> The privacy guard is an **ingress filter, not an audit** — it sees only newly staged lines.
 
 ## Decisions in force — inherit these
 - ⚠️ **NO LLM in the statement path** (user, 2026-09-05). `DocumentExtractor`/Gemini is itself
