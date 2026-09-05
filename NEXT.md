@@ -7,29 +7,27 @@ format. **136 real files: 0 failed self-checks, 0 replay findings**; counts matc
 system's exactly. Untried against a live box. **NOT next: generalizability.**
 
 > **Public repo — fictional names only; real balances/institutions never enter it.** Institution
-> detail is in the overlay (`ACCOUNT_MAPPING.md`, `SETUP.md`; `CONVENTIONS.md` is CANONICAL).
-> The privacy guard is an **ingress filter, not an audit** — it sees only newly staged lines.
+> detail lives in the overlay (`CONVENTIONS.md` is CANONICAL). The privacy guard is an **ingress
+> filter, not an audit** — it sees only newly staged lines.
 
 ## Decisions in force — inherit these
 - ⚠️ **NO LLM in the statement path** (user, 2026-09-05). Parsing is deterministic and
   self-checking. The overlay's mail handler still routes through `DocumentExtractor` — its doc
-  says so loudly, and it's unreachable (IMAP off). **Classification** is deferred; that's where
-  intelligence belongs.
+  says so loudly, and it's unreachable (IMAP off). **Classification** is deferred; intelligence
+  belongs there.
 - **Almost none of this is bank-specific** (user's question, 2026-09-05). Layout shapes and the
-  declared-figure checks generalize; only column *words*, date formats and the password rule
-  don't — so the password is a **named entry in the existing `[secrets]` map** (no new seam),
-  and layout strings stay hardcoded pending the generalizability talk.
-- **A statement failing its own checks is NOT imported — every format** (user chose to unify,
-  2026-09-05). One policy in `StatementParse::import_blockers`, one result type, one UI panel;
-  `force` sits behind a read-the-failures button.
+  checks generalize; only column *words*, date formats and the password rule don't — so the
+  password is a **named `[secrets]` entry** (no new seam) and layout strings stay hardcoded.
+- **A statement failing its own checks is NOT imported — every format** (user, 2026-09-05). One
+  policy (`StatementParse::import_blockers`), one result type, one panel; `force` sits behind a
+  read-the-failures button.
 - ⚠️ **"Nothing failed" ≠ "verified."** The chequing export has no balance column, so it clears
-  the gate by offering nothing to check; `Verifiability` carries that distinction in words all
-  the way to the screen. Never collapse it into a tick.
+  the gate by offering nothing to check; `Verifiability` says so in words. Never collapse it.
 - **THE BAR: finance tab offline until import here beats the old system's** (user). Auto-import
   ticks are NOT the near path. Parity: overlay `IMPORT_PARITY.md`.
 - ⚠️ **Ledger categories are NOT labels** — they're the OUTPUT of the rules under suspicion.
-  **Amounts externally verified; categories by NOTHING.** Exit: overlay
-  `CATEGORIZATION_DEFERRAL.md`. **No classifier without provenance. Sources stay OFF.**
+  **Amounts verified; categories by NOTHING.** Exit: overlay `CATEGORIZATION_DEFERRAL.md`.
+  **No classifier without provenance. Sources stay OFF.**
 
 ## Do NOT re-survey
 Parser rules validated against all 136 real files, twice. Statements: pCloud
@@ -37,6 +35,6 @@ Parser rules validated against all 136 real files, twice. Statements: pCloud
 
 ## Open threads
 ⚠️ **OOM-killed a shell this session** — 7.2GB RAM, 1.9GB swap: `CARGO_BUILD_JOBS=1`, one crate
-at a time, never two cargo processes at once. · **No `credentials.toml` here**, so encrypted PDFs
-can't be opened locally; the audit takes extracted `.txt`. · **Crypto modelled monthly — ask
-whether intended.** · Institution not per-account · 3 need the **test phone** · memory prune owed.
+at a time, never two cargo processes. · **No `credentials.toml` here**, so encrypted PDFs can't
+be opened locally; the audit takes extracted `.txt`. · **Crypto modelled monthly — ask whether
+intended.** · Institution not per-account · 3 need the **test phone** · memory prune owed.
