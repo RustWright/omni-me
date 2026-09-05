@@ -15,9 +15,8 @@ Full framing of all three in `tasks.md` § The agreed sequence. Do not run ahead
 - **The "nothing new until finances work end-to-end" gate is SUPERSEDED** — it would have
   blocked the sequence above forever. Journal and routines are end-to-end and in daily use,
   which was the part that mattered.
-- ⚠️ **NO LLM in the statement path**, and `DocumentExtractor`/Gemini is itself queued for
-  re-evaluation — that re-examination *is* item 3. Do not treat the current LLM design as
-  settled just because it exists and compiles.
+- ⚠️ `DocumentExtractor`/Gemini is queued for re-evaluation — that re-examination *is* item 3.
+  Do not treat today's LLM design as settled just because it exists and compiles.
 - **Almost none of the statement work was bank-specific** (user's question, 2026-09-05).
   Layout shapes and checks generalize; column *words*, date formats and the password rule
   don't. Password = a named `[secrets]` entry. A live input to item 2.
