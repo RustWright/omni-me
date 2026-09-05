@@ -1,10 +1,12 @@
 # NEXT
 
-**Next action: plan feedback capture** — item 1 of three the user set 2026-09-05. Plan first,
-build second (defer-major-phases rule). The sequence, in order, one at a time:
-**1. feedback capture · 2. generalization (decide *or* address) · 3. AI/LLM/ML integration —
-detailed planning: how to integrate, host and securely use it for best value at least cost.**
-Full framing of all three in `tasks.md` § The agreed sequence. Do not run ahead.
+**Next action: a FRESH PLANNING SESSION for feedback capture** — item 1 of three the user set
+2026-09-05. They deferred the design call to that session; **do not build, and do not re-run
+the survey** — it is already in `tasks.md` (nothing exists; every event type is a domain event;
+the user's mobile-write/desktop-read workaround is the key input; the open fork is
+tagged-note vs. new event type). The sequence, in order, one at a time: **1. feedback capture ·
+2. generalization (decide *or* address) · 3. AI/LLM/ML integration — how to integrate, host and
+securely use it for best value at least cost.** Framing in `tasks.md`. Do not run ahead.
 
 ## Decisions in force — inherit these
 - ⛔ **FINANCES ARE DEFERRED INDEFINITELY** (user, 2026-09-05). The user stopped using the
@@ -17,11 +19,11 @@ Full framing of all three in `tasks.md` § The agreed sequence. Do not run ahead
   which was the part that mattered.
 - ⚠️ `DocumentExtractor`/Gemini is queued for re-evaluation — that re-examination *is* item 3.
   Do not treat today's LLM design as settled just because it exists and compiles.
-- **Almost none of the statement work was bank-specific** (user's question, 2026-09-05).
-  Layout shapes and checks generalize; column *words*, date formats and the password rule
-  don't. Password = a named `[secrets]` entry. A live input to item 2.
+- **Almost none of the statement work was bank-specific** (user's question, 2026-09-05) —
+  layout shapes and checks generalize; column *words*, dates and the password rule don't.
+  A live input to item 2.
 - ⚠️ **"Nothing failed" ≠ "verified"** — a format with nothing to check clears every gate by
-  offering none. `Verifiability` says so in words; never collapse it into a tick.
+  offering none; `Verifiability` says so in words. Never collapse it into a tick.
 
 > **Public repo — fictional names only; real balances/institutions never enter it.** Institution
 > detail lives in the overlay (`CONVENTIONS.md` is CANONICAL). The privacy guard is an **ingress

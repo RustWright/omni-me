@@ -202,13 +202,34 @@ parser built 2026-09-05 would close the gap. Never checked.
   acceptable; writing back is not. **This is infrastructure, not a feature**, and it gates
   how safely everything else on this list can be fixed. [M]
 - [ ] **In-app feedback capture from the page where the issue happens** (user, 2026-09-03).
+  **= ITEM 1 of the agreed sequence. Its planning session has NOT happened** — the user
+  deferred the design decision to a fresh session on 2026-09-05. Do not start building.
   Today the user writes a long unstructured dump per session, which loses page context and
   costs them the writing. Wants capture at the point of friction, with app context attached
   (version, device, current screen, recent events), stored somewhere **pluggable** —
   defaulting to the private overlay for their own instance, since the feedback is often
   instance-specific, and pointable elsewhere by another deployment. Follows the existing
   extensibility pattern (subprocess plugins + config-selection, registry in
-  `server/src/main.rs`). Nothing exists today. [M]
+  `server/src/main.rs`). [M]
+
+  **Survey done 2026-09-05 — do NOT redo it:**
+  - **Nothing exists.** No feedback plumbing anywhere in `core/`, `server/`, or the app.
+  - **Every existing `EventType` is a DOMAIN event** — journal, routines, transactions, all
+    about the user's *content*. Feedback is about the *app*, so it is a new category however
+    it is stored. That is the tension the design call turns on.
+  - ⭐ **The user's current workaround is the strongest design input:** they wrote a feedback
+    dump **on mobile and copy-pasted it from desktop** — i.e. they are already using
+    note-sync as a feedback transport. Whatever ships should make that first-class rather
+    than replace it with something used less.
+  - **Ruled out:** a separate feedback channel straight to the box. It needs its own offline
+    queue, retry and sync — rebuilding machinery already proven at 12k events.
+  - **The open fork** (user deferred deciding): (a) feedback as a **tagged note** — inherits
+    offline, sync, the editor, search and export for free, context into frontmatter beside the
+    existing reflection keys, cheapest by far, but sits among real notes; (b) a **new
+    `FeedbackCaptured` event type** with its own projection and review screen — conceptually
+    cleaner and supports triage states, costs a projection + a UI surface; (c) (a) now and
+    promote to (b) if volume hurts, migration-in-one-direction. Claude's recommendation was
+    (a); the user has not chosen.
 
 ### Release engineering
 - [ ] **Desktop DOES flash white for ~320ms — but `backgroundColor` is NOT the culprit and the
