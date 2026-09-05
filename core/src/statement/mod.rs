@@ -33,6 +33,7 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 
 pub mod parse;
+pub mod rendered;
 pub mod replay;
 
 /// One row of a bank statement.
@@ -86,8 +87,37 @@ pub struct StatementParse {
     /// the parse is incomplete and the statement must not be used as an oracle
     /// until it is explained.
     pub skipped: Vec<SkippedLine>,
-    /// Non-empty lines the reader yielded, so the identity below can be checked
-    /// against something the parser did not itself decide.
+    /// Checks the statement failed against figures it states about *itself* —
+    /// declared totals, transaction counts, opening and closing balances.
+    ///
+    /// This is a different and stronger oracle than
+    /// [`StatementParse::verify_running_balance`], and it exists because some
+    /// formats publish a summary block the parse can be measured against
+    /// without a second source. A rendered document, for instance, states how
+    /// many debits and credits it contains — so a boilerplate line misread as a
+    /// transaction fails the count even when every amount is individually
+    /// right.
+    ///
+    /// Empty for formats that declare nothing (every CSV export in use), which
+    /// is why an empty vec here means *"nothing to check"* as often as it means
+    /// *"checked and passed"*. Callers reporting a verdict must say which.
+    pub declared_check_failures: Vec<String>,
+    /// The period's opening and closing balances as the statement **states
+    /// them**, for formats that print them outside the row table.
+    ///
+    /// These are not a convenience duplicate of the first and last row's
+    /// running balance — they are the only source for them in a layout that
+    /// puts a balance on some rows and not others. Without these, a statement
+    /// whose last row happens to sit mid-group reports its closing balance as
+    /// *unavailable*, and an unavailable check is treated as a failure by
+    /// design, so a perfectly reconciling statement reads as unverifiable.
+    ///
+    /// They are safe to rely on precisely because [`Self::declared_check_failures`]
+    /// is empty only when every row walks from one to the other.
+    pub declared_opening: Option<Decimal>,
+    pub declared_closing: Option<Decimal>,
+    /// Every line the reader yielded, blank ones included, so the identity
+    /// below can be checked against something the parser did not itself decide.
     pub lines_seen: usize,
 }
 
@@ -115,18 +145,30 @@ impl StatementParse {
 
     /// The balance after the last row — the statement's closing balance.
     ///
-    /// `None` when the format carries no running-balance column, in which case
-    /// only the count half of the acceptance test is available and the caller
-    /// must say so rather than silently checking less.
+    /// Prefers the last row's own running balance and falls back to the figure
+    /// the statement declares. Both come from the bank and must agree, which is
+    /// checked; the row is preferred only because it is the more local of the
+    /// two, so a disagreement surfaces against the declared figure rather than
+    /// hiding behind it.
+    ///
+    /// `None` when the format supplies neither, in which case only the count
+    /// half of the acceptance test is available and the caller must say so
+    /// rather than silently checking less.
     pub fn closing_balance(&self) -> Option<Decimal> {
-        self.rows.last().and_then(|r| r.running_balance)
+        self.rows
+            .last()
+            .and_then(|r| r.running_balance)
+            .or(self.declared_closing)
     }
 
     /// The balance *before* the first row: its running balance minus its own
-    /// amount. Gives the period's opening figure without a second file.
+    /// amount, or the declared opening where the format states one. Gives the
+    /// period's opening figure without a second file.
     pub fn opening_balance(&self) -> Option<Decimal> {
-        let first = self.rows.first()?;
-        Some(first.running_balance? - first.amount)
+        self.rows
+            .first()
+            .and_then(|first| Some(first.running_balance? - first.amount))
+            .or(self.declared_opening)
     }
 
     /// Sum of every row's signed amount — the period's net effect.
@@ -196,6 +238,9 @@ mod tests {
             rows: vec![row("2026-06-01", "-10", None)],
             structural: 1,
             skipped: vec![],
+            declared_check_failures: vec![],
+            declared_opening: None,
+            declared_closing: None,
             lines_seen: 2,
         };
         assert!(p.check_accounting().is_ok());
@@ -207,6 +252,9 @@ mod tests {
             rows: vec![row("2026-06-01", "-10", None)],
             structural: 0,
             skipped: vec![],
+            declared_check_failures: vec![],
+            declared_opening: None,
+            declared_closing: None,
             lines_seen: 5,
         };
         let err = p.check_accounting().unwrap_err();
@@ -224,6 +272,9 @@ mod tests {
             ],
             structural: 0,
             skipped: vec![],
+            declared_check_failures: vec![],
+            declared_opening: None,
+            declared_closing: None,
             lines_seen: 3,
         };
         assert!(p.verify_running_balance().is_empty());
@@ -244,6 +295,9 @@ mod tests {
             ],
             structural: 0,
             skipped: vec![],
+            declared_check_failures: vec![],
+            declared_opening: None,
+            declared_closing: None,
             lines_seen: 2,
         };
         let problems = p.verify_running_balance();
@@ -268,6 +322,9 @@ mod tests {
             ],
             structural: 0,
             skipped: vec![],
+            declared_check_failures: vec![],
+            declared_opening: None,
+            declared_closing: None,
             lines_seen: 2,
         };
         assert_eq!(p.verify_running_balance().len(), 1);

@@ -46,7 +46,7 @@ fn split_csv_line(line: &str) -> Vec<String> {
 /// Money cell → `Decimal`. Tolerates thousands separators, a currency symbol,
 /// surrounding whitespace, and parenthesised negatives. An empty cell is
 /// `None`; an unparseable one is an `Err` the caller must record as a skip.
-fn parse_money(raw: &str) -> Result<Option<Decimal>, String> {
+pub(super) fn parse_money(raw: &str) -> Result<Option<Decimal>, String> {
     let t = raw.trim();
     if t.is_empty() || t == "-" {
         return Ok(None);

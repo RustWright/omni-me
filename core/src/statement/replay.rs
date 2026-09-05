@@ -79,7 +79,14 @@ pub struct StatementVerdict {
     /// Lines the statement parser could not read. Non-empty means the oracle
     /// itself is incomplete and the verdict cannot be trusted either way.
     pub parse_skips: usize,
-    /// Rows where the statement disagrees with its own running balance.
+    /// Ways the statement disagrees with **itself** — rows that break its own
+    /// running balance, plus any figure it declares that the parse does not
+    /// reproduce (see [`StatementParse::declared_check_failures`]).
+    ///
+    /// Both are counted here because they answer the same question: is this
+    /// file trustworthy enough to judge the books against? Neither says
+    /// anything about the ledger, and a non-zero count means the verdict below
+    /// is measuring against a broken ruler.
     pub statement_self_check_failures: usize,
     /// Zero-amount statement rows, excluded from reconciliation.
     ///
@@ -225,7 +232,8 @@ pub fn replay_statement(
         missing_from_books,
         missing_from_statement,
         parse_skips: statement.skipped.len(),
-        statement_self_check_failures: statement.verify_running_balance().len(),
+        statement_self_check_failures: statement.verify_running_balance().len()
+            + statement.declared_check_failures.len(),
         informational_rows: informational.len(),
     }
 }
