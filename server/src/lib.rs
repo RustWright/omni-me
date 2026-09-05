@@ -10,6 +10,7 @@
 
 pub mod routes;
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -64,6 +65,15 @@ pub struct AppState {
     pub projections: ProjectionRunner,
     pub device_id: String,
     pub default_interval: Duration,
+    /// The credentials file's name-keyed `secrets` map, resolved by routes that
+    /// take a secret *name* rather than a secret.
+    ///
+    /// Statement upload is the current user: an encrypted statement needs a
+    /// password, but the rule for deriving one is the bank's invention and has
+    /// no place in a general engine. The client names a secret, the value is
+    /// looked up here, and the engine learns nothing about the institution —
+    /// the same indirection `[llm].api_key` and the subprocess helpers use.
+    pub secrets: Arc<HashMap<String, String>>,
 }
 
 /// The shared runtime handles [`run`] hands a [`SourceBuilder`] so it can
@@ -221,6 +231,7 @@ pub async fn run(cfg: RunConfig) {
         projections: server_projections.clone(),
         device_id: device_id.clone(),
         default_interval: interval,
+        secrets: Arc::new(creds.secrets.clone()),
     };
 
     // Auto-import: the engine owns the store/projections/device_id but not the
@@ -310,6 +321,7 @@ pub fn build_app(
         .layer(DefaultBodyLimit::max(256 * 1024))
         .merge(routes::blob_routes())
         .merge(routes::documents_routes())
+        .merge(routes::statement_routes())
         .merge(routes::auto_import_routes())
         .merge(routes::llm_routes());
 

@@ -44,6 +44,7 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
         projections,
         device_id: "test-device".to_string(),
         default_interval: std::time::Duration::from_secs(1800),
+        secrets: Default::default(),
     };
 
     let app = Router::new()
@@ -108,6 +109,7 @@ pub async fn start_full_server_with_auth(
         projections,
         device_id: "test-device".to_string(),
         default_interval: std::time::Duration::from_secs(1800),
+        secrets: Default::default(),
     };
 
     let app = omni_me_server::build_app(state, updates_dir, auth_token);

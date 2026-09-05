@@ -58,6 +58,7 @@ async fn start_server_on_port(
         projections: ProjectionRunner::new((*db_arc).clone(), Vec::new()),
         device_id: "test-device".to_string(),
         default_interval: Duration::from_secs(1800),
+        secrets: Default::default(),
     };
 
     let app = make_router(state);
@@ -101,6 +102,7 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
         projections: ProjectionRunner::new(server_db.clone(), Vec::new()),
         device_id: "test-device".to_string(),
         default_interval: Duration::from_secs(1800),
+        secrets: Default::default(),
     };
     let app = make_router(state);
 

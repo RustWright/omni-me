@@ -33,6 +33,7 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 
 pub mod parse;
+pub mod pdf;
 pub mod rendered;
 pub mod replay;
 
