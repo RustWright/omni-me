@@ -140,8 +140,8 @@ async fn parse_handler(
             .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?
     };
 
-    let parsed = parse_rendered_statement(&text)
-        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e))?;
+    let parsed =
+        parse_rendered_statement(&text).map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e))?;
 
     let blockers = parsed.import_blockers();
 

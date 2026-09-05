@@ -200,7 +200,9 @@ async fn a_configured_secret_resolves_and_the_failure_moves_downstream() {
     let secrets = HashMap::from([("statement-pw".to_string(), "hunter2".to_string())]);
     let (url, _h) = start_statement_server(secrets).await;
     let resp = reqwest::Client::new()
-        .post(format!("{url}/statements/parse?password_secret=statement-pw"))
+        .post(format!(
+            "{url}/statements/parse?password_secret=statement-pw"
+        ))
         .body(b"not a pdf".to_vec())
         .send()
         .await
@@ -213,5 +215,8 @@ async fn a_configured_secret_resolves_and_the_failure_moves_downstream() {
     let body = resp.text().await.unwrap();
     assert!(!body.contains("no secret named"), "{body}");
     // The password must never be echoed back, whatever went wrong.
-    assert!(!body.contains("hunter2"), "password leaked into an error: {body}");
+    assert!(
+        !body.contains("hunter2"),
+        "password leaked into an error: {body}"
+    );
 }

@@ -441,7 +441,10 @@ mod tests {
         let blockers = p.import_blockers();
         assert_eq!(blockers.len(), 1);
         assert!(blockers[0].contains("line 7"), "{blockers:?}");
-        assert!(blockers[0].contains("MYSTERY"), "raw text must survive to the user");
+        assert!(
+            blockers[0].contains("MYSTERY"),
+            "raw text must survive to the user"
+        );
     }
 
     /// The distinction the whole `Verifiability` type exists for: this parse
@@ -460,7 +463,9 @@ mod tests {
         assert!(p.import_blockers().is_empty(), "nothing failed");
         assert_eq!(p.verifiability(), Verifiability::NotVerifiable);
         assert!(
-            p.verifiability().describe(true).contains("nothing could be checked"),
+            p.verifiability()
+                .describe(true)
+                .contains("nothing could be checked"),
             "a clean-but-uncheckable result must not read as verified"
         );
     }

@@ -143,7 +143,10 @@ impl AmountColumns {
     fn classify(&self, right_edge: usize) -> Column {
         let d = |edge: usize| right_edge.abs_diff(edge);
         let mut best = (Column::Credit, d(self.credit));
-        for cand in [(Column::Debit, d(self.debit)), (Column::Balance, d(self.balance))] {
+        for cand in [
+            (Column::Debit, d(self.debit)),
+            (Column::Balance, d(self.balance)),
+        ] {
             if cand.1 < best.1 {
                 best = cand;
             }
@@ -154,9 +157,12 @@ impl AmountColumns {
 
 /// Character column just past the end of `word` in `header`.
 fn header_edge(header: &str, word: &str) -> Result<usize, String> {
-    let byte = header
-        .find(word)
-        .ok_or_else(|| format!("statement header has no {word:?} column: {:?}", header.trim()))?;
+    let byte = header.find(word).ok_or_else(|| {
+        format!(
+            "statement header has no {word:?} column: {:?}",
+            header.trim()
+        )
+    })?;
     Ok(header[..byte].chars().count() + word.chars().count())
 }
 
@@ -184,7 +190,10 @@ fn figures(line: &str, cols: &AmountColumns) -> Vec<(Column, Decimal)> {
 fn description(line: &str) -> String {
     let without_dates = DASHED_DATE.replace_all(line, " ");
     let without_money = MONEY.replace_all(&without_dates, " ");
-    without_money.split_whitespace().collect::<Vec<_>>().join(" ")
+    without_money
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The one figure a row's amount comes from, or an explanation of why the row
@@ -241,8 +250,11 @@ fn check_declared(rows: &[StatementRow], declared: &Declared) -> Vec<String> {
     // all. Reporting that as a failure is the whole point: an empty findings
     // list must never mean "there was nothing to look at".
     let Some(opening) = declared.opening else {
-        fails.push("statement does not state an opening balance, so the parse cannot be \
-                    checked against it".to_string());
+        fails.push(
+            "statement does not state an opening balance, so the parse cannot be \
+                    checked against it"
+                .to_string(),
+        );
         return fails;
     };
 
@@ -287,7 +299,8 @@ fn check_declared(rows: &[StatementRow], declared: &Declared) -> Vec<String> {
         ));
     }
 
-    let credit_rows: Vec<&StatementRow> = rows.iter().filter(|r| r.amount > Decimal::ZERO).collect();
+    let credit_rows: Vec<&StatementRow> =
+        rows.iter().filter(|r| r.amount > Decimal::ZERO).collect();
     let debit_rows: Vec<&StatementRow> = rows.iter().filter(|r| r.amount < Decimal::ZERO).collect();
 
     // Counts catch the failure the sums cannot: a line of boilerplate read as a
@@ -312,13 +325,17 @@ fn check_declared(rows: &[StatementRow], declared: &Declared) -> Vec<String> {
     if let Some(want) = declared.credit_total {
         let got: Decimal = credit_rows.iter().map(|r| r.amount).sum();
         if got != want {
-            fails.push(format!("credits sum to {got} but the statement declares {want}"));
+            fails.push(format!(
+                "credits sum to {got} but the statement declares {want}"
+            ));
         }
     }
     if let Some(want) = declared.debit_total {
         let got: Decimal = debit_rows.iter().map(|r| -r.amount).sum();
         if got != want {
-            fails.push(format!("debits sum to {got} but the statement declares {want}"));
+            fails.push(format!(
+                "debits sum to {got} but the statement declares {want}"
+            ));
         }
     }
 
@@ -396,8 +413,14 @@ fn parse_per_row_balance(text: &str) -> Result<StatementParse, String> {
         if body.contains("CLOSING BALANCE") {
             // The closing row restates the period totals alongside the balance,
             // read by column so their order cannot matter.
-            declared.credit_total = found.iter().find(|(c, _)| *c == Column::Credit).map(|(_, v)| *v);
-            declared.debit_total = found.iter().find(|(c, _)| *c == Column::Debit).map(|(_, v)| *v);
+            declared.credit_total = found
+                .iter()
+                .find(|(c, _)| *c == Column::Credit)
+                .map(|(_, v)| *v);
+            declared.debit_total = found
+                .iter()
+                .find(|(c, _)| *c == Column::Debit)
+                .map(|(_, v)| *v);
             declared.closing = row_balance(&found);
             out.structural += 1;
             continue;
@@ -485,9 +508,14 @@ fn parse_grouped_balance(text: &str) -> Result<StatementParse, String> {
             continue;
         }
         if line.contains("END OF STATEMENT") {
-            declared.debit_total = found.iter().find(|(c, _)| *c == Column::Debit).map(|(_, v)| *v);
-            declared.credit_total =
-                found.iter().find(|(c, _)| *c == Column::Credit).map(|(_, v)| *v);
+            declared.debit_total = found
+                .iter()
+                .find(|(c, _)| *c == Column::Debit)
+                .map(|(_, v)| *v);
+            declared.credit_total = found
+                .iter()
+                .find(|(c, _)| *c == Column::Credit)
+                .map(|(_, v)| *v);
             declared.closing_restated = row_balance(&found);
             out.structural += 1;
             continue;
@@ -659,7 +687,11 @@ Statement No./Page No.
         );
         assert_eq!(p.rows.len(), 3);
         assert_eq!(p.rows[0].date, day("2026-08-07"));
-        assert_eq!(p.rows[0].amount, d("-5.00"), "withdrawal column is negative");
+        assert_eq!(
+            p.rows[0].amount,
+            d("-5.00"),
+            "withdrawal column is negative"
+        );
         assert_eq!(p.rows[1].amount, d("200.00"), "deposit column is positive");
         assert_eq!(p.closing_balance(), Some(d("199.47")));
         assert!(p.verify_running_balance().is_empty());
@@ -675,7 +707,10 @@ Statement No./Page No.
             p.lines_seen,
             "every line accounted for"
         );
-        assert!(p.structural > p.rows.len(), "boilerplate dominates a render");
+        assert!(
+            p.structural > p.rows.len(),
+            "boilerplate dominates a render"
+        );
     }
 
     #[test]
@@ -707,8 +742,16 @@ Statement No./Page No.
             "  23-08-2026    23-08-2026     SAMPLE INWARD TRANSFER                                                                                               13,582.82",
         );
         let p = parse_rendered_statement(&trimmed).unwrap();
-        assert_eq!(p.rows.last().unwrap().running_balance, None, "mid-group last row");
-        assert_eq!(p.closing_balance(), Some(d("39774.25")), "from the summary block");
+        assert_eq!(
+            p.rows.last().unwrap().running_balance,
+            None,
+            "mid-group last row"
+        );
+        assert_eq!(
+            p.closing_balance(),
+            Some(d("39774.25")),
+            "from the summary block"
+        );
         assert_eq!(p.opening_balance(), Some(d("50041.43")));
         assert!(
             p.declared_check_failures.is_empty(),
@@ -722,7 +765,11 @@ Statement No./Page No.
     #[test]
     fn grouped_layout_reads_the_date_from_the_value_column() {
         let p = parse_rendered_statement(GROUPED).unwrap();
-        assert_eq!(p.rows[2].date, day("2026-08-14"), "not the 10-08 in the detail line");
+        assert_eq!(
+            p.rows[2].date,
+            day("2026-08-14"),
+            "not the 10-08 in the detail line"
+        );
     }
 
     /// The check the CSV parsers cannot make: a row that vanishes into the
@@ -735,7 +782,10 @@ Statement No./Page No.
         );
         let p = parse_rendered_statement(&mangled).unwrap();
         assert_eq!(p.rows.len(), 3, "the row is gone");
-        assert!(p.skipped.is_empty(), "and it left no skip behind — that is the danger");
+        assert!(
+            p.skipped.is_empty(),
+            "and it left no skip behind — that is the danger"
+        );
         let fails = p.declared_check_failures.join("; ");
         assert!(
             fails.contains("parsed 2 debit row(s) but the statement declares 3"),
@@ -754,7 +804,10 @@ Statement No./Page No.
     /// this catches a wrong figure on the *first* row.
     #[test]
     fn a_wrong_first_row_is_caught_even_though_no_earlier_row_exists() {
-        let mangled = PER_ROW.replace("5.00                     20.42", "6.00                     20.42");
+        let mangled = PER_ROW.replace(
+            "5.00                     20.42",
+            "6.00                     20.42",
+        );
         let p = parse_rendered_statement(&mangled).unwrap();
         let fails = p.declared_check_failures.join("; ");
         assert!(fails.contains("row 0"), "{fails}");
