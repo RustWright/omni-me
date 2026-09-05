@@ -93,20 +93,16 @@ fn missing(name: &str, header: &[String]) -> String {
 /// source cannot dedup on identity and uses a date floor instead — no algorithm
 /// reconstructs an identifier the source never wrote.
 pub fn parse_brokerage_statement(csv: &str) -> Result<StatementParse, String> {
-    parse_with(
-        csv,
-        &["date", "amount", "balance"],
-        |header| {
-            Ok(ColumnMap {
-                date: col(header, "date").ok_or_else(|| missing("date", header))?,
-                description: col(header, "description"),
-                amount: col(header, "amount").ok_or_else(|| missing("amount", header))?,
-                balance: col(header, "balance"),
-                external_id: None,
-                date_formats: &["%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y"],
-            })
-        },
-    )
+    parse_with(csv, &["date", "amount", "balance"], |header| {
+        Ok(ColumnMap {
+            date: col(header, "date").ok_or_else(|| missing("date", header))?,
+            description: col(header, "description"),
+            amount: col(header, "amount").ok_or_else(|| missing("amount", header))?,
+            balance: col(header, "balance"),
+            external_id: None,
+            date_formats: &["%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y"],
+        })
+    })
 }
 
 /// Parse a transfer-service statement export.
@@ -116,23 +112,19 @@ pub fn parse_brokerage_statement(csv: &str) -> Result<StatementParse, String> {
 /// dedup *and* the closing-balance check. Only the columns needed are read; the
 /// rest are ignored by name lookup, so added columns are harmless.
 pub fn parse_transfer_statement(csv: &str) -> Result<StatementParse, String> {
-    parse_with(
-        csv,
-        &["date", "amount", "running balance"],
-        |header| {
-            Ok(ColumnMap {
-                date: col(header, "date").ok_or_else(|| missing("date", header))?,
-                description: col(header, "description"),
-                amount: col(header, "amount").ok_or_else(|| missing("amount", header))?,
-                balance: col(header, "running balance"),
-                external_id: col(header, "transferwise id"),
-                // This export writes day-first (`31-07-2026`); listing it ahead
-                // of the month-first form matters, because `01-07-2026` parses
-                // under both and would silently become the wrong date.
-                date_formats: &["%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y"],
-            })
-        },
-    )
+    parse_with(csv, &["date", "amount", "running balance"], |header| {
+        Ok(ColumnMap {
+            date: col(header, "date").ok_or_else(|| missing("date", header))?,
+            description: col(header, "description"),
+            amount: col(header, "amount").ok_or_else(|| missing("amount", header))?,
+            balance: col(header, "running balance"),
+            external_id: col(header, "transferwise id"),
+            // This export writes day-first (`31-07-2026`); listing it ahead
+            // of the month-first form matters, because `01-07-2026` parses
+            // under both and would silently become the wrong date.
+            date_formats: &["%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y"],
+        })
+    })
 }
 
 struct ColumnMap {
@@ -159,9 +151,8 @@ fn parse_with(
             None => return Err("statement file is empty".to_string()),
         }
     };
-    let map = build_map(&header).map_err(|e| {
-        format!("{e} (expected a statement with columns like {expected:?})")
-    })?;
+    let map = build_map(&header)
+        .map_err(|e| format!("{e} (expected a statement with columns like {expected:?})"))?;
 
     let mut out = StatementParse::default();
     for (idx, line) in lines {
@@ -225,9 +216,7 @@ fn parse_with(
         // A malformed balance must not discard the row: the amount is the
         // load-bearing figure and the balance only powers the self-check, which
         // reports its own absence.
-        let running_balance = map
-            .balance
-            .and_then(|i| parse_money(get(i)).ok().flatten());
+        let running_balance = map.balance.and_then(|i| parse_money(get(i)).ok().flatten());
 
         out.rows.push(StatementRow {
             date,
@@ -418,7 +407,10 @@ mod tests {
     fn an_unrecognisable_header_is_an_error_naming_what_it_saw() {
         let err = parse_brokerage_statement("alpha,beta\n1,2\n").unwrap_err();
         assert!(err.contains("no \"date\" column"), "{err}");
-        assert!(err.contains("alpha"), "the message shows the real header: {err}");
+        assert!(
+            err.contains("alpha"),
+            "the message shows the real header: {err}"
+        );
     }
 
     #[test]

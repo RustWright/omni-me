@@ -266,8 +266,10 @@ fn parse_json(body: &str, cfg: &ParseCfg) -> Result<ParseOutcome, ImportError> {
                     record = i,
                     "skipping REST record: unparseable/missing amount"
                 );
-                out.failures
-                    .push((format!("record {i}"), "unparseable/missing amount".to_string()));
+                out.failures.push((
+                    format!("record {i}"),
+                    "unparseable/missing amount".to_string(),
+                ));
                 continue;
             }
         };
@@ -428,7 +430,9 @@ mod tests {
             }
         }"#;
         let f = fields(Some("ref"));
-        let drafts = parse_json(body, &cfg(&f, "data.transactions")).unwrap().drafts;
+        let drafts = parse_json(body, &cfg(&f, "data.transactions"))
+            .unwrap()
+            .drafts;
 
         assert_eq!(drafts.len(), 2);
         let d0 = &drafts[0];

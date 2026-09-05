@@ -446,8 +446,12 @@ pub enum TickOutcome {
     /// status surface is the only place a partial drop can be noticed without
     /// reading container logs, so it has to see the disposition rather than a
     /// single number that looks the same whether rows were lost or not.
-    Success { summary: ImportSummary },
-    Failure { error: String },
+    Success {
+        summary: ImportSummary,
+    },
+    Failure {
+        error: String,
+    },
 }
 
 /// Per-source observability snapshot. Cloned on read so callers (HTTP route
@@ -1086,7 +1090,11 @@ mod tests {
         assert_eq!(s.fetched, 5);
         assert_eq!(s.appended, 2);
         assert_eq!(s.unmapped, 1);
-        assert_eq!(s.lost(), 1, "unmapped is a loss; deduped/out-of-window are not");
+        assert_eq!(
+            s.lost(),
+            1,
+            "unmapped is a loss; deduped/out-of-window are not"
+        );
     }
 
     /// The whole point of the type: a code path that discards a row without
@@ -1115,8 +1123,11 @@ mod tests {
         match t.finish() {
             Err(ImportError::NothingMapped { fetched, ids }) => {
                 assert_eq!(fetched, 3);
-                assert_eq!(ids, vec!["acct-1".to_string(), "acct-2".to_string()],
-                    "ids are de-duplicated and sorted so the message is pasteable");
+                assert_eq!(
+                    ids,
+                    vec!["acct-1".to_string(), "acct-2".to_string()],
+                    "ids are de-duplicated and sorted so the message is pasteable"
+                );
             }
             other => panic!("expected NothingMapped, got {other:?}"),
         }

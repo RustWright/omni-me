@@ -361,7 +361,10 @@ impl SubprocessSource {
             tally.dropped(format!("{}-deduped", self.name), DropReason::Deduped);
         }
         for _ in 0..disposition.out_of_window {
-            tally.dropped(format!("{}-out-of-window", self.name), DropReason::OutOfWindow);
+            tally.dropped(
+                format!("{}-out-of-window", self.name),
+                DropReason::OutOfWindow,
+            );
         }
         for id in &disposition.unmapped_ids {
             tally.dropped(id.clone(), DropReason::Unmapped);
@@ -647,7 +650,13 @@ mod tests {
 
         let err = source.pull().await.unwrap_err();
         assert!(
-            matches!(err, ImportError::Unaccounted { fetched: 9, accounted: 1 }),
+            matches!(
+                err,
+                ImportError::Unaccounted {
+                    fetched: 9,
+                    accounted: 1
+                }
+            ),
             "expected Unaccounted{{9,1}}, got {err:?}"
         );
     }

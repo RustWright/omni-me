@@ -147,7 +147,8 @@ impl StatementParse {
     pub fn verify_running_balance(&self) -> Vec<(usize, Decimal)> {
         let mut problems = Vec::new();
         for (i, pair) in self.rows.windows(2).enumerate() {
-            let (Some(prev), Some(curr)) = (pair[0].running_balance, pair[1].running_balance) else {
+            let (Some(prev), Some(curr)) = (pair[0].running_balance, pair[1].running_balance)
+            else {
                 continue;
             };
             let expected = curr - prev;
@@ -248,7 +249,11 @@ mod tests {
         let problems = p.verify_running_balance();
         assert_eq!(problems.len(), 1);
         assert_eq!(problems[0].0, 1, "the second row is the bad one");
-        assert_eq!(problems[0].1, d("30.00"), "claimed +15 where -15 was needed");
+        assert_eq!(
+            problems[0].1,
+            d("30.00"),
+            "claimed +15 where -15 was needed"
+        );
     }
 
     /// A dropped row shows up as a balance jump even though every row present

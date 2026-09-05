@@ -372,9 +372,7 @@ mod tests {
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
         };
-        let outcome = poll_once(&fetcher, &handlers, &cursor)
-            .await
-            .unwrap();
+        let outcome = poll_once(&fetcher, &handlers, &cursor).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
         assert_eq!(events.len(), 2, "two messages routed to handlers");
         assert_eq!(next.last_seen_uid, Some(103));
@@ -390,9 +388,7 @@ mod tests {
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
         };
-        let outcome = poll_once(&fetcher, &[], &cursor)
-            .await
-            .unwrap();
+        let outcome = poll_once(&fetcher, &[], &cursor).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
         assert!(events.is_empty());
         assert_eq!(next.last_seen_uid, Some(101));
@@ -405,9 +401,7 @@ mod tests {
         let cursor = FetchCursor {
             last_seen_uid: Some(500),
         };
-        let outcome = poll_once(&fetcher, &[], &cursor)
-            .await
-            .unwrap();
+        let outcome = poll_once(&fetcher, &[], &cursor).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
         assert!(events.is_empty());
         assert_eq!(
@@ -478,9 +472,7 @@ mod tests {
             last_seen_uid: Some(100),
         };
 
-        let outcome = poll_once(&fetcher, &handlers, &cursor)
-            .await
-            .unwrap();
+        let outcome = poll_once(&fetcher, &handlers, &cursor).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
 
         assert_eq!(

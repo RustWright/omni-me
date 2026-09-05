@@ -159,7 +159,11 @@ impl StatementVerdict {
             self.period.1,
             self.recorded_rows,
             self.statement_rows,
-            if self.counts_match() { "OK" } else { "MISMATCH" },
+            if self.counts_match() {
+                "OK"
+            } else {
+                "MISMATCH"
+            },
             bal,
             if self.parse_skips > 0 {
                 format!("  [{} unparsed statement line(s)]", self.parse_skips)
@@ -329,7 +333,11 @@ mod tests {
 
         assert!(!v.counts_match(), "2 recorded vs 3 on the statement");
         assert_eq!(v.balance_matches(), Some(false));
-        assert_eq!(v.discrepancy(), Some(d("82.50")), "the missing debit exactly");
+        assert_eq!(
+            v.discrepancy(),
+            Some(d("82.50")),
+            "the missing debit exactly"
+        );
         assert_eq!(v.missing_from_books.len(), 1);
         assert_eq!(v.missing_from_books[0].description, "Grocer");
         assert!(!v.is_clean());
