@@ -123,10 +123,10 @@ pub fn Button(
     let tone = match variant {
         ButtonVariant::Primary => "bg-obsidian-accent text-white hover:bg-obsidian-accent/90",
         ButtonVariant::Secondary => {
-            "bg-obsidian-surface text-obsidian-text border border-obsidian-border/10 hover:bg-white/5"
+            "bg-obsidian-surface text-obsidian-text border border-obsidian-border/10 hover:bg-obsidian-border/5"
         }
         ButtonVariant::Ghost => {
-            "text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5"
+            "text-obsidian-text-muted hover:text-obsidian-text hover:bg-obsidian-border/5"
         }
         ButtonVariant::Danger => "bg-error/15 text-error border border-error/30 hover:bg-error/25",
     };
@@ -168,10 +168,10 @@ pub fn IconButton(
     let tone = match variant {
         ButtonVariant::Primary => "bg-obsidian-accent text-white hover:bg-obsidian-accent/90",
         ButtonVariant::Secondary => {
-            "bg-obsidian-surface text-obsidian-text border border-obsidian-border/10 hover:bg-white/5"
+            "bg-obsidian-surface text-obsidian-text border border-obsidian-border/10 hover:bg-obsidian-border/5"
         }
         ButtonVariant::Ghost => {
-            "text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5"
+            "text-obsidian-text-muted hover:text-obsidian-text hover:bg-obsidian-border/5"
         }
         ButtonVariant::Danger => "text-error hover:bg-error/15",
     };
@@ -250,7 +250,7 @@ pub fn SegmentedNav(
                     class: if key == &active {
                         "px-3 py-1.5 text-sm font-medium rounded-md bg-obsidian-accent text-white"
                     } else {
-                        "px-3 py-1.5 text-sm font-medium rounded-md text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5"
+                        "px-3 py-1.5 text-sm font-medium rounded-md text-obsidian-text-muted hover:text-obsidian-text hover:bg-obsidian-border/5"
                     },
                     onclick: {
                         let k = key.clone();

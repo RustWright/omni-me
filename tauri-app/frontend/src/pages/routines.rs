@@ -373,7 +373,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
             if let Some(err) = &*toggle_error.read() {
                 div { class: "px-4 py-2 text-xs text-error bg-error/10 border-b border-error/20", "{err}" }
             }
-            div { class: "px-4 py-3 bg-white/5 flex justify-between items-center border-bottom border-white/5",
+            div { class: "px-4 py-3 bg-obsidian-border/5 flex justify-between items-center border-bottom border-obsidian-border/5",
                 div { class: "flex items-center gap-2",
                     span { class: "font-bold text-[15px] tracking-tight text-white", "{group.name}" }
                     span { class: "px-2 py-0.5 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-[10px] font-bold uppercase tracking-wider",
@@ -391,7 +391,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                 }
             }
 
-            div { class: "divide-y divide-white/5",
+            div { class: "divide-y divide-obsidian-border/5",
                 for item in items_read.iter() {
                     {
                         let completion = completions_read.iter().find(|c| c.item_id == item.id);
@@ -402,7 +402,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                         let d = date.clone();
 
                         rsx! {
-                            div { class: "px-4 py-3 flex items-center gap-3 group transition-colors hover:bg-white/[0.02]",
+                            div { class: "px-4 py-3 flex items-center gap-3 group transition-colors hover:bg-obsidian-border/[0.02]",
 
                                 if is_done && !is_skipped {
                                     button {
@@ -482,7 +482,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                     }
                                     span { class: "flex-1 text-sm font-medium text-obsidian-text group-hover:text-white transition-colors", "{item.name}" }
                                     button {
-                                        class: "px-2 py-1 bg-white/5 border border-white/5 rounded text-[10px] font-bold text-obsidian-text-muted hover:text-white transition-colors opacity-0 group-hover:opacity-100",
+                                        class: "px-2 py-1 bg-obsidian-border/5 border border-obsidian-border/5 rounded text-[10px] font-bold text-obsidian-text-muted hover:text-white transition-colors opacity-0 group-hover:opacity-100",
                                         onclick: {
                                             let iid = item_id.clone();
                                             let gid = gid.clone();
@@ -597,7 +597,7 @@ fn GroupListView(
                                                 "Confirm?"
                                             }
                                             button {
-                                                class: "px-2 py-1 bg-white/5 text-obsidian-text border border-white/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-white/10 transition-colors",
+                                                class: "px-2 py-1 bg-obsidian-border/5 text-obsidian-text border border-obsidian-border/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-obsidian-border/10 transition-colors",
                                                 onclick: move |_| pending_remove.set(None),
                                                 "Cancel"
                                             }
@@ -698,7 +698,7 @@ fn AddGroupView(
                         div { class: "flex items-center gap-3 mt-3 animate-in fade-in duration-200",
                             span { class: "text-sm text-obsidian-text-muted", "every" }
                             input {
-                                class: "w-20 px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
+                                class: "w-20 px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-lg text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
                                 r#type: "number",
                                 min: "2",
                                 max: "31",
@@ -798,20 +798,20 @@ fn GroupDetailView(
                                     div { class: "px-4 py-3 bg-obsidian-sidebar/40 border border-obsidian-accent/40 rounded-lg space-y-3 animate-in fade-in duration-150",
                                         div { class: "flex gap-2",
                                             input {
-                                                class: "flex-1 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                                                class: "flex-1 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
                                                 r#type: "text",
                                                 value: "{edit_name}",
                                                 oninput: move |e| edit_name.set(e.value()),
                                             }
                                             input {
-                                                class: "w-16 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
+                                                class: "w-16 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-lg text-sm text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
                                                 r#type: "number",
                                                 min: "0",
                                                 value: "{edit_duration_value}",
                                                 oninput: move |e| edit_duration_value.set(e.value()),
                                             }
                                             select {
-                                                class: "w-20 px-2 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                                                class: "w-20 px-2 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
                                                 value: "{edit_duration_unit}",
                                                 onchange: move |e| edit_duration_unit.set(e.value()),
                                                 option { value: "{duration::UNIT_MIN}", "min" }
@@ -848,14 +848,14 @@ fn GroupDetailView(
                                                 if *saving_edit.read() { "Saving…" } else { "Save" }
                                             }
                                             button {
-                                                class: "px-3 py-1.5 bg-white/5 text-obsidian-text border border-white/10 text-[11px] font-bold uppercase tracking-wider rounded hover:bg-white/10 transition-colors",
+                                                class: "px-3 py-1.5 bg-obsidian-border/5 text-obsidian-text border border-obsidian-border/10 text-[11px] font-bold uppercase tracking-wider rounded hover:bg-obsidian-border/10 transition-colors",
                                                 onclick: move |_| editing_id.set(None),
                                                 "Cancel"
                                             }
                                         }
                                     }
                                 } else {
-                                    div { class: "px-4 py-3 bg-obsidian-sidebar/20 border border-white/5 rounded-lg flex justify-between items-center",
+                                    div { class: "px-4 py-3 bg-obsidian-sidebar/20 border border-obsidian-border/5 rounded-lg flex justify-between items-center",
                                         span { class: "text-sm font-medium text-obsidian-text", "{item.name}" }
                                         div { class: "flex items-center gap-2",
                                             span { class: "text-[10px] font-mono text-obsidian-text-muted", "{item.estimated_duration_min}m" }
@@ -876,13 +876,13 @@ fn GroupDetailView(
                                                     "Confirm?"
                                                 }
                                                 button {
-                                                    class: "px-2 py-1 bg-white/5 text-obsidian-text border border-white/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-white/10 transition-colors",
+                                                    class: "px-2 py-1 bg-obsidian-border/5 text-obsidian-text border border-obsidian-border/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-obsidian-border/10 transition-colors",
                                                     onclick: move |_| pending_remove.set(None),
                                                     "Cancel"
                                                 }
                                             } else {
                                                 button {
-                                                    class: "px-2 py-1 bg-white/5 text-obsidian-text-muted border border-white/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-white/10 hover:text-white transition-colors",
+                                                    class: "px-2 py-1 bg-obsidian-border/5 text-obsidian-text-muted border border-obsidian-border/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-obsidian-border/10 hover:text-white transition-colors",
                                                     onclick: move |_| {
                                                         let (val, unit) = duration::split_minutes_for_display(item_dur);
                                                         edit_name.set(item_name_for_edit.clone());
@@ -919,7 +919,7 @@ fn GroupDetailView(
                     // flex row made the name field unusably narrow on mobile once it
                     // had to compete with three fixed-width siblings for the width.
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
                         r#type: "text",
                         placeholder: "Step name...",
                         value: "{new_item_name}",
@@ -927,14 +927,14 @@ fn GroupDetailView(
                     }
                     div { class: "flex gap-2",
                         input {
-                            class: "w-16 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
+                            class: "w-16 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-lg text-sm text-obsidian-text text-center outline-none focus:border-obsidian-accent transition-colors",
                             r#type: "number",
                             min: "0",
                             value: "{new_item_duration}",
                             oninput: move |e| new_item_duration.set(e.value()),
                         }
                         select {
-                            class: "w-20 px-2 py-2 bg-obsidian-bg border border-white/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
+                            class: "w-20 px-2 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors appearance-none",
                             value: "{new_item_unit}",
                             onchange: move |e| new_item_unit.set(e.value()),
                             option { value: "{duration::UNIT_MIN}", "min" }
@@ -1021,11 +1021,11 @@ fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Elemen
                                 let is_done = completion.is_some();
 
                                 let bg_class = if is_skipped {
-                                    "bg-white/5 border-white/5 text-obsidian-text-muted/40"
+                                    "bg-obsidian-border/5 border-obsidian-border/5 text-obsidian-text-muted/40"
                                 } else if is_done {
                                     "bg-success/20 border-success/30 text-success"
                                 } else {
-                                    "bg-obsidian-sidebar border-white/5 text-transparent"
+                                    "bg-obsidian-sidebar border-obsidian-border/5 text-transparent"
                                 };
 
                                 rsx! {

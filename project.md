@@ -37,6 +37,18 @@ Build phases A (config foundation), B (inert feature toggles) and C (record type
 in `tasks.md`; **B carries the only real deadline** — it must land before the next
 feature ships, or every feature added this year is a retrofit owed later.
 
+**Phase A is built** (2026-09-06). Configuration is now two layers — an event-sourced
+value shared across devices, and a local override file that never syncs — resolved
+`device → shared → built-in default`, with the settings screen naming which layer won.
+Startup reads the materialized table before registering projections, which is the seam
+Phase B needs. The six feature keys ship **inert**: they record and sync, and nothing
+reads them yet. Appearance became the first key that does something, at the user's
+request: a light theme alongside the original dark one, and a choice of six accent
+hues. Blue was never a decision — it came from the Obsidian theme the first build
+referenced — so it is now data like everything else. On-device confirmation and the
+two-device override check are held for the next release test pass, with the same
+reasoning as item 1's device-only legs: tested together rather than piecemeal.
+
 ⛔ **Finances are deferred indefinitely** (user, 2026-09-05). This **supersedes** the
 earlier "offline until statement import beats the system it replaces" gate rather
 than clearing it: the user stopped using the section, and there is no intent to
@@ -47,7 +59,7 @@ accounts for each line it reads, and rendered-PDF statements parse in both layou
 and check themselves against the totals they declare, verified across 136 real files
 with zero failures. Journal and routines are unaffected and in daily use.
 
-**Last Updated:** 2026-09-05
+**Last Updated:** 2026-09-06
 
 > **What's next lives in [`NEXT.md`](NEXT.md)** — the next action and the
 > decisions in force, rewritten at every completion. Open work lives in

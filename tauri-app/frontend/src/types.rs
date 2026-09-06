@@ -131,6 +131,74 @@ pub struct RuntimeProfile {
     pub server_url: String,
 }
 
+// ── Configuration ───────────────────────────────────────────────────────────
+//
+// Mirrors of `omni_me_core::config` and `commands::config::ConfigEntryView`.
+// This crate is its own wasm workspace and does not depend on `omni-me-core`, so
+// the shapes are restated here — the same arrangement `SyncInfo` and
+// `RuntimeProfile` already live under. Serde is what keeps them honest: a field
+// renamed on one side fails to decode on the other.
+
+/// A configured value. Adjacently tagged, matching core's encoding.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum ConfigValue {
+    Bool(bool),
+    Text(String),
+    Int(i64),
+}
+
+impl ConfigValue {
+    /// How the value reads in a settings row.
+    pub fn display(&self) -> String {
+        match self {
+            ConfigValue::Bool(true) => "On".to_string(),
+            ConfigValue::Bool(false) => "Off".to_string(),
+            ConfigValue::Int(n) => n.to_string(),
+            ConfigValue::Text(t) => {
+                let mut chars = t.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
+        }
+    }
+}
+
+/// Which layer supplied the value in effect.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigLayer {
+    Device,
+    Global,
+    Default,
+}
+
+/// Which settings section a key renders under.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigGroup {
+    Features,
+    Appearance,
+}
+
+/// One configurable key, with both layers exposed so the row can say which one
+/// is winning rather than only showing the answer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigEntry {
+    pub key: String,
+    pub label: String,
+    pub group: ConfigGroup,
+    pub effective: ConfigValue,
+    pub layer: ConfigLayer,
+    pub global: Option<ConfigValue>,
+    pub device: Option<ConfigValue>,
+    pub default: ConfigValue,
+    pub applies_immediately: bool,
+    pub choices: Option<Vec<String>>,
+}
+
 /// Build + installation identity, shown in the capture modal so a user can see
 /// what a problem report will carry before sending it. Distinct from
 /// [`RuntimeProfile`], which is on the render path of a banner drawn on every

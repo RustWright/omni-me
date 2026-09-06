@@ -77,12 +77,24 @@ other way round.
 - [x] **Phase 0 — records + contract.** Done 2026-09-05. `docs/src/invariants.md` written,
   mdbook + GitHub Pages workflow stood up (mylearnbase pattern), comment convention added to
   `CLAUDE.md`, these records updated.
-- [ ] **Phase A — config foundation.** Config event type(s) + config projection with a
-  persisted table; per-device override file (`Option<bool>` per key) alongside the existing
-  `load_or_create` settings; `local.unwrap_or(global)` resolution; tri-state settings control
-  naming the winning layer. Startup reads the materialized table *before* registering
-  projections, so no replay is needed and a toggle set on another device applies at next
-  launch. [M]
+- [x] **Phase A — config foundation.** Done 2026-09-06. `core/src/config.rs` (closed `ConfigKey`,
+  `ConfigValue` Bool/Text/Int, `ResolvedConfig::get` → value + winning `Layer`),
+  `ConfigProjection` → `app_config`, `config_overrides.json` for the device layer (never synced).
+  Startup reads the materialized table before registering projections. Settings renders a
+  collapsed row per key that expands to both layers.
+  - **Scope beyond the plan, at the user's request:** the six feature keys ship **inert** (they
+    record and sync; nothing reads them — Phase B wires the consumers), and appearance became
+    real: a light theme, plus `appearance.accent` with six hues. Blue was never a decision, only
+    an inherited Obsidian reference, so it is now data like everything else.
+  - **Override widened** from the planned `Option<bool>` to `Option<ConfigValue>` per key, so a
+    string-valued key (theme, accent) can be overridden per device too.
+  - **Value ordering:** the projection compares the event's authoring `timestamp` against the
+    stored row and skips older ones. Config is the one place last-write-wins diverges
+    permanently — a setting nobody touches again never self-corrects the way a note does.
+  - **Cleared keys keep a tombstone row** (`value = NONE`) rather than being deleted; deleting
+    loses the timestamp the guard needs, and a stale `set` would resurrect the old value.
+  - On-device (Android) and the two-device override check are **deferred to the next release**,
+    by the user's decision. Resolver logic is covered by unit tests meanwhile.
 - [ ] **Phase B — inert feature toggles.** ⏰ **Must land before the next feature ships** —
   this is the only deadline-bearing item here, because every feature shipped without a toggle
   is a retrofit owed later. Explicit feature → (tab, projections, schedulers, commands,
@@ -90,6 +102,12 @@ other way round.
   persisted nav pointing at a hidden tab handled; commands refuse when their feature is off;
   projection registration and scheduler spawns become conditional. Features do **not** map 1:1
   onto projections (`NotesProjection` serves journal *and* notes). [M]
+  - ⚠️ **Two traps found while building A, both belonging here.** `ProjectionRunner::catch_up`
+    (`core/src/events/projection.rs:148`) takes the min watermark over *every* row in
+    `projection_versions`, unfiltered by what is registered — so the first disabled projection
+    makes every launch replay the whole log; filter that query by registered name. And
+    `server/src/routes/sync.rs:38` `?`s out on the first unknown event type, so one unrecognised
+    event 400s the entire push batch: deploy the server before shipping a client that emits one.
 - [ ] **Phase C — record types.** Declaration schema + `RecordTypeDeclared`; `is_complete`
   generalized off `COMPLETE_PROPERTIES`; `import.rs` key classification follows; `JournalProps`'
   three named fields → ordered map (ripples through `split_journal`/`serialize_journal` and

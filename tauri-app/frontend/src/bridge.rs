@@ -194,6 +194,83 @@ pub fn set_editor_font_px(px: Option<u32>) {
     }
 }
 
+/// Whether the OS is asking for a dark UI.
+///
+/// Defaults to **dark** when the query can't be answered, matching the app's own
+/// default so an unsupported WebView lands on the theme it has always had.
+pub fn os_prefers_dark() -> bool {
+    web_sys::window()
+        .and_then(|w| {
+            w.match_media("(prefers-color-scheme: light)")
+                .ok()
+                .flatten()
+        })
+        .map(|mq| !mq.matches())
+        .unwrap_or(true)
+}
+
+/// Stamp the resolved theme onto `<html data-theme>`.
+///
+/// `system` is resolved to a concrete value **here**, never passed through. That
+/// keeps one rule for every consumer downstream: the CSS token blocks and
+/// `editor.js` both only ever see `dark` or `light`, so neither needs its own
+/// copy of the preference logic (and neither can disagree with the other about
+/// what "system" meant at that instant).
+pub fn apply_theme(theme: &str) {
+    let resolved = match theme {
+        "light" => "light",
+        "system" => {
+            if os_prefers_dark() {
+                "dark"
+            } else {
+                "light"
+            }
+        }
+        _ => "dark",
+    };
+    set_root_attribute("data-theme", resolved);
+}
+
+/// Stamp the chosen accent hue onto `<html data-accent>`.
+///
+/// No resolution step, unlike the theme: an accent is whatever was picked, and
+/// the CSS pairs it with the active `data-theme` itself.
+pub fn apply_accent(accent: &str) {
+    set_root_attribute("data-accent", accent);
+}
+
+fn set_root_attribute(name: &str, value: &str) {
+    let Some(root) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+    else {
+        return;
+    };
+    let _ = root.set_attribute(name, value);
+}
+
+/// Call `on_change` whenever the OS light/dark preference flips.
+///
+/// The handler is deliberately leaked with `forget()`: it is installed once at
+/// the app root and must outlive every component, so there is nothing to drop it
+/// against. Un-forgetting it would free the closure while the browser still
+/// holds the callback.
+pub fn on_os_theme_change(on_change: impl FnMut() + 'static) {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::closure::Closure;
+
+    let Some(mq) = web_sys::window().and_then(|w| {
+        w.match_media("(prefers-color-scheme: light)")
+            .ok()
+            .flatten()
+    }) else {
+        return;
+    };
+    let cb = Closure::<dyn FnMut()>::new(on_change);
+    mq.set_onchange(Some(cb.as_ref().unchecked_ref()));
+    cb.forget();
+}
+
 /// Drop focus from whatever currently holds it.
 ///
 /// Used when the nav drawer opens over the editor. CodeMirror keeps DOM focus
@@ -1454,6 +1531,121 @@ pub async fn invoke_update_base_currency(currency: &str) -> Result<(), String> {
             currency: &'a str,
         }
         invoke_unit("update_base_currency", &Args { currency }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Configuration — the shared (event-sourced) and per-device layers
+// -----------------------------------------------------------------------------
+
+use crate::types::{ConfigEntry, ConfigValue};
+
+pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
+    #[cfg(feature = "mock")]
+    {
+        use crate::types::{ConfigGroup, ConfigLayer};
+        // Every key at its built-in default — the state a fresh install is in,
+        // which is also the state the headless UI checks should render.
+        let feature = |key: &str, label: &str| ConfigEntry {
+            key: key.to_string(),
+            label: label.to_string(),
+            group: ConfigGroup::Features,
+            effective: ConfigValue::Bool(true),
+            layer: ConfigLayer::Default,
+            global: None,
+            device: None,
+            default: ConfigValue::Bool(true),
+            applies_immediately: false,
+            choices: None,
+        };
+        Ok(vec![
+            feature("feature.journal", "Journal"),
+            feature("feature.notes", "Notes"),
+            feature("feature.routines", "Routines"),
+            feature("feature.finances", "Finances"),
+            feature("feature.auto_import", "Auto-import"),
+            feature("feature.llm", "LLM"),
+            ConfigEntry {
+                key: "appearance.theme".to_string(),
+                label: "Theme".to_string(),
+                group: ConfigGroup::Appearance,
+                effective: ConfigValue::Text("dark".to_string()),
+                layer: ConfigLayer::Default,
+                global: None,
+                device: None,
+                default: ConfigValue::Text("dark".to_string()),
+                applies_immediately: true,
+                choices: Some(vec![
+                    "dark".to_string(),
+                    "light".to_string(),
+                    "system".to_string(),
+                ]),
+            },
+            ConfigEntry {
+                key: "appearance.accent".to_string(),
+                label: "Accent".to_string(),
+                group: ConfigGroup::Appearance,
+                effective: ConfigValue::Text("blue".to_string()),
+                layer: ConfigLayer::Default,
+                global: None,
+                device: None,
+                default: ConfigValue::Text("blue".to_string()),
+                applies_immediately: true,
+                choices: Some(
+                    ["blue", "violet", "teal", "green", "amber", "rose"]
+                        .iter()
+                        .map(|s| (*s).to_string())
+                        .collect(),
+                ),
+            },
+        ])
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("get_config", &Args {}).await
+    }
+}
+
+/// Set the shared value for one key. `None` clears it back to the built-in
+/// default.
+pub async fn invoke_set_global_config(key: &str, value: Option<ConfigValue>) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (key, value);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            key: &'a str,
+            value: Option<ConfigValue>,
+        }
+        invoke_unit("set_global_config", &Args { key, value }).await
+    }
+}
+
+/// Set this device's override for one key. `None` clears it, so the device goes
+/// back to following the shared layer.
+pub async fn invoke_set_device_override(
+    key: &str,
+    value: Option<ConfigValue>,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (key, value);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            key: &'a str,
+            value: Option<ConfigValue>,
+        }
+        invoke_unit("set_device_override", &Args { key, value }).await
     }
 }
 

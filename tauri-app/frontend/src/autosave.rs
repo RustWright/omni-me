@@ -95,20 +95,14 @@ pub fn SaveIndicator(state: SaveState) -> Element {
     let (label, classes) = match state {
         SaveState::Saved => (
             "Saved",
-            "bg-obsidian-text-muted/10 text-obsidian-text-muted border-white/10",
+            "bg-obsidian-text-muted/10 text-obsidian-text-muted border-obsidian-border/10",
         ),
         SaveState::Saving => (
             "Saving…",
             "bg-obsidian-accent/10 text-obsidian-accent border-obsidian-accent/20",
         ),
-        SaveState::Unsaved => (
-            "Unsaved",
-            "bg-amber-500/10 text-amber-400 border-amber-500/30",
-        ),
-        SaveState::Failed => (
-            "Save failed",
-            "bg-red-900/20 text-red-400 border-red-900/50",
-        ),
+        SaveState::Unsaved => ("Unsaved", "bg-warn/10 text-warn border-warn/30"),
+        SaveState::Failed => ("Save failed", "bg-error/10 text-error border-error/25"),
     };
     rsx! {
         span {

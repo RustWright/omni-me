@@ -3,7 +3,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
-use super::types::{EventType, FeedbackCapturedPayload, TransactionRecordedPayload};
+use super::types::{
+    ConfigSetPayload, EventType, FeedbackCapturedPayload, TransactionRecordedPayload,
+};
 use crate::db::Database;
 
 /// Error type for event store and projection operations.
@@ -168,6 +170,27 @@ impl NewEvent {
             timestamp: Utc::now(),
             device_id: device_id.into(),
             payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `ConfigSet` event. `aggregate_id` is the key's wire name,
+    /// which is what makes a key's history readable via `get_by_aggregate` and
+    /// what keeps two devices setting the same key on one aggregate.
+    ///
+    /// `value: None` clears the shared value back to the built-in default.
+    pub fn config_set(
+        device_id: impl Into<String>,
+        key: crate::config::ConfigKey,
+        value: Option<crate::config::ConfigValue>,
+    ) -> Result<NewEvent, serde_json::Error> {
+        let payload = ConfigSetPayload { key, value };
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::ConfigSet.to_string(),
+            aggregate_id: key.to_string(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(&payload)?,
         })
     }
 }

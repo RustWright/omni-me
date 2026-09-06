@@ -57,6 +57,8 @@ pub enum EventType {
     DataWiped,
     // Feedback — the one event about the *app* rather than the user's content
     FeedbackCaptured,
+    // Config — the app's own settings, shared across the user's devices
+    ConfigSet,
 }
 
 impl fmt::Display for EventType {
@@ -100,6 +102,7 @@ impl fmt::Display for EventType {
             EventType::AutoImportBatchDismissed => "auto_import_batch_dismissed",
             EventType::DataWiped => "data_wiped",
             EventType::FeedbackCaptured => "feedback_captured",
+            EventType::ConfigSet => "config_set",
         };
         write!(f, "{s}")
     }
@@ -148,6 +151,7 @@ impl FromStr for EventType {
             "auto_import_batch_dismissed" => Ok(EventType::AutoImportBatchDismissed),
             "data_wiped" => Ok(EventType::DataWiped),
             "feedback_captured" => Ok(EventType::FeedbackCaptured),
+            "config_set" => Ok(EventType::ConfigSet),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -755,6 +759,24 @@ pub struct FeedbackCapturedPayload {
     pub recent_events: Vec<String>,
 }
 
+// Config
+
+/// A change to one configuration key's **shared** value.
+///
+/// `aggregate_id` is the key's wire name, so `get_by_aggregate` yields that key's
+/// history for free. Per-device overrides are deliberately absent from this
+/// payload: they are local by definition and must never travel over sync.
+///
+/// `value: None` means "clear back to the built-in default" rather than "set to
+/// nothing" — the projection deletes the row, and resolution falls through to
+/// [`crate::config::ConfigKey::default_value`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigSetPayload {
+    pub key: crate::config::ConfigKey,
+    #[serde(default)]
+    pub value: Option<crate::config::ConfigValue>,
+}
+
 /// Validate that a payload JSON value matches the expected shape for the given event type.
 pub fn validate_payload(
     event_type: &EventType,
@@ -879,11 +901,35 @@ pub fn validate_payload(
         EventType::FeedbackCaptured => {
             serde_json::from_value::<FeedbackCapturedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::ConfigSet => {
+            serde_json::from_value::<ConfigSetPayload>(payload.clone()).map(|_| ())
+        }
     };
 
     result.map_err(|e| {
         super::store::EventError::Validation(format!("invalid payload for {event_type}: {e}"))
-    })
+    })?;
+
+    // Config gets a second gate the other payloads don't need. For every other
+    // event the payload's shape IS its contract; a config value's admissible type
+    // and domain instead depend on which key carries it, so
+    // `{"key":"appearance.theme","value":{"kind":"bool","value":true}}` decodes
+    // perfectly and still means nothing. Re-decoding here rather than threading a
+    // value out of the match keeps every arm the same shape, and the payload is
+    // two fields on a rare event.
+    if *event_type == EventType::ConfigSet {
+        let parsed: ConfigSetPayload = serde_json::from_value(payload.clone()).map_err(|e| {
+            super::store::EventError::Validation(format!("invalid payload for {event_type}: {e}"))
+        })?;
+        if let Some(value) = &parsed.value {
+            parsed
+                .key
+                .validate(value)
+                .map_err(super::store::EventError::Validation)?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -931,6 +977,7 @@ mod tests {
             EventType::AutoImportBatchDismissed,
             EventType::DataWiped,
             EventType::FeedbackCaptured,
+            EventType::ConfigSet,
         ];
 
         for t in &types {

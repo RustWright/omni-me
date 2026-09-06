@@ -7,10 +7,11 @@ use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 
+use omni_me_core::config::{ConfigMap, ResolvedConfig};
 use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
-    AutoImportProjection, BudgetProjection, NotesProjection, ProjectionRunner, RoutinesProjection,
-    SurrealEventStore,
+    AutoImportProjection, BudgetProjection, ConfigProjection, NotesProjection, ProjectionRunner,
+    RoutinesProjection, SurrealEventStore, load_persisted,
 };
 use omni_me_core::journal_file::JournalFile;
 use omni_me_core::ledger::{self, JournalArtifacts};
@@ -63,6 +64,14 @@ const WORKSPACE_FILE: &str = "workspace.json";
 /// screen. The user's real roster file ships from the private overlay repo and
 /// is installed into `app_data_dir`. `#`-prefixed and blank lines are ignored.
 const ROSTER_FILE: &str = "roster";
+/// This device's config overrides — a JSON object of key → value that outranks
+/// the shared, event-sourced layer.
+///
+/// ⚠️ **This file must never be synced or pushed.** A device override exists
+/// precisely to say "not here", and replicating it would make it the opposite of
+/// what it is. It is also why the overrides live in a file rather than in an
+/// event: there is no way to append one to the log and have it stay local.
+const CONFIG_OVERRIDES_FILE: &str = "config_overrides.json";
 
 /// Load a string value from a file, or use a default and persist it.
 fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> String) -> String {
@@ -180,6 +189,39 @@ fn load_roster(app_data: &Path) -> Vec<String> {
     }
 }
 
+/// Load this device's config overrides. Missing, empty or unreadable ⇒ no
+/// overrides, so the device simply follows the shared layer.
+///
+/// Unreadable is deliberately as quiet as missing: a corrupt overrides file must
+/// not stop the app booting over a preference, and the warning in the log is
+/// enough to explain a setting that reverted.
+fn load_device_overrides(app_data: &Path) -> ConfigMap {
+    let path = app_data.join(CONFIG_OVERRIDES_FILE);
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return ConfigMap::new();
+    };
+    if contents.trim().is_empty() {
+        return ConfigMap::new();
+    }
+    match serde_json::from_str::<ConfigMap>(&contents) {
+        Ok(map) => map,
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "could not read the device config overrides; following the shared layer"
+            );
+            ConfigMap::new()
+        }
+    }
+}
+
+/// Persist this device's config overrides, replacing the file wholesale.
+fn save_device_overrides(app_data: &Path, overrides: &ConfigMap) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(overrides).map_err(|e| e.to_string())?;
+    std::fs::write(app_data.join(CONFIG_OVERRIDES_FILE), json).map_err(|e| e.to_string())
+}
+
 pub struct AppState {
     pub db: Database,
     pub event_store: SurrealEventStore,
@@ -194,6 +236,16 @@ pub struct AppState {
     /// dashboard screens. Loaded from `ROSTER_FILE`; empty ⇒ empty Accounts
     /// screen. The real roster is supplied by the private overlay.
     pub roster: tokio::sync::RwLock<Vec<String>>,
+    /// Both config layers plus the rule between them, resolved at startup.
+    ///
+    /// The **shared** half is a snapshot of what the config projection had
+    /// materialized *before* this launch registered its projections — that read
+    /// has to happen before the projection list is built, so a value set on
+    /// another device lands one launch later. Writes here keep the in-memory copy
+    /// current for the settings screen; what they cannot do is retroactively
+    /// change what got registered at boot, which is why
+    /// `ConfigKey::applies_immediately` exists.
+    pub config: Arc<tokio::sync::RwLock<ResolvedConfig>>,
     pub app_data_dir: std::path::PathBuf,
     /// True when the app-data root came from [`DATA_DIR_ENV`] rather than the OS
     /// default — i.e. this run is deliberately NOT on the user's real data.
@@ -518,6 +570,22 @@ pub fn run() {
 
                 let event_store = SurrealEventStore::new(db.clone());
 
+                // Config is read HERE, before the projection list is built,
+                // because it is what decides the contents of that list (Phase B).
+                // Reading the materialized table rather than replaying is what
+                // keeps this off the pre-paint critical path; the cost is that a
+                // value set on another device applies at the *next* launch.
+                let config = ResolvedConfig::new(
+                    load_persisted(&db).await.unwrap_or_else(|e| {
+                        // Non-fatal on purpose: unreadable shared config means
+                        // built-in defaults, which is a working app. Refusing to
+                        // boot over it would turn a preference into an outage.
+                        tracing::warn!(error = %e, "could not read shared config; using defaults");
+                        ConfigMap::new()
+                    }),
+                    load_device_overrides(&app_data),
+                );
+
                 // The hledger journal file lives in the app data dir alongside
                 // the SurrealDB file. It's a regenerable cache; if it's deleted
                 // the rebuild() path replays all events to reconstruct it.
@@ -525,6 +593,8 @@ pub fn run() {
                 let projections = ProjectionRunner::new(
                     db.clone(),
                     vec![
+                        // Never feature-gated: it is what feature gating reads.
+                        Box::new(ConfigProjection),
                         Box::new(NotesProjection),
                         Box::new(RoutinesProjection),
                         Box::new(BudgetProjection),
@@ -699,6 +769,7 @@ pub fn run() {
                     timezone: timezone_shared,
                     base_currency: tokio::sync::RwLock::new(base_currency),
                     roster: tokio::sync::RwLock::new(roster),
+                    config: Arc::new(tokio::sync::RwLock::new(config)),
                     app_data_dir: app_data,
                     non_production,
                     attachment_cache_dir,
@@ -765,6 +836,10 @@ pub fn run() {
             commands::settings::get_runtime_profile,
             commands::settings::get_base_currency,
             commands::settings::update_base_currency,
+            // Configuration — shared (event-sourced) and per-device layers
+            commands::config::get_config,
+            commands::config::set_global_config,
+            commands::config::set_device_override,
             // Feedback capture
             commands::feedback::get_app_context,
             commands::feedback::submit_feedback,
@@ -949,5 +1024,67 @@ mod runtime_profile_tests {
             assert_eq!(dir, PathBuf::from("/live"), "env={env:?}");
             assert!(!non_prod, "env={env:?} must not flip the profile");
         }
+    }
+}
+
+#[cfg(test)]
+mod device_override_tests {
+    use super::*;
+    use omni_me_core::config::{ConfigKey, ConfigValue};
+
+    #[test]
+    fn overrides_round_trip_through_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut overrides = ConfigMap::new();
+        overrides.insert(ConfigKey::FeatureFinances, ConfigValue::Bool(false));
+        overrides.insert(
+            ConfigKey::AppearanceTheme,
+            ConfigValue::Text("light".into()),
+        );
+
+        save_device_overrides(dir.path(), &overrides).unwrap();
+        assert_eq!(load_device_overrides(dir.path()), overrides);
+    }
+
+    /// A device with no overrides file simply follows the shared layer — this is
+    /// the state every device is in before anyone touches the setting.
+    #[test]
+    fn a_missing_file_means_no_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_device_overrides(dir.path()).is_empty());
+    }
+
+    /// Saving an empty map clears every override rather than leaving the previous
+    /// file in place — "follow the shared layer everywhere" has to be reachable.
+    #[test]
+    fn saving_an_empty_map_clears_previous_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut overrides = ConfigMap::new();
+        overrides.insert(ConfigKey::FeatureLlm, ConfigValue::Bool(false));
+        save_device_overrides(dir.path(), &overrides).unwrap();
+
+        save_device_overrides(dir.path(), &ConfigMap::new()).unwrap();
+        assert!(load_device_overrides(dir.path()).is_empty());
+    }
+
+    /// A corrupt file must not stop the app booting over a preference.
+    #[test]
+    fn a_corrupt_file_degrades_to_no_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(CONFIG_OVERRIDES_FILE), "{not json").unwrap();
+        assert!(load_device_overrides(dir.path()).is_empty());
+    }
+
+    /// Same for a file naming a key this build doesn't have — a downgraded
+    /// device must still boot.
+    #[test]
+    fn an_unknown_key_in_the_file_degrades_to_no_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(CONFIG_OVERRIDES_FILE),
+            r#"{"feature.telepathy": {"kind": "bool", "value": true}}"#,
+        )
+        .unwrap();
+        assert!(load_device_overrides(dir.path()).is_empty());
     }
 }

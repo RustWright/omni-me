@@ -1041,13 +1041,13 @@ fn ReviewInboxCard(
             }
             div { class: "space-y-1",
                 button {
-                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-white/5 transition-colors",
+                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
                     onclick: move |_| on_open_batches.call(()),
                     span { class: "text-obsidian-text", "Auto-imported batches" }
                     span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
                 }
                 button {
-                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-white/5 transition-colors",
+                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
                     onclick: move |_| on_open_reconciliation.call(()),
                     span { class: "text-obsidian-text", "Unmatched to reconcile" }
                     span { class: "tabular-nums font-semibold text-xs {unmatched_tone}", "{unmatched_str}" }
@@ -1531,7 +1531,7 @@ fn CaptureTile(
     enabled: bool,
     on_click: EventHandler<()>,
 ) -> Element {
-    let base = "flex flex-col items-center justify-center gap-2 p-4 bg-obsidian-sidebar border border-white/10 rounded-xl min-h-[96px] transition-colors";
+    let base = "flex flex-col items-center justify-center gap-2 p-4 bg-obsidian-sidebar border border-obsidian-border/10 rounded-xl min-h-[96px] transition-colors";
     let interactive = if enabled {
         "text-obsidian-text hover:border-obsidian-accent hover:text-obsidian-accent cursor-pointer"
     } else {
@@ -1687,7 +1687,7 @@ fn DocumentCapture(
             // ship to Gemini; click fires the same extraction path the file
             // picker uses.
             if let Some(capture) = preloaded.clone() {
-                div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+                div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
                     div { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
                         "Shared file"
                     }
@@ -1814,7 +1814,7 @@ fn HintRadio(
     let style = if checked {
         "bg-obsidian-accent text-white border-obsidian-accent"
     } else {
-        "bg-transparent text-obsidian-text-muted border-white/10 hover:border-obsidian-accent hover:text-obsidian-text"
+        "bg-transparent text-obsidian-text-muted border-obsidian-border/10 hover:border-obsidian-accent hover:text-obsidian-text"
     };
     rsx! {
         button {
@@ -1898,7 +1898,7 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
                     "Paste the email body"
                 }
                 textarea {
-                    class: "block w-full min-h-[200px] p-3 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted text-sm font-mono outline-none focus:border-obsidian-accent transition-colors resize-y",
+                    class: "block w-full min-h-[200px] p-3 bg-obsidian-sidebar border border-obsidian-border/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted text-sm font-mono outline-none focus:border-obsidian-accent transition-colors resize-y",
                     placeholder: "Paste a receipt confirmation email, a Globepay notification, anything with a charge in it…",
                     value: "{body.read()}",
                     oninput: move |e| body.set(e.value().clone()),
@@ -2209,7 +2209,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                     "Description"
                 }
                 input {
-                    class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent",
+                    class: "w-full px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent",
                     r#type: "text",
                     placeholder: "Loblaws — Groceries",
                     value: "{description.read()}",
@@ -2242,7 +2242,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                             div { key: "{idx}", class: "flex flex-wrap gap-2 items-center",
                                 AccountInput {
                                     wrapper_class: "flex-1 min-w-[200px]".to_string(),
-                                    input_class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent".to_string(),
+                                    input_class: "w-full px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent".to_string(),
                                     placeholder: "Account (e.g. Expenses:Groceries)".to_string(),
                                     mode: AccountMode::Add,
                                     value: row.account.clone(),
@@ -2255,7 +2255,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                                     },
                                 }
                                 input {
-                                    class: "w-28 px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent",
+                                    class: "w-28 px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent",
                                     r#type: "text",
                                     placeholder: "0.00",
                                     value: "{row.amount}",
@@ -2268,7 +2268,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                                     },
                                 }
                                 input {
-                                    class: "w-20 px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent uppercase",
+                                    class: "w-20 px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent uppercase",
                                     r#type: "text",
                                     placeholder: "CAD",
                                     value: "{row.commodity}",
@@ -2303,7 +2303,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
             // persisted server-side and mirrored to the on-device LRU cache.
             // Thumbnail rendering is Phase 4 (transaction detail) territory.
             if let Some(att) = attachment.read().clone() {
-                div { class: "p-3 bg-obsidian-sidebar/60 border border-white/10 rounded-md text-xs text-obsidian-text-muted flex items-center gap-2",
+                div { class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-md text-xs text-obsidian-text-muted flex items-center gap-2",
                     svg { class: "w-4 h-4 text-obsidian-accent", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
                         path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: "M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" }
                     }
@@ -2348,7 +2348,7 @@ fn render_idle(kind: DocumentKind) -> Element {
 
 fn render_working() -> Element {
     rsx! {
-        div { class: "flex items-center gap-3 p-4 bg-obsidian-sidebar/60 border border-white/5 rounded-lg",
+        div { class: "flex items-center gap-3 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg",
             div { class: "w-4 h-4 border-2 border-obsidian-accent border-t-transparent rounded-full animate-spin" }
             span { class: "text-sm text-obsidian-text-muted", "Extracting transaction details…" }
         }
@@ -2424,7 +2424,7 @@ fn BatchListView(on_back: EventHandler<()>, on_open_batch: EventHandler<String>)
                 }
             },
             Some(Ok(rows)) if rows.is_empty() => rsx! {
-                div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                div { class: "p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
                     "No pending auto-import batches. Captured transactions and confirmed batches appear under Recent."
                 }
             },
@@ -2461,7 +2461,7 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
 
     rsx! {
         button {
-            class: "w-full p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
+            class: "w-full p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg flex items-center justify-between hover:border-obsidian-accent/40 transition-colors text-left",
             onclick: move |_| on_open.call(()),
             div { class: "flex-1 min-w-0",
                 div { class: "flex items-baseline gap-2 mb-1",
@@ -2580,7 +2580,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                 if let Some(meta_str) = metadata_pretty {
                     details { class: "mb-4 text-xs text-obsidian-text-muted",
                         summary { class: "cursor-pointer hover:text-obsidian-text", "Source metadata" }
-                        pre { class: "mt-2 p-3 bg-obsidian-sidebar/60 rounded border border-white/5 overflow-x-auto",
+                        pre { class: "mt-2 p-3 bg-obsidian-sidebar/60 rounded border border-obsidian-border/5 overflow-x-auto",
                             "{meta_str}"
                         }
                     }
@@ -2615,7 +2615,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                             r#type: "text",
                             inputmode: "decimal",
                             placeholder: "e.g., 0.00088",
-                            class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-obsidian-text",
+                            class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-obsidian-text",
                             value: "{fx_rate_input.read()}",
                             oninput: move |evt| fx_rate_input.set(evt.value()),
                         }
@@ -2678,7 +2678,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                         }
                     }
                     button {
-                        class: "px-4 py-3 bg-obsidian-sidebar border border-white/10 text-obsidian-text-muted rounded-lg hover:text-obsidian-text hover:border-red-500/40 hover:text-red-300 transition-colors disabled:opacity-50",
+                        class: "px-4 py-3 bg-obsidian-sidebar border border-obsidian-border/10 text-obsidian-text-muted rounded-lg hover:text-obsidian-text hover:border-red-500/40 hover:text-red-300 transition-colors disabled:opacity-50",
                         disabled: *busy.read(),
                         onclick: {
                             let batch_id = b.batch_id.clone();
@@ -2720,7 +2720,7 @@ fn DraftRow(
     let border = if accepted {
         "border-obsidian-accent/40"
     } else {
-        "border-white/5 opacity-60"
+        "border-obsidian-border/5 opacity-60"
     };
     rsx! {
         div { class: "p-3 bg-obsidian-sidebar/60 border {border} rounded-lg",
@@ -2837,7 +2837,7 @@ fn EditableCategoryChip(current: Option<String>, on_save: EventHandler<String>) 
                 class: if current.is_some() {
                     "text-[10px] px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full font-medium hover:bg-obsidian-accent/25"
                 } else {
-                    "text-[10px] px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded-full font-medium hover:bg-white/10 border border-dashed border-white/10"
+                    "text-[10px] px-2 py-0.5 bg-obsidian-border/5 text-obsidian-text-muted rounded-full font-medium hover:bg-obsidian-border/10 border border-dashed border-obsidian-border/10"
                 },
                 onclick: move |e| {
                     e.stop_propagation();
@@ -2867,7 +2867,7 @@ fn EditableTagList(current: Vec<String>, on_save: EventHandler<Vec<String>>) -> 
             class: "inline-flex flex-wrap items-center gap-1",
             onclick: move |e| e.stop_propagation(),
             for (idx, tag) in current.iter().cloned().enumerate() {
-                span { class: "text-[10px] inline-flex items-center gap-1 px-2 py-0.5 bg-white/5 text-obsidian-text-muted rounded-full font-mono",
+                span { class: "text-[10px] inline-flex items-center gap-1 px-2 py-0.5 bg-obsidian-border/5 text-obsidian-text-muted rounded-full font-mono",
                     "#{tag}"
                     button {
                         r#type: "button",
@@ -2931,7 +2931,7 @@ fn EditableTagList(current: Vec<String>, on_save: EventHandler<Vec<String>>) -> 
             } else {
                 button {
                     r#type: "button",
-                    class: "text-[10px] px-2 py-0.5 bg-transparent text-obsidian-text-muted rounded-full font-mono border border-dashed border-white/10 hover:border-obsidian-accent hover:text-obsidian-accent",
+                    class: "text-[10px] px-2 py-0.5 bg-transparent text-obsidian-text-muted rounded-full font-mono border border-dashed border-obsidian-border/10 hover:border-obsidian-accent hover:text-obsidian-accent",
                     onclick: move |e| {
                         e.stop_propagation();
                         adding.set(true);
@@ -3222,7 +3222,7 @@ fn TransactionListView(
         }
 
         if show_empty {
-            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
                 if filter_active {
                     "No transactions match these filters."
                 } else {
@@ -3255,7 +3255,7 @@ fn TransactionListView(
             } else if *has_more.read() {
                 div { class: "mt-4 flex justify-center",
                     button {
-                        class: "px-4 py-2 bg-obsidian-sidebar border border-white/10 text-obsidian-text-muted text-sm rounded-md hover:border-obsidian-accent/40 hover:text-obsidian-text transition-colors",
+                        class: "px-4 py-2 bg-obsidian-sidebar border border-obsidian-border/10 text-obsidian-text-muted text-sm rounded-md hover:border-obsidian-accent/40 hover:text-obsidian-text transition-colors",
                         onclick: load_more,
                         "Load more"
                     }
@@ -3402,8 +3402,8 @@ fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>
     let mut error: Signal<Option<String>> = use_signal(|| None);
     let mut has_run: Signal<bool> = use_signal(|| false);
 
-    let input_class = "px-2 py-1.5 bg-obsidian-bg border border-white/10 rounded-md text-obsidian-text text-xs outline-none focus:border-obsidian-accent placeholder-obsidian-text-muted";
-    let select_class = "px-2 py-1.5 bg-obsidian-bg border border-white/10 rounded-md text-obsidian-text text-xs outline-none focus:border-obsidian-accent";
+    let input_class = "px-2 py-1.5 bg-obsidian-bg border border-obsidian-border/10 rounded-md text-obsidian-text text-xs outline-none focus:border-obsidian-accent placeholder-obsidian-text-muted";
+    let select_class = "px-2 py-1.5 bg-obsidian-bg border border-obsidian-border/10 rounded-md text-obsidian-text text-xs outline-none focus:border-obsidian-accent";
 
     let dsl = build_query_dsl(&rows.read(), *any.read());
     let dsl_empty = dsl.trim().is_empty();
@@ -3443,7 +3443,7 @@ fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>
                 class: if !*any.read() {
                     "px-3 py-1 rounded-md bg-obsidian-accent text-black font-semibold"
                 } else {
-                    "px-3 py-1 rounded-md bg-obsidian-sidebar border border-white/10 text-obsidian-text-muted hover:text-obsidian-text"
+                    "px-3 py-1 rounded-md bg-obsidian-sidebar border border-obsidian-border/10 text-obsidian-text-muted hover:text-obsidian-text"
                 },
                 onclick: move |_| any.set(false),
                 "ALL"
@@ -3452,7 +3452,7 @@ fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>
                 class: if *any.read() {
                     "px-3 py-1 rounded-md bg-obsidian-accent text-black font-semibold"
                 } else {
-                    "px-3 py-1 rounded-md bg-obsidian-sidebar border border-white/10 text-obsidian-text-muted hover:text-obsidian-text"
+                    "px-3 py-1 rounded-md bg-obsidian-sidebar border border-obsidian-border/10 text-obsidian-text-muted hover:text-obsidian-text"
                 },
                 onclick: move |_| any.set(true),
                 "ANY"
@@ -3464,7 +3464,7 @@ fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>
             for (i, row) in rows.read().clone().into_iter().enumerate() {
                 div {
                     key: "{i}",
-                    class: "flex flex-wrap items-center gap-2 p-2 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+                    class: "flex flex-wrap items-center gap-2 p-2 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg",
                     select {
                         class: "{select_class}",
                         value: "{row.field.as_key()}",
@@ -3569,7 +3569,7 @@ fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>
         div { class: "mt-4",
             div { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest mb-1", "Generated query" }
             div {
-                class: "font-mono text-xs bg-obsidian-bg border border-white/10 rounded-md px-3 py-2 text-obsidian-text break-all min-h-[2.25rem]",
+                class: "font-mono text-xs bg-obsidian-bg border border-obsidian-border/10 rounded-md px-3 py-2 text-obsidian-text break-all min-h-[2.25rem]",
                 if dsl_empty {
                     span { class: "text-obsidian-text-muted", "(add a filter above)" }
                 } else {
@@ -3600,7 +3600,7 @@ fn QueryBuilderView(on_back: EventHandler<()>, on_open_txn: EventHandler<String>
                 let out = results.read().clone();
                 if out.is_empty() {
                     rsx! {
-                        div { class: "mt-4 p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                        div { class: "mt-4 p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
                             "No transactions match this query."
                         }
                     }
@@ -3637,7 +3637,7 @@ fn FilterBar(
     on_clear: EventHandler<()>,
     filter_active: bool,
 ) -> Element {
-    let input_class = "px-2 py-1.5 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-xs outline-none focus:border-obsidian-accent placeholder-obsidian-text-muted";
+    let input_class = "px-2 py-1.5 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-xs outline-none focus:border-obsidian-accent placeholder-obsidian-text-muted";
     let date_val_from = draft.read().date_from.clone().unwrap_or_default();
     let date_val_to = draft.read().date_to.clone().unwrap_or_default();
     let account_val = draft.read().account.clone().unwrap_or_default();
@@ -3645,7 +3645,7 @@ fn FilterBar(
     let tag_val = draft.read().tag.clone().unwrap_or_default();
 
     rsx! {
-        div { class: "mb-4 p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg",
+        div { class: "mb-4 p-3 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg",
             div { class: "flex flex-wrap items-end gap-2",
                 label { class: "flex flex-col gap-1",
                     span { class: "text-[10px] text-obsidian-text-muted uppercase tracking-widest", "From" }
@@ -3802,7 +3802,7 @@ fn TransactionListRow(
     let frame = if selected {
         "border-obsidian-accent/70 bg-obsidian-accent/5"
     } else {
-        "border-white/5 hover:border-obsidian-accent/40"
+        "border-obsidian-border/5 hover:border-obsidian-accent/40"
     };
     rsx! {
         button {
@@ -4102,7 +4102,7 @@ fn TransactionDetailBody(
     rsx! {
         div { class: "space-y-6",
             // --- Metadata block ---
-            div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+            div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg",
                 div { class: "flex items-start justify-between gap-3 mb-3",
                     div { class: "flex flex-wrap items-baseline gap-x-3 gap-y-1",
                         span { class: "text-sm text-obsidian-text-muted font-mono",
@@ -4113,7 +4113,7 @@ fn TransactionDetailBody(
                         }
                     }
                     button {
-                        class: "shrink-0 text-xs px-2.5 py-1 rounded-md border border-white/10 text-obsidian-text-muted hover:text-obsidian-text hover:border-white/20",
+                        class: "shrink-0 text-xs px-2.5 py-1 rounded-md border border-obsidian-border/10 text-obsidian-text-muted hover:text-obsidian-text hover:border-obsidian-border/20",
                         onclick: move |_| editing.set(true),
                         "Edit"
                     }
@@ -4149,7 +4149,7 @@ fn TransactionDetailBody(
                 h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2",
                     "Postings"
                 }
-                div { class: "space-y-1 p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg",
+                div { class: "space-y-1 p-3 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg",
                     for posting in postings {
                         div { class: "flex justify-between gap-3 text-sm font-mono",
                             span { class: "text-obsidian-text-muted truncate",
@@ -4175,7 +4175,7 @@ fn TransactionDetailBody(
                         "Delete this transaction?"
                     }
                     button {
-                        class: "text-xs px-2.5 py-1 rounded-md border border-white/10 text-obsidian-text-muted hover:text-obsidian-text disabled:opacity-40",
+                        class: "text-xs px-2.5 py-1 rounded-md border border-obsidian-border/10 text-obsidian-text-muted hover:text-obsidian-text disabled:opacity-40",
                         disabled: *deleting.read(),
                         onclick: move |_| confirm_delete.set(false),
                         "Cancel"
@@ -4313,7 +4313,7 @@ fn TransactionEditForm(
                     "Description"
                 }
                 input {
-                    class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent",
+                    class: "w-full px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text outline-none focus:border-obsidian-accent",
                     r#type: "text",
                     value: "{description.read()}",
                     oninput: move |e| description.set(e.value().clone()),
@@ -4345,7 +4345,7 @@ fn TransactionEditForm(
                             div { key: "{idx}", class: "flex flex-wrap gap-2 items-center",
                                 AccountInput {
                                     wrapper_class: "flex-1 min-w-[200px]".to_string(),
-                                    input_class: "w-full px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent".to_string(),
+                                    input_class: "w-full px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent".to_string(),
                                     placeholder: "Account (e.g. Expenses:Groceries)".to_string(),
                                     mode: AccountMode::Add,
                                     value: row.account.clone(),
@@ -4358,7 +4358,7 @@ fn TransactionEditForm(
                                     },
                                 }
                                 input {
-                                    class: "w-28 px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent",
+                                    class: "w-28 px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent",
                                     r#type: "text",
                                     placeholder: "0.00",
                                     value: "{row.amount}",
@@ -4371,7 +4371,7 @@ fn TransactionEditForm(
                                     },
                                 }
                                 input {
-                                    class: "w-20 px-3 py-2 bg-obsidian-sidebar border border-white/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent uppercase",
+                                    class: "w-20 px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm font-mono outline-none focus:border-obsidian-accent uppercase",
                                     r#type: "text",
                                     placeholder: "CAD",
                                     value: "{row.commodity}",
@@ -4518,7 +4518,7 @@ fn AttachmentViewer(meta: AttachmentMeta) -> Element {
             h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2",
                 "Attachment"
             }
-            div { class: "p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg space-y-3",
+            div { class: "p-3 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg space-y-3",
                 div { class: "flex items-center gap-2 text-xs text-obsidian-text-muted",
                     svg { class: "w-3.5 h-3.5 text-obsidian-accent",
                         fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
@@ -4544,13 +4544,13 @@ fn AttachmentViewer(meta: AttachmentMeta) -> Element {
                                 img {
                                     src: "{url}",
                                     alt: "{meta.filename}",
-                                    class: "max-w-full max-h-[600px] rounded border border-white/10",
+                                    class: "max-w-full max-h-[600px] rounded border border-obsidian-border/10",
                                 }
                             },
                             AttachmentRender::Pdf => rsx! {
                                 iframe {
                                     src: "{url}",
-                                    class: "w-full h-[600px] rounded border border-white/10 bg-white",
+                                    class: "w-full h-[600px] rounded border border-obsidian-border/10 bg-white",
                                     title: "{meta.filename}",
                                 }
                             },
@@ -4673,7 +4673,7 @@ fn AccountListView(on_back: EventHandler<()>) -> Element {
                 }
             }
         } else if show_empty {
-            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
                 "No accounts to show yet. Record a transaction or declare an account from Settings to populate this screen."
             }
         } else {
@@ -4739,7 +4739,7 @@ fn AccountSummaryCard(summary: AccountSummaryView) -> Element {
     let active_group = group_by();
 
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg",
             div { class: "flex items-baseline justify-between gap-3 mb-3",
                 button {
                     class: "flex items-baseline gap-2 min-w-0 text-left",
@@ -4781,7 +4781,7 @@ fn AccountSummaryCard(summary: AccountSummaryView) -> Element {
             }
 
             if !summary.balances.is_empty() {
-                div { class: "space-y-1 border-t border-white/5 pt-2",
+                div { class: "space-y-1 border-t border-obsidian-border/5 pt-2",
                     for bal in summary.balances.iter() {
                         div { class: "flex items-baseline justify-between text-xs text-obsidian-text-muted font-mono",
                             span { "{format_money(&bal.quantity, &bal.commodity)}" }
@@ -4799,7 +4799,7 @@ fn AccountSummaryCard(summary: AccountSummaryView) -> Element {
             }
 
             if is_open {
-                div { class: "mt-3 border-t border-white/5 pt-3",
+                div { class: "mt-3 border-t border-obsidian-border/5 pt-3",
                     // Institution | Product toggle.
                     div { class: "flex items-center gap-1 mb-2",
                         for (key , label) in [("institution" , "Institution") , ("product" , "Product")] {
@@ -5024,7 +5024,7 @@ fn DashboardView(on_back: EventHandler<()>, on_open_unmatched: EventHandler<()>)
 #[component]
 fn NetWorthCard(net_worth: Option<String>, base_currency: String) -> Element {
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg",
             div { class: "text-xs text-obsidian-text-muted uppercase tracking-wider mb-1",
                 "Net worth"
             }
@@ -5060,7 +5060,7 @@ fn UnmatchedCard(
     let border = if is_pending {
         "border-amber-500/40 hover:border-amber-400/60"
     } else {
-        "border-white/10 hover:border-obsidian-accent/40"
+        "border-obsidian-border/10 hover:border-obsidian-accent/40"
     };
 
     rsx! {
@@ -5105,7 +5105,7 @@ fn MonthlyTrendCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String)
     let hovered = *hover_idx.read();
     let n = buckets.len();
     rsx! {
-        div { class: "mt-3 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+        div { class: "mt-3 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg",
             div { class: "flex items-baseline justify-between mb-3",
                 div { class: "text-xs text-obsidian-text-muted uppercase tracking-wider",
                     "Income vs. spending — last {buckets.len()} months"
@@ -5194,7 +5194,7 @@ fn MonthlyTrendCard(buckets: Vec<MonthlyTrendBucketView>, base_currency: String)
 #[component]
 fn RecurringCard(recurring: Vec<RecurringObligationView>, base_currency: String) -> Element {
     rsx! {
-        div { class: "mt-3 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+        div { class: "mt-3 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg",
             div { class: "text-xs text-obsidian-text-muted uppercase tracking-wider mb-3",
                 "Recurring obligations"
             }
@@ -5252,7 +5252,7 @@ fn RecurringObligationRow(r: RecurringObligationView) -> Element {
     };
 
     rsx! {
-        div { class: "border-b border-white/5 last:border-b-0 py-1",
+        div { class: "border-b border-obsidian-border/5 last:border-b-0 py-1",
             button {
                 class: "w-full flex items-baseline justify-between text-sm gap-3 text-left",
                 onclick: toggle,
@@ -5535,7 +5535,7 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
         }
 
         // --- Add / edit form ---
-        div { class: "mb-6 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+        div { class: "mb-6 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg",
             div { class: "flex items-center justify-between mb-3",
                 div { class: "text-sm font-semibold text-obsidian-text",
                     if editing_some {
@@ -5559,7 +5559,7 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
                         "Category"
                     }
                     AccountInput {
-                        input_class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-60".to_string(),
+                        input_class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-60".to_string(),
                         placeholder: "Expenses:Groceries".to_string(),
                         mode: AccountMode::Add,
                         disabled: editing_some,
@@ -5573,7 +5573,7 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
                             "Target amount"
                         }
                         input {
-                            class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
+                            class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
                             r#type: "text",
                             inputmode: "decimal",
                             placeholder: "0.00",
@@ -5586,7 +5586,7 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
                             "Cycle"
                         }
                         select {
-                            class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                            class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
                             value: "{period_input.read()}",
                             onchange: move |e| period_input.set(e.value()),
                             for (value, label) in PERIOD_CHOICES.iter() {
@@ -5629,7 +5629,7 @@ fn BudgetListView(on_back: EventHandler<()>) -> Element {
                 "Loading…"
             }
         } else if snapshot.is_empty() {
-            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
                 "No budgets yet. Add one above to start tracking a category target."
             }
         } else {
@@ -5668,7 +5668,7 @@ fn BudgetRowCard(
 ) -> Element {
     let period_text = period_label(&row.period);
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex flex-col gap-3",
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg flex flex-col gap-3",
             div { class: "flex items-center justify-between gap-3",
                 div { class: "min-w-0 flex-1",
                     div { class: "text-sm font-semibold text-obsidian-text truncate",
@@ -5680,7 +5680,7 @@ fn BudgetRowCard(
                 }
                 div { class: "flex gap-2 shrink-0",
                     button {
-                        class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-accent border border-white/10 hover:border-obsidian-accent/40 rounded",
+                        class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-accent border border-obsidian-border/10 hover:border-obsidian-accent/40 rounded",
                         onclick: move |_| on_edit.call(()),
                         "Edit"
                     }
@@ -5814,7 +5814,7 @@ fn RecurringReviewView(on_back: EventHandler<()>) -> Element {
             }
         }
 
-        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex items-center justify-between gap-3",
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg flex items-center justify-between gap-3",
             div { class: "min-w-0",
                 div { class: "text-sm font-semibold text-obsidian-text",
                     "Scan for new patterns"
@@ -5847,7 +5847,7 @@ fn RecurringReviewView(on_back: EventHandler<()>) -> Element {
                 "Loading…"
             }
         } else if snapshot.is_empty() {
-            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
                 "No detected patterns awaiting review. Run a scan to surface new candidates, or check back after more transactions accumulate."
             }
         } else {
@@ -5908,7 +5908,7 @@ fn RecurringRowCard(
     };
 
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg flex flex-col gap-3",
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg flex flex-col gap-3",
             div { class: "min-w-0",
                 div { class: "text-sm font-semibold text-obsidian-text truncate",
                     "{row.vendor}"
@@ -5945,7 +5945,7 @@ fn RecurringRowCard(
             }
 
             if *expanded.read() {
-                div { class: "border-t border-white/5 pt-3 space-y-1.5",
+                div { class: "border-t border-obsidian-border/5 pt-3 space-y-1.5",
                     if *loading.read() {
                         div { class: "text-xs text-obsidian-text-muted", "Loading transactions…" }
                     } else if matches.read().is_empty() {
@@ -6246,13 +6246,13 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
             }
         }
 
-        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
             div {
                 label { class: "block text-xs text-obsidian-text-muted mb-1",
                     "Source account"
                 }
                 AccountInput {
-                    input_class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                    input_class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
                     placeholder: "Assets:Bank:Chequing".to_string(),
                     mode: AccountMode::Add,
                     value: source_account.read().clone(),
@@ -6265,7 +6265,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         "Statement label"
                     }
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
                         r#type: "text",
                         placeholder: "chequing-2026-09",
                         value: "{statement_source.read()}",
@@ -6280,7 +6280,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         "Commodity"
                     }
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
                         r#type: "text",
                         value: "{commodity.read()}",
                         oninput: move |e| commodity.set(e.value()),
@@ -6294,7 +6294,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         "Institution"
                     }
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
                         r#type: "text",
                         placeholder: "who holds it",
                         value: "{institution.read()}",
@@ -6310,7 +6310,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         "Statement format"
                     }
                     select {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
                         value: "{format.read()}",
                         onchange: move |e| format.set(e.value()),
                         option { value: "chequing", "Chequing (no header row)" }
@@ -6331,7 +6331,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                         "Password secret name (leave blank if the PDF is not encrypted)"
                     }
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none",
                         r#type: "text",
                         placeholder: "name of an entry in the server's secrets",
                         value: "{password_secret.read()}",
@@ -6373,7 +6373,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
         // A parser that refuses to skip silently is worth nothing if this panel
         // does not exist — the guarantee only reaches the user here.
         if let Some(result) = last_result.read().clone() {
-            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
                 div { class: "text-sm font-semibold text-obsidian-text", "Import report" }
 
                 div { class: "text-xs text-obsidian-text-muted",
@@ -6439,7 +6439,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
             }
         }
 
-        div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-xs text-obsidian-text-muted space-y-2",
+        div { class: "p-4 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg text-xs text-obsidian-text-muted space-y-2",
             div { class: "font-semibold text-obsidian-text", "What this does" }
             div {
                 "Each parsed row becomes one transaction with a posting on the source account and a balancing entry on the Unmatched clearing account. Use the Reconcile screen to pair these against captured receipts or auto-imported transactions."
@@ -6470,7 +6470,7 @@ fn confidence_color_class(score: f64) -> &'static str {
     } else if score >= 0.6 {
         "bg-amber-400/15 text-amber-200 border-amber-400/30"
     } else {
-        "bg-obsidian-text-muted/10 text-obsidian-text-muted border-white/10"
+        "bg-obsidian-text-muted/10 text-obsidian-text-muted border-obsidian-border/10"
     }
 }
 
@@ -6580,7 +6580,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
             }
         }
 
-        div { class: "mb-4 p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-xs text-obsidian-text-muted",
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg text-xs text-obsidian-text-muted",
             "Pairs of Unmatched-touching transactions whose amounts cancel out. Merge accepts the pair into one transaction (with the statement side automatically cleared); Skip hides the pair until next reload."
         }
 
@@ -6632,7 +6632,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
         // no candidate. User assigns a category to convert the Unmatched
         // leg into a real category leg; statement-sourced rows auto-clear.
         if !no_match_empty {
-            div { class: "mt-6 mb-3 border-b border-white/5 pb-2",
+            div { class: "mt-6 mb-3 border-b border-obsidian-border/5 pb-2",
                 h2 { class: "text-sm font-bold text-obsidian-text",
                     "No-match transactions ({no_match_snapshot.len()})"
                 }
@@ -6654,7 +6654,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
             }
         } else if !is_loading && visible_empty {
             // True empty state — no pairs AND no no-match rows.
-            div { class: "p-6 bg-obsidian-sidebar/60 border border-white/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+            div { class: "p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
                 "No reconciliation candidates. Import a statement or wait for more auto-imported transactions to accumulate."
             }
         }
@@ -6678,7 +6678,7 @@ fn NoMatchRowCard(row: ReconciliationTxnPreview, on_resolve: EventHandler<String
     };
 
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
             div { class: "min-w-0",
                 div { class: "text-sm font-semibold text-obsidian-text truncate",
                     "{row.description}"
@@ -6690,7 +6690,7 @@ fn NoMatchRowCard(row: ReconciliationTxnPreview, on_resolve: EventHandler<String
             div { class: "flex gap-2",
                 AccountInput {
                     wrapper_class: "flex-1".to_string(),
-                    input_class: "w-full px-3 py-1.5 bg-obsidian-bg border border-white/10 rounded text-xs text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                    input_class: "w-full px-3 py-1.5 bg-obsidian-bg border border-obsidian-border/10 rounded text-xs text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
                     placeholder: "Expenses:Groceries".to_string(),
                     mode: AccountMode::Add,
                     value: category_input.read().clone(),
@@ -6719,7 +6719,7 @@ fn CandidateCard(
     let conf = confidence_label(cand.score);
     let conf_class = confidence_color_class(cand.score);
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
             div { class: "flex items-center gap-2",
                 span {
                     class: "px-2 py-0.5 text-xs font-semibold border rounded-full {conf_class}",
@@ -6740,7 +6740,7 @@ fn CandidateCard(
             }
             div { class: "flex gap-2 justify-end pt-1",
                 button {
-                    class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-text border border-white/10 hover:border-white/20 rounded disabled:opacity-50",
+                    class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-text border border-obsidian-border/10 hover:border-obsidian-border/20 rounded disabled:opacity-50",
                     disabled: is_merging,
                     onclick: move |_| on_dismiss.call(()),
                     "Skip"
@@ -6760,7 +6760,7 @@ fn CandidateCard(
 fn CandidateSide(txn: crate::types::ReconciliationTxnPreview) -> Element {
     let source_label = txn.statement_source.as_deref().unwrap_or("captured");
     rsx! {
-        div { class: "p-3 bg-obsidian-bg/60 border border-white/5 rounded text-xs space-y-1",
+        div { class: "p-3 bg-obsidian-bg/60 border border-obsidian-border/5 rounded text-xs space-y-1",
             div { class: "text-obsidian-text font-medium truncate",
                 "{txn.description}"
             }
@@ -6822,11 +6822,11 @@ fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
             }
         }
 
-        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
             div {
                 label { class: "block text-xs text-obsidian-text-muted mb-1", "Account" }
                 AccountInput {
-                    input_class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                    input_class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
                     placeholder: "Assets:Bank:Chequing".to_string(),
                     mode: AccountMode::Query,
                     value: account.read().clone(),
@@ -6837,7 +6837,7 @@ fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
                 div {
                     label { class: "block text-xs text-obsidian-text-muted mb-1", "Commodity" }
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
                         r#type: "text",
                         value: "{commodity.read()}",
                         oninput: move |e| commodity.set(e.value()),
@@ -6846,7 +6846,7 @@ fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
                 div {
                     label { class: "block text-xs text-obsidian-text-muted mb-1", "Statement balance" }
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
                         r#type: "text",
                         inputmode: "decimal",
                         placeholder: "1500.00",
@@ -6858,7 +6858,7 @@ fn BalanceCheckFormView(on_back: EventHandler<()>) -> Element {
                     label { class: "block text-xs text-obsidian-text-muted mb-1", "As of" }
                     DateField {
                         value: as_of.read().clone(),
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none".to_string(),
                         on_input: move |v| as_of.set(v),
                     }
                 }
@@ -7007,13 +7007,13 @@ fn JournalImportView(on_back: EventHandler<()>) -> Element {
 
         // --- Idle / path-entry state ---
         if preview.read().is_none() && result.read().is_none() {
-            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
                 div {
                     label { class: "block text-xs text-obsidian-text-muted mb-1",
                         "Path to main.ledger"
                     }
                     input {
-                        class: "w-full px-3 py-2 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
+                        class: "w-full px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none",
                         r#type: "text",
                         placeholder: "/home/you/journals/main.ledger",
                         value: "{path.read()}",
@@ -7034,7 +7034,7 @@ fn JournalImportView(on_back: EventHandler<()>) -> Element {
 
         // --- Previewed state ---
         if let Some(view) = preview.read().clone() {
-            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-white/10 rounded-lg space-y-3",
+            div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
                 div { class: "grid grid-cols-2 md:grid-cols-4 gap-3 text-sm",
                     StatCell { label: "Files", value: "{view.files_parsed}" }
                     StatCell { label: "Transactions", value: "{view.transactions_count}" }
@@ -7125,7 +7125,7 @@ fn JournalImportView(on_back: EventHandler<()>) -> Element {
                     if *loading.read() { "Committing…" } else { "Commit import" }
                 }
                 button {
-                    class: "px-4 py-2 bg-obsidian-sidebar border border-white/10 hover:border-white/20 text-obsidian-text rounded text-sm",
+                    class: "px-4 py-2 bg-obsidian-sidebar border border-obsidian-border/10 hover:border-obsidian-border/20 text-obsidian-text rounded text-sm",
                     onclick: move |_| { preview.set(None); error.set(None); },
                     "Cancel"
                 }
@@ -7154,7 +7154,7 @@ fn JournalImportView(on_back: EventHandler<()>) -> Element {
                 }
             }
             button {
-                class: "px-4 py-2 bg-obsidian-sidebar border border-white/10 hover:border-white/20 text-obsidian-text rounded text-sm",
+                class: "px-4 py-2 bg-obsidian-sidebar border border-obsidian-border/10 hover:border-obsidian-border/20 text-obsidian-text rounded text-sm",
                 onclick: move |_| { result.set(None); on_back.call(()); },
                 "Back to Finances"
             }
@@ -7165,7 +7165,7 @@ fn JournalImportView(on_back: EventHandler<()>) -> Element {
 #[component]
 fn StatCell(label: &'static str, value: String) -> Element {
     rsx! {
-        div { class: "p-2 bg-obsidian-bg border border-white/5 rounded",
+        div { class: "p-2 bg-obsidian-bg border border-obsidian-border/5 rounded",
             div { class: "text-xs text-obsidian-text-muted", "{label}" }
             div { class: "text-lg font-semibold text-obsidian-text", "{value}" }
         }
@@ -7187,9 +7187,9 @@ fn AccountRow(
     let current_rename = renames.read().get(&stats.account).cloned();
     let rename_value = current_rename.unwrap_or_else(|| account_for_default.clone());
     let row_class = if included {
-        "flex items-center gap-2 p-2 bg-obsidian-bg/60 border border-white/5 rounded"
+        "flex items-center gap-2 p-2 bg-obsidian-bg/60 border border-obsidian-border/5 rounded"
     } else {
-        "flex items-center gap-2 p-2 bg-obsidian-bg/30 border border-white/5 rounded opacity-50"
+        "flex items-center gap-2 p-2 bg-obsidian-bg/30 border border-obsidian-border/5 rounded opacity-50"
     };
     rsx! {
         div { class: "{row_class}",
@@ -7215,7 +7215,7 @@ fn AccountRow(
             }
             AccountInput {
                 wrapper_class: "w-44".to_string(),
-                input_class: "w-full px-2 py-1 bg-obsidian-bg border border-white/10 rounded text-xs text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                input_class: "w-full px-2 py-1 bg-obsidian-bg border border-obsidian-border/10 rounded text-xs text-obsidian-text focus:border-obsidian-accent/60 focus:outline-none".to_string(),
                 placeholder: "rename to…".to_string(),
                 mode: AccountMode::Add,
                 value: rename_value.clone(),
@@ -7235,7 +7235,7 @@ fn AccountRow(
 #[component]
 fn SampleTxnRow(txn: crate::types::JournalImportSampleTxn) -> Element {
     rsx! {
-        div { class: "p-2 bg-obsidian-bg/60 border border-white/5 rounded text-xs",
+        div { class: "p-2 bg-obsidian-bg/60 border border-obsidian-border/5 rounded text-xs",
             div { class: "flex justify-between items-baseline",
                 div { class: "font-semibold text-obsidian-text", "{txn.date} · {txn.description}" }
                 div { class: "text-obsidian-text-muted font-mono", "{txn.txn_id}" }

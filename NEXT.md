@@ -1,40 +1,43 @@
 # NEXT
 
-**Next action: generalization Phase A — the config foundation.** Item 2 is **designed, not
-built**: 12 decisions settled 2026-09-05, phases in `tasks.md` § Generalization, reasoning in
-`~/.claude/plans/lets-continue-deep-blanket.md`. Order A → B → C, each its own session; item 3
-(AI/LLM/ML) follows. ⏰ **Phase B (inert feature toggles) is the only deadline-bearing item** —
-it lands before the next feature ships, or every feature added this year is a retrofit owed.
+**Next action: generalization Phase B — inert feature toggles.** ⏰ The only deadline-bearing
+item: it lands before the next feature ships, or every feature added this year is a retrofit
+owed. **Phase A shipped 2026-09-06** — config foundation, light theme, accent hues. Phases in
+`tasks.md` § Generalization; reasoning in `~/.claude/plans/lets-continue-deep-blanket.md`.
 
 ## Decisions in force — inherit these
 - ⛔ **FINANCES ARE DEFERRED INDEFINITELY.** Don't start, propose, or "just fix" an item. State
-  only: tab offline, both bank sources OFF, categorization to `Unmatched`. This also puts
-  statement layout strings **out of generalization's scope**, despite item 2 naming them.
-- **`docs/src/invariants.md` is the contract** (mdbook → Pages): check the implementation
-  **against** it, never back-fit it to whatever got built.
-- **Client customization is data; server customization may be code.** From fork cost, not
-  taste: the overlay swaps a binary's `main` and builds in CI; a client fork means NDK +
-  signing + publishing your own `/updates`. The client has no composition point at all.
-- **Declared record types are the target** — identity rule, template, properties, completeness,
-  auto-close. Journal is one instance. **No new code may assume one journal type.** First run
-  applies the *minimal* preset; the user's three prompts ship as the *reflective* preset.
-- **"Off" means inert**: no tab, commands refuse, **projections and schedulers never start**;
-  reversible by replay. Features do **not** map 1:1 onto projections (`NotesProjection` serves
-  journal *and* notes), so an explicit feature → (tab, projections, schedulers, commands,
-  settings) map is required.
-- **UI stops at schema-driven forms** — no view DSL, no UI plugins (WASM can't load UI at
-  runtime). **Both platform doors held open, neither built:** no new client code spawns
-  processes or assumes POSIX; native behaviour is a labelled shim, never a pattern to copy.
-- **Config = event-sourced baseline + per-device override; the device wins when set.** Startup
-  reads the config projection's **persisted table** (no replay) before registering projections
-  ⇒ a toggle set elsewhere applies **at next launch**. Record types have no such lag.
+  only: tab offline, both bank sources OFF, categorization to `Unmatched`.
+- **`docs/src/invariants.md` is the contract** — check against it, never back-fit it.
+- **Client customization is data; server customization may be code.** From fork cost: a client
+  fork means NDK + signing + your own `/updates`.
+- **Declared record types are the target** (Phase C). **No new code may assume one journal type.**
+- **"Off" means inert**: no tab, commands refuse, projections and schedulers never start;
+  reversible by replay. Features do **not** map 1:1 onto projections, so an explicit feature →
+  (tab, projections, schedulers, commands, settings) map is required.
+- **UI stops at schema-driven forms** — no view DSL, no UI plugins.
+- **Config is built and settled.** `core/src/config.rs`: closed `ConfigKey`, `ConfigValue`
+  Bool/Text/Int, `ResolvedConfig::get` → value + winning `Layer`; `ConfigProjection` →
+  `app_config`; device overrides in `config_overrides.json`, **never synced**. Startup reads the
+  materialized table *before* registering projections ⇒ a value set elsewhere applies at next
+  launch. Adding a key is one enum arm plus its match arms — no migration.
+
+## Phase B's two traps, both found while building A
+- ⚠️ `ProjectionRunner::catch_up` (`core/src/events/projection.rs:148`) takes the min watermark
+  over **every row** in `projection_versions`, unfiltered by what is registered. The moment B
+  stops registering a disabled projection, that frozen row replays the whole log every launch.
+  **Filter that query by registered name.**
+- ⚠️ `server/src/routes/sync.rs:38` `?`s out on the first unknown event type, so one unrecognised
+  event **400s the whole push batch**. Deploy the server before running a client that emits a new
+  event type; until then test under `OMNI_DATA_DIR`, which forces localhost.
 
 ## Do NOT re-survey
-Generalization design is **CLOSED** — inherit the decisions, don't reopen. The server is
-**already** open-core (overlay = sibling crate with its own `main`; subprocess contract frozen)
-and runs **zero** projections (`server/src/lib.rs:207`). Verification PNGs are throwaway.
+Generalization design is CLOSED. The server is already open-core and runs zero projections.
+Verification PNGs are throwaway.
 
 ## Open threads
-⚠️ **Disk AND RAM both bind.** Never `cargo test -p A -p B` (~1.4G second artifact set); one
-crate at a time, `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0`. · `npm run copy:editor:dev` after
-every dx rebuild or CodeMirror 404s. · Curiosities→concepts + memory prune owed.
+146 raw palette utilities remain in `finances.rs` — light works there, its error/edge states look
+off; left alone under the finance hold. · Android `themes.xml` pins a charcoal `windowBackground`,
+so light likely flashes dark at cold start — unverified; on-device and the two-device override
+check are both deferred to the next release. · Never `cargo test -p A -p B`. ·
+`npm run copy:editor:dev` after every dx rebuild. · Curiosities→concepts + memory prune owed.

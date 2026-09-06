@@ -25028,7 +25028,7 @@
 
   // assets/js/editor.js
   var SANS_STACK = 'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
-  var omniEditorTheme = EditorView.theme({
+  var themeSpec = {
     "&": {
       flex: "1 0 auto",
       // Driven by a CSS variable so the size setting can change it live, without
@@ -25036,7 +25036,7 @@
       // undo history and the caret position). The fallback keeps a stock 16px
       // for any surface that never sets the variable.
       fontSize: "var(--editor-font-size, 16px)",
-      color: "#dcddde"
+      color: "rgb(var(--color-text))"
     },
     ".cm-scroller": {
       fontFamily: SANS_STACK,
@@ -25047,7 +25047,7 @@
       // Minimal horizontal inset — the page column supplies the gutter. Some
       // bottom breathing room so the last line isn't glued to the edge.
       padding: "10px 2px 48px",
-      caretColor: "#dcddde"
+      caretColor: "rgb(var(--color-text))"
     },
     ".cm-line": {
       padding: "0 4px"
@@ -25072,37 +25072,34 @@
       opacity: "0.65"
     },
     ".cm-cursor, .cm-dropCursor": {
-      borderLeftColor: "#448aff",
+      borderLeftColor: "rgb(var(--color-accent))",
       borderLeftWidth: "2px"
     },
-    // Selection colors, and the reason they are spelled out rather than inherited.
+    // ⚠️ Selection colors are spelled out here and must stay that way.
     //
-    // This theme is declared `{ dark: true }` below. Without that flag CodeMirror
-    // stamped `cm-light` on the editor and applied its LIGHT selection defaults
-    // (#d9d9d9 unfocused, #d7d4f0 focused) underneath #dcddde text — a near-white
-    // band under near-white glyphs, which is the "highlight unreadable in dark
-    // mode" report.
-    //
-    // Setting the flag alone is not enough: CM's dark defaults are #222/#233,
-    // which against this editor's #1e1e1e ground are almost invisible. So the
-    // band is the app accent at low alpha — clearly present, still letting the
-    // text carry the contrast.
+    // Inheriting them broke twice, in opposite directions. Without the dark flag
+    // CodeMirror stamps `cm-light` and uses its LIGHT selection defaults (#d9d9d9
+    // unfocused, #d7d4f0 focused) under near-white text — a pale band under pale
+    // glyphs, the "highlight unreadable in dark mode" report. With the flag, its
+    // dark defaults (#222/#233) are almost invisible against the #1e1e1e ground.
+    // Neither default is usable, so the band is the app accent at low alpha in
+    // both themes: clearly present, and the text still carries the contrast.
     //
     // The focused selector mirrors the base theme's own child-combinator shape so
     // specificity matches and theme order decides the winner. Shortening it loses
     // to the base rule and the selection silently reverts.
     ".cm-selectionBackground": {
-      background: "rgba(68, 138, 255, 0.25)"
+      background: "rgb(var(--color-accent) / 0.25)"
     },
     "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
-      background: "rgba(68, 138, 255, 0.38)"
+      background: "rgb(var(--color-accent) / 0.38)"
     },
     // #344 reveal-on-select line completion time: floated to the right edge of the
     // active line, small and muted so it reads as metadata, never selectable.
     ".cm-ts-reveal": {
       float: "right",
       marginLeft: "1.5em",
-      color: "#6f747d",
+      color: "rgb(var(--color-text-muted))",
       fontSize: "0.72em",
       lineHeight: "1.65",
       letterSpacing: "0.02em",
@@ -25111,7 +25108,30 @@
       pointerEvents: "none",
       whiteSpace: "nowrap"
     }
-  }, { dark: true });
+  };
+  var omniEditorThemeDark = EditorView.theme(themeSpec, { dark: true });
+  var omniEditorThemeLight = EditorView.theme(themeSpec, { dark: false });
+  var themeCompartment = new Compartment();
+  function documentPrefersDark() {
+    const theme2 = document.documentElement.getAttribute("data-theme") || "dark";
+    return !theme2.startsWith("light");
+  }
+  function omniEditorThemeFor(dark) {
+    return dark ? omniEditorThemeDark : omniEditorThemeLight;
+  }
+  if (typeof MutationObserver !== "undefined") {
+    new MutationObserver(() => {
+      if (!editorView) return;
+      editorView.dispatch({
+        effects: themeCompartment.reconfigure(
+          omniEditorThemeFor(documentPrefersDark())
+        )
+      });
+    }).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"]
+    });
+  }
   var omniHighlight = HighlightStyle.define([
     { tag: tags.strikethrough, class: "cm-omni-strike" }
   ]);
@@ -25605,7 +25625,7 @@
       // immediately cover it.
       EditorView.scrollMargins.of(() => ({ top: 48, bottom: 48 })),
       proseInputAttributes,
-      omniEditorTheme,
+      themeCompartment.of(omniEditorThemeFor(documentPrefersDark())),
       autoWrapFilter,
       checkboxPlugin
     ];

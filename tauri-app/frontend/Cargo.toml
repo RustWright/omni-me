@@ -35,6 +35,10 @@ web-sys = { version = "0.3", features = [
     "ErrorEvent",
     "PromiseRejectionEvent",
     "Storage",
+    # Theme resolution: `system` means "follow prefers-color-scheme", which needs
+    # both the query itself and its change event so a theme switch in the OS
+    # reaches a running app instead of waiting for the next launch.
+    "MediaQueryList",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

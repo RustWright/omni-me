@@ -289,7 +289,7 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
                 div { class: "flex-1 relative",
                     Icon { name: IconName::Search, class: "absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-obsidian-text-muted" }
                     input {
-                        class: "w-full pl-10 pr-10 py-2 bg-obsidian-sidebar border border-white/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
+                        class: "w-full pl-10 pr-10 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-lg text-obsidian-text placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent transition-colors",
                         r#type: "text",
                         placeholder: "Search generic notes...",
                         value: "{query}",
@@ -677,7 +677,7 @@ fn NoteEditor(note_id: Option<String>, on_back: EventHandler<()>) -> Element {
                     // intrinsic (auto) min-width, so on a narrow (mobile) header
                     // the row overflows and shoves the Save button off-screen.
                     // min-w-0 lets flex actually shrink the field. (friction 2026-07-04)
-                    class: "flex-1 min-w-0 px-3 py-2 bg-transparent border-b border-white/10 text-lg font-bold text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                    class: "flex-1 min-w-0 px-3 py-2 bg-transparent border-b border-obsidian-border/10 text-lg font-bold text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
                     r#type: "text",
                     placeholder: if local_note_id.read().is_none() { "Untitled note" } else { "Title" },
                     value: "{title}",
@@ -796,7 +796,7 @@ fn NotePropertiesPanel(model: Signal<NoteProps>, on_change: EventHandler<()>) ->
     let has_legacy = !props.read().legacy_raw.is_empty();
 
     rsx! {
-        div { class: "mb-4 rounded-lg border border-white/5 bg-obsidian-sidebar/30 divide-y divide-white/5 text-sm",
+        div { class: "mb-4 rounded-lg border border-obsidian-border/5 bg-obsidian-sidebar/30 divide-y divide-obsidian-border/5 text-sm",
             // Tags — chip editor.
             div { class: "flex items-start gap-3 px-3 py-2",
                 span { class: "w-24 shrink-0 pt-1 text-xs font-medium text-obsidian-text-muted", "Tags" }
@@ -832,7 +832,7 @@ fn NotePropertiesPanel(model: Signal<NoteProps>, on_change: EventHandler<()>) ->
                 }
                 if *show_raw.read() {
                     textarea {
-                        class: "mt-2 w-full bg-obsidian-bg/50 border border-white/5 rounded p-2 text-xs font-mono text-obsidian-text resize-y focus:outline-none focus:border-obsidian-accent/40",
+                        class: "mt-2 w-full bg-obsidian-bg/50 border border-obsidian-border/5 rounded p-2 text-xs font-mono text-obsidian-text resize-y focus:outline-none focus:border-obsidian-accent/40",
                         rows: "3",
                         placeholder: "Other frontmatter, preserved verbatim",
                         value: "{props.read().legacy_raw}",

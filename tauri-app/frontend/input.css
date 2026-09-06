@@ -37,8 +37,14 @@ body {
  * Color values are SPACE-SEPARATED RGB CHANNELS (not hex) so Tailwind's opacity
  * modifier works: `bg-obsidian-accent/10` compiles to
  * `rgb(var(--color-accent) / 0.1)`. tailwind.config.js references each of these
- * as `rgb(var(--…) / <alpha-value>)`. A future light theme overrides this whole
- * block under a `:root[data-theme="light"]` selector — nothing else changes. */
+ * as `rgb(var(--…) / <alpha-value>)`. The light themes below override this whole
+ * block under a `:root[data-theme=…]` selector — nothing else changes.
+ *
+ * ⚠️ `--color-border` is the theme's neutral INK, not only its hairlines. It
+ * backs `border-obsidian-border/10` (a rule), `bg-obsidian-border/5` (a hover
+ * wash) and `divide-obsidian-border/5` alike, which is why it flips to black in
+ * a light theme rather than staying white. A value that reads well as a line but
+ * not as a wash breaks half its call sites silently. */
 :root {
     /* Surfaces — dark "Blue Topaz". -bg is the page; -sidebar the nav/recessed
      * panels (#161616); -surface an elevated card on the content area (#262626). */
@@ -57,6 +63,65 @@ body {
     --color-error: 248 113 113;    /* red-400    */
 }
 
+/* ── Light theme ────────────────────────────────────────────────────────────
+ * Warm paper rather than cool white: this is a writing surface first, and a
+ * pure-cool ground glares under sustained reading. Three properties hold here,
+ * and breaking any of them breaks call sites rather than merely looking
+ * different:
+ *   1. -sidebar RECEDES from -bg and -surface ELEVATES above it, mirroring the
+ *      dark ramp. A pure-white -bg would leave -surface nowhere to go, and
+ *      every card would stop reading as a card.
+ *   2. -border flips to black, so every `/5` and `/10` alpha still contrasts.
+ *   3. Status colors drop to the -700 family: the dark theme's -400s are picked
+ *      to glow on charcoal and wash out on paper. */
+:root[data-theme="light"] {
+    color-scheme: light;
+    --color-bg: 250 249 246;         /* #faf9f6 */
+    --color-sidebar: 243 241 236;    /* #f3f1ec */
+    --color-surface: 255 255 255;
+    --color-accent: 27 99 194;       /* #1b63c2 — darkened; #448aff is ~3:1 on paper */
+    --color-text: 38 34 30;          /* #26221e */
+    /* 5.7:1 on -bg. The obvious #746c62 measures 4.65:1 — passing AA by a hair
+     * is what "light grey on white" looks like from the outside. */
+    --color-text-muted: 102 95 85;   /* #665f55 */
+    --color-border: 0 0 0;
+    --color-success: 21 128 61;      /* green-700 */
+    --color-warn: 180 83 9;          /* amber-700 */
+    --color-error: 185 28 28;        /* red-700   */
+}
+
+/* ── Accent hues ────────────────────────────────────────────────────────────
+ * `data-accent` on <html>, composing with `data-theme`. Every hue needs BOTH
+ * variants: one tuned to glow on charcoal washes out on paper, and one dark
+ * enough to read on paper disappears into charcoal. The
+ * `[data-theme="light"][data-accent]` pair is (0,3,0) against the dark rule's
+ * (0,2,0), so the light value wins without !important.
+ *
+ * ⚠️ Two constraints on any hue added here:
+ *   1. Primary buttons paint white text on the accent, so a DARK-theme accent
+ *      must stay dark enough to carry it. That is why these are the -500/-600
+ *      family and not the -400s the status colors use.
+ *   2. `amber` and `rose` sit near the warn and error semantics. They are
+ *      offered anyway because the two never share a surface — accent is
+ *      navigation and primary actions, status is banners and dots — but a new
+ *      hue that collides in the same *place* would be a real ambiguity.
+ *
+ * Blue is unchanged from the pre-configurable value, so the default look is
+ * byte-identical for anyone who never opens the control. */
+:root[data-accent="blue"]   { --color-accent: 68 138 255; }  /* #448aff */
+:root[data-accent="violet"] { --color-accent: 139 92 246; }  /* #8b5cf6 */
+:root[data-accent="teal"]   { --color-accent: 13 148 136; }  /* #0d9488 */
+:root[data-accent="green"]  { --color-accent: 22 163 74; }   /* #16a34a */
+:root[data-accent="amber"]  { --color-accent: 217 119 6; }   /* #d97706 */
+:root[data-accent="rose"]   { --color-accent: 244 63 94; }   /* #f43f5e */
+
+:root[data-theme="light"][data-accent="blue"]   { --color-accent: 27 99 194; }  /* #1b63c2 */
+:root[data-theme="light"][data-accent="violet"] { --color-accent: 109 40 217; } /* #6d28d9 */
+:root[data-theme="light"][data-accent="teal"]   { --color-accent: 15 118 110; } /* #0f766e */
+:root[data-theme="light"][data-accent="green"]  { --color-accent: 21 128 61; }  /* #15803d */
+:root[data-theme="light"][data-accent="amber"]  { --color-accent: 180 83 9; }   /* #b45309 */
+:root[data-theme="light"][data-accent="rose"]   { --color-accent: 190 18 60; }  /* #be123c */
+
 /* Native <select> dark styling. webkit2gtk ignores CSS background/color on a
  * native <select> unless the native appearance is cleared, so color-scheme:dark
  * alone left the CLOSED picker box unreadable on the Linux desktop (friction
@@ -68,8 +133,8 @@ body {
 select {
     -webkit-appearance: none;
     appearance: none;
-    background-color: #161616;
-    color: #dcddde;
+    background-color: rgb(var(--color-sidebar));
+    color: rgb(var(--color-text));
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23a3a3a3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.6rem center;
@@ -79,6 +144,12 @@ select {
      * specificity) — otherwise a narrow/auto-width select's value slides under
      * the arrow (e.g. the auto-width currency picker). */
     padding-right: 2rem !important;
+}
+
+/* The chevron is a data URI, so its stroke cannot read a custom property — the
+ * whole image has to be restated per theme. `%23` is an escaped `#`. */
+:root[data-theme="light"] select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23665f55' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
 }
 
 /* ── Boot splash ────────────────────────────────────────────────────────────

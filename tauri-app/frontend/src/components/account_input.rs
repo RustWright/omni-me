@@ -155,7 +155,7 @@ pub fn AccountInput(
     };
     let unknown_class = match mode {
         AccountMode::Add => "mt-1 text-[11px] text-obsidian-text-muted",
-        AccountMode::Query => "mt-1 text-[11px] text-amber-400",
+        AccountMode::Query => "mt-1 text-[11px] text-warn",
     };
 
     let dropdown_open = !disabled && *open.read() && !suggestions.is_empty();
@@ -222,14 +222,14 @@ pub fn AccountInput(
             }
 
             if dropdown_open {
-                ul { class: "absolute z-30 mt-1 w-full max-h-60 overflow-y-auto bg-obsidian-sidebar border border-white/10 rounded-md shadow-lg shadow-black/40",
+                ul { class: "absolute z-30 mt-1 w-full max-h-60 overflow-y-auto bg-obsidian-sidebar border border-obsidian-border/10 rounded-md shadow-lg shadow-black/40",
                     for (i, s) in suggestions.iter().enumerate() {
                         li {
                             key: "{s}",
                             class: if i == hl {
-                                "px-3 py-1.5 text-sm cursor-pointer bg-white/10 text-obsidian-text"
+                                "px-3 py-1.5 text-sm cursor-pointer bg-obsidian-border/10 text-obsidian-text"
                             } else {
-                                "px-3 py-1.5 text-sm cursor-pointer text-obsidian-text hover:bg-white/5"
+                                "px-3 py-1.5 text-sm cursor-pointer text-obsidian-text hover:bg-obsidian-border/5"
                             },
                             // Select on mousedown (fires before the input's blur),
                             // and prevent_default so focus stays on the input.

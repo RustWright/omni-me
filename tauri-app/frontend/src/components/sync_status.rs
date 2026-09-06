@@ -47,15 +47,15 @@ pub fn SyncStatusIndicator() -> Element {
     let snap = snapshot.read();
     let current = snap.status;
     let (label, dot_class, text_class, animated) = match current {
-        SyncState::Idle => ("Synced", "bg-green-500", "text-obsidian-text-muted", false),
+        SyncState::Idle => ("Synced", "bg-success", "text-obsidian-text-muted", false),
         SyncState::Syncing => (
             "Syncing",
             "bg-obsidian-accent",
             "text-obsidian-accent",
             true,
         ),
-        SyncState::Retrying => ("Retrying", "bg-yellow-500", "text-yellow-500", true),
-        SyncState::Error => ("Sync error", "bg-red-500", "text-red-400", false),
+        SyncState::Retrying => ("Retrying", "bg-warn", "text-warn", true),
+        SyncState::Error => ("Sync error", "bg-error", "text-error", false),
     };
 
     let dot_pulse = if animated { "animate-pulse" } else { "" };

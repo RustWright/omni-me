@@ -209,6 +209,18 @@ pub fn use_boot_hold(ready: impl Fn() -> bool + Copy + 'static) {
 #[derive(Clone, Copy)]
 pub struct RestoreProgress(pub Signal<u64>);
 
+/// The theme preference as chosen — `dark` | `light` | `system` — not as
+/// resolved. Shared so the Settings control can apply a change the moment it is
+/// made instead of at the next launch: theming is the one config key that has no
+/// startup-registration lag to respect.
+#[derive(Clone, Copy)]
+pub struct ThemePref(pub Signal<String>);
+
+/// The chosen accent hue. Separate from [`ThemePref`] because the two are
+/// independent axes: every hue has a variant in both themes.
+#[derive(Clone, Copy)]
+pub struct AccentPref(pub Signal<String>);
+
 /// Left-edge strip width (CSS px) within which a touch may begin a drawer-open
 /// swipe (1.12). The matching native `setSystemGestureExclusionRects` keeps
 /// Android's back-gesture from stealing swipes in this strip.
@@ -535,6 +547,46 @@ fn App() -> Element {
         }
     });
 
+    // Appearance. Both keys are held as the *chosen* value, not the resolved one,
+    // so the Settings control shows what was picked — `system` has to keep
+    // reading as "system" there even while it currently paints dark.
+    //
+    // Seeded to the built-in defaults and corrected once config arrives, and
+    // deliberately NOT gated behind the boot splash: the splash paints from these
+    // very tokens, so waiting would mean showing it in the wrong theme first.
+    let mut theme_signal = use_signal(|| "dark".to_string());
+    let mut accent_signal = use_signal(|| "blue".to_string());
+    use_context_provider(|| ThemePref(theme_signal));
+    use_context_provider(|| AccentPref(accent_signal));
+    use_future(move || async move {
+        let Ok(entries) = bridge::invoke_get_config().await else {
+            return;
+        };
+        let text_of = |key: &str| {
+            entries
+                .iter()
+                .find(|e| e.key == key)
+                .and_then(|e| match &e.effective {
+                    types::ConfigValue::Text(v) => Some(v.clone()),
+                    _ => None,
+                })
+        };
+        if let Some(theme) = text_of("appearance.theme") {
+            theme_signal.set(theme);
+        }
+        if let Some(accent) = text_of("appearance.accent") {
+            accent_signal.set(accent);
+        }
+    });
+    use_effect(move || bridge::apply_theme(&theme_signal.read()));
+    use_effect(move || bridge::apply_accent(&accent_signal.read()));
+    // A `system` theme has to keep following the OS while the app runs, not only
+    // at launch. Installed once; re-reads the signal on each flip, so a pinned
+    // theme correctly ignores the event.
+    use_hook(|| {
+        bridge::on_os_theme_change(move || bridge::apply_theme(&theme_signal.peek()));
+    });
+
     // Timezone: default to UTC, load from backend on mount.
     //
     // RETRIED, and the retry is load-bearing — not defensive padding. This fires
@@ -670,13 +722,13 @@ fn App() -> Element {
                     class: if *header_hidden.read() {
                         "flex items-center justify-end gap-3 px-4 md:px-6 bg-obsidian-bg/80 backdrop-blur-sm overflow-hidden transition-all duration-300 max-h-0 py-0 opacity-0 border-b border-transparent"
                     } else {
-                        "flex items-center justify-end gap-3 px-4 md:px-6 bg-obsidian-bg/80 backdrop-blur-sm overflow-hidden transition-all duration-300 max-h-16 py-3 opacity-100 border-b border-white/5"
+                        "flex items-center justify-end gap-3 px-4 md:px-6 bg-obsidian-bg/80 backdrop-blur-sm overflow-hidden transition-all duration-300 max-h-16 py-3 opacity-100 border-b border-obsidian-border/5"
                     },
                     // Hamburger — mobile only (desktop has the persistent SideNav).
                     // `mr-auto` keeps it hard-left while the sync chip stays right;
                     // when hidden at md+, `justify-end` keeps the chip right.
                     button {
-                        class: "md:hidden mr-auto p-1.5 -ml-1.5 rounded-md text-obsidian-text-muted hover:text-obsidian-text hover:bg-white/5 transition-colors",
+                        class: "md:hidden mr-auto p-1.5 -ml-1.5 rounded-md text-obsidian-text-muted hover:text-obsidian-text hover:bg-obsidian-border/5 transition-colors",
                         "aria-label": "Open navigation",
                         onclick: move |_| drawer_open.set(true),
                         svg { class: "w-6 h-6", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",

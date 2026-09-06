@@ -2,7 +2,12 @@ import { EditorView, minimalSetup } from "codemirror";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import { EditorState, RangeSetBuilder, Annotation } from "@codemirror/state";
+import {
+  EditorState,
+  RangeSetBuilder,
+  Annotation,
+  Compartment,
+} from "@codemirror/state";
 import { Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
 
 // ---------------------------------------------------------------------------
@@ -24,7 +29,11 @@ import { Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
 const SANS_STACK =
   'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
-const omniEditorTheme = EditorView.theme({
+// Colors below are the app's design tokens, read through `var()` rather than
+// spelled as hex. The editor is inside the same document as everything else, so
+// flipping `data-theme` on <html> repaints it with no reconfigure at all. Only
+// the `dark:` flag can't be a variable — see `omniEditorThemeFor`.
+const themeSpec = {
   "&": {
     flex: "1 0 auto",
     // Driven by a CSS variable so the size setting can change it live, without
@@ -32,7 +41,7 @@ const omniEditorTheme = EditorView.theme({
     // undo history and the caret position). The fallback keeps a stock 16px
     // for any surface that never sets the variable.
     fontSize: "var(--editor-font-size, 16px)",
-    color: "#dcddde",
+    color: "rgb(var(--color-text))",
   },
   ".cm-scroller": {
     fontFamily: SANS_STACK,
@@ -43,7 +52,7 @@ const omniEditorTheme = EditorView.theme({
     // Minimal horizontal inset — the page column supplies the gutter. Some
     // bottom breathing room so the last line isn't glued to the edge.
     padding: "10px 2px 48px",
-    caretColor: "#dcddde",
+    caretColor: "rgb(var(--color-text))",
   },
   ".cm-line": {
     padding: "0 4px",
@@ -68,37 +77,34 @@ const omniEditorTheme = EditorView.theme({
     opacity: "0.65",
   },
   ".cm-cursor, .cm-dropCursor": {
-    borderLeftColor: "#448aff",
+    borderLeftColor: "rgb(var(--color-accent))",
     borderLeftWidth: "2px",
   },
-  // Selection colors, and the reason they are spelled out rather than inherited.
+  // ⚠️ Selection colors are spelled out here and must stay that way.
   //
-  // This theme is declared `{ dark: true }` below. Without that flag CodeMirror
-  // stamped `cm-light` on the editor and applied its LIGHT selection defaults
-  // (#d9d9d9 unfocused, #d7d4f0 focused) underneath #dcddde text — a near-white
-  // band under near-white glyphs, which is the "highlight unreadable in dark
-  // mode" report.
-  //
-  // Setting the flag alone is not enough: CM's dark defaults are #222/#233,
-  // which against this editor's #1e1e1e ground are almost invisible. So the
-  // band is the app accent at low alpha — clearly present, still letting the
-  // text carry the contrast.
+  // Inheriting them broke twice, in opposite directions. Without the dark flag
+  // CodeMirror stamps `cm-light` and uses its LIGHT selection defaults (#d9d9d9
+  // unfocused, #d7d4f0 focused) under near-white text — a pale band under pale
+  // glyphs, the "highlight unreadable in dark mode" report. With the flag, its
+  // dark defaults (#222/#233) are almost invisible against the #1e1e1e ground.
+  // Neither default is usable, so the band is the app accent at low alpha in
+  // both themes: clearly present, and the text still carries the contrast.
   //
   // The focused selector mirrors the base theme's own child-combinator shape so
   // specificity matches and theme order decides the winner. Shortening it loses
   // to the base rule and the selection silently reverts.
   ".cm-selectionBackground": {
-    background: "rgba(68, 138, 255, 0.25)",
+    background: "rgb(var(--color-accent) / 0.25)",
   },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
-    background: "rgba(68, 138, 255, 0.38)",
+    background: "rgb(var(--color-accent) / 0.38)",
   },
   // #344 reveal-on-select line completion time: floated to the right edge of the
   // active line, small and muted so it reads as metadata, never selectable.
   ".cm-ts-reveal": {
     float: "right",
     marginLeft: "1.5em",
-    color: "#6f747d",
+    color: "rgb(var(--color-text-muted))",
     fontSize: "0.72em",
     lineHeight: "1.65",
     letterSpacing: "0.02em",
@@ -107,7 +113,56 @@ const omniEditorTheme = EditorView.theme({
     pointerEvents: "none",
     whiteSpace: "nowrap",
   },
-}, { dark: true });
+};
+
+// Two themes from ONE spec, differing only in the `dark:` flag — the one part
+// of a CodeMirror theme that is a build-time boolean rather than a CSS value,
+// and so the only reason the editor needs a reconfigure on a theme change at
+// all. Deriving both from `themeSpec` is what stops them drifting: a rule added
+// to one is a rule added to both, by construction.
+//
+// The flag decides whether CodeMirror stamps `cm-dark` or `cm-light`, which in
+// turn picks its built-in defaults for anything this spec does not set. Getting
+// it backwards is not a crash, it is a slightly wrong shade somewhere — which is
+// exactly why it is worth wiring rather than hardcoding.
+const omniEditorThemeDark = EditorView.theme(themeSpec, { dark: true });
+const omniEditorThemeLight = EditorView.theme(themeSpec, { dark: false });
+const themeCompartment = new Compartment();
+
+/**
+ * Whether the document is currently on a dark theme.
+ *
+ * `data-theme` is always a concrete value — the Rust side resolves the `system`
+ * preference against `prefers-color-scheme` before stamping it, so this never
+ * has to. Absent means the default, which is dark.
+ * @returns {boolean}
+ */
+function documentPrefersDark() {
+  const theme = document.documentElement.getAttribute("data-theme") || "dark";
+  return !theme.startsWith("light");
+}
+
+function omniEditorThemeFor(dark) {
+  return dark ? omniEditorThemeDark : omniEditorThemeLight;
+}
+
+// Follow the same signal the CSS follows, rather than having the Rust side call
+// in. One observer for the module: there is only ever one live editor, and it
+// re-reads the attribute on each mutation, so this stays correct across
+// create/destroy cycles without any registration bookkeeping.
+if (typeof MutationObserver !== "undefined") {
+  new MutationObserver(() => {
+    if (!editorView) return;
+    editorView.dispatch({
+      effects: themeCompartment.reconfigure(
+        omniEditorThemeFor(documentPrefersDark()),
+      ),
+    });
+  }).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+}
 
 // A stable class name for the strikethrough mark, so the theme rule above can
 // target it. `minimalSetup` styles marks via `defaultHighlightStyle`, whose
@@ -869,7 +924,7 @@ window.createEditor = function (elementId, initialContent, onChange, options) {
     // immediately cover it.
     EditorView.scrollMargins.of(() => ({ top: 48, bottom: 48 })),
     proseInputAttributes,
-    omniEditorTheme,
+    themeCompartment.of(omniEditorThemeFor(documentPrefersDark())),
     autoWrapFilter,
     checkboxPlugin,
   ];

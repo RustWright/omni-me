@@ -56,7 +56,7 @@ pub fn NavDrawer(
         if is_active {
             "flex items-center gap-3 px-3 py-2 rounded-lg bg-obsidian-bg text-obsidian-accent font-semibold text-sm cursor-pointer transition-all duration-150".into()
         } else {
-            "flex items-center gap-3 px-3 py-2 rounded-lg bg-transparent text-obsidian-text-muted font-medium text-sm cursor-pointer hover:bg-white/5 hover:text-obsidian-text transition-all duration-150".into()
+            "flex items-center gap-3 px-3 py-2 rounded-lg bg-transparent text-obsidian-text-muted font-medium text-sm cursor-pointer hover:bg-obsidian-border/5 hover:text-obsidian-text transition-all duration-150".into()
         }
     };
 
@@ -68,7 +68,7 @@ pub fn NavDrawer(
         "md:hidden fixed inset-0 z-[140] bg-black/50 transition-opacity duration-200 opacity-0 pointer-events-none"
     };
     // Panel: slides between fully off-screen (`-translate-x-full`) and flush.
-    let panel_base = "md:hidden fixed inset-y-0 left-0 z-[150] w-64 max-w-[80vw] bg-obsidian-sidebar border-r border-white/5 px-3 py-5 flex flex-col gap-1 transition-transform duration-200 ease-out";
+    let panel_base = "md:hidden fixed inset-y-0 left-0 z-[150] w-64 max-w-[80vw] bg-obsidian-sidebar border-r border-obsidian-border/5 px-3 py-5 flex flex-col gap-1 transition-transform duration-200 ease-out";
     let panel_class = if open {
         format!("{panel_base} translate-x-0")
     } else {
@@ -85,7 +85,7 @@ pub fn NavDrawer(
             class: "{panel_class}",
             // Clear the status bar / gesture bar on Android via the inset vars.
             style: "padding-top: calc(1.25rem + var(--safe-area-inset-top)); padding-bottom: calc(1.25rem + var(--safe-area-inset-bottom));",
-            div { class: "px-3 pb-4 mb-2 border-b border-white/5",
+            div { class: "px-3 pb-4 mb-2 border-b border-obsidian-border/5",
                 h1 { class: "text-lg font-bold text-obsidian-accent tracking-tight", "Omni-Me" }
                 p { class: "text-[10px] uppercase tracking-[0.2em] text-obsidian-text-muted mt-1", "Personal OS" }
             }
@@ -136,9 +136,9 @@ pub fn NavDrawer(
 fn FeedbackRow(on_activate: EventHandler<()>) -> Element {
     rsx! {
         button {
-            class: "mt-auto flex items-center gap-3 px-3 py-2 pt-3 border-t border-white/5 rounded-lg \
+            class: "mt-auto flex items-center gap-3 px-3 py-2 pt-3 border-t border-obsidian-border/5 rounded-lg \
                     bg-transparent text-obsidian-text-muted font-medium text-sm cursor-pointer \
-                    hover:bg-white/5 hover:text-obsidian-text transition-all duration-150",
+                    hover:bg-obsidian-border/5 hover:text-obsidian-text transition-all duration-150",
             onclick: move |_| on_activate.call(()),
             svg { class: "w-5 h-5 shrink-0", fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
                 path {
@@ -168,13 +168,13 @@ pub fn SideNav(
         if is_active {
             "flex items-center gap-3 px-3 py-2 rounded-lg bg-obsidian-bg text-obsidian-accent font-semibold text-sm cursor-pointer transition-all duration-150".into()
         } else {
-            "flex items-center gap-3 px-3 py-2 rounded-lg bg-transparent text-obsidian-text-muted font-medium text-sm cursor-pointer hover:bg-white/5 hover:text-obsidian-text transition-all duration-150".into()
+            "flex items-center gap-3 px-3 py-2 rounded-lg bg-transparent text-obsidian-text-muted font-medium text-sm cursor-pointer hover:bg-obsidian-border/5 hover:text-obsidian-text transition-all duration-150".into()
         }
     };
 
     rsx! {
-        aside { class: "hidden md:flex md:flex-col w-56 shrink-0 bg-obsidian-sidebar border-r border-white/5 px-3 py-5 gap-1",
-            div { class: "px-3 pb-4 mb-2 border-b border-white/5",
+        aside { class: "hidden md:flex md:flex-col w-56 shrink-0 bg-obsidian-sidebar border-r border-obsidian-border/5 px-3 py-5 gap-1",
+            div { class: "px-3 pb-4 mb-2 border-b border-obsidian-border/5",
                 h1 { class: "text-lg font-bold text-obsidian-accent tracking-tight", "Omni-Me" }
                 p { class: "text-[10px] uppercase tracking-[0.2em] text-obsidian-text-muted mt-1", "Personal OS" }
             }

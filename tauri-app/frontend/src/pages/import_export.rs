@@ -53,7 +53,7 @@ enum ExportPhase {
 pub fn ImportExportSection() -> Element {
     rsx! {
         div { class: "mb-10 space-y-6",
-            div { class: "border-b border-white/5 pb-2 mb-4",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
                 h2 { class: "text-lg font-bold text-obsidian-text", "Obsidian Import / Export" }
                 p { class: "text-xs text-obsidian-text-muted mt-1",
                     "Bring an existing vault in, or write your current data out as a fresh vault."
@@ -81,14 +81,14 @@ fn ImportFlow() -> Element {
     let mut overrides = use_signal(std::collections::HashMap::<String, String>::new);
 
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg space-y-3",
+        div { class: "p-4 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg space-y-3",
             h3 { class: "text-sm font-bold text-obsidian-text", "Import from Obsidian" }
 
             // Step 1: Path input + scan
             if matches!(*phase.read(), ImportPhase::Idle | ImportPhase::Error(_)) {
                 div { class: "flex gap-2",
                     input {
-                        class: "flex-1 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-md text-sm text-obsidian-text font-mono placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent",
+                        class: "flex-1 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-md text-sm text-obsidian-text font-mono placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent",
                         r#type: "text",
                         placeholder: "/path/to/obsidian/vault",
                         value: "{root}",
@@ -115,7 +115,7 @@ fn ImportFlow() -> Element {
                 }
 
                 if let ImportPhase::Error(err) = &*phase.read() {
-                    div { class: "p-2 bg-red-900/20 text-red-400 border border-red-900/50 rounded text-xs",
+                    div { class: "p-2 bg-error/10 text-error border border-error/25 rounded text-xs",
                         "{err}"
                     }
                 }
@@ -142,13 +142,13 @@ fn ImportFlow() -> Element {
                             overrides: overrides,
                         }
 
-                        div { class: "flex justify-between items-center pt-3 border-t border-white/5",
+                        div { class: "flex justify-between items-center pt-3 border-t border-obsidian-border/5",
                             div { class: "text-xs text-obsidian-text-muted",
                                 "{accepted} of {total} notes will be imported."
                             }
                             div { class: "flex gap-2",
                                 button {
-                                    class: "px-3 py-1.5 text-xs font-semibold rounded-md bg-obsidian-sidebar border border-white/10 text-obsidian-text hover:bg-white/5",
+                                    class: "px-3 py-1.5 text-xs font-semibold rounded-md bg-obsidian-sidebar border border-obsidian-border/10 text-obsidian-text hover:bg-obsidian-border/5",
                                     onclick: move |_| phase.set(ImportPhase::Idle),
                                     "Cancel"
                                 }
@@ -204,9 +204,9 @@ fn ImportFlow() -> Element {
                                 div { "Journals created: {summary.journal_created}" }
                                 div { "Generic notes created: {summary.generic_created}" }
                                 if has_errors {
-                                    div { class: "text-red-400 mt-2", "Errors: {summary.errors.len()}" }
+                                    div { class: "text-error mt-2", "Errors: {summary.errors.len()}" }
                                     for e in &summary.errors {
-                                        div { class: "font-mono text-[11px] text-red-300 pl-2", "{e}" }
+                                        div { class: "font-mono text-[11px] text-error pl-2", "{e}" }
                                     }
                                 }
                             }
@@ -239,13 +239,13 @@ fn ImportPreview(
             }
             if summary.error_count > 0 {
                 span { class: "mr-3", "Errors: "
-                    span { class: "text-red-400 font-semibold", "{summary.error_count}" }
+                    span { class: "text-error font-semibold", "{summary.error_count}" }
                 }
             }
         }
 
         if summary.rows.is_empty() {
-            div { class: "p-6 rounded border border-white/5 bg-obsidian-bg/40 text-xs text-obsidian-text-muted text-center leading-relaxed",
+            div { class: "p-6 rounded border border-obsidian-border/5 bg-obsidian-bg/40 text-xs text-obsidian-text-muted text-center leading-relaxed",
                 p { class: "font-semibold text-obsidian-text mb-1", "No markdown files found" }
                 p {
                     "Nothing under " code { class: "font-mono", "{summary.root}" }
@@ -257,7 +257,7 @@ fn ImportPreview(
                 }
             }
         } else {
-            div { class: "max-h-[360px] overflow-y-auto rounded border border-white/5 divide-y divide-white/5",
+            div { class: "max-h-[360px] overflow-y-auto rounded border border-obsidian-border/5 divide-y divide-obsidian-border/5",
                 for row in summary.rows.iter().cloned() {
                     ImportPreviewRowItem {
                         key: "{row.path}",
@@ -287,11 +287,11 @@ fn ImportPreviewRowItem(
     let display_key = current_override.clone().unwrap_or_else(|| row.key.clone());
 
     let row_class = if is_error {
-        "p-3 bg-red-900/10 opacity-70"
+        "p-3 bg-error/[0.06] opacity-70"
     } else if is_skipped {
         "p-3 opacity-40"
     } else {
-        "p-3 hover:bg-white/[0.02]"
+        "p-3 hover:bg-obsidian-border/[0.02]"
     };
 
     let kind_badge_class = match row.kind.as_str() {
@@ -299,10 +299,10 @@ fn ImportPreviewRowItem(
             "px-2 py-0.5 text-[10px] font-bold rounded bg-obsidian-accent/15 text-obsidian-accent border border-obsidian-accent/30 uppercase tracking-wide"
         }
         "generic" => {
-            "px-2 py-0.5 text-[10px] font-bold rounded bg-white/5 text-obsidian-text border border-white/10 uppercase tracking-wide"
+            "px-2 py-0.5 text-[10px] font-bold rounded bg-obsidian-border/5 text-obsidian-text border border-obsidian-border/10 uppercase tracking-wide"
         }
         _ => {
-            "px-2 py-0.5 text-[10px] font-bold rounded bg-red-900/30 text-red-400 border border-red-900/50 uppercase tracking-wide"
+            "px-2 py-0.5 text-[10px] font-bold rounded bg-error/15 text-error border border-error/25 uppercase tracking-wide"
         }
     };
 
@@ -333,21 +333,21 @@ fn ImportPreviewRowItem(
                         }
                         if row.has_legacy_properties {
                             span {
-                                class: "w-1.5 h-1.5 rounded-full bg-yellow-400",
+                                class: "w-1.5 h-1.5 rounded-full bg-warn",
                                 title: "Frontmatter has non-native properties — preserved as legacy_properties",
                             }
                         }
                     }
 
                     if is_error {
-                        div { class: "mt-1 text-xs text-red-400",
+                        div { class: "mt-1 text-xs text-error",
                             "{row.error.clone().unwrap_or_default()}"
                         }
                     } else {
                         // Key (date or title) — editable inline
                         div { class: "mt-1 flex items-center gap-2",
                             input {
-                                class: "px-2 py-0.5 text-xs bg-obsidian-bg border border-white/5 rounded text-obsidian-text w-48 outline-none focus:border-obsidian-accent",
+                                class: "px-2 py-0.5 text-xs bg-obsidian-bg border border-obsidian-border/5 rounded text-obsidian-text w-48 outline-none focus:border-obsidian-accent",
                                 r#type: "text",
                                 value: "{display_key}",
                                 oninput: move |e| {
@@ -392,7 +392,7 @@ fn ExportFlow() -> Element {
     let mut phase = use_signal(|| ExportPhase::Idle);
 
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/40 border border-white/5 rounded-lg space-y-3",
+        div { class: "p-4 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg space-y-3",
             h3 { class: "text-sm font-bold text-obsidian-text", "Export to Obsidian" }
             p { class: "text-[11px] text-obsidian-text-muted",
                 "Writes every journal entry to "
@@ -405,7 +405,7 @@ fn ExportFlow() -> Element {
             if matches!(*phase.read(), ExportPhase::Idle | ExportPhase::Error(_)) {
                 div { class: "flex gap-2",
                     input {
-                        class: "flex-1 px-3 py-2 bg-obsidian-bg border border-white/10 rounded-md text-sm text-obsidian-text font-mono placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent",
+                        class: "flex-1 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-md text-sm text-obsidian-text font-mono placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent",
                         r#type: "text",
                         placeholder: "/path/to/export-target",
                         value: "{target}",
@@ -430,7 +430,7 @@ fn ExportFlow() -> Element {
                 }
 
                 if let ExportPhase::Error(err) = &*phase.read() {
-                    div { class: "p-2 bg-red-900/20 text-red-400 border border-red-900/50 rounded text-xs",
+                    div { class: "p-2 bg-error/10 text-error border border-error/25 rounded text-xs",
                         "{err}"
                     }
                 }
@@ -448,9 +448,9 @@ fn ExportFlow() -> Element {
                     let listed: Vec<String> = preview.would_overwrite.clone();
                     rsx! {
                         div { class: "p-3 border rounded text-sm",
-                            class: if count > 0 { "bg-red-900/20 border-red-900/50" } else { "bg-obsidian-accent/10 border-obsidian-accent/30" },
+                            class: if count > 0 { "bg-error/10 border-error/25" } else { "bg-obsidian-accent/10 border-obsidian-accent/30" },
                             div { class: "font-semibold",
-                                class: if count > 0 { "text-red-400" } else { "text-obsidian-accent" },
+                                class: if count > 0 { "text-error" } else { "text-obsidian-accent" },
                                 if count > 0 {
                                     "{count} existing file(s) will be overwritten"
                                 } else {
@@ -512,7 +512,7 @@ fn ExportFlow() -> Element {
                     div { class: "text-xs text-obsidian-text-muted mt-1",
                         "{written} files written"
                         if errors > 0 {
-                            span { class: "text-red-400 ml-2", "({errors} errors)" }
+                            span { class: "text-error ml-2", "({errors} errors)" }
                         }
                     }
                     button {

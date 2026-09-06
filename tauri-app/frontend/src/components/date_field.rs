@@ -38,11 +38,11 @@ fn picker_day_class(is_today: bool, is_selected: bool, in_month: bool) -> String
     let state = if is_selected {
         "bg-obsidian-accent text-black font-semibold"
     } else if is_today {
-        "text-obsidian-accent font-semibold ring-1 ring-obsidian-accent/40 hover:bg-white/5"
+        "text-obsidian-accent font-semibold ring-1 ring-obsidian-accent/40 hover:bg-obsidian-border/5"
     } else if in_month {
-        "text-obsidian-text hover:bg-white/5"
+        "text-obsidian-text hover:bg-obsidian-border/5"
     } else {
-        "text-obsidian-text-muted/40 hover:bg-white/5"
+        "text-obsidian-text-muted/40 hover:bg-obsidian-border/5"
     };
     format!("{base} {state}")
 }
@@ -69,7 +69,7 @@ pub fn DateField(
     let invalid = !is_valid_date_str(&value);
     // A red ring (not a border-colour swap) so it reads as "error" regardless of
     // the base class's own `border-*`, which Tailwind ordering could otherwise win.
-    let ring = if invalid { " ring-1 ring-red-500" } else { "" };
+    let ring = if invalid { " ring-1 ring-error" } else { "" };
 
     let tz_signal: Signal<Tz> = use_context();
     let mut open = use_signal(|| false);
@@ -115,7 +115,7 @@ pub fn DateField(
                 }
                 button {
                     r#type: "button",
-                    class: "absolute right-1.5 top-1/2 -translate-y-1/2 p-1 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
+                    class: "absolute right-1.5 top-1/2 -translate-y-1/2 p-1 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-obsidian-border/5 transition-colors",
                     "aria-label": "Open calendar",
                     onclick: open_popover,
                     Icon { name: IconName::Calendar, class: "w-4 h-4" }
@@ -124,7 +124,7 @@ pub fn DateField(
 
             if invalid {
                 p {
-                    class: if compact { "text-[10px] text-red-400 mt-0.5" } else { "text-[11px] text-red-400 mt-1" },
+                    class: if compact { "text-[10px] text-error mt-0.5" } else { "text-[11px] text-error mt-1" },
                     "Use YYYY-MM-DD"
                 }
             }
@@ -136,12 +136,12 @@ pub fn DateField(
                     class: "fixed inset-0 z-20",
                     onclick: move |_| open.set(false),
                 }
-                div { class: "absolute left-0 top-full mt-1 z-30 w-64 max-w-[calc(100vw-2rem)] p-3 bg-obsidian-sidebar border border-white/10 rounded-lg shadow-lg shadow-black/40",
+                div { class: "absolute left-0 top-full mt-1 z-30 w-64 max-w-[calc(100vw-2rem)] p-3 bg-obsidian-sidebar border border-obsidian-border/10 rounded-lg shadow-lg shadow-black/40",
                     // Month navigation.
                     div { class: "flex items-center justify-between mb-2",
                         button {
                             r#type: "button",
-                            class: "p-1.5 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
+                            class: "p-1.5 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-obsidian-border/5 transition-colors",
                             "aria-label": "Previous month",
                             onclick: move |_| {
                                 let cur = *anchor.peek();
@@ -152,7 +152,7 @@ pub fn DateField(
                         h3 { class: "text-sm font-semibold text-obsidian-text", "{month_label}" }
                         button {
                             r#type: "button",
-                            class: "p-1.5 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-white/5 transition-colors",
+                            class: "p-1.5 text-obsidian-text-muted hover:text-obsidian-text rounded hover:bg-obsidian-border/5 transition-colors",
                             "aria-label": "Next month",
                             onclick: move |_| {
                                 let cur = *anchor.peek();

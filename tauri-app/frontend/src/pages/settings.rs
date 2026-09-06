@@ -7,8 +7,8 @@ use crate::components::primitives::{
 };
 use crate::continuity::use_continuity;
 use crate::{
-    bridge,
-    types::{AutoImportSourceView, SyncStatus},
+    AccentPref, ThemePref, bridge,
+    types::{AutoImportSourceView, ConfigEntry, ConfigGroup, ConfigLayer, ConfigValue, SyncStatus},
 };
 
 #[component]
@@ -51,14 +51,14 @@ pub fn SettingsPage() -> Element {
 
             // --- Sync Section ---
             div { class: "mb-10 space-y-6",
-                div { class: "border-b border-white/5 pb-2 mb-4",
+                div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
                     h2 { class: "text-lg font-bold text-obsidian-text", "Cloud Synchronization" }
                 }
 
                 // Device ID (read-only)
                 div {
                     label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Local Device ID" }
-                    div { class: "p-3 bg-obsidian-sidebar/60 border border-white/5 rounded-lg font-mono text-xs text-obsidian-text-muted select-all",
+                    div { class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg font-mono text-xs text-obsidian-text-muted select-all",
                         "{device_id}"
                     }
                 }
@@ -164,7 +164,7 @@ pub fn SettingsPage() -> Element {
 
             // --- Timezone Section ---
             div { class: "mb-10 space-y-6",
-                div { class: "border-b border-white/5 pb-2 mb-4",
+                div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
                     h2 { class: "text-lg font-bold text-obsidian-text", "Timezone" }
                 }
 
@@ -244,6 +244,12 @@ pub fn SettingsPage() -> Element {
             // --- App Updates (app delivery / OTA) ---
             UpdatesSection {}
 
+            // --- Features (generalization Phase A) ---
+            ConfigSection { group: ConfigGroup::Features }
+
+            // --- Appearance ---
+            ConfigSection { group: ConfigGroup::Appearance }
+
             // --- Base Currency (Phase 7.3) ---
             BaseCurrencySection {}
 
@@ -295,8 +301,274 @@ fn format_bytes(bytes: u64) -> String {
 /// list is just the convenient menu, not a hard constraint.
 const CURRENCY_CODES: &[&str] = &["CAD", "USD", "EUR", "GBP", "AED", "AUD", "JPY", "CHF"];
 
-/// Base-currency picker (Phase 7.3). The selection persists server-side and is
-/// read by the dashboard / accounts / budget aggregation as the FX base.
+// ── Configuration rows ──────────────────────────────────────────────────────
+
+/// Heading and standing note for a config group.
+///
+/// ⚠️ The Features note describes what the switches do **today**, which is
+/// nothing. Delete it when Phase B wires the consumers — a control that silently
+/// has no effect is worse than one that says so, but a note that outlives the
+/// truth is worse than both.
+fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
+    match group {
+        ConfigGroup::Features => (
+            "Features",
+            Some(
+                "Recorded but not yet acted on. These choices save and sync, and \
+                 nothing reads them yet — no tab is hidden and no background work stops.",
+            ),
+        ),
+        ConfigGroup::Appearance => ("Appearance", None),
+    }
+}
+
+/// The segments offered for a key's value, excluding the device layer's
+/// "follow" option.
+fn value_segments(entry: &ConfigEntry) -> Vec<(String, String)> {
+    if let Some(choices) = &entry.choices {
+        return choices
+            .iter()
+            .map(|c| (c.clone(), ConfigValue::Text(c.clone()).display()))
+            .collect();
+    }
+    match entry.default {
+        ConfigValue::Bool(_) => vec![
+            ("true".to_string(), "On".to_string()),
+            ("false".to_string(), "Off".to_string()),
+        ],
+        // No key of this kind has a control yet. Rendering nothing beats guessing
+        // a widget — the row still reports the value, it just can't be changed
+        // from here.
+        _ => Vec::new(),
+    }
+}
+
+fn value_to_segment(value: &ConfigValue) -> String {
+    match value {
+        ConfigValue::Bool(b) => b.to_string(),
+        ConfigValue::Int(n) => n.to_string(),
+        ConfigValue::Text(t) => t.clone(),
+    }
+}
+
+/// Map a segment back to a value. The empty key is the cleared / "follow"
+/// segment, which is why this returns an `Option` rather than a value.
+fn segment_to_value(entry: &ConfigEntry, segment: &str) -> Option<ConfigValue> {
+    if segment.is_empty() {
+        return None;
+    }
+    match entry.default {
+        ConfigValue::Bool(_) => Some(ConfigValue::Bool(segment == "true")),
+        ConfigValue::Int(_) => segment.parse().ok().map(ConfigValue::Int),
+        ConfigValue::Text(_) => Some(ConfigValue::Text(segment.to_string())),
+    }
+}
+
+/// One group of configuration keys.
+///
+/// Every write is followed by a full re-read rather than a local edit of the
+/// row. The backend can legitimately decline a write — the config projection
+/// orders by authoring time, so an event older than what is stored is dropped —
+/// and a row that echoed the request would misreport exactly the thing this
+/// screen exists to report.
+#[component]
+fn ConfigSection(group: ConfigGroup) -> Element {
+    let mut entries = use_signal(Vec::<ConfigEntry>::new);
+    let mut expanded = use_signal(|| None::<String>);
+    let mut error = use_signal(|| None::<String>);
+    let ThemePref(mut theme_pref) = use_context();
+    let AccentPref(mut accent_pref) = use_context();
+
+    use_future(move || async move {
+        match bridge::invoke_get_config().await {
+            Ok(list) => entries.set(list),
+            Err(e) => error.set(Some(e)),
+        }
+    });
+
+    let apply = move |(key, to_device, value): (String, bool, Option<ConfigValue>)| {
+        spawn(async move {
+            let written = if to_device {
+                bridge::invoke_set_device_override(&key, value).await
+            } else {
+                bridge::invoke_set_global_config(&key, value).await
+            };
+            match written {
+                Ok(()) => match bridge::invoke_get_config().await {
+                    Ok(list) => {
+                        // Push the theme through the shared signal rather than
+                        // painting it here: the root owns `data-theme`, and one
+                        // writer means the OS-preference listener and this
+                        // control can't end up disagreeing about `system`.
+                        let text_of = |key: &str| {
+                            list.iter()
+                                .find(|e| e.key == key)
+                                .and_then(|e| match &e.effective {
+                                    ConfigValue::Text(v) => Some(v.clone()),
+                                    _ => None,
+                                })
+                        };
+                        if let Some(theme) = text_of("appearance.theme") {
+                            theme_pref.set(theme);
+                        }
+                        if let Some(accent) = text_of("appearance.accent") {
+                            accent_pref.set(accent);
+                        }
+                        entries.set(list);
+                        error.set(None);
+                    }
+                    Err(e) => error.set(Some(e)),
+                },
+                Err(e) => error.set(Some(e)),
+            }
+        });
+    };
+
+    let (heading, note) = group_meta(group);
+    let rows: Vec<ConfigEntry> = entries
+        .read()
+        .iter()
+        .filter(|e| e.group == group)
+        .cloned()
+        .collect();
+
+    rsx! {
+        div { class: "mb-10 space-y-4",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
+                h2 { class: "text-lg font-bold text-obsidian-text", "{heading}" }
+            }
+            if let Some(note) = note {
+                Banner { kind: BannerKind::Info, "{note}" }
+            }
+            div { class: "divide-y divide-obsidian-border/5",
+                for entry in rows {
+                    ConfigRow {
+                        key: "{entry.key}",
+                        entry: entry.clone(),
+                        expanded: expanded.read().as_deref() == Some(entry.key.as_str()),
+                        on_toggle: {
+                            let row_key = entry.key.clone();
+                            move |_| {
+                                let open = expanded.read().as_deref() == Some(row_key.as_str());
+                                expanded.set(if open { None } else { Some(row_key.clone()) });
+                            }
+                        },
+                        on_change: apply,
+                    }
+                }
+            }
+            if let Some(e) = &*error.read() {
+                Banner { kind: BannerKind::Error, "{e}" }
+            }
+        }
+    }
+}
+
+/// A single key: the answer when collapsed, both layers when expanded.
+#[component]
+fn ConfigRow(
+    entry: ConfigEntry,
+    expanded: bool,
+    on_toggle: EventHandler<()>,
+    /// `(key, to_device, value)` — `to_device` picks the layer, `None` clears it.
+    on_change: EventHandler<(String, bool, Option<ConfigValue>)>,
+) -> Element {
+    // Why the layer is named only when it is *not* the shared one: a row that
+    // says "shared" on every line trains the eye to skip the suffix, and then the
+    // one row that says "this device" reads the same as the rest.
+    let origin = match entry.layer {
+        ConfigLayer::Device => Some("this device"),
+        ConfigLayer::Global | ConfigLayer::Default => None,
+    };
+
+    let segments = value_segments(&entry);
+    let shared_active = entry
+        .global
+        .as_ref()
+        .map(value_to_segment)
+        .unwrap_or_else(|| value_to_segment(&entry.default));
+    let device_active = entry
+        .device
+        .as_ref()
+        .map(value_to_segment)
+        .unwrap_or_default();
+
+    let mut device_segments = vec![(String::new(), "Follow".to_string())];
+    device_segments.extend(segments.iter().cloned());
+
+    rsx! {
+        div { class: "py-3",
+            button {
+                r#type: "button",
+                class: "w-full flex items-center justify-between gap-3 text-left",
+                onclick: move |_| on_toggle.call(()),
+                span { class: "text-sm font-medium text-obsidian-text", "{entry.label}" }
+                span { class: "flex items-center gap-2 shrink-0",
+                    span { class: "text-sm text-obsidian-text-muted",
+                        "{entry.effective.display()}"
+                        if let Some(origin) = origin {
+                            span { class: "text-obsidian-accent", " · {origin}" }
+                        }
+                    }
+                    Icon {
+                        name: IconName::ChevronRight,
+                        class: if expanded { "w-4 h-4 text-obsidian-text-muted rotate-90 transition-transform" } else { "w-4 h-4 text-obsidian-text-muted transition-transform" },
+                    }
+                }
+            }
+
+            if expanded && !segments.is_empty() {
+                div { class: "mt-3 pl-1 space-y-3",
+                    div {
+                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-1.5 block",
+                            "Shared"
+                        }
+                        SegmentedNav {
+                            items: segments.clone(),
+                            active: shared_active,
+                            on_select: {
+                                let row_key = entry.key.clone();
+                                let row = entry.clone();
+                                move |seg: String| {
+                                    on_change.call((row_key.clone(), false, segment_to_value(&row, &seg)))
+                                }
+                            },
+                        }
+                        if entry.global.is_none() {
+                            p { class: "text-xs text-obsidian-text-muted mt-1.5",
+                                "Not set — showing the built-in default."
+                            }
+                        }
+                    }
+                    div {
+                        label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-1.5 block",
+                            "This device"
+                        }
+                        SegmentedNav {
+                            items: device_segments,
+                            active: device_active,
+                            on_select: {
+                                let row_key = entry.key.clone();
+                                let row = entry.clone();
+                                move |seg: String| {
+                                    on_change.call((row_key.clone(), true, segment_to_value(&row, &seg)))
+                                }
+                            },
+                        }
+                        p { class: "text-xs text-obsidian-text-muted mt-1.5",
+                            if entry.applies_immediately {
+                                "Follow uses the shared value. Takes effect immediately."
+                            } else {
+                                "Follow uses the shared value. Takes effect at the next launch — what a feature registers is decided at startup."
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Editor body text size. Sizes are px values, not vague labels, because the
 /// setting maps to one CSS variable the editor theme reads — naming the number
 /// keeps the control honest about what it does.
@@ -316,7 +588,7 @@ fn EditorSection() -> Element {
 
     rsx! {
         div { class: "mb-10 space-y-6",
-            div { class: "border-b border-white/5 pb-2 mb-4",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
                 h2 { class: "text-lg font-bold text-obsidian-text", "Editor" }
             }
             div {
@@ -345,6 +617,8 @@ fn EditorSection() -> Element {
     }
 }
 
+/// Base-currency picker (Phase 7.3). The selection persists server-side and is
+/// read by the dashboard / accounts / budget aggregation as the FX base.
 #[component]
 fn BaseCurrencySection() -> Element {
     let mut current = use_signal(|| "CAD".to_string());
@@ -360,7 +634,7 @@ fn BaseCurrencySection() -> Element {
 
     rsx! {
         div { class: "mb-10 space-y-6",
-            div { class: "border-b border-white/5 pb-2 mb-4",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
                 h2 { class: "text-lg font-bold text-obsidian-text", "Base Currency" }
             }
             div {
@@ -478,7 +752,7 @@ fn UpdatesSection() -> Element {
 
     rsx! {
         div { class: "mb-10 space-y-4",
-            div { class: "border-b border-white/5 pb-2 mb-4",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
                 h2 { class: "text-lg font-bold text-obsidian-text", "App Updates" }
             }
 
@@ -560,7 +834,7 @@ fn CacheSection() -> Element {
 
     rsx! {
         div { class: "mb-10 space-y-4",
-            div { class: "border-b border-white/5 pb-2 mb-4",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
                 h2 { class: "text-lg font-bold text-obsidian-text", "Attachment Cache" }
             }
 
@@ -571,7 +845,7 @@ fn CacheSection() -> Element {
                 "re-fetched on demand."
             }
 
-            div { class: "flex items-center justify-between gap-4 p-4 bg-obsidian-sidebar/60 border border-white/5 rounded-lg",
+            div { class: "flex items-center justify-between gap-4 p-4 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg",
                 div {
                     label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest block mb-1", "Used" }
                     div { class: "font-mono text-base text-obsidian-text",
@@ -764,7 +1038,7 @@ fn health_badge(wire_health: &str) -> (&'static str, &'static str) {
         "dropping" => ("Dropping rows", "bg-error/15 text-error border-error/30"),
         _ => (
             "Unknown",
-            "bg-white/5 text-obsidian-text-muted border-white/10",
+            "bg-obsidian-border/5 text-obsidian-text-muted border-obsidian-border/10",
         ),
     }
 }
@@ -885,7 +1159,7 @@ fn AutoImportSection() -> Element {
 
     rsx! {
         div { class: "mb-10 space-y-4",
-            div { class: "border-b border-white/5 pb-2 mb-4 flex items-center justify-between",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4 flex items-center justify-between",
                 h2 { class: "text-lg font-bold text-obsidian-text", "Auto-Import Sources" }
                 button {
                     class: "text-xs text-obsidian-text-muted hover:text-obsidian-accent hover:underline",
@@ -930,7 +1204,7 @@ fn AutoImportSection() -> Element {
                         div { class: "text-sm text-obsidian-text-muted italic", "Loading…" }
                     },
                     Some(list) if list.is_empty() => rsx! {
-                        div { class: "p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-sm text-obsidian-text-muted",
+                        div { class: "p-3 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg text-sm text-obsidian-text-muted",
                             "No generic sources configured yet. Use “+ Add source” to declare a CSV file or a subprocess helper."
                         }
                     },
@@ -972,7 +1246,7 @@ fn AutoImportSection() -> Element {
                         div { class: "text-sm text-obsidian-text-muted italic", "Loading…" }
                     },
                     Some(list) if list.is_empty() => rsx! {
-                        div { class: "p-3 bg-obsidian-sidebar/40 border border-white/5 rounded-lg text-sm text-obsidian-text-muted",
+                        div { class: "p-3 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg text-sm text-obsidian-text-muted",
                             "Nothing running yet. Added sources start ticking immediately; built-in bank sources (private builds) appear here once they tick."
                         }
                     },
@@ -1094,7 +1368,7 @@ fn AccountsSection() -> Element {
 
     rsx! {
         div { class: "mb-10 space-y-4",
-            div { class: "border-b border-white/5 pb-2 mb-4",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
                 h2 { class: "text-lg font-bold text-obsidian-text", "Accounts" }
             }
             p { class: "text-sm text-obsidian-text-muted",
@@ -1153,7 +1427,7 @@ fn AccountOverrideRow(
     let mut saving = use_signal(|| false);
     let row_dim = if hidden { "opacity-50" } else { "" };
 
-    let inp = "flex-1 min-w-0 px-2 py-1 bg-obsidian-bg border border-white/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-50";
+    let inp = "flex-1 min-w-0 px-2 py-1 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-50";
 
     // Current rename value → Option (empty = clear the override label).
     let current_name = move || {
@@ -1165,11 +1439,11 @@ fn AccountOverrideRow(
     let liquid_btn = if is_liquid {
         "shrink-0 px-2.5 py-1 bg-success/15 border border-success/40 text-success text-xs font-semibold rounded hover:bg-success/25 transition-colors disabled:opacity-40"
     } else {
-        "shrink-0 px-2.5 py-1 bg-white/5 border border-white/10 text-obsidian-text-muted text-xs font-semibold rounded hover:bg-white/10 transition-colors disabled:opacity-40"
+        "shrink-0 px-2.5 py-1 bg-obsidian-border/5 border border-obsidian-border/10 text-obsidian-text-muted text-xs font-semibold rounded hover:bg-obsidian-border/10 transition-colors disabled:opacity-40"
     };
 
     rsx! {
-        div { class: "flex items-center gap-2 p-2 rounded border border-white/5 bg-obsidian-sidebar/40 {row_dim}",
+        div { class: "flex items-center gap-2 p-2 rounded border border-obsidian-border/5 bg-obsidian-sidebar/40 {row_dim}",
             div { class: "flex-1 min-w-0",
                 input {
                     class: inp,
@@ -1226,7 +1500,7 @@ fn AccountOverrideRow(
                 if is_liquid { "Liquid" } else { "Mark Liquid" }
             }
             button {
-                class: "shrink-0 px-2.5 py-1 bg-white/5 border border-white/10 text-obsidian-text text-xs font-semibold rounded hover:bg-white/10 transition-colors disabled:opacity-40",
+                class: "shrink-0 px-2.5 py-1 bg-obsidian-border/5 border border-obsidian-border/10 text-obsidian-text text-xs font-semibold rounded hover:bg-obsidian-border/10 transition-colors disabled:opacity-40",
                 disabled: *saving.read(),
                 onclick: {
                     let account = account.clone();
@@ -1312,7 +1586,7 @@ fn LlmProviderSection() -> Element {
 
     rsx! {
         div { class: "mb-10 space-y-4",
-            div { class: "border-b border-white/5 pb-2 mb-4",
+            div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
                 h2 { class: "text-lg font-bold text-obsidian-text", "LLM Provider" }
             }
             p { class: "text-sm text-obsidian-text-muted",
@@ -1424,7 +1698,7 @@ fn AutoImportRow(
     let mut msg = use_signal(|| None::<(bool, String)>);
 
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-white/5 rounded-lg",
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg",
             div { class: "flex items-start justify-between gap-4 mb-2",
                 div { class: "min-w-0 flex-1",
                     div { class: "flex items-center gap-2 mb-1 min-w-0",
@@ -1435,7 +1709,7 @@ fn AutoImportRow(
                         }
                         if paused {
                             span {
-                                class: "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border border-white/15 bg-white/5 text-obsidian-text-muted",
+                                class: "text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border border-obsidian-border/15 bg-obsidian-border/5 text-obsidian-text-muted",
                                 "Paused"
                             }
                         }
@@ -1505,7 +1779,7 @@ fn AutoImportRow(
                             }
                             div { class: "flex items-center gap-2",
                                 input {
-                                    class: "w-32 px-3 py-1.5 bg-obsidian-sidebar border border-white/15 rounded text-obsidian-text text-sm font-mono tracking-[0.4em] text-center outline-none focus:border-obsidian-accent transition-colors disabled:opacity-40",
+                                    class: "w-32 px-3 py-1.5 bg-obsidian-sidebar border border-obsidian-border/15 rounded text-obsidian-text text-sm font-mono tracking-[0.4em] text-center outline-none focus:border-obsidian-accent transition-colors disabled:opacity-40",
                                     r#type: "text",
                                     inputmode: "numeric",
                                     autocomplete: "one-time-code",
@@ -1635,19 +1909,19 @@ fn ConfiguredSourceRow(
         }
         None => (
             "not running".into(),
-            "bg-white/5 text-obsidian-text-muted border border-white/10",
+            "bg-obsidian-border/5 text-obsidian-text-muted border border-obsidian-border/10",
         ),
     };
 
     rsx! {
-        div { class: "p-3 bg-obsidian-sidebar/60 border border-white/10 rounded-lg",
+        div { class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg",
             div { class: "flex items-center justify-between gap-2",
                 div { class: "min-w-0",
                     div { class: "flex items-center gap-2 min-w-0",
                         span { class: "font-mono text-sm text-obsidian-text truncate min-w-0", "{name}" }
                         span { class: "shrink-0 text-[10px] px-1.5 py-0.5 rounded {badge_classes}", "{badge_label}" }
                         if !enabled {
-                            span { class: "shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-obsidian-text-muted",
+                            span { class: "shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-obsidian-border/5 text-obsidian-text-muted",
                                 "disabled"
                             }
                         }
@@ -1656,7 +1930,7 @@ fn ConfiguredSourceRow(
                 }
                 div { class: "flex items-center gap-1 shrink-0",
                     button {
-                        class: "text-xs px-2 py-1 rounded hover:bg-white/5 text-obsidian-text-muted hover:text-obsidian-text transition-colors",
+                        class: "text-xs px-2 py-1 rounded hover:bg-obsidian-border/5 text-obsidian-text-muted hover:text-obsidian-text transition-colors",
                         onclick: {
                             let def = def.clone();
                             move |_| on_edit.call(def.clone())

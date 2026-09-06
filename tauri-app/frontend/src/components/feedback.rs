@@ -158,7 +158,7 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
         }
         div {
             class: "fixed inset-x-0 bottom-0 md:inset-0 md:m-auto z-[210] w-full md:max-w-lg md:h-fit \
-                    bg-obsidian-sidebar border-t md:border border-white/10 md:rounded-xl \
+                    bg-obsidian-sidebar border-t md:border border-obsidian-border/10 md:rounded-xl \
                     px-4 pt-4 flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-4 duration-200",
             // Clear the Android gesture bar; the sheet is bottom-anchored on mobile.
             style: "padding-bottom: calc(1rem + var(--safe-area-inset-bottom));",
@@ -166,7 +166,7 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
             div { class: "flex items-center justify-between",
                 h2 { class: "text-base font-bold text-obsidian-text", "Report a problem" }
                 button {
-                    class: "w-8 h-8 flex items-center justify-center rounded-md text-obsidian-text-muted hover:bg-white/5 hover:text-obsidian-text transition-colors",
+                    class: "w-8 h-8 flex items-center justify-center rounded-md text-obsidian-text-muted hover:bg-obsidian-border/5 hover:text-obsidian-text transition-colors",
                     "aria-label": "Close",
                     onclick: move |_| on_close.call(()),
                     "✕"
@@ -185,7 +185,7 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
                 }
             } else {
                 textarea {
-                    class: "w-full min-h-[110px] px-3 py-2 bg-obsidian-bg border border-white/10 rounded-lg \
+                    class: "w-full min-h-[110px] px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-lg \
                             text-obsidian-text text-sm outline-none focus:border-obsidian-accent transition-colors resize-y",
                     placeholder: "What happened?",
                     autofocus: true,
@@ -214,7 +214,7 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
                                 }
                                 if let Some(mut include) = line.include {
                                     button {
-                                        class: "shrink-0 px-1.5 rounded text-obsidian-text-muted hover:bg-white/5 hover:text-obsidian-text transition-colors",
+                                        class: "shrink-0 px-1.5 rounded text-obsidian-text-muted hover:bg-obsidian-border/5 hover:text-obsidian-text transition-colors",
                                         // Names the line it governs: with more
                                         // than one droppable row, a bare
                                         // "toggle attaching this" reads as two

@@ -6,6 +6,7 @@ pub mod auto_import;
 pub mod auto_import_scheduler;
 pub mod balances;
 pub mod budget;
+pub mod config;
 pub mod credentials;
 pub mod dashboard;
 pub mod db;

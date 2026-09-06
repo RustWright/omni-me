@@ -905,7 +905,7 @@ fn DayView(
                             let complete = e.complete;
                             rsx! {
                                 if closed {
-                                    span { class: "px-2 py-0.5 bg-obsidian-text-muted/10 text-obsidian-text-muted border border-white/10 rounded text-[10px] font-bold uppercase tracking-wider",
+                                    span { class: "px-2 py-0.5 bg-obsidian-text-muted/10 text-obsidian-text-muted border border-obsidian-border/10 rounded text-[10px] font-bold uppercase tracking-wider",
                                         "Closed"
                                     }
                                 } else if complete {
@@ -1146,7 +1146,7 @@ fn JournalPropertiesPanel(
     let has_legacy = !props.read().legacy_raw.is_empty();
 
     rsx! {
-        div { class: "mb-4 rounded-lg border border-white/5 bg-obsidian-sidebar/30 divide-y divide-white/5 text-sm",
+        div { class: "mb-4 rounded-lg border border-obsidian-border/5 bg-obsidian-sidebar/30 divide-y divide-obsidian-border/5 text-sm",
             // Date — read-only (it's the entry key).
             div { class: "flex items-center gap-3 px-3 py-2",
                 span { class: "w-24 shrink-0 text-xs font-medium text-obsidian-text-muted", "Date" }
@@ -1217,7 +1217,7 @@ fn JournalPropertiesPanel(
                 }
                 if *show_raw.read() {
                     textarea {
-                        class: "mt-2 w-full bg-obsidian-bg/50 border border-white/5 rounded p-2 text-xs font-mono text-obsidian-text resize-y focus:outline-none focus:border-obsidian-accent/40",
+                        class: "mt-2 w-full bg-obsidian-bg/50 border border-obsidian-border/5 rounded p-2 text-xs font-mono text-obsidian-text resize-y focus:outline-none focus:border-obsidian-accent/40",
                         rows: "3",
                         readonly: read_only,
                         placeholder: "Other frontmatter, preserved verbatim",
@@ -1351,7 +1351,7 @@ fn CalendarDrawer(
     } else {
         "fixed inset-0 z-[140] bg-black/50 transition-opacity duration-200 opacity-0 pointer-events-none"
     };
-    let panel_base = "fixed inset-y-0 right-0 z-[150] w-72 max-w-[85vw] bg-obsidian-sidebar border-l border-white/5 flex flex-col overflow-y-auto transition-transform duration-200 ease-out";
+    let panel_base = "fixed inset-y-0 right-0 z-[150] w-72 max-w-[85vw] bg-obsidian-sidebar border-l border-obsidian-border/5 flex flex-col overflow-y-auto transition-transform duration-200 ease-out";
     let panel_class = if is_open {
         format!("{panel_base} translate-x-0")
     } else {
@@ -1370,7 +1370,7 @@ fn CalendarDrawer(
             style: "padding-top: calc(1rem + var(--safe-area-inset-top)); padding-bottom: calc(1rem + var(--safe-area-inset-bottom));",
 
             // Drawer header: title + close
-            div { class: "flex items-center justify-between px-4 pb-3 mb-1 border-b border-white/5",
+            div { class: "flex items-center justify-between px-4 pb-3 mb-1 border-b border-obsidian-border/5",
                 h2 { class: "text-sm font-bold text-obsidian-accent uppercase tracking-wider", "Calendar" }
                 IconButton {
                     variant: ButtonVariant::Ghost,
@@ -1461,7 +1461,7 @@ fn CalendarDrawer(
 
             // Footer: the viewed note's word/char count (Obsidian calendar
             // parity). `mt-auto` pins it to the bottom of the drawer column.
-            div { class: "mt-auto px-4 pt-3 border-t border-white/5 flex items-center justify-between text-[11px] text-obsidian-text-muted",
+            div { class: "mt-auto px-4 pt-3 border-t border-obsidian-border/5 flex items-center justify-between text-[11px] text-obsidian-text-muted",
                 span { "{words} {word_label}" }
                 span { "{chars} {char_label}" }
             }
@@ -1569,7 +1569,7 @@ fn day_cell_class(
         "bg-obsidian-sidebar border border-obsidian-accent/30".to_string()
     } else {
         let fill = day_fill_class(stat.map_or(0, |s| word_level(s.words)));
-        format!("hover:bg-white/5 border border-transparent {fill}")
+        format!("hover:bg-obsidian-border/5 border border-transparent {fill}")
     };
     // Closed rides a ring — a third channel, so it stacks with fill and glyph
     // instead of competing for either.
