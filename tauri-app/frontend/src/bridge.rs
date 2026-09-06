@@ -249,27 +249,50 @@ extern "C" {
 
 // --- Internal Invoke Helpers ---
 
+// Every backend call in this file funnels through the three helpers below, so
+// one tap on each `Err` path covers the whole IPC surface for
+// `diagnostics::record_invoke_failure` — no per-wrapper change, and no way for
+// a new wrapper to be added without inheriting it.
+//
+// Two consequences, stated here rather than discovered later. **Mock builds
+// record nothing**: the `#[cfg(feature = "mock")]` branches return canned data
+// without reaching these helpers at all, which is correct — a failed invoke is
+// device behaviour and the browser loop has no IPC to fail. And
+// `submit_feedback` itself rides `invoke`, so a failed send records its own
+// failure and a retry carries it. That is useful, not a loop: the record is
+// bounded by the ring and a successful send clears nothing.
+
 #[cfg(not(feature = "mock"))]
 async fn invoke<T: serde::de::DeserializeOwned>(
     cmd: &str,
     args: &impl serde::Serialize,
 ) -> Result<T, String> {
-    let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
-    let promise = tauri_invoke(cmd, args_js);
-    let result = wasm_bindgen_futures::JsFuture::from(promise)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+    let result: Result<T, String> = async {
+        let args_js =
+            serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
+        let promise = tauri_invoke(cmd, args_js);
+        let result = wasm_bindgen_futures::JsFuture::from(promise)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+    }
+    .await;
+    result.inspect_err(|e| crate::diagnostics::record_invoke_failure(cmd, e))
 }
 
 #[cfg(not(feature = "mock"))]
 async fn invoke_unit(cmd: &str, args: &impl serde::Serialize) -> Result<(), String> {
-    let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
-    let promise = tauri_invoke(cmd, args_js);
-    wasm_bindgen_futures::JsFuture::from(promise)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    Ok(())
+    let result: Result<(), String> = async {
+        let args_js =
+            serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
+        let promise = tauri_invoke(cmd, args_js);
+        wasm_bindgen_futures::JsFuture::from(promise)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(())
+    }
+    .await;
+    result.inspect_err(|e| crate::diagnostics::record_invoke_failure(cmd, e))
 }
 
 /// `invoke`, but bounded: resolves to `Err` if the promise has not settled
@@ -292,29 +315,37 @@ async fn invoke_timed<T: serde::de::DeserializeOwned>(
     args: &impl serde::Serialize,
     timeout_ms: i32,
 ) -> Result<T, String> {
-    let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
-    let invoke_promise = tauri_invoke(cmd, args_js);
+    let outcome: Result<T, String> = async {
+        let args_js =
+            serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
+        let invoke_promise = tauri_invoke(cmd, args_js);
 
-    // A promise that rejects once `timeout_ms` elapses. `once_into_js` keeps
-    // the callback alive until it fires exactly once (no `forget` leak).
-    let timeout_promise = js_sys::Promise::new(&mut |_resolve, reject| {
-        let cb = Closure::once_into_js(move || {
-            let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("__ipc_timeout__"));
+        // A promise that rejects once `timeout_ms` elapses. `once_into_js` keeps
+        // the callback alive until it fires exactly once (no `forget` leak).
+        let timeout_promise = js_sys::Promise::new(&mut |_resolve, reject| {
+            let cb = Closure::once_into_js(move || {
+                let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("__ipc_timeout__"));
+            });
+            if let Some(win) = web_sys::window() {
+                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    cb.unchecked_ref(),
+                    timeout_ms,
+                );
+            }
         });
-        if let Some(win) = web_sys::window() {
-            let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
-                cb.unchecked_ref(),
-                timeout_ms,
-            );
-        }
-    });
 
-    // Whichever settles first wins; a never-settling invoke loses to the timeout.
-    let race = js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
-    let result = wasm_bindgen_futures::JsFuture::from(race)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+        // Whichever settles first wins; a never-settling invoke loses to the timeout.
+        let race = js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
+        let result = wasm_bindgen_futures::JsFuture::from(race)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+    }
+    .await;
+    // A timeout here surfaces as `__ipc_timeout__` in the buffer, which is the
+    // signature of the boot-race this helper exists for — worth recognising on
+    // sight in a report.
+    outcome.inspect_err(|e| crate::diagnostics::record_invoke_failure(cmd, e))
 }
 
 // -----------------------------------------------------------------------------

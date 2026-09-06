@@ -23,10 +23,16 @@ use crate::types::AppContext;
 /// One line of the "attached automatically" list.
 struct ContextLine {
     text: String,
-    /// Whether the user can drop this line before sending. Only content that
-    /// may quote their own writing is droppable; build identity is not, because
-    /// a report that hides which version it came from is not worth filing.
-    droppable: bool,
+    /// The signal governing whether this line is sent, or `None` when the line
+    /// is not droppable.
+    ///
+    /// Per-line rather than one shared flag because there is now more than one
+    /// droppable line, and they are dropped for different reasons — a draft is
+    /// the user's own prose, a console error may have quoted it. Only content
+    /// that can carry the user's writing is droppable at all; build identity is
+    /// not, because a report that hides which version it came from is not worth
+    /// filing.
+    include: Option<Signal<bool>>,
 }
 
 #[component]
@@ -47,8 +53,14 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
         }
     });
 
+    // Snapshot at mount, for the same reason the screen description is — see the
+    // module note. A failure that happens while the modal is open belongs to the
+    // next report, not this one.
+    let errors = use_hook(crate::diagnostics::snapshot);
+
     let mut body = use_signal(String::new);
-    let mut include_detail = use_signal(|| true);
+    let include_detail = use_signal(|| true);
+    let include_errors = use_signal(|| true);
     let mut sending = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
     let mut sent_id = use_signal(|| None::<String>);
@@ -68,7 +80,7 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
         };
         lines.push(ContextLine {
             text: where_text,
-            droppable: false,
+            include: None,
         });
     }
     if let Some(c) = &ctx_snapshot {
@@ -82,13 +94,23 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
         }
         lines.push(ContextLine {
             text: build,
-            droppable: false,
+            include: None,
         });
     }
     if let Some(detail) = &snapshot.detail {
         lines.push(ContextLine {
             text: detail.clone(),
-            droppable: true,
+            include: Some(include_detail),
+        });
+    }
+    if !errors.is_empty() {
+        // The count, never the text. This list is a summary of what is
+        // attached, and a stack trace pasted into a 390px sheet buries the send
+        // button under the thing the user is trying to report.
+        let plural = if errors.len() == 1 { "" } else { "s" };
+        lines.push(ContextLine {
+            text: format!("{} recent error{plural}", errors.len()),
+            include: Some(include_errors),
         });
     }
 
@@ -107,14 +129,18 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
             .read()
             .then(|| snapshot.detail.clone())
             .flatten();
+        let errors = if *include_errors.read() {
+            errors.clone()
+        } else {
+            Vec::new()
+        };
         spawn(async move {
             let result = bridge::invoke_submit_feedback(
                 &text,
                 screen.as_deref(),
                 screen_ref.as_deref(),
                 detail.as_deref(),
-                // Populated once the diagnostic ring buffer exists.
-                &[],
+                &errors,
             )
             .await;
             match result {
@@ -179,22 +205,26 @@ pub fn FeedbackModal(on_close: EventHandler<()>) -> Element {
                                 class: "flex items-start gap-2 text-xs text-obsidian-text-muted",
                                 span { class: "text-obsidian-accent leading-4", "•" }
                                 span {
-                                    class: if line.droppable && !*include_detail.read() {
+                                    class: if line.include.is_some_and(|inc| !*inc.read()) {
                                         "flex-1 line-through opacity-40 break-words"
                                     } else {
                                         "flex-1 break-words"
                                     },
                                     "{line.text}"
                                 }
-                                if line.droppable {
+                                if let Some(mut include) = line.include {
                                     button {
                                         class: "shrink-0 px-1.5 rounded text-obsidian-text-muted hover:bg-white/5 hover:text-obsidian-text transition-colors",
-                                        "aria-label": "Toggle attaching this",
+                                        // Names the line it governs: with more
+                                        // than one droppable row, a bare
+                                        // "toggle attaching this" reads as two
+                                        // identical buttons to a screen reader.
+                                        "aria-label": "Toggle attaching: {line.text}",
                                         onclick: move |_| {
-                                            let current = *include_detail.read();
-                                            include_detail.set(!current);
+                                            let current = *include.read();
+                                            include.set(!current);
                                         },
-                                        if *include_detail.read() { "✕" } else { "＋" }
+                                        if *include.read() { "✕" } else { "＋" }
                                     }
                                 }
                             }

@@ -15,7 +15,7 @@
 
 use tauri::State;
 
-use omni_me_core::events::{FeedbackCapturedPayload, NewEvent};
+use omni_me_core::events::{EventStore, FeedbackCapturedPayload, NewEvent};
 
 use super::shared::append_new_and_apply;
 use crate::AppState;
@@ -81,6 +81,14 @@ pub async fn submit_feedback(
         return Err("a report needs a description".into());
     }
 
+    // `diagnostics` already bounds this on the way out, so in practice the
+    // truncation never fires. It is here because the frontend's cap is a
+    // *convention* and this is the boundary where an event becomes permanent:
+    // the log is append-only and replicates to every device, so an oversized
+    // report is not something a later fix can take back.
+    let mut recent_errors = recent_errors;
+    recent_errors.truncate(MAX_RECENT_ERRORS);
+
     let feedback_id = ulid::Ulid::new().to_string();
     tracing::info!(feedback_id = %feedback_id, screen = ?screen, "submit_feedback");
 
@@ -96,9 +104,7 @@ pub async fn submit_feedback(
         non_production: state.non_production,
         data_dir: Some(state.app_data_dir.to_string_lossy().to_string()),
         recent_errors,
-        // Filled once `get_recent_events` exists; the field is already on the
-        // payload so adding it later is not a wire-format change.
-        recent_events: Vec::new(),
+        recent_events: recent_event_lines(&state, RECENT_EVENT_LIMIT).await,
     };
 
     let event = NewEvent::feedback_captured(state.device_id.clone(), &payload)
@@ -106,6 +112,61 @@ pub async fn submit_feedback(
     append_new_and_apply(&state, event).await?;
 
     Ok(feedback_id)
+}
+
+/// Hard ceiling on attached error lines. Matches `diagnostics::CAPACITY` on the
+/// frontend, which is the only caller — this is the backstop, not the policy.
+const MAX_RECENT_ERRORS: usize = 50;
+
+/// How many recent events a report carries. Enough to show the sequence that
+/// led somewhere — opening a note, an autosave, a sync — without turning the
+/// report into a log dump nobody reads to the end.
+const RECENT_EVENT_LIMIT: u32 = 20;
+
+/// The last few events authored on this device, oldest first, as
+/// `<timestamp> <event_type> <aggregate_id>` lines.
+///
+/// **Built here rather than in the frontend, deliberately.** This is the same
+/// split the module header draws for device and build identity: anything
+/// describing the *installation* is filled in on this side, where a stale or
+/// forged frontend cannot reach it. It also keeps the event list off the IPC
+/// wire entirely — the modal never needs to see it.
+///
+/// **Payloads are never included.** Event payloads carry journal prose and
+/// transaction amounts; the type and aggregate id are what let a reader
+/// reconstruct a sequence, and a report is not a data export.
+///
+/// A store error yields an empty list, matching `queries::list_feedback`'s
+/// skip-don't-fail discipline. A report must never fail because its optional
+/// context could not be gathered — the sentence the user typed is the part that
+/// matters, and it is already in hand by the time this runs.
+async fn recent_event_lines(state: &AppState, limit: u32) -> Vec<String> {
+    let events = match state
+        .event_store
+        .get_recent_by_device(&state.device_id, limit)
+        .await
+    {
+        Ok(events) => events,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read recent events for report");
+            return Vec::new();
+        }
+    };
+
+    // The store returns newest-first so the limit keeps the events nearest the
+    // failure; the payload documents newest-last, which is how a sequence reads.
+    events
+        .into_iter()
+        .rev()
+        .map(|e| {
+            format!(
+                "{} {} {}",
+                e.timestamp.to_rfc3339(),
+                e.event_type,
+                e.aggregate_id
+            )
+        })
+        .collect()
 }
 
 /// Compile-time platform tag. `std::env::consts::OS` reports the *host* triple,

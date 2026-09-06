@@ -171,6 +171,36 @@ mod tests {
         assert_eq!(render_markdown(&[], 0), "No feedback reports.\n");
     }
 
+    /// These two sections were written alongside the payload fields but had no
+    /// data to render until the diagnostic buffer existed, so nothing had ever
+    /// exercised them. Both are the reason a report is actionable rather than
+    /// merely filed — they are worth a test that fails if either is dropped.
+    #[test]
+    fn error_and_event_trails_render_when_present() {
+        let mut r = report("editor froze");
+        r.report.recent_errors = vec![
+            "[+4.2s] error: uncaught: cm is not defined (editor.js:31)".into(),
+            "[+4.3s] invoke: save_note: __ipc_timeout__".into(),
+        ];
+        r.report.recent_events = vec!["2026-09-05T11:59:58Z generic_note_updated note-7".into()];
+
+        let md = render_markdown(&[r], 0);
+        assert!(md.contains("**Errors:**"), "{md}");
+        assert!(md.contains("cm is not defined"), "{md}");
+        assert!(md.contains("save_note: __ipc_timeout__"), "{md}");
+        assert!(md.contains("**Recent events:**"), "{md}");
+        assert!(md.contains("generic_note_updated note-7"), "{md}");
+    }
+
+    /// The common case is a report with neither, and an empty section header
+    /// under every report is the kind of noise that makes a list unreadable.
+    #[test]
+    fn absent_trails_render_no_headings() {
+        let md = render_markdown(&[report("just a thought")], 0);
+        assert!(!md.contains("**Errors:**"), "{md}");
+        assert!(!md.contains("**Recent events:**"), "{md}");
+    }
+
     /// A decoder that quietly ate rows would make a partial list look complete.
     #[test]
     fn skipped_rows_are_announced() {

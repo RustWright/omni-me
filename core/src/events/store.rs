@@ -198,6 +198,19 @@ pub trait EventStore: Send + Sync {
     /// Get all events for a given aggregate, ordered by timestamp.
     async fn get_by_aggregate(&self, aggregate_id: &str) -> Result<Vec<Event>, EventError>;
 
+    /// The most recent `limit` events authored on `device_id`, newest first.
+    ///
+    /// Distinct from [`EventStore::get_since_by_device`] in what it is anchored
+    /// to: that one answers "everything after this point", which is the question
+    /// sync asks. This answers "the last N, whenever they were", which is the
+    /// question a problem report asks — there is no meaningful `since` for
+    /// "what was the user doing just before this broke".
+    async fn get_recent_by_device(
+        &self,
+        device_id: &str,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError>;
+
     /// Delete every event from the store. Used by the local data-wipe flow.
     /// Peers are unaffected; this only clears the current device's event log.
     async fn purge_all(&self) -> Result<(), EventError>;
@@ -408,6 +421,37 @@ impl EventStore for SurrealEventStore {
         rows.into_iter().map(Event::try_from).collect()
     }
 
+    async fn get_recent_by_device(
+        &self,
+        device_id: &str,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError> {
+        let device = device_id.to_string();
+
+        // `timestamp DESC` rather than `received_at`: this reconstructs what the
+        // user did, in the order they did it, and for locally-authored events
+        // `received_at` only records when the projection caught up.
+        let mut response = self
+            .db
+            .query(
+                "SELECT meta::id(id) AS eid, event_type, aggregate_id,
+                        <string> timestamp AS ts, timestamp,
+                        <string> received_at AS rcv, received_at,
+                        device_id, payload
+                 FROM events
+                 WHERE device_id = $device
+                 ORDER BY timestamp DESC, eid DESC
+                 LIMIT $limit",
+            )
+            .bind(("device", device))
+            .bind(("limit", limit))
+            .await?;
+
+        let rows: Vec<EventRow> = response.take(0)?;
+
+        rows.into_iter().map(Event::try_from).collect()
+    }
+
     async fn purge_all(&self) -> Result<(), EventError> {
         self.db.query("DELETE events").await?;
         Ok(())
@@ -491,6 +535,61 @@ mod tests {
         assert_eq!(events[0].id, event.id);
         // Verify payload roundtrips
         assert_eq!(events[0].payload["raw_text"], "hello");
+    }
+
+    #[tokio::test]
+    async fn get_recent_by_device_is_scoped_ordered_and_bounded() {
+        // Backs the `recent_events` half of a problem report. All three
+        // properties matter together: a report from this phone must not be
+        // padded with the desktop's activity, must read newest-first so the
+        // limit keeps the events *nearest* the failure, and must stay bounded
+        // because the whole log is unbounded.
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+
+        let base = chrono::DateTime::parse_from_rfc3339("2026-05-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        for i in 0..5 {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("note-{i}"),
+                    timestamp: base + chrono::Duration::minutes(i),
+                    device_id: "device-a".into(),
+                    payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                })
+                .await
+                .unwrap();
+        }
+
+        // Authored *later* than anything on device-a, so a query that ignored
+        // the device filter would return this first and the assertions below
+        // would fail on the very first element.
+        store
+            .append(NewEvent {
+                id: None,
+                event_type: "note_created".into(),
+                aggregate_id: "other-device-note".into(),
+                timestamp: base + chrono::Duration::hours(1),
+                device_id: "device-b".into(),
+                payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+            })
+            .await
+            .unwrap();
+
+        let recent = store.get_recent_by_device("device-a", 3).await.unwrap();
+
+        assert_eq!(recent.len(), 3, "limit is respected");
+        assert!(
+            recent.iter().all(|e| e.device_id == "device-a"),
+            "another device's events must not appear"
+        );
+        // Newest first: notes 4, 3, 2 — not 0, 1, 2.
+        assert_eq!(recent[0].aggregate_id, "note-4");
+        assert_eq!(recent[2].aggregate_id, "note-2");
     }
 
     #[tokio::test]

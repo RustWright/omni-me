@@ -204,8 +204,8 @@ parser built 2026-09-05 would close the gap. Never checked.
   how safely everything else on this list can be fixed. [M]
 - [~] **In-app feedback capture from the page where the issue happens** (user, 2026-09-03).
   **= ITEM 1 of the agreed sequence. Planned and BUILT (Stage 1) 2026-09-05.** Plan:
-  `~/.claude/plans/lets-continue-eventual-aurora.md`. Remaining: Stage 2 below, and the
-  live-box end-to-end.
+  `~/.claude/plans/lets-continue-eventual-aurora.md`. **Stage 2 built 2026-09-05** (see below).
+  Remaining: the live-box end-to-end, and the panic-path follow-up.
 
   **The design fork is CLOSED — feedback is an event.** `EventType::FeedbackCaptured` +
   `FeedbackCapturedPayload` (only `feedback_id` and `body` required, so capture can never fail
@@ -232,30 +232,47 @@ parser built 2026-09-05 would close the gap. Never checked.
   errors** — modal opens over the live page, context list renders screen + build + unsaved-draft
   length, the draft line drops and restores, send returns an id. [M]
 
-- [ ] **Stage 2 — the diagnostic ring buffer.** A report that says "it broke" with no error trail
-  is barely better than the dump it replaces. Nothing records panics, console errors or failed
-  `invoke` calls today; `tracing_subscriber::fmt()` goes to stdout, which on Android is logcat —
-  invisible in-app and gone when the process dies. Needs: a bounded (~50) frontend ring buffer
-  fed by a wasm panic hook, a `console.error`/`warn` tap and a failed-`invoke` tap; plus
-  `get_recent_events(limit)` (`EventStore` has `get_since`/`get_since_by_device`/
-  `get_by_aggregate` — none answer "last N by timestamp for this device"). The payload fields
-  `recent_errors` / `recent_events` already exist, so this is not a wire-format change. [M]
+- [x] **Stage 2 — the diagnostic ring buffer. BUILT 2026-09-05.** `frontend/src/diagnostics.rs`:
+  a 50-entry `thread_local!` ring (each entry capped at 500 chars) fed by four producers — a
+  chained panic hook, `window` `error` and `unhandledrejection` listeners, and a
+  `console.error`/`warn` patch. Backend half is `EventStore::get_recent_by_device(device, limit)`
+  plus `recent_event_lines` in `commands/feedback.rs`, which formats the last 20 events
+  **server-side** so the list never crosses IPC and cannot be forged by a client. Payloads are
+  never included. Both payload fields were already plumbed, so no wire-format change.
 
-- [ ] **Feedback end-to-end against a live box.** Everything so far ran against the mock bridge.
-  The cross-device leg is the only part that proves the loop: capture on the phone, then
-  `GET /feedback` from the desktop and see that report. [S]
+  **A panic flushes the ring to `localStorage`; nothing else does.** wasm has no unwinding, so a
+  panic traps the module and the most valuable entry is the one an in-memory ring cannot deliver.
+  Boot restores that key as `[prev]` entries and clears it — a crash trail survives exactly one
+  relaunch. Per-error persistence was rejected as the churn `screen_context.rs` avoids.
 
-- [ ] **Feedback close-out audit — deferred items** (2026-09-05). Two findings were fixed the
-  same session: `data_dir` was specified in the plan but never wired (`non_production` says *a*
-  sandbox, `data_dir` says which one), and `render_markdown` printed only the client-minted id
-  while its own doc comment claimed both were kept so a divergence would show. Still open:
-  **(a)** Notes *search* publishes only the `notes:search` coordinate — not the query text or
-  result count, which is what makes a "search found nothing" report actionable; the query lives
-  in a child component. **(b)** The 390px Playwright pass covered modal-open and drawer-close
-  only; the send flow, context list and drop toggle were verified at 1280 alone. **(c)** No
-  screenshots exist for this work — both `browser_take_screenshot` calls reported success but no
-  PNG landed, so the visual record is accessibility-tree assertions only, and a logbook post on
-  this has no assets. [S]
+  **The console patch is built in JS, not bound as a Rust closure**, because `console.error` is
+  variadic and a Rust closure cannot reach JS `arguments` — binding one would silently drop every
+  argument past the first. Confirmed live: dx's own dev-server console patch wraps *ours* rather
+  than orphaning it, because `install()` runs before `dioxus::launch` and the wrapper chains via
+  `orig.apply`. Ordering matters; do not move the install site.
+
+  **Verified:** 7 new ring tests (101 frontend total), the new store test (690 core), 82 src-tauri
+  incl. architectural guards, 8 feedback route tests incl. 2 new ones covering the Errors and
+  Recent-events markdown sections, both wasm clippy configs. Playwright at **390 and 1280**:
+  clean boot shows no error line at all, one `console.error` → "1 recent error", `warn` also
+  taps, drop toggle strikes through and restores, and **the send flow ran at 390** and returned an
+  id. Console clean apart from the known `showDXToast` dx artifact. Device-only legs are folded
+  into the next release test pass, below. [M]
+
+
+- [ ] **Feedback: the two device-only legs, folded into the next release test pass**
+  (user, 2026-09-05 — test all of this at once rather than piecemeal). Neither can be proven in
+  the browser, and both are cheap once a build is on a phone.
+  **(1) Cross-device end-to-end** — capture on the phone, then `GET /feedback` from the desktop
+  and see that report. This is the leg that proves the loop; everything so far ran against the
+  mock bridge. **(2) A real panic** — the `localStorage` crash flush and the `[prev]` restore in
+  `diagnostics.rs` are verified by reading the code, not by a wasm panic. It is the branch that
+  matters most when it fires and the only one no test touches. [S]
+
+- [ ] **Notes search publishes only its coordinate, not its query** (2026-09-05). A
+  `notes:search` report says which surface was open but not the query text or the result count —
+  which is the whole content of a "search found nothing" report. The query lives in a child
+  component, so this needs the describer to reach it or the child to publish. [S]
 
 ### Release engineering
 - [ ] **Desktop DOES flash white for ~320ms — but `backgroundColor` is NOT the culprit and the

@@ -2,6 +2,7 @@ mod autosave;
 mod bridge;
 mod components;
 mod continuity;
+mod diagnostics;
 mod duration;
 mod journal_template;
 mod note_frontmatter;
@@ -236,6 +237,10 @@ const HEADER_TOGGLE_COOLDOWN_MS: i64 = 400;
 const HEADER_TOGGLE_DELTA_PX: f64 = 12.0;
 
 fn main() {
+    // Before `launch`, so a failure during the app's own first render is
+    // already being recorded. Installing from inside a component would miss
+    // exactly the boot-time breakage that is hardest to reproduce by hand.
+    diagnostics::install();
     dioxus::launch(App);
 }
 
