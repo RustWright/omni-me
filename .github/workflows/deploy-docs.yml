@@ -1,4 +1,4 @@
-name: Deploy Documentation
+name: Documentation
 
 on:
   push:
@@ -36,8 +36,17 @@ jobs:
         with:
           path: docs/book
 
+  # Publishing is gated so the build above stays useful on its own — it catches a broken
+  # SUMMARY.md link or malformed markdown on every docs change, which is the point while the
+  # book is still being written.
+  #
+  # ⚠️ Do not drop this `if` without first enabling Pages on the repo (Settings → Pages →
+  # Source: GitHub Actions). deploy-pages 404s on a repo that has never had Pages enabled, and
+  # it fails at the deploy step *after* a green build, which reads like a broken build.
+  # To publish: enable Pages, then set repository variable PUBLISH_DOCS=true.
   deploy:
     needs: build
+    if: vars.PUBLISH_DOCS == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
