@@ -1,7 +1,8 @@
 # Tasks — post-v1 daily use
 
-**Status:** v1.0.5, released and in real daily use on the personal phone and `surface`
-(the Linux desktop). Both devices sync against the Hetzner box.
+**Status:** v1.1.0, released 2026-09-06 and published to `/updates`; both devices still
+run v1.0.5 until the OTA is taken, and **on-device verification is open** (see `NEXT.md`).
+The phone and `surface` (the Linux desktop) sync against the Hetzner box.
 
 **Reconciled against git 2026-09-05** (twice — the second pass closed the three on-device
 items, deferred finances indefinitely, and set the three-item sequence). This file carries

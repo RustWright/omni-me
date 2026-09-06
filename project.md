@@ -6,7 +6,13 @@ event-sourced store, with an LLM deriving structure from raw notes. Tauri v2
 Open-core: the bank-free engine is public, a private overlay carries real
 sources and credentials.
 
-**Status:** **v1.0.5 released and in real daily use** on both personal devices —
+**Status:** **v1.1.0 released 2026-09-06** — the server deployed to the box first
+(`sha-9a0b1dd`, health-gated), then the tag cut on a green CI matrix and the APK +
+AppImage published to `/updates`. On-device verification is the open item, and its
+first step is perishable: a still-v1.0.5 client syncing against the new server can
+only be observed before either device takes the update. The release carries items 1
+and 2 of the three-item sequence — feedback capture, and generalization through
+record types. **v1.0.5 was in real daily use** on both personal devices —
 the phone and `surface`, the Linux desktop — syncing against the box. Cycle 4's
 build work is done: the pre-v1 review is closed, the branch gate and version stamp
 are in place, and the OTA round-trip is proven on both platforms. What the cycle
