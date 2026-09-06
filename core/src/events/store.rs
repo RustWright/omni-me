@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
 use super::types::{
-    ConfigSetPayload, EventType, FeedbackCapturedPayload, TransactionRecordedPayload,
+    ConfigSetPayload, EventType, FeedbackCapturedPayload, RecordTypeDeclaredPayload,
+    TransactionRecordedPayload,
 };
 use crate::db::Database;
 
@@ -188,6 +189,27 @@ impl NewEvent {
             id: None,
             event_type: EventType::ConfigSet.to_string(),
             aggregate_id: key.to_string(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(&payload)?,
+        })
+    }
+
+    /// Declare (or redeclare) one record type's shape.
+    ///
+    /// The canonical way to build this event. Tests build through it rather than
+    /// hand-writing JSON so a change to the payload shape breaks them instead of
+    /// passing against a literal nothing in production emits.
+    pub fn record_type_declared(
+        device_id: impl Into<String>,
+        record_type: crate::record_type::RecordType,
+    ) -> Result<NewEvent, serde_json::Error> {
+        let aggregate_id = record_type.name.clone();
+        let payload = RecordTypeDeclaredPayload { record_type };
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::RecordTypeDeclared.to_string(),
+            aggregate_id,
             timestamp: Utc::now(),
             device_id: device_id.into(),
             payload: serde_json::to_value(&payload)?,

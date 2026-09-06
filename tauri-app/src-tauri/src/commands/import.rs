@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use omni_me_core::db::queries;
-use omni_me_core::events::{EventStore, EventType, NewEvent, ProjectionRunner};
+use omni_me_core::events::{
+    EventStore, EventType, NewEvent, ProjectionRunner, journal_record_type,
+};
 use omni_me_core::import::{
     NoteKind, VaultEntry, classify_with_frontmatter, map_frontmatter, parse_date_prefix,
     parse_markdown, walk_vault,
@@ -75,7 +77,8 @@ pub async fn preview_import(
     // other's rows unimportable.
     require_any_feature(&state, &[Feature::Journal, Feature::Notes])?;
 
-    let summary = scan_for_preview(root).await?;
+    let record_type = journal_record_type(&state.db).await;
+    let summary = scan_for_preview(root, &record_type.property_keys()).await?;
     // Canonicalize the scanned root and remember it. `commit_import` later
     // refuses any path that doesn't resolve under this root.
     let canonical_root =
@@ -85,8 +88,9 @@ pub async fn preview_import(
 }
 
 /// Pure scan: walk the vault root and build the preview summary. Separated
-/// from the Tauri command so tests don't need a full `AppState`.
-async fn scan_for_preview(root: String) -> Result<PreviewSummary, String> {
+/// from the Tauri command so tests don't need a full `AppState` — which is also
+/// why `declared` arrives as a parameter rather than being read from the db here.
+async fn scan_for_preview(root: String, declared: &[&str]) -> Result<PreviewSummary, String> {
     let root_path = PathBuf::from(&root);
     if !root_path.is_dir() {
         return Err(format!("Not a directory: {root}"));
@@ -101,7 +105,7 @@ async fn scan_for_preview(root: String) -> Result<PreviewSummary, String> {
 
     let rows: Vec<PreviewRow> = entries
         .into_iter()
-        .map(|entry| build_preview_row(&root_path, entry))
+        .map(|entry| build_preview_row(&root_path, entry, &declared))
         .collect();
 
     let mut journal_count = 0;
@@ -124,10 +128,10 @@ async fn scan_for_preview(root: String) -> Result<PreviewSummary, String> {
     })
 }
 
-fn build_preview_row(root: &Path, entry: VaultEntry) -> PreviewRow {
+fn build_preview_row(root: &Path, entry: VaultEntry, declared: &[&str]) -> PreviewRow {
     match entry {
         VaultEntry::Ok(note) => {
-            let mapped = map_frontmatter(&note.frontmatter);
+            let mapped = map_frontmatter(&note.frontmatter, declared);
             // Classify against the path *relative to the vault root* so the
             // force-generic rule (FORCE_GENERIC_DIRS) only inspects segments
             // inside the vault, not the user's chosen vault location on disk.
@@ -224,6 +228,8 @@ pub async fn commit_import(
         .clone()
         .ok_or_else(|| "no vault has been previewed in this session".to_string())?;
 
+    let record_type = journal_record_type(&state.db).await;
+
     commit_import_inner(
         &state.event_store,
         &state.projections,
@@ -231,6 +237,7 @@ pub async fn commit_import(
         &scanned_root,
         rows,
         Some(&state.push_debouncer),
+        &record_type.property_keys(),
     )
     .await
 }
@@ -248,6 +255,10 @@ async fn commit_import_inner(
     // a bulk import that doesn't nudge the pusher pushes *nothing*, because
     // `pusher::run_loop` has no interval fallback and only wakes on a trigger.
     push_debouncer: Option<&omni_me_core::sync::PushDebouncer>,
+    // The record type's property keys. Anything it does not name is preserved as
+    // `legacy_properties` rather than dropped, which is what lets an imported
+    // vault keep frontmatter this install has no declaration for.
+    declared: &[&str],
 ) -> Result<CommitSummary, String> {
     // Phase 1: parse every row, collecting events to write + per-row errors.
     // build_event_for_row never touches the DB, so a parse failure on row N
@@ -257,7 +268,7 @@ async fn commit_import_inner(
     let mut errors: Vec<String> = Vec::new();
 
     for row in rows {
-        match build_event_for_row(device_id, scanned_root, row) {
+        match build_event_for_row(device_id, scanned_root, row, declared) {
             Ok((event, kind)) => {
                 new_events.push(event);
                 event_kinds.push(kind);
@@ -321,6 +332,7 @@ fn build_event_for_row(
     device_id: &str,
     scanned_root: &Path,
     row: AcceptedRow,
+    declared: &[&str],
 ) -> Result<(NewEvent, CommittedKind), String> {
     let candidate = PathBuf::from(&row.path);
     let path = validate_committable_path(scanned_root, &candidate)?;
@@ -337,7 +349,7 @@ fn build_event_for_row(
     let raw = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", row.path))?;
 
     let (frontmatter, _body) = parse_markdown(&raw).map_err(|e| format!("{}: {e}", row.path))?;
-    let mapped = map_frontmatter(&frontmatter);
+    let mapped = map_frontmatter(&frontmatter, declared);
 
     match row.kind.as_str() {
         "journal" => {

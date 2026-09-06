@@ -60,6 +60,8 @@ pub enum EventType {
     FeedbackCaptured,
     // Config — the app's own settings, shared across the user's devices
     ConfigSet,
+    // Record types — the shape of the user's own records, shared across devices
+    RecordTypeDeclared,
 }
 
 impl fmt::Display for EventType {
@@ -104,6 +106,7 @@ impl fmt::Display for EventType {
             EventType::DataWiped => "data_wiped",
             EventType::FeedbackCaptured => "feedback_captured",
             EventType::ConfigSet => "config_set",
+            EventType::RecordTypeDeclared => "record_type_declared",
         };
         write!(f, "{s}")
     }
@@ -153,6 +156,7 @@ impl FromStr for EventType {
             "data_wiped" => Ok(EventType::DataWiped),
             "feedback_captured" => Ok(EventType::FeedbackCaptured),
             "config_set" => Ok(EventType::ConfigSet),
+            "record_type_declared" => Ok(EventType::RecordTypeDeclared),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -204,6 +208,7 @@ impl EventType {
         EventType::DataWiped,
         EventType::FeedbackCaptured,
         EventType::ConfigSet,
+        EventType::RecordTypeDeclared,
     ];
 
     /// The features that may author this event, or `None` for an event no feature
@@ -218,7 +223,10 @@ impl EventType {
     /// Empty for `DataWiped` (the wipe has to work with everything off, or a
     /// disabled feature's data would be unreachable *and* unremovable),
     /// `FeedbackCaptured` (reporting a problem must never depend on the feature
-    /// you are reporting about) and `ConfigSet` (it is what the gating reads).
+    /// you are reporting about), `ConfigSet` (it is what the gating reads) and
+    /// `RecordTypeDeclared` (declaring the shape of your own data must not depend
+    /// on the feature that renders it being switched on, and the first-run seed is
+    /// emitted at startup, before any feature has been consulted).
     ///
     /// This says nothing about **inbound** events: the sync pull path applies
     /// whatever the log contains, so every device keeps a complete log no matter
@@ -275,7 +283,10 @@ impl EventType {
             | EventType::AutoImportBatchCommitted
             | EventType::AutoImportBatchDismissed => &[Feature::AutoImport],
 
-            EventType::DataWiped | EventType::FeedbackCaptured | EventType::ConfigSet => &[],
+            EventType::DataWiped
+            | EventType::FeedbackCaptured
+            | EventType::ConfigSet
+            | EventType::RecordTypeDeclared => &[],
         }
     }
 }
@@ -900,6 +911,21 @@ pub struct ConfigSetPayload {
     pub value: Option<crate::config::ConfigValue>,
 }
 
+// Record types
+
+/// A declaration of what one record type looks like.
+///
+/// `aggregate_id` is the type's name, so `get_by_aggregate` yields that type's
+/// declaration history for free. The whole shape is carried on every declaration
+/// rather than a diff against the last one: a record type is small, and a replay
+/// that has to fold partial edits to know the current shape could not answer
+/// "what did this note mean at the time" without replaying the whole log first.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordTypeDeclaredPayload {
+    #[serde(flatten)]
+    pub record_type: crate::record_type::RecordType,
+}
+
 /// Validate that a payload JSON value matches the expected shape for the given event type.
 pub fn validate_payload(
     event_type: &EventType,
@@ -1027,6 +1053,9 @@ pub fn validate_payload(
         EventType::ConfigSet => {
             serde_json::from_value::<ConfigSetPayload>(payload.clone()).map(|_| ())
         }
+        EventType::RecordTypeDeclared => {
+            serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
+        }
     };
 
     result.map_err(|e| {
@@ -1050,6 +1079,24 @@ pub fn validate_payload(
                 .validate(value)
                 .map_err(super::store::EventError::Validation)?;
         }
+    }
+
+    // A record type gets the same second gate, for the same reason: the payload's
+    // shape says nothing about whether its property keys are usable. A key holding
+    // a colon decodes perfectly and then serializes into a frontmatter line the
+    // completeness scanner reads as a different property entirely. Gating here
+    // catches it on the way *in*, including from sync, rather than at each writer.
+    if *event_type == EventType::RecordTypeDeclared {
+        let parsed: RecordTypeDeclaredPayload =
+            serde_json::from_value(payload.clone()).map_err(|e| {
+                super::store::EventError::Validation(format!(
+                    "invalid payload for {event_type}: {e}"
+                ))
+            })?;
+        parsed
+            .record_type
+            .validate()
+            .map_err(super::store::EventError::Validation)?;
     }
 
     Ok(())
@@ -1116,10 +1163,11 @@ mod tests {
                 | EventType::AutoImportBatchDismissed
                 | EventType::DataWiped
                 | EventType::FeedbackCaptured
-                | EventType::ConfigSet => counted += 1,
+                | EventType::ConfigSet
+                | EventType::RecordTypeDeclared => counted += 1,
             }
         }
-        assert_eq!(counted, 39, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 40, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

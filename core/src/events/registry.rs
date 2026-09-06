@@ -18,7 +18,7 @@ use crate::journal_file::JournalFile;
 
 use super::{
     AutoImportProjection, BudgetProjection, ConfigProjection, NotesProjection, Projection,
-    RoutinesProjection,
+    RecordTypeProjection, RoutinesProjection,
 };
 
 /// Projections that are never feature-gated.
@@ -26,11 +26,17 @@ use super::{
 /// `config` materializes the `app_config` table that the gating itself reads, so
 /// gating it would be circular: the first launch after a toggle would have no
 /// config to decide with.
-pub const NEVER_GATED: &[&str] = &[ConfigProjection::NAME];
+///
+/// `record_types` is ungated for the neighbouring reason: it decides how a journal
+/// entry is *read*, so gating it behind the journal feature would mean turning
+/// journal off and back on again reinterpreted the whole back catalogue against
+/// whatever fallback shape happened to apply.
+pub const NEVER_GATED: &[&str] = &[ConfigProjection::NAME, RecordTypeProjection::NAME];
 
 /// Every projection registered in production, for [`every_projection_has_an_owner`].
 pub const ALL_PROJECTIONS: &[&str] = &[
     ConfigProjection::NAME,
+    RecordTypeProjection::NAME,
     NotesProjection::NAME,
     RoutinesProjection::NAME,
     BudgetProjection::NAME,
@@ -84,6 +90,13 @@ pub fn enabled_projection_names(config: &ResolvedConfig) -> BTreeSet<&'static st
 fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
     vec![
         Box::new(ConfigProjection),
+        // `RecordTypeProjection` **must** precede `NotesProjection`: the latter
+        // reads the declaration to decide whether an entry is complete, and
+        // `ProjectionRunner` applies every projection to one event before moving
+        // to the next. Ahead of it, a declaration applies to the events that
+        // follow it in the log and to no earlier one — behind it, a shape change
+        // would land one event late on every replay.
+        Box::new(RecordTypeProjection),
         Box::new(NotesProjection),
         Box::new(RoutinesProjection),
         Box::new(BudgetProjection),
@@ -133,6 +146,7 @@ mod tests {
         let journal_file = JournalFile::new("/nonexistent/never-touched.journal");
         let live: Vec<&str> = vec![
             ConfigProjection.name(),
+            RecordTypeProjection.name(),
             NotesProjection.name(),
             RoutinesProjection.name(),
             BudgetProjection.name(),
@@ -170,13 +184,14 @@ mod tests {
     }
 
     #[test]
-    fn config_survives_every_feature_being_off() {
+    fn the_never_gated_projections_survive_every_feature_being_off() {
         let names = enabled_projection_names(&without(ALL_FEATURES));
         assert_eq!(
             names,
-            BTreeSet::from([ConfigProjection::NAME]),
+            BTreeSet::from([ConfigProjection::NAME, RecordTypeProjection::NAME]),
             "config must register even with every feature off — it is what the \
-             gating reads"
+             gating reads — and record_types with it, or turning journal off and \
+             on again would reinterpret the back catalogue"
         );
     }
 

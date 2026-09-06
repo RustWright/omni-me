@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use crate::db::Database;
 
 use super::projection::Projection;
+use super::record_type_projection::journal_record_type;
 use super::store::{Event, EventError};
 
 /// Projection that maintains two read tables:
@@ -10,10 +11,14 @@ use super::store::{Event, EventError};
 /// - `generic_notes`   keyed by `note_id` (ULID), with user-supplied `title`
 pub struct NotesProjection;
 
-/// The three manual journal properties whose presence signals "day complete".
-/// Public so `import` can use the same list when classifying frontmatter keys
-/// — adding a 4th reflection property updates both call sites from one edit.
-pub const COMPLETE_PROPERTIES: [&str; 3] = ["homework_for_life", "grateful_for", "learnt_today"];
+// Which properties signal "day complete" is no longer a constant here — it is
+// whatever the journal's record type declares required, read per event rather than
+// cached on this struct. `RecordTypeProjection` is registered ahead of this one and
+// `ProjectionRunner` loops events outer / projections inner, so the table already
+// reflects every declaration at or before the event being applied. That is what
+// makes a replay reconstruct history instead of reinterpreting it through today's
+// shape; a cache would additionally have to be reset in `clear_tables`, or a
+// rebuild would start its replay holding the previous pass's declaration.
 
 impl NotesProjection {
     pub const NAME: &'static str = "notes";
@@ -98,7 +103,8 @@ impl NotesProjection {
             .unwrap_or_default()
             .to_string();
         let legacy_properties = event.payload.get("legacy_properties").cloned();
-        let complete = is_complete(&raw_text);
+        let record_type = journal_record_type(db).await;
+        let complete = is_complete(&raw_text, &record_type.required_keys());
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
@@ -136,7 +142,8 @@ impl NotesProjection {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let complete = is_complete(&raw_text);
+        let record_type = journal_record_type(db).await;
+        let complete = is_complete(&raw_text, &record_type.required_keys());
         let ts = event.timestamp.to_rfc3339();
 
         db.query(
@@ -323,8 +330,14 @@ impl NotesProjection {
     }
 }
 
-/// A journal entry is "complete" when all three manual reflection properties
-/// have non-empty values in the YAML frontmatter at the top of the note.
+/// A journal entry is "complete" when every **required** property of its record
+/// type has a non-empty value in the YAML frontmatter at the top of the note.
+///
+/// ⚠️ **An empty `required` list means `false`, not `true`.** `[].iter().all()` is
+/// vacuously true, which would mark every entry complete the moment a record type
+/// declares no required properties — and `complete` is what `auto_close` acts on,
+/// so the whole back catalogue would close itself and go read-only. Nothing to fill
+/// in means nothing to finish, so this fails closed.
 ///
 /// **Fenced frontmatter is scanned in full.** When the note opens with a `---`
 /// fence (what the journal template and the property panel always emit), every
@@ -347,12 +360,16 @@ impl NotesProjection {
 /// (last-wins) but is safe: duplicate keys essentially never occur via normal
 /// edits, and the rule favors the realistic "typed it once, added a blank line
 /// later" mistake mode.
-fn is_complete(raw_text: &str) -> bool {
-    // Single-pass scan over `&str` slices — no allocation. We track which of
-    // the required properties have been seen with a non-empty value and
-    // short-circuit as soon as all three are satisfied, so this stays cheap on
-    // every keystroke-triggered auto-save.
-    let mut found = [false; COMPLETE_PROPERTIES.len()];
+fn is_complete(raw_text: &str, required: &[&str]) -> bool {
+    if required.is_empty() {
+        return false;
+    }
+
+    // Single-pass scan over `&str` slices — the only allocation is the found-set,
+    // which is sized to the declaration rather than to a constant. We short-circuit
+    // as soon as every required property is satisfied, so this stays cheap on every
+    // keystroke-triggered auto-save.
+    let mut found = vec![false; required.len()];
 
     let mut lines = raw_text.lines();
 
@@ -413,7 +430,7 @@ fn is_complete(raw_text: &str) -> bool {
             continue;
         }
         let key = key.trim();
-        for (i, required) in COMPLETE_PROPERTIES.iter().enumerate() {
+        for (i, required) in required.iter().enumerate() {
             if !found[i] && key.eq_ignore_ascii_case(required) {
                 found[i] = true;
                 break; // a single key matches at most one required entry
@@ -432,7 +449,19 @@ mod tests {
     use super::*;
     use crate::events::projection::ProjectionRunner;
     use crate::events::store::{EventStore, NewEvent, SurrealEventStore};
+    use crate::record_type::RecordType;
     use chrono::Utc;
+
+    /// The keys the journal used before record types existed, taken from the
+    /// preset that actually ships rather than restated as literals.
+    ///
+    /// ⚠️ Every `is_complete_*` case below predates this phase and passes
+    /// **unchanged** through it. That is the migration claim at unit level: if the
+    /// generalized scanner and the reflective preset together disagree with the
+    /// old hardcoded array on any of these shapes, one of these tests fails.
+    fn reflective() -> RecordType {
+        RecordType::journal_reflective()
+    }
 
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
@@ -445,26 +474,26 @@ mod tests {
     #[test]
     fn is_complete_detects_all_three_properties() {
         let text = "---\nhomework_for_life: shipped event schema\ngrateful_for: coffee\nlearnt_today: surreal flexible types\n---\nBody goes here.";
-        assert!(is_complete(text));
+        assert!(is_complete(text, &reflective().required_keys()));
     }
 
     #[test]
     fn is_complete_false_when_any_property_empty() {
         let text = "homework_for_life: shipped\ngrateful_for:\nlearnt_today: things";
-        assert!(!is_complete(text));
+        assert!(!is_complete(text, &reflective().required_keys()));
     }
 
     #[test]
     fn is_complete_false_when_property_missing() {
         let text = "homework_for_life: shipped\nlearnt_today: things";
-        assert!(!is_complete(text));
+        assert!(!is_complete(text, &reflective().required_keys()));
     }
 
     #[test]
     fn is_complete_accepts_no_fences() {
         // Common mobile-entry shape: no leading ---
         let text = "homework_for_life: a\ngrateful_for: b\nlearnt_today: c\n\nbody";
-        assert!(is_complete(text));
+        assert!(is_complete(text, &reflective().required_keys()));
     }
 
     #[test]
@@ -488,7 +517,7 @@ mod tests {
             ## What happened today? (Add as much detail as you want)\n\
             \n";
         assert!(
-            is_complete(filled),
+            is_complete(filled, &reflective().required_keys()),
             "filled-in journal template must register as complete"
         );
     }
@@ -509,7 +538,7 @@ mod tests {
             ---\n\
             body";
         assert!(
-            is_complete(text),
+            is_complete(text, &reflective().required_keys()),
             "block-list tags must not hide the reflections"
         );
     }
@@ -528,7 +557,7 @@ mod tests {
             ---\n\
             body";
         assert!(
-            is_complete(text),
+            is_complete(text, &reflective().required_keys()),
             "reordered keys must still register complete"
         );
     }
@@ -545,7 +574,7 @@ mod tests {
             learnt_today: c\n\
             ---";
         assert!(
-            is_complete(text),
+            is_complete(text, &reflective().required_keys()),
             "blank lines inside the fence must not terminate the scan"
         );
     }
@@ -562,8 +591,38 @@ mod tests {
             \n\
             body";
         assert!(
-            is_complete(text),
+            is_complete(text, &reflective().required_keys()),
             "fence-less block list must not hide the reflections"
+        );
+    }
+
+    #[test]
+    fn is_complete_is_false_when_no_properties_are_required() {
+        // ⚠️ The vacuous-truth trap. `[].iter().all()` is `true`, so the obvious
+        // generalization would mark EVERY entry complete the moment a record type
+        // declares nothing required — and `complete` is what `auto_close` acts on,
+        // so the whole back catalogue would close itself and go read-only. The
+        // minimal preset is exactly that declaration, so this is not hypothetical.
+        let filled = "---\nhomework_for_life: a\ngrateful_for: b\nlearnt_today: c\n---\nbody";
+        assert!(
+            !is_complete(filled, &[]),
+            "nothing required must mean nothing to finish, not everything finished"
+        );
+        assert!(
+            RecordType::journal_minimal().required_keys().is_empty(),
+            "the minimal preset is what reaches the branch above"
+        );
+    }
+
+    #[test]
+    fn is_complete_follows_a_declaration_that_is_not_the_reflective_one() {
+        // The point of the phase: the scanner has no opinion about which keys
+        // matter. A fourth property participates, and a dropped one stops.
+        let text = "---\nmood: 7\ngrateful_for: b\n---\nbody";
+        assert!(is_complete(text, &["mood", "grateful_for"]));
+        assert!(
+            !is_complete(text, &["mood", "grateful_for", "learnt_today"]),
+            "a declared-but-absent key must still block completeness"
         );
     }
 
@@ -572,7 +631,7 @@ mod tests {
         // Regression: prose that merely contains a colon must not read as a
         // complete frontmatter. The first non-kv line ends the fence-less run.
         let text = "Meeting notes: discussed the roadmap\nAction items follow.\nMore body.";
-        assert!(!is_complete(text));
+        assert!(!is_complete(text, &reflective().required_keys()));
     }
 
     #[test]
@@ -587,7 +646,7 @@ mod tests {
             grateful_for: b\n\
             learnt_today: c\n\
             ---";
-        assert!(!is_complete(text));
+        assert!(!is_complete(text, &reflective().required_keys()));
     }
 
     #[tokio::test]

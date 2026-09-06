@@ -246,12 +246,12 @@ fn walk_into(dir: &Path, out: &mut Vec<VaultEntry>) {
 // Frontmatter mapper (phase 5.3)
 // ---------------------------------------------------------------------------
 
-/// The set of frontmatter keys omni-me understands natively. Anything else
-/// ends up in `legacy_properties`.
+/// The frontmatter keys the app itself owns, which no record type may claim.
+/// Anything that is neither one of these nor a declared property ends up in
+/// `legacy_properties`.
 ///
-/// Reflection keys (`homework_for_life` / `grateful_for` / `learnt_today`) are
-/// also "known" but live in `events::COMPLETE_PROPERTIES` because the projection
-/// owns them; the classifier at the use site checks both lists.
+/// Kept in step with `record_type::RESERVED_KEYS`, which refuses a declaration
+/// that would shadow one.
 const NATIVE_FRONTMATTER_KEYS: [&str; 2] = ["date", "tags"];
 
 /// Mapped view of a note's frontmatter: known schema fields lifted out,
@@ -264,17 +264,21 @@ pub struct MappedFrontmatter {
     /// (Obsidian allows both forms). Empty when absent.
     pub tags: Vec<String>,
     /// Everything in the frontmatter that isn't a native key (`date`, `tags`)
-    /// or a reflection key (see `events::COMPLETE_PROPERTIES`), preserved as
-    /// a JSON object. `None` when the frontmatter had no unknown keys (or was
-    /// entirely absent).
+    /// or a property the record type declares, preserved as a JSON object.
+    /// `None` when the frontmatter had no unknown keys (or was entirely absent).
     pub legacy_properties: Option<JsonValue>,
 }
 
 /// Split a parsed frontmatter value into typed fields + `legacy_properties`.
 ///
+/// `declared` is the record type's property keys. A key it does not name is not
+/// discarded — it lands in `legacy_properties` and comes back out through the
+/// panel's raw escape hatch, which is what lets an imported Obsidian note keep
+/// frontmatter this install has no declaration for.
+///
 /// Non-object frontmatter (scalar, list, null) goes entirely into
 /// `legacy_properties` since it doesn't fit the property-panel model.
-pub fn map_frontmatter(fm: &JsonValue) -> MappedFrontmatter {
+pub fn map_frontmatter(fm: &JsonValue, declared: &[&str]) -> MappedFrontmatter {
     let Some(map) = fm.as_object() else {
         return MappedFrontmatter {
             date: None,
@@ -292,9 +296,7 @@ pub fn map_frontmatter(fm: &JsonValue) -> MappedFrontmatter {
     let mut legacy = serde_json::Map::new();
     for (k, v) in map {
         let key = k.as_str();
-        if !NATIVE_FRONTMATTER_KEYS.contains(&key)
-            && !crate::events::COMPLETE_PROPERTIES.contains(&key)
-        {
+        if !NATIVE_FRONTMATTER_KEYS.contains(&key) && !declared.contains(&key) {
             legacy.insert(k.clone(), v.clone());
         }
     }
@@ -448,6 +450,14 @@ pub fn classify_with_frontmatter(path: &Path, fm: &MappedFrontmatter) -> NoteKin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::record_type::RecordType;
+
+    /// The record type the mapper tests classify against — the reflective preset,
+    /// which is the shape every already-imported vault was mapped under. Taken
+    /// from the preset rather than restated, so a change to it fails here.
+    fn declared() -> RecordType {
+        RecordType::journal_reflective()
+    }
 
     #[test]
     fn split_no_frontmatter() {
@@ -592,7 +602,7 @@ mod tests {
 
     #[test]
     fn map_null_frontmatter_is_empty() {
-        let out = map_frontmatter(&JsonValue::Null);
+        let out = map_frontmatter(&JsonValue::Null, &declared().property_keys());
         assert_eq!(out.date, None);
         assert!(out.tags.is_empty());
         assert!(out.legacy_properties.is_none());
@@ -607,7 +617,7 @@ mod tests {
             "aliases": ["Apr 22"],
             "mood": 7
         });
-        let out = map_frontmatter(&fm);
+        let out = map_frontmatter(&fm, &declared().property_keys());
         assert_eq!(
             out.date,
             Some(NaiveDate::from_ymd_opt(2026, 4, 22).unwrap())
@@ -625,14 +635,14 @@ mod tests {
     #[test]
     fn map_tags_single_string_accepted() {
         let fm = serde_json::json!({ "tags": "daily_note" });
-        let out = map_frontmatter(&fm);
+        let out = map_frontmatter(&fm, &declared().property_keys());
         assert_eq!(out.tags, vec!["daily_note"]);
     }
 
     #[test]
     fn map_tags_comma_separated_string() {
         let fm = serde_json::json!({ "tags": "daily_note, reflection , mood" });
-        let out = map_frontmatter(&fm);
+        let out = map_frontmatter(&fm, &declared().property_keys());
         assert_eq!(out.tags, vec!["daily_note", "reflection", "mood"]);
     }
 
@@ -645,7 +655,11 @@ mod tests {
             "grateful_for": "b",
             "learnt_today": "c"
         });
-        assert!(map_frontmatter(&fm).legacy_properties.is_none());
+        assert!(
+            map_frontmatter(&fm, &declared().property_keys())
+                .legacy_properties
+                .is_none()
+        );
     }
 
     // ------ Classifier (5.4) ------
@@ -883,7 +897,11 @@ mod tests {
     #[test]
     fn map_tags_empty_list_stays_empty() {
         let fm = serde_json::json!({ "tags": [] });
-        assert!(map_frontmatter(&fm).tags.is_empty());
+        assert!(
+            map_frontmatter(&fm, &declared().property_keys())
+                .tags
+                .is_empty()
+        );
     }
 
     #[test]
@@ -892,7 +910,7 @@ mod tests {
         // is rare but legal YAML. Whole thing should land in legacy_properties
         // so nothing's silently dropped.
         let fm = serde_json::json!(["not", "an", "object"]);
-        let out = map_frontmatter(&fm);
+        let out = map_frontmatter(&fm, &declared().property_keys());
         assert!(out.date.is_none());
         assert!(out.tags.is_empty());
         assert_eq!(out.legacy_properties.unwrap(), fm);

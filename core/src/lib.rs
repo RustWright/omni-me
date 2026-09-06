@@ -22,6 +22,7 @@ pub mod llm;
 pub mod preprocess;
 pub mod query;
 pub mod reconciliation;
+pub mod record_type;
 pub mod recurring;
 pub mod routines;
 pub mod statement;

@@ -616,6 +616,28 @@ pub fn run() {
                 let device_id = load_or_create(&app_data, DEVICE_ID_FILE, || {
                     ulid::Ulid::new().to_string()
                 });
+
+                // Declare the journal's shape if the log has never carried one.
+                // Awaited rather than spawned, unlike the device-id audit below:
+                // the first journal event of this session must not be projected
+                // against a shape that is still being decided. The cost after the
+                // first launch is one keyed SELECT that finds a row and returns —
+                // the events scan and the append happen once, ever.
+                //
+                // Non-fatal: a failure here leaves the log undeclared, and
+                // `journal_record_type` falls back to the pre-record-type shape,
+                // which is a working app rather than a refused boot.
+                if let Err(e) = omni_me_core::events::seed_journal_record_type(
+                    &db,
+                    &event_store,
+                    &projections,
+                    &device_id,
+                )
+                .await
+                {
+                    tracing::warn!(error = %e, "could not seed the journal record type");
+                }
+
                 let server_url = resolve_server_url(&app_data, non_production);
                 let server_token =
                     load_or_create(&app_data, SERVER_TOKEN_FILE, String::new);
