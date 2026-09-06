@@ -106,6 +106,12 @@ other way round.
   warning** — those are load-bearing. Extracted essays become the mdbook's architecture
   section. Also folds in the root design docs and fixes the README/`architecture.md` claim that
   the server runs projections (it runs none — `server/src/lib.rs:207`). [L]
+  - **Publishing the site is deliberately off.** The `Documentation` workflow builds the book on
+    every `docs/**` change (catching broken `SUMMARY.md` links) but its deploy job is gated on
+    `vars.PUBLISH_DOCS == 'true'`. To go live: enable Pages on the repo (Settings → Pages →
+    Source: GitHub Actions — it has **never** been enabled, and `deploy-pages` 404s without it),
+    then set the repository variable. Held back because the site is two pages and its intended
+    reader — someone deciding whether to adopt omni-me — has no setup guide to follow yet.
 - [ ] **Trailing, no deadline.** Preset picker UI, extra presets, record-type export/import;
   the small constants now that there is somewhere to put them (`FORCE_GENERIC_DIRS`, vault
   naming, routine frequency bounds); user-facing setup + customization guides in the mdbook.
