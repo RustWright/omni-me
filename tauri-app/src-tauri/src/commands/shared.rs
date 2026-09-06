@@ -223,10 +223,16 @@ mod tests {
     ///
     /// The match in `authoring_features` is exhaustive, so a new variant cannot
     /// compile without an arm — but an arm returning `&[]` is the easy way to
-    /// silence it, and `&[]` means ungated forever. This pins the three that are
-    /// legitimately unowned so a fourth has to be argued for here.
+    /// silence it, and `&[]` means ungated forever. This pins the four that are
+    /// legitimately unowned so a fifth has to be argued for here.
+    ///
+    /// `record_type_declared` is the fourth: a declaration is the shape of your
+    /// own data, so it must not depend on the feature that renders it being on,
+    /// and the first-run seed is emitted at startup before any feature has been
+    /// consulted. `events::registry` makes the same call on the read side, where
+    /// `RecordTypeProjection` sits in `NEVER_GATED` beside config's.
     #[test]
-    fn only_the_three_app_level_events_are_unowned() {
+    fn only_the_four_app_level_events_are_unowned() {
         let unowned: Vec<String> = EventType::ALL
             .iter()
             .filter(|t| t.authoring_features().is_empty())
@@ -234,7 +240,12 @@ mod tests {
             .collect();
         assert_eq!(
             unowned,
-            vec!["data_wiped", "feedback_captured", "config_set"],
+            vec![
+                "data_wiped",
+                "feedback_captured",
+                "config_set",
+                "record_type_declared"
+            ],
             "an event type became unowned (ungated) — or a legitimately unowned \
              one gained an owner; if this is deliberate, update this list and say why"
         );
