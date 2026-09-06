@@ -1657,6 +1657,49 @@ pub async fn invoke_set_device_override(
 }
 
 // -----------------------------------------------------------------------------
+// Record types — the declared shape of a record
+// -----------------------------------------------------------------------------
+
+use crate::types::RecordType;
+
+/// Fetch one record type's declaration.
+///
+/// Called at use-time, not from a boot snapshot: a property the user just added
+/// should appear without a relaunch.
+pub async fn invoke_get_record_type(name: &str) -> Result<RecordType, String> {
+    #[cfg(feature = "mock")]
+    {
+        use crate::types::{Identity, PropertyDecl, PropertyKind};
+        // The reflective preset — what an install that predates record types
+        // falls back to, and therefore what the headless UI checks should draw.
+        let prop = |key: &str, label: &str| PropertyDecl {
+            key: key.to_string(),
+            label: label.to_string(),
+            kind: PropertyKind::Text,
+            required: true,
+        };
+        Ok(RecordType {
+            name: name.to_string(),
+            identity: Identity::Date,
+            auto_close: true,
+            properties: vec![
+                prop("homework_for_life", "Homework for life"),
+                prop("grateful_for", "Grateful for"),
+                prop("learnt_today", "Learnt today"),
+            ],
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            name: &'a str,
+        }
+        invoke("get_record_type", &Args { name }).await
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Obsidian import / export
 // -----------------------------------------------------------------------------
 

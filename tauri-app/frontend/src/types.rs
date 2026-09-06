@@ -286,6 +286,62 @@ pub struct ConfigEntry {
     pub choices: Option<Vec<String>>,
 }
 
+// ---------------------------------------------------------------------------
+// Record types — the declared shape of a record
+// ---------------------------------------------------------------------------
+//
+// Mirrors `core::record_type`. The frontend has no `core` dependency, so the
+// shape is restated here; the `#[serde(default)]` attributes must match the
+// backend's, or a declaration written by an older build stops decoding.
+
+/// What makes one record of this type distinct from another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Identity {
+    Date,
+}
+
+/// How a property's value is entered and stored. Only prose today; the field
+/// exists so adding a kind later is a value change rather than a payload
+/// migration on an append-only log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PropertyKind {
+    #[default]
+    Text,
+}
+
+/// One declared property: the frontmatter key, and how to draw it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PropertyDecl {
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub kind: PropertyKind,
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// A record type as declared, in declaration order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordType {
+    pub name: String,
+    pub identity: Identity,
+    #[serde(default)]
+    pub auto_close: bool,
+    #[serde(default)]
+    pub properties: Vec<PropertyDecl>,
+}
+
+impl RecordType {
+    /// Every declared key, in declaration order. This is the set
+    /// `split_journal` lifts out of frontmatter; anything else stays in
+    /// `legacy_raw` rather than being dropped.
+    pub fn property_keys(&self) -> Vec<&str> {
+        self.properties.iter().map(|p| p.key.as_str()).collect()
+    }
+}
+
 /// Build + installation identity, shown in the capture modal so a user can see
 /// what a problem report will carry before sending it. Distinct from
 /// [`RuntimeProfile`], which is on the render path of a banner drawn on every

@@ -2,22 +2,29 @@
 //! properties + body — the data model behind the journal properties panel.
 //!
 //! The frontend crate has **no `core` dependency and no YAML library**, so this
-//! is a small, forgiving, hand-rolled parser/serializer. It only understands the
-//! handful of keys omni-me types natively (`date`, `tags`, and the three
-//! reflection keys); everything else in the frontmatter is preserved verbatim as
-//! `legacy_raw` (the panel's raw escape hatch) so imported Obsidian notes round-trip.
+//! is a small, forgiving, hand-rolled parser/serializer. It types two universal
+//! keys (`date`, `tags`) plus whichever keys the record type declares — passed
+//! in, never compiled in; everything else in the frontmatter is preserved
+//! verbatim as `legacy_raw` (the panel's raw escape hatch) so imported Obsidian
+//! notes round-trip.
 //!
 //! **Serialization is safe by construction:** its output is a strict subset of
 //! what `core::import::parse_markdown` and
 //! `core::events::notes_projection::is_complete` accept —
 //!   * `tags` are always inline (`[a, b]`), never a YAML block list, so
 //!     `is_complete`'s single-pass scan never terminates early;
-//!   * an empty reflection serializes to a bare `key:` (empty value → not
+//!   * an empty declared property serializes to a bare `key:` (empty value → not
 //!     complete), a non-empty one to `key: "…"` double-quoted on a single
 //!     physical line (non-empty value → complete, and valid YAML);
-//!   * reflections are emitted *before* any legacy block, so a legacy block-list
-//!     property can never stop the `is_complete` scan before the three reflection
-//!     keys are seen.
+//!   * declared properties are emitted *before* any legacy block, so a legacy
+//!     block-list property can never stop the `is_complete` scan before the
+//!     declared keys are seen.
+//!
+//! ⚠️ Those three now have to hold for **user-declared** keys, not just for three
+//! known ones. What keeps them holding is that `core::record_type::RecordType::validate`
+//! rejects a key that could break the scan (spaces, colons, newlines, a leading
+//! `-` or `#`, or one of the reserved names) before the declaration is ever
+//! stored — so a key reaching this file is already scan-safe.
 //!
 //! Keep those invariants in step with `core/src/events/notes_projection.rs`
 //! (`is_complete`) and `core/src/import.rs` (`parse_markdown`).
@@ -30,11 +37,17 @@ pub struct JournalProps {
     pub date: String,
     /// `tags` list. Serialized inline so `is_complete` never terminates early.
     pub tags: Vec<String>,
-    pub homework_for_life: String,
-    pub grateful_for: String,
-    pub learnt_today: String,
+    /// The declared properties as `(key, value)`, **in declaration order**.
+    /// Seeded from the declaration by [`split_journal`], so a key the record
+    /// type names but the file omits still gets a row — that is what makes the
+    /// panel draw an empty box for a property you just added, rather than
+    /// silently dropping it until something writes a value.
+    pub entries: Vec<(String, String)>,
     /// Unknown / imported frontmatter lines, preserved verbatim. Never contains
-    /// the `---` fences or the known-key lines. Empty when there are none.
+    /// the `---` fences or the typed-key lines. Empty when there are none.
+    ///
+    /// Un-declaring a property lands its value here rather than deleting it: the
+    /// key stops being declared, so the next split leaves it in the legacy block.
     pub legacy_raw: String,
 }
 
@@ -44,8 +57,19 @@ pub struct JournalProps {
 /// requires a leading `---` fence line and a matching closing `---` line to have
 /// any frontmatter; otherwise the whole input is the body and props are default.
 /// The body is returned byte-exactly (everything after the closing fence line).
-pub fn split_journal(raw: &str) -> (JournalProps, String) {
-    let mut props = JournalProps::default();
+///
+/// `declared` is the record type's property keys in declaration order. They are
+/// seeded into `props.entries` before parsing, so the returned entries are
+/// always the declaration — every declared key present exactly once, in order —
+/// regardless of what order (or whether) the file listed them.
+pub fn split_journal(raw: &str, declared: &[&str]) -> (JournalProps, String) {
+    let mut props = JournalProps {
+        entries: declared
+            .iter()
+            .map(|k| ((*k).to_string(), String::new()))
+            .collect(),
+        ..Default::default()
+    };
 
     let Some(rest) = strip_open_fence(raw) else {
         return (props, raw.to_string());
@@ -68,13 +92,10 @@ pub fn serialize_journal(props: &JournalProps, body: &str) -> String {
     }
     // Always inline — never a block list.
     fm.push_str(&format!("tags: [{}]\n", props.tags.join(", ")));
-    fm.push_str(&reflection_line(
-        "homework_for_life",
-        &props.homework_for_life,
-    ));
-    fm.push_str(&reflection_line("grateful_for", &props.grateful_for));
-    fm.push_str(&reflection_line("learnt_today", &props.learnt_today));
-    // Legacy block last, so it can't interrupt the is_complete reflection scan.
+    for (key, value) in &props.entries {
+        fm.push_str(&property_line(key, value));
+    }
+    // Legacy block last, so it can't interrupt the is_complete property scan.
     if !props.legacy_raw.is_empty() {
         fm.push_str(&props.legacy_raw);
         if !props.legacy_raw.ends_with('\n') {
@@ -214,6 +235,9 @@ fn split_closing_fence(rest: &str) -> Option<(&str, &str)> {
 // Frontmatter parsing
 // ---------------------------------------------------------------------------
 
+/// Fills `props` from the frontmatter block. `props.entries` must already be
+/// seeded with the declared keys — a key with no seeded slot is not declared,
+/// and therefore belongs in the legacy block.
 fn parse_frontmatter(fm: &str, props: &mut JournalProps) {
     let lines: Vec<&str> = fm.lines().collect();
     let mut legacy: Vec<&str> = Vec::new();
@@ -231,9 +255,6 @@ fn parse_frontmatter(fm: &str, props: &mut JournalProps) {
         let value = value.trim();
         match key {
             "date" => props.date = value.to_string(),
-            "homework_for_life" => props.homework_for_life = unquote(value),
-            "grateful_for" => props.grateful_for = unquote(value),
-            "learnt_today" => props.learnt_today = unquote(value),
             "tags" => {
                 if value.is_empty() {
                     // Block-list form: consume the following `- item` lines.
@@ -244,7 +265,10 @@ fn parse_frontmatter(fm: &str, props: &mut JournalProps) {
                 }
                 props.tags = parse_tags_inline(value);
             }
-            _ => legacy.push(line),
+            _ => match props.entries.iter_mut().find(|(k, _)| k == key) {
+                Some(slot) => slot.1 = unquote(value),
+                None => legacy.push(line),
+            },
         }
         i += 1;
     }
@@ -283,9 +307,9 @@ fn parse_tags_inline(value: &str) -> Vec<String> {
         .collect()
 }
 
-/// A non-empty reflection serializes to a double-quoted single-line scalar;
-/// an empty one to a bare `key:` (so `is_complete` sees no value).
-fn reflection_line(key: &str, value: &str) -> String {
+/// A non-empty declared property serializes to a double-quoted single-line
+/// scalar; an empty one to a bare `key:` (so `is_complete` sees no value).
+fn property_line(key: &str, value: &str) -> String {
     if value.is_empty() {
         format!("{key}:\n")
     } else {
@@ -345,9 +369,24 @@ mod tests {
     use super::*;
     use crate::journal_template;
 
-    /// The exact three reflection keys `is_complete` looks for, so the tests
-    /// below can assert the serialized shape without pulling in `core`.
+    /// The reflective preset's keys. These tests deliberately stay on it: it is
+    /// what an install predating record types falls back to, so they double as
+    /// the byte-compatibility gate — they must pass unchanged.
     const REFLECTIONS: [&str; 3] = ["homework_for_life", "grateful_for", "learnt_today"];
+
+    fn set(props: &mut JournalProps, key: &str, value: &str) {
+        match props.entries.iter_mut().find(|(k, _)| k == key) {
+            Some(slot) => slot.1 = value.to_string(),
+            None => panic!("`{key}` is not declared"),
+        }
+    }
+
+    fn get<'a>(props: &'a JournalProps, key: &str) -> &'a str {
+        match props.entries.iter().find(|(k, _)| k == key) {
+            Some((_, v)) => v.as_str(),
+            None => panic!("`{key}` is not declared"),
+        }
+    }
 
     /// Re-implementation of the contract from `core`'s `is_complete`: a reflection
     /// key counts as "filled" when a `key: value` line has a non-empty trimmed
@@ -361,11 +400,11 @@ mod tests {
 
     #[test]
     fn template_round_trips_byte_identical() {
-        let tmpl = journal_template::render("2026-07-03");
-        let (props, body) = split_journal(&tmpl);
+        let tmpl = journal_template::render("2026-07-03", &REFLECTIONS);
+        let (props, body) = split_journal(&tmpl, &REFLECTIONS);
         assert_eq!(props.date, "2026-07-03");
         assert_eq!(props.tags, vec!["daily_note".to_string()]);
-        assert!(props.homework_for_life.is_empty());
+        assert!(get(&props, "homework_for_life").is_empty());
         assert!(props.legacy_raw.is_empty());
         // Untouched entries must not phantom-diff on recombine.
         assert_eq!(serialize_journal(&props, &body), tmpl);
@@ -373,14 +412,18 @@ mod tests {
 
     #[test]
     fn fresh_template_is_incomplete_filled_template_is_complete() {
-        let tmpl = journal_template::render("2026-07-03");
+        let tmpl = journal_template::render("2026-07-03", &REFLECTIONS);
         for key in REFLECTIONS {
             assert!(!reflection_filled(&tmpl, key), "blank template: {key}");
         }
-        let (mut props, body) = split_journal(&tmpl);
-        props.homework_for_life = "notice diverging assumptions".into();
-        props.grateful_for = "regression tests".into();
-        props.learnt_today = "surreal flexible types".into();
+        let (mut props, body) = split_journal(&tmpl, &REFLECTIONS);
+        set(
+            &mut props,
+            "homework_for_life",
+            "notice diverging assumptions",
+        );
+        set(&mut props, "grateful_for", "regression tests");
+        set(&mut props, "learnt_today", "surreal flexible types");
         let out = serialize_journal(&props, &body);
         for key in REFLECTIONS {
             assert!(reflection_filled(&out, key), "filled entry: {key}");
@@ -389,12 +432,12 @@ mod tests {
 
     #[test]
     fn reflection_special_chars_round_trip_and_stay_parser_safe() {
-        let mut props = JournalProps {
-            date: "2026-07-03".into(),
-            tags: vec!["daily_note".into()],
-            ..Default::default()
-        };
-        props.grateful_for = "mentor: Jane \"the great\"\nand line two".into();
+        let (mut props, _) = split_journal(
+            "---\ndate: 2026-07-03\ntags: [daily_note]\n---\n",
+            &REFLECTIONS,
+        );
+        let hairy = "mentor: Jane \"the great\"\nand line two";
+        set(&mut props, "grateful_for", hairy);
         let out = serialize_journal(&props, "body");
         // The value stays on one physical line (no raw newline breaks YAML).
         let refl_line = out
@@ -404,8 +447,8 @@ mod tests {
         assert!(!refl_line.contains('\n'));
         assert!(reflection_filled(&out, "grateful_for"));
         // And it survives a round trip exactly.
-        let (back, body) = split_journal(&out);
-        assert_eq!(back.grateful_for, props.grateful_for);
+        let (back, body) = split_journal(&out, &REFLECTIONS);
+        assert_eq!(get(&back, "grateful_for"), hairy);
         assert_eq!(body, "body");
     }
 
@@ -420,11 +463,11 @@ mod tests {
             grateful_for: coffee\n\
             learnt_today: yaml\n\
             ---\n\nBody.\n";
-        let (props, body) = split_journal(raw);
+        let (props, body) = split_journal(raw, &REFLECTIONS);
         assert!(props.legacy_raw.contains("aliases:"));
         assert!(props.legacy_raw.contains("- old-note"));
         assert!(props.legacy_raw.contains("mood: 7"));
-        assert_eq!(props.homework_for_life, "shipped it");
+        assert_eq!(get(&props, "homework_for_life"), "shipped it");
         assert_eq!(body, "\nBody.\n");
 
         // Reflections come before the legacy block in the re-emitted output.
@@ -443,7 +486,7 @@ mod tests {
             date: 2026-07-03\n\
             tags:\n  - daily_note\n  - work\n\
             homework_for_life: a\n---\nbody";
-        let (props, _) = split_journal(raw);
+        let (props, _) = split_journal(raw, &REFLECTIONS);
         assert_eq!(
             props.tags,
             vec!["daily_note".to_string(), "work".to_string()]
@@ -456,9 +499,54 @@ mod tests {
     #[test]
     fn no_fence_note_is_all_body() {
         let raw = "Just a note with no frontmatter.\nSecond line.";
-        let (props, body) = split_journal(raw);
-        assert_eq!(props, JournalProps::default());
+        let (props, body) = split_journal(raw, &REFLECTIONS);
         assert_eq!(body, raw);
+        // The declaration is still seeded — the panel draws its boxes for a
+        // fence-less note too — but nothing is lifted out of the text.
+        assert!(props.date.is_empty());
+        assert!(props.tags.is_empty());
+        assert!(props.legacy_raw.is_empty());
+        assert!(props.entries.iter().all(|(_, v)| v.is_empty()));
+        assert_eq!(props.entries.len(), REFLECTIONS.len());
+    }
+
+    #[test]
+    fn an_undeclared_key_stays_in_legacy_rather_than_being_dropped() {
+        // Un-declaring a property must not delete its value. Split the same
+        // note twice: once with `mood` declared, once without.
+        let raw = "---\ndate: 2026-07-03\nmood: 7\n---\nbody";
+
+        let (declared, _) = split_journal(raw, &["mood"]);
+        assert_eq!(get(&declared, "mood"), "7");
+        assert!(declared.legacy_raw.is_empty());
+
+        let (undeclared, body) = split_journal(raw, &REFLECTIONS);
+        assert!(undeclared.legacy_raw.contains("mood: 7"));
+        // …and it survives a re-serialize, so the value is still there if the
+        // property is declared again later.
+        let out = serialize_journal(&undeclared, &body);
+        assert!(out.contains("mood: 7"), "value must survive: {out}");
+    }
+
+    #[test]
+    fn entries_follow_declaration_order_not_file_order() {
+        // The file lists the reflections backwards; the panel and the
+        // re-serialized output must both use declaration order.
+        let raw = "---\ndate: 2026-07-03\nlearnt_today: c\ngrateful_for: b\n\
+            homework_for_life: a\n---\nbody";
+        let (props, body) = split_journal(raw, &REFLECTIONS);
+        assert_eq!(
+            props.entries,
+            vec![
+                ("homework_for_life".to_string(), "a".to_string()),
+                ("grateful_for".to_string(), "b".to_string()),
+                ("learnt_today".to_string(), "c".to_string()),
+            ]
+        );
+        let out = serialize_journal(&props, &body);
+        let at = |k: &str| out.find(k).unwrap();
+        assert!(at("homework_for_life") < at("grateful_for"));
+        assert!(at("grateful_for") < at("learnt_today"));
     }
 
     // -- generic notes -----------------------------------------------------

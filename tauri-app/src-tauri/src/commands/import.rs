@@ -105,7 +105,7 @@ async fn scan_for_preview(root: String, declared: &[&str]) -> Result<PreviewSumm
 
     let rows: Vec<PreviewRow> = entries
         .into_iter()
-        .map(|entry| build_preview_row(&root_path, entry, &declared))
+        .map(|entry| build_preview_row(&root_path, entry, declared))
         .collect();
 
     let mut journal_count = 0;
@@ -653,6 +653,14 @@ fn assign_unique_filenames(titles: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omni_me_core::record_type::RecordType;
+
+    /// The declaration these tests scan against. Returns the type rather than the
+    /// key slice because `property_keys` borrows from it — callers write
+    /// `&declared().property_keys()`, and the temporary lives to end of statement.
+    fn declared() -> RecordType {
+        RecordType::journal_reflective()
+    }
 
     #[test]
     fn sanitize_strips_forbidden_chars() {
@@ -781,9 +789,12 @@ mod tests {
         std::fs::write(root.join(".obsidian/workspace"), "{}").unwrap();
         std::fs::write(root.join("image.png"), b"binary").unwrap();
 
-        let summary = scan_for_preview(root.to_string_lossy().into_owned())
-            .await
-            .unwrap();
+        let summary = scan_for_preview(
+            root.to_string_lossy().into_owned(),
+            &declared().property_keys(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(summary.journal_count, 1);
         assert_eq!(summary.generic_count, 1);
@@ -810,18 +821,24 @@ mod tests {
         let file_path = tmp.path().join("not_a_dir.md");
         std::fs::write(&file_path, "content").unwrap();
 
-        let err = scan_for_preview(file_path.to_string_lossy().into_owned())
-            .await
-            .unwrap_err();
+        let err = scan_for_preview(
+            file_path.to_string_lossy().into_owned(),
+            &declared().property_keys(),
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains("Not a directory"), "got: {err}");
     }
 
     #[tokio::test]
     async fn preview_import_empty_vault_returns_zero_rows() {
         let tmp = tempfile::tempdir().unwrap();
-        let summary = scan_for_preview(tmp.path().to_string_lossy().into_owned())
-            .await
-            .unwrap();
+        let summary = scan_for_preview(
+            tmp.path().to_string_lossy().into_owned(),
+            &declared().property_keys(),
+        )
+        .await
+        .unwrap();
         assert_eq!(summary.rows.len(), 0);
         assert_eq!(summary.journal_count, 0);
         assert_eq!(summary.generic_count, 0);
@@ -836,9 +853,12 @@ mod tests {
         )
         .unwrap();
 
-        let summary = scan_for_preview(tmp.path().to_string_lossy().into_owned())
-            .await
-            .unwrap();
+        let summary = scan_for_preview(
+            tmp.path().to_string_lossy().into_owned(),
+            &declared().property_keys(),
+        )
+        .await
+        .unwrap();
         assert_eq!(summary.error_count, 1);
         assert_eq!(summary.rows[0].kind, "error");
         assert!(summary.rows[0].error.is_some());
@@ -903,9 +923,12 @@ mod tests {
         )
         .unwrap();
 
-        let summary = scan_for_preview(vault.to_string_lossy().into_owned())
-            .await
-            .unwrap();
+        let summary = scan_for_preview(
+            vault.to_string_lossy().into_owned(),
+            &declared().property_keys(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             summary.journal_count, 1,
@@ -932,9 +955,12 @@ mod tests {
         )
         .unwrap();
 
-        let summary = scan_for_preview(vault.to_string_lossy().into_owned())
-            .await
-            .unwrap();
+        let summary = scan_for_preview(
+            vault.to_string_lossy().into_owned(),
+            &declared().property_keys(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(summary.journal_count, 1, "real journal stays Journal");
         assert_eq!(
@@ -984,6 +1010,7 @@ mod tests {
             &scanned_root,
             vec![],
             None,
+            &declared().property_keys(),
         )
         .await
         .expect("empty input must not error");

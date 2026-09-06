@@ -22,7 +22,7 @@ use crate::journal_template;
 use crate::note_frontmatter::{JournalProps, serialize_journal, split_journal};
 use crate::screen_context::{ScreenReport, describe_len, use_publish_screen_report};
 use crate::timer::{AUTOSAVE_DEBOUNCE_MS, sleep_ms};
-use crate::types::JournalEntryItem;
+use crate::types::{JournalEntryItem, RecordType};
 use crate::user_date::UserDate;
 
 /// Start strip / travel thresholds (CSS px) for the calendar drawer's right-edge
@@ -351,8 +351,25 @@ pub fn JournalPage() -> Element {
 /// Split a raw journal note into the properties panel's typed `props` + the
 /// editor `body`. Called wherever raw text is loaded into the day (hydrate,
 /// reopen, close). Never touches `content` — that stays the source of truth.
-fn apply_raw(mut props: Signal<JournalProps>, mut body: Signal<String>, raw: &str) {
-    let (p, b) = split_journal(raw);
+///
+/// Takes the declaration as a signal rather than a key slice so the reopen /
+/// close handlers don't have to carry one through their closures. Every call
+/// site runs after hydrate, and hydrate bails before setting `hydrated` if the
+/// declaration didn't load — so `None` here is unreachable rather than a
+/// fallback worth designing. It splits everything into `legacy_raw` if it ever
+/// happens, which preserves the text.
+fn apply_raw(
+    record_type: Signal<Option<RecordType>>,
+    mut props: Signal<JournalProps>,
+    mut body: Signal<String>,
+    raw: &str,
+) {
+    let decl = record_type.read();
+    let declared = decl
+        .as_ref()
+        .map(RecordType::property_keys)
+        .unwrap_or_default();
+    let (p, b) = split_journal(raw, &declared);
     props.set(p);
     body.set(b);
 }
@@ -422,6 +439,12 @@ fn DayView(
     // `props` is only ever mutated inside the panel (by value), so it does not.
     let props = use_signal(JournalProps::default);
     let mut body = use_signal(String::new);
+    // The declared shape of a journal record — which properties the panel draws
+    // and which frontmatter keys `apply_raw` lifts out. Read at use-time rather
+    // than from a boot snapshot (feature toggles are snapshotted on purpose; a
+    // declaration has no such coupling), and fetched concurrently with the entry
+    // below so it costs no extra round-trip on the load path.
+    let mut record_type = use_signal(|| None::<RecordType>);
 
     // Continuity store (1.2): this day's editing session is held at the app
     // root, so switching tabs (which unmounts DayView) no longer drops typed
@@ -460,10 +483,37 @@ fn DayView(
             // bug). The continuity guarantee (never lose typed-but-unsaved text)
             // is untouched: only clean sessions defer.
             let stored = store.get(&key).filter(session_is_recoverable);
-            match bridge::invoke_get_journal_by_date(&d).await {
+            // Both fetches at once: the declaration is needed before any raw
+            // text can be split, but it does not depend on the entry.
+            let (decl, fetched) = futures::future::join(
+                bridge::invoke_get_record_type("journal"),
+                bridge::invoke_get_journal_by_date(&d),
+            )
+            .await;
+            match decl {
+                Ok(d) => record_type.set(Some(d)),
+                // Leave `hydrated` false, exactly as the entry-fetch error path
+                // does. Splitting raw text against an unknown declaration would
+                // sweep every reflection into the legacy block, and a later save
+                // would write that shape back.
+                Err(e) => {
+                    error_msg.set(Some(e));
+                    loading.set(false);
+                    return;
+                }
+            }
+            let declared = record_type
+                .peek()
+                .as_ref()
+                .map(RecordType::property_keys)
+                .unwrap_or_default()
+                .iter()
+                .map(|k| (*k).to_string())
+                .collect::<Vec<_>>();
+            match fetched {
                 Ok(Some(e)) => {
                     if let Some(s) = stored {
-                        apply_raw(props, body, &s.content);
+                        apply_raw(record_type, props, body, &s.content);
                         content.set(s.content);
                         last_saved_content.set(s.last_saved_content);
                         save_generation.set(s.save_generation);
@@ -471,7 +521,7 @@ fn DayView(
                     } else {
                         let raw = e.raw_text.clone();
                         last_saved_content.set(raw.clone());
-                        apply_raw(props, body, &raw);
+                        apply_raw(record_type, props, body, &raw);
                         content.set(raw);
                     }
                     entry.set(Some(e));
@@ -480,7 +530,7 @@ fn DayView(
                 }
                 Ok(None) => {
                     if let Some(s) = stored {
-                        apply_raw(props, body, &s.content);
+                        apply_raw(record_type, props, body, &s.content);
                         content.set(s.content);
                         last_saved_content.set(s.last_saved_content);
                         save_generation.set(s.save_generation);
@@ -490,9 +540,10 @@ fn DayView(
                         // template so an immediate Save without keystrokes still
                         // persists it, and so auto-save doesn't treat the
                         // template-vs-empty diff as user input.
-                        let template = journal_template::render(&d);
+                        let keys: Vec<&str> = declared.iter().map(String::as_str).collect();
+                        let template = journal_template::render(&d, &keys);
                         last_saved_content.set(template.clone());
-                        apply_raw(props, body, &template);
+                        apply_raw(record_type, props, body, &template);
                         content.set(template);
                     }
                     entry.set(None);
@@ -864,7 +915,7 @@ fn DayView(
                     // only ever holds the BODY — the frontmatter renders in the
                     // panel above — so push the split body, NOT the full raw, or
                     // the frontmatter gets dumped as plain text under the panel.
-                    apply_raw(props, body, &raw);
+                    apply_raw(record_type, props, body, &raw);
                     content.set(raw.clone());
                     let editor_body = body.peek().clone();
                     bridge::js_set_editor_content(&editor_body);
@@ -952,7 +1003,7 @@ fn DayView(
                                                 {
                                                     let raw = refreshed.raw_text.clone();
                                                     last_saved_content.set(raw.clone());
-                                                    apply_raw(props, body, &raw);
+                                                    apply_raw(record_type, props, body, &raw);
                                                     content.set(raw);
                                                     entry.set(Some(refreshed));
                                                 }
@@ -994,7 +1045,7 @@ fn DayView(
                                                 {
                                                     let raw = refreshed.raw_text.clone();
                                                     last_saved_content.set(raw.clone());
-                                                    apply_raw(props, body, &raw);
+                                                    apply_raw(record_type, props, body, &raw);
                                                     content.set(raw);
                                                     entry.set(Some(refreshed));
                                                 }
@@ -1078,6 +1129,7 @@ fn DayView(
                     rsx! {
                         JournalPropertiesPanel {
                             model: props,
+                            declaration: record_type,
                             read_only: is_closed,
                             on_change: move |_| recombine(props, body, content),
                         }
@@ -1129,9 +1181,24 @@ fn DayView(
 // recombines props + body back into the note `content`. See `note_frontmatter`.
 // ---------------------------------------------------------------------------
 
+/// The label a declared property should be drawn under. Falls back to the raw
+/// key: a value with no matching declaration is still shown and still editable,
+/// which is strictly better than hiding it behind a blank heading.
+fn label_for(declaration: &Signal<Option<RecordType>>, key: &str) -> String {
+    declaration
+        .read()
+        .as_ref()
+        .and_then(|d| d.properties.iter().find(|p| p.key == key))
+        .map(|p| p.label.clone())
+        .unwrap_or_else(|| key.to_string())
+}
+
 #[component]
 fn JournalPropertiesPanel(
     model: Signal<JournalProps>,
+    /// The declared shape, for the property labels. The values live in `model`;
+    /// this only supplies how to name them.
+    declaration: Signal<Option<RecordType>>,
     #[props(default = false)] read_only: bool,
     on_change: EventHandler<()>,
 ) -> Element {
@@ -1144,6 +1211,15 @@ fn JournalPropertiesPanel(
     let date = props.read().date.clone();
     let tags = props.read().tags.clone();
     let has_legacy = !props.read().legacy_raw.is_empty();
+    // Snapshot the rows before the `rsx!` block: each `on_input` closure below
+    // borrows `props` mutably, so nothing may still be holding a read guard.
+    let fields: Vec<(usize, String, String)> = props
+        .read()
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(i, (k, v))| (i, k.clone(), v.clone()))
+        .collect();
 
     rsx! {
         div { class: "mb-4 rounded-lg border border-obsidian-border/5 bg-obsidian-sidebar/30 divide-y divide-obsidian-border/5 text-sm",
@@ -1172,32 +1248,23 @@ fn JournalPropertiesPanel(
                 }
             }
 
-            ReflectionField {
-                label: "Homework for life",
-                value: props.read().homework_for_life.clone(),
-                read_only,
-                on_input: move |v: String| {
-                    props.write().homework_for_life = v;
-                    on_change.call(());
-                },
-            }
-            ReflectionField {
-                label: "Grateful for",
-                value: props.read().grateful_for.clone(),
-                read_only,
-                on_input: move |v: String| {
-                    props.write().grateful_for = v;
-                    on_change.call(());
-                },
-            }
-            ReflectionField {
-                label: "Learnt today",
-                value: props.read().learnt_today.clone(),
-                read_only,
-                on_input: move |v: String| {
-                    props.write().learnt_today = v;
-                    on_change.call(());
-                },
+            for (idx , key , value) in fields {
+                ReflectionField {
+                    key: "{key}",
+                    label: label_for(&declaration, &key),
+                    value,
+                    read_only,
+                    // Written by index, not by key: `props.entries` is seeded
+                    // from the declaration and never reordered, so the index is
+                    // stable for the life of the panel — and a lookup would have
+                    // to decide what to do when the key is gone.
+                    on_input: move |v: String| {
+                        if let Some(slot) = props.write().entries.get_mut(idx) {
+                            slot.1 = v;
+                        }
+                        on_change.call(());
+                    },
+                }
             }
 
             // Raw escape hatch for other / imported frontmatter.

@@ -97,8 +97,10 @@ rather than the pattern.
 
 ### The screens are the app's; your data shape is yours **(partly today)**
 
-You can [hide features you do not use](features.md) and retheme the app today. You will be
-able to declare what your records look like. You will not be able to write your own screens.
+You can [hide features you do not use](features.md) and retheme the app today. What your
+records look like is a declaration the app reads rather than code it ships, though editing
+that declaration still needs a screen that does not exist yet. You will not be able to write
+your own screens.
 
 **Why:** the interface compiles to WebAssembly, so there is no mechanism to load someone
 else's interface code at runtime. The only alternative would be inventing a layout language to
@@ -107,18 +109,30 @@ this project can honestly make.
 
 **What it costs you:** a genuinely new screen means an overlay and your own build.
 
-### Journal is one record type, not a special case **(planned)**
+### Journal is one record type, not a special case **(partly today)**
 
 A record type declares its identity rule, its template, its properties, what counts as
 complete, and whether completed entries close themselves. The daily journal is one instance of
-that, and the reflection prompts that ship with it are a preset you can replace, not the app's
-opinion about how you should journal.
+that, and the reflection prompts that ship with it are a preset, not the app's opinion about
+how you should journal.
+
+That declaration is live today. It arrives as a `RecordTypeDeclared` event, so it syncs and
+replays like any other change, and it is what now drives the completeness check, the new-entry
+template, the properties panel and the import classifier — the four places that used to hold
+their own hardcoded copy of one person's prompts.
 
 **Why:** the alternative is what this codebase did before, where one person's journaling
-framework was compiled into the completeness check, the template and the properties panel.
+framework was compiled into all four, and a second user could only escape it by forking.
 
-**What it costs you today:** journal entries are keyed by date, one per day. Multiple entries
-per day has no representation yet.
+**What it costs you today:** there is no screen for editing the declaration yet, so replacing
+the preset means emitting the event yourself. Properties are prose boxes only — the payload
+carries a kind field, but `text` is its only value. Journal entries are keyed by date, one per
+day; multiple entries per day has no representation.
+
+A fresh install is seeded with a minimal type that declares no properties at all, so you are
+not handed someone else's prompts to delete. An install that already has journal entries is
+seeded with the reflective preset instead, because those entries were written against it and
+their completeness must not change underneath them.
 
 ### Habits are not tasks **(today)**
 
@@ -135,7 +149,9 @@ Configuration today: the server address and token, timezone, base currency, your
 and display-name overrides, your LLM provider, your data sources, the theme and accent, and
 [which features exist at all](features.md) — per device as well as globally.
 
-Planned: your record types, including their templates, properties and completeness rules.
+Yours today, but not yet through a screen: your record types, including their templates,
+properties and completeness rules. The declaration is data the app reads; what is still
+missing is the interface for editing it.
 
 Always yours, with no rebuild and no permission: a new data source, via a subprocess plugin.
 

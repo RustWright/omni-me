@@ -52,9 +52,11 @@ defer-major-phases rule; do not run ahead to the next one.
    `GET /feedback`. Detail in "Open — from daily use" below. This was first because it is how
    every later item gets its bug reports. **Still open under it:** Stage 2 (the diagnostic
    ring buffer) and the live-box end-to-end.
-2. **Generalization** — **DESIGNED 2026-09-05**, build not started. The narrow framing (three
-   hardcoded strings) was replaced by the real question: omni-me is meant to become a system
-   other people run and customize, without being forced into the user's own preferences.
+2. **Generalization** — **STRUCTURAL PHASES COMPLETE 2026-09-06** (0, A, B, C all built and
+   verified). The narrow framing (three hardcoded strings) was replaced by the real question:
+   omni-me is meant to become a system other people run and customize, without being forced
+   into the user's own preferences. What remains is trailing, not structural: a preset picker
+   UI, extra presets, record-type export/import.
    12 decisions settled; full reasoning in `~/.claude/plans/lets-continue-deep-blanket.md`,
    the second-user-facing half published in `docs/src/invariants.md`. Phases below.
    ⚠️ **Statement layout strings are OUT of scope** — item 2 named them, but the finance
@@ -146,15 +148,29 @@ other way round.
     claimed all commands refuse, when reads deliberately do not.
   - **Left for the next release** (Phase A's deferral, unchanged): on-device Android and the
     two-device override check.
-- [ ] **Phase C — record types.** Declaration schema + `RecordTypeDeclared`; `is_complete`
-  generalized off `COMPLETE_PROPERTIES`; `import.rs` key classification follows; `JournalProps`'
-  three named fields → ordered map (ripples through `split_journal`/`serialize_journal` and
-  their tests); template rendered from config; schema-driven properties panel replacing the
-  three fixed `ReflectionField`s. **Done includes** the minimal preset applied at first run and
-  the reflective preset seeding the user's own migration. **Absorbs the
-  properties-panel-rework backlog item — same work.** [L]
-  - ⚠️ **Gate:** replay the existing event log with the shipped default record type and assert
-    `complete` is unchanged for every existing entry. This test exists before any of C merges.
+- [x] **Phase C — record types.** Done 2026-09-06. `core/src/record_type.rs` holds the
+  declaration schema (`RecordType`, `PropertyDecl`, `PropertyKind::Text`, `Identity::Date`)
+  with a `validate` that rejects any key the `is_complete` scanner could choke on.
+  `RecordTypeDeclared` authors under **no** feature and `RecordTypeProjection` is `NEVER_GATED`,
+  registered **ahead of** `NotesProjection` so a declaration applies to every journal event
+  after it. All four hardcoded sites now read the declaration: `is_complete`, `map_frontmatter`,
+  `journal_template::render`, and the properties panel (a loop over `props.entries`, not three
+  fixed `ReflectionField`s). Seeded at startup — minimal preset on a fresh log, reflective when
+  journal events already exist. Verified: core 632, frontend 115, clippy clean in both wasm
+  configs, Playwright 390/1280 with zero console errors. **Absorbed the properties-panel-rework
+  backlog item.** [L]
+  - ✅ **Gate held, and was proven non-vacuous.** `declaring_the_reflective_preset_changes_no_existing_entry`
+    replays a 9-entry corpus of awkward real frontmatter twice — undeclared, then declared — and
+    asserts `complete` is identical. Sabotaging `journal_record_type`'s fallback to the minimal
+    preset made it fail, confirming the test bites; then restored.
+  - Two deliberate deviations from the plan: the declaration is read from the table per event
+    rather than cached in an `RwLock` (kills the `clear_tables`-must-reset trap), and
+    `journal_template::render` builds through `serialize_journal` rather than a format string
+    (the template was an untested second copy of the serializer's safety invariants).
+  - ⚠️ **Not shipped:** no UI for editing a declaration — replacing the preset means emitting
+    the event by hand. `docs/src/invariants.md` says **(partly today)** for exactly this reason.
+  - ⚠️ **Server must deploy before any client that emits `record_type_declared`** — `push_handler`
+    400s a whole batch on an unknown event type. This is Trap 2, which Phase B dodged and C does not.
 - [ ] **Comment sweep + docs extraction.** Own session. Comment lines run 15–22% of source;
   the biggest blocks are module-header essays (`statement/rendered.rs` 44 lines,
   `auto_import/config.rs` 38, `diagnostics.rs` 35). Route per the four buckets in `CLAUDE.md`.
@@ -435,7 +451,7 @@ parser built 2026-09-05 would close the gap. Never checked.
   was a bare heading with unrelated items filed beneath it, the same corruption that left an
   orphaned paragraph in the friction log. Only the title and the design-first framing
   survive; the requirements need re-eliciting from the user before anything is built. [M]
-- [ ] **Journal template hardcodes the user's personal journaling framework** — `frontend/src/journal_template.rs::render` bakes in the user's own choices: the three reflection property keys (`homework_for_life`, `grateful_for`, `learnt_today`), the `## What happened today?` section heading, and the `daily_note` tag. Those same three keys are also hardcoded in the day-complete `is_complete` check (`core/src/events/notes_projection.rs`), and the `tags: [daily_note]` inline-list form is itself a workaround for that parser — so the template, the auto-close logic, and the typed properties panel (`journal.rs::JournalPropertiesPanel`, 3 fixed reflection fields) are all coupled to this one personal schema. Generalizing (user-configurable reflection prompts + template) means reworking `is_complete` to not key off fixed names + adding a config surface for the prompt set. Also a mild personalization-in-open-core smell (personal journaling prompts sit in the public repo, though not identity/financial data). [M] — flagged by user 2026-07-06. **SUPERSEDED 2026-09-05: this is now Phase C above.** The estimate was wrong ([L], not [M] — `JournalProps`' three named fields become an ordered map, which ripples through serialization and every test naming a field), and the resolution is not "make the prompts configurable" but declared record types, with the user's three prompts shipping as the *reflective preset* rather than the app's default.
+- [x] **Journal template hardcodes the user's personal journaling framework** — **RESOLVED 2026-09-06 by Phase C.** All four sites now read a declared record type; the user's three prompts ship as the *reflective preset*, seeded only where journal entries already exist. Original entry follows. `frontend/src/journal_template.rs::render` bakes in the user's own choices: the three reflection property keys (`homework_for_life`, `grateful_for`, `learnt_today`), the `## What happened today?` section heading, and the `daily_note` tag. Those same three keys are also hardcoded in the day-complete `is_complete` check (`core/src/events/notes_projection.rs`), and the `tags: [daily_note]` inline-list form is itself a workaround for that parser — so the template, the auto-close logic, and the typed properties panel (`journal.rs::JournalPropertiesPanel`, 3 fixed reflection fields) are all coupled to this one personal schema. Generalizing (user-configurable reflection prompts + template) means reworking `is_complete` to not key off fixed names + adding a config surface for the prompt set. Also a mild personalization-in-open-core smell (personal journaling prompts sit in the public repo, though not identity/financial data). [M] — flagged by user 2026-07-06. **SUPERSEDED 2026-09-05: this is now Phase C above.** The estimate was wrong ([L], not [M] — `JournalProps`' three named fields become an ordered map, which ripples through serialization and every test naming a field), and the resolution is not "make the prompts configurable" but declared record types, with the user's three prompts shipping as the *reflective preset* rather than the app's default.
 - [ ] **Finances section feels slow to load / unresponsive, and the overall UI/UX lacks coherence (mobile + desktop).** User (2026-07-21): "better ways to present the data and expose interfaces for me as a user to interact with it." Two intertwined threads: **(1) perf** — the finances views feel laggy on load (seed already noted: balance-cache landed 2026-07-04, but load/interaction responsiveness in the finances section specifically still feels slow — profile the real path: command latency, projection reads, frontend render/hydration, mobile vs desktop); **(2) UX/IA redesign** — the app doesn't feel like one coherent system; rethink how finance data is presented and how the user interacts with it, on both form factors. **Cross-cutting → its own planning-first session** per the defer-major-phases rule, opened with **rendered design candidates** (per the design-render-candidates habit; design for full future scope, go wide before narrowing). Do NOT start as a tail-of-session. [L, → own session] — **IN PROGRESS — Stages A/B/C landed 2026-08-10** (plan `could-you-start-reviewing-curious-dahl.md`; approved IA = **Overview · Ledger · Analyze**). **A (perf):** read-path `tracing` instrumentation (`972cdfb`); measured real data (10,209 txns) → naive indexes insufficient (SurrealDB 3.0.4 won't skip the ORDER BY sort), so the win is frontend caching, done in C3. **B (design foundation):** CSS-var token layer + shared primitives (`Card`/`Button`/`PageHeader`/`Banner`/`StatTile`/`SegmentedNav`/`TextInput`/`Icon`) (`39a6021`); user picked Overview look **C · Balanced**. **C (IA build, 6 commits `dcd37d0`→`e87a5fb`):** C1 real net-worth-history backend (`core::dashboard::net_worth_series`, endpoint == hero; 3 core tests); C2 persistent sub-nav replacing the flat 18-variant hub (all flows preserved, surface persisted in `NavState`); C3 stale-while-revalidate frontend read-cache + skeletons (the top felt-latency lever); C4 the C·Balanced Overview (net-worth hero + range-switchable SVG area chart 1M/3M/6M/1Y/YTD/All + 2×2 card grid); C5 Ledger master-detail (desktop side-by-side / mobile slide-over, row highlight); C6 Analyze landing (cash-flow trend + budgets snapshot + reserved LLM entry). Review gate: core tests + both wasm clippy configs green, Playwright-verified 390+1280 with 0 console errors, inline-edit mutation confirmed. **REMAINING:** ~~Stage D~~ **DONE 2026-08-24** (full primitive refactor across all 5 pages + input-class fold; see #594 in the roadmap above for commit list). Still: on-device/real-data end-to-end pass (mock can't exercise the backend or real perf; rides the queued DB reset). [L, → own session]
 
 ---

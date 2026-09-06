@@ -30,6 +30,7 @@ pub mod import;
 pub mod journal_import;
 pub mod llm;
 pub mod notes;
+pub mod record_types;
 pub mod routines;
 pub mod settings;
 pub mod share_intent;

@@ -880,6 +880,7 @@ pub fn run() {
             commands::config::get_config,
             commands::config::set_global_config,
             commands::config::set_device_override,
+            commands::record_types::get_record_type,
             // Feedback capture
             commands::feedback::get_app_context,
             commands::feedback::submit_feedback,

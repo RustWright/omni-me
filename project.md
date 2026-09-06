@@ -16,7 +16,8 @@ rather than a staged test): note and journal body edits propagate across devices
 ledger transaction edits do too, and Android predictive text commits on space.
 
 Work now follows a **three-item sequence set by the user 2026-09-05, taken one at a
-time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.**
+time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.** Items 1 and
+2 are done; **item 3 is next**, and it is a planning-first session by its own framing.
 
 **Item 1 is done** — both stages built and verified 2026-09-05. Problem reports are
 captured in-app as a `FeedbackCaptured` event carrying screen and build context, read
@@ -24,7 +25,7 @@ back over `GET /feedback`, and a diagnostic ring buffer attaches the error trail
 two device-only legs (cross-device end-to-end, a real panic) are deliberately held for
 the next release test pass, to be tested together rather than piecemeal.
 
-**Item 2 is designed, not built.** The narrow framing — three hardcoded personal
+**Item 2's structural work is done** (2026-09-06). The narrow framing — three hardcoded personal
 strings in the public engine — was replaced by the real question: omni-me is meant to
 become a system other people run and customize, without inheriting one person's
 preferences. Twelve decisions settled, the load-bearing ones being that client
@@ -34,7 +35,8 @@ and that enforced built-ins are legitimate but must be *published*. What omni-me
 insists on is now a document a second user can read before committing a weekend:
 [`docs/src/invariants.md`](docs/src/invariants.md), published as an mdbook site.
 Build phases A (config foundation), B (inert feature toggles) and C (record types) are
-in `tasks.md`. **A and B are built; C is what remains.**
+in `tasks.md`. **All three are built.** What remains of item 2 is trailing rather than
+structural: a preset picker UI, extra presets, record-type export/import.
 
 **Phase A is built** (2026-09-06). Configuration is now two layers — an event-sourced
 value shared across devices, and a local override file that never syncs — resolved
@@ -72,6 +74,28 @@ rather than a file. One gap is recorded rather than fixed — the server does no
 config, so switching auto-import off on a client does not stop the box fetching; that
 is what the per-source pause controls are for, and it is written down in
 [`docs/src/features.md`](docs/src/features.md) rather than left for someone to discover.
+
+**Phase C is built** (2026-09-06), and with it the promise `invariants.md` makes to a
+second user — *your data shape is yours, the screens are the app's* — stops being half
+broken on the screen where it mattered most. The daily journal's three reflection
+prompts were compiled into four independent places, so a second user inherited one
+person's journaling framework and could only escape it by forking. They now come from
+a **declaration carried as an event**, so the shape of a record syncs and replays like
+any other change, and journal is one instance of that rather than a special case.
+
+The whole phase turned on one migration risk, because a year of entries had already
+been written against the old shape. Completeness drives auto-close, auto-close makes an
+entry read-only, and the generalized check would return `true` for an empty required
+list — so a naive rewrite would have silently closed the entire back catalogue. Three
+things hold that line: completeness fails closed on an empty list, the preset seeded on
+an install that already has journal entries is the reflective one rather than the
+minimal one, and a gate test replays a corpus of awkward real frontmatter both ways and
+asserts the verdict is identical. That test was **deliberately sabotaged to confirm it
+fails** before being trusted.
+
+What is not built is a screen for editing a declaration, so replacing the preset means
+emitting the event by hand. `docs/src/invariants.md` therefore reads **(partly today)**,
+which is the contract being checked against rather than back-fitted.
 
 ⛔ **Finances are deferred indefinitely** (user, 2026-09-05). This **supersedes** the
 earlier "offline until statement import beats the system it replaces" gate rather

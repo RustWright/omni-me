@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: generalization Phase C — record types.** The last structural phase; scope and
-gate in `tasks.md` § Generalization, reasoning in `~/.claude/plans/lets-continue-deep-blanket.md`.
-**Phase B shipped 2026-09-06** — feature toggles are live and enforced.
+**Next action: deploy the server, THEN install a client — see the ordering trap below.**
+Phase C — record types — is **built, green and UI-verified**: core 632, frontend 115, clippy
+clean in both wasm configs, Playwright at 390/1280 with **zero** console errors, and the panel
+confirmed drawing from the declaration.
+
+## ⚠️ Release ordering — do this before installing any client
+`sync.rs::push_handler` parses **every** event in a batch before appending **any**, so an
+unknown `event_type` 400s the whole batch. Phase C adds `record_type_declared`: a client
+emitting it against the deployed server breaks **all** sync, journal edits included. **Deploy
+first**: public push → `gh workflow run 303640807 -f public_ref=main` (~18 min, health-gated).
+The server needs no projection — it runs zero — only a core build that can parse the type.
 
 ## Decisions in force — inherit these
-- ⛔ **FINANCES ARE DEFERRED INDEFINITELY.** Don't start, propose, or "just fix" an item. It
-  now has a real off switch, `feature.finances`, rather than a convention to remember.
-- **`docs/src/invariants.md` is the contract** — check against it, never back-fit it.
-- **Client customization is data; server customization may be code.** **UI stops at
-  schema-driven forms** — no view DSL, no UI plugins. **Declared record types are the target**
-  (Phase C); **no new code may assume one journal type.**
-- **Config (A) and the feature map (B) are settled** — closed enums with exhaustive matches, so
-  a new key/feature breaks the build where it must be decided; a new **event type** declares its
-  owner in `EventType::authoring_features`. A projection registers if **any** owner is on.
-- **Feature changes apply at next launch.** `AppState.boot_features` is a startup snapshot on
-  purpose; a live read would half-disable a feature between the toggle and the relaunch.
-
-## Phase C's gate, and what Phase B leaves behind
-- ⚠️ **Before any of C merges:** replay the log with the shipped default record type; assert
-  `complete` is unchanged for every existing journal entry.
-- Phase B's traps are **closed**: `catch_up` filters by registered name (regression test
-  confirmed failing without it); no new event types, so **no server deploy is pending**.
-- ⚠️ **Known gap, documented not fixed** (`docs/src/features.md`): the server does not read
-  config, so `feature.auto_import = false` on a client does not stop the box's ticker.
+- ⛔ **FINANCES ARE DEFERRED INDEFINITELY.** Real off switch: `feature.finances`.
+- **`docs/src/invariants.md` is the contract** — never back-fit it. Phase C reads
+  **(partly today)** deliberately: the declaration is live, but no screen edits it.
+- **Properties are prose boxes only.** The payload carries `kind` with `text` its only value —
+  the log is permanent, so the field ships now; new kinds are a value change later.
+- **Empty required list ⇒ `complete = false`, never true.** `[].iter().all()` is `true`, and
+  `complete` drives auto-close (⇒ read-only). Fails closed, plus `auto_close: false` on the
+  minimal preset as a second guard.
+- **Fresh install → minimal preset; existing → reflective**, by whether the log holds journal
+  events. The reflective fallback in `journal_record_type` is load-bearing: minimal would mark
+  the whole back catalogue incomplete.
 
 ## Do NOT re-survey
-Generalization design is CLOSED; the feature map is built, tested and published — don't
-re-derive it. The server runs zero projections.
+Generalization is CLOSED — Phases 0, A, B, C all built; the gate was run **and proven to bite**
+(sabotaging the fallback made it fail). Don't re-derive the feature map, the config foundation,
+or "UI stops at schema-driven forms" — that is in `invariants.md`. **After the deploy, item 3
+(AI/LLM/ML) is next, and it is planning-first by its own framing — give it a fresh session.**
 
 ## Open threads
-⚠️ **Disk 91% full / 9.9GB free at 2026-09-06 close** (32GB `target`, 6.2GB
-`frontend/target`) — fine for cargo, **reclaim before any Android or release build**. · The
-user wants finances switched off on their own device now that the switch exists. · 146 raw
-palette utilities in `finances.rs`; light theme looks off there, left under the finance hold. ·
-Android `themes.xml` pins a charcoal `windowBackground`, so light likely flashes dark at cold
-start — unverified; that and the two-device override check are deferred to the next release. ·
-Curiosities→concepts + memory prune owed. · Never `cargo test -p A -p B`; `npm run
-copy:editor:dev` after every dx rebuild.
+⚠️ **Check `free -h` SWAP before heavy cargo** — `systemd-oomd` killed the whole terminal scope
+2026-09-06 at swap 1.6/1.9GB; diagnosis in memory `project_release_builds`. · Disk 92%. · No UI
+for editing a declaration yet. · ⚠️ **The mock backend never persists**, so an *autosaved* edit
+reverts on navigation and the mock entry has no frontmatter — mock limits, not bugs; don't
+re-diagnose them. · Finances still to be switched off on the user's device. ·
+Curiosities→concepts + memory prune owed. · `npm run copy:editor:dev` after every dx rebuild.
