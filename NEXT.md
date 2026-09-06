@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: item 2 of the agreed sequence — generalization.** Feedback capture is DONE, both
-stages built and verified 2026-09-05. **Sequence unchanged: 1. feedback ✅ · 2. generalization ·
-3. AI/LLM/ML.** Do not run ahead. Its two device-only legs (cross-device end-to-end, a real
-panic) are **deliberately deferred to the next release test pass** (user, 2026-09-05 — test
-these together, not piecemeal). Do not re-propose them as standalone work.
+**Next action: generalization Phase A — the config foundation.** Item 2 is **designed, not
+built**: 12 decisions settled 2026-09-05, phases in `tasks.md` § Generalization, reasoning in
+`~/.claude/plans/lets-continue-deep-blanket.md`. Order A → B → C, each its own session; item 3
+(AI/LLM/ML) follows. ⏰ **Phase B (inert feature toggles) is the only deadline-bearing item** —
+it lands before the next feature ships, or every feature added this year is a retrofit owed.
 
 ## Decisions in force — inherit these
-- ⛔ **FINANCES ARE DEFERRED INDEFINITELY** (user, 2026-09-05). Do not start it, propose it, or
-  "just fix" an item. State only: tab offline, both bank sources OFF, categorization to `Unmatched`.
-- **Feedback is an EVENT — not a note, not a projection.** `FeedbackCaptured` + one query, no
-  projection handler. Screen context is **describe-on-demand** (`screen_context.rs`); a describer
-  **summarises, never quotes** — the editor buffer is the one exception, and is droppable.
-- **Diagnostics live in `frontend/src/diagnostics.rs`** — a 50-entry `thread_local!` ring, not a
-  Dioxus signal: three of four producers fire outside any Dioxus scope where a signal write
-  panics. **`install()` must stay in `main()` before `dioxus::launch`** — dx's dev console patch
-  wraps ours only because ours goes first; move it and the tap dies. The wrapper is built in JS
-  because a Rust closure cannot reach JS `arguments`. **Only a panic persists** (to
-  `localStorage`, restored for one relaunch): wasm has no unwinding, so a trapped module can
-  never deliver its own ring. Per-error persistence was rejected as churn.
-- **`recent_events` is built server-side** in `commands/feedback.rs` — off IPC, unforgeable, and
-  event payloads are never included in it.
-- **`ContinuityStore` holds ONLY unsaved sessions** — `put` evicts clean ones, so a "saved"
-  branch reading it is unreachable. Don't add one.
-- ⚠️ `DocumentExtractor`/Gemini re-evaluation **is** item 3 — not settled just because it exists.
+- ⛔ **FINANCES ARE DEFERRED INDEFINITELY.** Don't start, propose, or "just fix" an item. State
+  only: tab offline, both bank sources OFF, categorization to `Unmatched`. This also puts
+  statement layout strings **out of generalization's scope**, despite item 2 naming them.
+- **`docs/src/invariants.md` is the contract** (mdbook → Pages): check the implementation
+  **against** it, never back-fit it to whatever got built.
+- **Client customization is data; server customization may be code.** From fork cost, not
+  taste: the overlay swaps a binary's `main` and builds in CI; a client fork means NDK +
+  signing + publishing your own `/updates`. The client has no composition point at all.
+- **Declared record types are the target** — identity rule, template, properties, completeness,
+  auto-close. Journal is one instance. **No new code may assume one journal type.** First run
+  applies the *minimal* preset; the user's three prompts ship as the *reflective* preset.
+- **"Off" means inert**: no tab, commands refuse, **projections and schedulers never start**;
+  reversible by replay. Features do **not** map 1:1 onto projections (`NotesProjection` serves
+  journal *and* notes), so an explicit feature → (tab, projections, schedulers, commands,
+  settings) map is required.
+- **UI stops at schema-driven forms** — no view DSL, no UI plugins (WASM can't load UI at
+  runtime). **Both platform doors held open, neither built:** no new client code spawns
+  processes or assumes POSIX; native behaviour is a labelled shim, never a pattern to copy.
+- **Config = event-sourced baseline + per-device override; the device wins when set.** Startup
+  reads the config projection's **persisted table** (no replay) before registering projections
+  ⇒ a toggle set elsewhere applies **at next launch**. Record types have no such lag.
 
 ## Do NOT re-survey
-Feedback storage fork is **CLOSED** — decided, built, tested at 390 and 1280. **Verification PNGs
-are throwaway**: `UI_WORKFLOW.md` § Screenshots already says they land at the repo root, are
-gitignored by `/*.png`, and get deleted after checking. Never file a task about them again.
-`probe_realdb.rs` is **not in this repo** (overlay-side).
+Generalization design is **CLOSED** — inherit the decisions, don't reopen. The server is
+**already** open-core (overlay = sibling crate with its own `main`; subprocess contract frozen)
+and runs **zero** projections (`server/src/lib.rs:207`). Verification PNGs are throwaway.
 
 ## Open threads
-⚠️ **Disk AND RAM are both ongoing constraints here** (user, 2026-09-05); disk hit 100% (143M)
-mid-session, now 15G. **Never `cargo test -p A -p B`** — the differing feature unification builds
-a second artifact set (~1.4G). One crate at a time, `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0`. ·
-`npm run copy:editor:dev` after every dx rebuild or CodeMirror 404s. · Only Journal and Notes
-publish describers. · Curiosities→concepts pass owed at cycle close · memory prune owed ·
-`server_url` precedence question still open.
+⚠️ **Disk AND RAM both bind.** Never `cargo test -p A -p B` (~1.4G second artifact set); one
+crate at a time, `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0`. · `npm run copy:editor:dev` after
+every dx rebuild or CodeMirror 404s. · Curiosities→concepts + memory prune owed.

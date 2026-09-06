@@ -15,6 +15,30 @@ This project follows the structured process defined in `../../setup_files/PROJEC
 
 **Session model:** Six-session process per `PROJECT_PROCESS.md` § Process Flow (Initiation → Research → Architecture → Planning → Implementation → Code Review). The AI role per session is documented in `PROJECT_PROCESS.md` § AI's Role.
 
+## Comments: route each one to where its reader is
+
+Decided 2026-09-05. Comment lines run 15–22% of source, and the largest blocks are module
+headers carrying architecture essays — documentation filed in the wrong place, not clutter.
+The test is `context-not-chronicle`'s, applied to comments: **delete this line — does any
+future decision change?**
+
+Four destinations, and the bucket decides:
+
+- **A trap at the edit site stays inline.** Anything phrased as a warning about what breaks if
+  you change this line. These are load-bearing: the `tags:` inline-list note in
+  `journal_template.rs` guards `is_complete`; the `frontendDist` note in the build scripts
+  guards against shipping a mock-data APK, which already happened once. Shorten them, never
+  relocate them.
+- **Subsystem rationale moves to `docs/`** and leaves a one-line `//!` pointer. A module-header
+  essay reaches only whoever opens that file; in the published docs it reaches someone
+  deciding whether to adopt omni-me.
+- **Narrative history moves to `docs/` or is dropped to git.** "The earlier importer silently
+  skipped 41 statements" is chronicle.
+- **Restating the code gets deleted.**
+
+Be aggressive on chronicle and in-function narration, conservative on anything that reads as a
+warning. The full sweep is its own session; **new code is written under this convention now**.
+
 ## Current Project State
 
 - Check `project.md` Session Checklist for completed sessions.

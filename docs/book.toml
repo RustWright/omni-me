@@ -1,0 +1,12 @@
+[book]
+title = "omni-me"
+authors = ["Efe"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/RustWright/omni-me"
+edit-url-template = "https://github.com/RustWright/omni-me/edit/main/docs/{path}"

@@ -23,6 +23,9 @@ reviews/
 logbook/_drafts/
 logbook/_assets/
 /*.png
+
+# mdbook build output — the site is built in CI and published to Pages
+docs/book/
 ui_dev/
 UI_design.md
 tauri-app/frontend/assets/tailwind.css

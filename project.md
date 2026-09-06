@@ -16,11 +16,26 @@ rather than a staged test): note and journal body edits propagate across devices
 ledger transaction edits do too, and Android predictive text commits on space.
 
 Work now follows a **three-item sequence set by the user 2026-09-05, taken one at a
-time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.** Item 1's
-Stage 1 is built — problem reports are captured in-app as a `FeedbackCaptured` event
-carrying screen and build context, and read back over `GET /feedback`. Its Stage 2
-(a diagnostic ring buffer, so a report carries the error trail) and a live-box
-end-to-end run are still open.
+time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.**
+
+**Item 1 is done** — both stages built and verified 2026-09-05. Problem reports are
+captured in-app as a `FeedbackCaptured` event carrying screen and build context, read
+back over `GET /feedback`, and a diagnostic ring buffer attaches the error trail. Its
+two device-only legs (cross-device end-to-end, a real panic) are deliberately held for
+the next release test pass, to be tested together rather than piecemeal.
+
+**Item 2 is designed, not built.** The narrow framing — three hardcoded personal
+strings in the public engine — was replaced by the real question: omni-me is meant to
+become a system other people run and customize, without inheriting one person's
+preferences. Twelve decisions settled, the load-bearing ones being that client
+customization must be data while server customization may be code (it follows from
+fork cost, not taste), that journal becomes one instance of a **declared record type**,
+and that enforced built-ins are legitimate but must be *published*. What omni-me
+insists on is now a document a second user can read before committing a weekend:
+[`docs/src/invariants.md`](docs/src/invariants.md), published as an mdbook site.
+Build phases A (config foundation), B (inert feature toggles) and C (record types) are
+in `tasks.md`; **B carries the only real deadline** — it must land before the next
+feature ships, or every feature added this year is a retrofit owed later.
 
 ⛔ **Finances are deferred indefinitely** (user, 2026-09-05). This **supersedes** the
 earlier "offline until statement import beats the system it replaces" gate rather
@@ -89,4 +104,5 @@ whichever phase is live.
 | `UI_WORKFLOW.md` | How to develop the UI (`dx serve` + Playwright) |
 | `SOURCE_REAUTH_DESIGN.md` | App-entered OTP re-auth for bank sources |
 | `SUBPROCESS_SOURCE_CONTRACT.md` | The plugin contract for data sources |
+| `docs/` | mdbook published to GitHub Pages; `src/invariants.md` is what omni-me insists on and why |
 | `logbook/` | Published write-ups of shipped work |
