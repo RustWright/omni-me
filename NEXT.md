@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: deploy the server, THEN install a client — see the ordering trap below.**
-Phase C — record types — is **built, green and UI-verified**: core 632, frontend 115, clippy
-clean in both wasm configs, Playwright at 390/1280 with **zero** console errors, and the panel
-confirmed drawing from the declaration.
+**Next action: stamp v1.1.0 and bump the private lock in the SAME stretch, then release the
+client.** The server is already deployed (`sha-9a0b1dd`, health-gated OK 2026-09-06) and the
+Phase C sync trap is gone — the box parses `record_type_declared`, so a Phase C client is safe
+to install. Version is the user's call, already made: **1.1.0**; tags are immutable.
 
-## ⚠️ Release ordering — do this before installing any client
-`sync.rs::push_handler` parses **every** event in a batch before appending **any**, so an
-unknown `event_type` 400s the whole batch. Phase C adds `record_type_declared`: a client
-emitting it against the deployed server breaks **all** sync, journal edits included. **Deploy
-first**: public push → `gh workflow run 303640807 -f public_ref=main` (~18 min, health-gated).
-The server needs no projection — it runs zero — only a core build that can parse the type.
+## ⚠️ The stamp and the private lock move together
+`omni-me-private/Cargo.lock` pins the public crates by version and its Dockerfile builds
+`--locked`: stamping alone breaks the **next** deploy, naming the lockfile not the release.
+Re-resolve with `cargo metadata --format-version 1 >/dev/null` (3-line diff; not
+`generate-lockfile`). Stamp only `Cargo.toml`, `tauri-app/frontend/Cargo.toml`,
+`tauri.conf.json` — the `1.0.5` in `types.rs` and `feedback.rs` is a test fixture **and its
+assertion**, which a sed rewrites in lockstep, leaving a green test that tests nothing. Then
+tag, push, `gh workflow run 303775869 -f version=1.1.0 -f public_ref=v1.1.0 -f targets=both`.
 
 ## Decisions in force — inherit these
 - ⛔ **FINANCES ARE DEFERRED INDEFINITELY.** Real off switch: `feature.finances`.
 - **`docs/src/invariants.md` is the contract** — never back-fit it. Phase C reads
   **(partly today)** deliberately: the declaration is live, but no screen edits it.
-- **Properties are prose boxes only.** The payload carries `kind` with `text` its only value —
-  the log is permanent, so the field ships now; new kinds are a value change later.
-- **Empty required list ⇒ `complete = false`, never true.** `[].iter().all()` is `true`, and
-  `complete` drives auto-close (⇒ read-only). Fails closed, plus `auto_close: false` on the
-  minimal preset as a second guard.
-- **Fresh install → minimal preset; existing → reflective**, by whether the log holds journal
-  events. The reflective fallback in `journal_record_type` is load-bearing: minimal would mark
-  the whole back catalogue incomplete.
+- **Empty required list ⇒ `complete = false`.** Fails closed; `complete` drives auto-close
+  (⇒ read-only), plus `auto_close: false` on the minimal preset as a second guard.
+- **Fresh install → minimal preset; existing → reflective.** The reflective fallback in
+  `journal_record_type` is load-bearing: minimal would mark the back catalogue incomplete.
+- **The overlay is a CI blind spot** — no push-triggered workflow, so it compiles against the
+  engine only during a deploy. Cost one 17-min failed deploy 2026-09-06 (stale `origin/main`,
+  6 unpushed commits). A `cargo check --locked -p omni-me-private` job is **agreed, pending**.
 
 ## Do NOT re-survey
-Generalization is CLOSED — Phases 0, A, B, C all built; the gate was run **and proven to bite**
-(sabotaging the fallback made it fail). Don't re-derive the feature map, the config foundation,
-or "UI stops at schema-driven forms" — that is in `invariants.md`. **After the deploy, item 3
-(AI/LLM/ML) is next, and it is planning-first by its own framing — give it a fresh session.**
+Generalization is CLOSED — Phases 0, A, B, C built, the gate proven to bite. Don't re-derive the
+feature map, the config foundation, or "UI stops at schema-driven forms" — see `invariants.md`.
+**After the release, item 3 (AI/LLM/ML) is next; planning-first, give it a fresh session.**
 
 ## Open threads
-⚠️ **Check `free -h` SWAP before heavy cargo** — `systemd-oomd` killed the whole terminal scope
-2026-09-06 at swap 1.6/1.9GB; diagnosis in memory `project_release_builds`. · Disk 92%. · No UI
-for editing a declaration yet. · ⚠️ **The mock backend never persists**, so an *autosaved* edit
-reverts on navigation and the mock entry has no frontmatter — mock limits, not bugs; don't
-re-diagnose them. · Finances still to be switched off on the user's device. ·
-Curiosities→concepts + memory prune owed. · `npm run copy:editor:dev` after every dx rebuild.
+⚠️ **`git status` the OVERLAY separately** — SessionEnd pushes only the current repo. · Held for
+this release test pass: cross-device feedback capture, a real panic, two-device config override.
+· ⚠️ `free -h` SWAP before heavy cargo (oomd killed the terminal scope 2026-09-06); disk 92%. ·
+No UI for editing a declaration. · ⚠️ **Mock backend never persists** — autosaved edits revert
+on navigation; mock limits, not bugs. · Finances still to be switched off on the device. ·
+Curiosities→concepts + memory prune owed.
