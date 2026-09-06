@@ -52,7 +52,10 @@ use omni_me_core::statement;
 use rust_decimal::Decimal;
 
 use super::shared::{append_and_apply, append_batch_and_apply, append_new_and_apply};
+use omni_me_core::config::Feature;
+
 use crate::AppState;
+use crate::commands::shared::require_feature;
 
 /// Lightweight latency probe for the finances read commands. Logs the elapsed
 /// wall-clock time on drop — so it covers every early-return `?` path without
@@ -1331,6 +1334,8 @@ pub async fn import_chequing_csv(
     opts: ImportStatementOptions,
     force: Option<bool>,
 ) -> Result<ImportStatementResult, String> {
+    require_feature(&state, Feature::Finances)?;
+
     let ImportStatementOptions {
         source_account,
         statement_source,
@@ -1509,6 +1514,10 @@ pub async fn import_statement_document(
     password_secret: Option<String>,
     force: Option<bool>,
 ) -> Result<ImportStatementResult, String> {
+    // Reaches the box's extractor before any event exists, so it refuses here
+    // rather than at the append tail.
+    require_feature(&state, Feature::Finances)?;
+
     let ImportStatementOptions {
         source_account,
         statement_source,

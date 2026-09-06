@@ -26,10 +26,14 @@ use super::store::{Event, EventError};
 
 pub struct AutoImportProjection;
 
+impl AutoImportProjection {
+    pub const NAME: &'static str = "auto_import";
+}
+
 #[async_trait]
 impl Projection for AutoImportProjection {
     fn name(&self) -> &str {
-        "auto_import"
+        Self::NAME
     }
 
     fn version(&self) -> u32 {

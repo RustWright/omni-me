@@ -95,10 +95,10 @@ string path throughout, the set of accounts is configuration, and display names 
 overridden. The app ships a small number of reserved account names, and they are the exception
 rather than the pattern.
 
-### The screens are the app's; your data shape is yours **(planned)**
+### The screens are the app's; your data shape is yours **(partly today)**
 
-You will be able to declare what your records look like, hide features you do not use, and
-retheme the app. You will not be able to write your own screens.
+You can [hide features you do not use](features.md) and retheme the app today. You will be
+able to declare what your records look like. You will not be able to write your own screens.
 
 **Why:** the interface compiles to WebAssembly, so there is no mechanism to load someone
 else's interface code at runtime. The only alternative would be inventing a layout language to
@@ -132,10 +132,10 @@ calendar entry wearing a habit's clothes.
 ## What is yours
 
 Configuration today: the server address and token, timezone, base currency, your account list
-and display-name overrides, your LLM provider, and your data sources.
+and display-name overrides, your LLM provider, your data sources, the theme and accent, and
+[which features exist at all](features.md) — per device as well as globally.
 
-Planned: which features exist at all, per device as well as globally; your record types,
-including their templates, properties and completeness rules; and theming.
+Planned: your record types, including their templates, properties and completeness rules.
 
 Always yours, with no rebuild and no permission: a new data source, via a subprocess plugin.
 

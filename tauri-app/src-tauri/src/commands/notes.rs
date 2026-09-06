@@ -4,7 +4,10 @@ use omni_me_core::db::queries::{self, GenericNoteRow, JournalDayStat, JournalEnt
 use omni_me_core::events::{EventType, NewEvent};
 
 use super::shared::{append_and_apply, append_new_and_apply};
+use omni_me_core::config::Feature;
+
 use crate::AppState;
+use crate::commands::shared::require_feature;
 
 // -----------------------------------------------------------------------------
 // Journal entries (date-keyed, one-per-day)
@@ -189,6 +192,11 @@ pub async fn process_note_llm(
     state: State<'_, AppState>,
     aggregate_id: String,
 ) -> Result<serde_json::Value, String> {
+    // Guarded before the request, not at the append tail: the server call happens
+    // first, so the `NoteLlmProcessed` guard alone would spend an LLM call and
+    // then refuse to record it.
+    require_feature(&state, Feature::Llm)?;
+
     tracing::info!(aggregate_id = %aggregate_id, "process_note_llm");
 
     let raw_text = resolve_raw_text(&state, &aggregate_id)

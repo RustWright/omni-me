@@ -1546,25 +1546,32 @@ pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
         use crate::types::{ConfigGroup, ConfigLayer};
         // Every key at its built-in default — the state a fresh install is in,
         // which is also the state the headless UI checks should render.
-        let feature = |key: &str, label: &str| ConfigEntry {
+        // `on` is a parameter rather than a constant so a browser session can
+        // represent a switched-off feature: flip one to `false` here to see the
+        // hidden-tab and hidden-section states without a backend.
+        let feature = |key: &str, label: &str, on: bool| ConfigEntry {
             key: key.to_string(),
             label: label.to_string(),
             group: ConfigGroup::Features,
-            effective: ConfigValue::Bool(true),
-            layer: ConfigLayer::Default,
-            global: None,
+            effective: ConfigValue::Bool(on),
+            layer: if on {
+                ConfigLayer::Default
+            } else {
+                ConfigLayer::Global
+            },
+            global: (!on).then_some(ConfigValue::Bool(false)),
             device: None,
             default: ConfigValue::Bool(true),
             applies_immediately: false,
             choices: None,
         };
         Ok(vec![
-            feature("feature.journal", "Journal"),
-            feature("feature.notes", "Notes"),
-            feature("feature.routines", "Routines"),
-            feature("feature.finances", "Finances"),
-            feature("feature.auto_import", "Auto-import"),
-            feature("feature.llm", "LLM"),
+            feature("feature.journal", "Journal", true),
+            feature("feature.notes", "Notes", true),
+            feature("feature.routines", "Routines", true),
+            feature("feature.finances", "Finances", true),
+            feature("feature.auto_import", "Auto-import", true),
+            feature("feature.llm", "LLM", true),
             ConfigEntry {
                 key: "appearance.theme".to_string(),
                 label: "Theme".to_string(),

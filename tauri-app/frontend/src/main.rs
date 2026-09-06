@@ -4,6 +4,7 @@ mod components;
 mod continuity;
 mod diagnostics;
 mod duration;
+mod features;
 mod journal_template;
 mod note_frontmatter;
 mod pages;
@@ -61,6 +62,39 @@ impl Tab {
             _ => None,
         }
     }
+
+    /// The feature that owns this tab, or `None` for one that is always present.
+    ///
+    /// Settings is never gated: it hosts the switches, so gating it would make a
+    /// feature you turned off impossible to turn back on.
+    pub fn feature(self) -> Option<types::Feature> {
+        match self {
+            Tab::Journal => Some(types::Feature::Journal),
+            Tab::Notes => Some(types::Feature::Notes),
+            Tab::Routines => Some(types::Feature::Routines),
+            Tab::Finances => Some(types::Feature::Finances),
+            Tab::Settings => None,
+        }
+    }
+
+    /// Whether this tab shows at all.
+    pub fn visible(self, features: &types::Features) -> bool {
+        self.feature().is_none_or(|f| features.on(f))
+    }
+}
+
+/// The tab to land on: the first visible one in nav order.
+///
+/// Settings is always visible, so this cannot fail — that is what makes it the
+/// floor rather than a fallback needing its own branch. With everything off the
+/// app opens on Settings, which is exactly where someone in that state needs to
+/// be.
+pub fn home_tab(features: &types::Features) -> Tab {
+    components::nav::ALL_TABS
+        .iter()
+        .copied()
+        .find(|t| t.visible(features))
+        .unwrap_or(Tab::Settings)
 }
 
 /// Bridges each page's in-app nav into the app-wide hardware/gesture-back
@@ -258,6 +292,16 @@ fn main() {
 
 #[component]
 fn App() -> Element {
+    // Which features this launch is running. Provided here, before anything that
+    // decides what to draw; the value arrives later, from the one `get_config`
+    // this component makes. Seeded to `Tab::Journal` and corrected once the set
+    // resolves — the render gate below holds the nav until then, so a hidden tab
+    // is never briefly drawn.
+    let feature_set = features::use_features_provider();
+    // Not a hook, so it is safe to call inside an effect or an event closure.
+    // Reading the signal is what makes those callers reactive.
+    let home_of = move || home_tab(&feature_set.read().clone().unwrap_or_default());
+
     let mut active_tab = use_signal(|| Tab::Journal);
     // Mobile nav drawer open/close (1.11). Desktop uses the persistent SideNav,
     // so this only drives the small-screen slide-in.
@@ -459,10 +503,14 @@ fn App() -> Element {
                     // scope via `use_page_back`).
                     let next = pop_seq.peek().wrapping_add(1);
                     pop_seq.set(next);
-                } else if *active_tab.peek() != Tab::Journal {
-                    active_tab.set(Tab::Journal);
-                    continuity_store
-                        .update_nav(|n| n.tab = Some(Tab::Journal.as_key().to_string()));
+                } else {
+                    // "Home" is the first *visible* tab, not Journal: with journal
+                    // switched off, backing out to it would land on a hidden tab.
+                    let home = home_of();
+                    if *active_tab.peek() != home {
+                        active_tab.set(home);
+                        continuity_store.update_nav(|n| n.tab = Some(home.as_key().to_string()));
+                    }
                 }
             }
         });
@@ -473,8 +521,7 @@ fn App() -> Element {
     // synchronously (#372). Reactive on drawer / page-depth / tab, so the flag
     // is always current when a back press arrives.
     use_effect(move || {
-        let can =
-            *drawer_open.read() || *page_depth.read() > 0 || *active_tab.read() != Tab::Journal;
+        let can = *drawer_open.read() || *page_depth.read() > 0 || *active_tab.read() != home_of();
         bridge::set_can_go_back(can);
     });
 
@@ -537,13 +584,25 @@ fn App() -> Element {
         if *share_claimed_tab.peek() {
             return;
         }
-        if let Some(tab) = continuity_store
+        // Wait for the feature set too: restoring onto a tab that turns out to be
+        // hidden is the same bug as restoring an unknown key, and the check below
+        // needs the answer.
+        while feature_set.peek().is_none() {
+            timer::sleep_ms(20).await;
+        }
+        let stored = continuity_store
             .nav_peek()
             .tab
             .as_deref()
-            .and_then(Tab::from_key)
-        {
-            active_tab.set(tab);
+            .and_then(Tab::from_key);
+        // An unknown key already fell through to the seed; a *known* key whose
+        // feature has since been switched off has to fall through the same way,
+        // and to the first visible tab rather than to Journal.
+        match stored {
+            Some(tab) if tab.visible(&feature_set.peek().clone().unwrap_or_default()) => {
+                active_tab.set(tab);
+            }
+            _ => active_tab.set(home_of()),
         }
     });
 
@@ -558,10 +617,17 @@ fn App() -> Element {
     let mut accent_signal = use_signal(|| "blue".to_string());
     use_context_provider(|| ThemePref(theme_signal));
     use_context_provider(|| AccentPref(accent_signal));
+    // One `get_config` serves both appearance and the feature set — the two are
+    // in the same response, and this sits on the pre-paint path.
+    let mut feature_set = features::use_features_provider();
     use_future(move || async move {
         let Ok(entries) = bridge::invoke_get_config().await else {
+            // Everything on, matching core's defaults. Must still be set, or
+            // `features_ready` stays false and the splash never lifts.
+            feature_set.set(Some(types::Features::default()));
             return;
         };
+        feature_set.set(Some(types::Features::from_entries(&entries)));
         let text_of = |key: &str| {
             entries
                 .iter()
@@ -636,6 +702,18 @@ fn App() -> Element {
     let mut pending_share_mut = pending_share;
     use_future(move || async move {
         if let Ok(Some(capture)) = bridge::invoke_take_pending_share_intent().await {
+            // The capture flow it hands off to lives inside Finances, so with
+            // that tab hidden there is nowhere to switch to. The bytes stay on
+            // disk for whenever the feature comes back.
+            while feature_set.peek().is_none() {
+                timer::sleep_ms(20).await;
+            }
+            if !Tab::Finances.visible(&feature_set.peek().clone().unwrap_or_default()) {
+                web_sys::console::warn_1(
+                    &"share intent arrived with finances off; leaving it pending".into(),
+                );
+                return;
+            }
             pending_share_mut.set(Some(capture));
             // Claim before switching, so a tab restore that resolves *after*
             // this can't overwrite the capture's destination.
@@ -795,7 +873,14 @@ fn App() -> Element {
                     // finishes, the deadline disarms the gate and the app
                     // appears anyway (on its default tab) instead of staying
                     // blank behind a lifted splash.
-                    if continuity_store.is_loaded() || !*boot_armed.read() {
+                    // The feature set joins the same gate: a page drawn before it
+                    // resolves could be one whose feature is off, and correcting
+                    // it afterwards means a tab that appears and then vanishes.
+                    // `!armed` still fails open, so an unresolvable read shows the
+                    // app (everything on) rather than nothing.
+                    if (continuity_store.is_loaded() && features::features_ready())
+                        || !*boot_armed.read()
+                    {
                         match *active_tab.read() {
                             Tab::Journal => rsx! { JournalPage {} },
                             Tab::Notes => rsx! { NotesPage {} },
@@ -834,5 +919,111 @@ fn App() -> Element {
                 components::splash::Splash { fading: *splash_fading.read() }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tab_visibility_tests {
+    use super::*;
+    use types::{Feature, Features};
+
+    fn features_without(off: &[Feature]) -> Features {
+        let entries: Vec<types::ConfigEntry> = off
+            .iter()
+            .map(|f| types::ConfigEntry {
+                key: f.key().to_string(),
+                label: f.key().to_string(),
+                group: types::ConfigGroup::Features,
+                effective: types::ConfigValue::Bool(false),
+                layer: types::ConfigLayer::Global,
+                global: Some(types::ConfigValue::Bool(false)),
+                device: None,
+                default: types::ConfigValue::Bool(true),
+                applies_immediately: false,
+                choices: None,
+            })
+            .collect();
+        Features::from_entries(&entries)
+    }
+
+    /// Every tab except Settings must map to a feature, or turning that feature
+    /// off would leave its tab behind.
+    #[test]
+    fn only_settings_is_ungated() {
+        let ungated: Vec<&str> = components::nav::ALL_TABS
+            .iter()
+            .filter(|t| t.feature().is_none())
+            .map(|t| t.as_key())
+            .collect();
+        assert_eq!(ungated, vec!["settings"]);
+    }
+
+    #[test]
+    fn all_tabs_show_by_default() {
+        let features = Features::default();
+        assert_eq!(components::nav::ALL_TABS.len(), 5);
+        for tab in components::nav::ALL_TABS {
+            assert!(tab.visible(&features), "{} hidden by default", tab.as_key());
+        }
+        assert_eq!(home_tab(&features).as_key(), "journal");
+    }
+
+    /// The landing tab follows nav order, so turning off a prefix of the tabs
+    /// walks it forward rather than falling back to a fixed default.
+    #[test]
+    fn home_walks_forward_as_leading_tabs_are_switched_off() {
+        assert_eq!(
+            home_tab(&features_without(&[Feature::Journal])).as_key(),
+            "notes"
+        );
+        assert_eq!(
+            home_tab(&features_without(&[Feature::Journal, Feature::Notes])).as_key(),
+            "routines"
+        );
+        assert_eq!(
+            home_tab(&features_without(&[
+                Feature::Journal,
+                Feature::Notes,
+                Feature::Routines
+            ]))
+            .as_key(),
+            "finances"
+        );
+    }
+
+    /// With everything off the app must still open somewhere, and that somewhere
+    /// has to be the screen holding the switches — otherwise the state is a
+    /// dead end.
+    #[test]
+    fn settings_is_the_floor() {
+        let nothing = features_without(types::ALL_FEATURES);
+        assert_eq!(home_tab(&nothing).as_key(), "settings");
+        let visible: Vec<&str> = components::nav::ALL_TABS
+            .iter()
+            .filter(|t| t.visible(&nothing))
+            .map(|t| t.as_key())
+            .collect();
+        assert_eq!(visible, vec!["settings"]);
+    }
+
+    /// Auto-import and LLM own no tab — they live as sub-surfaces of Finances.
+    /// Switching them off must not remove a tab.
+    #[test]
+    fn the_tabless_features_do_not_hide_a_tab() {
+        let features = features_without(&[Feature::AutoImport, Feature::Llm]);
+        for tab in components::nav::ALL_TABS {
+            assert!(tab.visible(&features), "{} hidden", tab.as_key());
+        }
+    }
+
+    /// A persisted tab whose feature went off must not survive a restore. This is
+    /// the same fall-through an unknown key already got, and the reason the
+    /// restore cannot simply trust `from_key`.
+    #[test]
+    fn a_persisted_tab_can_become_invisible() {
+        let features = features_without(&[Feature::Finances]);
+        let stored = Tab::from_key("finances").expect("known key");
+        assert!(!stored.visible(&features));
+        assert_eq!(home_tab(&features).as_key(), "journal");
     }
 }

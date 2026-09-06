@@ -1,6 +1,21 @@
 use dioxus::prelude::*;
 
 use crate::Tab;
+use crate::features::use_features;
+
+/// The tabs to draw, in display order.
+///
+/// Reads the feature set from context rather than taking it as a prop: both navs
+/// need it, and a prop would have to be threaded through every call site — which
+/// is how one of the two ends up drawing a tab the other has hidden.
+fn visible_tabs() -> Vec<Tab> {
+    let features = use_features();
+    ALL_TABS
+        .iter()
+        .copied()
+        .filter(|t| t.visible(&features))
+        .collect()
+}
 
 /// Returns the display label and the heroicons-outline path data for each tab.
 /// Keeping this as a plain function (rather than a separate struct) keeps the
@@ -27,7 +42,9 @@ fn tab_meta(tab: Tab) -> (&'static str, &'static str) {
     }
 }
 
-const ALL_TABS: &[Tab] = &[
+/// Every tab, in display order. `pub` because `home_tab` walks it to find the
+/// first visible one, so nav order and landing order cannot disagree.
+pub const ALL_TABS: &[Tab] = &[
     Tab::Journal,
     Tab::Notes,
     Tab::Routines,
@@ -90,7 +107,7 @@ pub fn NavDrawer(
                 p { class: "text-[10px] uppercase tracking-[0.2em] text-obsidian-text-muted mt-1", "Personal OS" }
             }
 
-            for tab in ALL_TABS.iter().copied() {
+            for tab in visible_tabs() {
                 {
                     let (label, icon_path) = tab_meta(tab);
                     rsx! {
@@ -179,7 +196,7 @@ pub fn SideNav(
                 p { class: "text-[10px] uppercase tracking-[0.2em] text-obsidian-text-muted mt-1", "Personal OS" }
             }
 
-            for tab in ALL_TABS.iter().copied() {
+            for tab in visible_tabs() {
                 {
                     let (label, icon_path) = tab_meta(tab);
                     rsx! {

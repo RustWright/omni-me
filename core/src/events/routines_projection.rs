@@ -18,10 +18,14 @@ use super::store::{Event, EventError};
 ///   trivial: any row with matching (item_id, date) means done.
 pub struct RoutinesProjection;
 
+impl RoutinesProjection {
+    pub const NAME: &'static str = "routines";
+}
+
 #[async_trait]
 impl Projection for RoutinesProjection {
     fn name(&self) -> &str {
-        "routines"
+        Self::NAME
     }
 
     fn version(&self) -> u32 {

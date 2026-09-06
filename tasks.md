@@ -95,19 +95,57 @@ other way round.
     loses the timestamp the guard needs, and a stale `set` would resurrect the old value.
   - On-device (Android) and the two-device override check are **deferred to the next release**,
     by the user's decision. Resolver logic is covered by unit tests meanwhile.
-- [ ] **Phase B — inert feature toggles.** ⏰ **Must land before the next feature ships** —
-  this is the only deadline-bearing item here, because every feature shipped without a toggle
-  is a retrofit owed later. Explicit feature → (tab, projections, schedulers, commands,
-  settings sections) map; `Tab` filtered from config with the default tab guarded and a
-  persisted nav pointing at a hidden tab handled; commands refuse when their feature is off;
-  projection registration and scheduler spawns become conditional. Features do **not** map 1:1
-  onto projections (`NotesProjection` serves journal *and* notes). [M]
-  - ⚠️ **Two traps found while building A, both belonging here.** `ProjectionRunner::catch_up`
-    (`core/src/events/projection.rs:148`) takes the min watermark over *every* row in
-    `projection_versions`, unfiltered by what is registered — so the first disabled projection
-    makes every launch replay the whole log; filter that query by registered name. And
-    `server/src/routes/sync.rs:38` `?`s out on the first unknown event type, so one unrecognised
-    event 400s the entire push batch: deploy the server before shipping a client that emits one.
+- [x] **Phase B — inert feature toggles.** Done 2026-09-06. The map is enforced in three
+  places rather than documented in one: `core/src/config.rs`'s `Feature` enum (exhaustive
+  matches, so a seventh feature breaks the build at every site that must decide about it),
+  `core/src/events/registry.rs` (feature → projection, with `every_projection_has_an_owner`
+  catching a projection nobody claims), and `EventType::authoring_features`
+  (`core/src/events/types.rs`) for the write side. Published as `docs/src/features.md`;
+  `invariants.md`'s "planned" claims about feature-hiding and theming corrected to shipped.
+  - **The command guard is one chokepoint, not ~70 hand-placed checks.** `guard_event_type` in
+    `commands/shared.rs` sits in the append tails that `no_command_appends_events_directly`
+    already forces every write through, so it covers write paths that do not exist yet (a
+    future LLM tool-call layer inherits it). Only outbound HTTP needed explicit guards —
+    `box_request` is generic, so it has no chokepoint — and a fourth source-grepping test,
+    `every_box_reaching_feature_module_guards_itself`, holds that line. `sync.rs` and
+    `update.rs` are exempt by design: sync must work with everything off or a disabled
+    feature's events never reach another device, and the updater is how a broken build gets
+    replaced.
+  - **Trap 1 fixed and regression-tested.** `catch_up` now filters `projection_versions` by
+    registered name, in Rust rather than in the query (a wrong-but-parseable `WHERE name IN`
+    fails silently as an empty result — the exact failure the fix exists to prevent).
+    `a_deregistered_projection_neither_forces_nor_loses_a_replay` was confirmed to fail
+    without the fix (6 applies vs 3) and covers the re-enable replay too. The watermark
+    *freeze* is deliberately preserved — it is what makes re-enabling replay from the right
+    point.
+  - **Trap 2 did not apply:** Phase B adds no event types, so `sync.rs:38`'s batch-killing `?`
+    is not in play and **no server deploy was needed**.
+  - **Decisions taken:** finances gated like any other feature (the user wants it off while
+    incomplete); a projection registers when **any** owning feature is on, so `budget` survives
+    finances-off + auto-import-on. `boot_features` on `AppState` is a startup snapshot, not a
+    live read — a live read would produce a half-off feature between the toggle and the relaunch.
+  - **Found while building:** `NotesProjection` serves **three** features, not two
+    (`note_llm_processed` routes into either table). `JournalFile` reads `BudgetProjection`'s
+    table and is the sole handler of `exchange_rate_recorded`, so dropping it removes FX
+    conversion. The auto-import **ticker is server-side**, so the client's auto-import surface
+    is one projection plus its commands.
+  - ⚠️ **Recorded gap, not an oversight:** the server does not read config, so
+    `feature.auto_import = false` on a client does not stop the box's ticker — that is
+    `sources.toml` plus the per-source pause flags. Fixing it means registering
+    `ConfigProjection` server-side, against its current zero-projection design. Documented in
+    `features.md`.
+  - **Found by the close-out audit, fixed same session.** The registration seam was only ever
+    unit-tested on pure functions; the browser check runs against the mock bridge and never
+    touches `lib.rs`, so nothing exercised *stored event → `ConfigProjection` → `app_config` →
+    `load_persisted` → registration*. `a_stored_config_event_narrows_the_next_launch_s_registration`
+    (`core/src/events/registry.rs`) now covers it headlessly, using the canonical
+    `NewEvent::config_set` factory so a payload-shape change cannot pass it; confirmed failing
+    against a sabotaged `load_persisted`. The projection list also moved into
+    `registry::build_projections` — `lib.rs` had a **second copy** that could have silently
+    disagreed with `ALL_PROJECTIONS`. `docs/src/features.md`'s summary line was corrected: it
+    claimed all commands refuse, when reads deliberately do not.
+  - **Left for the next release** (Phase A's deferral, unchanged): on-device Android and the
+    two-device override check.
 - [ ] **Phase C — record types.** Declaration schema + `RecordTypeDeclared`; `is_complete`
   generalized off `COMPLETE_PROPERTIES`; `import.rs` key classification follows; `JournalProps`'
   three named fields → ordered map (ripples through `split_journal`/`serialize_journal` and

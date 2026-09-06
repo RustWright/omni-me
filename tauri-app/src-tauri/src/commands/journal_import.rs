@@ -29,7 +29,10 @@ use omni_me_core::journal_import::{
     DraftImportedTransaction, ImportPlan, apply_a2_rewriter, apply_plan, parse_journal,
 };
 
+use omni_me_core::config::Feature;
+
 use crate::AppState;
+use crate::commands::shared::require_feature;
 
 const SAMPLE_LIMIT: usize = 50;
 
@@ -137,6 +140,8 @@ pub async fn preview_journal_import(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<JournalImportPreview, String> {
+    require_feature(&state, Feature::Finances)?;
+
     let canonical = canonicalize_journal_path(&path)?;
     let canonical_for_state = canonical.clone();
     let canonical_for_task = canonical.clone();
@@ -199,6 +204,8 @@ pub async fn commit_journal_import(
     path: String,
     plan: JournalImportPlanDto,
 ) -> Result<JournalImportResult, String> {
+    require_feature(&state, Feature::Finances)?;
+
     let canonical = canonicalize_journal_path(&path)?;
     let last = state.last_journal_import_path.lock().await.clone();
     match last {

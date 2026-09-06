@@ -31,10 +31,14 @@ use super::store::{Event, EventError};
 
 pub struct BudgetProjection;
 
+impl BudgetProjection {
+    pub const NAME: &'static str = "budget";
+}
+
 #[async_trait]
 impl Projection for BudgetProjection {
     fn name(&self) -> &str {
-        "budget"
+        Self::NAME
     }
 
     fn version(&self) -> u32 {

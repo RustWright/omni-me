@@ -15,10 +15,14 @@ use super::types::ConfigSetPayload;
 
 pub struct ConfigProjection;
 
+impl ConfigProjection {
+    pub const NAME: &'static str = "config";
+}
+
 #[async_trait]
 impl Projection for ConfigProjection {
     fn name(&self) -> &str {
-        "config"
+        Self::NAME
     }
 
     fn version(&self) -> u32 {

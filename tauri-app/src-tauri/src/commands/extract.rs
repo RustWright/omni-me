@@ -14,10 +14,12 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use omni_me_core::config::Feature;
 use omni_me_core::events::AttachmentRef;
 
 use crate::AppState;
 use crate::commands::attachments;
+use crate::commands::shared::require_feature;
 
 /// Single extracted posting line. Amount is wire-side string (server's
 /// `rust_decimal::serde::str`); frontend mirror lives in
@@ -82,6 +84,10 @@ pub async fn extract_document(
     mime: String,
     hint: String,
 ) -> Result<ExtractedDraft, String> {
+    // Guarded here rather than at the append tail: this reaches an LLM before any
+    // event exists, so it has to refuse before the request goes out.
+    require_feature(&state, Feature::Llm)?;
+
     // Hint values are simple snake_case strings (receipt, bank_statement, ...)
     // so no URL encoding is needed; the server will 400 on anything unknown.
     let path = format!("/documents/extract?hint={hint}&attach=true");

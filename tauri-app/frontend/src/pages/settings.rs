@@ -6,13 +6,20 @@ use crate::components::primitives::{
     Banner, BannerKind, Button, ButtonSize, ButtonVariant, INPUT_CLASS, PageHeader, SegmentedNav,
 };
 use crate::continuity::use_continuity;
+use crate::features::use_features;
 use crate::{
     AccentPref, ThemePref, bridge,
-    types::{AutoImportSourceView, ConfigEntry, ConfigGroup, ConfigLayer, ConfigValue, SyncStatus},
+    types::{
+        AutoImportSourceView, ConfigEntry, ConfigGroup, ConfigLayer, ConfigValue, Feature,
+        SyncStatus,
+    },
 };
 
 #[component]
 pub fn SettingsPage() -> Element {
+    // Which feature-owned sections to render. The boot set, not a live read — the
+    // sections configure subsystems that were started (or not) at launch.
+    let features = use_features();
     let mut server_url = use_signal(String::new);
     let mut device_id = use_signal(String::new);
     let mut sync_status = use_signal(|| None::<String>);
@@ -250,28 +257,45 @@ pub fn SettingsPage() -> Element {
             // --- Appearance ---
             ConfigSection { group: ConfigGroup::Appearance }
 
-            // --- Base Currency (Phase 7.3) ---
-            BaseCurrencySection {}
+            // Feature-owned sections below. A section whose feature is off is not
+            // rendered at all rather than disabled — a control for something inert
+            // is worse than its absence. The two `ConfigSection`s above are never
+            // gated: they are the switches.
+            if features.on(Feature::Finances) {
+                // --- Base Currency (Phase 7.3) ---
+                BaseCurrencySection {}
+            }
 
-            // --- Editor appearance ---
-            EditorSection {}
+            if features.any(&[Feature::Journal, Feature::Notes]) {
+                // --- Editor appearance --- (the editor serves both)
+                EditorSection {}
 
-            // --- Obsidian Import / Export ---
-            super::import_export::ImportExportSection {}
+                // --- Obsidian Import / Export --- (journal entries + notes)
+                super::import_export::ImportExportSection {}
+            }
 
-            // --- Attachment Cache (Phase 3.8) ---
-            CacheSection {}
+            if features.on(Feature::Finances) {
+                // --- Attachment Cache (Phase 3.8) --- receipts + statements
+                CacheSection {}
+            }
 
-            // --- Auto-Import Sources (Phase 3.9) ---
-            AutoImportSection {}
+            if features.on(Feature::AutoImport) {
+                // --- Auto-Import Sources (Phase 3.9) ---
+                AutoImportSection {}
+            }
 
-            // --- Accounts (3.9 auto-detected) ---
-            AccountsSection {}
+            if features.on(Feature::Finances) {
+                // --- Accounts (3.9 auto-detected) ---
+                AccountsSection {}
+            }
 
-            // --- LLM Provider (3.8 bring-your-own-LLM) ---
-            LlmProviderSection {}
+            if features.on(Feature::Llm) {
+                // --- LLM Provider (3.8 bring-your-own-LLM) ---
+                LlmProviderSection {}
+            }
 
-            // --- Danger Zone ---
+            // Never gated: a wipe has to stay reachable with everything off, or a
+            // disabled feature's data is both invisible and unremovable.
             DangerZone {}
         }
     }
@@ -304,18 +328,14 @@ const CURRENCY_CODES: &[&str] = &["CAD", "USD", "EUR", "GBP", "AED", "AUD", "JPY
 // ── Configuration rows ──────────────────────────────────────────────────────
 
 /// Heading and standing note for a config group.
-///
-/// ⚠️ The Features note describes what the switches do **today**, which is
-/// nothing. Delete it when Phase B wires the consumers — a control that silently
-/// has no effect is worse than one that says so, but a note that outlives the
-/// truth is worse than both.
 fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
     match group {
         ConfigGroup::Features => (
             "Features",
             Some(
-                "Recorded but not yet acted on. These choices save and sync, and \
-                 nothing reads them yet — no tab is hidden and no background work stops.",
+                "Switching a feature off hides its tab and stops its background \
+                 work; nothing is deleted, and turning it back on rebuilds from \
+                 your history. Changes take effect at the next launch.",
             ),
         ),
         ConfigGroup::Appearance => ("Appearance", None),

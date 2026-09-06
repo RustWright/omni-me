@@ -29,10 +29,11 @@ use crate::components::primitives::{
     Button, ButtonSize, ButtonVariant, Card, PageHeader, SegmentedNav,
 };
 use crate::continuity::{CaptureDraft, ContinuityKey, ListState, PostingDraft, use_continuity};
+use crate::features::feature_on;
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AttachmentRef,
     BalanceCheckView, BudgetProgress, BudgetRow, DashboardSummaryView, DraftTransactionView,
-    ExtractedDraft, ImportStatementResult, JournalImportPlan, JournalImportPreview,
+    ExtractedDraft, Feature, ImportStatementResult, JournalImportPlan, JournalImportPreview,
     JournalImportResult, MatchCandidateView, MonthlyTrendBucketView, NetWorthPointView,
     NetWorthSeriesView, PendingBatchView, PendingShareCapture, PostingInput,
     ReconciliationTxnPreview, RecurringObligationView, RecurringPattern, ScanRecurringResult,
@@ -288,10 +289,13 @@ pub fn FinancesPage() -> Element {
     // the batches inline) keeps the tile cheap — one COUNT query, not a full
     // SELECT per navigation.
     let mut pending_batch_count: Signal<u64> = use_signal(|| 0);
+    let auto_import_on = feature_on(Feature::AutoImport);
     let _refresh_count_resource = use_resource(move || {
         let on_overview = matches!(*view.read(), FinancesView::Overview);
         async move {
-            if !on_overview {
+            // With auto-import off there is no projection maintaining the table,
+            // so the count would be a stale read of a frozen row.
+            if !on_overview || !auto_import_on {
                 return;
             }
             if let Ok(batches) = bridge::invoke_list_pending_batches().await {
@@ -345,6 +349,13 @@ pub fn FinancesPage() -> Element {
         // same statement deadlocks the borrow checker.
         let snapshot = pending_share.read().clone();
         let Some(capture) = snapshot else { return };
+        // Capture extracts through the LLM. Finances can be on while the LLM is
+        // off, and routing there anyway would open a screen whose only action
+        // refuses.
+        if !feature_on(Feature::Llm) {
+            pending_share.set(None);
+            return;
+        }
         match classify_share_mime(&capture.mime, &capture.filename) {
             Some(kind) => view.set(FinancesView::Capture(kind)),
             None => {
@@ -1040,11 +1051,15 @@ fn ReviewInboxCard(
                 h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Review inbox" }
             }
             div { class: "space-y-1",
-                button {
-                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
-                    onclick: move |_| on_open_batches.call(()),
-                    span { class: "text-obsidian-text", "Auto-imported batches" }
-                    span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
+                // Batches are auto-import's; reconciling Unmatched is finances'
+                // own, and stays whichever way auto-import is set.
+                if feature_on(Feature::AutoImport) {
+                    button {
+                        class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
+                        onclick: move |_| on_open_batches.call(()),
+                        span { class: "text-obsidian-text", "Auto-imported batches" }
+                        span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
+                    }
                 }
                 button {
                     class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
@@ -1463,6 +1478,10 @@ fn AddMenuView(
     on_open_statement_import: EventHandler<()>,
     on_open_journal_import: EventHandler<()>,
 ) -> Element {
+    // Photo, PDF and Email all extract through the server's LLM; Manual does not.
+    // With the LLM off, Manual is the whole section rather than one tile of four.
+    let extraction = feature_on(Feature::Llm);
+
     rsx! {
         PageHeader { title: "Add",
             button {
@@ -1477,23 +1496,25 @@ fn AddMenuView(
                 "Capture a transaction"
             }
             div { class: "grid grid-cols-2 md:grid-cols-4 gap-3",
-                CaptureTile {
-                    label: "Photo",
-                    icon_path: "M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z M15 13a3 3 0 11-6 0 3 3 0 016 0z",
-                    enabled: true,
-                    on_click: move |_| on_open_photo.call(()),
-                }
-                CaptureTile {
-                    label: "PDF",
-                    icon_path: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
-                    enabled: true,
-                    on_click: move |_| on_open_pdf.call(()),
-                }
-                CaptureTile {
-                    label: "Email",
-                    icon_path: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z",
-                    enabled: true,
-                    on_click: move |_| on_open_email.call(()),
+                if extraction {
+                    CaptureTile {
+                        label: "Photo",
+                        icon_path: "M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z M15 13a3 3 0 11-6 0 3 3 0 016 0z",
+                        enabled: true,
+                        on_click: move |_| on_open_photo.call(()),
+                    }
+                    CaptureTile {
+                        label: "PDF",
+                        icon_path: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
+                        enabled: true,
+                        on_click: move |_| on_open_pdf.call(()),
+                    }
+                    CaptureTile {
+                        label: "Email",
+                        icon_path: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z",
+                        enabled: true,
+                        on_click: move |_| on_open_email.call(()),
+                    }
                 }
                 CaptureTile {
                     label: "Manual",

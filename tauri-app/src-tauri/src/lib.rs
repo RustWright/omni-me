@@ -7,13 +7,10 @@ use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 
-use omni_me_core::config::{ConfigMap, ResolvedConfig};
+use omni_me_core::config::{ConfigMap, Feature, ResolvedConfig};
 use omni_me_core::db::{self, Database};
-use omni_me_core::events::{
-    AutoImportProjection, BudgetProjection, ConfigProjection, NotesProjection, ProjectionRunner,
-    RoutinesProjection, SurrealEventStore, load_persisted,
-};
-use omni_me_core::journal_file::JournalFile;
+// The projection *list* lives in `registry`, not here — see `build_projections`.
+use omni_me_core::events::{ProjectionRunner, SurrealEventStore, load_persisted, registry};
 use omni_me_core::ledger::{self, JournalArtifacts};
 use omni_me_core::sync::{
     NetworkMonitor, PullEvent, PullScheduler, PushDebouncer, RetryEngine, StatusReporter,
@@ -246,6 +243,16 @@ pub struct AppState {
     /// change what got registered at boot, which is why
     /// `ConfigKey::applies_immediately` exists.
     pub config: Arc<tokio::sync::RwLock<ResolvedConfig>>,
+    /// The features that were on when this launch built its projection list.
+    ///
+    /// Deliberately a **boot snapshot** rather than a live read of `config`, and
+    /// that is the whole point: a feature is inert or it isn't. Its projections,
+    /// schedulers and tabs were all decided at startup, so a command guard
+    /// reading the live value would produce a half-off feature between the toggle
+    /// and the relaunch — commands refusing while the tab is still up and the
+    /// projection still being maintained. `ConfigKey::applies_immediately` is
+    /// `false` for every feature key for the same reason.
+    pub boot_features: std::collections::BTreeSet<Feature>,
     pub app_data_dir: std::path::PathBuf,
     /// True when the app-data root came from [`DATA_DIR_ENV`] rather than the OS
     /// default — i.e. this run is deliberately NOT on the user's real data.
@@ -590,18 +597,16 @@ pub fn run() {
                 // the SurrealDB file. It's a regenerable cache; if it's deleted
                 // the rebuild() path replays all events to reconstruct it.
                 let journal_path = app_data.join("budget.journal");
-                let projections = ProjectionRunner::new(
-                    db.clone(),
-                    vec![
-                        // Never feature-gated: it is what feature gating reads.
-                        Box::new(ConfigProjection),
-                        Box::new(NotesProjection),
-                        Box::new(RoutinesProjection),
-                        Box::new(BudgetProjection),
-                        Box::new(AutoImportProjection),
-                        Box::new(JournalFile::new(journal_path)),
-                    ],
+
+                // Feature gating on the projection side happens in `registry` and
+                // nowhere else — including the list itself, so this cannot drift
+                // from what the registry's own tests check.
+                let registered = registry::build_projections(&config, journal_path);
+                tracing::info!(
+                    projections = ?registered.iter().map(|p| p.name()).collect::<Vec<_>>(),
+                    "registered projections"
                 );
+                let projections = ProjectionRunner::new(db.clone(), registered);
 
                 projections
                     .init_all()
@@ -698,27 +703,35 @@ pub fn run() {
                 // Spawned *after* the debouncer exists so the patterns it emits
                 // wake the pusher; it used to append without nudging, and
                 // `pusher::run_loop` has no interval fallback to cover that.
-                recurring_scanner::spawn(
-                    db.clone(),
-                    event_store.clone(),
-                    projections.clone(),
-                    device_id.clone(),
-                    push_debouncer.clone(),
-                );
+                if config.enabled(Feature::Finances) {
+                    recurring_scanner::spawn(
+                        db.clone(),
+                        event_store.clone(),
+                        projections.clone(),
+                        device_id.clone(),
+                        push_debouncer.clone(),
+                    );
+                } else {
+                    tracing::info!("finances off — recurring scanner not spawned");
+                }
 
                 // MUST stay below `push_debouncer`'s construction. This used to
                 // spawn further up, before the debouncer existed, so it could
                 // not be given one — and an auto-closed note therefore projected
                 // locally but never synced, reading closed on this device and
                 // open on every other.
-                auto_close_scheduler::spawn(
-                    db.clone(),
-                    event_store.clone(),
-                    projections.clone(),
-                    device_id.clone(),
-                    timezone_shared.clone(),
-                    push_debouncer.clone(),
-                );
+                if config.enabled(Feature::Journal) {
+                    auto_close_scheduler::spawn(
+                        db.clone(),
+                        event_store.clone(),
+                        projections.clone(),
+                        device_id.clone(),
+                        timezone_shared.clone(),
+                        push_debouncer.clone(),
+                    );
+                } else {
+                    tracing::info!("journal off — auto-close scheduler not spawned");
+                }
 
                 // Auto-pull (inbound half of auto-sync): startup backfill +
                 // interval + network-online pulls, applied best-effort. Nothing
@@ -769,6 +782,11 @@ pub fn run() {
                     timezone: timezone_shared,
                     base_currency: tokio::sync::RwLock::new(base_currency),
                     roster: tokio::sync::RwLock::new(roster),
+                    boot_features: omni_me_core::config::ALL_FEATURES
+                        .iter()
+                        .copied()
+                        .filter(|f| config.enabled(*f))
+                        .collect(),
                     config: Arc::new(tokio::sync::RwLock::new(config)),
                     app_data_dir: app_data,
                     non_production,

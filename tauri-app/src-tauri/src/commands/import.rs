@@ -20,7 +20,10 @@ use omni_me_core::import::{
     parse_markdown, walk_vault,
 };
 
+use omni_me_core::config::Feature;
+
 use crate::AppState;
+use crate::commands::shared::require_any_feature;
 
 // ---------------------------------------------------------------------------
 // Preview DTOs
@@ -67,6 +70,11 @@ pub async fn preview_import(
     state: State<'_, AppState>,
     root: String,
 ) -> Result<PreviewSummary, String> {
+    // Either feature keeps the vault door open: an Obsidian tree holds journal
+    // entries and generic notes, and one of the two being off does not make the
+    // other's rows unimportable.
+    require_any_feature(&state, &[Feature::Journal, Feature::Notes])?;
+
     let summary = scan_for_preview(root).await?;
     // Canonicalize the scanned root and remember it. `commit_import` later
     // refuses any path that doesn't resolve under this root.
@@ -203,6 +211,8 @@ pub async fn commit_import(
     state: State<'_, AppState>,
     rows: Vec<AcceptedRow>,
 ) -> Result<CommitSummary, String> {
+    require_any_feature(&state, &[Feature::Journal, Feature::Notes])?;
+
     tracing::info!(count = rows.len(), "commit_import");
 
     // Snapshot the scanned root once. Refuse to commit anything if the user
@@ -444,6 +454,8 @@ pub async fn preview_obsidian_export(
     state: State<'_, AppState>,
     target: String,
 ) -> Result<ExportPreview, String> {
+    require_any_feature(&state, &[Feature::Journal, Feature::Notes])?;
+
     let target_path = PathBuf::from(&target);
     let journal_dir = target_path.join("journal");
     let notes_dir = target_path.join("notes");
@@ -490,6 +502,8 @@ pub async fn export_obsidian(
     state: State<'_, AppState>,
     target: String,
 ) -> Result<ExportSummary, String> {
+    require_any_feature(&state, &[Feature::Journal, Feature::Notes])?;
+
     tracing::info!(%target, "export_obsidian");
 
     let target_path = PathBuf::from(&target);

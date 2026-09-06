@@ -145,17 +145,45 @@ impl ProjectionRunner {
     /// Resilient rather than fail-fast: one bad historical event must not stop
     /// the rest of the backlog from landing.
     async fn catch_up(&self) -> Result<usize, EventError> {
+        // ⚠️ Filtered to the **registered** set, and the filtering happens in Rust
+        // rather than in the query. A feature-gated build registers a subset
+        // (`events::registry`), and `advance_bookmark` only advances rows it
+        // registered — so a de-registered projection's row freezes while the rest
+        // move on. Read unfiltered, `min()` would pick that frozen mark and replay
+        // the entire log on every launch, forever. The freeze itself is correct:
+        // it is what makes re-enabling a feature replay from the right point.
+        // The derive expands to `impl SurrealValue`, so the trait has to be in
+        // scope here rather than only being named in the attribute.
+        use surrealdb::types::SurrealValue;
+
+        /// One watermark row. Read as a row rather than as two column vectors so
+        /// a name can never be paired with another projection's mark.
+        #[derive(SurrealValue)]
+        struct Watermark {
+            name: Option<String>,
+            lr: Option<String>,
+        }
+
         let mut resp = self
             .db
-            .query("SELECT <string> last_received_at AS lr FROM projection_versions")
+            .query("SELECT name, <string> last_received_at AS lr FROM projection_versions")
             .await?;
-        let marks: Vec<Option<String>> = resp.take("lr").unwrap_or_default();
+        let rows: Vec<Watermark> = resp.take(0).unwrap_or_default();
 
-        // The oldest watermark across projections — they advance together, but
-        // taking the min means a newly-added projection can't skip history.
-        let Some(since) = marks
+        let registered: std::collections::BTreeSet<&str> =
+            self.projections.iter().map(|p| p.name()).collect();
+
+        // The oldest watermark across **registered** projections — they advance
+        // together, so the min only matters when the registered set changes: a
+        // newly-added or re-enabled projection can't skip history.
+        let Some(since) = rows
             .into_iter()
-            .flatten()
+            .filter(|row| {
+                row.name
+                    .as_deref()
+                    .is_some_and(|name| registered.contains(name))
+            })
+            .filter_map(|row| row.lr)
             .filter_map(|s| {
                 chrono::DateTime::parse_from_rfc3339(&s)
                     .ok()
@@ -495,6 +523,92 @@ mod tests {
             1,
             "catch-up replayed an already-applied event"
         );
+    }
+
+    /// Feature gating means a launch can register a *subset* of the projections
+    /// the previous launch did. `advance_bookmark` only advances rows it
+    /// registered, so a de-registered projection's watermark freezes — and
+    /// `catch_up` used to read every row unfiltered, so `min()` picked that
+    /// frozen mark and replayed the whole log on **every** launch, forever.
+    ///
+    /// The second half asserts the freeze is still load-bearing: re-registering
+    /// the projection brings its stale mark back into the min, and the history it
+    /// missed replays. That round trip is what makes turning a feature off
+    /// non-destructive, and it is why the fix filters the read rather than
+    /// deleting or advancing the row.
+    #[tokio::test]
+    async fn a_deregistered_projection_neither_forces_nor_loses_a_replay() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let counting = Arc::new(AtomicU32::new(0));
+        let flaky = Arc::new(AtomicU32::new(0));
+
+        let both = || {
+            ProjectionRunner::new(
+                db.clone(),
+                vec![
+                    Box::new(CountingProjection {
+                        applied: counting.clone(),
+                    }) as Box<dyn Projection>,
+                    Box::new(FlakyProjection {
+                        applied: flaky.clone(),
+                    }),
+                ],
+            )
+        };
+        let counting_only = || {
+            ProjectionRunner::new(
+                db.clone(),
+                vec![Box::new(CountingProjection {
+                    applied: counting.clone(),
+                }) as Box<dyn Projection>],
+            )
+        };
+
+        // Launch 1: both features on, so both rows exist and are current.
+        both().init_all().await.unwrap();
+
+        for i in 0..3 {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("n{i}"),
+                    timestamp: Utc::now(),
+                    device_id: "d1".into(),
+                    payload: serde_json::json!({}),
+                })
+                .await
+                .unwrap();
+        }
+
+        // Launch 2: one feature has been turned off. The backlog lands in the
+        // projection that is still registered, and only its bookmark advances.
+        counting_only().init_all().await.unwrap();
+        assert_eq!(counting.load(Ordering::SeqCst), 3);
+        assert_eq!(flaky.load(Ordering::SeqCst), 0, "an off feature projected");
+
+        // Launch 3: nothing new happened, so nothing should replay. This is the
+        // assertion that fails without the registered-name filter.
+        counting_only().init_all().await.unwrap();
+        assert_eq!(
+            counting.load(Ordering::SeqCst),
+            3,
+            "the frozen watermark of a de-registered projection forced a replay"
+        );
+
+        // Launch 4: the feature is switched back on. Its stale mark re-enters the
+        // min, so the events it missed replay and its state reconstructs.
+        both().init_all().await.unwrap();
+        assert_eq!(
+            flaky.load(Ordering::SeqCst),
+            3,
+            "re-enabling a feature did not replay the history it missed"
+        );
+        // The already-current projection sees those events a second time, which
+        // is why every projection has to be idempotent — `JournalFile` keys its
+        // appends for exactly this reason.
+        assert_eq!(counting.load(Ordering::SeqCst), 6);
     }
 
     /// Bumping `version()` must actually rebuild. It used to be write-only —

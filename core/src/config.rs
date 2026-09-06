@@ -228,6 +228,20 @@ impl ConfigKey {
         }
     }
 
+    /// The feature this key switches, or `None` for a key that is not a feature
+    /// switch at all.
+    pub fn feature(self) -> Option<Feature> {
+        match self {
+            ConfigKey::FeatureJournal => Some(Feature::Journal),
+            ConfigKey::FeatureNotes => Some(Feature::Notes),
+            ConfigKey::FeatureRoutines => Some(Feature::Routines),
+            ConfigKey::FeatureFinances => Some(Feature::Finances),
+            ConfigKey::FeatureAutoImport => Some(Feature::AutoImport),
+            ConfigKey::FeatureLlm => Some(Feature::Llm),
+            ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => None,
+        }
+    }
+
     /// Which settings section this key renders under.
     ///
     /// Grouping lives here rather than being re-derived from the wire name's
@@ -280,6 +294,61 @@ impl ConfigKey {
     }
 }
 
+/// A user-facing feature that can be switched off whole.
+///
+/// A type rather than a convention about which `ConfigKey`s happen to start with
+/// `feature.`: every site in the feature map matches exhaustively on this, so a
+/// seventh feature stops the build at each place that has to decide about it
+/// instead of silently defaulting to ungated. What each feature owns — tab,
+/// projections, schedulers, commands, settings sections — is published in
+/// `docs/src/features.md`; the projection half is enforced in
+/// [`crate::events::registry`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Feature {
+    Journal,
+    Notes,
+    Routines,
+    Finances,
+    AutoImport,
+    Llm,
+}
+
+/// Every feature, in the order [`ALL_KEYS`] lists their switches.
+pub const ALL_FEATURES: &[Feature] = &[
+    Feature::Journal,
+    Feature::Notes,
+    Feature::Routines,
+    Feature::Finances,
+    Feature::AutoImport,
+    Feature::Llm,
+];
+
+impl Feature {
+    /// The config key that switches this feature.
+    pub fn key(self) -> ConfigKey {
+        match self {
+            Feature::Journal => ConfigKey::FeatureJournal,
+            Feature::Notes => ConfigKey::FeatureNotes,
+            Feature::Routines => ConfigKey::FeatureRoutines,
+            Feature::Finances => ConfigKey::FeatureFinances,
+            Feature::AutoImport => ConfigKey::FeatureAutoImport,
+            Feature::Llm => ConfigKey::FeatureLlm,
+        }
+    }
+
+    /// Human label, borrowed from the key so the settings screen and any
+    /// feature-off message cannot disagree about what a feature is called.
+    pub fn label(self) -> &'static str {
+        self.key().label()
+    }
+}
+
+impl fmt::Display for Feature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.label())
+    }
+}
+
 /// Values set at one layer. Absent key ⇒ that layer says nothing about it.
 pub type ConfigMap = BTreeMap<ConfigKey, ConfigValue>;
 
@@ -317,6 +386,15 @@ impl ResolvedConfig {
         value
             .as_bool()
             .unwrap_or_else(|| key.default_value().as_bool().unwrap_or(true))
+    }
+
+    /// Whether a feature is switched on.
+    ///
+    /// Inherits [`ResolvedConfig::bool_of`]'s fall-back: a value of the wrong
+    /// type reads as the default, which is *on*. A feature silently disappearing
+    /// because some other build wrote a malformed value is the worse failure.
+    pub fn enabled(&self, feature: Feature) -> bool {
+        self.bool_of(feature.key())
     }
 
     /// The effective value of a text key, with the same fall-back reasoning as
@@ -380,6 +458,71 @@ mod tests {
 
         let unique: std::collections::BTreeSet<_> = ALL_KEYS.iter().collect();
         assert_eq!(unique.len(), ALL_KEYS.len(), "ALL_KEYS repeats a key");
+    }
+
+    /// Same shape, and the same acknowledged hole, as
+    /// [`all_keys_lists_every_variant`]: the exhaustive match stops the build in
+    /// this file when a variant is added, and the count then fails until
+    /// `ALL_FEATURES` lists it.
+    #[test]
+    fn all_features_lists_every_variant() {
+        let mut counted = 0;
+        for feature in ALL_FEATURES {
+            match feature {
+                Feature::Journal
+                | Feature::Notes
+                | Feature::Routines
+                | Feature::Finances
+                | Feature::AutoImport
+                | Feature::Llm => counted += 1,
+            }
+        }
+        assert_eq!(
+            counted, 6,
+            "ALL_FEATURES does not list every Feature variant"
+        );
+
+        let unique: std::collections::BTreeSet<_> = ALL_FEATURES.iter().collect();
+        assert_eq!(
+            unique.len(),
+            ALL_FEATURES.len(),
+            "ALL_FEATURES repeats a feature"
+        );
+    }
+
+    /// The two directions must agree, or a key could switch a feature that no
+    /// `Feature` maps back to — invisible to every exhaustive match downstream.
+    #[test]
+    fn feature_and_key_round_trip() {
+        for feature in ALL_FEATURES {
+            assert_eq!(
+                feature.key().feature(),
+                Some(*feature),
+                "{feature}'s key does not map back to it"
+            );
+        }
+        let switches: std::collections::BTreeSet<_> =
+            ALL_KEYS.iter().filter_map(|k| k.feature()).collect();
+        assert_eq!(
+            switches.len(),
+            ALL_FEATURES.len(),
+            "some feature has no key in ALL_KEYS, or two keys claim one feature"
+        );
+        assert_eq!(
+            ConfigKey::AppearanceTheme.feature(),
+            None,
+            "appearance keys must not read as feature switches"
+        );
+    }
+
+    /// Every feature must default on, so a build that gains this machinery
+    /// behaves exactly like the one before it.
+    #[test]
+    fn every_feature_defaults_on() {
+        let empty = ResolvedConfig::default();
+        for feature in ALL_FEATURES {
+            assert!(empty.enabled(*feature), "{feature} should default on");
+        }
     }
 
     #[test]

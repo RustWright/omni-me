@@ -183,6 +183,93 @@ pub enum ConfigGroup {
     Appearance,
 }
 
+/// A feature that can be switched off whole. Mirror of `core::config::Feature`.
+///
+/// Identified by its config key's wire name rather than by a serde tag: what the
+/// frontend receives is a `Vec<ConfigEntry>`, and the key string is what links a
+/// row to the feature it switches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Feature {
+    Journal,
+    Notes,
+    Routines,
+    Finances,
+    AutoImport,
+    Llm,
+}
+
+pub const ALL_FEATURES: &[Feature] = &[
+    Feature::Journal,
+    Feature::Notes,
+    Feature::Routines,
+    Feature::Finances,
+    Feature::AutoImport,
+    Feature::Llm,
+];
+
+impl Feature {
+    pub fn key(self) -> &'static str {
+        match self {
+            Feature::Journal => "feature.journal",
+            Feature::Notes => "feature.notes",
+            Feature::Routines => "feature.routines",
+            Feature::Finances => "feature.finances",
+            Feature::AutoImport => "feature.auto_import",
+            Feature::Llm => "feature.llm",
+        }
+    }
+}
+
+/// The features that are on, read once at boot.
+///
+/// A set rather than a map because "absent" and "off" are the same thing to every
+/// caller, and because the empty set is the wrong default — see
+/// [`Features::from_entries`] for why an unresolved read reports everything on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Features(std::collections::BTreeSet<Feature>);
+
+impl Default for Features {
+    /// Everything on, matching core's per-key defaults.
+    fn default() -> Self {
+        Features(ALL_FEATURES.iter().copied().collect())
+    }
+}
+
+impl Features {
+    /// Read the feature set out of a fetched config list.
+    ///
+    /// A key the list does not mention, or whose value is not a boolean, counts
+    /// as **on** — the same direction `ResolvedConfig::bool_of` falls back in. A
+    /// missing key must never hide a tab: an empty or failed read would blank the
+    /// whole app, which looks like data loss rather than a preference.
+    pub fn from_entries(entries: &[ConfigEntry]) -> Self {
+        Features(
+            ALL_FEATURES
+                .iter()
+                .copied()
+                .filter(|f| {
+                    entries
+                        .iter()
+                        .find(|e| e.key == f.key())
+                        .and_then(|e| match e.effective {
+                            ConfigValue::Bool(b) => Some(b),
+                            _ => None,
+                        })
+                        .unwrap_or(true)
+                })
+                .collect(),
+        )
+    }
+
+    pub fn on(&self, feature: Feature) -> bool {
+        self.0.contains(&feature)
+    }
+
+    pub fn any(&self, features: &[Feature]) -> bool {
+        features.iter().any(|f| self.on(*f))
+    }
+}
+
 /// One configurable key, with both layers exposed so the row can say which one
 /// is winning rather than only showing the answer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -830,4 +917,76 @@ pub struct JournalImportResult {
     pub balance_failures: Vec<String>,
     pub parse_errors: Vec<JournalImportParseError>,
     pub a2_rewrites: usize,
+}
+
+#[cfg(test)]
+mod feature_tests {
+    use super::*;
+
+    fn entry(key: &str, on: bool) -> ConfigEntry {
+        ConfigEntry {
+            key: key.to_string(),
+            label: key.to_string(),
+            group: ConfigGroup::Features,
+            effective: ConfigValue::Bool(on),
+            layer: ConfigLayer::Global,
+            global: Some(ConfigValue::Bool(on)),
+            device: None,
+            default: ConfigValue::Bool(true),
+            applies_immediately: false,
+            choices: None,
+        }
+    }
+
+    /// The wire names must match core's, or a feature reads as absent — which
+    /// falls back to *on*, so the mismatch is silent rather than loud.
+    #[test]
+    fn keys_match_the_wire_names_core_publishes() {
+        let expected = [
+            "feature.journal",
+            "feature.notes",
+            "feature.routines",
+            "feature.finances",
+            "feature.auto_import",
+            "feature.llm",
+        ];
+        let actual: Vec<&str> = ALL_FEATURES.iter().map(|f| f.key()).collect();
+        assert_eq!(actual, expected);
+    }
+
+    /// An empty or partial response must read as everything on. The opposite
+    /// default would blank the whole app on a failed read, which looks like data
+    /// loss rather than a preference.
+    #[test]
+    fn a_missing_key_reads_as_on() {
+        assert_eq!(Features::from_entries(&[]), Features::default());
+
+        let partial = Features::from_entries(&[entry("feature.finances", false)]);
+        assert!(!partial.on(Feature::Finances));
+        assert!(
+            partial.on(Feature::Journal),
+            "an absent key must read as on"
+        );
+    }
+
+    /// A value of the wrong type is a bug in the writer; reading it as "off"
+    /// would hide a tab over it. Mirrors `ResolvedConfig::bool_of`.
+    #[test]
+    fn a_wrong_typed_value_reads_as_on() {
+        let mut e = entry("feature.routines", false);
+        e.effective = ConfigValue::Text("nope".into());
+        assert!(Features::from_entries(&[e]).on(Feature::Routines));
+    }
+
+    #[test]
+    fn any_is_true_when_one_owner_is_on() {
+        let f = Features::from_entries(&[entry("feature.journal", false)]);
+        assert!(f.any(&[Feature::Journal, Feature::Notes]));
+
+        let neither = Features::from_entries(&[
+            entry("feature.journal", false),
+            entry("feature.notes", false),
+        ]);
+        assert!(!neither.any(&[Feature::Journal, Feature::Notes]));
+    }
 }

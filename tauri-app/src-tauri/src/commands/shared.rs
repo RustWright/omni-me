@@ -1,8 +1,63 @@
 use chrono::Utc;
 
+use omni_me_core::config::Feature;
 use omni_me_core::events::{Event, EventStore, EventType, NewEvent};
 
 use crate::AppState;
+
+/// Refuse a command whose feature is switched off.
+///
+/// The last line of the "off means inert" promise. A hidden tab is what a user
+/// sees; this is what holds when something reaches the command anyway — a stale
+/// frontend, a share intent, an overlay, a future LLM tool call.
+pub(crate) fn require_feature(state: &AppState, feature: Feature) -> Result<(), String> {
+    require_any_feature(state, &[feature])
+}
+
+/// Refuse unless at least one of `features` is on.
+///
+/// Some commands genuinely serve two: Obsidian import/export moves journal
+/// entries *and* generic notes, so it stays available while either is on.
+pub(crate) fn require_any_feature(state: &AppState, features: &[Feature]) -> Result<(), String> {
+    if features.iter().any(|f| state.boot_features.contains(f)) {
+        return Ok(());
+    }
+    let refusal = feature_off_message(features);
+    tracing::warn!(%refusal, "command refused: feature off");
+    Err(refusal)
+}
+
+/// Refuse to author an event whose feature is switched off.
+///
+/// Called from the shared append tails, so it covers **every** local write path
+/// in one place — see [`EventType::authoring_features`] for why the map lives on
+/// the event type rather than at each command. Inbound events are untouched: the
+/// sync pull path does not come through here, so a device keeps a complete log of
+/// features it has switched off.
+fn guard_event_type(state: &AppState, event_type: &str) -> Result<(), String> {
+    // An unparseable type is not this guard's business. The event store's own
+    // validation owns it, and answering here would report a typo as "feature off".
+    let Ok(parsed) = event_type.parse::<EventType>() else {
+        return Ok(());
+    };
+    let features = parsed.authoring_features();
+    if features.is_empty() {
+        return Ok(());
+    }
+    require_any_feature(state, features)
+}
+
+/// Pure so the wording is testable without standing up an `AppState`, following
+/// `check_wipe_confirmation`'s precedent.
+fn feature_off_message(features: &[Feature]) -> String {
+    let names: Vec<&str> = features.iter().map(|f| f.label()).collect();
+    let subject = match names.as_slice() {
+        [] => "This feature".to_string(),
+        [one] => format!("{one} is"),
+        [rest @ .., last] => format!("{} and {last} are", rest.join(", ")),
+    };
+    format!("{subject} switched off. Turn it back on in Settings, then restart the app.")
+}
 
 /// Append a pre-built event envelope, fold it through the projection runner, and
 /// nudge the push debouncer. The grammar-bearing *create* commands build their
@@ -14,6 +69,8 @@ pub(crate) async fn append_new_and_apply(
     state: &AppState,
     event: NewEvent,
 ) -> Result<Event, String> {
+    guard_event_type(state, &event.event_type)?;
+
     let stored = state
         .event_store
         .append(event)
@@ -78,6 +135,12 @@ pub(crate) async fn append_batch_and_apply(
     state: &AppState,
     events: Vec<NewEvent>,
 ) -> Result<Vec<Event>, String> {
+    // All-or-nothing, like the server's push validation: a batch that is half a
+    // disabled feature's would otherwise land partially.
+    for event in &events {
+        guard_event_type(state, &event.event_type)?;
+    }
+
     let appended = state
         .event_store
         .append_batch(events)
@@ -99,6 +162,109 @@ pub(crate) async fn append_batch_and_apply(
 
 #[cfg(test)]
 mod tests {
+    use omni_me_core::config::Feature;
+    use omni_me_core::events::EventType;
+
+    /// Every command that reaches the box on a feature's behalf must refuse when
+    /// that feature is off.
+    ///
+    /// The **write** side needs no scan: `authoring_features` is an exhaustive
+    /// match, and `guard_event_type` sits in the append tails that
+    /// `no_command_appends_events_directly` already forces every write through.
+    /// Outbound HTTP has no such chokepoint — `box_request` is generic — so a
+    /// command can spend an LLM call or hit a bank source with its feature off
+    /// and nothing downstream would notice.
+    ///
+    /// **Blind spot, deliberately open.** This checks that a module reaching the
+    /// box mentions a guard *somewhere*, not that every function in it does. A
+    /// finer check would need to parse Rust. Two modules are exempt because they
+    /// belong to no feature: `sync.rs` (sync must work with everything off, or a
+    /// disabled feature's events would never reach another device) and
+    /// `update.rs` (the updater is how a broken build gets replaced).
+    /// `attachments.rs` is exempt on purpose too: it is content-addressed blob
+    /// housekeeping, and gating cache-size/clear would strand disk usage behind a
+    /// hidden settings section.
+    #[test]
+    fn every_box_reaching_feature_module_guards_itself() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
+        const EXEMPT: &[&str] = &["sync.rs", "update.rs", "attachments.rs", "shared.rs"];
+        let mut offenders = Vec::new();
+
+        for entry in std::fs::read_dir(&dir).expect("commands dir").flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|f| f.to_str()) else {
+                continue;
+            };
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") || EXEMPT.contains(&name) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            // Whitespace stripped entirely, for the reason spelled out in
+            // `no_command_appends_events_directly`: rustfmt splits these chains
+            // across lines, and collapsing to single spaces matches neither form.
+            let flat: String = text.split_whitespace().collect();
+            let reaches_box = flat.contains(".box_request(") || flat.contains(".box_url(");
+            let guards = flat.contains("require_feature(") || flat.contains("require_any_feature(");
+            if reaches_box && !guards {
+                offenders.push(name.to_string());
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "these reach the box but never call a feature guard, so they run with \
+             their feature switched off: {offenders:#?}"
+        );
+    }
+
+    /// The write-side map must not quietly acquire an unowned event type.
+    ///
+    /// The match in `authoring_features` is exhaustive, so a new variant cannot
+    /// compile without an arm — but an arm returning `&[]` is the easy way to
+    /// silence it, and `&[]` means ungated forever. This pins the three that are
+    /// legitimately unowned so a fourth has to be argued for here.
+    #[test]
+    fn only_the_three_app_level_events_are_unowned() {
+        let unowned: Vec<String> = EventType::ALL
+            .iter()
+            .filter(|t| t.authoring_features().is_empty())
+            .map(|t| t.to_string())
+            .collect();
+        assert_eq!(
+            unowned,
+            vec!["data_wiped", "feedback_captured", "config_set"],
+            "an event type became unowned (ungated) — or a legitimately unowned \
+             one gained an owner; if this is deliberate, update this list and say why"
+        );
+    }
+
+    /// Each feature must own at least one event type, or turning it off would
+    /// leave its write path unguarded.
+    #[test]
+    fn every_feature_owns_at_least_one_event_type() {
+        for feature in omni_me_core::config::ALL_FEATURES {
+            assert!(
+                EventType::ALL
+                    .iter()
+                    .any(|t| t.authoring_features().contains(feature)),
+                "{feature} owns no event type, so nothing guards its writes"
+            );
+        }
+    }
+
+    #[test]
+    fn the_refusal_names_the_feature_and_says_what_to_do() {
+        let one = super::feature_off_message(&[Feature::Finances]);
+        assert!(one.contains("Finances is switched off"), "{one}");
+        assert!(one.contains("Settings"), "{one}");
+        assert!(one.contains("restart"), "{one}");
+
+        let two = super::feature_off_message(&[Feature::Journal, Feature::Notes]);
+        assert!(two.contains("Journal and Notes are switched off"), "{two}");
+    }
+
     /// No command may reach for `state.event_store.append*` directly.
     ///
     /// Appending an event and nudging the push debouncer have to happen

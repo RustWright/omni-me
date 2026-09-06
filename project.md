@@ -34,8 +34,7 @@ and that enforced built-ins are legitimate but must be *published*. What omni-me
 insists on is now a document a second user can read before committing a weekend:
 [`docs/src/invariants.md`](docs/src/invariants.md), published as an mdbook site.
 Build phases A (config foundation), B (inert feature toggles) and C (record types) are
-in `tasks.md`; **B carries the only real deadline** — it must land before the next
-feature ships, or every feature added this year is a retrofit owed later.
+in `tasks.md`. **A and B are built; C is what remains.**
 
 **Phase A is built** (2026-09-06). Configuration is now two layers — an event-sourced
 value shared across devices, and a local override file that never syncs — resolved
@@ -49,11 +48,38 @@ referenced — so it is now data like everything else. On-device confirmation an
 two-device override check are held for the next release test pass, with the same
 reasoning as item 1's device-only legs: tested together rather than piecemeal.
 
+**Phase B is built** (2026-09-06), which closes the one deadline this year carried:
+a feature shipped without a toggle is a retrofit owed later, so the map had to exist
+before the next feature did. Switching a feature off now makes it inert — no tab, no
+projections, no schedulers, and commands that refuse — and turning it back on replays
+the log to rebuild what it held. That round trip is the payoff for event sourcing, and
+it is why "off" could be made non-destructive at all.
+
+The map is **enforced in three places rather than documented in one**, because a
+convention drifts: a closed `Feature` enum whose exhaustive matches break the build at
+every site that must decide about a seventh feature, a registry that fails its own test
+if a projection is claimed by nobody, and — the write side — an `EventType` that cannot
+be added without naming the feature allowed to author it. That last one means the
+guard sits at the three shared append tails instead of at seventy commands, so write
+paths that do not exist yet inherit it. Only outbound HTTP needed hand-placed guards,
+and a source-scanning test holds that line the way three others already do here.
+
+Two things surfaced that the design had not: the projection behind journal entries
+serves **three** features rather than two, because LLM results land in the same tables;
+and the hledger journal writer reads the transaction projection's table while being the
+only handler of exchange rates, so dropping it would have removed currency conversion
+rather than a file. One gap is recorded rather than fixed — the server does not read
+config, so switching auto-import off on a client does not stop the box fetching; that
+is what the per-source pause controls are for, and it is written down in
+[`docs/src/features.md`](docs/src/features.md) rather than left for someone to discover.
+
 ⛔ **Finances are deferred indefinitely** (user, 2026-09-05). This **supersedes** the
 earlier "offline until statement import beats the system it replaces" gate rather
 than clearing it: the user stopped using the section, and there is no intent to
 reopen it. Only the *state* survives — the finance tab stays offline, both bank
-auto-import sources stay off, and categorization stays deferred to `Unmatched`.
+auto-import sources stay off, and categorization stays deferred to `Unmatched`. As of
+Phase B this has a mechanism rather than a convention: `feature.finances` switches the
+whole section off, which is what the user intends to do on their own device.
 What was built before the stop still stands: every import runs through a parser that
 accounts for each line it reads, and rendered-PDF statements parse in both layouts
 and check themselves against the totals they declare, verified across 136 real files

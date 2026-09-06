@@ -15,10 +15,14 @@ pub struct NotesProjection;
 /// — adding a 4th reflection property updates both call sites from one edit.
 pub const COMPLETE_PROPERTIES: [&str; 3] = ["homework_for_life", "grateful_for", "learnt_today"];
 
+impl NotesProjection {
+    pub const NAME: &'static str = "notes";
+}
+
 #[async_trait]
 impl Projection for NotesProjection {
     fn name(&self) -> &str {
-        "notes"
+        Self::NAME
     }
 
     fn version(&self) -> u32 {

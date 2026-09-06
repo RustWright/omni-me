@@ -7,7 +7,10 @@
 
 use tauri::State;
 
+use omni_me_core::config::Feature;
+
 use crate::AppState;
+use crate::commands::shared::require_feature;
 
 /// What the UI needs in order to say which data the user is looking at.
 #[derive(serde::Serialize)]
@@ -47,6 +50,8 @@ pub async fn update_base_currency(
     state: State<'_, AppState>,
     currency: String,
 ) -> Result<(), String> {
+    require_feature(&state, Feature::Finances)?;
+
     let code = currency.trim().to_uppercase();
     if code.len() != 3 || !code.chars().all(|c| c.is_ascii_alphabetic()) {
         return Err(format!("'{currency}' is not a 3-letter ISO currency code"));

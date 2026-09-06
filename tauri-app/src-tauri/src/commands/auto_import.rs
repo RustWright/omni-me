@@ -27,7 +27,10 @@ use omni_me_core::events::{
     TransactionRecordedPayload,
 };
 
+use omni_me_core::config::Feature;
+
 use crate::AppState;
+use crate::commands::shared::require_feature;
 
 /// Transaction id for a committed draft: the source's stable `external_id`
 /// **plus a hash of the draft's own content**, so committing the same draft
@@ -114,6 +117,8 @@ pub struct AutoImportSourceView {
 pub async fn list_auto_import_sources(
     state: State<'_, AppState>,
 ) -> Result<Vec<AutoImportSourceView>, String> {
+    require_feature(&state, Feature::AutoImport)?;
+
     let resp = state
         .box_request(reqwest::Method::GET, "/auto_import/status")
         .await
@@ -170,6 +175,8 @@ pub async fn trigger_auto_import_tick(
     state: State<'_, AppState>,
     source: String,
 ) -> Result<TickResponse, String> {
+    require_feature(&state, Feature::AutoImport)?;
+
     let resp = state
         .box_request(reqwest::Method::POST, "/auto_import/tick")
         .await
@@ -202,6 +209,8 @@ pub async fn reauth_source(
     source: String,
     otp: String,
 ) -> Result<serde_json::Value, String> {
+    require_feature(&state, Feature::AutoImport)?;
+
     let resp = state
         .box_request(reqwest::Method::POST, "/auto_import/reauth")
         .await
@@ -228,6 +237,8 @@ pub async fn set_source_paused(
     source: String,
     paused: bool,
 ) -> Result<serde_json::Value, String> {
+    require_feature(&state, Feature::AutoImport)?;
+
     let action = if paused { "pause" } else { "resume" };
     // Source names are simple identifiers (the Add form rejects path-unsafe
     // characters; compiled source names are code constants), so path-safe as-is.
@@ -266,6 +277,8 @@ pub async fn set_source_paused(
 pub async fn list_source_configs(
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
+    require_feature(&state, Feature::AutoImport)?;
+
     let resp = state
         .box_request(reqwest::Method::GET, "/auto_import/sources")
         .await
@@ -287,6 +300,8 @@ pub async fn add_source_config(
     state: State<'_, AppState>,
     source: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    require_feature(&state, Feature::AutoImport)?;
+
     let resp = state
         .box_request(reqwest::Method::POST, "/auto_import/sources")
         .await
@@ -311,6 +326,8 @@ pub async fn remove_source_config(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<serde_json::Value, String> {
+    require_feature(&state, Feature::AutoImport)?;
+
     // Source names are constrained to simple identifiers (the Add form
     // rejects path-unsafe characters), so the name is path-safe as-is.
     let path = format!("/auto_import/sources/{name}");

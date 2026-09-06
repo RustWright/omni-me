@@ -3,6 +3,7 @@ mod budget_projection;
 mod config_projection;
 mod notes_projection;
 mod projection;
+pub mod registry;
 mod routines_projection;
 mod store;
 mod types;

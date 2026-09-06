@@ -46,6 +46,8 @@ pub struct JournalFile {
 }
 
 impl JournalFile {
+    pub const NAME: &'static str = "journal_file";
+
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
@@ -230,7 +232,7 @@ impl JournalFile {
 #[async_trait]
 impl Projection for JournalFile {
     fn name(&self) -> &str {
-        "journal_file"
+        Self::NAME
     }
 
     fn version(&self) -> u32 {

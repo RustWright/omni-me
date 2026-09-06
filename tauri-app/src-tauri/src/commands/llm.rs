@@ -8,6 +8,10 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use omni_me_core::config::Feature;
+
+use crate::commands::shared::require_feature;
+
 use crate::AppState;
 
 /// Read view of the server's `[llm]` config — the secret key is represented only
@@ -25,6 +29,8 @@ pub struct LlmConfigView {
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_llm_config(state: State<'_, AppState>) -> Result<LlmConfigView, String> {
+    require_feature(&state, Feature::Llm)?;
+
     let resp = state
         .box_request(reqwest::Method::GET, "/llm/config")
         .await
@@ -47,6 +53,8 @@ pub async fn set_llm_config(
     state: State<'_, AppState>,
     config: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    require_feature(&state, Feature::Llm)?;
+
     let resp = state
         .box_request(reqwest::Method::PUT, "/llm/config")
         .await

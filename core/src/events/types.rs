@@ -1,3 +1,4 @@
+use crate::config::Feature;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
@@ -153,6 +154,128 @@ impl FromStr for EventType {
             "feedback_captured" => Ok(EventType::FeedbackCaptured),
             "config_set" => Ok(EventType::ConfigSet),
             other => Err(format!("unknown event type: {other}")),
+        }
+    }
+}
+
+impl EventType {
+    /// Every event type.
+    ///
+    /// Hand-written, with the same acknowledged hole as `config::ALL_KEYS`: the
+    /// exhaustive matches in this file stop the build when a variant is added, and
+    /// `all_event_types_are_listed` then fails until it appears here.
+    pub const ALL: &'static [EventType] = &[
+        EventType::JournalEntryCreated,
+        EventType::JournalEntryUpdated,
+        EventType::JournalEntryClosed,
+        EventType::JournalEntryReopened,
+        EventType::GenericNoteCreated,
+        EventType::GenericNoteUpdated,
+        EventType::GenericNoteRenamed,
+        EventType::NoteLlmProcessed,
+        EventType::RoutineGroupCreated,
+        EventType::RoutineGroupReordered,
+        EventType::RoutineGroupRemoved,
+        EventType::RoutineItemAdded,
+        EventType::RoutineItemModified,
+        EventType::RoutineItemRemoved,
+        EventType::RoutineItemCompleted,
+        EventType::RoutineItemCompletionUndone,
+        EventType::RoutineItemSkipped,
+        EventType::RoutineItemSkipUndone,
+        EventType::TransactionRecorded,
+        EventType::TransactionCategorized,
+        EventType::TransactionTagged,
+        EventType::TransactionUpdated,
+        EventType::TransactionDeleted,
+        EventType::TransactionCleared,
+        EventType::TransactionsMerged,
+        EventType::BudgetSet,
+        EventType::BudgetUpdated,
+        EventType::BudgetRemoved,
+        EventType::AccountAdded,
+        EventType::RecurringTransactionDetected,
+        EventType::RecurringTransactionConfirmed,
+        EventType::RecurringTransactionDismissed,
+        EventType::ExchangeRateRecorded,
+        EventType::AutoImportBatchProposed,
+        EventType::AutoImportBatchCommitted,
+        EventType::AutoImportBatchDismissed,
+        EventType::DataWiped,
+        EventType::FeedbackCaptured,
+        EventType::ConfigSet,
+    ];
+
+    /// The features that may author this event, or `None` for an event no feature
+    /// owns.
+    ///
+    /// This is the **write** half of the feature map, and it is a match rather
+    /// than a lookup table so a new event type cannot be added without deciding
+    /// which feature is allowed to emit it. Guarding here instead of at each of
+    /// the ~70 commands means one site covers every write path, including ones
+    /// that do not exist yet.
+    ///
+    /// Empty for `DataWiped` (the wipe has to work with everything off, or a
+    /// disabled feature's data would be unreachable *and* unremovable),
+    /// `FeedbackCaptured` (reporting a problem must never depend on the feature
+    /// you are reporting about) and `ConfigSet` (it is what the gating reads).
+    ///
+    /// This says nothing about **inbound** events: the sync pull path applies
+    /// whatever the log contains, so every device keeps a complete log no matter
+    /// which features it has switched on.
+    pub fn authoring_features(&self) -> &'static [Feature] {
+        match self {
+            EventType::JournalEntryCreated
+            | EventType::JournalEntryUpdated
+            | EventType::JournalEntryClosed
+            | EventType::JournalEntryReopened => &[Feature::Journal],
+
+            EventType::GenericNoteCreated
+            | EventType::GenericNoteUpdated
+            | EventType::GenericNoteRenamed => &[Feature::Notes],
+
+            // Authored against either a journal entry or a generic note, so the
+            // LLM feature carries it and the host feature has to be on too — the
+            // guard admits it while *any* listed feature is on, and the command
+            // that reaches it already belongs to one of them.
+            EventType::NoteLlmProcessed => &[Feature::Llm],
+
+            EventType::RoutineGroupCreated
+            | EventType::RoutineGroupReordered
+            | EventType::RoutineGroupRemoved
+            | EventType::RoutineItemAdded
+            | EventType::RoutineItemModified
+            | EventType::RoutineItemRemoved
+            | EventType::RoutineItemCompleted
+            | EventType::RoutineItemCompletionUndone
+            | EventType::RoutineItemSkipped
+            | EventType::RoutineItemSkipUndone => &[Feature::Routines],
+
+            // A committed auto-import batch is the second author of a
+            // transaction, which is why `budget` survives finances being off
+            // while auto-import is on (see `events::registry`).
+            EventType::TransactionRecorded => &[Feature::Finances, Feature::AutoImport],
+
+            EventType::TransactionCategorized
+            | EventType::TransactionTagged
+            | EventType::TransactionUpdated
+            | EventType::TransactionDeleted
+            | EventType::TransactionCleared
+            | EventType::TransactionsMerged
+            | EventType::BudgetSet
+            | EventType::BudgetUpdated
+            | EventType::BudgetRemoved
+            | EventType::AccountAdded
+            | EventType::RecurringTransactionDetected
+            | EventType::RecurringTransactionConfirmed
+            | EventType::RecurringTransactionDismissed
+            | EventType::ExchangeRateRecorded => &[Feature::Finances],
+
+            EventType::AutoImportBatchProposed
+            | EventType::AutoImportBatchCommitted
+            | EventType::AutoImportBatchDismissed => &[Feature::AutoImport],
+
+            EventType::DataWiped | EventType::FeedbackCaptured | EventType::ConfigSet => &[],
         }
     }
 }
@@ -938,53 +1061,73 @@ mod tests {
 
     #[test]
     fn event_type_display_roundtrip() {
-        let types = [
-            EventType::JournalEntryCreated,
-            EventType::JournalEntryUpdated,
-            EventType::JournalEntryClosed,
-            EventType::JournalEntryReopened,
-            EventType::GenericNoteCreated,
-            EventType::GenericNoteUpdated,
-            EventType::GenericNoteRenamed,
-            EventType::NoteLlmProcessed,
-            EventType::RoutineGroupCreated,
-            EventType::RoutineGroupReordered,
-            EventType::RoutineGroupRemoved,
-            EventType::RoutineItemAdded,
-            EventType::RoutineItemModified,
-            EventType::RoutineItemRemoved,
-            EventType::RoutineItemCompleted,
-            EventType::RoutineItemCompletionUndone,
-            EventType::RoutineItemSkipped,
-            EventType::RoutineItemSkipUndone,
-            EventType::TransactionRecorded,
-            EventType::TransactionCategorized,
-            EventType::TransactionTagged,
-            EventType::TransactionUpdated,
-            EventType::TransactionDeleted,
-            EventType::TransactionCleared,
-            EventType::TransactionsMerged,
-            EventType::BudgetSet,
-            EventType::BudgetUpdated,
-            EventType::BudgetRemoved,
-            EventType::AccountAdded,
-            EventType::RecurringTransactionDetected,
-            EventType::RecurringTransactionConfirmed,
-            EventType::RecurringTransactionDismissed,
-            EventType::ExchangeRateRecorded,
-            EventType::AutoImportBatchProposed,
-            EventType::AutoImportBatchCommitted,
-            EventType::AutoImportBatchDismissed,
-            EventType::DataWiped,
-            EventType::FeedbackCaptured,
-            EventType::ConfigSet,
-        ];
-
-        for t in &types {
+        for t in EventType::ALL {
             let s = t.to_string();
             let parsed: EventType = s.parse().unwrap();
             assert_eq!(&parsed, t);
         }
+    }
+
+    /// `EventType::ALL` is hand-written, and a type missing from it is invisible
+    /// to everything that iterates the space — including the feature-ownership
+    /// audits in `commands::shared`. Same shape and same hole as
+    /// `config::tests::all_keys_lists_every_variant`: the exhaustive match stops
+    /// the build here, then the count fails until `ALL` is updated too.
+    #[test]
+    fn all_event_types_are_listed() {
+        let mut counted = 0;
+        for t in EventType::ALL {
+            match t {
+                EventType::JournalEntryCreated
+                | EventType::JournalEntryUpdated
+                | EventType::JournalEntryClosed
+                | EventType::JournalEntryReopened
+                | EventType::GenericNoteCreated
+                | EventType::GenericNoteUpdated
+                | EventType::GenericNoteRenamed
+                | EventType::NoteLlmProcessed
+                | EventType::RoutineGroupCreated
+                | EventType::RoutineGroupReordered
+                | EventType::RoutineGroupRemoved
+                | EventType::RoutineItemAdded
+                | EventType::RoutineItemModified
+                | EventType::RoutineItemRemoved
+                | EventType::RoutineItemCompleted
+                | EventType::RoutineItemCompletionUndone
+                | EventType::RoutineItemSkipped
+                | EventType::RoutineItemSkipUndone
+                | EventType::TransactionRecorded
+                | EventType::TransactionCategorized
+                | EventType::TransactionTagged
+                | EventType::TransactionUpdated
+                | EventType::TransactionDeleted
+                | EventType::TransactionCleared
+                | EventType::TransactionsMerged
+                | EventType::BudgetSet
+                | EventType::BudgetUpdated
+                | EventType::BudgetRemoved
+                | EventType::AccountAdded
+                | EventType::RecurringTransactionDetected
+                | EventType::RecurringTransactionConfirmed
+                | EventType::RecurringTransactionDismissed
+                | EventType::ExchangeRateRecorded
+                | EventType::AutoImportBatchProposed
+                | EventType::AutoImportBatchCommitted
+                | EventType::AutoImportBatchDismissed
+                | EventType::DataWiped
+                | EventType::FeedbackCaptured
+                | EventType::ConfigSet => counted += 1,
+            }
+        }
+        assert_eq!(counted, 39, "EventType::ALL does not list every variant");
+
+        let unique: std::collections::BTreeSet<String> =
+            EventType::ALL.iter().map(|t| t.to_string()).collect();
+        assert_eq!(
+            unique.len(),
+            EventType::ALL.len(),
+            "EventType::ALL repeats a type, or two share a wire name"
+        );
     }
 
     #[test]
