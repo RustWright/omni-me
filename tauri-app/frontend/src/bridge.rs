@@ -339,37 +339,147 @@ extern "C" {
 // failure and a retry carries it. That is useful, not a loop: the record is
 // bounded by the ring and a successful send clears nothing.
 
+/// How long the helpers keep retrying a call the backend was not yet ready for.
+///
+/// Deadline rather than an attempt count because the thing being waited on —
+/// `setup()` reaching `handle.manage(AppState{…})` — scales with the event log,
+/// not with a fixed number of tries. Observed on-device 2026-09-07: the refusals
+/// land at +0.7s on a phone whose WAL recovery replays ~36k batches, and `manage`
+/// itself is somewhere past that. 10s is far beyond any healthy boot while still
+/// bounded, so a genuinely dead backend still fails open rather than hanging.
+#[cfg(not(feature = "mock"))]
+const BOOT_RETRY_DEADLINE_MS: f64 = 10_000.0;
+
+/// Tauri refused the call **before dispatch** because `AppState` is not managed
+/// yet, so the command provably never ran.
+///
+/// That "never ran" is what makes retrying safe even for a mutating command,
+/// and it is why this is matched separately from a timeout — see
+/// [`invoke_timed`], where the distinction actually bites.
+#[cfg(not(feature = "mock"))]
+fn backend_not_ready(err: &str) -> bool {
+    err.contains("state not managed")
+}
+
+/// Backoff for the next boot retry, or `None` once the deadline has passed.
+/// 50ms doubling to a 800ms ceiling — short enough that winning the race early
+/// costs almost nothing, capped so a long boot does not spin.
+#[cfg(not(feature = "mock"))]
+fn next_boot_retry_delay(attempt: u32, started_ms: f64) -> Option<i32> {
+    if js_sys::Date::now() - started_ms >= BOOT_RETRY_DEADLINE_MS {
+        return None;
+    }
+    Some(50 << attempt.min(4))
+}
+
+/// Resolve after `ms`. Falls back to resolving immediately with no `window`,
+/// because a sleep that never wakes would park the caller forever — the exact
+/// failure mode [`invoke_timed`] exists to eliminate.
+#[cfg(not(feature = "mock"))]
+async fn sleep_ms(ms: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| match web_sys::window() {
+        Some(win) => {
+            let cb = Closure::once_into_js({
+                let resolve = resolve.clone();
+                move || {
+                    let _ = resolve.call0(&JsValue::NULL);
+                }
+            });
+            let _ =
+                win.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), ms);
+        }
+        None => {
+            let _ = resolve.call0(&JsValue::NULL);
+        }
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+}
+
 #[cfg(not(feature = "mock"))]
 async fn invoke<T: serde::de::DeserializeOwned>(
     cmd: &str,
     args: &impl serde::Serialize,
 ) -> Result<T, String> {
-    let result: Result<T, String> = async {
-        let args_js =
-            serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
-        let promise = tauri_invoke(cmd, args_js);
-        let result = wasm_bindgen_futures::JsFuture::from(promise)
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+    let started = js_sys::Date::now();
+    let mut attempt = 0u32;
+    loop {
+        let result: Result<T, String> = async {
+            let args_js =
+                serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
+            let promise = tauri_invoke(cmd, args_js);
+            let result = wasm_bindgen_futures::JsFuture::from(promise)
+                .await
+                .map_err(|e| format!("{e:?}"))?;
+            serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+        }
+        .await;
+
+        match result {
+            Ok(value) => {
+                if attempt > 0 {
+                    crate::diagnostics::record_invoke_recovery(
+                        cmd,
+                        attempt,
+                        js_sys::Date::now() - started,
+                    );
+                }
+                return Ok(value);
+            }
+            Err(e) => {
+                if backend_not_ready(&e)
+                    && let Some(delay) = next_boot_retry_delay(attempt, started)
+                {
+                    attempt += 1;
+                    sleep_ms(delay).await;
+                    continue;
+                }
+                crate::diagnostics::record_invoke_failure(cmd, &e);
+                return Err(e);
+            }
+        }
     }
-    .await;
-    result.inspect_err(|e| crate::diagnostics::record_invoke_failure(cmd, e))
 }
 
 #[cfg(not(feature = "mock"))]
 async fn invoke_unit(cmd: &str, args: &impl serde::Serialize) -> Result<(), String> {
-    let result: Result<(), String> = async {
-        let args_js =
-            serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
-        let promise = tauri_invoke(cmd, args_js);
-        wasm_bindgen_futures::JsFuture::from(promise)
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        Ok(())
+    let started = js_sys::Date::now();
+    let mut attempt = 0u32;
+    loop {
+        let result: Result<(), String> = async {
+            let args_js =
+                serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
+            let promise = tauri_invoke(cmd, args_js);
+            wasm_bindgen_futures::JsFuture::from(promise)
+                .await
+                .map_err(|e| format!("{e:?}"))?;
+            Ok(())
+        }
+        .await;
+
+        match result {
+            Ok(()) => {
+                if attempt > 0 {
+                    crate::diagnostics::record_invoke_recovery(
+                        cmd,
+                        attempt,
+                        js_sys::Date::now() - started,
+                    );
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                if backend_not_ready(&e)
+                    && let Some(delay) = next_boot_retry_delay(attempt, started)
+                {
+                    attempt += 1;
+                    sleep_ms(delay).await;
+                    continue;
+                }
+                crate::diagnostics::record_invoke_failure(cmd, &e);
+                return Err(e);
+            }
+        }
     }
-    .await;
-    result.inspect_err(|e| crate::diagnostics::record_invoke_failure(cmd, e))
 }
 
 /// `invoke`, but bounded: resolves to `Err` if the promise has not settled
@@ -392,37 +502,72 @@ async fn invoke_timed<T: serde::de::DeserializeOwned>(
     args: &impl serde::Serialize,
     timeout_ms: i32,
 ) -> Result<T, String> {
-    let outcome: Result<T, String> = async {
-        let args_js =
-            serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
-        let invoke_promise = tauri_invoke(cmd, args_js);
+    let started = js_sys::Date::now();
+    let mut attempt = 0u32;
+    loop {
+        let outcome: Result<T, String> = async {
+            let args_js =
+                serde_wasm_bindgen::to_value(args).map_err(|e| format!("serialize args: {e}"))?;
+            let invoke_promise = tauri_invoke(cmd, args_js);
 
-        // A promise that rejects once `timeout_ms` elapses. `once_into_js` keeps
-        // the callback alive until it fires exactly once (no `forget` leak).
-        let timeout_promise = js_sys::Promise::new(&mut |_resolve, reject| {
-            let cb = Closure::once_into_js(move || {
-                let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("__ipc_timeout__"));
+            // A promise that rejects once `timeout_ms` elapses. `once_into_js` keeps
+            // the callback alive until it fires exactly once (no `forget` leak).
+            let timeout_promise = js_sys::Promise::new(&mut |_resolve, reject| {
+                let cb = Closure::once_into_js(move || {
+                    let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("__ipc_timeout__"));
+                });
+                if let Some(win) = web_sys::window() {
+                    let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                        cb.unchecked_ref(),
+                        timeout_ms,
+                    );
+                }
             });
-            if let Some(win) = web_sys::window() {
-                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    cb.unchecked_ref(),
-                    timeout_ms,
-                );
-            }
-        });
 
-        // Whichever settles first wins; a never-settling invoke loses to the timeout.
-        let race = js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
-        let result = wasm_bindgen_futures::JsFuture::from(race)
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+            // Whichever settles first wins; a never-settling invoke loses to the timeout.
+            let race =
+                js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
+            let result = wasm_bindgen_futures::JsFuture::from(race)
+                .await
+                .map_err(|e| format!("{e:?}"))?;
+            serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
+        }
+        .await;
+
+        match outcome {
+            Ok(value) => {
+                if attempt > 0 {
+                    crate::diagnostics::record_invoke_recovery(
+                        cmd,
+                        attempt,
+                        js_sys::Date::now() - started,
+                    );
+                }
+                return Ok(value);
+            }
+            Err(e) => {
+                // Both signatures are the same boot race seen from either side of the
+                // window: `state not managed` is Tauri refusing before dispatch,
+                // `__ipc_timeout__` is the invoke being dropped before the native IPC
+                // handler existed. Retrying `__ipc_timeout__` is safe **here and only
+                // here** — this helper is documented as boot-only and its callers are
+                // reads. A timeout does not prove the command did not run, so the
+                // untimed helpers deliberately do not retry on it.
+                if (backend_not_ready(&e) || e.contains("__ipc_timeout__"))
+                    && let Some(delay) = next_boot_retry_delay(attempt, started)
+                {
+                    attempt += 1;
+                    sleep_ms(delay).await;
+                    continue;
+                }
+                // A timeout that outlives the deadline surfaces as `__ipc_timeout__`
+                // in the buffer, which is the signature of the boot-race this helper
+                // exists for — worth recognising on sight in a report.
+                crate::diagnostics::record_invoke_failure(cmd, &e);
+                return Err(e);
+            }
+        }
     }
-    .await;
-    // A timeout here surfaces as `__ipc_timeout__` in the buffer, which is the
-    // signature of the boot-race this helper exists for — worth recognising on
-    // sight in a report.
-    outcome.inspect_err(|e| crate::diagnostics::record_invoke_failure(cmd, e))
 }
 
 // -----------------------------------------------------------------------------

@@ -223,6 +223,28 @@ accounts) has **no oracle at all** — its export carries no balance column. Eac
 CIBC dirs in the pCloud backup holds 2 unexamined PDFs; if those are statements, the rendered
 parser built 2026-09-05 would close the gap. Never checked.
 
+**Both bank sources are now OFF at the source (2026-09-07), not merely paused.** Done by
+renaming their credential section headers on the box so the overlay stops registering them —
+neither credentials view uses `deny_unknown_fields`, so a renamed section parses and is
+silently ignored, and a source is registered only when its section is `Some`. The scheduler
+now boots `sources=0` instead of `sources=2`. Values are untouched and it reverses by renaming
+two lines back. Institution names, exact paths and the backup file are in the **overlay's**
+`tasks.md` — they do not belong in this repo.
+
+This was needed because **pausing does not survive a restart**, which had gone unnoticed:
+
+- [ ] **The pause off-switch cannot persist if the XDG config dir is not writable.** Found
+  2026-09-07; ⚠️ **the defect is in the deploy image, not in finance code**, so it will bite any
+  future auto-import source. `paused::set_paused` writes `paused_sources.toml` into
+  `$XDG_CONFIG_HOME/omni-me/` via temp+rename. When a container mounts only
+  `credentials.toml` into that directory, the directory itself is created by Docker as a mount
+  parent and is **root-owned**, while the app runs unprivileged — so the write fails
+  `Permission denied (os error 13)`. `pause_source_handler` correctly surfaces that as a 500
+  rather than faking success (#367's whole point), but the net effect is that pause works
+  *live* and never survives a restart, and every boot logs `paused=0` with the sources running
+  again. Worth a startup preflight that warns when the config dir is not writable, since the
+  failure is otherwise only visible at the moment someone tries to pause. Image-side fix and
+  the operational record are in the **overlay's** `tasks.md`. [XS]
 - [ ] **Reach import parity with paisa's seven importers.** Parity map is written (overlay
   `IMPORT_PARITY.md`; institution names are private). **Four of the seven are now covered**
   as of 2026-09-05: the old comma-splitting `statement_csv.rs` is deleted, imports run
@@ -280,6 +302,66 @@ parser built 2026-09-05 would close the gap. Never checked.
   open-view live-refresh gap.
 
 ### Platform and onboarding
+- [ ] **Cold-start race: startup invokes fire before `AppState` is managed, and the feature set
+  never re-derives.** Found 2026-09-07 on the phone during the v1.1.0 verification pass, and
+  **confirmed from the app's own diagnostic ring buffer** rather than inferred — the first real
+  use of the feedback feature, which is what surfaced it. [S–M]
+
+  **Symptom.** `feature.finances` was set off (shared) on `surface` and took effect there after a
+  restart. On the phone the Finances tab stayed, across an app restart *and* a device reboot,
+  while Settings showed `shared: off` / `this device: follow` and the collapsed row read **Off**.
+
+  **Root cause, from the ring buffer:** seven startup commands failed at +0.6–0.7s —
+  `get_workspace` and `get_timezone` with `__ipc_timeout__`, then `get_runtime_profile`,
+  **`get_config`**, `take_pending_share_intent`, `get_sync_status` and `list_known_accounts` with
+  *"state not managed for field `state` … You must call `.manage()` before using this command"*.
+  The WebView fires its startup invokes before `setup()` finishes (DB connect, WAL recovery of
+  ~36k batches, `init_all`, record-type seeding) and reaches `handle.manage(AppState{…})` at
+  `lib.rs:798`. `get_config` failing takes the `let Ok(entries) = … else` branch at
+  `main.rs:627`, which sets `Features::default()` — **everything on** — and `features.rs:27`
+  sets that signal *exactly once*, so a lost race persists for the whole session.
+
+  **Why it stayed hidden until now.** Before feature toggles existed, everything was on, so the
+  fail-open fallback was always *correct*. The race almost certainly predates v1.1.0 and only
+  became visible the first time a feature was actually switched off. The phone loses a race
+  `surface` wins because its cold start is slower.
+
+  ⚠️ **Fail-open is deliberate and should stay** — `types.rs:243`: "A missing key must never hide
+  a tab: an empty or failed read would blank the nav." The consequence is that a drawn tab is
+  the app's *error state as well as its on state*, indistinguishable from outside. The fix is
+  recovery, not a stricter default. Also note the race was **already known**: the IPC timeout
+  helper exists for it and says so (`bridge.rs:422`, "the signature of the boot-race this helper
+  exists for"). What is missing is a retry, not detection.
+
+  **Fix directions (not chosen):** emit a backend-ready event after `manage()` and have the
+  frontend re-derive features on it; or manage a lightweight ready-flag state early so commands
+  can await initialization instead of hard-failing; or retry `get_config` in the background and
+  correct the signal after the splash lifts (needs care — `features.rs` requires set-once, and a
+  mid-session feature flip is what `boot_features` being a snapshot deliberately avoids).
+
+  **Open question, deliberately unresolved:** whether the phone's `boot_features` also ended up
+  on. "The tab still shows data" does **not** settle it — the finances pages have a
+  stale-while-revalidate read cache (Stage C3), so they can render cached rows whatever the
+  backend would now answer. Needs a probe that bypasses the cache.
+- [ ] **`GET /feedback` is broken — the read side of feedback capture has never worked against
+  real data.** Found 2026-09-07. The endpoint returns a SurrealDB parse error:
+  *"Missing order idiom `timestamp` in statement selection"* — the query is
+  `SELECT meta::id(id) AS eid, device_id, … WHERE event_type = 'feedback_captured' ORDER BY
+  timestamp DESC LIMIT $limit`, and SurrealDB requires an `ORDER BY` field to appear in the
+  selection. ⚠️ **It is served as HTTP 200 with `content-type: text/plain`**, so a caller cannot
+  distinguish the failure from an empty result — fix that too, not just the query.
+  The **write** path is fine: the report synced and was read back off the box via `/sync/pull`
+  (screen `journal:day`, platform android, 1.1.0, 10 recent errors, 20 recent events, 3.3 KB).
+  [XS]
+- [ ] **`chunk_for_push` cannot get a single oversized event under the byte cap** — noticed while
+  reading, **NOT observed**; today's stall was a tailnet drop, not this. Recorded so it is not
+  re-derived. `chunk_for_push` splits by event count and cumulative bytes, but its own comment
+  says "An event larger than the byte budget is still emitted alone (best effort)". The server's
+  `DefaultBodyLimit` answers **413**, and `SyncError::Rejected` — the quarantine-don't-retry path
+  whose doc says "the same bytes will be rejected forever" — is keyed on **400**, so an oversized
+  event lands in retry-with-backoff instead. `feedback_captured` is the one event type with no
+  natural size bound (`screen_data` is "whatever the page rendered of itself", `recent_errors` up
+  to 50×500). Real payloads seen so far are ~3 KB, so this is latent, not urgent. [S, unverified]
 - [ ] **A "fresh install" on a machine that ran an older build silently inherits that build's
   state, and there is no in-app way to reset it.** Hit on the go-live desktop (`surface`) minutes
   after installing 1.0.3: the app opened onto a **garbage note from April** and reported the
@@ -445,6 +527,55 @@ parser built 2026-09-05 would close the gap. Never checked.
   overlay's `app-release.yml`.
 
 ### Deferred, with a design call attached
+- [ ] **A new projection never sees history, and "ignored" is recorded as "applied".**
+  Observed end-to-end during the v1.1.0 two-device upgrade, 2026-09-07 — **benign this time**,
+  but the mechanism is general and will recur on every future projection.
+
+  **What happened.** `surface` upgraded first and seeded `record_type_declared` (10:28:04Z).
+  The phone, still on 1.0.5, pulled it: no projection matched, every one returned `_ => Ok(())`
+  (`notes_projection.rs:78`), so `apply_events_resilient` saw no error, counted the event as
+  **successfully applied**, and advanced the bookmark past it. The phone then upgraded and
+  registered `record_types` for the first time — a brand-new projection, whose watermark
+  `init` seeds to `time::now()` (`projection.rs:103`, `last_received_at ?? time::now()`).
+  `catch_up`'s `min` was already past 10:28:04 because the no-op had advanced it, so nothing
+  replayed. `load_record_type` queries the **projection table**, found it empty, and the phone
+  declared a second time (10:54:45Z).
+
+  **Why it was harmless.** `seed_journal_record_type` derives the preset from the *event log*
+  (`SELECT id FROM events WHERE event_type = 'journal_entry_created'`), not from local context,
+  so both devices independently answered the same durable question, both chose
+  `journal_reflective`, and last-write-wins converged on identical content. The dangerous
+  variant is a **fresh install** with no entries seeding `journal_minimal` and winning LWW
+  against upgrade devices — which is what `complete` failing closed on an empty required list,
+  and `auto_close: false` on the minimal preset, exist to contain.
+
+  **The conflation to fix.** `_ => Ok(())` cannot distinguish "not my type, a sibling handles
+  it" (constant and correct) from "no projection in this binary handles it" (a future event).
+  The oracle already exists: `EventType::from_str` ends `other => Err("unknown event type")`
+  (`types.rs:160`) — that is the binary's complete vocabulary, independent of the projections.
+  Note the asymmetry with feature toggles, which *are* handled correctly: a de-registered
+  projection's watermark **freezes** and re-registering replays what it missed
+  (`a_deregistered_projection_neither_forces_nor_loses_a_replay`). Replay safety keys on
+  "existed and was switched off", not on "did not exist yet".
+
+  **Two directions — user leaning toward either, NOT yet decided (2026-09-07):**
+  - **A. Unclaimed-event side table.** Keep the watermark advancing; when `from_str` fails,
+    record the id in `unclaimed_events`. On startup replay rows whose type now parses, then
+    delete. Dead-letter-queue pattern. Needs an age-out rule or a device pinned on an old
+    version accumulates rows forever. Handles the general case: *the event arrived before any
+    handler existed.*
+  - **B. Stop conflating "new projection" with "new schema field".** The `?? time::now()`
+    comment describes an *existing* projection upgrading into a newly-added field, where
+    `now()` is right — but the same line also catches *genuinely new* projections, where it is
+    wrong. They are distinguishable: a pre-existing row has a non-empty `last_event_id`, a
+    fresh one gets `''`. Seed only genuinely-new projections from epoch. Smaller, no new
+    machinery, and it covers the case actually observed.
+
+  ⚠️ **Measure before designing.** B's cost is the "surprise full replay" the comment avoids —
+  but the log is ~14,360 events and a boot recovered 36,670 WAL batches in ~0.6s, so a
+  one-time replay may be seconds. If it is, B is a few lines. Nothing here risks data: events
+  are appended durably *before* apply, so every failure mode is "not yet derived", never "not
+  stored". [S–M, design call]
 - [ ] The objection is **open-ended gate config**, not automation and not email as a source. Any replacement has to make "which mail is relevant" self-maintaining. Directions worth *only* a note until v1 ships — do not design these now: forward-to-a-dedicated-address push instead of polling (the user's filter action becomes the signal, no label to maintain); Gmail API query search instead of a maintained label; or drop email entirely and add API sources. Whatever replaces it inherits the constraint at `receipts.rs:216-231` — untrusted sender input reaching an LLM, with the pending-review queue as the only control. [→ own planning session, [[feedback-defer-major-phases-to-fresh-session]]]
 
 - [ ] **Journal line timestamps — redesign, design-first** (user, 2026-07-05). Its own

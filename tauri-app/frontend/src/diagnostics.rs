@@ -174,6 +174,21 @@ pub fn record_invoke_failure(cmd: &str, err: &str) {
     record(Kind::Invoke, &format!("{cmd}: {err}"));
 }
 
+/// A boot-race invoke that failed and then succeeded on retry.
+///
+/// Recorded as a **warning, not a failure**: the call ultimately worked, so it
+/// is not a defect the user experienced. It is kept because the retry would
+/// otherwise erase the only evidence that the race still happens — and the race
+/// getting slower (a bigger log, a slower device) is exactly the thing worth
+/// noticing before it outruns the deadline and starts failing open again.
+#[cfg_attr(feature = "mock", expect(dead_code))]
+pub fn record_invoke_recovery(cmd: &str, attempts: u32, waited_ms: f64) {
+    record(
+        Kind::Warn,
+        &format!("{cmd}: recovered after {attempts} retr(y/ies), {waited_ms:.0}ms"),
+    );
+}
+
 /// The buffer as display lines, newest last — the order
 /// `FeedbackCapturedPayload::recent_errors` documents.
 pub fn snapshot() -> Vec<String> {
