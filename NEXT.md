@@ -1,40 +1,44 @@
 # NEXT
 
-**Next action: finish the v1.1.1 release.** CI was running on `3aa4a80` when the session paused.
-When green: tag `v1.1.1`, then `gh workflow run app-release.yml -R RustWright/omni-me-private
--f version=1.1.1 -f public_ref=main -f targets=both -f box=hetzner`, then OTA both devices and
-**verify on the phone** — the Finances tab must be gone, and a new report's `recent_errors`
-should read `recovered after N retr(y/ies)` instead of `state not managed`. Then item 3
-(AI/LLM/ML), planning-first, fresh session.
+**Next action: verify v1.1.2 on both devices.** Release run `34127047401` was building when the
+session paused (`gh run view 34127047401 -R RustWright/omni-me-private`). When it lands, OTA both:
+- **Phone:** Finances tab stays gone, and a fresh problem report's `recent_errors` shows
+  `recovered after N retr(y/ies)` rather than `state not managed`.
+- **`surface`: let the updater AUTO-RESTART — do NOT close the app manually.** That is the only
+  reproduction path for the splash hang; a manual relaunch always worked and proves nothing. If
+  it hangs anyway, the new `tracing::debug!("get_config")` settles it: present ⇒ IPC arrived.
 
-**What v1.1.1 is:** a cold-start race — the WebView fires startup invokes before `setup()`
-reaches `handle.manage(AppState{…})`, so seven fail. `get_config` failing falls back to
-`Features::default()` = everything on, set **once**, so the phone drew a Finances tab for a
-feature that was off. Fix: deadline-based retry in the three shared invoke helpers in
-`bridge.rs`. Found via the app's own feedback capture — its first real use. Detail in `tasks.md`.
+Then item 3 (AI/LLM/ML), planning-first, fresh session.
+
+## What 1.1.1 + 1.1.2 fixed — one root cause, two severities
+The WebView fires startup invokes before the backend is ready. **`AppState` unmanaged** → Tauri
+*rejects* → an `Err` → `get_config` fell back to `Features::default()` (all on) → the phone drew
+a Finances tab for a disabled feature; fixed 1.1.1 by a bounded retry in the shared invoke
+helpers. **IPC handler not ready** → Tauri *drops* it, the promise never settles → the boot
+future parked forever and the splash never lifted (`surface`, after the updater's auto-restart,
+on the 1.1.0 *and* 1.1.1 updates); fixed 1.1.2 with `invoke_get_config_timed` + the
+retry/deadline loop `continuity.rs` already used.
 
 ## Decisions in force — inherit these
-- ⛔ **FINANCES DEFERRED INDEFINITELY**, and now **off at the source**: both bank credential
-  section headers renamed on the box so the scheduler boots `sources=0`. Reversible by renaming
-  two lines; detail + backup path in the **overlay's** `tasks.md`.
-- **Retry deadline is 10s deliberately** — too-short reproduces the silent bug being fixed,
-  too-long is only a visible splash. Err long.
-- **Retry safety differs by signature.** `state not managed` = refused before dispatch, so it
-  provably never ran → safe anywhere. `__ipc_timeout__` = we stopped waiting and it may have
-  run → retried **only** in `invoke_timed` (boot-only, read-only callers).
+- **Boot invokes need BOTH halves.** `invoke_timed` converts "never settles" into an `Err`; the
+  retry then re-invokes. Timed-alone fails open with the wrong data; retry-alone never fires,
+  because a dropped invoke produces no error. Anything fired at boot uses both.
 - **Features fail OPEN and stay that way** (`types.rs:243`); a drawn tab is also the error state.
+- ⛔ **FINANCES DEFERRED INDEFINITELY**, and now **off at the source** — bank credential section
+  headers renamed on the box, scheduler boots `sources=0`. Detail in the overlay's `tasks.md`.
 - **A public stamp and the overlay `Cargo.lock` move together** or the next `--locked` deploy
-  dies: 1.1.1 = 3 public files + both public locks + the overlay lock.
-- **Real institution names never enter the public repo** — the guard caught one this session.
+  dies: 3 public files + both public locks + the overlay lock.
+- **Real institution names never enter the public repo**; the canonical guard lives in
+  `omni-me-private/privacy-guard/` and is **not** installed in a fresh clone.
 
 ## Do NOT re-survey
-Generalization is CLOSED (Phases 0/A/B/C) and `docs/src/invariants.md` is the contract — never
-back-fit it. The v1.1.0 verification pass is CLOSED: steps 1–6 and legs 7a/7c confirmed on hardware.
+Generalization is CLOSED (Phases 0/A/B/C); `docs/src/invariants.md` is the contract, never
+back-fit it. The v1.1.0 verification pass is CLOSED: steps 1–6 and legs 7a/7c confirmed.
 
 ## Open threads
-⚠️ Server stays **1.1.0** (client-only fix) but the overlay lock now expects 1.1.1. · Leg **7b**
-(a real panic reaching the ring buffer) is the one held item. · `GET /feedback` is **broken** —
-SurrealDB `ORDER BY` parse error served as HTTP 200 `text/plain` [XS]. · New-projection history
-gap: **A vs B not decided**, measure replay cost first. · `chunk_for_push` oversized-event 413
-is **unverified**. · Real institution names sit in public `tasks.md` (~line 221), pre-existing. ·
+⚠️ Server stays **1.1.0** (client-only fixes) but the overlay lock expects 1.1.2. · Leg **7b** (a
+real panic reaching the ring buffer) still held. · `GET /feedback` **broken** — SurrealDB
+`ORDER BY` parse error served as HTTP 200 `text/plain` [XS]. · Every update leaves a husk process
+on a deleted `/tmp/tauri_current_app…` binary — harmless (no db fds) but unexplained. ·
+New-projection history gap: **A vs B not decided**. · `chunk_for_push` 413 **unverified**. ·
 Curiosities→concepts + memory prune owed (Cycle 4 close-out).
