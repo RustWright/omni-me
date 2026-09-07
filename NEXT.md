@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: verify v1.1.0 on the two devices, in the order below — then item 3 (AI/LLM/ML)
-in a fresh, planning-first session.** Shipped 2026-09-06: server `sha-9a0b1dd` health-gated,
-public tagged `v1.1.0` (full CI matrix green on `701b28d`), APK + AppImage published to
-`/var/omni-updates` with both `latest.json` manifests written.
+**Next action: finish the v1.1.1 release.** CI was running on `3aa4a80` when the session paused.
+When green: tag `v1.1.1`, then `gh workflow run app-release.yml -R RustWright/omni-me-private
+-f version=1.1.1 -f public_ref=main -f targets=both -f box=hetzner`, then OTA both devices and
+**verify on the phone** — the Finances tab must be gone, and a new report's `recent_errors`
+should read `recovered after N retr(y/ies)` instead of `state not managed`. Then item 3
+(AI/LLM/ML), planning-first, fresh session.
 
-## Device verification — step 1 expires the moment you update
-1. **Before updating anything**, confirm a still-v1.0.5 client syncs against the new server.
-   This is what the deploy-first ordering existed to protect, and it is unrepeatable after.
-2. OTA on the phone and on `surface`; each should report 1.1.0 after restart.
-3. Open a daily journal entry — the reflection panel should draw from the declaration.
-4. Legs held for this pass: cross-device feedback capture, a real panic reaching the
-   diagnostic ring buffer, the two-device config override.
+**What v1.1.1 is:** a cold-start race — the WebView fires startup invokes before `setup()`
+reaches `handle.manage(AppState{…})`, so seven fail. `get_config` failing falls back to
+`Features::default()` = everything on, set **once**, so the phone drew a Finances tab for a
+feature that was off. Fix: deadline-based retry in the three shared invoke helpers in
+`bridge.rs`. Found via the app's own feedback capture — its first real use. Detail in `tasks.md`.
 
 ## Decisions in force — inherit these
-- ⛔ **FINANCES ARE DEFERRED INDEFINITELY.** Real off switch: `feature.finances`.
-- **`docs/src/invariants.md` is the contract** — never back-fit it. Phase C reads
-  **(partly today)** deliberately: the declaration is live, but no screen edits it.
-- **Empty required list ⇒ `complete = false`.** Fails closed; `complete` drives auto-close
-  (⇒ read-only), plus `auto_close: false` on the minimal preset as a second guard.
-- **Fresh install → minimal preset; existing → reflective.** The reflective fallback in
-  `journal_record_type` is load-bearing: minimal would mark the back catalogue incomplete.
-- **A public version stamp and `omni-me-private/Cargo.lock` move together** — the overlay
-  Dockerfile builds `--locked`, so stamping alone breaks the next deploy, naming the lockfile.
-- **The overlay is a CI blind spot** — no push-triggered workflow, so it compiles against the
-  engine only during a deploy. Cost one 17-min failed deploy 2026-09-06 (stale `origin/main`,
-  6 unpushed commits). A `cargo check --locked -p omni-me-private` job is **agreed, pending**.
+- ⛔ **FINANCES DEFERRED INDEFINITELY**, and now **off at the source**: both bank credential
+  section headers renamed on the box so the scheduler boots `sources=0`. Reversible by renaming
+  two lines; detail + backup path in the **overlay's** `tasks.md`.
+- **Retry deadline is 10s deliberately** — too-short reproduces the silent bug being fixed,
+  too-long is only a visible splash. Err long.
+- **Retry safety differs by signature.** `state not managed` = refused before dispatch, so it
+  provably never ran → safe anywhere. `__ipc_timeout__` = we stopped waiting and it may have
+  run → retried **only** in `invoke_timed` (boot-only, read-only callers).
+- **Features fail OPEN and stay that way** (`types.rs:243`); a drawn tab is also the error state.
+- **A public stamp and the overlay `Cargo.lock` move together** or the next `--locked` deploy
+  dies: 1.1.1 = 3 public files + both public locks + the overlay lock.
+- **Real institution names never enter the public repo** — the guard caught one this session.
 
 ## Do NOT re-survey
-Generalization is CLOSED — Phases 0, A, B, C built, the gate proven to bite. Don't re-derive the
-feature map, the config foundation, or "UI stops at schema-driven forms" — see `invariants.md`.
-**Item 3 (AI/LLM/ML) is planning-first by its own framing; give it a fresh session.**
+Generalization is CLOSED (Phases 0/A/B/C) and `docs/src/invariants.md` is the contract — never
+back-fit it. The v1.1.0 verification pass is CLOSED: steps 1–6 and legs 7a/7c confirmed on hardware.
 
 ## Open threads
-⚠️ **`git status` the OVERLAY separately** — SessionEnd pushes only the current repo. · ⚠️
-`free -h` SWAP before heavy cargo (oomd killed the terminal scope 2026-09-06); disk 92%. · No UI
-for editing a declaration. · ⚠️ **Mock backend never persists** — autosaved edits revert on
-navigation; mock limits, not bugs. · Finances still to be switched off on the device. ·
+⚠️ Server stays **1.1.0** (client-only fix) but the overlay lock now expects 1.1.1. · Leg **7b**
+(a real panic reaching the ring buffer) is the one held item. · `GET /feedback` is **broken** —
+SurrealDB `ORDER BY` parse error served as HTTP 200 `text/plain` [XS]. · New-projection history
+gap: **A vs B not decided**, measure replay cost first. · `chunk_for_push` oversized-event 413
+is **unverified**. · Real institution names sit in public `tasks.md` (~line 221), pre-existing. ·
 Curiosities→concepts + memory prune owed (Cycle 4 close-out).
