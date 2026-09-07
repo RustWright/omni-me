@@ -8,32 +8,29 @@ session paused (`gh run view 34127047401 -R RustWright/omni-me-private`). When i
   reproduction path for the splash hang; a manual relaunch always worked and proves nothing. If
   it hangs anyway, the new `tracing::debug!("get_config")` settles it: present ⇒ IPC arrived.
 
-Then item 3 (AI/LLM/ML), planning-first, fresh session.
+**Then item 3 (AI/LLM/ML), planning-first, fresh session.**
 
 ## What 1.1.1 + 1.1.2 fixed — one root cause, two severities
 The WebView fires startup invokes before the backend is ready. **`AppState` unmanaged** → Tauri
-*rejects* → an `Err` → `get_config` fell back to `Features::default()` (all on) → the phone drew
-a Finances tab for a disabled feature; fixed 1.1.1 by a bounded retry in the shared invoke
-helpers. **IPC handler not ready** → Tauri *drops* it, the promise never settles → the boot
-future parked forever and the splash never lifted (`surface`, after the updater's auto-restart,
-on the 1.1.0 *and* 1.1.1 updates); fixed 1.1.2 with `invoke_get_config_timed` + the
-retry/deadline loop `continuity.rs` already used.
+*rejects* → `Err` → `get_config` fell back to `Features::default()` (all on) → the phone drew a
+Finances tab for a disabled feature; fixed 1.1.1 by a bounded retry in the shared helpers.
+**IPC not ready** → Tauri *drops* it, the promise never settles → the boot future parked forever
+and the splash never lifted (`surface`, after the updater's auto-restart, on the 1.1.0 *and*
+1.1.1 updates); fixed 1.1.2 with `invoke_get_config_timed` + `continuity.rs`'s retry loop.
 
 ## Decisions in force — inherit these
-- **Boot invokes need BOTH halves.** `invoke_timed` converts "never settles" into an `Err`; the
-  retry then re-invokes. Timed-alone fails open with the wrong data; retry-alone never fires,
-  because a dropped invoke produces no error. Anything fired at boot uses both.
+- **Boot invokes need BOTH halves.** `invoke_timed` turns "never settles" into an `Err`; the
+  retry then re-invokes. Timed-alone fails open with wrong data; retry-alone never fires, since a
+  dropped invoke produces no error.
 - **Features fail OPEN and stay that way** (`types.rs:243`); a drawn tab is also the error state.
-- ⛔ **FINANCES DEFERRED INDEFINITELY**, and now **off at the source** — bank credential section
-  headers renamed on the box, scheduler boots `sources=0`. Detail in the overlay's `tasks.md`.
-- **A public stamp and the overlay `Cargo.lock` move together** or the next `--locked` deploy
-  dies: 3 public files + both public locks + the overlay lock.
-- **Real institution names never enter the public repo**; the canonical guard lives in
-  `omni-me-private/privacy-guard/` and is **not** installed in a fresh clone.
-
-## Do NOT re-survey
-Generalization is CLOSED (Phases 0/A/B/C); `docs/src/invariants.md` is the contract, never
-back-fit it. The v1.1.0 verification pass is CLOSED: steps 1–6 and legs 7a/7c confirmed.
+- ⛔ **FINANCES DEFERRED INDEFINITELY**, now **off at the source** — bank credential headers
+  renamed on the box, scheduler boots `sources=0`. Detail in the overlay's `tasks.md`.
+- **A public stamp and the overlay `Cargo.lock` move together**: 3 public files + both public
+  locks + the overlay lock, or the next `--locked` deploy dies.
+- **Real institution names never enter the public repo**; canonical guard lives in
+  `omni-me-private/privacy-guard/`, **not** installed in a fresh clone.
+- **CLOSED, do not re-survey:** generalization (Phases 0/A/B/C) — `invariants.md` is the
+  contract, never back-fit it — and the v1.1.0 verification pass (steps 1–6, legs 7a/7c).
 
 ## Open threads
 ⚠️ Server stays **1.1.0** (client-only fixes) but the overlay lock expects 1.1.2. · Leg **7b** (a
