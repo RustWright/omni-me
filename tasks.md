@@ -302,8 +302,19 @@ This was needed because **pausing does not survive a restart**, which had gone u
   open-view live-refresh gap.
 
 ### Platform and onboarding
-- [ ] **Cold-start race: startup invokes fire before `AppState` is managed, and the feature set
-  never re-derives.** Found 2026-09-07 on the phone during the v1.1.0 verification pass, and
+- [x] **Cold-start race: startup invokes fire before `AppState` is managed, and the feature set
+  never re-derives.** **FIXED + VERIFIED ON DEVICE 2026-09-07 (v1.1.1 + v1.1.2).** The phone's own
+  problem report on 1.1.2 shows all seven commands *recovering* rather than failing —
+  `get_workspace` 567ms, `get_config` 573ms, `get_timezone` 595ms, `get_runtime_profile` 664ms,
+  `take_pending_share_intent` 649ms, `get_sync_status` 649ms, `list_known_accounts` 853ms — each
+  **after 1 retry**, every entry a `warn` instead of a failure, against seven hard
+  `state not managed` failures on the same device that morning. The Finances tab is correctly
+  gone, and `surface` came back clean through the updater's auto-restart (the only path that
+  reproduced the splash hang). ⚠️ **The race still happens — it is handled, not eliminated**, and
+  the recorded timings are the early-warning signal: one retry at <1s means the 10s deadline has
+  wide headroom, and these numbers climbing (bigger log, slower device) is the cue that the
+  margin is eroding before it fails open again. Original entry follows.
+  Found 2026-09-07 on the phone during the v1.1.0 verification pass, and
   **confirmed from the app's own diagnostic ring buffer** rather than inferred — the first real
   use of the feedback feature, which is what surfaced it. [S–M]
 
