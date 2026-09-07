@@ -23,7 +23,26 @@ ledger transaction edits do too, and Android predictive text commits on space.
 
 Work now follows a **three-item sequence set by the user 2026-09-05, taken one at a
 time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.** Items 1 and
-2 are done; **item 3 is next**, and it is a planning-first session by its own framing.
+2 are done; **item 3 is now designed** (2026-09-07) and its build has not started.
+
+**Item 3 is planned, and its original premise turned out to be wrong** (2026-09-07,
+design session, no code). It was filed as "re-examine `DocumentExtractor`/Gemini"; an
+inventory found the LLM surface has **no reachable consumer at all** — the text path
+lost its UI trigger in July, and extraction's only call sites sit behind the deferred
+finance feature — so there was nothing to re-evaluate. The user reframed it into the
+real question: he is overwhelmed and holds too much in his head, and wants **an
+assistant with reach across the whole app**, growing as more of his life lands in it.
+Three decisions carry the design. The model's tool surface is a **fixed verb set over
+declared record types**, because tool-calling accuracy degrades past roughly fifteen to
+twenty tools — so a tool per feature would rot exactly as the app grew, while data-driven
+verbs stay constant forever. The assistant is **a headless omni-me device** with its own
+database and identity, syncing like the phone, which the embedded store forces and which
+keeps an agent failure from taking sync down with it. And **autonomy is earned rather
+than granted**: it proposes, he approves, and behaviours are promoted per action type —
+a lifecycle that doubles as the audit trail, the personalization corpus and the model
+eval set. Hosting is rented and open-weights only; buying hardware is out because he has
+no permanent address. Full design and its research in
+`~/.claude/plans/lets-plan-how-to-sprightly-hartmanis.md`.
 
 **Item 1 is done** — both stages built and verified 2026-09-05. Problem reports are
 captured in-app as a `FeedbackCaptured` event carrying screen and build context, read

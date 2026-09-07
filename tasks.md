@@ -62,11 +62,27 @@ defer-major-phases rule; do not run ahead to the next one.
    the second-user-facing half published in `docs/src/invariants.md`. Phases below.
    ⚠️ **Statement layout strings are OUT of scope** — item 2 named them, but the finance
    block below forbids finance work and it controls.
-3. **AI / LLM / ML integration — detailed planning and rethinking.** How to integrate, host
-   and *securely* use AI in this app for the best value at the least cost. Explicitly a
-   re-examination, not an implementation of the existing design: `DocumentExtractor`/Gemini
-   was queued for re-evaluation on 2026-09-05 rather than accepted. Related backlog: LLM chat
-   that executes commands (Cycle 5 filing), feature toggles, `llm/` as it stands today.
+3. **AI / LLM / ML integration — PLANNED 2026-09-07, not built.** Design in
+   `~/.claude/plans/lets-plan-how-to-sprightly-hartmanis.md`; build sequence Phase 0 → G below.
+   ⚠️ **This item's original framing is superseded.** It said "re-examine
+   `DocumentExtractor`/Gemini"; the user reframed it into **a personal assistant with reach
+   across the whole app** — the more of his life lands in omni-me, the more the model can help
+   him stay organised. And the premise was wrong: an inventory found the existing LLM surface
+   has **no reachable consumer at all** (the text path lost its UI trigger 2026-07-04;
+   extraction's only call sites are behind ⛔-deferred finances), so there was nothing to
+   re-evaluate. Nothing in it is load-bearing; it is not to be preserved.
+   - **Interface:** a fixed verb set (`search`/`read`/`propose`/`list_types`/`describe_type`)
+     generic over declared record types, because tool accuracy degrades past ~15–20 tools.
+     New features add data, never tools.
+   - **Agent shape:** a headless omni-me device — own process, own DB, own device id, syncing
+     like the phone. Forced by SurrealKV being per-process.
+   - **Autonomy:** proposal-only, earned per action type, destination "reversible acts freely".
+   - **Hosting:** Hetzner's free Experiments endpoint for development; an EU zero-retention
+     open-weights API long-term, **provider not yet chosen** (criteria + candidates in the plan).
+     No hardware purchase — the user has no permanent address.
+   - ⚠️ **Blocker for any write path:** `guard_event_type` lives in the Tauri commands layer, so
+     Phase B's claim that a future tool layer inherits it is **false** for a separate agent
+     binary. It must move into `core` first.
 
 ---
 
