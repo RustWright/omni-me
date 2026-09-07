@@ -218,10 +218,10 @@ whoever picks it up later — possibly with the LLM push, which may change the s
 problem entirely — starts from what was established rather than re-deriving it. The full
 decision set is in the overlay's `CATEGORIZATION_DEFERRAL.md` and `IMPORT_PARITY.md`.
 
-**Known gap at the stopping point:** the CIBC CSV format (highest transaction volume, four
-accounts) has **no oracle at all** — its export carries no balance column. Each of the four
-CIBC dirs in the pCloud backup holds 2 unexamined PDFs; if those are statements, the rendered
-parser built 2026-09-05 would close the gap. Never checked.
+**Known gap at the stopping point:** the highest-volume CSV institution (four accounts) has
+**no oracle at all** — its export carries no balance column. Each of its four dirs in the
+cloud backup holds 2 unexamined PDFs; if those are statements, the rendered parser built
+2026-09-05 would close the gap. Never checked. (Institution named in the overlay's tracker.)
 
 **Both bank sources are now OFF at the source (2026-09-07), not merely paused.** Done by
 renaming their credential section headers on the box so the overlay stops registering them —
@@ -251,7 +251,7 @@ This was needed because **pausing does not survive a restart**, which had gone u
   through `core/src/statement/`, and both rendered-PDF layouts parse — verified over 136 real
   files with zero self-check failures. Remaining: the two other CSV institutions and the
   investment/holdings shape, which is a genuinely different problem (positions, not cash
-  rows). paisa's importers are in the pCloud backup with the corpus in sibling dirs. [M]
+  rows). paisa's importers are in the cloud backup with the corpus in sibling dirs. [M]
 - [x] **CSV import adopts the document path's refusal gate.** Done 2026-09-05 (user chose to
   unify). `StatementParse::import_blockers` is the single policy, one `ImportStatementResult`
   serves every format, and the UI has one report panel. A new `Verifiability` keeps "checked

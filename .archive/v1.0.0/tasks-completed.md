@@ -464,14 +464,14 @@ Do the current step, stop, let the user compact. Do NOT run ahead.*
      4 demoted / 19 scan errors**, vault file count 1,645, source `~/Documents/Obsidian Sync Vault`.
      **Journal delta (measured 2026-08-30, read-only, replicating `headless_import::import_journal`
      verbatim):** the imported copy `~/Documents/…` now holds 1,294 journal dates ending **2026-07-03**
-     (it stopped there — Obsidian sync is off); the pCloud copy holds 1,343 ending **2026-08-22** and is
-     a **strict superset** (0 dates present in Documents but absent from pCloud). **49 new journal
+     (it stopped there — Obsidian sync is off); the cloud copy holds 1,343 ending **2026-08-22** and is
+     a **strict superset** (0 dates present in Documents but absent from the cloud copy). **49 new journal
      dates, `2026-07-04 .. 2026-08-22`** (one gap, `2026-08-09`). Generic 343, demoted 4, scan errors 19
      and the single `Alton Hardin.md` rescue are **identical across both copies** → the new material is
      purely new daily notes, **no new data issues to triage**. Tool + report in `.reference/`.
-     **Vault handoff protocol (user, 2026-08-30):** pCloud is the *delivery* method only. The vault goes
+     **Vault handoff protocol (user, 2026-08-30):** the cloud share is the *delivery* method only. The vault goes
      stale daily (active use, sync off), so **wait for the user to say the files are ready and that they
-     have made a local copy** — do not read the pCloud mount live as the import source, and re-measure
+     have made a local copy** — do not read the cloud mount live as the import source, and re-measure
      the delta against whatever local copy they hand over.
      **Ledger:** paisa is imported through **2026-05-31** and **no June/July/August source files exist
      on disk** — nothing regenerates until they are downloaded. Per-account download checklist (each
