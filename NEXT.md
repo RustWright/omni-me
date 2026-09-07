@@ -4,9 +4,8 @@
 session. *How to integrate, host and securely use AI in this app for the best value at least
 cost* — explicitly a **re-examination, not an implementation** of the existing design;
 `DocumentExtractor`/Gemini was queued for re-evaluation, not accepted. Related: LLM chat that
-executes commands (Cycle 5), `feature.llm`, `llm/` as it stands. See `tasks.md` § The agreed
-sequence. Items 1 and 2 are done, and **v1.1.2 is released and VERIFIED on both devices** —
-nothing is owed on it.
+executes commands (Cycle 5), `feature.llm`, `llm/` as it stands; see `tasks.md` § The agreed
+sequence. Items 1 and 2 are done, and **v1.1.2 is released and VERIFIED on both devices**.
 
 ## What shipped today, and the one thing to watch
 A cold-start race, found by the app's own feedback capture on its first real use. The WebView
@@ -24,7 +23,7 @@ timings climbing is the cue that the margin is eroding.
   retry re-invokes. Timed-alone fails open with wrong data; retry-alone never fires.
 - **Features fail OPEN and stay that way** (`types.rs:243`); a drawn tab is also the error state.
 - ⛔ **FINANCES DEFERRED INDEFINITELY**, now **off at the source** — bank credential headers
-  renamed on the box, scheduler boots `sources=0`. Detail in the overlay's `tasks.md`.
+  renamed on the box, scheduler boots `sources=0`. Detail in the overlay.
 - **A public stamp and the overlay `Cargo.lock` move together**: 3 public files + both public
   locks + the overlay lock, or the next `--locked` deploy dies.
 - **Real institution names never enter the public repo**; the canonical guard is in
