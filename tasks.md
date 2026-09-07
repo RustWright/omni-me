@@ -343,6 +343,27 @@ This was needed because **pausing does not survive a restart**, which had gone u
   on. "The tab still shows data" does **not** settle it — the finances pages have a
   stale-while-revalidate read cache (Stage C3), so they can render cached rows whatever the
   backend would now answer. Needs a probe that bypasses the cache.
+
+  **⚠️ SECOND, WORSE VARIANT — the desktop post-update splash hang (v1.1.2 fix).** Same root
+  cause, one stage earlier, and *unrecoverable* rather than cosmetic. When the **IPC handler
+  itself** is not ready (as opposed to `AppState` not being managed), Tauri does not reject —
+  the invoke is silently **dropped**, its promise never resolving and never rejecting. A plain
+  `invoke` awaits it forever, so `features_ready` never flips and the splash never lifts. Seen
+  on `surface` after the updater's auto-restart on both the 1.1.0 and 1.1.1 updates; closing and
+  reopening (a launch where IPC is ready in time) clears it every time. **Verified live while
+  hung:** backend fully initialized, `finances off` honoured, auto-pull applying with `failed=0`
+  two minutes in, WebView alive and burning CPU, no DB contention — a healthy backend under a
+  dead UI. The retry added in 1.1.1 cannot help here: it retries on errors, and no error is ever
+  produced. Only `invoke_timed` converts "never settles" into an `Err`, and despite its doc
+  saying *"use this for anything fired during app boot"*, **only `get_workspace` and
+  `get_timezone` had adopted it** — `continuity.rs` was immune for exactly that reason.
+  Fix (1.1.2): `invoke_get_config_timed` plus the same bounded retry/deadline loop
+  `continuity.rs` already uses (500ms attempt, 100ms gap, 15s fail-open cap). The two halves are
+  both required — timed-alone fails open with the wrong feature set, retry-alone never fires.
+  Also added a `tracing::debug!` on the backend `get_config` entry, because nothing on the boot
+  path logged and the dropped-IPC diagnosis had to be *inferred*; that line makes it observable.
+  Housekeeping: 1.1.1 introduced a duplicate `sleep_ms` in `bridge.rs` — removed, now uses the
+  pre-existing `crate::timer::sleep_ms`.
 - [ ] **`GET /feedback` is broken — the read side of feedback capture has never worked against
   real data.** Found 2026-09-07. The endpoint returns a SurrealDB parse error:
   *"Missing order idiom `timestamp` in statement selection"* — the query is

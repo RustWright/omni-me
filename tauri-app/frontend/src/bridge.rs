@@ -372,29 +372,6 @@ fn next_boot_retry_delay(attempt: u32, started_ms: f64) -> Option<i32> {
     Some(50 << attempt.min(4))
 }
 
-/// Resolve after `ms`. Falls back to resolving immediately with no `window`,
-/// because a sleep that never wakes would park the caller forever — the exact
-/// failure mode [`invoke_timed`] exists to eliminate.
-#[cfg(not(feature = "mock"))]
-async fn sleep_ms(ms: i32) {
-    let promise = js_sys::Promise::new(&mut |resolve, _reject| match web_sys::window() {
-        Some(win) => {
-            let cb = Closure::once_into_js({
-                let resolve = resolve.clone();
-                move || {
-                    let _ = resolve.call0(&JsValue::NULL);
-                }
-            });
-            let _ =
-                win.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), ms);
-        }
-        None => {
-            let _ = resolve.call0(&JsValue::NULL);
-        }
-    });
-    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
-}
-
 #[cfg(not(feature = "mock"))]
 async fn invoke<T: serde::de::DeserializeOwned>(
     cmd: &str,
@@ -430,7 +407,7 @@ async fn invoke<T: serde::de::DeserializeOwned>(
                     && let Some(delay) = next_boot_retry_delay(attempt, started)
                 {
                     attempt += 1;
-                    sleep_ms(delay).await;
+                    crate::timer::sleep_ms(delay).await;
                     continue;
                 }
                 crate::diagnostics::record_invoke_failure(cmd, &e);
@@ -472,7 +449,7 @@ async fn invoke_unit(cmd: &str, args: &impl serde::Serialize) -> Result<(), Stri
                     && let Some(delay) = next_boot_retry_delay(attempt, started)
                 {
                     attempt += 1;
-                    sleep_ms(delay).await;
+                    crate::timer::sleep_ms(delay).await;
                     continue;
                 }
                 crate::diagnostics::record_invoke_failure(cmd, &e);
@@ -557,7 +534,7 @@ async fn invoke_timed<T: serde::de::DeserializeOwned>(
                     && let Some(delay) = next_boot_retry_delay(attempt, started)
                 {
                     attempt += 1;
-                    sleep_ms(delay).await;
+                    crate::timer::sleep_ms(delay).await;
                     continue;
                 }
                 // A timeout that outlives the deadline surfaces as `__ipc_timeout__`
@@ -1684,6 +1661,33 @@ pub async fn invoke_update_base_currency(currency: &str) -> Result<(), String> {
 // -----------------------------------------------------------------------------
 
 use crate::types::{ConfigEntry, ConfigValue};
+
+/// `get_config`, bounded — the **boot-path** variant.
+///
+/// Fired during boot from `main.rs`, so it is exposed to the dropped-invoke race
+/// on [`invoke_timed`]: an invoke issued before the native IPC handler is ready
+/// never resolves *and* never rejects, and the plain helper parks the feature
+/// future forever. `features_ready` then stays false and the splash never lifts.
+///
+/// That is the desktop post-update splash hang (`surface`, 2026-09-07, and once
+/// before on the 1.1.0 update): the backend was fully initialized and applying
+/// syncs while the UI waited on a promise that could never settle, and closing
+/// and reopening — a launch where IPC is ready in time — cleared it.
+/// `get_workspace` was immune only because `continuity.rs` already used this
+/// timed+retry form; this call site never adopted it.
+pub async fn invoke_get_config_timed(timeout_ms: i32) -> Result<Vec<ConfigEntry>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = timeout_ms;
+        invoke_get_config().await
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke_timed("get_config", &Args {}, timeout_ms).await
+    }
+}
 
 pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
     #[cfg(feature = "mock")]

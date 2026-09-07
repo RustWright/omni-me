@@ -47,6 +47,12 @@ fn choices_for(key: ConfigKey) -> Option<Vec<String>> {
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_config(state: State<'_, AppState>) -> Result<Vec<ConfigEntryView>, String> {
+    // Deliberate entry log, not noise. This command gates the boot splash, and
+    // when it hangs the question is always "did the invoke ever reach the
+    // backend?" — unanswerable on 2026-09-07 because nothing on the boot path
+    // logged, leaving a dropped-IPC diagnosis inferred rather than observed.
+    // One line here settles it: present ⇒ the IPC arrived, absent ⇒ it did not.
+    tracing::debug!("get_config");
     let config = state.config.read().await;
     Ok(ALL_KEYS
         .iter()

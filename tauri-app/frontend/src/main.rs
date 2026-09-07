@@ -621,7 +621,30 @@ fn App() -> Element {
     // in the same response, and this sits on the pre-paint path.
     let mut feature_set = features::use_features_provider();
     use_future(move || async move {
-        let Ok(entries) = bridge::invoke_get_config().await else {
+        // Bounded retry, mirroring the workspace boot read in `continuity.rs`.
+        // An invoke fired before the native IPC handler is ready is *dropped* —
+        // never resolving, never rejecting — so a single plain await parks here
+        // forever and the splash never lifts (the post-update hang on `surface`,
+        // 2026-09-07). Timing each attempt turns that hang into an Err we can
+        // retry; the deadline is the fail-open cap covering both a fast Err spin
+        // and a silent hang, so a genuinely broken backend still reaches the UI.
+        const ATTEMPT_TIMEOUT_MS: i32 = 500;
+        const RETRY_GAP_MS: i32 = 100;
+        const DEADLINE_MS: i32 = 15_000; // setup finishes in <1s; generous fail-open
+        let mut spent = 0i32;
+        let fetched = loop {
+            match bridge::invoke_get_config_timed(ATTEMPT_TIMEOUT_MS).await {
+                Ok(entries) => break Some(entries),
+                Err(_) => {
+                    spent += ATTEMPT_TIMEOUT_MS + RETRY_GAP_MS;
+                    if spent >= DEADLINE_MS {
+                        break None;
+                    }
+                    crate::timer::sleep_ms(RETRY_GAP_MS).await;
+                }
+            }
+        };
+        let Some(entries) = fetched else {
             // Everything on, matching core's defaults. Must still be set, or
             // `features_ready` stays false and the splash never lifts.
             feature_set.set(Some(types::Features::default()));
