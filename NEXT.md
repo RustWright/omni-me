@@ -7,8 +7,7 @@ session paused (`gh run view 34127047401 -R RustWright/omni-me-private`). When i
 - **`surface`: let the updater AUTO-RESTART — do NOT close the app manually.** That is the only
   reproduction path for the splash hang; a manual relaunch always worked and proves nothing. If
   it hangs anyway, the new `tracing::debug!("get_config")` settles it: present ⇒ IPC arrived.
-
-**Then item 3 (AI/LLM/ML), planning-first, fresh session.**
+  **Then item 3 (AI/LLM/ML), planning-first, fresh session.**
 
 ## What 1.1.1 + 1.1.2 fixed — one root cause, two severities
 The WebView fires startup invokes before the backend is ready. **`AppState` unmanaged** → Tauri
@@ -36,6 +35,6 @@ and the splash never lifted (`surface`, after the updater's auto-restart, on the
 ⚠️ Server stays **1.1.0** (client-only fixes) but the overlay lock expects 1.1.2. · Leg **7b** (a
 real panic reaching the ring buffer) still held. · `GET /feedback` **broken** — SurrealDB
 `ORDER BY` parse error served as HTTP 200 `text/plain` [XS]. · Every update leaves a husk process
-on a deleted `/tmp/tauri_current_app…` binary — harmless (no db fds) but unexplained. ·
-New-projection history gap: **A vs B not decided**. · `chunk_for_push` 413 **unverified**. ·
-Curiosities→concepts + memory prune owed (Cycle 4 close-out).
+on a deleted `/tmp/tauri_current_app…` binary — harmless (no db fds), unexplained. · New-projection
+history gap: **A vs B undecided**. · `chunk_for_push` 413 **unverified**. · Curiosities→concepts
++ memory prune owed (Cycle 4 close-out).
