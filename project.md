@@ -23,7 +23,27 @@ ledger transaction edits do too, and Android predictive text commits on space.
 
 Work now follows a **three-item sequence set by the user 2026-09-05, taken one at a
 time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.** Items 1 and
-2 are done; **item 3 is now designed** (2026-09-07) and its build has not started.
+2 are done; **item 3 is designed (2026-09-07) and building** — Phase 0, A and B are in.
+
+**The assistant can read (2026-09-08).** Phase B put the four read verbs behind a
+multi-turn loop with cost instrumentation, and it works end-to-end against a real
+endpoint: asked what he had written about a rent notice, it discovered the record
+kinds, searched, read a journal entry and a note, and answered citing both. Free-form
+verb selection scored 10/10. It still cannot change anything — `propose` is Phase D,
+and until it exists the read-only claim is a property of the build rather than a
+promise about behaviour.
+
+The phase's real decision was one it did **not** take. Reaching for `RecordType` — the
+only declaration mechanism the codebase has — would have meant widening a permanent,
+unversioned event payload. Reading why it was built ruled that out: it is a *document
+form* schema, describing frontmatter keys so the client can render an editor, and it
+cannot express a routine, which is three tables and no prose. The assistant instead
+reads a separate catalogue that lives in code, because every table it names is created
+by a projection in code and a declaration pointing at a table that cannot exist would
+be genericity in name only. The two compose rather than one absorbing the other.
+Building it also surfaced four traps that a design review would not have — including
+BM25 scoring a legitimate match at exactly zero on a small corpus, and search
+highlighting leaking its markers into a user-facing answer.
 
 **Item 3 is planned, and its original premise turned out to be wrong** (2026-09-07,
 design session, no code). It was filed as "re-examine `DocumentExtractor`/Gemini"; an

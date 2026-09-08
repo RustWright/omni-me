@@ -108,6 +108,38 @@ defer-major-phases rule; do not run ahead to the next one.
        regardless of config. Fixed by distinguishing "no row" (never ran → seed epoch) from
        "row present, field NONE" (upgrade → seed now), with a regression test. Still latent for
        any *newly-shipped* projection on an existing install, which this now also covers.
+   - **Phase B built 2026-09-08 — the four read verbs, live end-to-end.** `search` / `read` /
+     `list_types` / `describe_type`, a multi-turn loop, and cost instrumentation from the first
+     call. Free-form verb selection scored **10/10** against the free endpoint on a seeded
+     throwaway hub; a real question ran `list_types → search → read ×2 → answer` in 5 turns and
+     cited both a journal entry and a note correctly.
+     - ⚠️ **`RecordType` was NOT extended, and that is the phase's main decision.** It is a
+       *document form* schema (generalization decisions 2 + 9 — "forms rendered from record
+       types"); its properties are frontmatter keys and it cannot describe a routine. The
+       assistant reads a separate **read catalog** (`core/src/assistant/catalog.rs`), which is
+       **code rather than events** because every table it names is created by a projection in
+       code — a declaration pointing at a missing table would be genericity in name only. The
+       two compose: `describe_type` reads the live `RecordType` where a type has one.
+       Journal, note and routine are registered; a **transaction entry is a test fixture that
+       never registers**, so the struct was designed against a non-document shape without
+       touching ⛔-deferred finance data.
+     - **The five-verb set is flexible** (user, 2026-09-08). What is load-bearing is why it
+       stays small, not the number. Changes get proposed and discussed, with a reason.
+     - **`--ask` and `--bench` are test scaffolding**, unlike `--probe`. They exist because the
+       verbs have no interface yet and go when the chat surface lands.
+     - Search is SurrealDB `FULLTEXT` + BM25 + `HIGHLIGHTS` — verified working on the embedded
+       `kv-surrealkv` engine before anything depended on it, and the same `DEFINE INDEX` family
+       Phase C's `HNSW` will use. The app gets its first real search as a side effect.
+     - ⚠️ **Four traps found by building it, all now regression-tested:** BM25 is
+       corpus-relative and legitimately scores `0.0` for a real match in a small corpus, so
+       `search` must never threshold on `> 0` · `search::highlight` marks the whole field and
+       its markers reached a user-facing answer on the first live run, hence keyword-in-context
+       windowing · **constrained decoding suppresses tool calling rather than failing**, so the
+       loop parses `{"verb":…}` out of message content or the tax measures the transport ·
+       rate limiting is a *correctness* control on a capped tier, not politeness.
+     - **Still owed:** the constraint tax on an endpoint that can serve both halves. Hetzner
+       cannot. `OMNI_AGENT_LLM_{BASE_URL,MODEL,API_KEY}` point a run at OpenRouter without
+       editing `credentials.toml`; pin the upstream or the result is unattributable.
    - **Plumbing facts for Phase B/C/D, true regardless of which model wins:**
      - Images pass as `data:` URLs, so **no signed-URL subsystem is needed** for blobs behind
        Tailscale. But requests **413 above ~5 MB**, so downscaling (2048px long edge) is
