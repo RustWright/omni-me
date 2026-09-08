@@ -49,6 +49,8 @@ impl Projection for NotesProjection {
              DEFINE FIELD IF NOT EXISTS created_at ON journal_entries TYPE datetime;
              DEFINE FIELD IF NOT EXISTS updated_at ON journal_entries TYPE datetime;
              DEFINE INDEX IF NOT EXISTS idx_journal_id ON journal_entries FIELDS journal_id UNIQUE;
+             DEFINE INDEX IF NOT EXISTS idx_journal_raw_text_fts ON journal_entries
+                 FIELDS raw_text FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;
 
              DEFINE TABLE IF NOT EXISTS generic_notes SCHEMAFULL;
              DEFINE FIELD IF NOT EXISTS title ON generic_notes TYPE string;
@@ -58,7 +60,13 @@ impl Projection for NotesProjection {
              DEFINE FIELD IF NOT EXISTS summary ON generic_notes TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS legacy_properties ON generic_notes TYPE option<object> FLEXIBLE;
              DEFINE FIELD IF NOT EXISTS created_at ON generic_notes TYPE datetime;
-             DEFINE FIELD IF NOT EXISTS updated_at ON generic_notes TYPE datetime;",
+             DEFINE FIELD IF NOT EXISTS updated_at ON generic_notes TYPE datetime;
+             -- One index per field: a full-text index covers exactly one field,
+             -- so a note's title and body are two indexes and a query ORs them.
+             DEFINE INDEX IF NOT EXISTS idx_note_title_fts ON generic_notes
+                 FIELDS title FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;
+             DEFINE INDEX IF NOT EXISTS idx_note_raw_text_fts ON generic_notes
+                 FIELDS raw_text FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;",
         )
         .await?;
 

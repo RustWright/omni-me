@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod assistant;
 pub mod auto_close;
 #[cfg(feature = "auto-import")]
 pub mod auto_import;

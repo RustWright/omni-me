@@ -60,6 +60,20 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
         -- the background pusher used a post-pull *server* cursor as its push
         -- `since`, skipping local work at or below it.
         DEFINE FIELD IF NOT EXISTS last_push_received_at ON sync_state TYPE option<datetime>;
+
+        -- The one text analyzer, shared by every full-text index in the app.
+        --
+        -- It lives here rather than in a projection because an index naming a
+        -- missing analyzer is a schema error, and projections define their
+        -- tables in an order this module does not control. Defining it during
+        -- `connect` puts it ahead of all of them.
+        --
+        -- `class` splits on character class so `2026-03-14` yields its parts;
+        -- `blank` splits on whitespace. `lowercase` + `ascii` make matching
+        -- case- and accent-insensitive.
+        DEFINE ANALYZER IF NOT EXISTS omni_text
+            TOKENIZERS class, blank
+            FILTERS lowercase, ascii;
         ",
     )
     .await

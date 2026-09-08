@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant};
 
+use super::chat::{ChatRequest, ChatResponse};
 use super::client::{LlmClient, LlmError};
 use super::tools::{LlmResponse, ToolCall, ToolDef};
 
@@ -190,6 +191,10 @@ impl GeminiClient {
             .filter_map(|part| {
                 let fc = part.get("functionCall")?;
                 Some(ToolCall {
+                    // Gemini's `functionCall` carries no id — it pairs calls
+                    // with responses by name and position instead. Empty is
+                    // accurate here, not a placeholder.
+                    id: String::new(),
                     name: fc["name"].as_str()?.to_string(),
                     arguments: fc["args"].clone(),
                 })
@@ -251,6 +256,23 @@ impl LlmClient for GeminiClient {
         // Fall back to text response
         let text = Self::extract_text(&response)?;
         Ok(LlmResponse::Text(text))
+    }
+
+    /// Not implemented, and refused rather than approximated.
+    ///
+    /// Gemini's `generateContent` does support multi-turn function calling, but
+    /// through a different message shape (`contents` with `functionCall` /
+    /// `functionResponse` parts) than the OpenAI form [`ChatRequest`] models. The
+    /// assistant targets OpenAI-compatible endpoints, so writing that translation
+    /// now would be untested code on a path nothing exercises. Refusing here is
+    /// visible; a plausible-looking wrong translation would not be.
+    async fn chat(&self, _request: &ChatRequest) -> Result<ChatResponse, LlmError> {
+        Err(LlmError::ApiError(
+            "the Gemini client does not implement multi-turn chat; the assistant \
+             needs an OpenAI-compatible endpoint (set [llm] provider = \
+             \"openai_compatible\" in credentials.toml)"
+                .to_string(),
+        ))
     }
 }
 

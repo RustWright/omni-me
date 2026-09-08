@@ -15,6 +15,14 @@ pub struct ToolDef {
 /// A single tool call made by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
+    /// Provider-assigned call id.
+    ///
+    /// Needed to answer a call in a multi-turn conversation: the result message
+    /// references it, and a model that issued two calls has no other way to tell
+    /// which answer belongs to which. `#[serde(default)]` because the
+    /// single-shot paths never had one and older stored payloads omit it.
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub arguments: Value,
 }
@@ -152,6 +160,7 @@ mod tests {
     #[test]
     fn test_tool_call_serialization() {
         let call = ToolCall {
+            id: String::new(),
             name: "create_tag".to_string(),
             arguments: json!({"tag": "personal"}),
         };

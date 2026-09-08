@@ -38,7 +38,7 @@ use omni_me_core::extraction::{
     DocumentExtractor, gemini::GeminiExtractor, null::NullExtractor,
     openai_compat::OpenAiCompatExtractor,
 };
-use omni_me_core::llm::{GeminiClient, LlmClient, OpenAiCompatClient};
+use omni_me_core::llm::{ClientOptions, LlmClient, build_llm_client, resolve_gemini_key};
 
 const DB_PATH: &str = "surreal_data/server.db";
 const LISTEN_ADDR: &str = "0.0.0.0:3000";
@@ -159,20 +159,12 @@ pub async fn run(cfg: RunConfig) {
     // credentials fallback lets local dev boot without exporting the key. Both
     // OPTIONAL — when absent the Gemini client carries an empty key and LLM
     // routes error gracefully at call time rather than crashing boot (3.4).
-    let gemini_key = std::env::var("GEMINI_API_KEY")
-        .ok()
-        .filter(|k| !k.is_empty())
-        .or_else(|| {
-            creds
-                .gemini
-                .as_ref()
-                .map(|g| g.api_key.clone())
-                .filter(|k| !k.is_empty())
-        });
+    let gemini_key = resolve_gemini_key(&creds);
 
     // Text LLM client (3.8 provider-swap): `[llm]` selects the provider; the
-    // default is Gemini with the resolved key.
-    let llm_client = build_llm_client(&creds, gemini_key);
+    // default is Gemini with the resolved key. Shared with the agent, which runs
+    // the assistant against the same `[llm]` section.
+    let llm_client = build_llm_client(&creds, gemini_key, ClientOptions::default());
 
     let blob_dir: PathBuf = std::env::var("BLOB_DIR")
         .unwrap_or_else(|_| DEFAULT_BLOB_DIR.into())
@@ -436,39 +428,10 @@ fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
     }
 }
 
-/// Build the *text* LLM client (3.8 provider-swap). `[llm].provider ==
-/// "openai_compatible"` (with a non-empty `base_url` + `model`) selects the
-/// generic OpenAI-compatible client; anything else — including an absent `[llm]`
-/// section — uses Gemini keyed by `gemini_key`. A missing key never crashes
-/// boot: the Gemini client carries an empty key and LLM routes error at call
-/// time (3.4). The document extractor is built separately and stays on Gemini.
-fn build_llm_client(creds: &Credentials, gemini_key: Option<String>) -> Arc<dyn LlmClient> {
-    if let Some(cfg) = &creds.llm
-        && cfg.provider == "openai_compatible"
-    {
-        match (cfg.base_url.as_deref(), cfg.model.as_deref()) {
-            (Some(base_url), Some(model)) if !base_url.is_empty() && !model.is_empty() => {
-                tracing::info!(model = %model, "LLM client: OpenAI-compatible");
-                return Arc::new(OpenAiCompatClient::new(
-                    base_url,
-                    model,
-                    cfg.api_key.clone().unwrap_or_default(),
-                ));
-            }
-            _ => tracing::warn!(
-                "[llm] provider=openai_compatible but base_url/model missing — \
-                 falling back to Gemini"
-            ),
-        }
-    }
-    if gemini_key.is_none() {
-        tracing::warn!(
-            "no LLM provider configured (no [llm] + no Gemini key) — note-processing \
-             will error at call time"
-        );
-    }
-    Arc::new(GeminiClient::new(gemini_key.unwrap_or_default()))
-}
+// The *text* LLM client selector (3.8 provider-swap) now lives in
+// `omni_me_core::llm::build_llm_client`, so the server and the agent cannot
+// disagree about which provider a `[llm]` section selects. The document
+// extractor is still built here and stays on Gemini.
 
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -533,20 +496,20 @@ mod tests {
         assert!(build_extractor(&creds).name().contains("gemini"));
     }
 
+    /// Selection itself is tested in `core::llm::provider`. What is still worth
+    /// asserting here is the pairing the server owns: the text client swaps to
+    /// an OpenAI-compatible endpoint while the extractor stays on Gemini, and
+    /// the vision flag does not couple them.
     #[test]
-    fn build_llm_client_selects_openai_compatible_text() {
-        // Text client swaps independently of the vision flag.
+    fn a_text_provider_swap_leaves_the_extractor_on_gemini() {
         let creds = Credentials {
             llm: Some(openai_llm(false)),
+            gemini: Some(GeminiCredentials {
+                api_key: "g".into(),
+            }),
             ..Default::default()
         };
-        assert_eq!(build_llm_client(&creds, None).model_name(), "llava");
-
-        // No [llm] → Gemini default keyed by the passed key.
-        let creds = Credentials::default();
-        assert_ne!(
-            build_llm_client(&creds, Some("g".into())).model_name(),
-            "llava"
-        );
+        assert_eq!(build_llm_client(&creds, None, ClientOptions::default()).model_name(), "llava");
+        assert!(build_extractor(&creds).name().contains("gemini"));
     }
 }

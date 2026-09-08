@@ -41,6 +41,8 @@ impl Projection for RoutinesProjection {
              DEFINE FIELD IF NOT EXISTS removed ON routine_groups TYPE bool;
              DEFINE FIELD IF NOT EXISTS created_at ON routine_groups TYPE datetime;
              DEFINE FIELD IF NOT EXISTS updated_at ON routine_groups TYPE datetime;
+             DEFINE INDEX IF NOT EXISTS idx_routine_group_name_fts ON routine_groups
+                 FIELDS name FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;
 
              DEFINE TABLE IF NOT EXISTS routine_items SCHEMAFULL;
              DEFINE FIELD IF NOT EXISTS group_id ON routine_items TYPE string;

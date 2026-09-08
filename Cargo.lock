@@ -3958,6 +3958,7 @@ name = "omni-me-agent"
 version = "1.1.2"
 dependencies = [
  "omni-me-core",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

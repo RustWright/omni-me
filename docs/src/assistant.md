@@ -1,10 +1,15 @@
 # The assistant, and what it is allowed to do
 
-> Status: **decided 2026-09-07**, ahead of the work it describes. Almost everything on
-> this page is marked **(planned)**: it is a committed design written down before the
-> implementation so the implementation can be checked against it, following the same
-> practice as [What omni-me insists on](invariants.md). Sections marked **(today)**
-> describe machinery that already exists and that the assistant is built on top of.
+> Status: **decided 2026-09-07**, ahead of the work it describes; the read half
+> **built 2026-09-08**. Most of this page is still marked **(planned)**: it is a
+> committed design written down before the implementation so the implementation can
+> be checked against it, following the same practice as
+> [What omni-me insists on](invariants.md). Sections marked **(today)** describe
+> machinery that exists now.
+>
+> The design is checked against this page, not the other way round — but the page is
+> not frozen either. Where building something showed the design to be wrong, the page
+> changes and says why.
 
 omni-me accumulates a lot about one person: journal entries going back years, notes,
 routines, records of things bought and done. An assistant with reach across all of it is
@@ -14,17 +19,26 @@ same proportion. This page is the contract that makes the first true without the
 It is written for two readers: someone deciding whether to let software like this near
 their life, and someone extending omni-me who needs to know which lines are load-bearing.
 
-## Five verbs, and the list never grows **(planned)**
+## Five verbs, and the list stays small **(read half today)**
 
 The assistant acts through exactly five tools:
 
-| Verb | What it does |
-|---|---|
-| `search` | Find records matching a query. Returns summaries, not bodies. |
-| `read` | Fetch one record in full, by identity. |
-| `propose` | Offer a change for approval. The only route to any write. |
-| `list_types` | List the record types this app has been told about. |
-| `describe_type` | Describe one type: its identity field and its properties. |
+| Verb | What it does | |
+|---|---|---|
+| `search` | Find records matching a query. Returns summaries, not bodies. | **(today)** |
+| `read` | Fetch one record in full, by identity. | **(today)** |
+| `list_types` | List the kinds of record this app holds. | **(today)** |
+| `describe_type` | Describe one kind: how it is identified, and its properties. | **(today)** |
+| `propose` | Offer a change for approval. The only route to any write. | **(planned)** |
+
+The four read verbs work. `propose` does not exist yet, and until it does the
+assistant is **read-only in the strongest sense** — there is no write path behind
+any tool it holds, so "it cannot change anything" is a property of the build
+rather than a promise about behaviour.
+
+Search today is keyword matching with relevance ranking, over the text fields each
+kind of record declares. Meaning-based retrieval is later work, and the interface
+does not change when it lands.
 
 The obvious alternative is a tool per feature: `create_journal_entry`, `add_routine`,
 `log_expense`. It is rejected, and the reason is not taste. Tool-calling accuracy degrades
@@ -33,10 +47,20 @@ documented bias toward whichever tools appear early in the list. A per-feature s
 therefore gets *worse at exactly the rate the app gets richer*, which is the opposite of
 what a personal system needs over years of use.
 
-So the verbs are generic over record types, and the types are data. A new feature declares
-a `RecordTypeDeclared` event **(today)** and the assistant discovers it at runtime through
-`list_types` and `describe_type`. **New features add data, never tools.** The tool count is
-the same on the day omni-me holds forty record types as on the day it holds two.
+So the verbs are generic over the kinds of record, and what those kinds are is a
+catalogue the assistant reads at runtime through `list_types` and `describe_type`.
+**New features add entries, never tools.** The tool count is the same on the day
+omni-me holds forty kinds of record as on the day it holds two.
+
+The catalogue is deliberately **not** the same thing as a
+[record type declaration](invariants.md#journal-is-one-record-type-not-a-special-case).
+A declaration describes a *document form* — its properties, what makes it complete,
+what its template looks like — so the app can render an editor for it. The catalogue
+describes how a collection is *searched and fetched*: its identity, the fields worth
+matching on, and what belongs to it. Journal entries and notes have both, which makes
+them look like one idea; a routine has only the second, because a routine is a small
+tree of rows rather than a document. Where a kind of record does have a declaration,
+`describe_type` reads it, so the properties it reports are the ones you declared.
 
 **What it costs you:** the model has to make two or three calls to do what one bespoke tool
 could do in one, and it must be able to read a type declaration and work out what to do with

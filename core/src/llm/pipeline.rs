@@ -251,6 +251,14 @@ mod tests {
         ) -> Result<LlmResponse, LlmError> {
             Ok(self.response.clone())
         }
+
+        /// The note pipeline is single-shot; nothing here drives a conversation.
+        async fn chat(
+            &self,
+            _request: &crate::llm::chat::ChatRequest,
+        ) -> Result<crate::llm::chat::ChatResponse, LlmError> {
+            Err(LlmError::ApiError("mock has no chat".to_string()))
+        }
     }
 
     #[test]
@@ -275,22 +283,27 @@ mod tests {
     fn test_interpret_tool_calls_with_all_tools() {
         let response = LlmResponse::ToolCalls(vec![
             ToolCall {
+                id: String::new(),
                 name: "create_tag".to_string(),
                 arguments: json!({"tag": "shopping"}),
             },
             ToolCall {
+                id: String::new(),
                 name: "create_tag".to_string(),
                 arguments: json!({"tag": "food"}),
             },
             ToolCall {
+                id: String::new(),
                 name: "extract_task".to_string(),
                 arguments: json!({"description": "Buy groceries", "priority": "medium"}),
             },
             ToolCall {
+                id: String::new(),
                 name: "extract_date".to_string(),
                 arguments: json!({"date": "2026-03-28", "context": "entry date"}),
             },
             ToolCall {
+                id: String::new(),
                 name: "extract_expense".to_string(),
                 arguments: json!({"amount": 15.0, "currency": "USD", "description": "lunch"}),
             },
@@ -332,10 +345,12 @@ mod tests {
     fn test_interpret_tool_calls_unknown_tool_ignored() {
         let response = LlmResponse::ToolCalls(vec![
             ToolCall {
+                id: String::new(),
                 name: "create_tag".to_string(),
                 arguments: json!({"tag": "test"}),
             },
             ToolCall {
+                id: String::new(),
                 name: "unknown_tool".to_string(),
                 arguments: json!({"foo": "bar"}),
             },

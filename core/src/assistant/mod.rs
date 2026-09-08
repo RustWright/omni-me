@@ -1,0 +1,19 @@
+//! The assistant: a small fixed set of verbs, generic over the data it can reach.
+//!
+//! The design, its rationale, and the promises it makes to a person deciding
+//! whether to run this are in `docs/src/assistant.md`. The short version is that
+//! the verbs stay few and generic because tool-calling accuracy degrades once a
+//! model is choosing among roughly fifteen to twenty tools — so a tool per
+//! feature would get worse at exactly the rate the app gets richer.
+//!
+//! What reaches the model is decided by [`catalog`], not by this module.
+
+pub mod catalog;
+pub mod session;
+pub mod store;
+pub mod verbs;
+
+pub use catalog::{CatalogEntry, ChildCollection, FilterField, FilterKind, IdentityKind};
+pub use session::{MAX_TURNS, Outcome, Session, StopReason, TurnRecord};
+pub use store::{FullRecord, SearchHit, TypeResults};
+pub use verbs::{SYSTEM_PROMPT, VERB_NAMES, dispatch, tools};

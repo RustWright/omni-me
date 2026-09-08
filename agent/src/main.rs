@@ -17,6 +17,9 @@
 //! it built. Both answer a question about a *host* rather than about the code,
 //! which is why they live here and not in a test.
 
+mod ask;
+mod bench;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -46,6 +49,41 @@ const SERVER_TOKEN_FILE: &str = "server_token";
 /// exists to avoid.
 const DATA_DIR_ENV: &str = "OMNI_AGENT_DATA";
 const SERVER_URL_ENV: &str = "OMNI_AGENT_SERVER_URL";
+
+/// Where to read `[llm]` from, overriding the XDG default.
+///
+/// The server has no such override because it runs where its config lives. The
+/// agent is developed against a checked-out repo whose gitignored
+/// `secrets/credentials.toml` holds the key, so it needs one.
+const CREDENTIALS_ENV: &str = "OMNI_AGENT_CREDENTIALS";
+
+/// Provider-specific request fields, as raw JSON.
+///
+/// Exists for gateways that pick an upstream for you: OpenRouter needs
+/// `{"provider":{"order":["deepinfra"],"allow_fallbacks":false}}` or a silent
+/// reroute makes a benchmark unattributable — you learn that *something*
+/// answered, not whose serving stack did, and the constrained-decoding result
+/// this phase measures is a fact about a stack.
+const LLM_EXTRA_BODY_ENV: &str = "OMNI_AGENT_LLM_EXTRA_BODY";
+
+/// Minimum milliseconds between model requests.
+///
+/// ⚠️ On a rate-capped endpoint this is a **correctness** setting, not politeness.
+/// One question makes several calls and `--bench` makes dozens; without spacing,
+/// a free tier's cap returns rate-limit errors that a scorecard would then report
+/// as the model failing. For a ten-per-minute tier, 7000 leaves retry headroom.
+const LLM_MIN_INTERVAL_ENV: &str = "OMNI_AGENT_LLM_MIN_INTERVAL_MS";
+
+/// Point the agent at a different endpoint without editing `credentials.toml`.
+///
+/// `--bench` has to run against more than one endpoint — the constraint tax can
+/// only be read off a stack that can serve both halves — and the alternative is
+/// hand-editing the credentials file per run and remembering to change it back.
+/// Leaving it pointed at a benchmark endpoint afterwards is the failure mode
+/// these exist to remove.
+const LLM_BASE_URL_ENV: &str = "OMNI_AGENT_LLM_BASE_URL";
+const LLM_MODEL_ENV: &str = "OMNI_AGENT_LLM_MODEL";
+const LLM_API_KEY_ENV: &str = "OMNI_AGENT_LLM_API_KEY";
 
 /// Fresh-install default sync target, overridable at build time like the
 /// client's. Unset → localhost, so a zero-config agent talks to a local hub
@@ -82,17 +120,45 @@ struct Args {
     /// ⚠️ This writes a real note into whatever log it is pointed at. That is a
     /// throwaway hub, never a real one.
     probe: bool,
+
+    /// Put one question through the assistant, print the trace, and exit.
+    ///
+    /// ⚠️ **Test scaffolding, not ops surface** — unlike [`Args::read_only`] and
+    /// [`Args::probe`], which answer questions about a *host* and are permanent.
+    /// This exists because the verbs have no real interface yet; the chat surface
+    /// that replaces it is separate, later work. Do not build tooling on it.
+    ask: Option<String>,
+
+    /// Score verb selection over fixed cases, free-form and schema-constrained,
+    /// and report the difference — the **constraint tax**, as a measured number
+    /// rather than an assumption.
+    ///
+    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    bench: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         read_only: false,
         probe: false,
+        ask: None,
+        bench: false,
     };
-    for arg in std::env::args().skip(1) {
+    let mut argv = std::env::args().skip(1);
+    while let Some(arg) = argv.next() {
         match arg.as_str() {
             "--read-only" => args.read_only = true,
             "--probe" => args.probe = true,
+            "--bench" => args.bench = true,
+            "--ask" => {
+                let question = argv
+                    .next()
+                    .ok_or_else(|| "--ask needs a question".to_string())?;
+                if question.trim().is_empty() {
+                    return Err("--ask needs a non-empty question".to_string());
+                }
+                args.ask = Some(question);
+            }
             other => return Err(format!("unrecognised argument: {other}")),
         }
     }
@@ -100,6 +166,9 @@ fn parse_args() -> Result<Args, String> {
     // resolved: read-only builds no writer, and probing needs one.
     if args.probe && args.read_only {
         return Err("--probe needs a writer; --read-only refuses to build one".to_string());
+    }
+    if args.ask.is_some() && args.bench {
+        return Err("--ask and --bench are separate runs; pick one".to_string());
     }
     Ok(args)
 }
@@ -133,7 +202,11 @@ async fn main() {
     let args = match parse_args() {
         Ok(args) => args,
         Err(e) => {
-            eprintln!("{e}\n\nusage: omni-me-agent [--read-only | --probe]");
+            eprintln!(
+                "{e}\n\nusage: omni-me-agent [--read-only | --probe]\n       \
+                 omni-me-agent --ask \"<question>\"      (test scaffolding)\n       \
+                 omni-me-agent --bench                  (test scaffolding)"
+            );
             std::process::exit(2);
         }
     };
@@ -142,6 +215,74 @@ async fn main() {
         tracing::error!(error = %e, "agent failed to start");
         std::process::exit(1);
     }
+}
+
+/// Build the assistant's LLM client from `[llm]`.
+///
+/// Goes through `omni_me_core::llm::build_llm_client` rather than constructing a
+/// client here, so the agent and the server cannot disagree about which provider
+/// a config selects.
+fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClient>, String> {
+    let path = match std::env::var(CREDENTIALS_ENV) {
+        Ok(p) => PathBuf::from(p),
+        Err(_) => omni_me_core::credentials::default_path()
+            .map_err(|e| format!("could not locate credentials: {e}"))?,
+    };
+    let mut creds = omni_me_core::credentials::load(&path)
+        .map_err(|e| format!("could not read credentials at {}: {e}", path.display()))?;
+
+    // Env overrides win over the file. Setting any of them means the caller is
+    // deliberately pointing this run somewhere else, so an override also selects
+    // the OpenAI-compatible provider — otherwise a base URL would be set and
+    // silently ignored because `[llm]` still said Gemini.
+    let overrides = [LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_API_KEY_ENV]
+        .iter()
+        .any(|k| std::env::var(k).is_ok());
+    if overrides {
+        let llm = creds.llm.get_or_insert_with(|| {
+            omni_me_core::credentials::LlmProviderConfig {
+                provider: "openai_compatible".to_string(),
+                base_url: None,
+                model: None,
+                api_key: None,
+                vision: false,
+            }
+        });
+        llm.provider = "openai_compatible".to_string();
+        if let Ok(v) = std::env::var(LLM_BASE_URL_ENV) {
+            llm.base_url = Some(v);
+        }
+        if let Ok(v) = std::env::var(LLM_MODEL_ENV) {
+            llm.model = Some(v);
+        }
+        if let Ok(v) = std::env::var(LLM_API_KEY_ENV) {
+            llm.api_key = Some(v);
+        }
+        // The model, never the key or the URL — a base URL can carry a key.
+        tracing::info!(model = ?llm.model, "LLM endpoint overridden by environment");
+    }
+
+    let options = omni_me_core::llm::ClientOptions {
+        extra_body: match std::env::var(LLM_EXTRA_BODY_ENV) {
+            Ok(raw) => Some(
+                serde_json::from_str(&raw)
+                    .map_err(|e| format!("{LLM_EXTRA_BODY_ENV} is not valid JSON: {e}"))?,
+            ),
+            Err(_) => None,
+        },
+        min_interval: match std::env::var(LLM_MIN_INTERVAL_ENV) {
+            Ok(raw) => Some(std::time::Duration::from_millis(
+                raw.parse()
+                    .map_err(|e| format!("{LLM_MIN_INTERVAL_ENV} is not a number: {e}"))?,
+            )),
+            Err(_) => None,
+        },
+    };
+
+    let gemini_key = omni_me_core::llm::resolve_gemini_key(&creds);
+    Ok(omni_me_core::llm::build_llm_client(
+        &creds, gemini_key, options,
+    ))
 }
 
 async fn run(args: Args) -> Result<(), String> {
@@ -237,6 +378,34 @@ async fn run(args: Args) -> Result<(), String> {
     // here when probing.
     if let (true, Some(writer)) = (args.probe, writer.as_ref()) {
         probe_once(writer).await;
+    }
+
+    // One-shot diagnostics run against the log as it stands and then exit,
+    // rather than starting the schedulers. They pull once first: asking about
+    // records this device has not seen would answer "not there" for data that
+    // exists, which looks like a retrieval failure and is not one.
+    if args.ask.is_some() || args.bench {
+        match sync_client.pull_only(&db).await {
+            Ok(outcome) => {
+                tracing::info!(pulled = outcome.pulled, "pull before diagnostics");
+                if let Err(e) = projections.init_all().await {
+                    tracing::warn!(error = %e, "could not project the pulled events");
+                }
+            }
+            // Not fatal: a local log may already hold what the question is about,
+            // and refusing to answer at all would be worse than answering from
+            // slightly stale data — as long as it is said out loud.
+            Err(e) => tracing::warn!(error = %e, "pull failed; answering from local data only"),
+        }
+
+        let llm = build_assistant_llm()?;
+        tracing::info!(model = llm.model_name(), "assistant model");
+        if let Some(question) = &args.ask {
+            ask::run(&db, &config, llm.as_ref(), question).await;
+        } else {
+            bench::run(&db, &config, llm.as_ref()).await;
+        }
+        return Ok(());
     }
 
     // Inbound half: startup backfill, then interval and network-online pulls. On
