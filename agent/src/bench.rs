@@ -69,6 +69,12 @@ const CASES: &[Case] = &[
         request: "Did I ever mention a dentist appointment?",
         expect: Some("search"),
     },
+    // ⚠️ **Known to fail, and kept because it fails.** No read verb can answer
+    // this: `search` is text matching, and the word "routine" appears nowhere in
+    // a routine named "Morning". Enumerating a kind of record is a capability the
+    // surface does not have. Observed live burning all six turns —
+    // `search{query:""} → search{query:"routine"} → …` — and it stays here as the
+    // standing evidence for whether a listing verb earns its place.
     Case {
         request: "What routines do I have?",
         expect: Some("search"),
@@ -174,22 +180,33 @@ async fn run_variant(
             score.errors += 1;
         }
 
-        // Generous on purpose, and worth being explicit about: exploring first is
-        // legitimate, so the expected verb appearing anywhere in the trace counts.
-        // A case that ran out of turns still scores if it got there.
-        let ok = match case.expect {
+        // Reaching the right verb is necessary but **not sufficient**: the run
+        // also has to finish. Scoring on "the verb appeared somewhere" alone
+        // marked a run that burned all six turns and never answered as correct —
+        // it was "what routines do I have?", which no read verb can answer
+        // because there is nothing that enumerates. A benchmark that calls that
+        // a pass cannot find the missing capability.
+        let answered = outcome.stopped == StopReason::Answered;
+        let reached = match case.expect {
+            // Exploring first is legitimate, so anywhere in the trace counts.
             Some(verb) => verbs.contains(&verb),
-            // "No verb" means it answered without reaching for a tool it does
-            // not have. Calling a read verb first and then declining is fine;
-            // what fails is never landing on an answer.
-            None => outcome.stopped == StopReason::Answered,
+            // "No verb" means it did not reach for a tool it does not have.
+            // Calling a read verb and then declining is fine.
+            None => true,
         };
+        let ok = reached && answered;
         score.correct += ok as usize;
 
+        let why = match (reached, answered) {
+            (true, true) => "OK ",
+            (false, true) => "   ",     // answered, but not the way expected
+            (true, false) => "NF ",     // right verb, never finished
+            (false, false) => "   ",
+        };
         println!(
             "  {:02} {} want={:<14} turns={} path={}",
             i,
-            if ok { "OK " } else { "   " },
+            why,
             case.expect.unwrap_or("(prose)"),
             outcome.trace.len(),
             if verbs.is_empty() {
