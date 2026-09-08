@@ -36,8 +36,7 @@ rather than failing · rate limiting is *correctness* on a capped tier. Detail:
 ## Open threads
 **A rule for reaching to widen a mechanism whose original purpose was never read** — design it
 later (user, 2026-09-08), with nuance: the tell is *permanent + unversioned* **plus** *intent
-unverified*, not "built for something else". [[feedback_prefer_integration_over_rewrite]] points
-the wrong way here. · Routine search matches group names, not item names · Gemini has no `chat`
-impl · untouched:
-`ExtractionResult.total`, `GET /feedback`, server-side `feature.llm`, server 1.1.0 vs overlay
-lock 1.1.2, `chunk_for_push` 413, history gap A/B, tasks gate estimation, curiosities prune.
+unverified*, not "built for something else"; [[feedback_prefer_integration_over_rewrite]] points
+the wrong way. · Routine search matches group names, not item names · Gemini has no `chat`
+impl · untouched: `ExtractionResult.total`, `GET /feedback`, server-side `feature.llm`, server
+1.1.0 vs overlay lock 1.1.2, `chunk_for_push` 413, history gap A/B, curiosities prune.
