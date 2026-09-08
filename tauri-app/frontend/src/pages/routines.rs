@@ -328,6 +328,10 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
     // move, because the refetch that follows keeps the UI truthful and the
     // `let _ = …await` swallowed the error.
     let mut toggle_error = use_signal(|| None::<String>);
+    // The item currently armed for a skip, holding its reason picker open. One
+    // signal for the whole group, so arming a second item closes the first — a
+    // skip is a single deliberate act, not something to queue up.
+    let mut pending_skip = use_signal(|| None::<String>);
     let group_id = group.id.clone();
     let date_for_load = date.clone();
 
@@ -397,12 +401,20 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                         let completion = completions_read.iter().find(|c| c.item_id == item.id);
                         let is_done = completion.is_some();
                         let is_skipped = completion.map(|c| c.skipped).unwrap_or(false);
+                        let skip_reason = completion.and_then(|c| c.reason.clone());
+                        let is_armed = pending_skip.read().as_deref() == Some(item.id.as_str());
                         let item_id = item.id.clone();
                         let gid = group.id.clone();
                         let d = date.clone();
 
                         rsx! {
-                            div { class: "px-4 py-3 flex items-center gap-3 group transition-colors hover:bg-obsidian-border/[0.02]",
+                            // `flex-wrap` + a `w-full` picker is what puts the skip
+                            // reason picker on its own line without a wrapper div.
+                            // A wrapper would have moved the `group` class, and
+                            // `group-hover` resolves against the nearest ancestor
+                            // carrying it — the SKIP button below is invisible until
+                            // hover, so it would have silently stopped appearing.
+                            div { class: "px-4 py-3 flex flex-wrap items-center gap-3 group transition-colors hover:bg-obsidian-border/[0.02]",
 
                                 if is_done && !is_skipped {
                                     button {
@@ -455,7 +467,17 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                         },
                                         Icon { name: IconName::Minus, class: "w-3 h-3", stroke: "3" }
                                     }
-                                    span { class: "flex-1 text-sm text-obsidian-text-muted/40 italic", "{item.name} (skipped)" }
+                                    // The `(skipped)` fallback is permanent, not a
+                                    // migration window: every row written before the
+                                    // picker existed has `reason = NONE`, and a
+                                    // reason cannot be backfilled after the fact.
+                                    span { class: "flex-1 text-sm text-obsidian-text-muted/40 italic",
+                                        if let Some(reason) = &skip_reason {
+                                            "{item.name} (skipped: {reason})"
+                                        } else {
+                                            "{item.name} (skipped)"
+                                        }
+                                    }
                                 } else {
                                     button {
                                         class: "w-6 h-6 rounded-md border-2 border-obsidian-text-muted/30 bg-transparent hover:border-obsidian-accent transition-colors",
@@ -481,27 +503,18 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                         },
                                     }
                                     span { class: "flex-1 text-sm font-medium text-obsidian-text group-hover:text-white transition-colors", "{item.name}" }
+                                    // Visible by default, hover-revealed only at md+.
+                                    // Touch has no hover, so the bare
+                                    // `opacity-0 group-hover:opacity-100` this
+                                    // replaced left the button at computed opacity 0
+                                    // on the phone — a 40x25 invisible box that still
+                                    // took taps. The APK is the primary target, so
+                                    // hover may hide a control on desktop only.
                                     button {
-                                        class: "px-2 py-1 bg-obsidian-border/5 border border-obsidian-border/5 rounded text-[10px] font-bold text-obsidian-text-muted hover:text-white transition-colors opacity-0 group-hover:opacity-100",
+                                        class: "px-2 py-1 bg-obsidian-border/5 border border-obsidian-border/5 rounded text-[10px] font-bold text-obsidian-text-muted hover:text-white transition-colors opacity-100 md:opacity-0 md:group-hover:opacity-100",
                                         onclick: {
                                             let iid = item_id.clone();
-                                            let gid = gid.clone();
-                                            let d = d.clone();
-                                            move |_| {
-                                                let iid = iid.clone();
-                                                let gid = gid.clone();
-                                                let d = d.clone();
-                                                spawn(async move {
-                                                    if let Err(e) = bridge::invoke_skip_routine_item(&iid, &gid, &d, None).await {
-                                                        toggle_error.set(Some(format!("Skip failed: {e}")));
-                                                    } else {
-                                                        toggle_error.set(None);
-                                                    }
-                                                    if let Ok(list) = bridge::invoke_get_completions_for_date(&gid, &d).await {
-                                                        completions.set(list);
-                                                    }
-                                                });
-                                            }
+                                            move |_| pending_skip.set(Some(iid.clone()))
                                         },
                                         "SKIP"
                                     }
@@ -512,9 +525,118 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
                                         "{item.estimated_duration_min}m"
                                     }
                                 }
+
+                                if is_armed {
+                                    SkipReasonPicker {
+                                        // One bridge call site for the skip, rather
+                                        // than one per chip: the picker reports the
+                                        // chosen string and knows nothing about ids.
+                                        on_pick: {
+                                            let iid = item_id.clone();
+                                            let gid = gid.clone();
+                                            let d = d.clone();
+                                            move |reason: String| {
+                                                let iid = iid.clone();
+                                                let gid = gid.clone();
+                                                let d = d.clone();
+                                                spawn(async move {
+                                                    if let Err(e) = bridge::invoke_skip_routine_item(&iid, &gid, &d, Some(&reason)).await {
+                                                        toggle_error.set(Some(format!("Skip failed: {e}")));
+                                                    } else {
+                                                        toggle_error.set(None);
+                                                    }
+                                                    if let Ok(list) = bridge::invoke_get_completions_for_date(&gid, &d).await {
+                                                        completions.set(list);
+                                                    }
+                                                    pending_skip.set(None);
+                                                });
+                                            }
+                                        },
+                                        on_cancel: move |_| pending_skip.set(None),
+                                    }
+                                }
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// The presets offered when skipping a routine item, in tap order.
+///
+/// Free text is stored, so this list is presentation only — changing it needs no
+/// migration and does not invalidate reasons already recorded under an older set.
+/// Keep it short: the value of a preset is that it is one tap and that the same
+/// wording comes back every time, and a longer list costs both.
+const SKIP_REASONS: [&str; 4] = ["No time", "Unwell", "Away", "Rest day"];
+
+/// Asks why an item is being skipped: one-tap presets, plus free text for anything
+/// else. Reports the chosen reason upward and knows nothing about ids or the bridge,
+/// so the skip has exactly one call site regardless of how many presets exist.
+///
+/// There is deliberately no "skip without a reason" control. A preset is one tap,
+/// which is not friction worth an escape hatch, and an escape hatch is how the field
+/// stays as empty as it was before the picker existed. Cancel abandons the skip
+/// entirely, which is a different thing and is offered.
+#[component]
+fn SkipReasonPicker(on_pick: EventHandler<String>, on_cancel: EventHandler<()>) -> Element {
+    let mut custom = use_signal(String::new);
+
+    // Shared by the Enter key and the button beside the field. Blank input is a
+    // no-op rather than a reasonless skip — see the note on this component.
+    let mut submit_custom = move || {
+        let text = custom.read().trim().to_string();
+        if !text.is_empty() {
+            custom.set(String::new());
+            on_pick.call(text);
+        }
+    };
+
+    rsx! {
+        // `w-full` is load-bearing: the parent row is `flex-wrap`, so a full-width
+        // child is what breaks the picker onto its own line. Four presets and an
+        // input do not fit beside the checkbox and name on a phone.
+        div { class: "w-full mt-2 pt-3 border-t border-obsidian-border/5 animate-in fade-in slide-in-from-top-1 duration-200",
+            div { class: "flex flex-wrap items-center gap-2",
+                span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mr-1", "Why skip?" }
+                for reason in SKIP_REASONS {
+                    button {
+                        class: "px-2 py-1 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-obsidian-accent/20 transition-colors",
+                        onclick: move |_| on_pick.call(reason.to_string()),
+                        "{reason}"
+                    }
+                }
+                button {
+                    class: "px-2 py-1 bg-obsidian-border/5 text-obsidian-text border border-obsidian-border/10 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-obsidian-border/10 transition-colors ml-auto",
+                    onclick: move |_| on_cancel.call(()),
+                    "Cancel"
+                }
+            }
+            div { class: "flex items-center gap-2 mt-2",
+                // A raw input rather than `TextInput`, which exposes no key handler:
+                // Enter has to submit here, because on a phone that is the keyboard's
+                // own confirm key and reaching back to a button is the slow path.
+                // `INPUT_CLASS` keeps it identical to the wrapper either way.
+                input {
+                    r#type: "text",
+                    class: "{INPUT_CLASS} py-1.5 text-sm",
+                    placeholder: "Something else…",
+                    value: "{custom}",
+                    autocomplete: "off",
+                    oninput: move |e| custom.set(e.value()),
+                    onkeydown: move |e| {
+                        if e.key() == Key::Enter {
+                            submit_custom();
+                        }
+                    },
+                }
+                button {
+                    class: "px-3 py-1.5 bg-obsidian-border/5 border border-obsidian-border/10 rounded text-[10px] font-bold uppercase tracking-wider text-obsidian-text hover:bg-obsidian-border/10 transition-colors disabled:opacity-30",
+                    disabled: custom.read().trim().is_empty(),
+                    onclick: move |_| submit_custom(),
+                    "Skip"
                 }
             }
         }
@@ -1028,8 +1150,18 @@ fn HistoryGrid(items: Vec<RoutineItem>, history: Vec<CompletionEntry>) -> Elemen
                                     "bg-obsidian-sidebar border-obsidian-border/5 text-transparent"
                                 };
 
+                                // Desktop-only affordance: touch has no hover, so the
+                                // grid is not where a reason is read on a phone. The
+                                // checklist row carries it in text for that.
+                                let tooltip = completion
+                                    .as_ref()
+                                    .and_then(|c| c.reason.clone())
+                                    .unwrap_or_default();
+
                                 rsx! {
-                                    div { class: "w-8 h-8 mx-auto rounded-md border flex items-center justify-center text-[10px] font-bold {bg_class}",
+                                    div {
+                                        class: "w-8 h-8 mx-auto rounded-md border flex items-center justify-center text-[10px] font-bold {bg_class}",
+                                        title: "{tooltip}",
                                         if is_skipped { "—" } else if is_done { "✓" } else { "" }
                                     }
                                 }

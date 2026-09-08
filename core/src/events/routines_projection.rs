@@ -869,6 +869,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn skip_reason_round_trips_through_the_projection() {
+        // The column is SCHEMAFULL `option<string>`, and until the routines screen
+        // grew a reason picker every skip on record carried `reason = NONE` — so a
+        // real string write down this path had never actually been exercised. A
+        // reason cannot be backfilled after the skip, which is what makes silently
+        // dropping one here expensive rather than merely wrong.
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(RoutinesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let with_reason = store
+            .append(NewEvent {
+                id: None,
+                event_type: "routine_item_skipped".into(),
+                aggregate_id: "s-reason".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "item_id": "i1", "group_id": "g1",
+                    "date": "2026-04-19", "reason": "Away"
+                }),
+            })
+            .await
+            .unwrap();
+        let without_reason = store
+            .append(NewEvent {
+                id: None,
+                event_type: "routine_item_skipped".into(),
+                aggregate_id: "s-none".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "item_id": "i2", "group_id": "g1",
+                    "date": "2026-04-19"
+                }),
+            })
+            .await
+            .unwrap();
+        runner
+            .apply_events(&[with_reason, without_reason])
+            .await
+            .unwrap();
+
+        let mut resp = db
+            .query("SELECT item_id, skipped, reason FROM routine_completions ORDER BY item_id")
+            .await
+            .unwrap();
+        let rows: Vec<serde_json::Value> = resp.take(0).unwrap();
+        assert_eq!(rows.len(), 2, "one row per skip, got: {rows:?}");
+        assert_eq!(rows[0]["reason"], serde_json::json!("Away"));
+        assert_eq!(rows[0]["skipped"], serde_json::json!(true));
+        // A skip with no reason must stay writable, not fall foul of the schema:
+        // every row predating the picker looks like this one.
+        assert!(
+            rows[1]["reason"].is_null(),
+            "a reasonless skip stays valid, got: {:?}",
+            rows[1]
+        );
+    }
+
+    #[tokio::test]
     async fn group_reordered_dedupes_duplicate_group_ids_last_wins() {
         // Defense against future callers / sync-merge strategies emitting a
         // duplicate group_id in one orderings list. Last entry wins.
