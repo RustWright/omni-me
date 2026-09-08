@@ -82,7 +82,63 @@ defer-major-phases rule; do not run ahead to the next one.
      No hardware purchase — the user has no permanent address.
    - ⚠️ **Blocker for any write path:** `guard_event_type` lives in the Tauri commands layer, so
      Phase B's claim that a future tool layer inherits it is **false** for a separate agent
-     binary. It must move into `core` first.
+     binary. It must move into `core` first. Confirmed 2026-09-07: it is a **private** fn taking
+     `&AppState`, so the move means re-seating the feature check on `ResolvedConfig`.
+   - **Phase 0 done 2026-09-07:** `docs/src/assistant.md` (the contract, model-neutral) and the
+     RAM spike (**no CX32** — CX22 has 3.1 GiB available, server + SurrealKV = 106 MiB against a
+     52 MB DB; the real risks are no swap, no container memory limits, and Phase C's embedder at
+     0.1–1 GB). Remaining: the model bake-off.
+   - **Plumbing facts for Phase B/C/D, true regardless of which model wins:**
+     - Images pass as `data:` URLs, so **no signed-URL subsystem is needed** for blobs behind
+       Tailscale. But requests **413 above ~5 MB**, so downscaling (2048px long edge) is
+       mandatory, not an optimisation.
+     - **Reasoning tokens must be instrumented separately** from completion tokens. They are
+       billed and rate-limited, and were ~95% of output on the baseline model.
+     - **Verb selection must be measured with a multi-turn agent loop.** Single-turn scoring
+       punishes a model for correctly calling `list_types` to explore first, and reports a
+       planning model as a failing one.
+     - **`ExtractionResult.total` is confirmed a schema+prompt fix** — models populate it as soon
+       as `response_schema()` asks for it. Demand digits only; symbol forms break `rust_decimal`.
+   - **Model selection is open and must be decided on merit.** The plan's "27–35B ceiling" came
+     from the rejected owned-hardware branch and is void; the genuine frontier of open weights
+     runs ~$92–106/month, still under half the €214/mo GPU box that could only hold 35B. Baseline
+     numbers from the free Hetzner endpoint are in the archived spike README and are **not** to be
+     inherited as constraints.
+   - **"One resident general model" is VOID as well.** It was justified by swap latency on a
+     single GPU; hosted endpoints are separate and always warm. **Assign a model per job,
+     statically — benchmarked by us and written into the code, never chosen by a runtime
+     orchestrator** (which is what the latency objection was actually about). Chat wants speed;
+     scheduled overnight reviews do not. Benchmarks therefore score **per task**, with latency
+     reported separately for interactive vs batch work.
+   - **Re-evaluate model selection every 3–6 months** once the assistant is live (user,
+     2026-09-07). The landscape moves fast enough that a one-time choice goes stale.
+     - **The mechanism already exists in the design:** shadow-mode vetting (plan decision 12) —
+       a candidate replays recorded proposals read-only and is scored against what the user
+       actually approved. The proposal lifecycle is the eval set (decision 6).
+     - ⚠️ **The synthetic bench is a BOOTSTRAP only**, needed because no proposal corpus exists
+       yet. Once one does, shadow mode supersedes it. Do not maintain a synthetic benchmark that
+       real approval data has obsoleted.
+     - Small model + LoRA on the approved-proposal corpus may beat a large model raw, so the
+       review compares *after* available optimizations, not raw capability. Requires a provider
+       that offers fine-tuning with adapter ownership retained.
+
+4. **Tasks + project management — NOT STARTED, and it gates an assistant capability.**
+   Decided 2026-09-07 while reading Phase 0 spike results. omni-me has **no task or project
+   records at all**: an inventory of the whole 14,412-event log found journal, notes,
+   transactions, auto-import and config, and nothing task-shaped.
+   - **Why it surfaced here.** The spike asked the model to work out how badly the user
+     estimates work. It answered correctly that **no estimate/actual pairs exist** in the
+     corpus — the prose has targets ("out before 7:25"), bare actuals ("took me till 9:20") and
+     fixed durations, but never a prediction paired with an outcome. The capability is not
+     blocked on the model; it is blocked on the data not existing.
+   - **Sequencing, per the user:** build tasks and projects **first**; estimation calibration
+     becomes answerable only afterwards. Do not attempt it before then.
+   - **This is the verb design paying off, and worth keeping as the worked example.** When the
+     record type is declared, the assistant gains the capability with **no assistant code at
+     all** — `list_types` starts returning it, `describe_type` explains its fields, `search` and
+     `read` reach it. "New features add data, never tools" stops being an assertion here.
+   - Related: routines already defer anything beyond a 31-day cadence to "a future task
+     feature", so this item also unblocks that cap.
 
 ---
 
