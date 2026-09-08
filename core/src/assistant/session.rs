@@ -246,7 +246,13 @@ impl<'a> Session<'a> {
                 } else {
                     StopReason::Answered
                 };
-                return self.finish(reply.content, trace, total, started, stopped);
+                // A constrained answer arrives as `{"verb":"answer",...}`; show
+                // the reply, not the envelope it had to be wrapped in.
+                let answer = match self.response_schema {
+                    Some(_) => unwrap_constrained_answer(reply.content),
+                    None => reply.content,
+                };
+                return self.finish(answer, trace, total, started, stopped);
             }
 
             // Answer every call, not just the first: a model that asked two
@@ -347,7 +353,11 @@ fn parse_constrained_call(content: Option<&str>) -> Option<crate::llm::ToolCall>
         .trim();
     let parsed: Value = serde_json::from_str(text).ok()?;
     let verb = parsed.get("verb")?.as_str()?;
-    if !verbs::VERB_NAMES.contains(&verb) {
+    // `answer` is the schema's exit, not a tool. Returning `None` sends it down
+    // the prose path, which is exactly what the free-form variant does when it
+    // stops calling tools — the two must end the same way or the comparison
+    // between them is not a comparison.
+    if verb == ANSWER_VERB || !verbs::VERB_NAMES.contains(&verb) {
         return None;
     }
     Some(crate::llm::ToolCall {
@@ -360,8 +370,44 @@ fn parse_constrained_call(content: Option<&str>) -> Option<crate::llm::ToolCall>
     })
 }
 
+/// Pull the reply out of an `{"verb":"answer","arguments":{"text":…}}` envelope.
+///
+/// Left untouched when it is not one: a model can ignore the schema, and showing
+/// whatever it did say beats showing nothing.
+fn unwrap_constrained_answer(content: Option<String>) -> Option<String> {
+    let raw = content?;
+    let Ok(parsed) = serde_json::from_str::<Value>(raw.trim()) else {
+        return Some(raw);
+    };
+    if parsed.get("verb").and_then(|v| v.as_str()) != Some(ANSWER_VERB) {
+        return Some(raw);
+    }
+    // `text` is what the schema asks for; the other keys are what models reach
+    // for instead, and an envelope shown raw is worse than a lenient read.
+    let args = &parsed["arguments"];
+    for key in ["text", "answer", "reply", "content", "message"] {
+        if let Some(s) = args.get(key).and_then(|v| v.as_str()) {
+            return Some(s.to_string());
+        }
+    }
+    Some(raw)
+}
+
+/// The pseudo-verb a constrained reply uses to stop.
+///
+/// ⚠️ **Load-bearing for the constraint-tax measurement.** Free-form mode ends a
+/// request by simply not calling a tool; a reply held to a verb-call schema has no
+/// such move, because every reply must satisfy the schema. Without an exit the
+/// model re-calls until the turn budget runs out — observed live as
+/// `list_types → list_types → describe_type ×4` — and the resulting "tax" measures
+/// the harness having no way to finish rather than constrained decoding costing
+/// accuracy. It is not one of [`verbs::VERB_NAMES`] and never reaches `dispatch`.
+const ANSWER_VERB: &str = "answer";
+
 /// A JSON-schema mirror of the tool surface, for the constrained variant.
 fn verb_call_schema() -> Value {
+    let mut names: Vec<&str> = verbs::VERB_NAMES.to_vec();
+    names.push(ANSWER_VERB);
     json!({
         "type": "json_schema",
         "json_schema": {
@@ -370,8 +416,12 @@ fn verb_call_schema() -> Value {
             "schema": {
                 "type": "object",
                 "properties": {
-                    "verb": { "type": "string", "enum": verbs::VERB_NAMES },
-                    "arguments": { "type": "object" }
+                    "verb": { "type": "string", "enum": names },
+                    "arguments": {
+                        "type": "object",
+                        "description": "The verb's arguments. For `answer`, put the reply \
+                                        to the user in `text`."
+                    }
                 },
                 "required": ["verb", "arguments"],
                 "additionalProperties": false
@@ -725,6 +775,60 @@ mod tests {
             "a constrained reply must count as the verb it names"
         );
         assert_eq!(out.stopped, StopReason::Answered);
+    }
+
+    /// The schema must offer a way to stop, or the constrained variant cannot
+    /// finish and the "tax" measures the harness rather than the model.
+    #[test]
+    fn the_constrained_schema_offers_an_exit() {
+        let schema = verb_call_schema();
+        let names = schema["json_schema"]["schema"]["properties"]["verb"]["enum"]
+            .as_array()
+            .unwrap();
+        assert!(
+            names.iter().any(|v| v == ANSWER_VERB),
+            "without an exit the model re-calls until the turn budget runs out: {names:?}"
+        );
+        assert!(!verbs::VERB_NAMES.contains(&ANSWER_VERB), "never dispatched");
+    }
+
+    #[tokio::test]
+    async fn a_constrained_answer_ends_the_run_and_shows_its_text() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![ChatResponse {
+            content: Some(
+                r#"{"verb":"answer","arguments":{"text":"You owe 180."}}"#.to_string(),
+            ),
+            tool_calls: vec![],
+            usage: Usage::default(),
+            latency: Duration::ZERO,
+            finish_reason: Some("stop".into()),
+        }]);
+        let cfg = config();
+
+        let out = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .constrained()
+            .ask("plumber?")
+            .await;
+
+        assert_eq!(out.stopped, StopReason::Answered);
+        // The reply, not the envelope it had to be wrapped in.
+        assert_eq!(out.answer.as_deref(), Some("You owe 180."));
+        assert!(out.verbs().is_empty(), "`answer` is not a verb call");
+    }
+
+    /// A model that ignores the schema still gets its words shown.
+    #[test]
+    fn a_non_envelope_reply_is_left_alone() {
+        assert_eq!(
+            unwrap_constrained_answer(Some("just prose".into())).as_deref(),
+            Some("just prose")
+        );
+        assert_eq!(
+            unwrap_constrained_answer(Some(r#"{"verb":"search"}"#.into())).as_deref(),
+            Some(r#"{"verb":"search"}"#)
+        );
     }
 
     /// The injection red-team, asserted on arguments rather than on prose.
