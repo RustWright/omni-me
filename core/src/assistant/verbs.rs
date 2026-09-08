@@ -33,7 +33,7 @@ const MAX_LIMIT: u32 = 50;
 /// not the order of [`tools`], which is a prompt-engineering choice — do not
 /// "fix" the two to agree; `the_tool_list_matches_the_verb_names` checks
 /// membership, not sequence.
-pub const VERB_NAMES: &[&str] = &["search", "read", "list_types", "describe_type"];
+pub const VERB_NAMES: &[&str] = &["search", "list", "read", "list_types", "describe_type"];
 
 /// What the assistant is, and the one rule it must not be talked out of.
 ///
@@ -82,9 +82,12 @@ pub fn tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "search".to_string(),
-            description: "Find records matching a text query. Returns short summaries with an \
-                          identity for each, never full bodies. Results are grouped by record \
-                          type; scores rank within a type and are not comparable between types."
+            description: "Find records whose text contains the words you give. Returns short \
+                          summaries with an identity for each, never full bodies. Results are \
+                          grouped by record type; scores rank within a type and are not \
+                          comparable between types. For \"what X do I have\", or anything \
+                          scoped by date, use `list` instead — a record is not guaranteed to \
+                          contain the name of its own type."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -102,6 +105,32 @@ pub fn tools() -> Vec<ToolDef> {
                     }
                 },
                 "required": ["query"]
+            }),
+        },
+        ToolDef {
+            name: "list".to_string(),
+            description: "List records of one kind, without searching for words. Use this for \
+                          \"what X do I have\" and for anything scoped by date rather than by \
+                          wording — `search` matches text, so it cannot answer either. Narrow \
+                          with `filters`, whose valid keys for a kind come from describe_type."
+                .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "type": { "type": "string", "description": "Record type name, from list_types." },
+                    "filters": {
+                        "type": "object",
+                        "description": "Optional. Keys come from describe_type's `filters`. A \
+                                        `range` filter takes {\"from\": …, \"to\": …} with either \
+                                        half optional; the others take a plain value. Example: \
+                                        {\"date\": {\"from\": \"2026-03-09\", \"to\": \"2026-03-15\"}}."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": format!("Max results. Default {DEFAULT_LIMIT}, capped at {MAX_LIMIT}.")
+                    }
+                },
+                "required": ["type"]
             }),
         },
         ToolDef {
@@ -145,6 +174,19 @@ pub async fn dispatch(db: &Database, config: &ResolvedConfig, name: &str, args: 
                 search(db, config, q, args["type"].as_str(), limit).await
             }
             None => json!({ "error": "search needs a `query`" }),
+        },
+        "list" => match args["type"].as_str() {
+            Some(t) => {
+                let limit = args["limit"]
+                    .as_u64()
+                    .map(|l| (l as u32).min(MAX_LIMIT))
+                    .unwrap_or(DEFAULT_LIMIT);
+                list(db, config, t, &args["filters"], limit).await
+            }
+            None => json!({
+                "error": "list needs a `type`",
+                "available": catalog::visible(config).iter().map(|e| e.name).collect::<Vec<_>>(),
+            }),
         },
         "read" => match (args["type"].as_str(), args["id"].as_str()) {
             (Some(t), Some(id)) => read(db, config, t, id).await,
@@ -278,6 +320,46 @@ async fn search(
     json!({ "results": groups })
 }
 
+async fn list(
+    db: &Database,
+    config: &ResolvedConfig,
+    type_name: &str,
+    filters: &Value,
+    limit: u32,
+) -> Value {
+    let Some(entry) = catalog::lookup(config, type_name) else {
+        return unknown_type(config, type_name);
+    };
+
+    // Absent filters are the common case — "what routines do I have" narrows
+    // nothing — so `null` means no narrowing rather than a malformed argument.
+    let narrowings = if filters.is_null() {
+        Vec::new()
+    } else {
+        match store::plan_filters(entry, filters) {
+            Ok(n) => n,
+            // The message already names this type's valid keys; the model can
+            // fix its guess on the next turn instead of spending one finding out.
+            Err(e) => return json!({ "error": e }),
+        }
+    };
+
+    match store::list(db, entry, &narrowings, limit).await {
+        Ok(r) if r.hits.is_empty() => json!({
+            "results": [],
+            "note": format!("there are no {type_name} records matching that."),
+        }),
+        Ok(r) => json!({ "results": [serde_json::to_value(r).unwrap_or(Value::Null)] }),
+        Err(e) => {
+            tracing::warn!(record_type = type_name, error = %e, "list failed");
+            // The detail goes to the log, never to the model: a database error
+            // can quote column names and query text, and the model has no use
+            // for either. Tests read the log line.
+            json!({ "error": "that record type could not be listed" })
+        }
+    }
+}
+
 async fn read(db: &Database, config: &ResolvedConfig, type_name: &str, id: &str) -> Value {
     let Some(entry) = catalog::lookup(config, type_name) else {
         return unknown_type(config, type_name);
@@ -347,6 +429,18 @@ mod tests {
 
     fn config() -> ResolvedConfig {
         ResolvedConfig::new(Default::default(), Default::default())
+    }
+
+    /// The handles from a `search`/`list` payload, or a panic carrying the whole
+    /// response. Reaching into `["results"][0]["hits"]` and unwrapping loses the
+    /// error the verb actually returned, which is the one thing worth seeing.
+    fn handles(out: &Value) -> Vec<String> {
+        let hits = out["results"][0]["hits"]
+            .as_array()
+            .unwrap_or_else(|| panic!("no hits in response: {out}"));
+        hits.iter()
+            .map(|h| h["handle"].as_str().unwrap_or("<no handle>").to_string())
+            .collect()
     }
 
     #[test]
@@ -505,6 +599,108 @@ mod tests {
             groups[0]["hits"].as_array().unwrap().len() <= MAX_LIMIT as usize,
             "the cap must hold against an absurd limit"
         );
+    }
+
+    /// The question that failed live before `list` existed: six turns, no answer,
+    /// because the word "routine" appears nowhere in a routine called "Morning".
+    #[tokio::test]
+    async fn list_answers_what_routines_do_i_have() {
+        let db = test_db().await;
+        for (i, name) in ["Morning", "Evening winddown"].iter().enumerate() {
+            db.query("CREATE type::record('routine_groups', $id) SET name = $n, frequency = 'daily', order_num = $o, removed = false, created_at = time::now(), updated_at = time::now()")
+                .bind(("id", format!("01JKGRP{i:019}")))
+                .bind(("n", name.to_string()))
+                .bind(("o", i as i64))
+                .await
+                .unwrap();
+        }
+
+        let out = dispatch(&db, &config(), "list", &json!({ "type": "routine" })).await;
+        // In the user's arranged order, which is what `order_num` is for.
+        assert_eq!(handles(&out), vec!["Morning", "Evening winddown"], "{out}");
+    }
+
+    /// The other shape `search` cannot reach: "what did I do last week" is a date
+    /// range, not a text match.
+    #[tokio::test]
+    async fn list_narrows_journal_by_a_date_range() {
+        let db = test_db().await;
+        for date in ["2026-03-08", "2026-03-10", "2026-03-14", "2026-03-20"] {
+            db.query("CREATE type::record('journal_entries', $d) SET journal_id = $d, date = $d, raw_text = 'x', tags = [], closed = false, complete = false, created_at = time::now(), updated_at = time::now()")
+                .bind(("d", date))
+                .await
+                .unwrap();
+        }
+
+        let out = dispatch(
+            &db,
+            &config(),
+            "list",
+            &json!({ "type": "journal", "filters": { "date": { "from": "2026-03-09", "to": "2026-03-15" } } }),
+        )
+        .await;
+        // Newest first, and the bounds are inclusive at both ends.
+        assert_eq!(handles(&out), vec!["2026-03-14", "2026-03-10"], "{out}");
+    }
+
+    /// Half a range is a real request — "everything since March" has no upper bound.
+    #[tokio::test]
+    async fn a_range_with_only_one_bound_works() {
+        let db = test_db().await;
+        for date in ["2026-03-08", "2026-03-20"] {
+            db.query("CREATE type::record('journal_entries', $d) SET journal_id = $d, date = $d, raw_text = 'x', tags = [], closed = false, complete = false, created_at = time::now(), updated_at = time::now()")
+                .bind(("d", date))
+                .await
+                .unwrap();
+        }
+        let out = dispatch(
+            &db,
+            &config(),
+            "list",
+            &json!({ "type": "journal", "filters": { "date": { "from": "2026-03-10" } } }),
+        )
+        .await;
+        assert_eq!(handles(&out), vec!["2026-03-20"], "{out}");
+    }
+
+    /// The model can only learn filter keys from `describe_type`. When it guesses
+    /// instead, the error has to hand it the real ones or it burns a turn finding out.
+    #[tokio::test]
+    async fn an_unknown_filter_key_names_the_valid_ones() {
+        let db = test_db().await;
+        let out = dispatch(
+            &db,
+            &config(),
+            "list",
+            &json!({ "type": "routine", "filters": { "colour": "blue" } }),
+        )
+        .await;
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("colour"), "{err}");
+        assert!(err.contains("frequency"), "must list the real keys: {err}");
+        assert!(err.contains("removed"), "{err}");
+    }
+
+    /// A filter key that a *different* type declares is still wrong for this one.
+    #[tokio::test]
+    async fn a_filter_from_another_type_is_refused() {
+        let db = test_db().await;
+        let out = dispatch(
+            &db,
+            &config(),
+            "list",
+            &json!({ "type": "note", "filters": { "date": { "from": "2026-01-01" } } }),
+        )
+        .await;
+        assert!(out["error"].as_str().unwrap().contains("no filter called `date`"));
+    }
+
+    #[tokio::test]
+    async fn list_needs_a_type_and_says_which_exist() {
+        let db = test_db().await;
+        let out = dispatch(&db, &config(), "list", &json!({})).await;
+        assert!(out["error"].as_str().unwrap().contains("needs a `type`"));
+        assert_eq!(out["available"].as_array().unwrap().len(), 3);
     }
 
     #[tokio::test]

@@ -75,6 +75,17 @@ pub struct FilterField {
     pub description: &'static str,
 }
 
+/// The order `list` returns a kind of record in, and which column decides it.
+///
+/// Declared per kind because the useful order differs and is not derivable:
+/// journal entries are interesting newest-first, while routines have a
+/// user-arranged order that is the whole point of the column.
+#[derive(Debug, Clone, Copy)]
+pub struct ListOrder {
+    pub column: &'static str,
+    pub descending: bool,
+}
+
 /// Rows on another table that belong to a parent row.
 ///
 /// A routine group without its items is not a routine, so `read` returns them
@@ -88,9 +99,36 @@ pub struct ChildCollection {
     pub table: &'static str,
     /// Column on the child table holding the parent's identity.
     pub foreign_key: &'static str,
-    /// Newest-first cap on rows returned.
+    /// How these rows are ordered.
+    ///
+    /// ⚠️ Declared, never inferred from the record id. Completion rows are keyed
+    /// `{item_id}-{date}-{done|skip}`, so ordering by id sorts by *item* and only
+    /// then by date — which silently returned "whichever item sorts highest"
+    /// while the description promised "newest first".
+    pub order: ListOrder,
+    /// Cap on rows returned, applied after ordering.
     pub limit: u32,
     pub description: &'static str,
+}
+
+/// A computed view `read` returns alongside the raw child rows.
+///
+/// Exists because raw rows can be *technically complete and practically
+/// unanswerable*: a routine's completion history is one row per item per day, so
+/// "did I do my morning routine on Tuesday" means re-deriving a rule the routines
+/// screen already owns — and a second reader that re-derives it can disagree with
+/// what the user sees on screen. The computed view carries the app's own answer.
+///
+/// One variant today. Left as an enum rather than a bool so the second case has
+/// somewhere to go, and so `store` matches exhaustively and cannot forget one.
+#[derive(Debug, Clone, Copy)]
+pub enum DerivedView {
+    /// Per-day rollup of a parent's item completions, via
+    /// [`crate::routines::roll_up`]. Names the two child collections it reads.
+    CompletionRollup {
+        items: &'static str,
+        completions: &'static str,
+    },
 }
 
 /// One queryable collection.
@@ -120,7 +158,12 @@ pub struct CatalogEntry {
     /// Each needs its own `FULLTEXT` index — one index covers one field.
     pub text_fields: &'static [&'static str],
     pub filters: &'static [FilterField],
+    /// How `list` orders this kind when nothing narrows it.
+    pub list_order: ListOrder,
     pub children: &'static [ChildCollection],
+    /// A computed view returned beside the raw children, when raw rows alone do
+    /// not answer the obvious question about this kind.
+    pub derived: Option<DerivedView>,
     /// Name of the [`crate::record_type::RecordType`] declaration whose properties
     /// `describe_type` should merge in, when this type has one.
     pub record_type: Option<&'static str>,
@@ -157,7 +200,12 @@ const JOURNAL_ENTRY: CatalogEntry = CatalogEntry {
             description: "Whether the day has been closed off.",
         },
     ],
+    list_order: ListOrder {
+        column: "date",
+        descending: true,
+    },
     children: &[],
+    derived: None,
     record_type: Some(JOURNAL),
 };
 
@@ -175,7 +223,12 @@ const NOTE: CatalogEntry = CatalogEntry {
         kind: FilterKind::Tag,
         description: "Tags written into the note.",
     }],
+    list_order: ListOrder {
+        column: "updated_at",
+        descending: true,
+    },
     children: &[],
+    derived: None,
     record_type: None,
 };
 
@@ -205,11 +258,20 @@ const ROUTINE: CatalogEntry = CatalogEntry {
             description: "Whether it has been deleted. Normally filter this to false.",
         },
     ],
+    list_order: ListOrder {
+        column: "order_num",
+        descending: false,
+    },
     children: &[
         ChildCollection {
             name: "items",
             table: "routine_items",
             foreign_key: "group_id",
+            // The order the user arranged them in — the column exists for it.
+            order: ListOrder {
+                column: "order_num",
+                descending: false,
+            },
             limit: 200,
             description: "The individual things done as part of this routine.",
         },
@@ -217,10 +279,19 @@ const ROUTINE: CatalogEntry = CatalogEntry {
             name: "completions",
             table: "routine_completions",
             foreign_key: "group_id",
+            // By date, not by id: see the warning on `ChildCollection::order`.
+            order: ListOrder {
+                column: "date",
+                descending: true,
+            },
             limit: 60,
             description: "Recent completion history, newest first, including skips.",
         },
     ],
+    derived: Some(DerivedView::CompletionRollup {
+        items: "items",
+        completions: "completions",
+    }),
     record_type: None,
 };
 
@@ -330,7 +401,12 @@ mod tests {
                     description: "Whether it has been reconciled against a statement.",
                 },
             ],
+            list_order: ListOrder {
+                column: "date",
+                descending: true,
+            },
             children: &[],
+            derived: None,
             record_type: None,
         };
 

@@ -4,10 +4,82 @@
 //! `RoutineGroupCreated` event payload and the daily-flow scheduler. Anything
 //! that persists to disk must round-trip through `Display` / `FromStr`.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
 use chrono::{Datelike, NaiveDate};
+use serde::Serialize;
+
+/// One item's completion on one day, as the rollup needs to see it.
+///
+/// Borrowed rather than owned, and free of any database type, so the same
+/// function serves a projection row, a Tauri command and the assistant.
+#[derive(Debug, Clone, Copy)]
+pub struct CompletionRecord<'a> {
+    pub item_id: &'a str,
+    pub date: &'a str,
+    pub skipped: bool,
+}
+
+/// What happened to a routine on one day.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DayRollup {
+    pub date: String,
+    /// Items with a completion row, skips included. See [`roll_up`].
+    pub done: u32,
+    /// How many of `done` were skips. Kept separate because a day of skips and
+    /// a day of doing are both "complete" and are not the same thing.
+    pub skipped: u32,
+    /// Current item count. Days before an item was added therefore read as
+    /// incomplete, which is inherent to counting against today's list.
+    pub total: u32,
+    pub complete: bool,
+}
+
+/// Roll per-item completions up into per-day status for one routine.
+///
+/// ⚠️ **A skipped item counts as done** (user, 2026-09-08). Skipping is a
+/// deliberate act with a reason attached, not a failure to act, so a morning
+/// where one item was skipped on purpose is a morning that happened. `skipped`
+/// is reported alongside so the distinction survives — the number to look at
+/// when asking whether a routine is really being kept.
+///
+/// This rule previously existed **only** in the routines screen, where a second
+/// reader would have had to re-derive it and could have disagreed with what the
+/// user sees. Anything answering "did I do my routine" reads it from here.
+///
+/// `item_ids` are the group's *current* items; removed ones must be filtered out
+/// by the caller, exactly as the screen does.
+pub fn roll_up(item_ids: &[&str], completions: &[CompletionRecord<'_>]) -> Vec<DayRollup> {
+    let total = item_ids.len() as u32;
+    // Per day: which of the current items have a row, and how many were skips.
+    // A set of item ids rather than a count, because two rows for one item on
+    // one day must not read as two items done.
+    let mut days: BTreeMap<&str, BTreeMap<&str, bool>> = BTreeMap::new();
+    for c in completions {
+        if !item_ids.contains(&c.item_id) {
+            continue;
+        }
+        // A later row wins, so an undo-then-skip on one day lands on the skip.
+        days.entry(c.date).or_default().insert(c.item_id, c.skipped);
+    }
+
+    // Newest first: recent history is what any question about a habit is about.
+    days.into_iter()
+        .rev()
+        .map(|(date, seen)| {
+            let done = seen.len() as u32;
+            DayRollup {
+                date: date.to_string(),
+                done,
+                skipped: seen.values().filter(|s| **s).count() as u32,
+                total,
+                complete: total > 0 && done == total,
+            }
+        })
+        .collect()
+}
 
 /// How often a routine group should appear on the daily flow.
 ///
@@ -397,5 +469,91 @@ mod tests {
             29,
             "century leap"
         );
+    }
+
+    fn done(item: &'static str, date: &'static str) -> CompletionRecord<'static> {
+        CompletionRecord { item_id: item, date, skipped: false }
+    }
+
+    fn skip(item: &'static str, date: &'static str) -> CompletionRecord<'static> {
+        CompletionRecord { item_id: item, date, skipped: true }
+    }
+
+    /// The decision, pinned: a deliberate skip is a morning that happened.
+    /// Changing this changes what the routines screen and the assistant both
+    /// mean by "done", so it should be a decision, never a tidy-up.
+    #[test]
+    fn a_skipped_item_still_counts_the_day_complete() {
+        let items = ["stretch", "coffee"];
+        let rolled = roll_up(
+            &items,
+            &[done("stretch", "2026-03-14"), skip("coffee", "2026-03-14")],
+        );
+        assert_eq!(rolled.len(), 1);
+        assert!(rolled[0].complete, "a skip is not a miss");
+        assert_eq!(rolled[0].done, 2);
+        // ...but the distinction survives, which is what makes "am I really
+        // keeping this up" answerable rather than flattened away.
+        assert_eq!(rolled[0].skipped, 1);
+    }
+
+    #[test]
+    fn a_missing_item_leaves_the_day_incomplete() {
+        let rolled = roll_up(&["stretch", "coffee"], &[done("stretch", "2026-03-14")]);
+        assert!(!rolled[0].complete);
+        assert_eq!(rolled[0].done, 1);
+        assert_eq!(rolled[0].total, 2);
+    }
+
+    /// Two rows for one item on one day is one item done, not two.
+    #[test]
+    fn duplicate_rows_for_one_item_do_not_inflate_the_count() {
+        let rolled = roll_up(
+            &["stretch", "coffee"],
+            &[done("stretch", "2026-03-14"), skip("stretch", "2026-03-14")],
+        );
+        assert_eq!(rolled[0].done, 1, "one item, however many rows");
+        assert!(!rolled[0].complete);
+        // The later row wins, so an undo-then-skip lands on the skip.
+        assert_eq!(rolled[0].skipped, 1);
+    }
+
+    /// Rows for an item that has since been removed must not count toward a day.
+    #[test]
+    fn completions_for_items_no_longer_in_the_routine_are_ignored() {
+        let rolled = roll_up(
+            &["stretch"],
+            &[done("stretch", "2026-03-14"), done("deleted-item", "2026-03-14")],
+        );
+        assert_eq!(rolled[0].done, 1);
+        assert_eq!(rolled[0].total, 1);
+        assert!(rolled[0].complete);
+    }
+
+    #[test]
+    fn days_come_back_newest_first() {
+        let rolled = roll_up(
+            &["stretch"],
+            &[
+                done("stretch", "2026-03-01"),
+                done("stretch", "2026-03-14"),
+                done("stretch", "2026-03-08"),
+            ],
+        );
+        let dates: Vec<&str> = rolled.iter().map(|d| d.date.as_str()).collect();
+        assert_eq!(dates, vec!["2026-03-14", "2026-03-08", "2026-03-01"]);
+    }
+
+    /// A routine with no items cannot be "complete", or an empty routine would
+    /// report a perfect streak forever.
+    #[test]
+    fn an_empty_routine_is_never_complete() {
+        let rolled = roll_up(&[], &[done("gone", "2026-03-14")]);
+        assert!(rolled.is_empty(), "nothing current, nothing to report");
+    }
+
+    #[test]
+    fn no_completions_means_no_days_rather_than_a_zero_row() {
+        assert!(roll_up(&["stretch"], &[]).is_empty());
     }
 }
