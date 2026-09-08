@@ -3954,6 +3954,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-me-agent"
+version = "1.1.2"
+dependencies = [
+ "omni-me-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+]
+
+[[package]]
 name = "omni-me-app"
 version = "1.1.2"
 dependencies = [
@@ -4006,6 +4017,7 @@ dependencies = [
  "toml 0.8.2",
  "tracing",
  "ulid",
+ "url",
  "wiremock",
 ]
 

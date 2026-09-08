@@ -21,8 +21,7 @@ use tokio::sync::RwLock;
 
 use omni_me_core::auto_close::auto_close_stale_journals;
 use omni_me_core::db::Database;
-use omni_me_core::events::{ProjectionRunner, SurrealEventStore};
-use omni_me_core::sync::PushDebouncer;
+use omni_me_core::events::EventWriter;
 
 /// Offset past midnight before the tick fires — avoids race with any
 /// midnight-adjacent write.
@@ -36,14 +35,7 @@ const CATCHUP_DELAY: Duration = Duration::from_secs(15);
 
 /// Spawn the auto-close scheduler on the Tauri async runtime. Returns
 /// immediately; the task lives as long as the runtime.
-pub fn spawn(
-    db: Database,
-    event_store: SurrealEventStore,
-    projections: ProjectionRunner,
-    device_id: String,
-    timezone: Arc<RwLock<String>>,
-    push_debouncer: PushDebouncer,
-) {
+pub fn spawn(db: Database, writer: Arc<EventWriter>, timezone: Arc<RwLock<String>>) {
     tauri::async_runtime::spawn(async move {
         // Catch-up sweep before the first sleep. `auto_close_stale_journals` is
         // driven by a `complete = true AND closed = false AND date <= yesterday`
@@ -54,17 +46,12 @@ pub fn spawn(
         loop {
             let tz_name = timezone.read().await.clone();
             let today = today_in_tz(&tz_name, Utc::now());
-            match auto_close_stale_journals(&db, &event_store, &projections, &device_id, today)
-                .await
-            {
+            // The writer nudges the pusher itself. It used not to, and these
+            // closes sat unsynced until an unrelated edit woke it — the note
+            // read closed on this device and open on every other one.
+            match auto_close_stale_journals(&db, &writer, today).await {
                 Ok(0) => tracing::debug!("auto-close: no stale journals"),
-                Ok(n) => {
-                    // Nudge the pusher, or these closes sit unsynced until an
-                    // unrelated edit happens to wake it — so the note would
-                    // read closed on this device and open on every other one.
-                    push_debouncer.trigger();
-                    tracing::info!(closed = n, "auto-close: closed stale journals");
-                }
+                Ok(n) => tracing::info!(closed = n, "auto-close: closed stale journals"),
                 Err(e) => tracing::warn!(error = %e, "auto-close: tick failed"),
             }
 

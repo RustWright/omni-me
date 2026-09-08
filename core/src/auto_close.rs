@@ -12,16 +12,20 @@
 use chrono::{NaiveDate, Utc};
 
 use crate::db::{Database, queries};
-use crate::events::{EventStore, EventType, NewEvent, ProjectionRunner};
+use crate::events::{EventType, EventWriter, NewEvent};
 
 /// Scan for stale complete-but-not-closed journals and emit
 /// `JournalEntryClosed { trigger: Auto }` for each. Returns the number of
 /// entries closed so the caller can log / surface it.
-pub async fn auto_close_stale_journals<S: EventStore + ?Sized>(
+///
+/// Writes through [`EventWriter`] rather than a bare store: this used to take
+/// the store, the projection runner and the device id as three separate
+/// parameters, which made it invisible to the client's "nothing appends
+/// directly" scan and left the feature guard to a hand-written check at the
+/// scheduler's spawn site.
+pub async fn auto_close_stale_journals(
     db: &Database,
-    event_store: &S,
-    projections: &ProjectionRunner,
-    device_id: &str,
+    writer: &EventWriter,
     today: NaiveDate,
 ) -> Result<usize, AutoCloseError> {
     let yesterday = today
@@ -44,25 +48,19 @@ pub async fn auto_close_stale_journals<S: EventStore + ?Sized>(
     // so the projection cannot reject duplicate close events outright.
     let mut closed = 0usize;
     for entry in candidates {
-        let event = event_store
-            .append(NewEvent {
+        writer
+            .append_new(NewEvent {
                 id: None,
                 event_type: EventType::JournalEntryClosed.to_string(),
                 aggregate_id: entry.journal_id.clone(),
                 timestamp: Utc::now(),
-                device_id: device_id.to_string(),
+                device_id: writer.device_id().to_string(),
                 payload: serde_json::json!({
                     "journal_id": entry.journal_id,
                     "trigger": "auto"
                 }),
             })
-            .await
-            .map_err(AutoCloseError::Event)?;
-
-        projections
-            .apply_events(&[event])
-            .await
-            .map_err(AutoCloseError::Event)?;
+            .await?;
 
         closed += 1;
     }
@@ -76,6 +74,8 @@ pub enum AutoCloseError {
     Db(#[from] crate::db::DbError),
     #[error("event error: {0}")]
     Event(#[from] crate::events::EventError),
+    #[error("{0}")]
+    Write(#[from] crate::events::WriteError),
     #[error("date underflow — no predecessor date for given 'today'")]
     DateOutOfRange,
 }
@@ -83,7 +83,20 @@ pub enum AutoCloseError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{NotesProjection, SurrealEventStore};
+    use crate::config::ALL_FEATURES;
+    use crate::events::{EventStore, NotesProjection, ProjectionRunner, SurrealEventStore};
+    use std::sync::Arc;
+
+    /// Every feature on, so these tests exercise the close logic rather than the
+    /// writer's feature guard — that has its own tests in `events::writer`.
+    fn test_writer(store: &SurrealEventStore, runner: &ProjectionRunner) -> EventWriter {
+        EventWriter::new(
+            Arc::new(store.clone()),
+            runner.clone(),
+            ALL_FEATURES.iter().copied().collect(),
+            "d1",
+        )
+    }
 
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
@@ -129,6 +142,7 @@ mod tests {
         let store = SurrealEventStore::new(db.clone());
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
         runner.init_all().await.unwrap();
+        let writer = test_writer(&store, &runner);
 
         let complete_body = "homework_for_life: a\ngrateful_for: b\nlearnt_today: c";
 
@@ -142,7 +156,7 @@ mod tests {
         // Incomplete past-day journal — must NOT close.
         seed_journal(&store, &runner, "2026-04-16", "just a note").await;
 
-        let closed = auto_close_stale_journals(&db, &store, &runner, "d1", ymd(2026, 4, 19))
+        let closed = auto_close_stale_journals(&db, &writer, ymd(2026, 4, 19))
             .await
             .unwrap();
         assert_eq!(closed, 2);
@@ -176,14 +190,15 @@ mod tests {
         let store = SurrealEventStore::new(db.clone());
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
         runner.init_all().await.unwrap();
+        let writer = test_writer(&store, &runner);
 
         let body = "homework_for_life: a\ngrateful_for: b\nlearnt_today: c";
         seed_journal(&store, &runner, "2026-04-17", body).await;
 
-        let first = auto_close_stale_journals(&db, &store, &runner, "d1", ymd(2026, 4, 19))
+        let first = auto_close_stale_journals(&db, &writer, ymd(2026, 4, 19))
             .await
             .unwrap();
-        let second = auto_close_stale_journals(&db, &store, &runner, "d1", ymd(2026, 4, 19))
+        let second = auto_close_stale_journals(&db, &writer, ymd(2026, 4, 19))
             .await
             .unwrap();
 
@@ -204,10 +219,11 @@ mod tests {
         let store = SurrealEventStore::new(db.clone());
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
         runner.init_all().await.unwrap();
+        let writer = test_writer(&store, &runner);
 
         seed_journal(&store, &runner, "2026-04-18", "just body, no properties").await;
 
-        let first = auto_close_stale_journals(&db, &store, &runner, "d1", ymd(2026, 4, 19))
+        let first = auto_close_stale_journals(&db, &writer, ymd(2026, 4, 19))
             .await
             .unwrap();
         assert_eq!(first, 0, "incomplete past-day entry skipped");
@@ -229,7 +245,7 @@ mod tests {
             .unwrap();
         runner.apply_events(&[e]).await.unwrap();
 
-        let second = auto_close_stale_journals(&db, &store, &runner, "d1", ymd(2026, 4, 19))
+        let second = auto_close_stale_journals(&db, &writer, ymd(2026, 4, 19))
             .await
             .unwrap();
         assert_eq!(second, 1, "late-filled entry closes on next tick");

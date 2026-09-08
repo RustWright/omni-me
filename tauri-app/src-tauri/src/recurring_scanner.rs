@@ -10,37 +10,30 @@
 //! never clobbers user confirmations or dismissals.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
 use omni_me_core::db::Database;
 use omni_me_core::db::queries;
-use omni_me_core::events::{EventStore, EventType, NewEvent, ProjectionRunner, SurrealEventStore};
+use omni_me_core::events::{EventType, EventWriter, NewEvent};
 use omni_me_core::recurring;
-use omni_me_core::sync::PushDebouncer;
 
 const WARMUP_DELAY: Duration = Duration::from_secs(60);
 const PERIODIC_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const LOOKBACK_DAYS: i64 = 365;
 
-pub fn spawn(
-    db: Database,
-    event_store: SurrealEventStore,
-    projections: ProjectionRunner,
-    device_id: String,
-    push_debouncer: PushDebouncer,
-) {
+pub fn spawn(db: Database, writer: Arc<EventWriter>) {
     tauri::async_runtime::spawn(async move {
         // Warm-up — let the initial UI load + event replay settle before
         // touching the projection.
         tokio::time::sleep(WARMUP_DELAY).await;
 
         loop {
-            match run_one_scan(&db, &event_store, &projections, &device_id).await {
+            // The writer nudges the pusher itself; these events used to sit
+            // unsynced until an unrelated edit happened to wake it.
+            match run_one_scan(&db, &writer).await {
                 Ok(emitted) if emitted > 0 => {
-                    // Nudge the pusher, or these events sit unsynced until an
-                    // unrelated edit happens to wake it.
-                    push_debouncer.trigger();
                     tracing::info!(emitted, "recurring-scanner: emitted new pattern events");
                 }
                 Ok(_) => tracing::debug!("recurring-scanner: no new patterns this tick"),
@@ -51,12 +44,7 @@ pub fn spawn(
     });
 }
 
-async fn run_one_scan(
-    db: &Database,
-    event_store: &SurrealEventStore,
-    projections: &ProjectionRunner,
-    device_id: &str,
-) -> Result<usize, String> {
+async fn run_one_scan(db: &Database, writer: &EventWriter) -> Result<usize, String> {
     let cutoff =
         (chrono::Utc::now().date_naive() - chrono::Duration::days(LOOKBACK_DAYS)).to_string();
     let txn_rows = queries::list_transactions_since(db, &cutoff)
@@ -89,19 +77,15 @@ async fn run_one_scan(
                 "last_seen": p.last_seen.to_string(),
             }
         });
-        let saved = event_store
-            .append(NewEvent {
+        writer
+            .append_new(NewEvent {
                 id: None,
                 event_type: EventType::RecurringTransactionDetected.to_string(),
                 aggregate_id: p.pattern_id.clone(),
                 timestamp: Utc::now(),
-                device_id: device_id.to_string(),
+                device_id: writer.device_id().to_string(),
                 payload,
             })
-            .await
-            .map_err(|e| e.to_string())?;
-        projections
-            .apply_events(&[saved])
             .await
             .map_err(|e| e.to_string())?;
         emitted += 1;

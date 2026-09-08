@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "server", "tauri-app/src-tauri"]
+members = ["agent", "core", "server", "tauri-app/src-tauri"]
 exclude = ["tauri-app/frontend"]
 resolver = "3"
 

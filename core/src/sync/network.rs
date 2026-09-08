@@ -70,6 +70,23 @@ struct Inner {
     shutdown: tokio::sync::Notify,
 }
 
+/// Host:port for the reachability probe, derived from a sync server URL.
+///
+/// Lives here rather than in each binary because it is easy to get subtly wrong
+/// by hand: an https URL with no explicit port must probe 443, not 80, and a
+/// hand-rolled string split silently gets that case backwards.
+pub fn probe_target(url: &str) -> String {
+    if let Ok(parsed) = url::Url::parse(url) {
+        let host = parsed.host_str().unwrap_or("127.0.0.1");
+        let port = parsed
+            .port_or_known_default()
+            .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+        return format!("{host}:{port}");
+    }
+    // Last resort — match the default server URL shape.
+    "127.0.0.1:3000".to_string()
+}
+
 impl NetworkMonitor {
     /// Spawn a monitor that probes the given `host:port` target (e.g.
     /// `"1.1.1.1:53"` or `"localhost:3000"`).

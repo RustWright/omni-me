@@ -177,11 +177,9 @@ pub async fn journal_record_type(db: &Database) -> RecordType {
 /// projection's authoring-timestamp guard settles which row survives.
 ///
 /// Returns what it declared, or `None` when a declaration already existed.
-pub async fn seed_journal_record_type<S: super::store::EventStore + ?Sized>(
+pub async fn seed_journal_record_type(
     db: &Database,
-    store: &S,
-    projections: &super::projection::ProjectionRunner,
-    device_id: &str,
+    writer: &super::writer::EventWriter,
 ) -> Result<Option<RecordType>, EventError> {
     if load_record_type(db, crate::record_type::JOURNAL)
         .await?
@@ -207,14 +205,20 @@ pub async fn seed_journal_record_type<S: super::store::EventStore + ?Sized>(
         "declaring the journal record type for the first time"
     );
 
-    let event = store
-        .append(
-            super::store::NewEvent::record_type_declared(device_id, preset.clone()).map_err(
-                |e| EventError::Validation(format!("could not build the declaration event: {e}")),
-            )?,
+    writer
+        .append_new(
+            super::store::NewEvent::record_type_declared(writer.device_id(), preset.clone())
+                .map_err(|e| {
+                    EventError::Validation(format!("could not build the declaration event: {e}"))
+                })?,
         )
-        .await?;
-    projections.apply_events(&[event]).await?;
+        .await
+        .map_err(|e| match e {
+            super::writer::WriteError::Event(e) => e,
+            // `record_type_declared` is deliberately unowned, so the guard can
+            // never refuse it — see `only_the_four_app_level_events_are_unowned`.
+            other => EventError::Validation(other.to_string()),
+        })?;
 
     Ok(Some(preset))
 }
@@ -225,8 +229,21 @@ mod tests {
     use crate::events::notes_projection::NotesProjection;
     use crate::events::projection::ProjectionRunner;
     use crate::events::store::{EventStore, NewEvent, SurrealEventStore};
+    use crate::events::writer::EventWriter;
     use crate::record_type::{PropertyDecl, RecordType};
     use chrono::Utc;
+    use std::sync::Arc;
+
+    /// Every feature on: these tests exercise seeding, not the writer's guard,
+    /// and `record_type_declared` is unowned so the guard never fires anyway.
+    fn test_writer(store: &SurrealEventStore, runner: &ProjectionRunner) -> EventWriter {
+        EventWriter::new(
+            Arc::new(store.clone()) as Arc<dyn EventStore>,
+            runner.clone(),
+            crate::config::ALL_FEATURES.iter().copied().collect(),
+            "d1",
+        )
+    }
 
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
@@ -485,7 +502,7 @@ mod tests {
         );
         runner.init_all().await.unwrap();
 
-        let seeded = seed_journal_record_type(&db, &store, &runner, "d1")
+        let seeded = seed_journal_record_type(&db, &test_writer(&store, &runner))
             .await
             .unwrap()
             .expect("a fresh log must be seeded");
@@ -515,7 +532,7 @@ mod tests {
             .unwrap();
         runner.apply_events(&[e]).await.unwrap();
 
-        let seeded = seed_journal_record_type(&db, &store, &runner, "d1")
+        let seeded = seed_journal_record_type(&db, &test_writer(&store, &runner))
             .await
             .unwrap()
             .expect("an upgrading log must be seeded");
@@ -534,13 +551,13 @@ mod tests {
         runner.init_all().await.unwrap();
 
         assert!(
-            seed_journal_record_type(&db, &store, &runner, "d1")
+            seed_journal_record_type(&db, &test_writer(&store, &runner))
                 .await
                 .unwrap()
                 .is_some()
         );
         assert!(
-            seed_journal_record_type(&db, &store, &runner, "d1")
+            seed_journal_record_type(&db, &test_writer(&store, &runner))
                 .await
                 .unwrap()
                 .is_none(),

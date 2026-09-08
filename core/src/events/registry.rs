@@ -122,9 +122,77 @@ pub fn build_projections(
         .collect()
 }
 
+/// Projections a host with no filesystem of its own must never register.
+///
+/// `JournalFile` writes an hledger file through `tokio::fs`. It is owned only by
+/// `Finances`, so a finances-off config already omits it — but ⚠️ that is an
+/// accident of configuration, not a guarantee. A **cold-start** host has no
+/// config at all (the shared layer is itself a projection, so it is empty until
+/// events have been folded) and every feature falls back to its default, which
+/// is `true`. The config filter would let `JournalFile` through on exactly the
+/// boot where nobody asked for it.
+pub const FILESYSTEM_PROJECTIONS: &[&str] = &[JournalFile::NAME];
+
+/// The projections to register for a headless host — the agent.
+///
+/// Same feature gating as [`build_projections`], minus anything in
+/// [`FILESYSTEM_PROJECTIONS`].
+pub fn build_projections_headless(config: &ResolvedConfig) -> Vec<Box<dyn Projection>> {
+    let enabled = enabled_projection_names(config);
+    // The path is never used: every projection that would read it is filtered
+    // out below.
+    all_projections(PathBuf::new())
+        .into_iter()
+        .filter(|p| enabled.contains(p.name()) && !FILESYSTEM_PROJECTIONS.contains(&p.name()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The agent must never register `JournalFile`, **whatever** the config says.
+    ///
+    /// The point of the test is the finances-on case: that is the one the
+    /// ordinary feature filter would let through, and it is reachable on any
+    /// cold start, because an empty config resolves every feature to its default
+    /// of `true`.
+    #[test]
+    fn a_headless_host_never_registers_a_filesystem_projection() {
+        let every_config = [
+            ResolvedConfig::new(ConfigMap::new(), ConfigMap::new()),
+            without(&[Feature::Finances]),
+            without(ALL_FEATURES),
+        ];
+        for config in every_config {
+            let registered = build_projections_headless(&config);
+            let names: Vec<&str> = registered.iter().map(|p| p.name()).collect();
+            for excluded in FILESYSTEM_PROJECTIONS {
+                assert!(
+                    !names.contains(excluded),
+                    "{excluded} reached a headless host: {names:?}"
+                );
+            }
+        }
+    }
+
+    /// Everything else a feature owns still registers — the exclusion must be
+    /// surgical, not a blanket "headless means nothing runs".
+    #[test]
+    fn a_headless_host_still_registers_the_rest() {
+        let config = ResolvedConfig::new(ConfigMap::new(), ConfigMap::new());
+        let registered = build_projections_headless(&config);
+        let names: Vec<&str> = registered.iter().map(|p| p.name()).collect();
+        assert!(names.contains(&NotesProjection::NAME), "{names:?}");
+        assert!(names.contains(&ConfigProjection::NAME), "{names:?}");
+        assert_eq!(
+            names.len(),
+            ALL_PROJECTIONS.len() - FILESYSTEM_PROJECTIONS.len(),
+            "an all-features-on headless host should get everything but the \
+             filesystem projections: {names:?}"
+        );
+    }
+
     use crate::config::{ConfigMap, ConfigValue};
     use crate::events::Projection;
 

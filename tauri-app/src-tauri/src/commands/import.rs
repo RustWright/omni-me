@@ -14,9 +14,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use omni_me_core::db::queries;
-use omni_me_core::events::{
-    EventStore, EventType, NewEvent, ProjectionRunner, journal_record_type,
-};
+use omni_me_core::events::{EventType, EventWriter, NewEvent, journal_record_type};
 use omni_me_core::import::{
     NoteKind, VaultEntry, classify_with_frontmatter, map_frontmatter, parse_date_prefix,
     parse_markdown, walk_vault,
@@ -231,12 +229,9 @@ pub async fn commit_import(
     let record_type = journal_record_type(&state.db).await;
 
     commit_import_inner(
-        &state.event_store,
-        &state.projections,
-        &state.device_id,
+        &state.writer,
         &scanned_root,
         rows,
-        Some(&state.push_debouncer),
         &record_type.property_keys(),
     )
     .await
@@ -245,16 +240,13 @@ pub async fn commit_import(
 /// Pure orchestration: build events from rows, write the batch, tally counts.
 /// Separated from the Tauri command so tests don't need a full `AppState`.
 async fn commit_import_inner(
-    event_store: &dyn EventStore,
-    projections: &ProjectionRunner,
-    device_id: &str,
+    // Threaded in rather than taken from `AppState` so tests can still call this
+    // without one. It carries the device id, the projections and the pusher
+    // nudge together — this used to be four parameters, and the nudge was
+    // `Option`, which is how a bulk import once pushed *nothing*.
+    writer: &EventWriter,
     scanned_root: &Path,
     rows: Vec<AcceptedRow>,
-    // Threaded in rather than taken from `AppState` so tests can still call
-    // this without one — they pass `None`. It is not optional in production:
-    // a bulk import that doesn't nudge the pusher pushes *nothing*, because
-    // `pusher::run_loop` has no interval fallback and only wakes on a trigger.
-    push_debouncer: Option<&omni_me_core::sync::PushDebouncer>,
     // The record type's property keys. Anything it does not name is preserved as
     // `legacy_properties` rather than dropped, which is what lets an imported
     // vault keep frontmatter this install has no declaration for.
@@ -268,7 +260,7 @@ async fn commit_import_inner(
     let mut errors: Vec<String> = Vec::new();
 
     for row in rows {
-        match build_event_for_row(device_id, scanned_root, row, declared) {
+        match build_event_for_row(writer.device_id(), scanned_root, row, declared) {
             Ok((event, kind)) => {
                 new_events.push(event);
                 event_kinds.push(kind);
@@ -277,23 +269,13 @@ async fn commit_import_inner(
         }
     }
 
-    // Both append_batch and apply_events are no-ops on empty input
-    // (store.rs `if events.is_empty() { return ... }` / projection.rs's
-    // `if let Some(last) = events.last()` guard), so no caller-side guard is
-    // needed. The empty-input test below locks that contract in.
-    let batched = event_store
+    // `append_batch` is a no-op on empty input (store.rs's
+    // `if events.is_empty() { return ... }`), so no caller-side guard is needed.
+    // The empty-input test below locks that contract in.
+    writer
         .append_batch(new_events)
         .await
         .map_err(|e| e.to_string())?;
-    projections
-        .apply_events(&batched)
-        .await
-        .map_err(|e| e.to_string())?;
-    if !batched.is_empty()
-        && let Some(pd) = push_debouncer
-    {
-        pd.trigger();
-    }
     let (journal_created, generic_created) =
         event_kinds
             .into_iter()
@@ -990,30 +972,33 @@ mod tests {
     }
 
     /// Locks in the contract that lets `commit_import_inner` skip its caller-side
-    /// empty-input guard: both `EventStore::append_batch` and
-    /// `ProjectionRunner::apply_events` must be no-ops on empty input. If either
-    /// dependency ever changes that contract, this test fails before the silent
-    /// regression reaches production.
+    /// empty-input guard: `EventWriter::append_batch` must be a no-op on empty
+    /// input, all the way down through `EventStore::append_batch` and
+    /// `ProjectionRunner::apply_events`. If any of them ever changes that
+    /// contract, this test fails before the silent regression reaches production.
     #[tokio::test]
     async fn commit_import_empty_rows_returns_zero_counts() {
-        use omni_me_core::events::SurrealEventStore;
+        use omni_me_core::config::ALL_FEATURES;
+        use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
+        use std::sync::Arc;
 
         let db = test_db().await;
         let event_store = SurrealEventStore::new(db.clone());
         let projections = ProjectionRunner::new(db.clone(), vec![]);
         let scanned_root = std::path::PathBuf::from("/");
-
-        let summary = commit_import_inner(
-            &event_store,
-            &projections,
+        // No push debouncer: this test has no sync half, which is exactly the
+        // case `EventWriter`'s `Option` exists for.
+        let writer = EventWriter::new(
+            Arc::new(event_store) as Arc<dyn EventStore>,
+            projections,
+            ALL_FEATURES.iter().copied().collect(),
             "test-device",
-            &scanned_root,
-            vec![],
-            None,
-            &declared().property_keys(),
-        )
-        .await
-        .expect("empty input must not error");
+        );
+
+        let summary =
+            commit_import_inner(&writer, &scanned_root, vec![], &declared().property_keys())
+                .await
+                .expect("empty input must not error");
 
         assert_eq!(summary.journal_created, 0);
         assert_eq!(summary.generic_created, 0);

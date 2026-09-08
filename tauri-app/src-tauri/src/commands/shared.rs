@@ -1,7 +1,15 @@
-use chrono::Utc;
+//! The command layer's half of the feature gate, plus thin delegation to the
+//! append boundary.
+//!
+//! The append tails themselves live in `omni_me_core::events::EventWriter` —
+//! the guard, the projection fold and the pusher nudge belong together, and a
+//! second binary that authors events must inherit all three rather than
+//! re-implement them. What stays here is the *command*-level guard, which has no
+//! core equivalent because it is about refusing a command outright, not about
+//! refusing an append.
 
 use omni_me_core::config::Feature;
-use omni_me_core::events::{Event, EventStore, EventType, NewEvent};
+use omni_me_core::events::{Event, EventType, NewEvent, feature_off_message};
 
 use crate::AppState;
 
@@ -19,44 +27,14 @@ pub(crate) fn require_feature(state: &AppState, feature: Feature) -> Result<(), 
 /// Some commands genuinely serve two: Obsidian import/export moves journal
 /// entries *and* generic notes, so it stays available while either is on.
 pub(crate) fn require_any_feature(state: &AppState, features: &[Feature]) -> Result<(), String> {
-    if features.iter().any(|f| state.boot_features.contains(f)) {
+    if features.iter().any(|f| state.writer.features().contains(f)) {
         return Ok(());
     }
+    // Same wording as the writer's own refusal, shared from core so the two
+    // cannot drift.
     let refusal = feature_off_message(features);
     tracing::warn!(%refusal, "command refused: feature off");
     Err(refusal)
-}
-
-/// Refuse to author an event whose feature is switched off.
-///
-/// Called from the shared append tails, so it covers **every** local write path
-/// in one place — see [`EventType::authoring_features`] for why the map lives on
-/// the event type rather than at each command. Inbound events are untouched: the
-/// sync pull path does not come through here, so a device keeps a complete log of
-/// features it has switched off.
-fn guard_event_type(state: &AppState, event_type: &str) -> Result<(), String> {
-    // An unparseable type is not this guard's business. The event store's own
-    // validation owns it, and answering here would report a typo as "feature off".
-    let Ok(parsed) = event_type.parse::<EventType>() else {
-        return Ok(());
-    };
-    let features = parsed.authoring_features();
-    if features.is_empty() {
-        return Ok(());
-    }
-    require_any_feature(state, features)
-}
-
-/// Pure so the wording is testable without standing up an `AppState`, following
-/// `check_wipe_confirmation`'s precedent.
-fn feature_off_message(features: &[Feature]) -> String {
-    let names: Vec<&str> = features.iter().map(|f| f.label()).collect();
-    let subject = match names.as_slice() {
-        [] => "This feature".to_string(),
-        [one] => format!("{one} is"),
-        [rest @ .., last] => format!("{} and {last} are", rest.join(", ")),
-    };
-    format!("{subject} switched off. Turn it back on in Settings, then restart the app.")
 }
 
 /// Append a pre-built event envelope, fold it through the projection runner, and
@@ -69,27 +47,11 @@ pub(crate) async fn append_new_and_apply(
     state: &AppState,
     event: NewEvent,
 ) -> Result<Event, String> {
-    guard_event_type(state, &event.event_type)?;
-
-    let stored = state
-        .event_store
-        .append(event)
-        .await
-        .map_err(|e| e.to_string())?;
-
     state
-        .projections
-        .apply_events(std::slice::from_ref(&stored))
+        .writer
+        .append_new(event)
         .await
-        .map_err(|e| e.to_string())?;
-
-    // Auto-sync (push half): nudge the debounced pusher so this edit propagates
-    // without a manual Sync. `trigger()` is a non-blocking notify; the debouncer
-    // coalesces a burst of edits into one push after its quiet window. Inbound
-    // events arrive via the separate pull scheduler (`sync::PullScheduler`).
-    state.push_debouncer.trigger();
-
-    Ok(stored)
+        .map_err(|e| e.to_string())
 }
 
 /// Append a single event and immediately fold it through the projection runner.
@@ -102,74 +64,34 @@ pub(crate) async fn append_and_apply(
     aggregate_id: String,
     payload: serde_json::Value,
 ) -> Result<(), String> {
-    let event = NewEvent {
-        id: None,
-        event_type: event_type.to_string(),
-        aggregate_id,
-        timestamp: Utc::now(),
-        device_id: state.device_id.clone(),
-        payload,
-    };
-    append_new_and_apply(state, event).await?;
-    Ok(())
+    state
+        .writer
+        .append(event_type, aggregate_id, payload)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
-/// Append a batch of events, fold them through the projection runner, and nudge
-/// the pusher — the batch twin of [`append_new_and_apply`].
-///
-/// **Why this exists as a helper rather than three calls at each site.** The
-/// `SyncBuffer` this app was designed around was never fed, so nothing woke the
-/// pusher; the fix was to nudge it from the shared append tail. That works for
-/// the 39 command call sites that go through these helpers — but it turned
-/// "every append nudges the pusher" into a rule you have to remember, and five
-/// sites had already forgotten it: the Obsidian batch import, the hledger
-/// journal import, the recurring scanner, and both wipe-path appends.
-///
-/// That is not a slow-sync bug, it is a no-sync bug. `pusher::run_loop` blocks
-/// on `trigger.notified()` with **no interval fallback**, so an un-nudged bulk
-/// import of 10k events pushed *nothing* until some unrelated edit, a manual
-/// Sync, or the retry engine happened to fire. Pairing the two operations in
-/// one function is what stops a sixth instance;
-/// `commands::shared::tests::no_command_appends_events_directly` enforces it.
+/// Batch twin of [`append_new_and_apply`].
 pub(crate) async fn append_batch_and_apply(
     state: &AppState,
     events: Vec<NewEvent>,
 ) -> Result<Vec<Event>, String> {
-    // All-or-nothing, like the server's push validation: a batch that is half a
-    // disabled feature's would otherwise land partially.
-    for event in &events {
-        guard_event_type(state, &event.event_type)?;
-    }
-
-    let appended = state
-        .event_store
+    state
+        .writer
         .append_batch(events)
         .await
-        .map_err(|e| e.to_string())?;
-
-    state
-        .projections
-        .apply_events(&appended)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !appended.is_empty() {
-        state.push_debouncer.trigger();
-    }
-
-    Ok(appended)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use omni_me_core::config::Feature;
-    use omni_me_core::events::EventType;
 
     /// Every command that reaches the box on a feature's behalf must refuse when
     /// that feature is off.
     ///
     /// The **write** side needs no scan: `authoring_features` is an exhaustive
-    /// match, and `guard_event_type` sits in the append tails that
+    /// match, and the guard sits inside `EventWriter`, which
     /// `no_command_appends_events_directly` already forces every write through.
     /// Outbound HTTP has no such chokepoint — `box_request` is generic — so a
     /// command can spend an LLM call or hit a bank source with its feature off
@@ -219,64 +141,7 @@ mod tests {
         );
     }
 
-    /// The write-side map must not quietly acquire an unowned event type.
-    ///
-    /// The match in `authoring_features` is exhaustive, so a new variant cannot
-    /// compile without an arm — but an arm returning `&[]` is the easy way to
-    /// silence it, and `&[]` means ungated forever. This pins the four that are
-    /// legitimately unowned so a fifth has to be argued for here.
-    ///
-    /// `record_type_declared` is the fourth: a declaration is the shape of your
-    /// own data, so it must not depend on the feature that renders it being on,
-    /// and the first-run seed is emitted at startup before any feature has been
-    /// consulted. `events::registry` makes the same call on the read side, where
-    /// `RecordTypeProjection` sits in `NEVER_GATED` beside config's.
-    #[test]
-    fn only_the_four_app_level_events_are_unowned() {
-        let unowned: Vec<String> = EventType::ALL
-            .iter()
-            .filter(|t| t.authoring_features().is_empty())
-            .map(|t| t.to_string())
-            .collect();
-        assert_eq!(
-            unowned,
-            vec![
-                "data_wiped",
-                "feedback_captured",
-                "config_set",
-                "record_type_declared"
-            ],
-            "an event type became unowned (ungated) — or a legitimately unowned \
-             one gained an owner; if this is deliberate, update this list and say why"
-        );
-    }
-
-    /// Each feature must own at least one event type, or turning it off would
-    /// leave its write path unguarded.
-    #[test]
-    fn every_feature_owns_at_least_one_event_type() {
-        for feature in omni_me_core::config::ALL_FEATURES {
-            assert!(
-                EventType::ALL
-                    .iter()
-                    .any(|t| t.authoring_features().contains(feature)),
-                "{feature} owns no event type, so nothing guards its writes"
-            );
-        }
-    }
-
-    #[test]
-    fn the_refusal_names_the_feature_and_says_what_to_do() {
-        let one = super::feature_off_message(&[Feature::Finances]);
-        assert!(one.contains("Finances is switched off"), "{one}");
-        assert!(one.contains("Settings"), "{one}");
-        assert!(one.contains("restart"), "{one}");
-
-        let two = super::feature_off_message(&[Feature::Journal, Feature::Notes]);
-        assert!(two.contains("Journal and Notes are switched off"), "{two}");
-    }
-
-    /// No command may reach for `state.event_store.append*` directly.
+    /// Nothing in this crate may append an event outside the writer.
     ///
     /// Appending an event and nudging the push debouncer have to happen
     /// together: `pusher::run_loop` blocks on `trigger.notified()` with **no
@@ -285,20 +150,22 @@ mod tests {
     /// or the retry engine happens to fire.
     ///
     /// This started as a rule people remembered, and six sites had already
-    /// forgotten it: the Obsidian batch import, the hledger journal import, the
-    /// recurring scanner, both wipe-path appends, and `dismiss_batch`. The
-    /// helpers in this module pair the two operations; this test is what stops
+    /// forgotten it. `EventWriter` pairs the operations; this test is what stops
     /// a seventh.
     ///
-    /// **Known blind spot, deliberately left open.** The scan matches the
-    /// literal `state.event_store.append`, so a function that receives the
-    /// store as a `&dyn EventStore` parameter is invisible to it. Exactly one
-    /// does: `import::commit_import_inner`, which threads the store *and* an
-    /// `Option<&PushDebouncer>` so its tests can run without an `AppState`, and
-    /// nudges by hand once the batch lands. Widening the needle to a bare
-    /// `event_store.append` would flag that correct site on every run, so the
-    /// audit lives here instead: a second parameter-threaded appender must nudge
-    /// the same way, and this note is what tells you the test won't catch it.
+    /// ⚠️ **The needle is `store.append`, not `state.event_store.append`.** The
+    /// narrower form missed every function that received the store as a
+    /// parameter instead of reading it off `AppState`, and the old note here
+    /// claimed there was exactly one. There were four: both schedulers,
+    /// `import::commit_import_inner`, and `core`'s own
+    /// `seed_journal_record_type` — which this scan could never have seen, since
+    /// it only walks this crate. All four take an `&EventWriter` now, so the
+    /// broad needle has nothing legitimate left to flag and any new match is a
+    /// real bypass rather than an accepted exception.
+    ///
+    /// The one that got away is the reason `EventWriter` lives in `core` rather
+    /// than here: a scan bounded by one crate cannot police an append performed
+    /// in another.
     #[test]
     fn no_command_appends_events_directly() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -332,16 +199,34 @@ mod tests {
                 // unspaced needle. This test passed against a planted multi-line
                 // violation until that was found.
                 let flat: String = text.split_whitespace().collect();
-                if flat.contains("state.event_store.append") {
+                // Catches `state.event_store.append`, a threaded `event_store`
+                // parameter, and `append_batch` alike.
+                if flat.contains("store.append") {
                     offenders.push(path.display().to_string());
                 }
             }
         }
 
         walk(&src, &mut offenders);
+
+        // The agent is a second *host* that authors events, so it needs the same
+        // chokepoint. Reached by traversal from this crate's manifest dir, which
+        // is admittedly the wrong home for it — a scan that polices another crate
+        // belongs in `core`. Moving it there means triaging the eight non-test
+        // `store.append` sites core and server still hold (auto-import sources,
+        // the LLM pipeline, and the two legitimately-exempt sync paths); until
+        // that is done, covering the agent here beats not covering it at all.
+        let agent_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agent/src");
+        assert!(
+            agent_src.is_dir(),
+            "agent/src not found at {agent_src:?} — this scan has silently stopped \
+             covering the agent, which is exactly the gap it was added to close"
+        );
+        walk(&agent_src, &mut offenders);
+
         assert!(
             offenders.is_empty(),
-            "these append events without going through commands::shared, so the push \
+            "these append events without going through EventWriter, so the push \
              debouncer is never nudged and the events never sync: {offenders:#?}"
         );
     }

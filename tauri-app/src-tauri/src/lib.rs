@@ -10,8 +10,11 @@ use tauri::{Emitter, Manager};
 use omni_me_core::config::{ConfigMap, Feature, ResolvedConfig};
 use omni_me_core::db::{self, Database};
 // The projection *list* lives in `registry`, not here — see `build_projections`.
-use omni_me_core::events::{ProjectionRunner, SurrealEventStore, load_persisted, registry};
+use omni_me_core::events::{
+    EventStore, EventWriter, ProjectionRunner, SurrealEventStore, load_persisted, registry,
+};
 use omni_me_core::ledger::{self, JournalArtifacts};
+use omni_me_core::runtime::ServerUrlPolicy;
 use omni_me_core::sync::{
     NetworkMonitor, PullEvent, PullScheduler, PushDebouncer, RetryEngine, StatusReporter,
     SyncClient, wire_accelerator, wire_puller_network,
@@ -70,103 +73,30 @@ const ROSTER_FILE: &str = "roster";
 /// event: there is no way to append one to the log and have it stay local.
 const CONFIG_OVERRIDES_FILE: &str = "config_overrides.json";
 
-/// Load a string value from a file, or use a default and persist it.
+/// This client's data-root and sync-target policy.
+///
+/// The precedence rules and the non-production asymmetry live in
+/// `omni_me_core::runtime` so the headless agent inherits them; only these
+/// constants are host-specific.
+fn server_url_policy() -> ServerUrlPolicy<'static> {
+    ServerUrlPolicy {
+        env_var: SERVER_URL_ENV,
+        url_file: SERVER_URL_FILE,
+        build_default: DEFAULT_SERVER_URL,
+        non_production_default: NON_PRODUCTION_SERVER_URL,
+    }
+}
+
 fn load_or_create(app_data: &Path, filename: &str, default_fn: impl FnOnce() -> String) -> String {
-    let path = app_data.join(filename);
-    if let Ok(val) = std::fs::read_to_string(&path) {
-        let val = val.trim().to_string();
-        if !val.is_empty() {
-            return val;
-        }
-    }
-    let val = default_fn();
-    let _ = std::fs::write(&path, &val);
-    val
+    omni_me_core::runtime::load_or_create(app_data, filename, default_fn)
 }
 
-/// Resolve the app-data root, honouring [`DATA_DIR_ENV`].
-///
-/// Returns the path **and** whether it came from the override, because that flag
-/// is what drives the non-production posture. Callers must not re-derive it by
-/// comparing paths — a dev root that happens to equal the default would then be
-/// silently treated as production.
 fn resolve_app_data(default_dir: PathBuf) -> (PathBuf, bool) {
-    choose_app_data(default_dir, std::env::var(DATA_DIR_ENV).ok().as_deref())
+    omni_me_core::runtime::resolve_app_data(default_dir, DATA_DIR_ENV)
 }
 
-/// Pure half of [`resolve_app_data`] — no env access, so it can be tested.
-fn choose_app_data(default_dir: PathBuf, env_dir: Option<&str>) -> (PathBuf, bool) {
-    match env_dir.map(str::trim).filter(|d| !d.is_empty()) {
-        Some(dir) => (PathBuf::from(dir), true),
-        None => (default_dir, false),
-    }
-}
-
-/// Resolve the sync server URL for this run.
-///
-/// In production this is `OMNI_SERVER_URL` → persisted file → build-time default.
-///
-/// Under a data-dir override the persisted file is **ignored**, and only an
-/// explicit `OMNI_SERVER_URL` can move the target off localhost. That asymmetry
-/// is intentional: a dev data root is very often a *copy* of the live one, and
-/// honouring the copied `server_url` would aim a dev build straight at the box —
-/// the exact accident this whole mechanism exists to prevent.
-/// An explicitly-set `OMNI_SERVER_URL` outranks the persisted file — and is
-/// deliberately **not** written back to it, so unsetting the env restores the
-/// saved value instead of having silently rewritten it.
-///
-/// The old order (file first, env consulted only as a fresh-install default)
-/// meant a device that had ever run an older build was pinned to that build's
-/// server URL with no recovery short of deleting the app-data dir. That is the
-/// bug that bit this user's desktop.
 fn resolve_server_url(app_data: &Path, non_production: bool) -> String {
-    let env_url = std::env::var(SERVER_URL_ENV).ok();
-    if non_production {
-        // No disk read at all: the persisted file is not merely outranked here,
-        // it is not consulted.
-        return choose_server_url(None, env_url.as_deref(), true, DEFAULT_SERVER_URL);
-    }
-    let persisted = std::fs::read_to_string(app_data.join(SERVER_URL_FILE)).ok();
-    let chosen = choose_server_url(
-        persisted.as_deref(),
-        env_url.as_deref(),
-        false,
-        DEFAULT_SERVER_URL,
-    );
-    // Preserve `load_or_create`'s write-back: a fresh install records the default
-    // it resolved. An env-supplied value is never written (see
-    // `load_with_env_override`), so unsetting the env restores the saved value.
-    let nothing_persisted = persisted.as_deref().map(str::trim).unwrap_or("").is_empty();
-    if nothing_persisted && env_url.is_none() {
-        let _ = std::fs::write(app_data.join(SERVER_URL_FILE), &chosen);
-    }
-    chosen
-}
-
-/// Pure half of [`resolve_server_url`]: precedence only, no env and no disk.
-///
-/// The asymmetry between the two modes is the safety property worth testing —
-/// under `non_production` a persisted value can never win, because a dev data
-/// root is usually a copy of the live one and would otherwise carry the box's
-/// address straight into a test run.
-fn choose_server_url(
-    persisted: Option<&str>,
-    env_url: Option<&str>,
-    non_production: bool,
-    build_default: &str,
-) -> String {
-    let env_url = env_url.map(str::trim).filter(|v| !v.is_empty());
-    if non_production {
-        return env_url.unwrap_or(NON_PRODUCTION_SERVER_URL).to_string();
-    }
-    if let Some(url) = env_url {
-        return url.to_string();
-    }
-    persisted
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or(build_default)
-        .to_string()
+    server_url_policy().resolve(app_data, non_production)
 }
 
 /// Load the account roster — one account name per line; `#` comments and blank
@@ -243,16 +173,18 @@ pub struct AppState {
     /// change what got registered at boot, which is why
     /// `ConfigKey::applies_immediately` exists.
     pub config: Arc<tokio::sync::RwLock<ResolvedConfig>>,
-    /// The features that were on when this launch built its projection list.
+    /// The sanctioned append path — guard, append, project, nudge the pusher,
+    /// welded into one type in `core` so every binary inherits all four.
     ///
-    /// Deliberately a **boot snapshot** rather than a live read of `config`, and
-    /// that is the whole point: a feature is inert or it isn't. Its projections,
-    /// schedulers and tabs were all decided at startup, so a command guard
-    /// reading the live value would produce a half-off feature between the toggle
-    /// and the relaunch — commands refusing while the tab is still up and the
-    /// projection still being maintained. `ConfigKey::applies_immediately` is
-    /// `false` for every feature key for the same reason.
-    pub boot_features: std::collections::BTreeSet<Feature>,
+    /// It also owns the feature snapshot the command guards read, which is
+    /// deliberately a **boot snapshot** rather than a live read of `config`: a
+    /// feature is inert or it isn't. Its projections, schedulers and tabs were
+    /// all decided at startup, so a command guard reading the live value would
+    /// produce a half-off feature between the toggle and the relaunch — commands
+    /// refusing while the tab is still up and the projection still being
+    /// maintained. `ConfigKey::applies_immediately` is `false` for every feature
+    /// key for the same reason.
+    pub writer: Arc<EventWriter>,
     pub app_data_dir: std::path::PathBuf,
     /// True when the app-data root came from [`DATA_DIR_ENV`] rather than the OS
     /// default — i.e. this run is deliberately NOT on the user's real data.
@@ -449,15 +381,7 @@ impl AppState {
 /// failures; callers may still wire the monitor to this even if the target
 /// is slightly stale — it only drives retry hints, not correctness.
 fn probe_target_from_url(url: &str) -> String {
-    if let Ok(parsed) = tauri::Url::parse(url) {
-        let host = parsed.host_str().unwrap_or("127.0.0.1");
-        let port = parsed
-            .port_or_known_default()
-            .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
-        return format!("{host}:{port}");
-    }
-    // Last resort — match the default server URL shape.
-    "127.0.0.1:3000".to_string()
+    omni_me_core::sync::probe_target(url)
 }
 
 /// Remove stale SurrealKV LOCK file if the owning process is no longer alive.
@@ -617,27 +541,6 @@ pub fn run() {
                     ulid::Ulid::new().to_string()
                 });
 
-                // Declare the journal's shape if the log has never carried one.
-                // Awaited rather than spawned, unlike the device-id audit below:
-                // the first journal event of this session must not be projected
-                // against a shape that is still being decided. The cost after the
-                // first launch is one keyed SELECT that finds a row and returns —
-                // the events scan and the append happen once, ever.
-                //
-                // Non-fatal: a failure here leaves the log undeclared, and
-                // `journal_record_type` falls back to the pre-record-type shape,
-                // which is a working app rather than a refused boot.
-                if let Err(e) = omni_me_core::events::seed_journal_record_type(
-                    &db,
-                    &event_store,
-                    &projections,
-                    &device_id,
-                )
-                .await
-                {
-                    tracing::warn!(error = %e, "could not seed the journal record type");
-                }
-
                 let server_url = resolve_server_url(&app_data, non_production);
                 let server_token =
                     load_or_create(&app_data, SERVER_TOKEN_FILE, String::new);
@@ -713,6 +616,44 @@ pub fn run() {
                     PushDebouncer::spawn(sync_client.clone(), db.clone());
                 let (retry_engine, _retry_task) =
                     RetryEngine::spawn(sync_client.clone(), db.clone(), &push_debouncer);
+
+                // MUST be built here, not earlier: the writer owns the pusher
+                // nudge, and one built before `push_debouncer` exists would
+                // append without waking the pusher — which is a no-sync bug,
+                // not a slow-sync one (`pusher::run_loop` has no interval
+                // fallback).
+                let writer = Arc::new(
+                    EventWriter::from_config(
+                        Arc::new(event_store.clone()) as Arc<dyn EventStore>,
+                        projections.clone(),
+                        &config,
+                        device_id.clone(),
+                    )
+                    .with_push_debouncer(push_debouncer.clone()),
+                );
+
+                // Declare the journal's shape if the log has never carried one.
+                // MOVED below the writer deliberately. It used to run before the
+                // push debouncer existed, so the declaration projected locally and
+                // never pushed — every device silently seeded its own copy. It is
+                // still ahead of anything that can author a journal event, which is
+                // the ordering that actually matters.
+                //
+                // Awaited rather than spawned, unlike the device-id audit below:
+                // the first journal event of this session must not be projected
+                // against a shape that is still being decided. The cost after the
+                // first launch is one keyed SELECT that finds a row and returns —
+                // the events scan and the append happen once, ever.
+                //
+                // Non-fatal: a failure here leaves the log undeclared, and
+                // `journal_record_type` falls back to the pre-record-type shape,
+                // which is a working app rather than a refused boot.
+                if let Err(e) =
+                    omni_me_core::events::seed_journal_record_type(&db, &writer).await
+                {
+                    tracing::warn!(error = %e, "could not seed the journal record type");
+                }
+
                 let probe_target = probe_target_from_url(&server_url);
                 let (network_monitor, _net_task) = NetworkMonitor::spawn(probe_target);
                 let _accel_task = wire_accelerator(&network_monitor, retry_engine.clone());
@@ -726,13 +667,7 @@ pub fn run() {
                 // wake the pusher; it used to append without nudging, and
                 // `pusher::run_loop` has no interval fallback to cover that.
                 if config.enabled(Feature::Finances) {
-                    recurring_scanner::spawn(
-                        db.clone(),
-                        event_store.clone(),
-                        projections.clone(),
-                        device_id.clone(),
-                        push_debouncer.clone(),
-                    );
+                    recurring_scanner::spawn(db.clone(), writer.clone());
                 } else {
                     tracing::info!("finances off — recurring scanner not spawned");
                 }
@@ -743,14 +678,7 @@ pub fn run() {
                 // locally but never synced, reading closed on this device and
                 // open on every other.
                 if config.enabled(Feature::Journal) {
-                    auto_close_scheduler::spawn(
-                        db.clone(),
-                        event_store.clone(),
-                        projections.clone(),
-                        device_id.clone(),
-                        timezone_shared.clone(),
-                        push_debouncer.clone(),
-                    );
+                    auto_close_scheduler::spawn(db.clone(), writer.clone(), timezone_shared.clone());
                 } else {
                     tracing::info!("journal off — auto-close scheduler not spawned");
                 }
@@ -804,11 +732,7 @@ pub fn run() {
                     timezone: timezone_shared,
                     base_currency: tokio::sync::RwLock::new(base_currency),
                     roster: tokio::sync::RwLock::new(roster),
-                    boot_features: omni_me_core::config::ALL_FEATURES
-                        .iter()
-                        .copied()
-                        .filter(|f| config.enabled(*f))
-                        .collect(),
+                    writer,
                     config: Arc::new(tokio::sync::RwLock::new(config)),
                     app_data_dir: app_data,
                     non_production,
@@ -967,105 +891,6 @@ pub fn run() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn mobile_entry_point() {
     run();
-}
-
-#[cfg(test)]
-mod runtime_profile_tests {
-    use super::*;
-
-    const BOX_URL: &str = "http://box.example:3000";
-
-    // --- the safety property ---------------------------------------------
-
-    /// **The test this whole mechanism exists for.** A dev data root is usually
-    /// a *copy* of the live one, so it carries the live `server_url` file. That
-    /// file must not be able to point a test build at the real box — the user
-    /// is using the app live, and a test write would land indistinguishable
-    /// fake rows in the real ledger.
-    #[test]
-    fn non_production_ignores_a_copied_server_url_file() {
-        let url = choose_server_url(Some(BOX_URL), None, true, BOX_URL);
-        assert_eq!(url, NON_PRODUCTION_SERVER_URL);
-    }
-
-    /// Reaching the box must require saying so out loud, never happen by default.
-    #[test]
-    fn non_production_defaults_to_localhost_not_the_build_default() {
-        // `DEFAULT_SERVER_URL` is baked to the box address by the overlay's CI,
-        // so falling back to it would defeat the whole safeguard.
-        let url = choose_server_url(None, None, true, BOX_URL);
-        assert_eq!(url, NON_PRODUCTION_SERVER_URL);
-        assert_ne!(url, BOX_URL);
-    }
-
-    /// An explicit env var is still honoured — the mechanism restricts defaults,
-    /// it does not forbid a deliberate choice.
-    #[test]
-    fn non_production_honours_an_explicit_env_url() {
-        let url = choose_server_url(Some(BOX_URL), Some("http://dev:3000"), true, BOX_URL);
-        assert_eq!(url, "http://dev:3000");
-    }
-
-    // --- production precedence -------------------------------------------
-
-    /// The stale-`server_url` fix: env now outranks the persisted file, which
-    /// previously won unconditionally and could only be changed by `rm -rf`.
-    #[test]
-    fn env_outranks_the_persisted_file_in_production() {
-        let url = choose_server_url(
-            Some("http://old:3000"),
-            Some("http://new:3000"),
-            false,
-            BOX_URL,
-        );
-        assert_eq!(url, "http://new:3000");
-    }
-
-    #[test]
-    fn persisted_file_outranks_the_build_default_in_production() {
-        let url = choose_server_url(Some("http://saved:3000"), None, false, BOX_URL);
-        assert_eq!(url, "http://saved:3000");
-    }
-
-    #[test]
-    fn falls_back_to_the_build_default_when_nothing_is_set() {
-        assert_eq!(choose_server_url(None, None, false, BOX_URL), BOX_URL);
-    }
-
-    /// Blank and whitespace-only values are absent, not empty overrides — an
-    /// exported-but-unset env var must not blank the server URL.
-    #[test]
-    fn blank_values_are_treated_as_absent() {
-        assert_eq!(
-            choose_server_url(Some("  "), Some("   "), false, BOX_URL),
-            BOX_URL
-        );
-        assert_eq!(
-            choose_server_url(None, Some(""), true, BOX_URL),
-            NON_PRODUCTION_SERVER_URL
-        );
-    }
-
-    // --- data root --------------------------------------------------------
-
-    #[test]
-    fn data_dir_override_flags_non_production() {
-        let (dir, non_prod) = choose_app_data(PathBuf::from("/live"), Some("/tmp/dev"));
-        assert_eq!(dir, PathBuf::from("/tmp/dev"));
-        assert!(
-            non_prod,
-            "an overridden data root is non-production by definition"
-        );
-    }
-
-    #[test]
-    fn absent_or_blank_data_dir_keeps_the_os_default_and_stays_production() {
-        for env in [None, Some(""), Some("   ")] {
-            let (dir, non_prod) = choose_app_data(PathBuf::from("/live"), env);
-            assert_eq!(dir, PathBuf::from("/live"), "env={env:?}");
-            assert!(!non_prod, "env={env:?} must not flip the profile");
-        }
-    }
 }
 
 #[cfg(test)]

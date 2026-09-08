@@ -15,6 +15,7 @@ pub use client::{
 pub use diagnostics::{DeviceIdAudit, audit_device_ids};
 pub use network::{
     DEFAULT_PROBE_INTERVAL, DEFAULT_PROBE_TIMEOUT, NetworkEvent, NetworkMonitor, NetworkState,
+    probe_target,
 };
 pub use puller::{
     DEFAULT_PULL_INTERVAL, DEFAULT_PULL_WARMUP, PullEvent, PullScheduler,
