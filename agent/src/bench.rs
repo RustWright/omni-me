@@ -31,6 +31,13 @@
 //!
 //! ⚠️ On a rate-capped endpoint, set `OMNI_AGENT_LLM_MIN_INTERVAL_MS`. Without it
 //! the cap returns errors that this scorecard would report as the model failing.
+//!
+//! ⚠️ **Run it as `cargo run -p omni-me-agent -- --bench`, never a prebuilt
+//! binary.** A run takes long enough that the source usually moves underneath it,
+//! and a stale binary produces a plausible scorecard measuring code that no longer
+//! exists — which happened: a "-20 point constraint tax" was recorded from a
+//! binary built eight minutes before the fix it was meant to be testing. `cargo
+//! run` rebuilds; a path into `target/debug` does not.
 
 use omni_me_core::assistant::{Session, StopReason};
 use omni_me_core::config::ResolvedConfig;
