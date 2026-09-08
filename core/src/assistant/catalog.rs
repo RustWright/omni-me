@@ -32,6 +32,7 @@
 //! [`every_queryable_projection_is_catalogued`] is what stops that being silent.
 
 use crate::config::{Feature, ResolvedConfig};
+use crate::events::{NotesProjection, RoutinesProjection};
 use crate::record_type::JOURNAL;
 
 /// How a row's identity behaves, which decides whether the model can construct
@@ -99,6 +100,13 @@ pub struct CatalogEntry {
     pub name: &'static str,
     /// The projection table it reads.
     pub table: &'static str,
+    /// The projection that maintains that table.
+    ///
+    /// Recorded so [`every_queryable_projection_is_catalogued`] can check coverage
+    /// by looking it up rather than through a hand-maintained mapping — which
+    /// would have to be edited every time a type is added, and would fail
+    /// confusingly when someone forgot.
+    pub projection: &'static str,
     /// Off means the type is absent from `list_types` entirely, rather than
     /// present and erroring — a disabled feature should not look like a broken one.
     pub feature: Feature,
@@ -121,6 +129,7 @@ pub struct CatalogEntry {
 const JOURNAL_ENTRY: CatalogEntry = CatalogEntry {
     name: JOURNAL,
     table: "journal_entries",
+    projection: NotesProjection::NAME,
     feature: Feature::Journal,
     description: "A dated journal entry. One per calendar day.",
     identity: IdentityKind::Date,
@@ -155,6 +164,7 @@ const JOURNAL_ENTRY: CatalogEntry = CatalogEntry {
 const NOTE: CatalogEntry = CatalogEntry {
     name: "note",
     table: "generic_notes",
+    projection: NotesProjection::NAME,
     feature: Feature::Notes,
     description: "A free-standing note with a title and a body.",
     identity: IdentityKind::Opaque,
@@ -172,6 +182,7 @@ const NOTE: CatalogEntry = CatalogEntry {
 const ROUTINE: CatalogEntry = CatalogEntry {
     name: "routine",
     table: "routine_groups",
+    projection: RoutinesProjection::NAME,
     feature: Feature::Routines,
     description: "A repeating group of things done together, and its history.",
     identity: IdentityKind::Opaque,
@@ -236,6 +247,7 @@ pub fn lookup(config: &ResolvedConfig, name: &str) -> Option<&'static CatalogEnt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::BudgetProjection;
     use crate::events::registry::ALL_PROJECTIONS;
 
     /// Projections whose tables are not records anyone would search.
@@ -264,16 +276,11 @@ mod tests {
             if NOT_QUERYABLE.contains(name) {
                 continue;
             }
-            // `notes` backs both journal and note, so match on the table's owner
-            // rather than expecting a 1:1 name mapping.
-            let covered = match *name {
-                "notes" => ALL_ENTRIES.iter().any(|e| e.name == JOURNAL)
-                    && ALL_ENTRIES.iter().any(|e| e.name == "note"),
-                "routines" => ALL_ENTRIES.iter().any(|e| e.name == "routine"),
-                _ => false,
-            };
+            // Looked up rather than mapped by hand: one projection can back
+            // several types (`notes` serves both journal and note), so a 1:1
+            // name mapping would be wrong as well as another thing to maintain.
             assert!(
-                covered,
+                ALL_ENTRIES.iter().any(|e| e.projection == *name),
                 "projection `{name}` has no catalog entry and is not listed in \
                  NOT_QUERYABLE, so the assistant cannot see its records and \
                  nothing else would report it"
@@ -295,6 +302,7 @@ mod tests {
         const TRANSACTION: CatalogEntry = CatalogEntry {
             name: "transaction",
             table: "transactions",
+            projection: BudgetProjection::NAME,
             feature: Feature::Finances,
             description: "A dated ledger entry with balanced postings.",
             identity: IdentityKind::Opaque,
