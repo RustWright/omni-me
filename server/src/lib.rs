@@ -509,7 +509,10 @@ mod tests {
             }),
             ..Default::default()
         };
-        assert_eq!(build_llm_client(&creds, None, ClientOptions::default()).model_name(), "llava");
+        assert_eq!(
+            build_llm_client(&creds, None, ClientOptions::default()).model_name(),
+            "llava"
+        );
         assert!(build_extractor(&creds).name().contains("gemini"));
     }
 }

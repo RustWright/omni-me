@@ -239,15 +239,15 @@ fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClie
         .iter()
         .any(|k| std::env::var(k).is_ok());
     if overrides {
-        let llm = creds.llm.get_or_insert_with(|| {
-            omni_me_core::credentials::LlmProviderConfig {
+        let llm = creds
+            .llm
+            .get_or_insert_with(|| omni_me_core::credentials::LlmProviderConfig {
                 provider: "openai_compatible".to_string(),
                 base_url: None,
                 model: None,
                 api_key: None,
                 vision: false,
-            }
-        });
+            });
         llm.provider = "openai_compatible".to_string();
         if let Ok(v) = std::env::var(LLM_BASE_URL_ENV) {
             llm.base_url = Some(v);

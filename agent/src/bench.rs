@@ -132,7 +132,12 @@ pub async fn run(db: &Database, config: &ResolvedConfig, llm: &dyn LlmClient) {
     let free = run_variant(db, config, llm, false).await;
     let constrained = run_variant(db, config, llm, true).await;
 
-    println!("  free-form         {}/{} ({:.0}%)", free.correct, free.total, free.pct());
+    println!(
+        "  free-form         {}/{} ({:.0}%)",
+        free.correct,
+        free.total,
+        free.pct()
+    );
     println!(
         "  schema-constrained {}/{} ({:.0}%){}",
         constrained.correct,
@@ -167,7 +172,14 @@ async fn run_variant(
     llm: &dyn LlmClient,
     constrained: bool,
 ) -> Score {
-    println!("--- {}", if constrained { "schema-constrained" } else { "free-form" });
+    println!(
+        "--- {}",
+        if constrained {
+            "schema-constrained"
+        } else {
+            "free-form"
+        }
+    );
     let mut score = Score {
         correct: 0,
         total: CASES.len(),
@@ -206,8 +218,8 @@ async fn run_variant(
 
         let why = match (reached, answered) {
             (true, true) => "OK ",
-            (false, true) => "   ",     // answered, but not the way expected
-            (true, false) => "NF ",     // right verb, never finished
+            (false, true) => "   ", // answered, but not the way expected
+            (true, false) => "NF ", // right verb, never finished
             (false, false) => "   ",
         };
         println!(

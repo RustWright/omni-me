@@ -228,10 +228,7 @@ enum NarrowOp {
 /// the model can only learn the keys from `describe_type`, and if it guessed
 /// instead, a bare "unknown filter" costs it a whole turn to recover from while
 /// a listed alternative costs none.
-pub fn plan_filters(
-    entry: &CatalogEntry,
-    filters: &Value,
-) -> Result<Vec<Narrowing>, String> {
+pub fn plan_filters(entry: &CatalogEntry, filters: &Value) -> Result<Vec<Narrowing>, String> {
     let Some(object) = filters.as_object() else {
         return Err("`filters` must be an object".to_string());
     };
@@ -442,7 +439,10 @@ fn derive(view: DerivedView, children: &serde_json::Map<String, Value>) -> Value
     match view {
         DerivedView::CompletionRollup { items, completions } => {
             let empty = Vec::new();
-            let item_rows = children.get(items).and_then(|v| v.as_array()).unwrap_or(&empty);
+            let item_rows = children
+                .get(items)
+                .and_then(|v| v.as_array())
+                .unwrap_or(&empty);
             let completion_rows = children
                 .get(completions)
                 .and_then(|v| v.as_array())
@@ -500,10 +500,17 @@ async fn fetch_children(
         table = child.table,
         fk = child.foreign_key,
         order_col = child.order.column,
-        direction = if child.order.descending { "DESC" } else { "ASC" },
+        direction = if child.order.descending {
+            "DESC"
+        } else {
+            "ASC"
+        },
         limit = child.limit,
     );
-    let mut resp = db.query(&sql).bind(("parent", parent_id.to_string())).await?;
+    let mut resp = db
+        .query(&sql)
+        .bind(("parent", parent_id.to_string()))
+        .await?;
     Ok(resp.take(0)?)
 }
 
@@ -605,7 +612,10 @@ mod tests {
         assert_eq!(out.hits[0].id, "01JKNOTE00000000000000000A");
 
         let snippet = out.hits[0].snippet.as_deref().unwrap();
-        assert!(snippet.contains("rent"), "snippet missed the match: {snippet}");
+        assert!(
+            snippet.contains("rent"),
+            "snippet missed the match: {snippet}"
+        );
         // ⚠️ Regression: the first live run answered "Landlord posted the «rent»
         // «notice» today" — the model quoted the markers straight back. They are
         // internal and must never reach it.
@@ -634,7 +644,10 @@ mod tests {
             snippet.contains("sourdough"),
             "the window must centre on the match, got: {snippet}"
         );
-        assert!(snippet.starts_with('…'), "a mid-body window says so: {snippet}");
+        assert!(
+            snippet.starts_with('…'),
+            "a mid-body window says so: {snippet}"
+        );
         assert!(
             snippet.chars().count() <= SNIPPET_CHARS + 2,
             "budget exceeded: {} chars",
@@ -907,7 +920,10 @@ mod tests {
 
     #[test]
     fn keyword_in_context_centres_on_the_match_and_strips_markers() {
-        let marked = format!("{}one two {HL_OPEN}three{HL_CLOSE} four five", "lead ".repeat(40));
+        let marked = format!(
+            "{}one two {HL_OPEN}three{HL_CLOSE} four five",
+            "lead ".repeat(40)
+        );
         let out = keyword_in_context(&marked, 60);
         assert!(out.contains("three"), "{out}");
         assert!(!out.contains(HL_OPEN) && !out.contains(HL_CLOSE), "{out}");

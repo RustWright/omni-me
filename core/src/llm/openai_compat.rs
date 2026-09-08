@@ -109,8 +109,7 @@ impl OpenAiCompatClient {
 
     /// Fold [`Self::extra_body`] into a request body, top-level keys only.
     fn apply_extra(&self, mut body: Value) -> Value {
-        if let (Some(Value::Object(extra)), Some(target)) =
-            (&self.extra_body, body.as_object_mut())
+        if let (Some(Value::Object(extra)), Some(target)) = (&self.extra_body, body.as_object_mut())
         {
             for (k, v) in extra {
                 target.insert(k.clone(), v.clone());
@@ -463,9 +462,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let req = super::super::chat::ChatRequest::new(vec![
-            super::super::chat::ChatMessage::User("find the rent notice".into()),
-        ]);
+        let req =
+            super::super::chat::ChatRequest::new(vec![super::super::chat::ChatMessage::User(
+                "find the rent notice".into(),
+            )]);
         let out = test_client(&server).chat(&req).await.unwrap();
 
         assert_eq!(out.tool_calls.len(), 1);
@@ -492,13 +492,17 @@ mod tests {
             .mount(&server)
             .await;
 
-        let req = super::super::chat::ChatRequest::new(vec![
-            super::super::chat::ChatMessage::User("hi".into()),
-        ]);
+        let req =
+            super::super::chat::ChatRequest::new(vec![super::super::chat::ChatMessage::User(
+                "hi".into(),
+            )]);
         let out = test_client(&server).chat(&req).await.unwrap();
         assert!(out.content.is_none());
         assert!(out.tool_calls.is_empty());
-        assert!(out.truncated(), "must be distinguishable from 'nothing to say'");
+        assert!(
+            out.truncated(),
+            "must be distinguishable from 'nothing to say'"
+        );
         assert_eq!(out.usage.reasoning_tokens, 3000);
     }
 

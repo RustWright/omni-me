@@ -55,7 +55,10 @@ pub fn print_outcome(outcome: &Outcome) {
             println!("{}", outcome.answer.as_deref().unwrap_or("(no text)"));
         }
         StopReason::TurnBudget => {
-            println!("(gave up after {} turns without answering)", outcome.trace.len());
+            println!(
+                "(gave up after {} turns without answering)",
+                outcome.trace.len()
+            );
         }
         StopReason::Failed(why) => println!("(failed: {why})"),
     }

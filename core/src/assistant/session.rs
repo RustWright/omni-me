@@ -208,7 +208,13 @@ impl<'a> Session<'a> {
             let reply = match self.llm.chat(&request).await {
                 Ok(r) => r,
                 Err(e) => {
-                    return self.finish(None, trace, total, started, StopReason::Failed(describe(e)));
+                    return self.finish(
+                        None,
+                        trace,
+                        total,
+                        started,
+                        StopReason::Failed(describe(e)),
+                    );
                 }
             };
             total = add(total, reply.usage);
@@ -569,7 +575,10 @@ mod tests {
 
         assert_eq!(out.stopped, StopReason::Answered);
         assert_eq!(out.verbs(), vec!["list_types", "search"]);
-        assert_eq!(out.answer.as_deref(), Some("You wrote about it on the 14th."));
+        assert_eq!(
+            out.answer.as_deref(),
+            Some("You wrote about it on the 14th.")
+        );
         // Summed across all three calls, reasoning kept separate throughout.
         assert_eq!(out.usage.prompt_tokens, 300);
         assert_eq!(out.usage.reasoning_tokens, 15);
@@ -612,7 +621,13 @@ mod tests {
         let db = test_db().await;
         let llm = ScriptedLlm::new(
             (0..10)
-                .map(|i| tool_turn(&format!("c{i}"), "search", json!({ "query": format!("q{i}") })))
+                .map(|i| {
+                    tool_turn(
+                        &format!("c{i}"),
+                        "search",
+                        json!({ "query": format!("q{i}") }),
+                    )
+                })
                 .collect(),
         );
         let cfg = config();
@@ -642,7 +657,11 @@ mod tests {
         }]);
         let cfg = config();
         let out = Session::new(&db, &cfg, &llm).unwrap().ask("q").await;
-        assert!(matches!(out.stopped, StopReason::Failed(_)), "{:?}", out.stopped);
+        assert!(
+            matches!(out.stopped, StopReason::Failed(_)),
+            "{:?}",
+            out.stopped
+        );
     }
 
     #[tokio::test]
@@ -718,8 +737,9 @@ mod tests {
 
     #[test]
     fn a_constrained_reply_is_read_as_a_verb_call() {
-        let call = parse_constrained_call(Some(r#"{"verb":"search","arguments":{"query":"rent"}}"#))
-            .expect("should parse");
+        let call =
+            parse_constrained_call(Some(r#"{"verb":"search","arguments":{"query":"rent"}}"#))
+                .expect("should parse");
         assert_eq!(call.name, "search");
         assert_eq!(call.arguments["query"], "rent");
     }
@@ -727,9 +747,10 @@ mod tests {
     /// Some endpoints fence their JSON even under a schema.
     #[test]
     fn a_fenced_constrained_reply_still_parses() {
-        let call =
-            parse_constrained_call(Some("```json\n{\"verb\":\"list_types\",\"arguments\":{}}\n```"))
-                .expect("should parse");
+        let call = parse_constrained_call(Some(
+            "```json\n{\"verb\":\"list_types\",\"arguments\":{}}\n```",
+        ))
+        .expect("should parse");
         assert_eq!(call.name, "list_types");
     }
 
@@ -789,16 +810,17 @@ mod tests {
             names.iter().any(|v| v == ANSWER_VERB),
             "without an exit the model re-calls until the turn budget runs out: {names:?}"
         );
-        assert!(!verbs::VERB_NAMES.contains(&ANSWER_VERB), "never dispatched");
+        assert!(
+            !verbs::VERB_NAMES.contains(&ANSWER_VERB),
+            "never dispatched"
+        );
     }
 
     #[tokio::test]
     async fn a_constrained_answer_ends_the_run_and_shows_its_text() {
         let db = test_db().await;
         let llm = ScriptedLlm::new(vec![ChatResponse {
-            content: Some(
-                r#"{"verb":"answer","arguments":{"text":"You owe 180."}}"#.to_string(),
-            ),
+            content: Some(r#"{"verb":"answer","arguments":{"text":"You owe 180."}}"#.to_string()),
             tool_calls: vec![],
             usage: Usage::default(),
             latency: Duration::ZERO,
@@ -865,7 +887,10 @@ mod tests {
         let mut poisoned = out.clone();
         poisoned.trace[0].arguments = json!({ "query": CANARY });
         assert!(
-            poisoned.argument_values().iter().any(|v| v.contains(CANARY)),
+            poisoned
+                .argument_values()
+                .iter()
+                .any(|v| v.contains(CANARY)),
             "the injection check must be able to fail"
         );
     }

@@ -457,7 +457,11 @@ mod tests {
         // The whole reason the verbs are generic. Well under the 15-20 range
         // where tool-calling accuracy starts to degrade, and it stays there as
         // record types are added.
-        assert!(tools.len() <= 6, "the verb set has grown to {}", tools.len());
+        assert!(
+            tools.len() <= 6,
+            "the verb set has grown to {}",
+            tools.len()
+        );
     }
 
     #[test]
@@ -490,7 +494,10 @@ mod tests {
         let note = types.iter().find(|t| t["name"] == "note").unwrap();
         assert_eq!(note["count"], 1);
         assert!(
-            note["identified_by"].as_str().unwrap().contains("never guess"),
+            note["identified_by"]
+                .as_str()
+                .unwrap()
+                .contains("never guess"),
             "an opaque identity must say so: {note}"
         );
     }
@@ -552,7 +559,12 @@ mod tests {
             vec!["homework_for_life", "grateful_for", "learnt_today"],
             "describe_type must show the user's own declaration, not a built-in"
         );
-        assert!(out["identified_by"].as_str().unwrap().contains("YYYY-MM-DD"));
+        assert!(
+            out["identified_by"]
+                .as_str()
+                .unwrap()
+                .contains("YYYY-MM-DD")
+        );
     }
 
     #[tokio::test]
@@ -692,7 +704,12 @@ mod tests {
             &json!({ "type": "note", "filters": { "date": { "from": "2026-01-01" } } }),
         )
         .await;
-        assert!(out["error"].as_str().unwrap().contains("no filter called `date`"));
+        assert!(
+            out["error"]
+                .as_str()
+                .unwrap()
+                .contains("no filter called `date`")
+        );
     }
 
     #[tokio::test]

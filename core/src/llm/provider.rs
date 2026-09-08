@@ -121,8 +121,14 @@ mod tests {
 
     #[test]
     fn openai_compatible_is_selected_when_fully_configured() {
-        let creds = creds_with(Some(openai(Some("http://localhost:11434/v1"), Some("llava"))));
-        assert_eq!(build_llm_client(&creds, None, ClientOptions::default()).model_name(), "llava");
+        let creds = creds_with(Some(openai(
+            Some("http://localhost:11434/v1"),
+            Some("llava"),
+        )));
+        assert_eq!(
+            build_llm_client(&creds, None, ClientOptions::default()).model_name(),
+            "llava"
+        );
     }
 
     #[test]
@@ -139,7 +145,10 @@ mod tests {
     #[test]
     fn a_missing_base_url_falls_back_rather_than_building_a_broken_client() {
         let creds = creds_with(Some(openai(None, Some("llava"))));
-        assert_ne!(build_llm_client(&creds, None, ClientOptions::default()).model_name(), "llava");
+        assert_ne!(
+            build_llm_client(&creds, None, ClientOptions::default()).model_name(),
+            "llava"
+        );
     }
 
     #[test]

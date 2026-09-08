@@ -472,11 +472,19 @@ mod tests {
     }
 
     fn done(item: &'static str, date: &'static str) -> CompletionRecord<'static> {
-        CompletionRecord { item_id: item, date, skipped: false }
+        CompletionRecord {
+            item_id: item,
+            date,
+            skipped: false,
+        }
     }
 
     fn skip(item: &'static str, date: &'static str) -> CompletionRecord<'static> {
-        CompletionRecord { item_id: item, date, skipped: true }
+        CompletionRecord {
+            item_id: item,
+            date,
+            skipped: true,
+        }
     }
 
     /// The decision, pinned: a deliberate skip is a morning that happened.
@@ -523,7 +531,10 @@ mod tests {
     fn completions_for_items_no_longer_in_the_routine_are_ignored() {
         let rolled = roll_up(
             &["stretch"],
-            &[done("stretch", "2026-03-14"), done("deleted-item", "2026-03-14")],
+            &[
+                done("stretch", "2026-03-14"),
+                done("deleted-item", "2026-03-14"),
+            ],
         );
         assert_eq!(rolled[0].done, 1);
         assert_eq!(rolled[0].total, 1);
