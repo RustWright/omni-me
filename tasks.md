@@ -80,14 +80,34 @@ defer-major-phases rule; do not run ahead to the next one.
    - **Hosting:** Hetzner's free Experiments endpoint for development; an EU zero-retention
      open-weights API long-term, **provider not yet chosen** (criteria + candidates in the plan).
      No hardware purchase — the user has no permanent address.
-   - ⚠️ **Blocker for any write path:** `guard_event_type` lives in the Tauri commands layer, so
-     Phase B's claim that a future tool layer inherits it is **false** for a separate agent
-     binary. It must move into `core` first. Confirmed 2026-09-07: it is a **private** fn taking
-     `&AppState`, so the move means re-seating the feature check on `ResolvedConfig`.
+   - ~~⚠️ **Blocker for any write path:** `guard_event_type` lives in the Tauri commands layer~~
+     **RESOLVED in Phase A.** The guard moved into `core` as `EventWriter`
+     (`core/src/events/writer.rs`), which welds guard + append + project + push-nudge into one
+     type seated on `ResolvedConfig`. It is now the only sanctioned way to author an event, and
+     the agent inherits it rather than re-implementing it.
    - **Phase 0 done 2026-09-07:** `docs/src/assistant.md` (the contract, model-neutral) and the
      RAM spike (**no CX32** — CX22 has 3.1 GiB available, server + SurrealKV = 106 MiB against a
      52 MB DB; the real risks are no swap, no container memory limits, and Phase C's embedder at
      0.1–1 GB). Remaining: the model bake-off.
+   - **Phase A done + verified end-to-end 2026-09-08.** The agent is a real headless device:
+     own process, own DB, own device id, syncing over HTTP. `EventWriter` is the single append
+     boundary; `registry::build_projections_headless` picks projections and excludes
+     `JournalFile` structurally; cold start pulls config *before* choosing projections, because
+     an empty DB resolves every feature to its default of `on` and for an agent a cold start is
+     the normal case. Registers no verbs and calls no model — that is Phase B.
+     - **Verified against a throwaway hub**, all four checks: cold-start backfill; an authored
+       event reaching a second agent **carrying the first's device id**; authoring refused with
+       the feature off; that same event still applied when arriving *inbound*. Recipe in memory
+       (`reference-throwaway-hub-agent-testing`) — no docker, no sudo.
+     - **`--probe` is a permanent ops flag** (user, 2026-09-08), the twin of `--read-only`: one
+       refuses to build a writer, the other authors one throwaway note through the one it built.
+       It writes a real note, so it is for throwaway hubs only.
+     - ⚠️ **The verification found a silent, permanent projection bug** — `init_all` seeded a
+       first-sight watermark to `time::now()`, which lands *after* events already in the store,
+       so the agent's cold-start pull was never projected and it booted on default features
+       regardless of config. Fixed by distinguishing "no row" (never ran → seed epoch) from
+       "row present, field NONE" (upgrade → seed now), with a regression test. Still latent for
+       any *newly-shipped* projection on an existing install, which this now also covers.
    - **Plumbing facts for Phase B/C/D, true regardless of which model wins:**
      - Images pass as `data:` URLs, so **no signed-URL subsystem is needed** for blobs behind
        Tailscale. But requests **413 above ~5 MB**, so downscaling (2048px long edge) is
