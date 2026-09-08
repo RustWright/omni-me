@@ -9,6 +9,7 @@ use crate::components::primitives::{
 };
 use crate::duration;
 use crate::reorder;
+use crate::routine_progress;
 use crate::types::{CompletionEntry, RoutineGroup, RoutineItem};
 use crate::user_date::UserDate;
 
@@ -350,12 +351,13 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
 
     let items_read = items.read();
     let completions_read = completions.read();
-    let done_count = items_read
-        .iter()
-        .filter(|item| completions_read.iter().any(|c| c.item_id == item.id))
-        .count();
-    let total = items_read.len();
-    let is_fully_done = total > 0 && done_count == total;
+    // Derived in `routine_progress`, not here: the same rule is encoded a
+    // second time in `core::routines::roll_up` for the assistant, and a shared
+    // fixture keeps the two honest. Inlining this again would drop that alarm.
+    let progress = routine_progress::day_progress(&items_read, &completions_read, &date);
+    let done_count = progress.done;
+    let total = progress.total;
+    let is_fully_done = progress.complete;
 
     let base_class = "bg-obsidian-surface border border-obsidian-border/10 rounded-card overflow-hidden shadow-card transition-all";
     let status_class = if is_fully_done {

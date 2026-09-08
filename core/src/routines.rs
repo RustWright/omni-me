@@ -45,9 +45,19 @@ pub struct DayRollup {
 /// is reported alongside so the distinction survives — the number to look at
 /// when asking whether a routine is really being kept.
 ///
-/// This rule previously existed **only** in the routines screen, where a second
-/// reader would have had to re-derive it and could have disagreed with what the
-/// user sees. Anything answering "did I do my routine" reads it from here.
+/// ⚠️ **This is not the only encoding of the rule.** The routines screen derives
+/// the same thing for its card header, in `routine_progress::day_progress` in
+/// the frontend crate — which shares no Rust code with this one, so no compiler
+/// checks the two against each other. Wiring the screen to call this function
+/// was considered and rejected (user, 2026-09-08): an async round-trip is not
+/// worth it for a number already on screen. What holds them together instead is
+/// `fixtures/routine_day_agreement.json` at the repo root, read by
+/// `roll_up_agrees_with_the_shared_day_fixture` below and by its twin on the
+/// frontend side.
+///
+/// That guarantee is real but bounded: it covers the cases the fixture lists,
+/// not all inputs, and nothing forces the screen to keep *calling* its own
+/// function rather than inlining a fresh derivation.
 ///
 /// `item_ids` are the group's *current* items; removed ones must be filtered out
 /// by the caller, exactly as the screen does.
@@ -566,5 +576,98 @@ mod tests {
     #[test]
     fn no_completions_means_no_days_rather_than_a_zero_row() {
         assert!(roll_up(&["stretch"], &[]).is_empty());
+    }
+
+    /// One completion case as the shared fixture states it. The frontend
+    /// declares this same shape independently — there is no shared definition
+    /// to derive it from, which is the whole situation being defended against.
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Case {
+        name: String,
+        why: String,
+        item_ids: Vec<String>,
+        date: String,
+        completions: Vec<Row>,
+        expect: Expect,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Row {
+        item_id: String,
+        date: String,
+        skipped: bool,
+    }
+
+    /// `skipped` is checked here and nowhere else: the routines screen renders
+    /// skips per item and never in aggregate, so its side of the fixture has no
+    /// such number to compare.
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Expect {
+        done: u32,
+        skipped: u32,
+        total: u32,
+        complete: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Fixture {
+        cases: Vec<Case>,
+    }
+
+    /// Cross-boundary agreement alarm for the day-completion rule.
+    ///
+    /// The other implementation is `routine_progress::day_progress` in the
+    /// frontend crate, which this one cannot import and the compiler never sees
+    /// alongside it. Change the rule on either side and everything still
+    /// builds; the divergence surfaces as the assistant answering "did I do my
+    /// routine" differently from what the user is looking at. This test and its
+    /// twin read one fixture and must agree.
+    ///
+    /// If it fires, decide which side is right FIRST. The fixture is a product
+    /// decision written down, not a pin to be nudged until the build is green.
+    #[test]
+    fn roll_up_agrees_with_the_shared_day_fixture() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/routine_day_agreement.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let fixture: Fixture = serde_json::from_str(&raw)
+            .unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
+        assert!(
+            !fixture.cases.is_empty(),
+            "fixture has no cases — this test would pass having checked nothing"
+        );
+
+        for case in &fixture.cases {
+            let ctx = format!("{} ({})", case.name, case.why);
+            let item_ids: Vec<&str> = case.item_ids.iter().map(String::as_str).collect();
+            let records: Vec<CompletionRecord<'_>> = case
+                .completions
+                .iter()
+                .map(|r| CompletionRecord {
+                    item_id: &r.item_id,
+                    date: &r.date,
+                    skipped: r.skipped,
+                })
+                .collect();
+
+            let rolled = roll_up(&item_ids, &records);
+            // A day with no rows is absent from the output entirely, while the
+            // screen still draws it as 0-of-N. Reading absence as a zero row is
+            // part of the contract between the two, not a shortcut of this test.
+            let (done, skipped, total, complete) = match rolled.iter().find(|d| d.date == case.date)
+            {
+                Some(d) => (d.done, d.skipped, d.total, d.complete),
+                None => (0, 0, case.item_ids.len() as u32, false),
+            };
+
+            assert_eq!(done, case.expect.done, "done — {ctx}");
+            assert_eq!(skipped, case.expect.skipped, "skipped — {ctx}");
+            assert_eq!(total, case.expect.total, "total — {ctx}");
+            assert_eq!(complete, case.expect.complete, "complete — {ctx}");
+        }
     }
 }

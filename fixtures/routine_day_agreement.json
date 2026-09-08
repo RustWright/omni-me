@@ -1,0 +1,95 @@
+{
+  "note": "Shared cases for the routine day-completion rule, read by two tests in two crates that share no Rust code: `roll_up_agrees_with_the_shared_day_fixture` in core/src/routines.rs, and `day_progress_agrees_with_the_shared_day_fixture` in tauri-app/frontend/src/routine_progress.rs. Each side runs the case through its own implementation and must land on the same answer. `item_ids` are the routine's CURRENT items — removed ones are filtered out by the caller on both sides, so a case models post-filter input. `expect.skipped` is asserted by the core side only: the screen renders `done/total` and computes nothing else. Editing an expectation here changes what the app and the assistant both mean by 'done' — that is a product decision, never a tidy-up.",
+  "cases": [
+    {
+      "name": "every current item has a row",
+      "why": "the ordinary complete day; without it the fixture only ever tests edges",
+      "item_ids": ["stretch", "coffee"],
+      "date": "2026-03-14",
+      "completions": [
+        { "item_id": "stretch", "date": "2026-03-14", "skipped": false },
+        { "item_id": "coffee", "date": "2026-03-14", "skipped": false }
+      ],
+      "expect": { "done": 2, "skipped": 0, "total": 2, "complete": true }
+    },
+    {
+      "name": "a skipped item still counts the day complete",
+      "why": "user decision 2026-09-08 — a skip is a deliberate act with a reason attached, so a morning where one item was skipped on purpose is a morning that happened",
+      "item_ids": ["stretch", "coffee"],
+      "date": "2026-03-14",
+      "completions": [
+        { "item_id": "stretch", "date": "2026-03-14", "skipped": false },
+        { "item_id": "coffee", "date": "2026-03-14", "skipped": true }
+      ],
+      "expect": { "done": 2, "skipped": 1, "total": 2, "complete": true }
+    },
+    {
+      "name": "a day of nothing but skips is still complete",
+      "why": "the decision taken to its limit — and the day whose `skipped` count is the whole story",
+      "item_ids": ["stretch", "coffee"],
+      "date": "2026-03-14",
+      "completions": [
+        { "item_id": "stretch", "date": "2026-03-14", "skipped": true },
+        { "item_id": "coffee", "date": "2026-03-14", "skipped": true }
+      ],
+      "expect": { "done": 2, "skipped": 2, "total": 2, "complete": true }
+    },
+    {
+      "name": "an item with no row leaves the day incomplete",
+      "why": "untouched is not skipped; only a row of either kind counts",
+      "item_ids": ["stretch", "coffee"],
+      "date": "2026-03-14",
+      "completions": [{ "item_id": "stretch", "date": "2026-03-14", "skipped": false }],
+      "expect": { "done": 1, "skipped": 0, "total": 2, "complete": false }
+    },
+    {
+      "name": "two rows for one item is one item done, not two",
+      "why": "an undo-then-skip writes a second row; counting rows instead of items would report a complete day off one item",
+      "item_ids": ["stretch", "coffee"],
+      "date": "2026-03-14",
+      "completions": [
+        { "item_id": "stretch", "date": "2026-03-14", "skipped": false },
+        { "item_id": "stretch", "date": "2026-03-14", "skipped": true }
+      ],
+      "expect": { "done": 1, "skipped": 1, "total": 2, "complete": false }
+    },
+    {
+      "name": "a row for an item no longer in the routine is ignored",
+      "why": "otherwise a deleted item's history would keep old days looking complete, or count toward new ones",
+      "item_ids": ["stretch"],
+      "date": "2026-03-14",
+      "completions": [
+        { "item_id": "stretch", "date": "2026-03-14", "skipped": false },
+        { "item_id": "since-deleted", "date": "2026-03-14", "skipped": false }
+      ],
+      "expect": { "done": 1, "skipped": 0, "total": 1, "complete": true }
+    },
+    {
+      "name": "rows from a neighbouring day do not count toward this one",
+      "why": "core groups by date while the screen is handed one date's rows; both must land on the same day boundary",
+      "item_ids": ["stretch", "coffee"],
+      "date": "2026-03-14",
+      "completions": [
+        { "item_id": "stretch", "date": "2026-03-14", "skipped": false },
+        { "item_id": "coffee", "date": "2026-03-13", "skipped": false }
+      ],
+      "expect": { "done": 1, "skipped": 0, "total": 2, "complete": false }
+    },
+    {
+      "name": "a day with no rows at all",
+      "why": "core omits such a day from its output entirely while the screen still draws it as 0-of-N; absence and a zero row must mean the same thing",
+      "item_ids": ["stretch", "coffee"],
+      "date": "2026-03-14",
+      "completions": [],
+      "expect": { "done": 0, "skipped": 0, "total": 2, "complete": false }
+    },
+    {
+      "name": "a routine with no items is never complete",
+      "why": "an empty routine would otherwise report a perfect streak forever, every item of nothing being done",
+      "item_ids": [],
+      "date": "2026-03-14",
+      "completions": [{ "item_id": "since-deleted", "date": "2026-03-14", "skipped": false }],
+      "expect": { "done": 0, "skipped": 0, "total": 0, "complete": false }
+    }
+  ]
+}

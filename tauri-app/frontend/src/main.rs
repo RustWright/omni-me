@@ -9,6 +9,7 @@ mod journal_template;
 mod note_frontmatter;
 mod pages;
 mod reorder;
+mod routine_progress;
 mod screen_context;
 mod sync_refresh;
 mod timer;
