@@ -1,40 +1,48 @@
 # NEXT
 
-**Next action: verify Phase A end-to-end against a throwaway hub.** Code is built, tested and
-clippy-clean; the sync round trip is NOT yet proven. **No sudo, no docker** — `server`'s
-`DB_PATH` is *relative*, so `cd <scratch dir> && cargo run -p omni-me-server` is an isolated
-hub (teardown = `rm -rf` it); credentials are optional by the zero-config guarantee. Seed via
-`/sync/push`; cold-start the agent and check it backfills; have it author one event and
-confirm a second agent instance receives it carrying the first's device id; with a feature
-off, confirm authoring is refused while that same event arriving *inbound* still applies.
+**Next action: pick up Phase B (verbs + model), or clear an open thread.** Phase A is
+**verified end-to-end** — all four checks passed against a throwaway hub on 2026-09-08:
+cold-start backfill, agent-to-agent with the author's device id preserved, authoring
+refused with the feature off, and that same event still applied when inbound. The agent
+now has `--probe` (author one throwaway note through the real writer) as the twin of
+`--read-only`. Nothing about the round trip is unproven any more.
 
 ## Decisions in force — inherit, do not re-derive
 - **`EventWriter` (`core/src/events/writer.rs`) is the only way to author an event** — guard +
   append + project + push-nudge, welded. Four sites used to do those separately.
-- **Cold start pulls config BEFORE choosing projections** (user, 2026-09-08). An empty DB
-  resolves every feature to its default of `on`, and for an agent a cold start is normal, not
-  rare. Costs one extra read of the log; correct from the first boot.
-- **`JournalFile` is excluded structurally**, via `registry::FILESYSTEM_PROJECTIONS` — not
-  left to the finances switch, which does not exist yet at cold start.
-- **Test isolation is mandatory.** The log is real and append-only: anything that writes runs
-  against a throwaway hub. The real box is touched **only** under `--read-only`, which
-  refuses to build a writer at all. Agent runs on `surface`; deploying it to the box is out
-  of scope, gated behind the box's missing swap + container memory limits.
-- Model choice **DEFERRED to Phase D** via shadow mode; dev endpoint is provisional, never a
-  selection. Assign a model **per job, statically**. "27–35B ceiling" and "one resident
-  model" are **VOID**. `docs/src/assistant.md` is the contract.
-- **Agent-to-agent is the verification shape** (user, 2026-09-08). A real Tauri client as the
-  second device is NOT needed for the initial tests. The test hub's `0.0.0.0:3000` bind is
-  accepted as-is — do not spend time narrowing it.
+- **Cold start pulls config BEFORE choosing projections** (user, 2026-09-08). Verified live;
+  it only actually worked after the watermark fix below.
+- **`--probe` is permanent** (user, 2026-09-08), not scaffolding: an ops diagnostic for
+  "can this host author and sync?". It writes a real note, so throwaway hubs only.
+- **`JournalFile` is excluded structurally**, via `registry::FILESYSTEM_PROJECTIONS`.
+  Confirmed absent from the agent's registered list at runtime.
+- **Test isolation is mandatory.** The real box is touched **only** under `--read-only`.
+  `OMNI_AGENT_DATA` doubles as the non-production switch, so an isolated agent structurally
+  cannot resolve the box's URL.
+- Model choice **DEFERRED to Phase D** via shadow mode. Assign a model **per job,
+  statically**. "27–35B ceiling" / "one resident model" are **VOID**.
+  `docs/src/assistant.md` is the contract.
 - ⛔ **FINANCES DEFERRED INDEFINITELY.**
 - **Do not re-survey:** generalization · v1.1.x pass · hosting market survey · RAM sizing ·
-  the model bake-off (n=1 per task — ranking is NOT trustworthy).
+  the model bake-off · **the four Phase A checks — they passed, don't re-run them.**
+
+## What the verification actually found
+**A silent, permanent projection bug — fixed, with a regression test.** `init_all` seeded a
+first-sight watermark to `time::now()`, which lands *after* events already in the store. So
+the agent's cold-start pull (`pull_only` appends without projecting) was never projected:
+config never materialized, and the agent booted on default features no matter what was
+configured. The mark stayed ahead forever, so no later launch recovered it. Fix distinguishes
+**no row** (never ran → seed epoch, replay the log) from **row present, field NONE** (upgrade
+→ seed now). Still latent for any *newly-shipped* projection on an existing install; the
+client's fresh-install path was never affected, because it calls `init_all` before its first
+pull, on an empty log.
 
 ## Open threads
-**Move the append scan into `core`, workspace-wide.** It sits in the tauri crate and reaches
-`agent/src` by path traversal — works, wrong home. Blocked on triaging **5 real bypasses**:
-`auto_import/{subprocess,csv,imap_source,rest}.rs` + `llm/pipeline.rs` (all finances/LLM, so
-⛔ gates them). `sync/client.rs`, `server/routes/sync.rs`, `events/writer.rs` stay exempt.
-Read-only rehearsal vs the real box · untouched by Phase A: `ExtractionResult.total`, `GET
-/feedback` (200 text/plain), server-side `feature.llm` · server 1.1.0 vs overlay lock 1.1.2 ·
-`chunk_for_push` 413 · history gap A/B · tasks gate estimation · curiosities+memory prune.
+Pusher now logs success *and* failure — `PushEvent` was only consumed by the Tauri UI, so
+agent-side push failures had been invisible. · **Move the append scan into `core`**: it sits
+in the tauri crate, reaching `agent/src` by path traversal. Blocked on triaging 5 real
+bypasses: `auto_import/{subprocess,csv,imap_source,rest}.rs` + `llm/pipeline.rs` (⛔-gated).
+`sync/client.rs`, `server/routes/sync.rs`, `events/writer.rs` stay exempt. · Read-only
+rehearsal vs the real box · untouched by Phase A: `ExtractionResult.total`, `GET /feedback`,
+server-side `feature.llm` · server 1.1.0 vs overlay lock 1.1.2 · `chunk_for_push` 413 ·
+history gap A/B · tasks gate estimation · curiosities+memory prune.

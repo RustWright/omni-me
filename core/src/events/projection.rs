@@ -94,21 +94,45 @@ impl ProjectionRunner {
                 stale.push(name.clone());
             }
 
-            // Upsert the version record. `last_received_at` is seeded to now on
-            // first sight rather than left NONE: an install upgrading into this
-            // field is as caught-up as it ever was, and seeding from epoch would
-            // mean a surprise full replay of every event at the next launch.
+            // Upsert the version record, seeding `last_received_at` on first
+            // sight. The two first-sight cases need **opposite** seeds, and
+            // `stored` is what tells them apart: `version` is a non-optional
+            // field, so no version read back means no row at all.
+            //
+            // - **No row** — this projection has never run, so it has projected
+            //   nothing and must replay whatever the log already holds. Seeding
+            //   `now` here skipped the entire backfill, silently and
+            //   permanently: the mark sat ahead of those events forever, so no
+            //   later launch recovered them either. That is the cold-start path
+            //   — `SyncClient::pull_only` appends without projecting, so an
+            //   agent pulls the whole log *before* any projection exists, and
+            //   booted on default features no matter what the user configured.
+            //
+            // - **Row present, field NONE** — an install upgrading into this
+            //   field, which is as caught-up as it ever was. Epoch there would
+            //   mean a surprise full replay on the upgrade launch.
+            //
+            // A full replay through already-caught-up projections is the
+            // accepted cost either way: `catch_up` takes the min across
+            // registered rows, so re-enabling a feature already replays through
+            // all of them, and projections are idempotent by construction.
+            let seed = if stored.is_none() {
+                chrono::DateTime::UNIX_EPOCH
+            } else {
+                chrono::Utc::now()
+            };
             self.db
                 .query(
                     "UPSERT projection_versions SET
                         name = $name,
                         version = $version,
                         last_event_id = last_event_id ?? '',
-                        last_received_at = last_received_at ?? time::now()
+                        last_received_at = last_received_at ?? type::datetime($seed)
                      WHERE name = $name",
                 )
                 .bind(("name", name))
                 .bind(("version", version))
+                .bind(("seed", seed.to_rfc3339()))
                 .await?;
         }
 
@@ -522,6 +546,73 @@ mod tests {
             counter.load(Ordering::SeqCst),
             1,
             "catch-up replayed an already-applied event"
+        );
+    }
+
+    /// Events already in the store when a projection is registered for the
+    /// **first** time must be projected, not skipped.
+    ///
+    /// This is the cold-start order, and it is the reverse of the crash-window
+    /// test above: there the projection is registered first and the event lands
+    /// after, here the log is populated before the projection has ever existed.
+    /// The agent does exactly this — `learn_config` pulls the whole log via
+    /// `pull_only`, which appends without projecting, and only then builds the
+    /// runner.
+    ///
+    /// It regressed because the first-sight watermark seed was `time::now()`,
+    /// which lands *after* the events the pull just wrote: catch-up then asked
+    /// for everything since a point already past them and got nothing. Silent
+    /// and permanent — the mark stays ahead forever, so no later launch recovers
+    /// it either, and an agent would boot on default features no matter what the
+    /// user had configured.
+    #[tokio::test]
+    async fn a_first_registration_projects_a_log_that_already_has_events() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let counter = Arc::new(AtomicU32::new(0));
+
+        // The backfill: events land before any projection has been registered.
+        for i in 0..3 {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("n{i}"),
+                    timestamp: Utc::now(),
+                    device_id: "other-device".into(),
+                    payload: serde_json::json!({}),
+                })
+                .await
+                .unwrap();
+        }
+
+        let runner = ProjectionRunner::new(
+            db.clone(),
+            vec![Box::new(CountingProjection {
+                applied: counter.clone(),
+            })],
+        );
+        runner.init_all().await.unwrap();
+
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            3,
+            "a backfilled log was never projected: the first-sight watermark was \
+             seeded past the events already in the store"
+        );
+
+        // And the mark is now genuinely caught up, so the next launch is quiet.
+        let runner = ProjectionRunner::new(
+            db.clone(),
+            vec![Box::new(CountingProjection {
+                applied: counter.clone(),
+            })],
+        );
+        runner.init_all().await.unwrap();
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            3,
+            "the backfill replayed a second time"
         );
     }
 

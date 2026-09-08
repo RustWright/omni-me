@@ -143,6 +143,11 @@ async fn attempt_push(inner: &Arc<Inner>) {
                     "events the server rejected were skipped so the push queue could drain"
                 );
             }
+            // An empty push is the common case (the debouncer fires on any
+            // nudge), so only a push that moved something is worth a line.
+            if pushed > 0 {
+                tracing::info!(pushed, "push complete");
+            }
             let _ = inner.outcomes.send(PushEvent::Succeeded { pushed });
             let mut counter = inner.last_known_events.lock().await;
             *counter = counter.saturating_add(pushed as u64);
@@ -156,6 +161,7 @@ async fn attempt_push(inner: &Arc<Inner>) {
                 // bisection somehow does not isolate it.
                 SyncError::Rejected(m) => format!("rejected: {m}"),
             };
+            tracing::warn!(error = %msg, "push failed");
             let _ = inner.outcomes.send(PushEvent::Failed { error: msg });
         }
     }

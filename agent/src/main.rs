@@ -11,6 +11,11 @@
 //! second binary can backfill the log, run projections, and author an event that
 //! reaches the other devices — and that it inherits the feature guard and the
 //! non-production posture rather than re-implementing either.
+//!
+//! Two flags stand for the two postures, and they are opposites: `--read-only`
+//! refuses to build a writer at all, `--probe` authors one note through the one
+//! it built. Both answer a question about a *host* rather than about the code,
+//! which is why they live here and not in a test.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,7 +23,8 @@ use std::sync::Arc;
 use omni_me_core::config::ResolvedConfig;
 use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
-    EventStore, EventWriter, ProjectionRunner, SurrealEventStore, load_persisted, registry,
+    EventStore, EventWriter, NewEvent, ProjectionRunner, SurrealEventStore, load_persisted,
+    registry,
 };
 use omni_me_core::runtime::{self, ServerUrlPolicy};
 use omni_me_core::sync::{
@@ -63,15 +69,37 @@ struct Args {
     /// start writing. It is what makes a full-scale timing run against the live
     /// box something other than a leap of faith.
     read_only: bool,
+
+    /// Author one throwaway note through the real writer, then keep running.
+    ///
+    /// The mirror of [`Args::read_only`]: that one proves this process *cannot*
+    /// write, this one proves it *can*. A cold start that backfills correctly
+    /// says nothing about the write half, and the write half is the one whose
+    /// wiring fails silently — a writer built above the push debouncer appends
+    /// happily and never syncs, because `pusher::run_loop` has no interval
+    /// fallback to cover for the missing nudge.
+    ///
+    /// ⚠️ This writes a real note into whatever log it is pointed at. That is a
+    /// throwaway hub, never a real one.
+    probe: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { read_only: false };
+    let mut args = Args {
+        read_only: false,
+        probe: false,
+    };
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--read-only" => args.read_only = true,
+            "--probe" => args.probe = true,
             other => return Err(format!("unrecognised argument: {other}")),
         }
+    }
+    // A contradiction rather than a preference, so it is refused rather than
+    // resolved: read-only builds no writer, and probing needs one.
+    if args.probe && args.read_only {
+        return Err("--probe needs a writer; --read-only refuses to build one".to_string());
     }
     Ok(args)
 }
@@ -105,7 +133,7 @@ async fn main() {
     let args = match parse_args() {
         Ok(args) => args,
         Err(e) => {
-            eprintln!("{e}\n\nusage: omni-me-agent [--read-only]");
+            eprintln!("{e}\n\nusage: omni-me-agent [--read-only | --probe]");
             std::process::exit(2);
         }
     };
@@ -190,7 +218,7 @@ async fn run(args: Args) -> Result<(), String> {
     // MUST stay below `push_debouncer`: a writer built before it exists appends
     // without waking the pusher, and `pusher::run_loop` has no interval fallback
     // — that is a no-sync bug, not a slow-sync one.
-    let _writer: Option<Arc<EventWriter>> = if args.read_only {
+    let writer: Option<Arc<EventWriter>> = if args.read_only {
         tracing::warn!("--read-only: no writer constructed; this process cannot author events");
         None
     } else {
@@ -204,6 +232,12 @@ async fn run(args: Args) -> Result<(), String> {
             .with_push_debouncer(push_debouncer.clone()),
         ))
     };
+
+    // `parse_args` refuses `--probe --read-only`, so the writer is always `Some`
+    // here when probing.
+    if let (true, Some(writer)) = (args.probe, writer.as_ref()) {
+        probe_once(writer).await;
+    }
 
     // Inbound half: startup backfill, then interval and network-online pulls. On
     // a cold start this batch is the entire log arriving.
@@ -224,6 +258,37 @@ async fn run(args: Args) -> Result<(), String> {
         .map_err(|e| format!("could not listen for shutdown: {e}"))?;
     tracing::info!("shutting down");
     Ok(())
+}
+
+/// Author one note through the real writer and report what happened.
+///
+/// Goes through [`EventWriter`] rather than the store on purpose: the point is
+/// to exercise the guard, the projection fold and the push nudge in the order
+/// *this process* wires them, which is the half no unit test can reach — a test
+/// constructs its own writer and so cannot catch a mistake in `run`'s ordering.
+///
+/// Non-fatal either way, because a refusal is a **result**, not a failure: with
+/// the feature that owns notes switched off, being refused here is the correct
+/// outcome and the one worth confirming.
+async fn probe_once(writer: &EventWriter) {
+    let note_id = ulid::Ulid::new().to_string();
+    let event = NewEvent::generic_note_created(
+        writer.device_id(),
+        &note_id,
+        "agent probe",
+        "Written by `omni-me-agent --probe` to prove this host's write path.",
+        None,
+    );
+
+    match writer.append_new(event).await {
+        Ok(stored) => tracing::info!(
+            event_id = %stored.id,
+            device_id = %stored.device_id,
+            note_id = %note_id,
+            "probe authored; the pusher should report it shortly"
+        ),
+        Err(e) => tracing::warn!(error = %e, "probe refused"),
+    }
 }
 
 /// Resolve the config this agent should run under, pulling first if it has to.
