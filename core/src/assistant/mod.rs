@@ -16,4 +16,4 @@ pub mod verbs;
 pub use catalog::{CatalogEntry, ChildCollection, FilterField, FilterKind, IdentityKind};
 pub use session::{MAX_TURNS, Outcome, Session, StopReason, TurnRecord};
 pub use store::{FullRecord, SearchHit, TypeResults};
-pub use verbs::{SYSTEM_PROMPT, VERB_NAMES, dispatch, tools};
+pub use verbs::{SYSTEM_PROMPT, VERB_NAMES, dispatch, tools, tools_as_prompt};

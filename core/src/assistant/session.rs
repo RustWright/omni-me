@@ -58,6 +58,22 @@ or three calls before answering is normal and expected.
 find something, change the words or accept that it is not there.
 - \"I could not find it\" is a correct answer. Guessing is not.";
 
+/// How to reply when the tool channel is closed and a grammar is in force.
+///
+/// ⚠️ Load-bearing, and not obviously so: the schema is compiled into a token
+/// grammar by the serving stack and never shown to the model, so nothing else in
+/// the request describes the envelope the model is being held to. Without this
+/// the model is required to emit a shape it was never told about, and the run
+/// measures that instead of the constraint.
+///
+/// Separate from the verb catalogue on purpose, the same way [`LOOP_RULES`] is
+/// separate from [`SYSTEM_PROMPT`]: the catalogue is the contract, this is one
+/// loop's transport, and they change for unrelated reasons.
+pub const CONSTRAINED_REPLY_RULES: &str = "\n
+Reply with a single JSON object of the form {\"verb\": …, \"arguments\": {…}}, and nothing \
+else. When you can answer the question, use the verb \"answer\" and put your reply in \
+arguments.text.";
+
 /// Why the loop stopped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopReason {
@@ -97,6 +113,15 @@ pub struct Outcome {
     pub usage: Usage,
     pub elapsed: Duration,
     pub stopped: StopReason,
+    /// Replies that did not satisfy the verb-call grammar, under a run that
+    /// asked for one. Always zero free-form.
+    ///
+    /// The canary for an endpoint that accepted `response_format` and then did
+    /// not enforce it: providers differ on whether a schema is a guarantee or a
+    /// strong hint, and the difference is invisible in a scorecard. Non-zero
+    /// means a "constrained" run was not constrained, and any number read off it
+    /// describes nothing.
+    pub off_schema: usize,
 }
 
 impl Outcome {
@@ -176,29 +201,17 @@ impl<'a> Session<'a> {
 
     /// Run with grammar-constrained decoding. See [`Session::response_schema`].
     ///
-    /// ⚠️ **This does not currently produce a trustworthy constraint tax**, and
-    /// the reason is in [`Session::ask`]: the request carries the tool
-    /// definitions *and* the response schema, so the model is handed two ways to
-    /// call a verb and picks one per its own training. Measured 2026-09-08
-    /// against DeepInfra:
+    /// ⚠️ **Never let this request carry `tools` as well.** Two ways to call a
+    /// verb means the model picks one per its own training, which makes the
+    /// resulting score a property of the model rather than of the constraint —
+    /// and comparing models is the only thing the number is for. One model
+    /// ignored the schema entirely; another emitted a verb envelope with
+    /// tool-call fields stuffed inside its `arguments`, recording a verb it had
+    /// not asked for.
     ///
-    /// - `openai/gpt-oss-120b` answered through the **native tool-call channel**
-    ///   and ignored the schema (2/2 runs) — so the "constrained" variant was not
-    ///   constrained, and any tax it reported would be ~0 by construction.
-    /// - `z-ai/glm-5.3-flash` produced a **hybrid**: a verb envelope whose
-    ///   `arguments` held tool-call fields (`{"verb":"list","arguments":{
-    ///   "id":"call_1","name":"search",…}}`), so the verb recorded was not the
-    ///   verb wanted, inflating the tax.
-    /// - The archived spike saw the **third** behaviour, the schema winning and
-    ///   tool calling being suppressed.
-    ///
-    /// Which of the three you get is a property of the model, so the number is
-    /// not comparable across models — which is the one thing a bake-off needs it
-    /// to be. Removing `tools` from the constrained request is the obvious fix
-    /// and is **not** free: the verb documentation lives in `verbs::tools()`, so
-    /// dropping it makes the constrained half less informed, and the run would
-    /// then measure information loss rather than the constraint. That is a
-    /// product decision about what the tax means, not a tidy-up.
+    /// The closed channel is why [`verbs::tools_as_prompt`] exists: the verb
+    /// documentation lives in the tool definitions, so dropping them without
+    /// replacing the docs would measure information loss instead.
     pub fn constrained(mut self) -> Self {
         self.response_schema = Some(verb_call_schema());
         self
@@ -212,23 +225,33 @@ impl<'a> Session<'a> {
     /// Answer one question, calling verbs as needed.
     pub async fn ask(&self, question: &str) -> Outcome {
         let started = Instant::now();
+        // Constrained runs carry the verb documentation in the prompt because
+        // their request cannot carry `tools`. Both variants therefore describe
+        // the same verbs, and differ only in how a call travels back — without
+        // this the comparison between them measures how much the model knows.
+        let system = match self.response_schema {
+            Some(_) => format!(
+                "{SYSTEM_PROMPT}{LOOP_RULES}\n\n{}{CONSTRAINED_REPLY_RULES}",
+                verbs::tools_as_prompt()
+            ),
+            None => format!("{SYSTEM_PROMPT}{LOOP_RULES}"),
+        };
         let mut messages = vec![
-            ChatMessage::System(format!("{SYSTEM_PROMPT}{LOOP_RULES}")),
+            ChatMessage::System(system),
             ChatMessage::User(question.to_string()),
         ];
         let mut trace: Vec<TurnRecord> = Vec::new();
         let mut total = Usage::default();
         let mut seen: Vec<String> = Vec::new();
+        let mut off_schema = 0usize;
 
         for _ in 0..self.max_turns {
-            // ⚠️ Both are sent when constrained, and that is the open defect
-            // described on `Session::constrained` — two contracts for one call,
-            // and the model chooses. Fixing it means deciding where the verb
-            // documentation lives when `tools` is absent; do not just delete the
-            // `with_tools` call.
-            let mut request = ChatRequest::new(messages.clone()).with_tools(verbs::tools());
+            // ⚠️ Exactly one channel, never both. See `Session::constrained`.
+            let mut request = ChatRequest::new(messages.clone());
             if let Some(schema) = &self.response_schema {
                 request = request.with_response_schema(schema.clone());
+            } else {
+                request = request.with_tools(verbs::tools());
             }
             if let Some(t) = self.enable_thinking {
                 request = request.with_thinking(t);
@@ -243,6 +266,7 @@ impl<'a> Session<'a> {
                         total,
                         started,
                         StopReason::Failed(describe(e)),
+                        off_schema,
                     );
                 }
             };
@@ -256,12 +280,20 @@ impl<'a> Session<'a> {
             // suppresses tool calling (it does, trivially) rather than whether it
             // hurts verb *selection* — the thing the constraint tax is about.
             let mut reply = reply;
-            if self.response_schema.is_some()
-                && reply.tool_calls.is_empty()
-                && let Some(call) = parse_constrained_call(reply.content.as_deref())
-            {
-                reply.tool_calls = vec![call];
-                reply.content = None;
+            if self.response_schema.is_some() {
+                // Judged before the envelope is unwrapped, and only when there is
+                // something to judge: an empty reply is a budget failure, already
+                // reported below, and counting it here would void a run for the
+                // wrong reason.
+                if reply.content.is_some() && !is_verb_envelope(reply.content.as_deref()) {
+                    off_schema += 1;
+                }
+                if reply.tool_calls.is_empty()
+                    && let Some(call) = parse_constrained_call(reply.content.as_deref())
+                {
+                    reply.tool_calls = vec![call];
+                    reply.content = None;
+                }
             }
 
             if reply.tool_calls.is_empty() {
@@ -287,7 +319,7 @@ impl<'a> Session<'a> {
                     Some(_) => unwrap_constrained_answer(reply.content),
                     None => reply.content,
                 };
-                return self.finish(answer, trace, total, started, stopped);
+                return self.finish(answer, trace, total, started, stopped, off_schema);
             }
 
             // Answer every call, not just the first: a model that asked two
@@ -335,7 +367,14 @@ impl<'a> Session<'a> {
             messages.extend(results);
         }
 
-        self.finish(None, trace, total, started, StopReason::TurnBudget)
+        self.finish(
+            None,
+            trace,
+            total,
+            started,
+            StopReason::TurnBudget,
+            off_schema,
+        )
     }
 
     fn finish(
@@ -345,6 +384,7 @@ impl<'a> Session<'a> {
         usage: Usage,
         started: Instant,
         stopped: StopReason,
+        off_schema: usize,
     ) -> Outcome {
         let elapsed = started.elapsed();
         // The request-level cost line. Per-call lines come from `ChatResponse`;
@@ -365,6 +405,7 @@ impl<'a> Session<'a> {
             usage,
             elapsed,
             stopped,
+            off_schema,
         }
     }
 }
@@ -379,14 +420,7 @@ impl<'a> Session<'a> {
 /// The synthetic id exists because a constrained reply has no provider call id
 /// and the result message still has to address something.
 fn parse_constrained_call(content: Option<&str>) -> Option<crate::llm::ToolCall> {
-    let text = content?.trim();
-    // Some endpoints wrap JSON in a code fence even under a schema.
-    let text = text
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    let parsed: Value = serde_json::from_str(text).ok()?;
+    let parsed: Value = serde_json::from_str(strip_fence(content?)).ok()?;
     let verb = parsed.get("verb")?.as_str()?;
     // `answer` is the schema's exit, not a tool. Returning `None` sends it down
     // the prose path, which is exactly what the free-form variant does when it
@@ -405,13 +439,47 @@ fn parse_constrained_call(content: Option<&str>) -> Option<crate::llm::ToolCall>
     })
 }
 
+/// Some endpoints wrap JSON in a code fence even under a schema.
+fn strip_fence(text: &str) -> &str {
+    text.trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+}
+
+/// Did this reply satisfy the verb-call grammar at all?
+///
+/// The canary behind [`Outcome::off_schema`]. A stack that compiled the schema
+/// into a grammar cannot return anything else; one that treated it as a strong
+/// hint can, and the two are indistinguishable from a scorecard. Checking is the
+/// only way to tell a constrained run from a run that merely asked to be.
+///
+/// Deliberately **not** expressed as `parse_constrained_call(..).is_none()`,
+/// whose `None` conflates prose with the `answer` exit. `answer` satisfies the
+/// schema; prose does not, and folding them together would report every
+/// constrained answer as a violation.
+fn is_verb_envelope(content: Option<&str>) -> bool {
+    let Some(text) = content else {
+        return false;
+    };
+    let Ok(parsed) = serde_json::from_str::<Value>(strip_fence(text)) else {
+        return false;
+    };
+    match parsed.get("verb").and_then(|v| v.as_str()) {
+        Some(verb) => verb == ANSWER_VERB || verbs::VERB_NAMES.contains(&verb),
+        None => false,
+    }
+}
+
 /// Pull the reply out of an `{"verb":"answer","arguments":{"text":…}}` envelope.
 ///
 /// Left untouched when it is not one: a model can ignore the schema, and showing
 /// whatever it did say beats showing nothing.
 fn unwrap_constrained_answer(content: Option<String>) -> Option<String> {
     let raw = content?;
-    let Ok(parsed) = serde_json::from_str::<Value>(raw.trim()) else {
+    // Fenced the same way a verb call can be, and for the same reason.
+    let Ok(parsed) = serde_json::from_str::<Value>(strip_fence(&raw)) else {
         return Some(raw);
     };
     if parsed.get("verb").and_then(|v| v.as_str()) != Some(ANSWER_VERB) {
@@ -440,6 +508,13 @@ fn unwrap_constrained_answer(content: Option<String>) -> Option<String> {
 const ANSWER_VERB: &str = "answer";
 
 /// A JSON-schema mirror of the tool surface, for the constrained variant.
+///
+/// ⚠️ Not portable as written: `strict` is set while `arguments` stays an open
+/// object, which vLLM-family stacks accept and OpenAI's strict mode rejects — it
+/// requires `additionalProperties: false` on every object and every property
+/// listed in `required`. `arguments` cannot satisfy that while holding a
+/// different shape per verb, so an OpenAI endpoint needs a different schema
+/// rather than a tweak to this one.
 fn verb_call_schema() -> Value {
     let mut names: Vec<&str> = verbs::VERB_NAMES.to_vec();
     names.push(ANSWER_VERB);
@@ -829,6 +904,118 @@ mod tests {
             "a constrained reply must count as the verb it names"
         );
         assert_eq!(out.stopped, StopReason::Answered);
+    }
+
+    /// The two arms must differ in exactly one thing: how a call travels back.
+    /// Both channels open at once and the model chooses, which makes the score a
+    /// property of the model rather than of the constraint.
+    #[tokio::test]
+    async fn a_constrained_request_carries_no_tool_definitions() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![prose_turn("hi")]);
+        let cfg = config();
+        let _ = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .constrained()
+            .ask("q")
+            .await;
+
+        let seen = llm.seen.lock().unwrap();
+        assert!(
+            seen[0].tools.is_empty(),
+            "a schema-constrained request must not also offer a tool channel"
+        );
+        assert!(seen[0].response_schema.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_free_form_request_carries_tools_and_no_schema() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![prose_turn("hi")]);
+        let cfg = config();
+        let _ = Session::new(&db, &cfg, &llm).unwrap().ask("q").await;
+
+        let seen = llm.seen.lock().unwrap();
+        assert_eq!(seen[0].tools.len(), verbs::VERB_NAMES.len());
+        assert!(seen[0].response_schema.is_none());
+    }
+
+    /// Closing the tool channel takes the verb documentation with it, since that
+    /// is where the descriptions live. Without this the constrained arm measures
+    /// what the model can guess from five bare names.
+    #[tokio::test]
+    async fn a_constrained_request_documents_the_verbs_in_its_prompt() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![prose_turn("hi")]);
+        let cfg = config();
+        let _ = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .constrained()
+            .ask("q")
+            .await;
+
+        let seen = llm.seen.lock().unwrap();
+        let ChatMessage::System(text) = &seen[0].messages[0] else {
+            panic!("first message must be the system prompt");
+        };
+        for name in verbs::VERB_NAMES {
+            assert!(text.contains(name), "{name} undocumented: {text}");
+        }
+        // And the envelope, which no other part of the request describes: the
+        // schema is compiled to a grammar and never shown to the model.
+        assert!(text.contains("\"verb\""), "{text}");
+        assert!(text.contains("arguments.text"), "{text}");
+    }
+
+    /// The canary for a stack that accepted `response_format` and ignored it.
+    #[tokio::test]
+    async fn an_off_schema_reply_under_a_schema_is_counted() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![prose_turn("Sure, here is what I found.")]);
+        let cfg = config();
+        let out = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .constrained()
+            .ask("q")
+            .await;
+        assert_eq!(
+            out.off_schema, 1,
+            "prose under a grammar means the grammar was not applied"
+        );
+    }
+
+    /// The exit satisfies the schema, so it must not read as a violation — the
+    /// canary would otherwise fire on every constrained run that answered.
+    #[tokio::test]
+    async fn the_answer_envelope_is_not_off_schema() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![ChatResponse {
+            content: Some(r#"{"verb":"answer","arguments":{"text":"Nothing there."}}"#.into()),
+            tool_calls: vec![],
+            usage: Usage::default(),
+            latency: Duration::ZERO,
+            finish_reason: Some("stop".into()),
+            provider: None,
+        }]);
+        let cfg = config();
+        let out = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .constrained()
+            .ask("q")
+            .await;
+        assert_eq!(out.off_schema, 0, "`answer` is the schema's own exit");
+        assert_eq!(out.stopped, StopReason::Answered);
+    }
+
+    /// Free-form replies are prose by design, and must never be scored against a
+    /// grammar nobody asked for.
+    #[tokio::test]
+    async fn a_free_form_run_never_reports_off_schema() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![prose_turn("plain prose")]);
+        let cfg = config();
+        let out = Session::new(&db, &cfg, &llm).unwrap().ask("q").await;
+        assert_eq!(out.off_schema, 0);
     }
 
     /// The schema must offer a way to stop, or the constrained variant cannot

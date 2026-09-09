@@ -18,13 +18,20 @@
 //! settles which one *this* tool surface gets. The difference between the two
 //! scores is the tax, and it is a measurement rather than an assumption.
 //!
-//! ⛔ **The constrained half is not sound yet — do not spend a run on this until
-//! it is.** The request carries the tool definitions *and* the response schema,
-//! so the model is handed two ways to call a verb and picks one per its own
-//! training: one model ignores the schema and uses native tool calls, another
-//! emits a hybrid of the two, a third suppresses tool calling as intended. The
-//! evidence and the reason the obvious fix is not free are on
+//! The two halves must differ in **one** thing: how a call travels back. Each
+//! carries the same verb documentation — the constrained half in its prompt,
+//! since its request cannot carry `tools` — and offers exactly one channel. Open
+//! both and the model picks per its own training, which makes the score a
+//! property of the model rather than of the constraint; see
 //! `Session::constrained`.
+//!
+//! ⚠️ **A tax is only reported when the constrained half was actually
+//! constrained.** Providers differ on whether a response schema is enforced as a
+//! grammar or read as a strong hint, and a scorecard cannot show which you got —
+//! so replies that ignore the schema are counted and a non-zero count withholds
+//! the number. Check the endpoint advertises `structured_outputs` *at the pinned
+//! quantization* before running: the same provider serves the same model with
+//! and without it depending on the tag.
 //!
 //! ⚠️ Not every endpoint can run the constrained half. One vendor's serving stack
 //! applies the grammar from token zero and never terminates with a reasoning
@@ -115,6 +122,8 @@ struct Score {
     correct: usize,
     total: usize,
     errors: usize,
+    /// Replies that ignored the response schema. Zero by definition free-form.
+    off_schema: usize,
 }
 
 impl Score {
@@ -148,10 +157,11 @@ pub async fn run(db: &Database, config: &ResolvedConfig, llm: &dyn LlmClient) {
         constrained.correct,
         constrained.total,
         constrained.pct(),
-        if constrained.errors > 0 {
-            format!("   ⚠️ {} call(s) errored", constrained.errors)
-        } else {
-            String::new()
+        match (constrained.errors, constrained.off_schema) {
+            (0, 0) => String::new(),
+            (e, 0) => format!("   ⚠️ {e} call(s) errored"),
+            (0, s) => format!("   ⚠️ {s} repl(ies) ignored the schema"),
+            (e, s) => format!("   ⚠️ {e} errored, {s} ignored the schema"),
         }
     );
 
@@ -162,6 +172,26 @@ pub async fn run(db: &Database, config: &ResolvedConfig, llm: &dyn LlmClient) {
         println!(
             "\n  constraint tax: NOT MEASURABLE on this endpoint — every constrained \
              call errored, which is a serving-stack limitation rather than a model one."
+        );
+        return;
+    }
+    if constrained.off_schema > 0 {
+        // The other way this half can be unsound, and the quieter one: the
+        // endpoint accepted `response_format` and did not enforce it, so the
+        // "constrained" run was never constrained. Providers differ on whether a
+        // schema is a guarantee or a strong hint, and a scorecard cannot show
+        // which you got. The scores stay printed — the run is still evidence
+        // about the endpoint — but a difference between them is not a tax.
+        println!(
+            "\n  constraint tax: NOT MEASURABLE — {} constrained repl{} ignored the \
+             schema, so this endpoint treats it as a hint rather than a grammar. \
+             Subtracting these two numbers would describe nothing.",
+            constrained.off_schema,
+            if constrained.off_schema == 1 {
+                "y"
+            } else {
+                "ies"
+            },
         );
         return;
     }
@@ -189,6 +219,7 @@ async fn run_variant(
         correct: 0,
         total: CASES.len(),
         errors: 0,
+        off_schema: 0,
     };
 
     for (i, case) in CASES.iter().enumerate() {
@@ -203,6 +234,7 @@ async fn run_variant(
         if failed {
             score.errors += 1;
         }
+        score.off_schema += outcome.off_schema;
 
         // Reaching the right verb is necessary but **not sufficient**: the run
         // also has to finish. Scoring on "the verb appeared somewhere" alone

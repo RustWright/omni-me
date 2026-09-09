@@ -65,6 +65,54 @@ fi
 model="${OMNI_BENCH_MODEL:-z-ai/glm-5.3-flash}"
 pin="${OMNI_BENCH_PIN:-deepinfra/fp4}"
 
+# Does the pinned endpoint actually offer what this invocation needs?
+#
+# `structured_outputs` is a property of the *tag*, not of the provider or the
+# model: openai/gpt-oss-120b has it on deepinfra/bf16 and deepinfra/turbo and
+# does NOT have it on deepinfra/fp8. Pinning the wrong one produces a
+# constrained half that was never constrained — a clean-looking scorecard
+# measuring nothing, which is the exact failure this whole harness keeps hitting.
+#
+# Only required when the run involves the constrained path; a plain `--ask` is
+# fine on an endpoint that lacks it. And this is cheap prevention, not the
+# guarantee — the agent counts replies that ignore the schema and withholds the
+# tax when any do. So an unreachable API warns and continues; only a definite
+# "this tag lacks it" aborts. Set OMNI_BENCH_SKIP_PREFLIGHT=1 to bypass.
+needs_schema=no
+for arg in "$@"; do
+  case "$arg" in --bench | --constrained) needs_schema=yes ;; esac
+done
+
+if [[ "${OMNI_BENCH_SKIP_PREFLIGHT:-}" != "1" ]]; then
+  python3 - "$model" "$pin" "$needs_schema" <<'PY' || exit 1
+import json, sys, urllib.error, urllib.request
+
+model, pin, needs_schema = sys.argv[1], sys.argv[2], sys.argv[3] == "yes"
+url = f"https://openrouter.ai/api/v1/models/{model}/endpoints"
+try:
+    with urllib.request.urlopen(url, timeout=20) as response:
+        data = json.load(response).get("data", {})
+except Exception as e:  # unreachable, rate-limited, malformed — all the same here
+    print(f"⚠️  could not pre-flight the pin ({e}); relying on the run's own "
+          f"schema canary instead.", file=sys.stderr)
+    sys.exit(0)
+
+endpoints = {e.get("tag"): e.get("supported_parameters", []) or []
+             for e in data.get("endpoints", [])}
+if pin not in endpoints:
+    sys.exit(f"pin `{pin}` is not an endpoint for {data.get('id', model)}.\n"
+             f"  available: {', '.join(sorted(t for t in endpoints if t))}")
+
+wanted = ["tools"] + (["structured_outputs"] if needs_schema else [])
+missing = [w for w in wanted if w not in endpoints[pin]]
+if missing:
+    usable = sorted(t for t, params in endpoints.items()
+                    if t and all(w in params for w in wanted))
+    sys.exit(f"pin `{pin}` does not advertise {', '.join(missing)}, so this run "
+             f"would measure nothing.\n  tags that do: {', '.join(usable) or '(none)'}")
+PY
+fi
+
 export OMNI_AGENT_DATA="${OMNI_AGENT_DATA:-${TMPDIR:-/tmp}/omni-agent-bench}"
 export OMNI_AGENT_LLM_BASE_URL="${OMNI_AGENT_LLM_BASE_URL:-https://openrouter.ai/api/v1}"
 export OMNI_AGENT_LLM_MODEL="$model"

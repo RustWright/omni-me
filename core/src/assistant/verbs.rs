@@ -150,6 +150,30 @@ pub fn tools() -> Vec<ToolDef> {
     ]
 }
 
+/// The same verb documentation as prompt text, for a request that cannot carry
+/// `tools`.
+///
+/// ⚠️ Built by walking [`tools`], never written out by hand. A second copy of
+/// these descriptions would drift the first time someone edits one here, and the
+/// constrained variant would go on testing wording that no longer ships.
+///
+/// It is needed at all because a serving stack compiles a response schema into a
+/// token grammar and never shows it to the model. A constrained request
+/// therefore holds the model to a verb enum it was otherwise never introduced
+/// to, and would be measuring what the model can guess from five bare names.
+pub fn tools_as_prompt() -> String {
+    let mut out = String::from("The verbs you may call, and their arguments:\n");
+    for tool in tools() {
+        out.push_str(&format!(
+            "\n{}\n  {}\n  arguments: {}\n",
+            tool.name,
+            tool.description,
+            serde_json::to_string(&tool.parameters).unwrap_or_default(),
+        ));
+    }
+    out
+}
+
 /// Run one verb and return what the model should see.
 ///
 /// Every failure comes back as `{"error": ...}` rather than an `Err`. A bad
@@ -471,6 +495,31 @@ mod tests {
             assert!(t.parameters.get("properties").is_some(), "{}", t.name);
             assert!(!t.description.is_empty(), "{}", t.name);
         }
+    }
+
+    /// The constrained variant reads its verbs from here and nowhere else, so a
+    /// description that fails to reach the rendering has to break the build —
+    /// otherwise it surfaces as an unexplained score gap in a benchmark months
+    /// later, which is not a debuggable signal.
+    #[test]
+    fn the_prompt_rendering_covers_every_verb_and_its_arguments() {
+        let rendered = tools_as_prompt();
+        for name in VERB_NAMES {
+            assert!(rendered.contains(name), "{name} missing from: {rendered}");
+        }
+        // Argument keys, not just names: a verb the model cannot call correctly
+        // is no better documented than one it has never heard of.
+        assert!(rendered.contains("\"query\""), "{rendered}");
+        assert!(
+            rendered.contains("\"required\":[\"type\",\"id\"]"),
+            "{rendered}"
+        );
+        // And the guidance, not only the schema. This sentence is what stops
+        // `search` being used for "what routines do I have".
+        assert!(
+            rendered.contains("not guaranteed to contain the name of its own type"),
+            "the descriptions must survive the rendering: {rendered}"
+        );
     }
 
     #[test]

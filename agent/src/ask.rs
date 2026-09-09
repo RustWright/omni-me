@@ -97,6 +97,19 @@ pub fn print_outcome(outcome: &Outcome) {
         outcome.usage.completion_tokens,
         outcome.usage.reasoning_tokens,
     );
+
+    // Printed here so one cheap question can rule an endpoint out before a bench
+    // is spent on it. A stack that compiled the schema into a grammar cannot
+    // return anything but the envelope; one that read it as a suggestion can,
+    // and nothing else in this output would show the difference.
+    if outcome.off_schema > 0 {
+        println!(
+            "\n⚠️  {} repl{} ignored the response schema. This endpoint did not enforce \
+             the grammar, so a constraint tax measured here would describe nothing.",
+            outcome.off_schema,
+            if outcome.off_schema == 1 { "y" } else { "ies" },
+        );
+    }
 }
 
 /// Arguments on one line, short enough to keep the trace scannable.
