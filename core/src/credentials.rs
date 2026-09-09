@@ -8,7 +8,7 @@
 //! pragmatic equivalent.
 //!
 //! The public engine knows only two *generic* credential kinds: IMAP mailbox
-//! pollers and the Gemini extractor key. Bank-specific credentials live in the
+//! pollers and the `[llm]` endpoint. Bank-specific credentials live in the
 //! private overlay, which deserializes its own struct from the **same**
 //! `credentials.toml` — serde ignores unknown sections in both directions
 //! (neither struct uses `deny_unknown_fields`), so the public and private
@@ -16,7 +16,7 @@
 //!
 //! Add a new generic integration by extending `Credentials` with a new field.
 //! Missing fields deserialize as `None`/empty — partially-configured installs
-//! are valid (e.g. Gemini set up but no IMAP accounts yet).
+//! are valid (e.g. `[llm]` set up but no IMAP accounts yet).
 //!
 //! Tauri-client side credentials (sync token, etc.) stay separate and use
 //! Tauri's storage plugins; this module is server-only.
@@ -47,18 +47,15 @@ pub struct Credentials {
     /// no IMAP accounts configured.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub imap: std::collections::HashMap<String, ImapCredentials>,
-    /// Gemini Flash multimodal API key — used by the document extractor for
-    /// receipts, bank statements, paystubs, etc. When absent, handlers fall
-    /// back to `NullExtractor` (no events emitted) — a useful signal that
-    /// the key needs configuring.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gemini: Option<GeminiCredentials>,
-    /// Provider-swap config for the *text* LLM (3.8 bring-your-own-LLM). When
-    /// absent or `provider = "gemini"`, the engine uses the Gemini client keyed
-    /// by `GEMINI_API_KEY`/`[gemini]`. When `provider = "openai_compatible"`, it
-    /// builds an OpenAI-compatible client from `base_url`/`model`/`api_key`. The
-    /// document extractor still reads `[gemini]` — its provider-swap is a
-    /// deferred fast-follow that will read this same section.
+    /// The one LLM endpoint, shared by the text client and — when
+    /// `vision = true` — the document extractor. `provider =
+    /// "openai_compatible"` with `base_url`/`model`/`api_key` is the only
+    /// supported shape; absent or incomplete yields a `NullLlmClient` that
+    /// reports the gap at call time rather than failing boot.
+    ///
+    /// ⚠️ A `[gemini]` section may still be present in an existing file. It is
+    /// ignored: serde has no `deny_unknown_fields` here, and the closed-model
+    /// path was removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm: Option<LlmProviderConfig>,
     /// Generic name→secret map for config-driven sources that authenticate by
@@ -94,24 +91,42 @@ pub struct ServerConfig {
 /// along so one section fully describes the provider.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LlmProviderConfig {
-    /// `"gemini"` (default) or `"openai_compatible"`.
+    /// `"openai_compatible"` — the only supported value. Anything else yields
+    /// a `NullLlmClient`; see `llm::provider::build_llm_client`.
     pub provider: String,
     /// API root for the OpenAI-compatible endpoint (e.g.
-    /// `http://localhost:11434/v1`). Unused for `provider = "gemini"`.
+    /// `https://api.deepinfra.com/v1/openai`, `http://localhost:11434/v1`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
-    /// Model id (e.g. `llama3.1`, `gpt-4o-mini`).
+    /// Model id (e.g. `deepseek/deepseek-v4-flash`, or a bare `llama3.1` on a
+    /// local server). ⚠️ Namespaced ids are checked against an open-weights
+    /// allowlist — see `llm::provider`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Bearer key. Empty/absent is valid for local servers that don't check it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// 3.8a opt-in: also route the *document extractor* (receipts/statements)
-    /// through this OpenAI-compatible endpoint's vision API. Default `false`
-    /// keeps the extractor on Gemini/Null — vision support varies across
-    /// endpoints, so we never silently POST images to one that can't do it.
+    /// Opt-in: also route the *document extractor* (receipts/statements)
+    /// through this endpoint's vision API. Default `false` leaves extraction on
+    /// `NullExtractor` — vision support varies across endpoints, so we never
+    /// silently POST images to one that can't do it.
     #[serde(default)]
     pub vision: bool,
+    /// Permit a closed-weights model, disabling the open-weights allowlist in
+    /// `llm::provider`.
+    ///
+    /// Default `false`, and that default is the privacy guarantee: an
+    /// open-weights provider that also *proxies* Anthropic or Google models
+    /// applies the model owner's policy to those, not its own, and the id is one
+    /// line away in the same catalogue. Refusing by default makes that a loud
+    /// failure instead of an invisible one.
+    ///
+    /// Setting it `true` is a deliberate, documented trade — a commercial
+    /// frontier model is a supported configuration for anyone running their own
+    /// omni-me, and it will be better at the hard reasoning. See
+    /// `docs/src/assistant.md`.
+    #[serde(default)]
+    pub allow_closed_weights: bool,
 }
 
 /// IMAP poller — host + port + account + app-password (NOT main login).
@@ -130,18 +145,13 @@ fn default_imap_label() -> String {
     "omni-me".to_string()
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct GeminiCredentials {
-    pub api_key: String,
-}
-
 // ---------------------------------------------------------------------------
 // Redacted Debug
 // ---------------------------------------------------------------------------
 //
 // Every struct in this module previously derived `Debug` with no redaction —
-// including the plaintext `secrets` map, `ImapCredentials.app_password`,
-// `GeminiCredentials.api_key` and `LlmProviderConfig.api_key`. Nothing logged
+// including the plaintext `secrets` map, `ImapCredentials.app_password`
+// and `LlmProviderConfig.api_key`. Nothing logged
 // them (checked across both repos, and `GET /llm/config` correctly returns
 // `has_key`), so this was one careless `tracing::debug!(?creds, ...)` away from
 // a log file holding every credential on the box.
@@ -165,7 +175,6 @@ impl std::fmt::Debug for Credentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Credentials")
             .field("imap", &self.imap)
-            .field("gemini", &self.gemini)
             .field("llm", &self.llm)
             // Keys are configuration, values are secrets.
             .field("secrets", &self.secrets.keys().collect::<Vec<_>>())
@@ -190,14 +199,6 @@ impl std::fmt::Debug for ImapCredentials {
             .field("account", &self.account)
             .field("app_password", &redacted(&self.app_password))
             .field("watched_label", &self.watched_label)
-            .finish()
-    }
-}
-
-impl std::fmt::Debug for GeminiCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GeminiCredentials")
-            .field("api_key", &redacted(&self.api_key))
             .finish()
     }
 }
@@ -312,7 +313,7 @@ mod tests {
         let path = dir.path().join("does-not-exist.toml");
         let creds = load(&path).unwrap();
         assert!(creds.imap.is_empty());
-        assert!(creds.gemini.is_none());
+        assert!(creds.llm.is_none());
     }
 
     #[test]
@@ -344,9 +345,6 @@ mod tests {
 
         let original = Credentials {
             imap: imap_accounts,
-            gemini: Some(GeminiCredentials {
-                api_key: "gemini-key".into(),
-            }),
             llm: None,
             secrets: Default::default(),
             server: None,
@@ -358,7 +356,6 @@ mod tests {
         assert_eq!(reloaded.imap.len(), 2);
         assert_eq!(reloaded.imap["gmail_personal"].port, 993);
         assert_eq!(reloaded.imap["yahoo"].host, "imap.mail.yahoo.com");
-        assert_eq!(reloaded.gemini.as_ref().unwrap().api_key, "gemini-key");
     }
 
     #[test]
@@ -366,6 +363,10 @@ mod tests {
         // The private overlay writes its own [globepay] / [northwind_sync]
         // sections into the same file. The public Credentials view must load
         // cleanly past them rather than erroring on unknown keys.
+        //
+        // `[gemini]` is here on purpose: the closed-model path was removed, and
+        // an existing install still has that section on disk. This is the test
+        // that it costs nothing.
         let toml_str = r#"
             [gemini]
             api_key = "k"
@@ -385,7 +386,6 @@ mod tests {
             commodity = "USD"
         "#;
         let creds: Credentials = toml::from_str(toml_str).unwrap();
-        assert_eq!(creds.gemini.unwrap().api_key, "k");
         assert_eq!(creds.imap.len(), 1);
     }
 
@@ -393,16 +393,21 @@ mod tests {
     fn partial_config_is_valid() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("credentials.toml");
-        // Only gemini configured — IMAP stays absent.
+        // Only [llm] configured — IMAP stays absent.
         let creds = Credentials {
-            gemini: Some(GeminiCredentials {
-                api_key: "only-gemini".into(),
+            llm: Some(LlmProviderConfig {
+                provider: "openai_compatible".into(),
+                base_url: Some("https://api.deepinfra.com/v1/openai".into()),
+                model: Some("deepseek/deepseek-v4-flash".into()),
+                api_key: Some("k".into()),
+                vision: false,
+                allow_closed_weights: false,
             }),
             ..Credentials::default()
         };
         save(&path, &creds).unwrap();
         let reloaded = load(&path).unwrap();
-        assert!(reloaded.gemini.is_some());
+        assert!(reloaded.llm.is_some());
         assert!(reloaded.imap.is_empty());
     }
 
@@ -417,6 +422,7 @@ mod tests {
                 model: Some("llama3.1".into()),
                 api_key: Some("sk-local".into()),
                 vision: true,
+                allow_closed_weights: false,
             }),
             ..Credentials::default()
         };
@@ -431,7 +437,7 @@ mod tests {
 
     #[test]
     fn absent_llm_section_is_none() {
-        // No [llm] section → None → the engine keeps the Gemini default.
+        // No [llm] section → None → NullLlmClient, reported at call time.
         let creds: Credentials = toml::from_str("[gemini]\napi_key = \"k\"\n").unwrap();
         assert!(creds.llm.is_none());
     }
@@ -596,15 +602,13 @@ mod tests {
                 watched_label: "omni-me".into(),
             },
         );
-        creds.gemini = Some(GeminiCredentials {
-            api_key: "AIza-super-secret-key".into(),
-        });
         creds.llm = Some(LlmProviderConfig {
             provider: "openai_compatible".into(),
             base_url: Some("http://localhost:11434/v1".into()),
             model: Some("llama3.1".into()),
             api_key: Some("sk-do-not-log-me".into()),
             vision: false,
+            allow_closed_weights: false,
         });
         creds
             .secrets
@@ -617,7 +621,6 @@ mod tests {
 
         for secret in [
             "hunter2-app-password",
-            "AIza-super-secret-key",
             "sk-do-not-log-me",
             "value-must-not-appear",
             "bearer-token-must-not-appear",

@@ -81,8 +81,8 @@ pub trait ImapHandler: Send + Sync {
 
     /// Cheap predicate — checks sender / subject patterns without parsing
     /// the body. Dispatch calls this first for every message; only on `true`
-    /// does it incur the cost of `handle()` (which may decrypt PDFs, run
-    /// Gemini, etc.).
+    /// does it incur the cost of `handle()` (which may decrypt PDFs, call the
+    /// extractor, etc.).
     fn accepts(&self, message: &ImapMessage) -> bool;
 
     /// Heavy work — parse MIME, decrypt if needed, run extraction, build

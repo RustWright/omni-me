@@ -22,7 +22,7 @@ pub enum LlmError {
 /// Object-safe: no generic methods, can be used as `Box<dyn LlmClient>`.
 #[async_trait]
 pub trait LlmClient: Send + Sync {
-    /// The model identifier used by this client (e.g. "gemini-2.0-flash").
+    /// The model identifier used by this client (e.g. "z-ai/glm-5.3-flash").
     fn model_name(&self) -> &str;
 
     /// Generate a plain text completion from the given prompt.

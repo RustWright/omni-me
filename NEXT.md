@@ -1,40 +1,39 @@
 # NEXT
 
-**Next action: the long-term LLM provider conversation, in a FRESH session** (user,
-2026-09-08 — this one carries too much noise). Planning-first and cross-cutting: self-hosted
-vs managed, what ZDR requires, what Hetzner's constrained-decoding failure means for a
-self-hosted future, cost. **Only after that** is a bench run worth spending — the constraint
-tax is a property of the *serving stack*, so a number is a fact about one endpoint only.
-
-**The bench harness is fixed and primed, not run.** `--bench`/`--ask --constrained` now send
-exactly one channel: constrained requests carry `response_format` and **no `tools`**, with the
-same verb docs rendered into the system prompt by `verbs::tools_as_prompt()`. New guards:
-`Outcome::off_schema` counts replies ignoring the envelope and `--bench` withholds the tax when
-any do; `scripts/bench-openrouter.sh` pre-flights the pin. 745 tests + clippy + fmt clean.
-⛔ Do not re-open the fix; do not run the bench before the provider decision.
+**Next action: fill the five roles with a benchmarked model each.** The provider question is
+closed, so a bench run is finally worth spending. `scripts/bench-openrouter.sh --bench` is
+primed and now refuses any pin that is not DeepInfra. Screen wide on OpenRouter (pinned to
+DeepInfra tags), then confirm the winners direct.
 
 ## Decisions in force — inherit, do not re-derive
-- **`structured_outputs` is a property of the endpoint TAG**, not the model or provider:
-  `gpt-oss-120b` has it on `deepinfra/bf16`/`turbo`, **not** on `deepinfra/fp8`. And
-  OpenRouter documents that some providers only treat a schema as a *hint*. Both guards above
-  exist for this — [[project-assistant-bench-harness-traps]] (now eight).
-- **Bench stack, when a run happens = `z-ai/glm-5.3-flash` @ `deepinfra/fp4`** (user,
-  2026-09-08). Overridable via `OMNI_BENCH_MODEL`/`OMNI_BENCH_PIN`. Picks a *stack*; model
-  selection stays deferred, and the provider session may replace this outright.
-- **The Phase 0 spike is NOT lost** — `~/productive_learning/.archive/poc/llm-quality-spike/`,
-  in the **parent** workspace. Inherit: Hetzner's constrained-decoding failure is **deployment
-  config, settled by control experiment** (DeepInfra passed the same weights in 1.3s) · **Qwen
-  is not a candidate**, it is what Hetzner serves free · its scores are **not comparable to
-  `--bench`**. Load-bearing for the provider session.
-- **Released, not in an endgame:** v1.0.0 tagged 2026-08-30, now v1.1.2. Read release state
-  from `git tag`; a stale memory note said otherwise and misframed this session.
-- **Frontend↔core share NO Rust code** (JSON over Tauri IPC) — [[project-cross-boundary-rules-get-a-fixture]].
-  **The read catalog is NOT `RecordType`**. **`--ask`/`--bench` are test scaffolding**,
-  `--probe` is permanent. ⛔ **FINANCES DEFERRED INDEFINITELY.**
-- **Do not re-survey:** generalization · the bake-off · hosting · SurrealDB FULLTEXT on
-  SurrealKV (proven) · the OpenRouter key (`[openrouter] api_key`, lifted by the bench script).
+- **Provider: DeepInfra, open weights only** (user, 2026-09-08). It won on criterion 1
+  (*owns no models*), which is where the real argument lives, plus SLA and adapter ownership.
+  **Accepted risk, stated: US jurisdiction, no recourse against US legal process.** EU
+  jurisdiction was demoted — the CLOUD Act follows the provider not the datacentre, and it
+  answered state access rather than the commercial-misuse threat actually held. ⛔ Do not
+  reopen; Phala's attested-GPU route is the one noted revisit, at the 3–6 month review.
+- **Five roles, model per role**: interactive · batch · quarantined extractor · high-volume
+  structurer · local. Table in `docs/src/assistant.md` and `core/src/llm/provider.rs`.
+  C-vs-D is a **trust boundary**, not a speed tier. D scores on **abstention**, not accuracy.
+- **Role-keyed config is deliberately NOT built.** `[llm]` stays one section until benchmarks
+  say what fills each role. That refactor lands *with* the results.
+- **Bench = production, structurally** — that is the guarantee, not a promise: the script
+  gates on a DeepInfra pin, and requests carry `zdr` + `data_collection:deny` +
+  `require_parameters` so a schema-ignoring endpoint errors instead of degrading silently.
+- **Gemini is deleted** — client, extractor, `[gemini]` creds, the fallback. `NullLlmClient`
+  replaced the fallback and reports *why* at call time. Closed-weights model ids are refused
+  unless `[llm] allow_closed_weights = true`, which exists to keep the published promise that
+  a commercial model is a supported configuration for **other people's** installs.
+- **Finances is deferred, NOT cancelled** (user, 2026-09-08) — do not accept capability
+  regressions on that path and call it acceptable because it is deferred.
+- **Do not re-survey:** the provider field (41 candidates screened) · the bake-off
+  (`~/productive_learning/.archive/poc/llm-quality-spike/`, parent workspace) · Hetzner's
+  constrained-decoding failure (settled: deployment config) · the OpenRouter key
+  (`[openrouter] api_key`, lifted by the bench script).
 
 ## Open threads
-Retire `Session::constrained` once the number exists? · routine search matches group names,
-not item names · Gemini has no `chat` impl · a rule for widening a mechanism whose purpose
-was never read (2026-09-08).
+`prompts.rs` still asks for no `total`, so `ExtractionResult.total` is always `None` and
+`verify`'s arithmetic check is unreachable (one-line schema fix, confirmed by the spike) ·
+scanned PDFs need page rasterization, unbuilt · confirm with DeepInfra support that an
+uploaded LoRA adapter counts as "Customer Data" before the first upload (Phase D) ·
+`Session::constrained` retirement once the constraint-tax number exists.

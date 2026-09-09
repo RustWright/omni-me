@@ -243,9 +243,9 @@ impl SubprocessSource {
         // `.env_clear()` + an explicit allow-list, not inheritance.
         //
         // The module doc above says "the engine never sees a secret". That was
-        // true one way and false the other: the server reads `GEMINI_API_KEY`
-        // from its own environment, and every helper it spawned inherited that
-        // plus whatever else the compose `.env` injected. For a boundary whose
+        // true one way and false the other: the server reads API keys from its
+        // own environment, and every helper it spawned inherited those plus
+        // whatever else the compose `.env` injected. For a boundary whose
         // whole point is third-party plugin authors, inheritance handed each
         // plugin the engine's credentials for free.
         //

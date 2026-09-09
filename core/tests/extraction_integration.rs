@@ -1,10 +1,10 @@
-//! Phase 2.8 — End-to-end integration tests for `GeminiExtractor` against
-//! real document samples.
+//! End-to-end integration tests for the document extractor against real
+//! document samples — the quarantined-extractor role, exercised for real.
 //!
-//! All tests in this file are `#[ignore]`d by default — they hit the real
-//! Gemini API and require:
+//! All tests here are `#[ignore]`d by default: they spend money against a live
+//! vision endpoint and require:
 //!
-//! 1. `GEMINI_API_KEY` environment variable set to a valid key.
+//! 1. `OMNI_EXTRACT_BASE_URL`, `OMNI_EXTRACT_MODEL` and `OMNI_EXTRACT_KEY` set.
 //! 2. Sample fixture files placed in `core/tests/fixtures/extraction/`:
 //!    - `receipt.jpg` — paper receipt photo
 //!    - `brokerage.pdf` — investment statement
@@ -13,19 +13,24 @@
 //!
 //! Run with:
 //! ```bash
-//! GEMINI_API_KEY=$(cat ~/.config/omni-me/gemini-key) \
+//! OMNI_EXTRACT_BASE_URL=https://api.deepinfra.com/v1/openai \
+//! OMNI_EXTRACT_MODEL=z-ai/glm-5.3-flash \
+//! OMNI_EXTRACT_KEY=$(…) \
 //!   cargo test -p omni-me-core --test extraction_integration -- --ignored
 //! ```
 //!
+//! ⚠️ The two PDF fixtures need `pdftotext` (poppler-utils) on the machine —
+//! PDFs are converted to text before the call, because no model reads PDF.
+//!
 //! These tests are not gated by CI — they exist for the developer to validate
-//! a specific build against real samples (Phase 0 POC pattern). Failures here
-//! are diagnostic, not green-bar-required.
+//! a specific build against real samples. Failures here are diagnostic, not
+//! green-bar-required.
 
 use std::path::PathBuf;
 
 use omni_me_core::extraction::{
-    DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, ExtractionHint, gemini::GeminiExtractor,
-    verify,
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, ExtractionHint,
+    openai_compat::OpenAiCompatExtractor, verify,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -36,10 +41,15 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn make_extractor() -> GeminiExtractor {
-    let key =
-        std::env::var("GEMINI_API_KEY").expect("GEMINI_API_KEY must be set for integration tests");
-    GeminiExtractor::new(key)
+fn make_extractor() -> OpenAiCompatExtractor {
+    let var = |k: &str| {
+        std::env::var(k).unwrap_or_else(|_| panic!("{k} must be set for integration tests"))
+    };
+    OpenAiCompatExtractor::new(
+        var("OMNI_EXTRACT_BASE_URL"),
+        var("OMNI_EXTRACT_MODEL"),
+        var("OMNI_EXTRACT_KEY"),
+    )
 }
 
 async fn extract_fixture(
@@ -65,7 +75,7 @@ async fn extract_fixture(
 }
 
 #[tokio::test]
-#[ignore = "hits real Gemini API; requires GEMINI_API_KEY + fixture files"]
+#[ignore = "hits a real vision endpoint; requires OMNI_EXTRACT_* + fixture files"]
 async fn receipt_extraction_passes_verification() {
     let result = extract_fixture("receipt.jpg", "image/jpeg", ExtractionHint::Receipt).await;
 
@@ -98,7 +108,7 @@ async fn receipt_extraction_passes_verification() {
 }
 
 #[tokio::test]
-#[ignore = "hits real Gemini API; requires GEMINI_API_KEY + fixture files"]
+#[ignore = "hits a real vision endpoint; requires OMNI_EXTRACT_* + fixture files"]
 async fn brokerage_statement_extraction_yields_positions() {
     let result = extract_fixture(
         "brokerage.pdf",
@@ -124,7 +134,7 @@ async fn brokerage_statement_extraction_yields_positions() {
 }
 
 #[tokio::test]
-#[ignore = "hits real Gemini API; requires GEMINI_API_KEY + fixture files"]
+#[ignore = "hits a real vision endpoint; requires OMNI_EXTRACT_* + fixture files"]
 async fn paystub_extraction_includes_gross_and_deductions() {
     let result = extract_fixture("paystub.pdf", "application/pdf", ExtractionHint::Paystub).await;
     assert!(
@@ -149,7 +159,7 @@ async fn paystub_extraction_includes_gross_and_deductions() {
 }
 
 #[tokio::test]
-#[ignore = "hits real Gemini API; requires GEMINI_API_KEY + fixture files"]
+#[ignore = "hits a real vision endpoint; requires OMNI_EXTRACT_* + fixture files"]
 async fn email_body_extraction_handles_plain_text() {
     let result = extract_fixture("email.txt", "text/plain", ExtractionHint::EmailBody).await;
     assert!(
@@ -160,7 +170,7 @@ async fn email_body_extraction_handles_plain_text() {
 }
 
 #[tokio::test]
-#[ignore = "hits real Gemini API; requires GEMINI_API_KEY + fixture files"]
+#[ignore = "hits a real vision endpoint; requires OMNI_EXTRACT_* + fixture files"]
 async fn rejects_unsupported_mime_without_calling_api() {
     // Sanity check that the supports() gate runs before the API call —
     // saves a billed request on a programmer error.

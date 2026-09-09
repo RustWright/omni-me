@@ -19,9 +19,9 @@ ordinary tests that run in CI — see the `TempDir`-based tests in
 `#[ignore]` is **not** a home for logic coverage. A test that can never run in
 CI gives zero regression protection and rots silently. Reserve `#[ignore]` for
 the narrow case of a **real external resource you genuinely cannot synthesize**
-— e.g. `tests/extraction_integration.rs` hits the real Gemini API, and "does the
-model return parseable output for a real document" is not something a fixture
-can fake. Those are manual *diagnostics*, run explicitly, and must skip
+— e.g. `tests/extraction_integration.rs` hits a real vision endpoint, and "does
+the model return parseable output for a real document" is not something a
+fixture can fake. Those are manual *diagnostics*, run explicitly, and must skip
 gracefully when their inputs/keys are absent.
 
 Do **not** park a real-data test for deterministic logic. (A pre-cleanup
@@ -63,7 +63,9 @@ locally; a fixture edit means re-freezing it against `ledger -f … bal`.
 Run a real-resource diagnostic locally (when its inputs are present):
 
 ```bash
-export GEMINI_API_KEY=$(cat ~/.config/omni-me/gemini-key)
+export OMNI_EXTRACT_BASE_URL=https://api.deepinfra.com/v1/openai
+export OMNI_EXTRACT_MODEL=z-ai/glm-5.3-flash
+export OMNI_EXTRACT_KEY=$(…)
 cargo test -p omni-me-core --test extraction_integration -- --ignored --nocapture
 ```
 

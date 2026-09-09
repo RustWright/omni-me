@@ -16,13 +16,18 @@ run when invoked explicitly with `--ignored`.
 ## Running
 
 ```bash
-export GEMINI_API_KEY=$(cat ~/.config/omni-me/gemini-key)
+export OMNI_EXTRACT_BASE_URL=https://api.deepinfra.com/v1/openai
+export OMNI_EXTRACT_MODEL=z-ai/glm-5.3-flash
+export OMNI_EXTRACT_KEY=$(…)
 cargo test -p omni-me-core --test extraction_integration -- --ignored --nocapture
 ```
 
 `--nocapture` prints the extractor's per-test stderr output — useful for
-eyeballing what Gemini actually returned without parsing the full
+eyeballing what the model actually returned without parsing the full
 `raw_response`.
+
+⚠️ The two PDF fixtures need `pdftotext` (poppler-utils) locally: PDFs are
+converted to text before the call, because no model reads PDF directly.
 
 ## What the tests check
 

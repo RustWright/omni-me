@@ -251,7 +251,7 @@ fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClie
     // Env overrides win over the file. Setting any of them means the caller is
     // deliberately pointing this run somewhere else, so an override also selects
     // the OpenAI-compatible provider — otherwise a base URL would be set and
-    // silently ignored because `[llm]` still said Gemini.
+    // silently ignored because `[llm]` still named another provider.
     let overrides = [LLM_BASE_URL_ENV, LLM_MODEL_ENV, LLM_API_KEY_ENV]
         .iter()
         .any(|k| std::env::var(k).is_ok());
@@ -264,6 +264,7 @@ fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClie
                 model: None,
                 api_key: None,
                 vision: false,
+                allow_closed_weights: false,
             });
         llm.provider = "openai_compatible".to_string();
         if let Ok(v) = std::env::var(LLM_BASE_URL_ENV) {
@@ -296,10 +297,7 @@ fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClie
         },
     };
 
-    let gemini_key = omni_me_core::llm::resolve_gemini_key(&creds);
-    Ok(omni_me_core::llm::build_llm_client(
-        &creds, gemini_key, options,
-    ))
+    Ok(omni_me_core::llm::build_llm_client(&creds, options))
 }
 
 async fn run(args: Args) -> Result<(), String> {

@@ -1,8 +1,8 @@
 //! Tauri command for document extraction.
 //!
 //! Forwards captured document bytes to `omni-me-server`'s
-//! `/documents/extract` endpoint, which runs `GeminiExtractor`. Server-side
-//! host honors `feedback_llm_server_side.md` — Gemini API keys never live
+//! `/documents/extract` endpoint, which runs the configured extractor.
+//! Server-side host honors `feedback_llm_server_side.md` — API keys never live
 //! on the client.
 //!
 //! Attachment wiring: every call sets `attach=true` so the server stores the

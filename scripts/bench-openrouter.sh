@@ -58,12 +58,25 @@ fi
 
 # The model and its pin travel together: a tag is only valid for a model that
 # provider actually serves, and `only` takes the full slug (with the quantization
-# suffix) while `order` takes a bare one. Checked live against
-# /api/v1/models/z-ai/glm-5.3-flash/endpoints — DeepInfra is the only
-# cheapest-tier provider serving it with BOTH `tools` and `structured_outputs`,
-# and it is one of two the design plan names as offering ZDR through OpenRouter.
+# suffix) while `order` takes a bare one.
 model="${OMNI_BENCH_MODEL:-z-ai/glm-5.3-flash}"
 pin="${OMNI_BENCH_PIN:-deepinfra/fp4}"
+
+# ─── the bench must measure something we can actually ship ────────────────────
+#
+# DeepInfra is the committed production provider (2026-09-08), so a screening run
+# through OpenRouter is only useful pinned to a DeepInfra tag: the constraint tax
+# and the latency are properties of the *serving stack*, and a number from some
+# other upstream describes a stack we will never run. This is the guarantee that
+# a benchmark cannot validate an option that "falls away once we move to
+# production" — enforced here rather than remembered.
+#
+# Set OMNI_BENCH_ALLOW_ANY_PROVIDER=1 to survey a different provider on purpose.
+if [[ "${OMNI_BENCH_ALLOW_ANY_PROVIDER:-}" != "1" && "$pin" != deepinfra/* ]]; then
+  echo "pin \`$pin\` is not a DeepInfra tag, so this run would measure a stack" >&2
+  echo "we do not ship. Set OMNI_BENCH_ALLOW_ANY_PROVIDER=1 to do it deliberately." >&2
+  exit 1
+fi
 
 # Does the pinned endpoint actually offer what this invocation needs?
 #
@@ -117,7 +130,13 @@ export OMNI_AGENT_DATA="${OMNI_AGENT_DATA:-${TMPDIR:-/tmp}/omni-agent-bench}"
 export OMNI_AGENT_LLM_BASE_URL="${OMNI_AGENT_LLM_BASE_URL:-https://openrouter.ai/api/v1}"
 export OMNI_AGENT_LLM_MODEL="$model"
 export OMNI_AGENT_LLM_API_KEY="$OPENROUTER_KEY"
-export OMNI_AGENT_LLM_EXTRA_BODY="${OMNI_AGENT_LLM_EXTRA_BODY:-{\"provider\":{\"only\":[\"$pin\"],\"allow_fallbacks\":false}}}"
+# `only` + no fallbacks pins the stack. The other three are the privacy and
+# honesty contract, and `require_parameters` is the load-bearing one: OpenRouter
+# refuses to route to an endpoint that lacks a parameter we sent, so a provider
+# that would treat `response_format` as a hint becomes a routing ERROR instead of
+# a clean-looking scorecard measuring nothing.
+default_extra_body="{\"provider\":{\"only\":[\"$pin\"],\"allow_fallbacks\":false,\"zdr\":true,\"data_collection\":\"deny\",\"require_parameters\":true}}"
+export OMNI_AGENT_LLM_EXTRA_BODY="${OMNI_AGENT_LLM_EXTRA_BODY:-$default_extra_body}"
 # Spacing only stops us *causing* a 429. The one seen live came from the pinned
 # upstream's shared pool being overloaded by other traffic, which no interval can
 # prevent — that is what the client's bounded retry is for.

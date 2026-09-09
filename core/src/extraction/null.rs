@@ -1,5 +1,5 @@
 //! Null extractor — returned when no real provider is configured, and used by
-//! tests that want a deterministic no-op result without spinning up Gemini.
+//! tests that want a deterministic no-op result without calling a real model.
 //!
 //! Always returns a zero-confidence empty draft. The confirm-draft
 //! screen treats this as "no extraction available, manual entry only."

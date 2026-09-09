@@ -6,13 +6,25 @@
 //! OpenAI vision shape (`content: [{type:"text"}, {type:"image_url"}]`) to the
 //! same `{base_url}/chat/completions` surface the text client uses, reusing the
 //! shared per-hint prompts + response schema + parse from the `extraction`
-//! module so its output is identical to Gemini's.
+//! module, so every extractor produces an identical `ExtractionResult`.
 //!
 //! It rides the same `[llm]` config (base_url / model / key) but is **opt-in**
 //! via `[llm] vision = true` (see `server::build_extractor`): vision support
 //! varies across OpenAI-compatible endpoints, so we never silently send images
-//! to one that can't handle them. `supports()` reports images + text only —
-//! raw PDF is excluded (unlike Gemini, most of these endpoints reject it).
+//! to one that can't handle them.
+//!
+//! ## PDF arrives as text, not as an image
+//!
+//! No model reads PDF — it is a container, and every API that advertises PDF
+//! support converts first. Google's did that for us server-side; OpenAI's
+//! `/chat/completions` does not (its PDF input lives in the Responses API, which
+//! open-weight servers do not implement). So the conversion happens here, via
+//! the `pdftotext -layout` path `statement::pdf` already owns.
+//!
+//! ⚠️ That covers **generated** PDFs — which is what statements are — and not
+//! scanned ones, where the page is an image and the extracted text is empty. A
+//! scanned PDF is reported as such rather than sent onward as a blank document;
+//! rasterizing pages to images would fix it and is not built.
 
 use async_trait::async_trait;
 use base64::Engine;
@@ -101,12 +113,16 @@ impl DocumentExtractor for OpenAiCompatExtractor {
     }
 
     fn supports(&self, mime: &str) -> bool {
-        // Images + text only. PDF is excluded — most OpenAI-compatible vision
-        // endpoints reject raw PDF (unlike Gemini), so claiming support would
-        // produce confusing upstream errors instead of a clean fall-through.
+        // PDF is included: `extract` converts it to text before the call, so the
+        // endpoint never sees a format it would reject.
         matches!(
             mime,
-            "image/jpeg" | "image/png" | "image/webp" | "text/plain" | "text/html"
+            "image/jpeg"
+                | "image/png"
+                | "image/webp"
+                | "text/plain"
+                | "text/html"
+                | "application/pdf"
         )
     }
 
@@ -122,6 +138,26 @@ impl DocumentExtractor for OpenAiCompatExtractor {
                 mime: mime.to_string(),
             });
         }
+
+        // PDF becomes layout-preserved text before anything else, so the rest of
+        // this method sees only shapes the endpoint accepts. Layout is preserved
+        // because statement columns carry meaning that reading-order text loses.
+        let converted;
+        let (bytes, mime) = if mime == "application/pdf" {
+            converted = crate::statement::pdf::extract_layout_text(bytes, "")
+                .await
+                .map_err(|e| ExtractionError::Upstream(e.to_string()))?;
+            if converted.trim().is_empty() {
+                return Err(ExtractionError::Parse(
+                    "PDF yielded no text — it is probably scanned, and rasterizing \
+                     pages to images is not implemented"
+                        .into(),
+                ));
+            }
+            (converted.as_bytes(), "text/plain")
+        } else {
+            (bytes, mime)
+        };
 
         // Steer the JSON shape via the prompt (the portable path — `json_object`
         // is far more widely supported than server-side `json_schema`), same as
@@ -230,17 +266,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_pdf_mime_rejected_without_call() {
+    async fn unsupported_mime_rejected_without_call() {
+        let ext = OpenAiCompatExtractor::new("http://127.0.0.1:1", "m", "");
+        let err = ext
+            .extract(b"\x00\x01", "image/heic", ExtractionHint::Receipt)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExtractionError::UnsupportedMime { .. }));
+    }
+
+    /// A PDF that yields no text is scanned, and must say so rather than post a
+    /// blank document and let the model invent a plausible receipt from nothing.
+    ///
+    /// The unreachable-URL base is deliberate: reaching the network at all would
+    /// mean the empty-text guard did not fire.
+    #[tokio::test]
+    async fn a_pdf_with_no_extractable_text_is_reported_not_sent() {
         let ext = OpenAiCompatExtractor::new("http://127.0.0.1:1", "m", "");
         let err = ext
             .extract(
-                b"%PDF-1.7",
+                b"not a pdf",
                 "application/pdf",
                 ExtractionHint::BankStatement,
             )
             .await
             .unwrap_err();
-        assert!(matches!(err, ExtractionError::UnsupportedMime { .. }));
+        // Either poppler refuses the bytes (Upstream) or returns nothing
+        // (Parse). Both are honest reports; neither is a silent empty document.
+        assert!(
+            matches!(
+                err,
+                ExtractionError::Upstream(_) | ExtractionError::Parse(_)
+            ),
+            "unexpected: {err:?}"
+        );
     }
 
     #[tokio::test]
@@ -281,12 +340,13 @@ mod tests {
     }
 
     #[test]
-    fn supports_images_and_text_not_pdf() {
+    fn supports_images_text_and_pdf() {
         let ext = OpenAiCompatExtractor::new("u", "m", "");
         assert!(ext.supports("image/png"));
         assert!(ext.supports("image/jpeg"));
         assert!(ext.supports("text/plain"));
-        assert!(!ext.supports("application/pdf"));
+        // PDF is converted to text before the call rather than posted raw.
+        assert!(ext.supports("application/pdf"));
         assert!(!ext.supports("image/heic"));
     }
 }

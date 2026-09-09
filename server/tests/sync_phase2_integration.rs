@@ -15,7 +15,7 @@ use chrono::Utc;
 use omni_me_core::db;
 use omni_me_core::events::{EventStore, NewEvent, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::null::NullExtractor;
-use omni_me_core::llm::GeminiClient;
+use omni_me_core::llm::NullLlmClient;
 use omni_me_core::sync::{
     NetworkMonitor, PushDebouncer, PushEvent, RetryEngine, RetryEvent, StatusReporter, SyncClient,
     SyncStatus, wire_accelerator,
@@ -50,7 +50,7 @@ async fn start_server_on_port(
     let db_arc = Arc::new(server_db);
     let state = AppState {
         db: db_arc.clone(),
-        llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
+        llm_client: Arc::new(NullLlmClient::unconfigured()),
         blob_dir: Arc::new(blob_path),
         extractor: Arc::new(NullExtractor),
         auto_import_registry: Default::default(),
@@ -94,7 +94,7 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
     std::mem::forget(blob_dir2);
     let state = AppState {
         db: Arc::new(server_db.clone()),
-        llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
+        llm_client: Arc::new(NullLlmClient::unconfigured()),
         blob_dir: Arc::new(blob_path2),
         extractor: Arc::new(NullExtractor),
         auto_import_registry: Default::default(),

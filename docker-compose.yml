@@ -21,8 +21,10 @@ services:
     ports:
       - "3000:3000"
 
-    # GEMINI_API_KEY (and optional RUST_LOG) come from .env if present. The
-    # server boots fine with none of them set — zero-config is a guarantee — so
+    # Optional RUST_LOG comes from .env if present. LLM credentials are NOT
+    # read from the environment — they live in credentials.toml on the volume,
+    # so a key cannot leak into `docker inspect` or a spawned helper's env. The
+    # server boots fine with none of this set — zero-config is a guarantee — so
     # the file is optional (long-form `required: false`).
     env_file:
       - path: .env

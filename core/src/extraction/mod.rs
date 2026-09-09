@@ -6,10 +6,16 @@
 //!
 //! Trait split deliberately keeps multimodal byte handling out of `LlmClient`
 //! (which stays tool-call / text-only). There is exactly one implementation
-//! today: Gemini multimodal. A second one — a receipt/statement specialist
-//! such as Veryfi, currently unimplemented — registers behind the routing
-//! table below without touching a single caller. That is the whole reason
-//! for the split.
+//! today: an OpenAI-compatible vision endpoint. A second one — a
+//! receipt/statement specialist such as Veryfi, currently unimplemented —
+//! registers behind the routing table below without touching a single caller.
+//! That is the whole reason for the split.
+//!
+//! PDF is handled by converting to text first (`statement::pdf`), because no
+//! model reads PDF directly and the API that used to convert for us is gone.
+//! `route_from_mime` still returns `None` for PDFs — not for lack of support,
+//! but because a PDF could be a receipt, paystub or either statement kind, and
+//! guessing burns budget on the wrong prompt.
 
 use async_trait::async_trait;
 use chrono::NaiveDate;
@@ -17,7 +23,6 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 pub mod event_mapper;
-pub mod gemini;
 pub mod null;
 pub mod openai_compat;
 pub mod verify;
@@ -100,7 +105,7 @@ pub enum ExtractionError {
 /// Object-safe trait — no generic methods, can be used as `Box<dyn DocumentExtractor>`.
 #[async_trait]
 pub trait DocumentExtractor: Send + Sync {
-    /// Human-readable identifier (e.g. "gemini-2.0-flash", "veryfi-bank-statements").
+    /// Human-readable identifier (e.g. "openai-compat-vision", "veryfi-bank-statements").
     fn name(&self) -> &str;
 
     /// Whether this extractor handles the given MIME type. Routing uses this
@@ -170,8 +175,8 @@ pub fn route(mime: &str, sender: Option<&str>) -> Option<ExtractionHint> {
 
 // --- Shared prompt / schema / parse ------------------------------------------
 //
-// Hoisted out of `gemini.rs` so every `DocumentExtractor` impl (Gemini,
-// OpenAI-compatible vision, future Veryfi) drives the same per-hint prompts,
+// Shared by every `DocumentExtractor` impl (OpenAI-compatible vision, future
+// Veryfi) so they drive the same per-hint prompts,
 // the same response schema, and the same parse + confidence-clamp. Keeping one
 // copy means the verification pass (`verify`) sees a uniform `ExtractionResult`
 // shape regardless of which model produced it.

@@ -4,13 +4,13 @@
 //! One generic HTTP client + config (base URL / model / key) covers Ollama,
 //! llama.cpp's server, vLLM, LM Studio, and the OpenAI API itself, because they
 //! all expose the same `/chat/completions` surface. Selecting it is a config
-//! choice (`[llm] provider = "openai_compatible"` in `credentials.toml`); the
-//! existing `GeminiClient` stays the default.
+//! choice (`[llm] provider = "openai_compatible"` in `credentials.toml`), and
+//! it is now the only text client.
 //!
 //! Scope: this is the *text* side of `LlmClient` (note processing + structured
-//! text). The multimodal `DocumentExtractor` swap rides the same `[llm]` config
-//! but is a deferred fast-follow — many OpenAI-compatible endpoints have no
-//! vision support, so it needs its own graceful-degradation handling.
+//! text). The multimodal `DocumentExtractor` rides the same `[llm]` config but
+//! is opt-in via `vision = true` — many OpenAI-compatible endpoints have no
+//! vision support, so it is never assumed.
 
 use std::sync::Arc;
 
@@ -150,7 +150,7 @@ impl OpenAiCompatClient {
 
     /// POST a chat-completions body and return the parsed JSON response. Errors
     /// are scrubbed of the URL (and thus any key in it) via `without_url`,
-    /// mirroring `GeminiClient` — a leaked key in a log line is the failure mode
+    /// — a leaked key in a log line is the failure mode
     /// guarded against.
     async fn send(&self, body: Value) -> Result<Value, LlmError> {
         let body = self.apply_extra(body);

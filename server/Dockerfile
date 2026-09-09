@@ -33,10 +33,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # ---- runtime ----
 FROM debian:bookworm-slim AS runtime
 
-# libssl3 = native-tls runtime; ca-certificates = outbound TLS (Gemini/IMAP/sync);
+# libssl3 = native-tls runtime; ca-certificates = outbound TLS (LLM/IMAP/sync);
 # curl = HEALTHCHECK probe.
+#
+# poppler-utils supplies `pdftotext`, which two code paths exec: statement
+# parsing and the document extractor's PDF branch. ⚠️ It was missing here, so
+# every spawn on the box failed ENOENT and PDF extraction had never once worked
+# in production — quietly enough to read as "no statements arrived".
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates libssl3 curl \
+        ca-certificates libssl3 curl poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root. Home = /data so the named volume mount inherits `app` ownership.

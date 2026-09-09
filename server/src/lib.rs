@@ -1,6 +1,6 @@
 //! Public `omni-me-server` library — the composition seam for the open-core split.
 //!
-//! [`run`] performs all of the engine's *generic* startup (SurrealDB, the Gemini
+//! [`run`] performs all of the engine's *generic* startup (SurrealDB, the
 //! document extractor, the blob store, the HTTP routes, graceful shutdown) and
 //! delegates the one thing it deliberately does NOT know about — *which*
 //! auto-import sources exist — to a caller-supplied [`SourceBuilder`]. The public
@@ -35,10 +35,9 @@ use omni_me_core::credentials::{self, Credentials};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::{
-    DocumentExtractor, gemini::GeminiExtractor, null::NullExtractor,
-    openai_compat::OpenAiCompatExtractor,
+    DocumentExtractor, null::NullExtractor, openai_compat::OpenAiCompatExtractor,
 };
-use omni_me_core::llm::{ClientOptions, LlmClient, build_llm_client, resolve_gemini_key};
+use omni_me_core::llm::{ClientOptions, LlmClient, build_llm_client};
 
 const DB_PATH: &str = "surreal_data/server.db";
 const LISTEN_ADDR: &str = "0.0.0.0:3000";
@@ -47,9 +46,10 @@ const DEFAULT_BLOB_DIR: &str = "blobs";
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Database>,
-    /// Text LLM client — `Arc<dyn LlmClient>` so the provider is swappable
-    /// (3.8): Gemini by default, or any OpenAI-compatible endpoint when `[llm]`
-    /// selects it. Selected once at boot by [`build_llm_client`].
+    /// Text LLM client — `Arc<dyn LlmClient>` so the endpoint is swappable:
+    /// any OpenAI-compatible endpoint `[llm]` selects, or a `NullLlmClient` that
+    /// reports the gap when none is configured. Selected once at boot by
+    /// [`build_llm_client`].
     pub llm_client: Arc<dyn LlmClient>,
     pub blob_dir: Arc<PathBuf>,
     pub extractor: Arc<dyn DocumentExtractor>,
@@ -126,8 +126,8 @@ pub async fn run(cfg: RunConfig) {
         .expect("failed to connect to SurrealDB");
 
     // Load server credentials once (graceful: missing/unreadable → default-empty,
-    // so a zero-config public engine still boots — 3.4). Reused for the Gemini
-    // key, the text-LLM provider swap (3.8), and the document extractor.
+    // so a zero-config public engine still boots — 3.4). Reused for the text-LLM
+    // client and the document extractor.
     let creds = credentials::default_path()
         .ok()
         .and_then(|p| credentials::load(&p).ok())
@@ -154,17 +154,13 @@ pub async fn run(cfg: RunConfig) {
         );
     }
 
-    // Gemini key resolution order: GEMINI_API_KEY env var → credentials.toml
-    // [gemini].api_key. Env wins so CI/secret-manager flows still work; the
-    // credentials fallback lets local dev boot without exporting the key. Both
-    // OPTIONAL — when absent the Gemini client carries an empty key and LLM
-    // routes error gracefully at call time rather than crashing boot (3.4).
-    let gemini_key = resolve_gemini_key(&creds);
-
-    // Text LLM client (3.8 provider-swap): `[llm]` selects the provider; the
-    // default is Gemini with the resolved key. Shared with the agent, which runs
-    // the assistant against the same `[llm]` section.
-    let llm_client = build_llm_client(&creds, gemini_key, ClientOptions::default());
+    // Text LLM client: `[llm]` selects the endpoint. Shared with the agent, which
+    // runs the assistant against the same section.
+    //
+    // `ClientOptions::default()` is deliberate — routing preferences are gateway
+    // vocabulary, and production goes direct to the provider. See
+    // `core::llm::ClientOptions`.
+    let llm_client = build_llm_client(&creds, ClientOptions::default());
 
     let blob_dir: PathBuf = std::env::var("BLOB_DIR")
         .unwrap_or_else(|_| DEFAULT_BLOB_DIR.into())
@@ -176,7 +172,7 @@ pub async fn run(cfg: RunConfig) {
 
     let db_arc = Arc::new(db);
 
-    // Document extractor (NullExtractor fallback when no Gemini key) — lifted
+    // Document extractor (NullExtractor fallback when no vision endpoint) — lifted
     // out of any auto-import conditional so AppState always carries one; the
     // /documents/extract route needs it regardless of auto-import config. Built
     // from the already-loaded `creds`; a missing key degrades to NullExtractor
@@ -388,14 +384,14 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
-/// Build the document extractor — real `GeminiExtractor` if a key is present in
-/// `credentials.gemini`, else `NullExtractor`. Server-side: this is where
-/// `feedback_llm_server_side.md` is honored — Gemini calls originate here.
+/// Build the document extractor — `OpenAiCompatExtractor` when `[llm]` opts in
+/// to vision, else `NullExtractor`. Server-side: this is where
+/// `feedback_llm_server_side.md` is honored — extraction calls originate here.
+///
+/// `vision = true` is an explicit assertion that the configured endpoint accepts
+/// images, because support varies across OpenAI-compatible servers and a silent
+/// POST to one that cannot would surface as a confusing upstream error.
 fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
-    // 3.8a opt-in: route the document extractor through the OpenAI-compatible
-    // endpoint's vision API. Gated on `[llm] vision = true` (+ provider +
-    // base_url + model) so we never silently send images to an endpoint without
-    // vision; otherwise fall through to the Gemini/Null default below.
     if let Some(cfg) = &creds.llm
         && cfg.provider == "openai_compatible"
         && cfg.vision
@@ -409,29 +405,18 @@ fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
                     cfg.api_key.clone().unwrap_or_default(),
                 ));
             }
-            _ => tracing::warn!(
-                "[llm] vision=true but base_url/model missing — falling back to Gemini/Null extractor"
-            ),
+            _ => tracing::warn!("[llm] vision=true but base_url/model missing"),
         }
     }
-    match &creds.gemini {
-        Some(g) if !g.api_key.is_empty() => {
-            tracing::info!("Gemini extractor wired");
-            Arc::new(GeminiExtractor::new(g.api_key.clone()))
-        }
-        _ => {
-            tracing::warn!(
-                "no Gemini API key in credentials — handlers will use NullExtractor (no events)"
-            );
-            Arc::new(NullExtractor)
-        }
-    }
+    tracing::warn!(
+        "no vision-capable [llm] configured — handlers will use NullExtractor (no events)"
+    );
+    Arc::new(NullExtractor)
 }
 
-// The *text* LLM client selector (3.8 provider-swap) now lives in
-// `omni_me_core::llm::build_llm_client`, so the server and the agent cannot
-// disagree about which provider a `[llm]` section selects. The document
-// extractor is still built here and stays on Gemini.
+// The *text* LLM client selector lives in `omni_me_core::llm::build_llm_client`,
+// so the server and the agent cannot disagree about which provider a `[llm]`
+// section selects. The extractor is built here because only the server has one.
 
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -458,7 +443,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use omni_me_core::credentials::{GeminiCredentials, LlmProviderConfig};
+    use omni_me_core::credentials::LlmProviderConfig;
 
     fn openai_llm(vision: bool) -> LlmProviderConfig {
         LlmProviderConfig {
@@ -467,6 +452,7 @@ mod tests {
             model: Some("llava".into()),
             api_key: Some("k".into()),
             vision,
+            allow_closed_weights: false,
         }
     }
 
@@ -479,40 +465,32 @@ mod tests {
         };
         assert_eq!(build_extractor(&creds).name(), "llava");
 
-        // Same provider, vision=false, no Gemini key → falls through to Null.
+        // Same provider, vision=false → no extractor rather than a silent
+        // image POST to an endpoint that may not accept one.
         let creds = Credentials {
             llm: Some(openai_llm(false)),
             ..Default::default()
         };
         assert_eq!(build_extractor(&creds).name(), "null");
 
-        // Gemini key present, no vision opt-in → Gemini extractor (unchanged default).
-        let creds = Credentials {
-            gemini: Some(GeminiCredentials {
-                api_key: "g".into(),
-            }),
-            ..Default::default()
-        };
-        assert!(build_extractor(&creds).name().contains("gemini"));
+        // No [llm] at all → Null.
+        assert_eq!(build_extractor(&Credentials::default()).name(), "null");
     }
 
-    /// Selection itself is tested in `core::llm::provider`. What is still worth
-    /// asserting here is the pairing the server owns: the text client swaps to
-    /// an OpenAI-compatible endpoint while the extractor stays on Gemini, and
-    /// the vision flag does not couple them.
+    /// Selection itself is tested in `core::llm::provider`. What is worth
+    /// asserting here is the pairing the server owns: one `[llm]` section feeds
+    /// both the text client and the extractor, and `vision` gates only the
+    /// second — a text client must not require a vision-capable endpoint.
     #[test]
-    fn a_text_provider_swap_leaves_the_extractor_on_gemini() {
+    fn the_vision_flag_gates_the_extractor_without_touching_the_text_client() {
         let creds = Credentials {
             llm: Some(openai_llm(false)),
-            gemini: Some(GeminiCredentials {
-                api_key: "g".into(),
-            }),
             ..Default::default()
         };
         assert_eq!(
-            build_llm_client(&creds, None, ClientOptions::default()).model_name(),
+            build_llm_client(&creds, ClientOptions::default()).model_name(),
             "llava"
         );
-        assert!(build_extractor(&creds).name().contains("gemini"));
+        assert_eq!(build_extractor(&creds).name(), "null");
     }
 }

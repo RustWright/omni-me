@@ -852,7 +852,7 @@ pub fn run() {
             commands::budget::merge_transactions,
             commands::budget::resolve_unmatched,
             commands::budget::check_account_balance,
-            // Document extraction (forwards to server-side GeminiExtractor)
+            // Document extraction (forwards to the server-side extractor)
             commands::extract::extract_document,
             // Local attachment cache (Phase 3.7)
             commands::attachments::fetch_attachment,
@@ -869,7 +869,6 @@ pub fn run() {
             commands::auto_import::remove_source_config,
             // LLM provider config (3.8 bring-your-own-LLM)
             commands::llm::get_llm_config,
-            commands::llm::set_llm_config,
             // Auto-import batch review (Phase 3.10.5)
             commands::auto_import::list_pending_batches,
             commands::auto_import::commit_batch,

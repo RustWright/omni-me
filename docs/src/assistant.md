@@ -256,18 +256,63 @@ varies between providers is what they stand to gain from a creative reading of t
 terms. A provider that does not own the models it serves, and is not racing to train better
 ones, has materially less to gain than one that does.
 
-That yields the criteria used to choose, in order:
+That yields the criteria used to choose:
 
-1. **Does not own the models it serves.**
-2. Jurisdiction and data residency you can pin per endpoint.
-3. Contractual zero data retention: no training on inputs, no human review.
-4. A real service level agreement.
-5. Private fine-tuning with ownership of the resulting adapter retained.
-6. Serves open weights, speaks OpenAI-compatible.
+1. **Does not own the models it serves.** The core of the argument, and the one that does
+   the most work.
+2. **Contractual zero data retention**: no training on inputs, no human review.
+3. **A real service level agreement.**
+4. **You end up owning any personalized adapter**, and the corpus it was trained on stays
+   yours.
+5. **Serves open weights, speaks OpenAI-compatible.**
+
+**An earlier version of this list ranked EU jurisdiction and residency second, and that was
+a mistake worth recording rather than quietly deleting.** Jurisdiction addresses a *different*
+threat than the one above: state access, not commercial misuse. It is also weaker than it
+looks — the US CLOUD Act reaches a provider, not a location, so "US company, EU datacentre"
+buys very little, and the EU-jurisdiction candidates that clear the other criteria carry
+substantial US operations anyway. Meanwhile the actual worry — a provider with something to
+gain from a creative reading of its own terms — is answered by criterion 1 alone. So
+jurisdiction is now a tiebreak, held honestly, rather than a headline.
+
+The provider chosen against this list is **DeepInfra**: it owns no models, states zero
+retention by default, runs its own hardware rather than renting from a hyperscaler, and
+publishes a real SLA. **The accepted cost is stated plainly: it is US-jurisdiction and
+reachable by US legal process.** Structural protection against that is not purchasable here —
+inference requires the model to see plaintext, so the encryption answer does not exist.
+Confidential-computing endpoints (inference inside an attested GPU enclave, where the host
+operator genuinely cannot read the prompt) are the one real answer and are worth revisiting;
+today they lack the SLA and the fine-tuning path.
+
+Criterion 4 works differently than expected, and better. DeepInfra does not train fine-tunes —
+it serves an adapter you trained elsewhere. So the approved-proposal corpus, the most
+sensitive derived artifact in the system, never leaves your machine at all.
 
 If you are running your own omni-me, none of this is prescribed. A commercial frontier model
 is a supported configuration and will be better at the hard reasoning. It is a different
-trade, not a worse one, and the interface does not change.
+trade, not a worse one, and the interface does not change — set `allow_closed_weights = true`
+in the `[llm]` section to say so. Left unset, a closed model is **refused**, because an
+open-weights provider that also proxies one applies the model owner's policy to it rather than
+its own, and the two sit one line apart in the same catalogue.
+
+## One model per job, chosen by measurement
+
+There is no single model behind all of this. Jobs differ in what they actually demand, so
+each of these roles earns its own, benchmarked rather than argued:
+
+| Role | What it does | What decides the choice |
+|---|---|---|
+| **Interactive reasoner** | the assistant loop and chat | latency — a slow model disqualifies itself |
+| **Batch reasoner** | overnight review, habits, derived beliefs | quality; it can afford to be slow |
+| **Quarantined extractor** | receipts, statements, photographed documents | reads images, and **never holds tools** |
+| **High-volume structurer** | note extraction, categorization | cost per call, and knowing when to abstain |
+| **Local** | search embeddings, speech recognition | never leaves your machine at all |
+
+The quarantined extractor is a trust boundary rather than a performance tier — it is the
+"never trusted" half described above, and it stays a separate model for that reason alone.
+The structurer is judged on **abstention**: a categorizer that is right 85% of the time and
+says so when unsure beats one that is right 95% of the time and confidently wrong for the
+rest, because an unsorted item is easy to fix and a wrongly-sorted one hides.
 
 ## What it will not do
 

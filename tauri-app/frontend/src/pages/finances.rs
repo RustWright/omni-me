@@ -66,7 +66,7 @@ enum DocumentKind {
 /// **Permissive by design.** Anything in `application/*` with a `.pdf` name
 /// (legacy `application/x-pdf`, misdeclared `application/zip`, the canonical
 /// `application/octet-stream` stripped-MIME case) routes to Pdf. The looseness
-/// is safe because Gemini is the actual validator downstream — a wrongly-
+/// is safe because the extractor is the actual validator downstream — a wrongly-
 /// classified share fails the extraction round-trip with a clean error that
 /// surfaces in `CaptureState::Error` one Retry away from recovery. Tightening
 /// this classifier costs lost legitimate shares; loosening it costs one
@@ -1705,7 +1705,7 @@ fn DocumentCapture(
             // Share-target preloaded panel — only renders when the user
             // arrived via an Android SEND intent (Phase 3.3). Surfaces the
             // shared file's metadata so the user can confirm before bytes
-            // ship to Gemini; click fires the same extraction path the file
+            // ship to the extractor; click fires the same extraction path the file
             // picker uses.
             if let Some(capture) = preloaded.clone() {
                 div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
@@ -7364,7 +7364,7 @@ mod tests {
     #[test]
     fn classify_share_mime_rejects_unknown_image_subtype() {
         // Image allowlist is intentional — image/tiff or image/svg+xml
-        // aren't realistic receipt formats and Gemini's photo extraction
+        // aren't realistic receipt formats and the extractor's photo extraction
         // is calibrated for the listed subtypes.
         assert_eq!(classify_share_mime("image/tiff", "r.tiff"), None);
         assert_eq!(classify_share_mime("image/svg+xml", "r.svg"), None);

@@ -140,17 +140,32 @@ and product carried as posting *tags* rather than account-name segments.
 
 ## LLM and document extraction
 
-Two separate trait-based abstractions, both with real second implementations (so the
-seam is load-bearing, not speculative):
+Two separate trait-based abstractions:
 
 | Trait | Implementations |
 |---|---|
-| `LlmClient` (`core/src/llm/`) | `GeminiClient`, `OpenAiCompatClient` |
-| `DocumentExtractor` (`core/src/extraction/`) | `GeminiExtractor`, `OpenAiCompatExtractor`, `NullExtractor` |
+| `LlmClient` (`core/src/llm/`) | `OpenAiCompatClient`, `NullLlmClient` |
+| `DocumentExtractor` (`core/src/extraction/`) | `OpenAiCompatExtractor`, `NullExtractor` |
+
+**The provider is DeepInfra, open weights only** (2026-09-08 — rationale and the accepted
+US-jurisdiction risk are in `docs/src/assistant.md`). The Gemini client and extractor were
+deleted with that decision: a closed model from a model owner is what criterion 1 excludes,
+so keeping a code path to one would have contradicted the guard added alongside it.
+`build_llm_client` refuses a closed-weights model id unless `[llm] allow_closed_weights`
+says otherwise, because DeepInfra's own catalogue proxies Anthropic and Google models to
+which its retention policy explicitly does not apply.
+
+`NullLlmClient` is what an unconfigured or refused endpoint yields. Boot must survive on a
+host with no LLM, so the failure is deferred to call time and carries its reason.
 
 Extraction routes on a MIME-derived hint with a user override where MIME is ambiguous.
 Deterministic pre-processing (`core/src/preprocess/`) runs before anything reaches a
-model.
+model. **PDFs are converted to text via `pdftotext` before the call** — no model reads PDF,
+and the API that used to do that conversion server-side is gone.
+
+**Model choice is per-role, not global**: interactive · batch · quarantined extractor ·
+high-volume structurer · local. The seam is `build_llm_client`'s call sites; role-keyed
+config lands when benchmarks fill the roles.
 
 **LLM tools bind to `core` functions, never to Tauri commands.** Tools live in
 `llm/tools.rs` (`ToolDef`, dispatched through `pipeline.rs`) and call core directly. A
@@ -258,7 +273,7 @@ SurrealDB is pinned to **3.0.4** in lockstep across both repos, storage engine
 | Planned | Actual | Why |
 |---|---|---|
 | `hledger` CLI via subprocess | In-process `ledger-parser` + `ledger-utils` | No native binary dependency on Android |
-| Mindee OCR | Gemini multimodal | One provider for both LLM and extraction |
+| Mindee OCR | Gemini multimodal, then an OpenAI-compatible vision endpoint | One provider for both LLM and extraction; Gemini then removed with the open-weights commitment |
 | Paisa for visualization | Custom SVG charts in-app | Avoids a second hosted service |
 | DigitalOcean | Hetzner | DO rejected payment |
 | "No conflicts, no last-write-wins" | Last-write-wins, no merge | Events don't conflict; *projections* still overwrite |

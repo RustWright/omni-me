@@ -77,9 +77,25 @@ defer-major-phases rule; do not run ahead to the next one.
    - **Agent shape:** a headless omni-me device — own process, own DB, own device id, syncing
      like the phone. Forced by SurrealKV being per-process.
    - **Autonomy:** proposal-only, earned per action type, destination "reversible acts freely".
-   - **Hosting:** Hetzner's free Experiments endpoint for development; an EU zero-retention
-     open-weights API long-term, **provider not yet chosen** (criteria + candidates in the plan).
-     No hardware purchase — the user has no permanent address.
+   - **Hosting — DECIDED 2026-09-08: DeepInfra, open weights only.** Screened the 41
+     zero-retention providers on OpenRouter against the six criteria; the EU-jurisdiction
+     criterion turned out to answer state access rather than the commercial-misuse threat
+     actually held, and the CLOUD Act follows the provider anyway, so it was demoted to a
+     tiebreak. **Accepted risk, explicit: US jurisdiction, no recourse against US legal
+     process.** DeepInfra owns no models, ZDR by default, 99.982% SLA, own hardware, ~4×
+     cheaper and more reliable than the EU alternative. Rationale in `docs/src/assistant.md`;
+     full comparison in `~/.claude/plans/so-i-made-a-mighty-boot.md`.
+     - **Bench = production, structurally.** Screening runs on OpenRouter *pinned to
+       DeepInfra tags* (the script refuses any other pin without an explicit override); the
+       deciding run goes direct. A benchmark can no longer validate a stack we cannot ship.
+     - **Gemini is gone** — client, extractor, `[gemini]` credentials, the fallback. A
+       closed model from a model owner is what criterion 1 excludes. `build_llm_client` now
+       refuses closed-weights ids (DeepInfra's catalogue proxies Anthropic/Google, where its
+       retention policy does not apply) unless `allow_closed_weights` opts in.
+     - ⚠️ **`poppler-utils` was missing from the production image**, so `pdftotext` ENOENT'd
+       and PDF extraction had never worked on the box. Added. PDFs now convert to text
+       before the model call — generated PDFs only; scanned ones need rasterization, unbuilt.
+     - No hardware purchase — the user has no permanent address.
    - ~~⚠️ **Blocker for any write path:** `guard_event_type` lives in the Tauri commands layer~~
      **RESOLVED in Phase A.** The guard moved into `core` as `EventWriter`
      (`core/src/events/writer.rs`), which welds guard + append + project + push-nudge into one

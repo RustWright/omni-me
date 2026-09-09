@@ -14,7 +14,7 @@ use axum::{Json, Router, routing::get};
 use omni_me_core::db;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::null::NullExtractor;
-use omni_me_core::llm::GeminiClient;
+use omni_me_core::llm::NullLlmClient;
 use omni_me_server::{AppState, routes};
 
 /// Spin up a real Axum server on a random port with its own temp SurrealDB.
@@ -36,7 +36,7 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
 
     let state = AppState {
         db: db_arc.clone(),
-        llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
+        llm_client: Arc::new(NullLlmClient::unconfigured()),
         blob_dir: Arc::new(blob_path),
         extractor: Arc::new(NullExtractor),
         auto_import_registry: Default::default(),
@@ -101,7 +101,7 @@ pub async fn start_full_server_with_auth(
 
     let state = AppState {
         db: db_arc.clone(),
-        llm_client: Arc::new(GeminiClient::new("test-key-unused".into())),
+        llm_client: Arc::new(NullLlmClient::unconfigured()),
         blob_dir: Arc::new(blob_path),
         extractor: Arc::new(NullExtractor),
         auto_import_registry: Default::default(),

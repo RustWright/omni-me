@@ -4028,7 +4028,6 @@ pub async fn invoke_remove_source_config(name: &str) -> Result<(), String> {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct LlmConfigView {
-    pub provider: String,
     #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]
@@ -4040,16 +4039,17 @@ pub struct LlmConfigView {
     pub vision: bool,
 }
 
+/// Fixed in mock: nothing writes this any more, so a `RefCell` would only
+/// pretend to be mutable. Shaped like a real wired endpoint so the read-only
+/// panel has something to render.
 #[cfg(feature = "mock")]
-thread_local! {
-    static MOCK_LLM_CONFIG: std::cell::RefCell<LlmConfigView> =
-        std::cell::RefCell::new(LlmConfigView {
-            provider: "gemini".into(),
-            base_url: None,
-            model: None,
-            has_key: true,
-            vision: false,
-        });
+fn mock_llm_config() -> LlmConfigView {
+    LlmConfigView {
+        base_url: Some("https://api.deepinfra.com/v1/openai".into()),
+        model: Some("z-ai/glm-5.3-flash".into()),
+        has_key: true,
+        vision: false,
+    }
 }
 
 /// The server's current `[llm]` selection. `has_key` stands in for the secret
@@ -4057,62 +4057,13 @@ thread_local! {
 pub async fn invoke_get_llm_config() -> Result<LlmConfigView, String> {
     #[cfg(feature = "mock")]
     {
-        Ok(MOCK_LLM_CONFIG.with(|c| c.borrow().clone()))
+        Ok(mock_llm_config())
     }
     #[cfg(not(feature = "mock"))]
     {
         #[derive(serde::Serialize)]
         struct Args {}
         invoke("get_llm_config", &Args {}).await
-    }
-}
-
-/// Persist the `[llm]` selection. `config` is `{provider, base_url?, model?,
-/// api_key?}`; a blank/absent `api_key` preserves the stored key server-side.
-pub async fn invoke_set_llm_config(config: serde_json::Value) -> Result<(), String> {
-    #[cfg(feature = "mock")]
-    {
-        crate::timer::sleep_ms(400).await;
-        MOCK_LLM_CONFIG.with(|c| {
-            let mut view = c.borrow_mut();
-            view.provider = config
-                .get("provider")
-                .and_then(|v| v.as_str())
-                .unwrap_or("gemini")
-                .to_string();
-            view.base_url = config
-                .get("base_url")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
-            view.model = config
-                .get("model")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
-            // Mirror preserve-on-blank: a non-empty key sets has_key; a blank
-            // field leaves the prior key (and thus has_key) untouched.
-            if config
-                .get("api_key")
-                .and_then(|v| v.as_str())
-                .is_some_and(|k| !k.is_empty())
-            {
-                view.has_key = true;
-            }
-            view.vision = config
-                .get("vision")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-        });
-        Ok(())
-    }
-    #[cfg(not(feature = "mock"))]
-    {
-        #[derive(serde::Serialize)]
-        struct Args<'a> {
-            config: &'a serde_json::Value,
-        }
-        invoke_unit("set_llm_config", &Args { config: &config }).await
     }
 }
 

@@ -1541,139 +1541,77 @@ fn AccountOverrideRow(
     }
 }
 
-/// LLM provider picker (3.8 bring-your-own-LLM). Gemini by default; pick an
-/// OpenAI-compatible endpoint (Ollama / llama.cpp / vLLM / commercial) to bring
-/// your own. Restart-to-apply — the running client is chosen at boot — unlike
-/// the auto-import sources above, which apply live. The api_key is write-only:
-/// it's never read back (the form shows "key configured" via `has_key`), and a
-/// blank field on save preserves the stored key.
+/// Read-only report of the server's LLM endpoint.
+///
+/// ⚠️ **Deliberately not editable.** This was a form that wrote `[llm]` —
+/// including an API key — to the server's `credentials.toml`. Three things were
+/// wrong with that: it is deployment configuration rather than a preference, it
+/// was restart-to-apply so it never behaved like a setting, and model selection
+/// is becoming per-role and benchmark-driven, which leaves a single "Model"
+/// textbox with no well-defined meaning. What remains is the one genuinely
+/// useful thing it did: answering "is a model wired, and which one" when note
+/// processing appears to do nothing. Change it in `credentials.toml` on the host.
 #[component]
 fn LlmProviderSection() -> Element {
-    let mut provider = use_signal(|| "gemini".to_string());
-    let mut base_url = use_signal(String::new);
-    let mut model = use_signal(String::new);
-    let mut api_key = use_signal(String::new); // never prefilled (write-only)
-    let mut has_key = use_signal(|| false);
-    let mut vision = use_signal(|| false);
-    let mut saving = use_signal(|| false);
-    let mut msg = use_signal(|| None::<String>);
+    let mut cfg = use_signal(|| None::<bridge::LlmConfigView>);
+    let mut loaded = use_signal(|| false);
 
     use_future(move || async move {
-        if let Ok(cfg) = bridge::invoke_get_llm_config().await {
-            provider.set(cfg.provider);
-            base_url.set(cfg.base_url.unwrap_or_default());
-            model.set(cfg.model.unwrap_or_default());
-            has_key.set(cfg.has_key);
-            vision.set(cfg.vision);
+        if let Ok(v) = bridge::invoke_get_llm_config().await {
+            cfg.set(Some(v));
         }
+        loaded.set(true);
     });
 
-    let lbl = "block text-xs text-obsidian-text-muted mb-1";
-    let inp = INPUT_CLASS;
-
-    let is_openai = provider.read().as_str() == "openai_compatible";
-    let key_placeholder = if *has_key.read() {
-        "•••••••• (leave blank to keep current)"
-    } else {
-        "sk-… (blank is fine for local servers)"
-    };
-
-    let submit = move |_| {
-        let body = serde_json::json!({
-            "provider": provider.read().clone(),
-            "base_url": base_url.read().trim().to_string(),
-            "model": model.read().trim().to_string(),
-            "api_key": api_key.read().clone(),
-            "vision": *vision.read(),
-        });
-        let had_key_input = !api_key.read().trim().is_empty();
-        saving.set(true);
-        msg.set(None);
-        spawn(async move {
-            match bridge::invoke_set_llm_config(body).await {
-                Ok(()) => {
-                    msg.set(Some("Saved. Applies on the next server restart.".into()));
-                    if had_key_input {
-                        has_key.set(true);
-                    }
-                    api_key.set(String::new());
-                }
-                Err(e) => msg.set(Some(format!("Save failed: {e}"))),
-            }
-            saving.set(false);
-        });
-    };
+    let row = "flex justify-between gap-4 py-1.5 text-sm";
+    let key = "text-obsidian-text-muted shrink-0";
+    let val = "text-obsidian-text text-right break-all font-mono text-xs";
 
     rsx! {
         div { class: "mb-10 space-y-4",
             div { class: "border-b border-obsidian-border/5 pb-2 mb-4",
-                h2 { class: "text-lg font-bold text-obsidian-text", "LLM Provider" }
-            }
-            p { class: "text-sm text-obsidian-text-muted",
-                "Which model processes your notes — tagging, task and expense extraction. The "
-                "default is Google Gemini; point it at any OpenAI-compatible endpoint (Ollama, "
-                "llama.cpp, vLLM, or a commercial API) to bring your own. Document extraction "
-                "(receipts & statements) stays on Gemini unless you opt the endpoint in below."
+                h2 { class: "text-lg font-bold text-obsidian-text", "LLM Endpoint" }
             }
 
-            div {
-                label { class: lbl, "Provider" }
-                select {
-                    class: inp,
-                    value: "{provider}",
-                    onchange: move |e| provider.set(e.value()),
-                    option { value: "gemini", "Google Gemini (default)" }
-                    option { value: "openai_compatible", "OpenAI-compatible" }
-                }
-            }
-
-            if is_openai {
-                div { class: "space-y-3",
-                    div {
-                        label { class: lbl, "Base URL" }
-                        input { class: inp, placeholder: "http://localhost:11434/v1", value: "{base_url}", oninput: move |e| base_url.set(e.value()) }
+            match &*cfg.read() {
+                Some(c) if c.model.is_some() => rsx! {
+                    p { class: "text-sm text-obsidian-text-muted",
+                        "The model that processes your notes — tagging, task and expense "
+                        "extraction. Configured on the server."
                     }
-                    div {
-                        label { class: lbl, "Model" }
-                        input { class: inp, placeholder: "llama3.1", value: "{model}", oninput: move |e| model.set(e.value()) }
-                    }
-                    div {
-                        label { class: lbl, "API key" }
-                        input {
-                            class: inp,
-                            r#type: "password",
-                            placeholder: key_placeholder,
-                            value: "{api_key}",
-                            oninput: move |e| api_key.set(e.value()),
+                    div { class: "rounded border border-obsidian-border/10 px-3 py-2",
+                        div { class: row,
+                            span { class: key, "Model" }
+                            span { class: val, "{c.model.clone().unwrap_or_default()}" }
+                        }
+                        div { class: row,
+                            span { class: key, "Endpoint" }
+                            span { class: val, "{c.base_url.clone().unwrap_or_default()}" }
+                        }
+                        div { class: row,
+                            span { class: key, "API key" }
+                            span { class: val,
+                                if c.has_key { "configured" } else { "none (fine for local servers)" }
+                            }
+                        }
+                        div { class: row,
+                            span { class: key, "Reads documents" }
+                            span { class: val, if c.vision { "yes" } else { "no" } }
                         }
                     }
-                    label { class: "flex items-start gap-2 cursor-pointer select-none",
-                        input {
-                            r#type: "checkbox",
-                            class: "mt-0.5",
-                            checked: *vision.read(),
-                            onchange: move |e| vision.set(e.checked()),
-                        }
-                        span { class: "text-xs text-obsidian-text-muted",
-                            "Also use this endpoint to read receipts & statements (vision). "
-                            "Leave off if it has no image support — extraction stays on Gemini."
-                        }
+                },
+                Some(_) => rsx! {
+                    Banner { kind: BannerKind::Info,
+                        "No model is configured, so notes are not processed. Set the [llm] "
+                        "section in credentials.toml on the server."
                     }
-                }
-            }
-
-            div { class: "flex items-center gap-3",
-                Button {
-                    size: ButtonSize::Sm,
-                    disabled: *saving.read(),
-                    onclick: submit,
-                    if *saving.read() { "Saving…" } else { "Save" }
-                }
-                span { class: "text-xs text-obsidian-text-muted", "Applies on the next server restart." }
-            }
-
-            if let Some(m) = &*msg.read() {
-                Banner { kind: BannerKind::Info, "{m}" }
+                },
+                None if *loaded.read() => rsx! {
+                    Banner { kind: BannerKind::Info, "Could not reach the server for LLM status." }
+                },
+                None => rsx! {
+                    p { class: "text-sm text-obsidian-text-muted", "Loading…" }
+                },
             }
         }
     }
