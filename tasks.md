@@ -137,9 +137,30 @@ defer-major-phases rule; do not run ahead to the next one.
        windowing · **constrained decoding suppresses tool calling rather than failing**, so the
        loop parses `{"verb":…}` out of message content or the tax measures the transport ·
        rate limiting is a *correctness* control on a capped tier, not politeness.
-     - **Still owed:** the constraint tax on an endpoint that can serve both halves. Hetzner
-       cannot. `OMNI_AGENT_LLM_{BASE_URL,MODEL,API_KEY}` point a run at OpenRouter without
-       editing `credentials.toml`; pin the upstream or the result is unattributable.
+     - **Still owed: the constraint tax. Attempted 2026-09-08 and NOT measured — the harness
+       is unsound, and that is the finding.** ⛔ `Session::ask` sends `verbs::tools()` **and**
+       `response_format` together in the constrained variant, so the model is handed two ways
+       to call a verb and picks one by training: `gpt-oss-120b` ignored the schema and used
+       native tool calls (2/2 on DeepInfra), making its "constrained" run free-form and its
+       tax ≈ 0 by construction; `glm-5.3-flash` emitted a hybrid whose `arguments` carried
+       tool-call fields, recording a verb it did not want; the archived spike saw the third
+       behaviour. **A number that varies by which channel a model prefers cannot be compared
+       across models**, which is the whole point of measuring it.
+       - **The fork before any re-run** (product decision, not a tidy-up): dropping `tools`
+         when constrained is right, but the verb documentation lives in `tools()`, so that
+         half becomes less *informed* and the run measures information loss instead. Proposed:
+         render the same docs into the system prompt for that variant.
+       - **Also blocked externally that day:** `glm-5.3-flash` was rate-limited upstream on
+         **every** provider tried (DeepInfra and Fireworks, `upstream_provider_shared_pool`).
+         Not our request rate, not credit. `gpt-oss-120b` stayed reachable.
+     - **Built while getting there, all tested:** bench case 5 corrected to expect `list` (it
+       still expected `search` after `list` shipped, scoring correct behaviour as wrong in
+       both halves) · `ChatResponse.provider` parses and logs which upstream served each call,
+       so a pin is evidenced rather than asserted · `--ask --constrained` as a one-request
+       rehearsal · bounded 429 retry with doubling backoff, honouring `Retry-After`, because
+       `allow_fallbacks:false` makes upstream congestion arrive as a hard failure ·
+       `scripts/seed-bench-hub.py` and `scripts/bench-openrouter.sh`, which were previously
+       ad-hoc shell recoverable only from a session log.
    - **Plumbing facts for Phase B/C/D, true regardless of which model wins:**
      - Images pass as `data:` URLs, so **no signed-URL subsystem is needed** for blobs behind
        Tailscale. But requests **413 above ~5 MB**, so downscaling (2048px long edge) is

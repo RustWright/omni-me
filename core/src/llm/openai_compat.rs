@@ -23,6 +23,22 @@ use super::chat::{ChatRequest, ChatResponse, Usage};
 use super::client::{LlmClient, LlmError};
 use super::tools::{LlmResponse, ToolCall, ToolDef};
 
+/// How many times a 429 is retried before the call is given up on.
+///
+/// ⚠️ A 429 is not necessarily about *our* request rate, and treating it as one
+/// misreads the most common case. Pinning a gateway to a single upstream — which
+/// any measurement must do, or it cannot name the stack that answered — means a
+/// transient overload in that provider's shared pool comes back to us instead of
+/// being rerouted, arriving as `limit_source: upstream_provider_shared_pool` with
+/// the advice to retry shortly. Failing the call on the first one scores
+/// congestion as a model failure, which is the same class of mistake as having no
+/// request spacing at all: the number ends up describing the harness.
+///
+/// This is therefore the *third* rate-limit control here and they are not
+/// redundant — [`OpenAiCompatClient::min_interval`] stops us causing a 429,
+/// this survives one we did not cause.
+const MAX_RATE_LIMIT_RETRIES: u32 = 3;
+
 /// Client for any OpenAI-compatible chat-completions endpoint.
 pub struct OpenAiCompatClient {
     api_key: String,
@@ -46,6 +62,8 @@ pub struct OpenAiCompatClient {
     /// benchmark makes dozens, so without it the run reports rate-limit errors
     /// as model failures.
     min_interval: Option<Duration>,
+    /// First wait after a 429, doubling per retry. See [`MAX_RATE_LIMIT_RETRIES`].
+    retry_backoff: Duration,
     last_request: Arc<Mutex<Instant>>,
 }
 
@@ -66,6 +84,7 @@ impl OpenAiCompatClient {
             http: crate::http::llm_client(),
             extra_body: None,
             min_interval: None,
+            retry_backoff: Duration::from_secs(2),
             // Far enough back that the first request never waits.
             last_request: Arc::new(Mutex::new(
                 Instant::now()
@@ -84,6 +103,17 @@ impl OpenAiCompatClient {
     /// Space requests at least this far apart. See [`Self::min_interval`].
     pub fn with_min_interval(mut self, interval: Duration) -> Self {
         self.min_interval = Some(interval);
+        self
+    }
+
+    /// First wait after a 429; each further retry doubles it.
+    ///
+    /// Two seconds by default, which suits a congested shared pool. A local
+    /// server that cannot rate limit at all wants it short, and so do tests —
+    /// the default would otherwise put fourteen seconds of real sleeping into
+    /// the suite.
+    pub fn with_retry_backoff(mut self, backoff: Duration) -> Self {
+        self.retry_backoff = backoff;
         self
     }
 
@@ -123,33 +153,59 @@ impl OpenAiCompatClient {
     /// mirroring `GeminiClient` — a leaked key in a log line is the failure mode
     /// guarded against.
     async fn send(&self, body: Value) -> Result<Value, LlmError> {
-        self.rate_limit().await;
         let body = self.apply_extra(body);
-        let mut req = self.http.post(self.endpoint()).json(&body);
-        if !self.api_key.is_empty() {
-            req = req.bearer_auth(&self.api_key);
-        }
-        let response = req
-            .send()
-            .await
-            .map_err(|e| LlmError::NetworkError(e.without_url().to_string()))?;
+        let mut attempt = 0u32;
 
-        let status = response.status();
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(LlmError::RateLimited);
-        }
+        loop {
+            self.rate_limit().await;
+            let mut req = self.http.post(self.endpoint()).json(&body);
+            if !self.api_key.is_empty() {
+                req = req.bearer_auth(&self.api_key);
+            }
+            let response = req
+                .send()
+                .await
+                .map_err(|e| LlmError::NetworkError(e.without_url().to_string()))?;
 
-        let response_body: Value = response.json().await.map_err(|e| {
-            LlmError::ParseError(format!("parse response JSON: {}", e.without_url()))
-        })?;
+            let status = response.status();
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                if attempt >= MAX_RATE_LIMIT_RETRIES {
+                    return Err(LlmError::RateLimited);
+                }
+                // Honour `Retry-After` where the endpoint sends one, capped so a
+                // hostile or mistaken value cannot park the run for an hour.
+                let wait = response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .map(Duration::from_secs)
+                    .unwrap_or(self.retry_backoff * 2u32.pow(attempt))
+                    .min(Duration::from_secs(60));
+                attempt += 1;
+                // Loud, and counted: a scorecard produced under repeated
+                // congestion is worth reading differently from a clean one.
+                tracing::warn!(
+                    attempt,
+                    wait_ms = wait.as_millis() as u64,
+                    "rate limited; backing off and retrying"
+                );
+                tokio::time::sleep(wait).await;
+                continue;
+            }
 
-        if !status.is_success() {
-            let msg = response_body["error"]["message"]
-                .as_str()
-                .unwrap_or("Unknown API error");
-            return Err(LlmError::ApiError(format!("HTTP {status}: {msg}")));
+            let response_body: Value = response.json().await.map_err(|e| {
+                LlmError::ParseError(format!("parse response JSON: {}", e.without_url()))
+            })?;
+
+            if !status.is_success() {
+                let msg = response_body["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Unknown API error");
+                return Err(LlmError::ApiError(format!("HTTP {status}: {msg}")));
+            }
+            return Ok(response_body);
         }
-        Ok(response_body)
     }
 
     /// Pull `choices[0].message.content` text out of a chat-completions response.
@@ -290,6 +346,10 @@ impl LlmClient for OpenAiCompatClient {
             finish_reason: response["choices"][0]["finish_reason"]
                 .as_str()
                 .map(|s| s.to_string()),
+            // Top level, not inside `choices` — OpenRouter reports the upstream
+            // it routed to here. Absent on every plain OpenAI-compatible server,
+            // which is why it is an `Option` rather than a failure.
+            provider: response["provider"].as_str().map(|s| s.to_string()),
         };
         out.record(&self.model);
         Ok(out)
@@ -425,8 +485,9 @@ mod tests {
             .mount(&server)
             .await;
 
+        let client = test_client(&server).with_retry_backoff(Duration::from_millis(1));
         assert!(matches!(
-            test_client(&server).complete("x").await.unwrap_err(),
+            client.complete("x").await.unwrap_err(),
             LlmError::RateLimited
         ));
     }
@@ -526,6 +587,100 @@ mod tests {
         // The mock only matches when the pin is present, so reaching a reply at
         // all is the assertion.
         assert_eq!(client.complete("x").await.unwrap(), "ok");
+    }
+
+    /// The other half of pinning: a pin is an instruction, this is the receipt.
+    /// A constraint-tax number is about a serving stack, so a run that cannot
+    /// name the stack that answered is unattributable — which already cost the
+    /// archived spike one unusable result.
+    #[tokio::test]
+    async fn chat_reports_which_upstream_served_the_call() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                // Top level, alongside `choices` — not inside it.
+                "provider": "DeepInfra",
+                "choices": [{ "finish_reason": "stop", "message": { "role": "assistant", "content": "ok" } }]
+            })))
+            .mount(&server)
+            .await;
+
+        let req =
+            super::super::chat::ChatRequest::new(vec![super::super::chat::ChatMessage::User(
+                "hi".into(),
+            )]);
+        let out = test_client(&server).chat(&req).await.unwrap();
+        assert_eq!(out.provider.as_deref(), Some("DeepInfra"));
+    }
+
+    /// Most OpenAI-compatible servers report no such field. That is silence, not
+    /// a failure — a local Ollama has exactly one upstream and nothing to say.
+    #[tokio::test]
+    async fn an_endpoint_that_reports_no_provider_is_not_an_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat_text_response("ok")))
+            .mount(&server)
+            .await;
+
+        let req =
+            super::super::chat::ChatRequest::new(vec![super::super::chat::ChatMessage::User(
+                "hi".into(),
+            )]);
+        let out = test_client(&server).chat(&req).await.unwrap();
+        assert!(out.provider.is_none());
+    }
+
+    /// A pinned upstream's shared pool can be briefly overloaded, and the 429
+    /// that produces literally says "retry shortly". Giving up on the first one
+    /// scores congestion as a model failure — observed live against DeepInfra,
+    /// three requests in, with credit to spare.
+    #[tokio::test]
+    async fn a_call_rate_limited_once_still_succeeds() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(429))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat_text_response("ok")))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).with_retry_backoff(Duration::from_millis(1));
+        assert_eq!(client.complete("x").await.unwrap(), "ok");
+        // Counted, so the test cannot pass by never having been rate limited.
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            2,
+            "one refusal, then the retry that succeeded"
+        );
+    }
+
+    /// Retrying is bounded: a provider that is down stays down, and a run that
+    /// never gives up is worse than one that reports the failure.
+    #[tokio::test]
+    async fn persistent_rate_limiting_gives_up_and_says_so() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(429))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&server).with_retry_backoff(Duration::from_millis(1));
+        let err = client.complete("x").await.unwrap_err();
+        assert!(matches!(err, LlmError::RateLimited), "got {err:?}");
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1 + MAX_RATE_LIMIT_RETRIES as usize,
+            "the first attempt plus every retry"
+        );
     }
 
     /// Without this, an agent loop against a ten-per-minute free tier reports

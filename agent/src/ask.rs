@@ -14,7 +14,16 @@ use omni_me_core::db::Database;
 use omni_me_core::llm::LlmClient;
 
 /// Run one question and print the trace, the answer, and the cost.
-pub async fn run(db: &Database, config: &ResolvedConfig, llm: &dyn LlmClient, question: &str) {
+///
+/// `constrained` runs it under the verb-call schema — the cheap rehearsal of the
+/// half of `--bench` that a serving stack can refuse outright.
+pub async fn run(
+    db: &Database,
+    config: &ResolvedConfig,
+    llm: &dyn LlmClient,
+    question: &str,
+    constrained: bool,
+) {
     let session = match Session::new(db, config, llm) {
         Ok(s) => s,
         Err(e) => {
@@ -22,8 +31,22 @@ pub async fn run(db: &Database, config: &ResolvedConfig, llm: &dyn LlmClient, qu
             return;
         }
     };
+    let session = if constrained {
+        session.constrained()
+    } else {
+        session
+    };
 
-    println!("? {question}\n");
+    // Named, because the two variants fail in different ways and a trace with no
+    // label is the kind of evidence that gets misfiled later.
+    println!(
+        "? {question}   [{}]\n",
+        if constrained {
+            "schema-constrained"
+        } else {
+            "free-form"
+        }
+    );
     let outcome = session.ask(question).await;
     print_outcome(&outcome);
 }

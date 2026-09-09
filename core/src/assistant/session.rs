@@ -175,6 +175,30 @@ impl<'a> Session<'a> {
     }
 
     /// Run with grammar-constrained decoding. See [`Session::response_schema`].
+    ///
+    /// ⚠️ **This does not currently produce a trustworthy constraint tax**, and
+    /// the reason is in [`Session::ask`]: the request carries the tool
+    /// definitions *and* the response schema, so the model is handed two ways to
+    /// call a verb and picks one per its own training. Measured 2026-09-08
+    /// against DeepInfra:
+    ///
+    /// - `openai/gpt-oss-120b` answered through the **native tool-call channel**
+    ///   and ignored the schema (2/2 runs) — so the "constrained" variant was not
+    ///   constrained, and any tax it reported would be ~0 by construction.
+    /// - `z-ai/glm-5.3-flash` produced a **hybrid**: a verb envelope whose
+    ///   `arguments` held tool-call fields (`{"verb":"list","arguments":{
+    ///   "id":"call_1","name":"search",…}}`), so the verb recorded was not the
+    ///   verb wanted, inflating the tax.
+    /// - The archived spike saw the **third** behaviour, the schema winning and
+    ///   tool calling being suppressed.
+    ///
+    /// Which of the three you get is a property of the model, so the number is
+    /// not comparable across models — which is the one thing a bake-off needs it
+    /// to be. Removing `tools` from the constrained request is the obvious fix
+    /// and is **not** free: the verb documentation lives in `verbs::tools()`, so
+    /// dropping it makes the constrained half less informed, and the run would
+    /// then measure information loss rather than the constraint. That is a
+    /// product decision about what the tax means, not a tidy-up.
     pub fn constrained(mut self) -> Self {
         self.response_schema = Some(verb_call_schema());
         self
@@ -197,6 +221,11 @@ impl<'a> Session<'a> {
         let mut seen: Vec<String> = Vec::new();
 
         for _ in 0..self.max_turns {
+            // ⚠️ Both are sent when constrained, and that is the open defect
+            // described on `Session::constrained` — two contracts for one call,
+            // and the model chooses. Fixing it means deciding where the verb
+            // documentation lives when `tools` is absent; do not just delete the
+            // `with_tools` call.
             let mut request = ChatRequest::new(messages.clone()).with_tools(verbs::tools());
             if let Some(schema) = &self.response_schema {
                 request = request.with_response_schema(schema.clone());
@@ -501,6 +530,7 @@ mod tests {
             },
             latency: Duration::from_millis(10),
             finish_reason: Some("tool_calls".into()),
+            provider: None,
         }
     }
 
@@ -516,6 +546,7 @@ mod tests {
             },
             latency: Duration::from_millis(10),
             finish_reason: Some("stop".into()),
+            provider: None,
         }
     }
 
@@ -654,6 +685,7 @@ mod tests {
             usage: Usage::default(),
             latency: Duration::ZERO,
             finish_reason: Some("length".into()),
+            provider: None,
         }]);
         let cfg = config();
         let out = Session::new(&db, &cfg, &llm).unwrap().ask("q").await;
@@ -776,6 +808,7 @@ mod tests {
             usage: Usage::default(),
             latency: Duration::ZERO,
             finish_reason: Some("stop".into()),
+            provider: None,
         };
         let llm = ScriptedLlm::new(vec![
             constrained_reply(r#"{"verb":"list_types","arguments":{}}"#),
@@ -825,6 +858,7 @@ mod tests {
             usage: Usage::default(),
             latency: Duration::ZERO,
             finish_reason: Some("stop".into()),
+            provider: None,
         }]);
         let cfg = config();
 

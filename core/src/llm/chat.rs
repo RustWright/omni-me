@@ -209,6 +209,17 @@ pub struct ChatResponse {
     /// out-of-budget case described on [`ChatRequest::max_tokens`], and is worth
     /// distinguishing from a model that simply had nothing to say.
     pub finish_reason: Option<String>,
+    /// Which upstream actually served the call, when the endpoint says.
+    ///
+    /// Gateways route: a request to OpenRouter names a *model*, and the stack
+    /// that answers is chosen from a dozen candidates at differing
+    /// quantizations. `extra_body` can pin one, but a pin is an instruction —
+    /// this is the evidence. Constrained decoding is a property of the serving
+    /// stack rather than the weights (one vendor's config, same weights, could
+    /// not terminate at all), so a measurement that cannot name its stack is
+    /// unattributable. `None` for endpoints that report nothing, which is most
+    /// of them.
+    pub provider: Option<String>,
 }
 
 impl ChatResponse {
@@ -219,6 +230,7 @@ impl ChatResponse {
     pub fn record(&self, model: &str) {
         tracing::info!(
             model,
+            provider = self.provider.as_deref().unwrap_or("unreported"),
             latency_ms = self.latency.as_millis() as u64,
             prompt_tokens = self.usage.prompt_tokens,
             completion_tokens = self.usage.completion_tokens,
@@ -336,6 +348,7 @@ mod tests {
             usage: Usage::default(),
             latency: Duration::ZERO,
             finish_reason: Some("length".into()),
+            provider: None,
         };
         assert!(cut.truncated());
         let done = ChatResponse {

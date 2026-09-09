@@ -18,6 +18,14 @@
 //! settles which one *this* tool surface gets. The difference between the two
 //! scores is the tax, and it is a measurement rather than an assumption.
 //!
+//! ⛔ **The constrained half is not sound yet — do not spend a run on this until
+//! it is.** The request carries the tool definitions *and* the response schema,
+//! so the model is handed two ways to call a verb and picks one per its own
+//! training: one model ignores the schema and uses native tool calls, another
+//! emits a hybrid of the two, a third suppresses tool calling as intended. The
+//! evidence and the reason the obvious fix is not free are on
+//! `Session::constrained`.
+//!
 //! ⚠️ Not every endpoint can run the constrained half. One vendor's serving stack
 //! applies the grammar from token zero and never terminates with a reasoning
 //! model, which is a deployment-config fact about that vendor and not a property
@@ -76,15 +84,12 @@ const CASES: &[Case] = &[
         request: "Did I ever mention a dentist appointment?",
         expect: Some("search"),
     },
-    // ⚠️ **Known to fail, and kept because it fails.** No read verb can answer
-    // this: `search` is text matching, and the word "routine" appears nowhere in
-    // a routine named "Morning". Enumerating a kind of record is a capability the
-    // surface does not have. Observed live burning all six turns —
-    // `search{query:""} → search{query:"routine"} → …` — and it stays here as the
-    // standing evidence for whether a listing verb earns its place.
+    // The case `list` exists for: `search` matches text, and the word "routine"
+    // appears nowhere in a routine named "Morning" — a record is not guaranteed
+    // to contain the name of its own type.
     Case {
         request: "What routines do I have?",
-        expect: Some("search"),
+        expect: Some("list"),
     },
     Case {
         request: "Which properties does my journal ask me to fill in?",

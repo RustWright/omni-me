@@ -1,39 +1,40 @@
 # NEXT
 
-**Next action: close Phase B — measure the constraint tax on OpenRouter.** Hetzner cannot
-serve both halves of `--bench` (8/10 free-form vs 4/10 constrained, on already-suspect
-constrained decoding), so today's number measures the harness rather than the model — the
-three ways that happens are in [[project-assistant-bench-harness-traps]]. Invocation and env
-vars are in `agent/src/bench.rs`. ⚠️ Needs an OpenRouter key and spends money: confirm first.
+**Next action: decide where verb documentation lives when the reply is schema-constrained
+— then, and only then, run the tax.** ⛔ Do not spend a run before that: `Session::ask` sends
+`verbs::tools()` **and** `response_format` together, so the model gets two ways to call a verb
+and picks one by training. Measured 2026-09-08 on DeepInfra: `gpt-oss-120b` ignored the schema
+and used native tool calls (2/2) — a "constrained" run that was not constrained, tax ≈ 0 by
+construction; `glm-5.3-flash` emitted a hybrid, `{"verb":"list","arguments":{"name":"search",
+…}}`, recording a verb it did not want. Evidence on `Session::constrained`; seven traps now in
+[[project-assistant-bench-harness-traps]].
+
+**The fork:** dropping `tools` when constrained is right, but the verb *documentation* lives in
+`tools()`, so that half becomes less **informed** and the run measures information loss instead.
+Recommendation: render the same docs into the system prompt there, so the halves differ only in
+reply format.
+
+⚠️ Second blocker: `glm-5.3-flash` was **rate-limited upstream on every provider tried**
+(DeepInfra *and* Fireworks, `limit_source: upstream_provider_shared_pool`) all session. Not our
+rate, not credit — ~$20.38 left. Retry later, or use `openai/gpt-oss-120b`, reachable throughout.
 
 ## Decisions in force — inherit, do not re-derive
-- **Frontend↔core share NO Rust code, by design.** Root `Cargo.toml` excludes the frontend; all
-  crossing is JSON over Tauri IPC, `types.rs` hand-mirrors ~70 structs, `src-tauri` is the bridge.
-- **Cross-boundary rules are pinned by a shared fixture, not by wiring.** The day-completion
-  rule lives twice on purpose — `core::routines::roll_up` and the frontend's
-  `routine_progress::day_progress` — because the async round-trip was rejected (user,
-  2026-09-08). `fixtures/routine_day_agreement.json` feeds both the same cases. ⚠️ It pins
-  agreement on the **covered cases only**, and nothing forces the screen to keep *calling*
-  `day_progress`. Editing an expectation there is a product decision, never a tidy-up. The
-  older twin of this pattern is `token_regex_in_editor_js_has_not_drifted` in `pages/journal.rs`.
-- **A skipped routine item counts as done** (user, 2026-09-08) — now enforced on both sides.
-  Skips are reported separately by core; the screen shows `done/total` and computes no
-  aggregate skip count (user, 2026-09-08), which is why the fixture's `skipped` is core-only.
-- **The read catalog is NOT `RecordType`.** That is a *document form* schema (generalization
-  decisions 2 + 9) describing frontmatter keys and cannot express a routine. The assistant reads
-  `core/src/assistant/catalog.rs` — **code, not events**; `describe_type` merges live RecordType.
-- **The verb set is flexible, currently five** (user, 2026-09-08). Load-bearing is *why* it stays
-  small — accuracy degrades past ~15–20 tools — not the number. Propose changes, with cause.
-- **Skip asks for a reason via preset chips + free text** (user, 2026-09-08). No reasonless-skip
-  escape. Presets are presentation only — free text is stored, so vocabulary needs no migration.
-- **SKIP is visible on mobile, hover-gated only at md+** (user, 2026-09-08). Touch has no hover.
-- **`--ask` / `--bench` are test scaffolding** (`--probe` is permanent); model choice stays
-  **DEFERRED to Phase D**. ⛔ **FINANCES DEFERRED INDEFINITELY** — its catalog entry is a fixture.
-- **Do not re-survey:** generalization · the model bake-off · hosting · the Phase A checks ·
-  **whether SurrealDB FULLTEXT works on SurrealKV — proven, and now load-bearing.**
+- **Bench model = `z-ai/glm-5.3-flash` pinned to `deepinfra/fp4`** (user, 2026-09-08): the only
+  cheap provider serving it with both `tools` and `structured_outputs`, and ZDR per the design
+  plan's criterion 3. This picks a *stack*; model selection itself stays deferred.
+- **The Phase 0 spike is NOT lost** — `~/productive_learning/.archive/poc/llm-quality-spike/`,
+  in the **parent** workspace (its corpus is real journal data). Inherit its conclusions:
+  Hetzner's constrained-decoding failure is **deployment config, settled by control experiment**
+  (DeepInfra passed the same weights in 1.3s) · **Qwen is not a candidate**, it is what Hetzner
+  serves free · GLM 10/12, DeepSeek 9/12 on the spike's own loop, **not comparable to `--bench`**
+  (12 cases incl. four `propose`; no write path exists here).
+- **Frontend↔core share NO Rust code** (JSON over Tauri IPC); cross-boundary rules are pinned
+  by a fixture — [[project-cross-boundary-rules-get-a-fixture]]. **The read catalog is NOT
+  `RecordType`** (`core/src/assistant/catalog.rs`, code not events). **`--ask`/`--bench` are
+  test scaffolding**, `--probe` is permanent. ⛔ **FINANCES DEFERRED INDEFINITELY.**
+- **Do not re-survey:** generalization · the bake-off · hosting · SurrealDB FULLTEXT on SurrealKV
+  (proven) · the OpenRouter key — `[openrouter] api_key`, lifted by `scripts/bench-openrouter.sh`.
 
 ## Open threads
-**A rule for reaching to widen a mechanism whose original purpose was never read** — to design
-later (user, 2026-09-08): the tell is *permanent + unversioned* **plus** *intent unverified*, not
-"built for something else"; [[feedback_prefer_integration_over_rewrite]] points the wrong way.
-· Routine search matches group names, not item names · Gemini has no `chat` impl.
+Routine search matches group names, not item names · Gemini has no `chat` impl · a rule for
+widening a mechanism whose purpose was never read (2026-09-08).

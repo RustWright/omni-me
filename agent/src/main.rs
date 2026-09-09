@@ -135,6 +135,16 @@ struct Args {
     ///
     /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
     bench: bool,
+
+    /// Run [`Args::ask`] under grammar-constrained decoding.
+    ///
+    /// Exists so the constrained half can be tried **once** before `--bench`
+    /// tries it a hundred times. Two things can only be settled against a real
+    /// endpoint: whether it accepts the verb-call schema at all, and whether a
+    /// constrained reply can reach the `answer` exit rather than re-calling
+    /// until the turn budget runs out. Both have already produced a scorecard
+    /// that measured the harness, and both cost one request to rule out.
+    constrained: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -143,6 +153,7 @@ fn parse_args() -> Result<Args, String> {
         probe: false,
         ask: None,
         bench: false,
+        constrained: false,
     };
     let mut argv = std::env::args().skip(1);
     while let Some(arg) = argv.next() {
@@ -150,6 +161,7 @@ fn parse_args() -> Result<Args, String> {
             "--read-only" => args.read_only = true,
             "--probe" => args.probe = true,
             "--bench" => args.bench = true,
+            "--constrained" => args.constrained = true,
             "--ask" => {
                 let question = argv
                     .next()
@@ -169,6 +181,11 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.ask.is_some() && args.bench {
         return Err("--ask and --bench are separate runs; pick one".to_string());
+    }
+    // `--bench` already runs both variants and reports the difference; letting
+    // this flag ride along would silently halve the measurement.
+    if args.constrained && args.ask.is_none() {
+        return Err("--constrained applies to --ask; --bench runs both variants".to_string());
     }
     Ok(args)
 }
@@ -204,8 +221,8 @@ async fn main() {
         Err(e) => {
             eprintln!(
                 "{e}\n\nusage: omni-me-agent [--read-only | --probe]\n       \
-                 omni-me-agent --ask \"<question>\"      (test scaffolding)\n       \
-                 omni-me-agent --bench                  (test scaffolding)"
+                 omni-me-agent --ask \"<question>\" [--constrained]   (test scaffolding)\n       \
+                 omni-me-agent --bench                              (test scaffolding)"
             );
             std::process::exit(2);
         }
@@ -401,7 +418,7 @@ async fn run(args: Args) -> Result<(), String> {
         let llm = build_assistant_llm()?;
         tracing::info!(model = llm.model_name(), "assistant model");
         if let Some(question) = &args.ask {
-            ask::run(&db, &config, llm.as_ref(), question).await;
+            ask::run(&db, &config, llm.as_ref(), question, args.constrained).await;
         } else {
             bench::run(&db, &config, llm.as_ref()).await;
         }
