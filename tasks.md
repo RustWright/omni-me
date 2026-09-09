@@ -177,6 +177,28 @@ defer-major-phases rule; do not run ahead to the next one.
        `allow_fallbacks:false` makes upstream congestion arrive as a hard failure ·
        `scripts/seed-bench-hub.py` and `scripts/bench-openrouter.sh`, which were previously
        ad-hoc shell recoverable only from a session log.
+   - **First slate run, 2026-09-09 — 9 models, 11 runs, ~$3, all pinned to DeepInfra.**
+     Scorecards in `runs/20260909-093234/` (gitignored). Free-form verb score, median/worst
+     request latency, tokens:
+     - `openai/gpt-oss-120b` @ `deepinfra/turbo` — **10/10, 3.5s median, 6.3s worst.** The
+       leading role-A candidate.
+     - `deepseek/deepseek-v4-flash` @ `fp8` — **10/10 on both arms, 8.9s median, ZERO
+       reasoning tokens**, and the cheapest on the slate ($0.09→$0.18). The close alternative.
+     - `qwen/qwen3.5-397b` 9/10 @ 8.0s · `z-ai/glm-5.3` 9/10 @ 10.4s · `qwen3.6-35b-a3b`
+       10/10 but **37.3s median, 110s worst** — disqualified for interactive use.
+     - `deepseek-v4-pro` 9/10 with errors; `llama-4-scout` 7/10 constrained-only, 4.1s.
+       `llama-4-maverick` unusable — 8× `HTTP 405` from `deepinfra/base`, an endpoint fault
+       (Scout runs the identical code path on `fp8` with zero errors).
+     - ⚠️ **Role A is a leading candidate, not a decision** — confirm direct before pinning.
+       **Role B is NOT decidable from this run: the bench saturated**, four models at 10/10.
+       Its real jobs (derived beliefs, overnight review) do not exist yet.
+   - **Same weights + same gateway + different serving tier = 3.7× latency** (12.8s bf16 vs
+     3.5s turbo, `gpt-oss-120b`). The third time this project has been misled by treating a
+     serving-stack property as a model property. Always compare endpoints, never models.
+   - **Constraint tax, where measurable, is ZERO** (+0/+0/+0, one −10). But this does **not**
+     retire `Session::constrained`: zero means constraining is *harmless*, and the constrained
+     path is the only way to reach an endpoint with no `tools` parameter — which is how Scout
+     was benched at all. That is a new argument to keep it.
    - **Plumbing facts for Phase B/C/D, true regardless of which model wins:**
      - Images pass as `data:` URLs, so **no signed-URL subsystem is needed** for blobs behind
        Tailscale. But requests **413 above ~5 MB**, so downscaling (2048px long edge) is
@@ -188,6 +210,29 @@ defer-major-phases rule; do not run ahead to the next one.
        planning model as a failing one.
      - **`ExtractionResult.total` is confirmed a schema+prompt fix** — models populate it as soon
        as `response_schema()` asks for it. Demand digits only; symbol forms break `rust_decimal`.
+     - **A vendor namespace is a gateway's spelling, not a fact about the vendor** (2026-09-09).
+       Z.ai is `z-ai/` on OpenRouter and `zai-org/` on DeepInfra; DeepSeek, ByteDance, Xiaomi
+       and MiniMax all differ the same way. `OPEN_WEIGHT_VENDORS` was written in OpenRouter's
+       dialect while production runs direct, so every DeepInfra spelling was refused —
+       *including the model the bench script itself defaults to*. Now an alias table keyed by
+       vendor, so adding one means adding every spelling.
+     - **Native tool calling is a property of the endpoint, not the model** (2026-09-09).
+       DeepInfra's Llama-4 endpoints (Scout and Maverick) advertise `response_format` and
+       `structured_outputs` but **not `tools`**, so those models can only drive the verb loop
+       through the constrained channel. Maverick's 0.7s tool-calling pass in the Phase 0
+       bake-off came from an **unpinned** route and describes an upstream we do not use.
+     - **Closing our side of the two-channel problem does not close the model's** (2026-09-09,
+       found by a live rehearsal, not by a test). A constrained request carries **no** tool
+       definitions, yet `openai/gpt-oss-120b` on DeepInfra still returns
+       `finish_reason: "tool_calls"` — the stack parses a natively-trained tool syntax out of
+       the completion regardless. The verb runs, the answer is right, and the constrained arm
+       has silently become a second free-form arm. The `off_schema` canary only inspected
+       message *content* and so never fired; it now counts a tool call under a schema too.
+       ⚠️ This would have voided both `gpt-oss-120b` rows of the very first slate sweep.
+     - **`structured_outputs` varies by quantization tag on one model.**
+       `openai/gpt-oss-120b` has it on `deepinfra/bf16` and `deepinfra/turbo` and **not** on
+       `deepinfra/fp8`. Confirmed live on the incumbent baseline; the bench pre-flight aborts
+       on it rather than producing a constrained half that was never constrained.
    - **Model selection is open and must be decided on merit.** The plan's "27–35B ceiling" came
      from the rejected owned-hardware branch and is void; the genuine frontier of open weights
      runs ~$92–106/month, still under half the €214/mo GPU box that could only hold 35B. Baseline

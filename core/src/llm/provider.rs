@@ -29,37 +29,68 @@ use serde_json::Value;
 use super::{LlmClient, NullLlmClient, OpenAiCompatClient};
 use crate::credentials::Credentials;
 
-/// Vendor namespaces whose models we are willing to send records to.
+/// Vendors whose models we are willing to send records to, each with every
+/// namespace spelling we have seen it served under.
 ///
 /// An **allowlist, deliberately**: an unrecognised vendor is refused, which is a
 /// loud one-line fix, where an unrecognised vendor silently *allowed* would be an
 /// invisible privacy breach. Same reasoning as the closed `Feature` enum — the
 /// unknown case must fail toward safety.
-const OPEN_WEIGHT_VENDORS: &[&str] = &[
-    "meta-llama",
-    "meta",
-    "qwen",
-    "deepseek",
-    "z-ai",
-    "mistralai",
-    "nvidia",
-    "microsoft",
-    "moonshotai",
-    "bytedance-seed",
-    "inclusionai",
-    "xiaomi",
-    "nousresearch",
-    "allenai",
-    "tencent",
+///
+/// ⚠️ **A namespace is a gateway's spelling, not a fact about the vendor**, which
+/// is why this is grouped by vendor rather than being a flat list of prefixes.
+/// Z.ai is `z-ai/` on OpenRouter and `zai-org/` on DeepInfra; DeepSeek is
+/// `deepseek/` and `deepseek-ai/`; ByteDance is `bytedance-seed/` and
+/// `ByteDance/`. A flat list is only ever correct for the one gateway it was
+/// written against — this one was written against OpenRouter, and every DeepInfra
+/// spelling was refused until 2026-09-09, *including the model the bench script
+/// itself defaults to*. We screen on one gateway and run production on another,
+/// so **adding a vendor means adding every spelling it is served under**, and the
+/// grouping is what makes that obligation visible. The canonical name on the left
+/// is read by nothing but the tests and a human; that is its job.
+///
+/// The list is **not exhaustive, and is not meant to be**. A vendor arrives here
+/// when something needs it, and only once its published licence has actually been
+/// checked — an entry is a privacy commitment, not a catalogue import. An absent
+/// vendor costs one verified line and fails loudly; a wrong one costs the
+/// guarantee and fails silently.
+const OPEN_WEIGHT_VENDORS: &[(&str, &[&str])] = &[
+    ("allen-ai", &["allenai"]),
+    ("bytedance", &["bytedance", "bytedance-seed"]),
+    ("deepseek", &["deepseek", "deepseek-ai"]),
+    ("ibm", &["ibm-granite"]),
+    ("inclusion-ai", &["inclusionai"]),
+    // Three spellings, one vendor, and the clearest case on this list for why it
+    // is grouped: `meta-llama/` serves Llama, `meta-models/` serves Muse Glimmer
+    // (Apache 2.0, Meta Superintelligence Labs), and `meta/` is a gateway
+    // shorthand. Nothing but the grouping makes it obvious they are the same
+    // decision — `meta-models/` was mistaken for a third-party namespace and
+    // excluded on exactly that confusion.
+    ("meta", &["meta", "meta-llama", "meta-models"]),
+    ("microsoft", &["microsoft"]),
+    ("minimax", &["minimax", "minimaxai"]),
+    ("mistral", &["mistralai"]),
+    ("moonshot", &["moonshotai"]),
+    ("nous-research", &["nousresearch"]),
+    ("nvidia", &["nvidia"]),
+    ("qwen", &["qwen"]),
+    ("stepfun", &["stepfun-ai"]),
+    ("tencent", &["tencent"]),
+    ("thinking-machines", &["thinkingmachines"]),
+    ("xiaomi", &["xiaomi", "xiaomimimo"]),
+    ("z-ai", &["z-ai", "zai-org"]),
 ];
 
-/// Namespaces that carry both open and closed weights, and the open prefix.
+/// Namespaces that carry both open and closed weights: the vendor's spellings,
+/// and the prefix that marks the open half.
 ///
 /// `openai/` is the trap this whole check exists for: `openai/gpt-oss-120b` is
 /// open weights, `openai/gpt-5-nano` is not, and they sort next to each other in
 /// any catalogue listing. `google/gemma-*` versus `google/gemini-*` is the same
-/// shape.
-const MIXED_VENDORS: &[(&str, &str)] = &[("openai", "gpt-oss"), ("google", "gemma")];
+/// shape. Alias-keyed for the same reason as above — these two happen to spell
+/// identically on both gateways today, and relying on that is how the other list
+/// went wrong.
+const MIXED_VENDORS: &[(&[&str], &str)] = &[(&["openai"], "gpt-oss"), (&["google"], "gemma")];
 
 /// Why a model id is refused, or `None` if it may be used.
 ///
@@ -85,10 +116,16 @@ fn refusal_reason(model: &str) -> Option<String> {
     };
     let vendor = vendor.to_ascii_lowercase();
 
-    if OPEN_WEIGHT_VENDORS.contains(&vendor.as_str()) {
+    if OPEN_WEIGHT_VENDORS
+        .iter()
+        .any(|(_, aliases)| aliases.contains(&vendor.as_str()))
+    {
         return None;
     }
-    if let Some((_, open_prefix)) = MIXED_VENDORS.iter().find(|(v, _)| *v == vendor) {
+    if let Some((_, open_prefix)) = MIXED_VENDORS
+        .iter()
+        .find(|(aliases, _)| aliases.contains(&vendor.as_str()))
+    {
         if name.to_ascii_lowercase().starts_with(open_prefix) {
             return None;
         }
@@ -100,8 +137,9 @@ fn refusal_reason(model: &str) -> Option<String> {
     Some(format!(
         "`{vendor}/` is not a known open-weights vendor. Closed models reached \
          through an open-weights provider fall under the model owner's policy, \
-         not the provider's. If this vendor does publish weights, add it to \
-         OPEN_WEIGHT_VENDORS"
+         not the provider's. If this vendor does publish weights, add this \
+         spelling to OPEN_WEIGHT_VENDORS — note that a vendor already listed \
+         under another gateway's spelling still needs this one"
     ))
 }
 
@@ -269,6 +307,50 @@ mod tests {
             "nvidia/nemotron-3-nano-30b-a3b",
         ] {
             assert!(refusal_reason(model).is_none(), "{model} should be allowed");
+        }
+    }
+
+    /// The **production** gateway's spellings, which are not the screening
+    /// gateway's. Every one of these was refused until 2026-09-09, so a model
+    /// could win a bench run on OpenRouter and be rejected by our own guard the
+    /// moment the endpoint changed — `z-ai/glm-5.3-flash` above and
+    /// `zai-org/GLM-5.3-Flash` here are the same weights.
+    #[test]
+    fn deepinfra_spellings_of_the_same_vendors_are_allowed() {
+        for model in [
+            "deepseek-ai/DeepSeek-V4-Flash",
+            "zai-org/GLM-5.3-Flash",
+            "ByteDance/Seed-2.0-mini",
+            "XiaomiMiMo/MiMo-V2.5",
+            "MiniMaxAI/MiniMax-M3",
+            "ibm-granite/granite-4.2-8b",
+            "inclusionAI/Ling-3.0-flash",
+            "Qwen/Qwen3.6-35B-A3B",
+        ] {
+            assert!(refusal_reason(model).is_none(), "{model} should be allowed");
+        }
+    }
+
+    /// The class the alias table exists to hold: a vendor is one decision, so
+    /// every spelling of it must land the same way. A spelling added to one
+    /// group and forgotten in another is the original bug returning.
+    #[test]
+    fn every_spelling_of_a_vendor_resolves_identically() {
+        for (canonical, aliases) in OPEN_WEIGHT_VENDORS {
+            assert!(!aliases.is_empty(), "{canonical} has no spellings");
+            for alias in *aliases {
+                assert!(
+                    refusal_reason(&format!("{alias}/some-model")).is_none(),
+                    "{canonical}: `{alias}/` should be allowed like its siblings"
+                );
+                assert_eq!(
+                    alias.to_ascii_lowercase(),
+                    **alias,
+                    "{canonical}: `{alias}` must be lowercase — the lookup \
+                     lowercases the vendor before matching, so a capitalised \
+                     entry here can never match anything"
+                );
+            }
         }
     }
 

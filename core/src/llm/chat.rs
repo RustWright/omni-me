@@ -198,6 +198,36 @@ impl Usage {
     }
 }
 
+/// Summing is what every caller does with these — a request totals its turns, a
+/// bench totals its cases — so it lives on the type rather than as a private
+/// helper per crate. Two such helpers could disagree about whether reasoning
+/// tokens are inside `completion_tokens`, and the disagreement would surface as
+/// a cost report that is quietly wrong rather than as a failure.
+impl std::ops::Add for Usage {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            prompt_tokens: self.prompt_tokens + other.prompt_tokens,
+            completion_tokens: self.completion_tokens + other.completion_tokens,
+            reasoning_tokens: self.reasoning_tokens + other.reasoning_tokens,
+            total_tokens: self.total_tokens + other.total_tokens,
+        }
+    }
+}
+
+impl std::ops::AddAssign for Usage {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
+impl std::iter::Sum for Usage {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + b)
+    }
+}
+
 /// One turn's reply.
 #[derive(Debug, Clone)]
 pub struct ChatResponse {

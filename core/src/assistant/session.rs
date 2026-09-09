@@ -270,7 +270,7 @@ impl<'a> Session<'a> {
                     );
                 }
             };
-            total = add(total, reply.usage);
+            total += reply.usage;
 
             // Under a response schema the model does not emit tool calls at all —
             // it emits the verb call as message *content*, because the grammar it
@@ -281,6 +281,25 @@ impl<'a> Session<'a> {
             // hurts verb *selection* — the thing the constraint tax is about.
             let mut reply = reply;
             if self.response_schema.is_some() {
+                // ⚠️ A tool call under a schema is off-schema, and this is the
+                // subtler half of the canary. Closing our side of the two-channel
+                // problem — sending `tools` OR `response_format`, never both — does
+                // not close the model's: a request carrying no tool definitions at
+                // all can still come back with `finish_reason: "tool_calls"`,
+                // because some serving stacks parse a natively-trained tool syntax
+                // out of the completion regardless. `openai/gpt-oss-120b` on
+                // DeepInfra does exactly this.
+                //
+                // Left uncounted it is invisible and total: the constrained arm
+                // quietly becomes a second free-form arm, and the tax goes back to
+                // measuring which channel a model prefers — the original unsound
+                // measurement, wearing the fix as a disguise. The run still
+                // executes the call, so the accuracy numbers stay real; only the
+                // *difference* between the arms is void, which is what a non-zero
+                // `off_schema` already withholds.
+                if !reply.tool_calls.is_empty() {
+                    off_schema += 1;
+                }
                 // Judged before the envelope is unwrapped, and only when there is
                 // something to judge: an empty reply is a budget failure, already
                 // reported below, and counting it here would void a run for the
@@ -538,15 +557,6 @@ fn verb_call_schema() -> Value {
             }
         }
     })
-}
-
-fn add(a: Usage, b: Usage) -> Usage {
-    Usage {
-        prompt_tokens: a.prompt_tokens + b.prompt_tokens,
-        completion_tokens: a.completion_tokens + b.completion_tokens,
-        reasoning_tokens: a.reasoning_tokens + b.reasoning_tokens,
-        total_tokens: a.total_tokens + b.total_tokens,
-    }
 }
 
 /// Scrubbed of anything that could carry a key — `LlmError` already avoids URLs,
@@ -1004,6 +1014,44 @@ mod tests {
             .ask("q")
             .await;
         assert_eq!(out.off_schema, 0, "`answer` is the schema's own exit");
+        assert_eq!(out.stopped, StopReason::Answered);
+    }
+
+    /// The quiet half of the canary, and the one that cost a real bench run.
+    ///
+    /// A constrained request carries **no** tool definitions, so a reply arriving
+    /// as a native tool call means the serving stack answered on a channel we
+    /// never opened. `openai/gpt-oss-120b` on DeepInfra does this — the verb
+    /// still gets called and the run still succeeds, which is exactly why it is
+    /// invisible without a counter. Uncounted, the constrained arm silently
+    /// becomes a second free-form arm and the tax measures nothing.
+    #[tokio::test]
+    async fn a_native_tool_call_under_a_schema_is_off_schema() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![
+            tool_turn("call-1", "list_types", serde_json::json!({})),
+            ChatResponse {
+                content: Some(r#"{"verb":"answer","arguments":{"text":"done"}}"#.into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+                latency: Duration::ZERO,
+                finish_reason: Some("stop".into()),
+                provider: None,
+            },
+        ]);
+        let cfg = config();
+        let out = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .constrained()
+            .ask("q")
+            .await;
+        assert_eq!(
+            out.off_schema, 1,
+            "a tool call we never offered means the grammar was not enforced"
+        );
+        // The verb still ran: the scorecard's accuracy stays real, and only the
+        // tax is withheld.
+        assert_eq!(out.verbs(), vec!["list_types"]);
         assert_eq!(out.stopped, StopReason::Answered);
     }
 

@@ -182,10 +182,19 @@ fn parse_args() -> Result<Args, String> {
     if args.ask.is_some() && args.bench {
         return Err("--ask and --bench are separate runs; pick one".to_string());
     }
-    // `--bench` already runs both variants and reports the difference; letting
-    // this flag ride along would silently halve the measurement.
-    if args.constrained && args.ask.is_none() {
-        return Err("--constrained applies to --ask; --bench runs both variants".to_string());
+    // With `--bench` this means **bench the constrained arm only**, and it is
+    // deliberate rather than a mistake: some endpoints offer `response_format`
+    // and no `tools` parameter at all, so the free-form arm cannot be run there
+    // and a both-arms bench aborts in pre-flight instead of measuring anything.
+    // DeepInfra's Llama-4 endpoints are the case that forced this.
+    //
+    // This combination used to be refused, on the grounds that it would silently
+    // halve the measurement. That concern was right and is now answered by the
+    // scorecard rather than by the ban: a constrained-only run says so in its
+    // header and reports the tax as NOT APPLICABLE, naming the omission as
+    // chosen. Silence was the problem, not the halving.
+    if args.constrained && args.ask.is_none() && !args.bench {
+        return Err("--constrained applies to --ask or --bench".to_string());
     }
     Ok(args)
 }
@@ -418,7 +427,7 @@ async fn run(args: Args) -> Result<(), String> {
         if let Some(question) = &args.ask {
             ask::run(&db, &config, llm.as_ref(), question, args.constrained).await;
         } else {
-            bench::run(&db, &config, llm.as_ref()).await;
+            bench::run(&db, &config, llm.as_ref(), args.constrained).await;
         }
         return Ok(());
     }

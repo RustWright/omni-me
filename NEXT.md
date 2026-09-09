@@ -1,39 +1,40 @@
 # NEXT
 
-**Next action: fill the five roles with a benchmarked model each.** The provider question is
-closed, so a bench run is finally worth spending. `scripts/bench-openrouter.sh --bench` is
-primed and now refuses any pin that is not DeepInfra. Screen wide on OpenRouter (pinned to
-DeepInfra tags), then confirm the winners direct.
+**Next action: create the DeepInfra account, walked live.** The user asked for this one step
+at a time — read the screen, hit the roadblock, handle it — not handed over as a checklist.
+Then point `[llm]` at `https://api.deepinfra.com/v1/openai` and re-run **only the two role-A
+finalists** (`openai/gpt-oss-120b` on a low-latency tier, and `deepseek/deepseek-v4-flash`).
+That doubles as the direct-path smoke test: multi-turn `chat`, tool calls, schema handling,
+and the model id accepted by the vendor allowlist.
 
 ## Decisions in force — inherit, do not re-derive
-- **Provider: DeepInfra, open weights only** (user, 2026-09-08). It won on criterion 1
-  (*owns no models*), which is where the real argument lives, plus SLA and adapter ownership.
-  **Accepted risk, stated: US jurisdiction, no recourse against US legal process.** EU
-  jurisdiction was demoted — the CLOUD Act follows the provider not the datacentre, and it
-  answered state access rather than the commercial-misuse threat actually held. ⛔ Do not
-  reopen; Phala's attested-GPU route is the one noted revisit, at the 3–6 month review.
-- **Five roles, model per role**: interactive · batch · quarantined extractor · high-volume
-  structurer · local. Table in `docs/src/assistant.md` and `core/src/llm/provider.rs`.
-  C-vs-D is a **trust boundary**, not a speed tier. D scores on **abstention**, not accuracy.
-- **Role-keyed config is deliberately NOT built.** `[llm]` stays one section until benchmarks
-  say what fills each role. That refactor lands *with* the results.
-- **Bench = production, structurally** — that is the guarantee, not a promise: the script
-  gates on a DeepInfra pin, and requests carry `zdr` + `data_collection:deny` +
-  `require_parameters` so a schema-ignoring endpoint errors instead of degrading silently.
-- **Gemini is deleted** — client, extractor, `[gemini]` creds, the fallback. `NullLlmClient`
-  replaced the fallback and reports *why* at call time. Closed-weights model ids are refused
-  unless `[llm] allow_closed_weights = true`, which exists to keep the published promise that
-  a commercial model is a supported configuration for **other people's** installs.
-- **Finances is deferred, NOT cancelled** (user, 2026-09-08) — do not accept capability
-  regressions on that path and call it acceptable because it is deferred.
-- **Do not re-survey:** the provider field (41 candidates screened) · the bake-off
-  (`~/productive_learning/.archive/poc/llm-quality-spike/`, parent workspace) · Hetzner's
-  constrained-decoding failure (settled: deployment config) · the OpenRouter key
-  (`[openrouter] api_key`, lifted by the bench script).
+- **Provider: DeepInfra, open weights only** (user, 2026-09-08). **Accepted risk, stated: US
+  jurisdiction, no recourse against US legal process.** ⛔ Do not reopen; confidential
+  computing is the one noted revisit, at the 3–6 month review.
+- **Role A has a leading candidate, not a decision** — `gpt-oss-120b` on the fast tier
+  (10/10, 3.5s median) with `deepseek-v4-flash` close behind (10/10 both arms, zero reasoning
+  tokens, cheapest). Numbers in `tasks.md`; confirm direct before pinning either.
+- **Role B is NOT decidable from the 2026-09-09 run — the bench saturated** at 10/10 for four
+  models. Do not break that tie by preference; that is the argued-not-measured choice the
+  role table exists to prevent. B's real jobs arrive in Phase E/F, and score it then.
+- **Roles C, D, E stay empty because they have no caller.** Benchmarking for work nothing
+  performs measures a config we cannot ship. Published as *unmeasured*, not *pending*.
+- **Role-keyed config stays deferred**, now for a third reason: only role A has a caller at
+  all. The interactive winner becomes the configured `[llm]` model; the refactor lands when a
+  second role has something to call it.
+- **`Session::constrained` STAYS.** The tax is zero where measurable, but zero means
+  *harmless*, not useless — and it is the only way to reach an endpoint with no `tools`
+  parameter, which is how `llama-4-scout` was benched at all. `--bench --constrained` runs
+  that arm alone and reports the tax as NOT APPLICABLE.
+- **Compare endpoints, never models.** Same weights + same gateway + different serving tier =
+  **3.7× latency**. Third time this has misled the project.
+- **Do not re-survey:** the provider field · the Phase 0 bake-off · Hetzner's
+  constrained-decoding failure · the slate pins, live-resolved and recorded in
+  `scripts/bench-slate.sh`.
 
 ## Open threads
-`prompts.rs` still asks for no `total`, so `ExtractionResult.total` is always `None` and
-`verify`'s arithmetic check is unreachable (one-line schema fix, confirmed by the spike) ·
-scanned PDFs need page rasterization, unbuilt · confirm with DeepInfra support that an
-uploaded LoRA adapter counts as "Customer Data" before the first upload (Phase D) ·
-`Session::constrained` retirement once the constraint-tax number exists.
+`prompts.rs` asks for no `total`, so `ExtractionResult.total` is always `None` — travels with
+roles C/D · scanned PDFs need rasterization · confirm a LoRA adapter counts as "Customer
+Data" before the first upload (Phase D) · `llama-4-maverick` @ `deepinfra/base` returns
+`HTTP 405` on multi-turn; retry another tag if it is ever wanted · the agent is in CI's clippy
+and tests but still not its release build.

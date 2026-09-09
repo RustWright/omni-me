@@ -300,13 +300,40 @@ its own, and the two sit one line apart in the same catalogue.
 There is no single model behind all of this. Jobs differ in what they actually demand, so
 each of these roles earns its own, benchmarked rather than argued:
 
-| Role | What it does | What decides the choice |
-|---|---|---|
-| **Interactive reasoner** | the assistant loop and chat | latency — a slow model disqualifies itself |
-| **Batch reasoner** | overnight review, habits, derived beliefs | quality; it can afford to be slow |
-| **Quarantined extractor** | receipts, statements, photographed documents | reads images, and **never holds tools** |
-| **High-volume structurer** | note extraction, categorization | cost per call, and knowing when to abstain |
-| **Local** | search embeddings, speech recognition | never leaves your machine at all |
+| Role | What it does | What decides the choice | Filled by |
+|---|---|---|---|
+| **Interactive reasoner** | the assistant loop and chat | latency — a slow model disqualifies itself | *leading candidate, see below* |
+| **Batch reasoner** | overnight review, habits, derived beliefs | quality; it can afford to be slow | **not yet** — the benchmark saturates |
+| **Quarantined extractor** | receipts, statements, photographed documents | reads images, and **never holds tools** | **not yet** — no caller exists |
+| **High-volume structurer** | note extraction, categorization | cost per call, and knowing when to abstain | **not yet** — no caller exists |
+| **Local** | search embeddings, speech recognition | never leaves your machine at all | **not yet** — arrives with retrieval |
+
+An empty seat here means *unmeasured*, not *pending selection*. Three of them have no
+caller in the system yet, and benchmarking a model for work nothing performs would measure
+a configuration we cannot ship. They are filled by the work that needs them.
+
+### What the first measurement found (2026-09-09)
+
+Ten multi-turn cases over a seeded corpus, every candidate pinned to the production
+provider's own serving stack. The leading interactive candidate is **`openai/gpt-oss-120b`
+served on a low-latency tier**, at a 3.5s median and a 6.3s worst case with a perfect verb
+score; **`deepseek/deepseek-v4-flash`** is the close alternative, equally accurate, several
+times cheaper, and spending no reasoning tokens at all, for roughly 2.5× the latency.
+
+Two results matter more than the ranking.
+
+**The same weights, served two ways by the same provider, differ by 3.7× in latency** — 3.5s
+against 12.8s. "How fast is this model" is not a well-formed question; only "how fast is this
+endpoint" is. The same lesson had already arrived twice from the other direction: a model that
+could not do constrained decoding on one host did it in 1.3s on another, and a model that
+looked six times faster than its rivals turned out to have been measured on a stack we do not
+use.
+
+**The batch seat stays empty because the benchmark saturated.** Four candidates scored
+perfectly, so the instrument cannot separate them at the top — and a tie broken by preference
+would be exactly the argued-not-measured choice this table exists to avoid. Batch work is
+judged on derived beliefs and overnight review, which do not exist yet; the seat is filled
+when there is something real to score.
 
 The quarantined extractor is a trust boundary rather than a performance tier — it is the
 "never trusted" half described above, and it stays a separate model for that reason alone.

@@ -19,6 +19,10 @@ blobs/
 .claude/scheduled_tasks.lock
 .playwright-mcp/
 reviews/
+# Raw bench scorecards from scripts/bench-slate.sh. The conclusions belong in
+# docs/src/assistant.md and tasks.md; the transcripts are working output, and a
+# failed run's log can carry an upstream error body verbatim.
+runs/
 .curiosities/
 logbook/_drafts/
 logbook/_assets/

@@ -77,6 +77,7 @@ jobs:
             backend:
               - 'core/**'
               - 'server/**'
+              - 'agent/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - '.github/workflows/ci.yml'
@@ -107,17 +108,23 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # Naming both packages in ONE invocation is load-bearing, not cosmetic.
+      # Naming the packages in ONE invocation is load-bearing, not cosmetic.
       # `server` depends on `core` with `features = ["auto-import"]`, and cargo
       # unifies features across a single invocation — so core is compiled WITH
       # auto-import here and its ~97 IMAP / receipts / subprocess / CSV tests
       # run. Split these into two commands and core silently drops to its
       # default feature set (513 tests instead of 609) with no failure to notice.
+      #
+      # `agent` joins them for the same reason it was missing for so long: it is
+      # a workspace member that no CI invocation named, so nothing here compiled
+      # it, ran its tests, or linted it — a regression in the assistant's own
+      # binary would have landed green. It depends on `core` too, so it belongs
+      # in the unified invocation rather than a second one.
       - name: Clippy
-        run: cargo clippy -p omni-me-core -p omni-me-server --all-targets -- -D warnings
+        run: cargo clippy -p omni-me-core -p omni-me-server -p omni-me-agent --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test -p omni-me-core -p omni-me-server
+        run: cargo test -p omni-me-core -p omni-me-server -p omni-me-agent
 
       - name: Build release
         run: cargo build --release -p omni-me-core -p omni-me-server

@@ -91,16 +91,31 @@ fi
 # guarantee — the agent counts replies that ignore the schema and withholds the
 # tax when any do. So an unreachable API warns and continues; only a definite
 # "this tag lacks it" aborts. Set OMNI_BENCH_SKIP_PREFLIGHT=1 to bypass.
+# Derive the requirement from what the run actually SENDS, not from the fact
+# that a run is happening. Requiring `tools` unconditionally was wrong in two
+# ways: it aborted `--bench --constrained` (constrained-arm-only, for endpoints
+# that have no `tools` at all) and it would have aborted `--ask --constrained`
+# on such an endpoint too, even though that request carries no tools either. It
+# only ever passed because the models tried so far happened to offer both.
+needs_tools=yes
 needs_schema=no
 for arg in "$@"; do
-  case "$arg" in --bench | --constrained) needs_schema=yes ;; esac
+  case "$arg" in
+    --bench) needs_schema=yes ;;
+    # Both the constrained `--ask` and the constrained-only `--bench` send
+    # `response_format` and NO tool definitions.
+    --constrained) needs_tools=no ;;
+  esac
 done
+# `--constrained` alone (with --ask) still needs the schema.
+[[ "$needs_tools" == "no" ]] && needs_schema=yes
 
 if [[ "${OMNI_BENCH_SKIP_PREFLIGHT:-}" != "1" ]]; then
-  python3 - "$model" "$pin" "$needs_schema" <<'PY' || exit 1
+  python3 - "$model" "$pin" "$needs_schema" "$needs_tools" <<'PY' || exit 1
 import json, sys, urllib.error, urllib.request
 
-model, pin, needs_schema = sys.argv[1], sys.argv[2], sys.argv[3] == "yes"
+model, pin = sys.argv[1], sys.argv[2]
+needs_schema, needs_tools = sys.argv[3] == "yes", sys.argv[4] == "yes"
 url = f"https://openrouter.ai/api/v1/models/{model}/endpoints"
 try:
     with urllib.request.urlopen(url, timeout=20) as response:
@@ -116,7 +131,8 @@ if pin not in endpoints:
     sys.exit(f"pin `{pin}` is not an endpoint for {data.get('id', model)}.\n"
              f"  available: {', '.join(sorted(t for t in endpoints if t))}")
 
-wanted = ["tools"] + (["structured_outputs"] if needs_schema else [])
+wanted = (["tools"] if needs_tools else []) + (
+    ["structured_outputs"] if needs_schema else [])
 missing = [w for w in wanted if w not in endpoints[pin]]
 if missing:
     usable = sorted(t for t, params in endpoints.items()
