@@ -1,6 +1,6 @@
-//! Merging two rankings into one. Rationale in `docs/src/retrieval.md`.
+//! Combining rankings into one. Rationale in `docs/src/retrieval.md`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Reciprocal Rank Fusion's smoothing constant, 60 as in the original paper.
 const RRF_K: f64 = 60.0;
@@ -12,7 +12,38 @@ pub struct RecordKey {
     pub id: String,
 }
 
+/// One retriever decides the order; the other only contributes what the first missed.
+///
+/// ⚠️ **This, not [`rank`], is what the live search path uses.** Fusing the two
+/// retrievers as equals was measured and it *lost* — see `docs/src/retrieval.md`
+/// § "Why the two retrievers are not equals". Do not swap this for RRF without a
+/// measurement that says otherwise.
+///
+/// `secondary` still earns a place in the answer, below everything `primary`
+/// ranked, so a record only one retriever can find is not lost. What it cannot do
+/// is reorder `primary`.
+///
+/// Scores are positional and exist only to satisfy [`cut`] and the reranker, which
+/// carry them without comparing them across calls.
+pub fn prefer(primary: &[RecordKey], secondary: &[RecordKey]) -> Vec<(RecordKey, f64)> {
+    let seen: HashSet<&RecordKey> = primary.iter().collect();
+    let order = primary
+        .iter()
+        .chain(secondary.iter().filter(|k| !seen.contains(*k)));
+
+    order
+        .enumerate()
+        .map(|(i, key)| (key.clone(), 1.0 / (i + 1) as f64))
+        .collect()
+}
+
 /// Merge several ranked lists into one, then guarantee every type a seat.
+///
+/// ⚠️ **Not on the live path** — [`prefer`] is. Kept because the argument for RRF
+/// survives the measurement that retired it: it is the right tool for two retrievers
+/// of *comparable* precision, which is what a second high-quality retriever would
+/// make true. Wiring it back in is a decision with a benchmark attached, not a
+/// simplification.
 ///
 /// ⚠️ **Fuses ranks, never scores.** The two retrievers' scores are on scales with
 /// nothing in common, so feeding raw scores here silently reintroduces the
@@ -118,6 +149,57 @@ mod tests {
             record_type: t.to_string(),
             id: id.to_string(),
         }
+    }
+
+    /// ⛔ The measured reason the retrievers are not equals. Under RRF a record the
+    /// keyword arm liked could outvote the semantic top hit, which cost 19 points of
+    /// top-1 the moment keyword matching started returning anything.
+    #[test]
+    fn the_keyword_favourite_cannot_displace_the_semantic_top_hit() {
+        let semantic = vec![key("note", "right"), key("note", "near")];
+        let keyword = vec![key("note", "wordy"), key("note", "near")];
+
+        let out = prefer(&semantic, &keyword);
+        let order: Vec<&RecordKey> = out.iter().map(|(k, _)| k).collect();
+
+        assert_eq!(order[0], &key("note", "right"), "got {order:?}");
+        assert_eq!(order[1], &key("note", "near"), "got {order:?}");
+        assert_eq!(
+            order[2],
+            &key("note", "wordy"),
+            "a keyword-only hit belongs in the tail, not the head: {order:?}"
+        );
+    }
+
+    /// A record only the keyword arm can find is still reachable — the point is that
+    /// it cannot reorder anything, not that it is discarded.
+    #[test]
+    fn a_record_only_one_retriever_found_still_appears() {
+        let out = prefer(&[key("note", "a")], &[key("journal", "b")]);
+        assert_eq!(out.len(), 2, "got {out:?}");
+        assert_eq!(out[1].0, key("journal", "b"));
+    }
+
+    #[test]
+    fn a_record_both_retrievers_found_appears_once() {
+        let shared = key("note", "a");
+        let out = prefer(std::slice::from_ref(&shared), std::slice::from_ref(&shared));
+        assert_eq!(out.len(), 1, "got {out:?}");
+    }
+
+    /// The no-embeddings build: with nothing to prefer, keyword order is the answer.
+    #[test]
+    fn an_empty_primary_leaves_the_secondary_order_untouched() {
+        let keyword = vec![key("note", "a"), key("note", "b"), key("note", "c")];
+        let out = prefer(&[], &keyword);
+        let order: Vec<RecordKey> = out.into_iter().map(|(k, _)| k).collect();
+        assert_eq!(order, keyword);
+    }
+
+    #[test]
+    fn scores_descend_so_the_order_survives_a_cut() {
+        let out = prefer(&[key("note", "a"), key("note", "b")], &[key("note", "c")]);
+        assert!(out[0].1 > out[1].1 && out[1].1 > out[2].1, "got {out:?}");
     }
 
     #[test]

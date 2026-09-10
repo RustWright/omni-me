@@ -80,7 +80,7 @@ pub const EMBED_MODEL_VALUES: &[&str] = &[
 ///
 /// Same split as [`EMBED_MODEL_VALUES`], and the same drift test in
 /// `assistant::rerank`. Sizes matter more here than anywhere else in the key space:
-/// the deployment host has 2988 MB and no swap, and the largest of these is 2.3 GB
+/// the deployment host has 3820 MB and no swap, and the largest of these is 2.3 GB
 /// of weights on its own. `MODEL_BENCH.md` § Retrieval carries the measurements.
 pub const RERANK_MODEL_VALUES: &[&str] = &[
     "jina-turbo",

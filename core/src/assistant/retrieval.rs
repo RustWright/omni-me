@@ -65,7 +65,7 @@ pub struct Retrievers<'a> {
     pub reranker: Option<&'a dyn Rerank>,
 }
 
-/// How many fused candidates a reranker gets to look at.
+/// How many candidates a reranker gets to look at.
 ///
 /// ⚠️ Bounded absolutely, not by a multiple alone: every candidate costs one inference
 /// on a two-core host, so this is a latency budget as much as a quality knob.
@@ -78,8 +78,15 @@ const RERANK_POOL_MAX: usize = 24;
 /// The output is **one ranked list across every type**. ⛔ Never revert to per-type
 /// grouping; why, in `docs/src/retrieval.md`.
 ///
+/// ⚠️ **The retrievers are not equals.** Semantic ranks; keyword only supplies what
+/// semantic missed. Fusing them as peers was built, measured, and retired — it cost
+/// 19 points of top-1. See [`fusion::prefer`].
+///
 /// `keyword_matches` counts BM25 matches only, and is named for it: there is no
 /// meaningful count on the semantic side, so a combined total would have no referent.
+/// ⚠️ A match is **any** content word of the question — see
+/// [`super::store::TypeResults::total_matches`]. The number says how much was
+/// looked at, never how much was relevant.
 pub async fn merge(
     db: &Database,
     targets: &[&'static CatalogEntry],
@@ -105,25 +112,22 @@ pub async fn merge(
         .collect();
     let semantic_ranking: Vec<RecordKey> = semantic.iter().map(|h| h.key.clone()).collect();
 
-    // An empty ranking is dropped rather than passed as an empty list: RRF over
-    // one retriever must reproduce that retriever's order exactly, which is what
-    // keeps a no-embeddings build behaving as it did before.
-    let rankings: Vec<Vec<RecordKey>> = [keyword_ranking, semantic_ranking]
-        .into_iter()
-        .filter(|r| !r.is_empty())
-        .collect();
+    // ⚠️ The semantic ranking decides the order and the keyword one only fills the
+    // tail. They are NOT fused as equals — that was measured and it lost. An empty
+    // semantic ranking degrades to keyword order for free, which is what a build
+    // without the `embeddings` feature gets.
+    let candidates = fusion::prefer(&semantic_ranking, &keyword_ranking);
 
-    if rankings.is_empty() {
+    if candidates.is_empty() {
         return json!({
             "results": [],
             "note": "nothing matched. Try different words, or say that it is not there.",
         });
     }
 
-    let fused = fusion::rank(&rankings);
     let ordered = match reranker {
-        Some(r) => rerank_pool(r, query, &fused, &keyword, &semantic, limit).await,
-        None => fusion::cut(&fused, limit),
+        Some(r) => rerank_pool(r, query, &candidates, &keyword, &semantic, limit).await,
+        None => fusion::cut(&candidates, limit),
     };
     let hits = describe(db, targets, &ordered, &keyword, &semantic).await;
 
@@ -133,23 +137,24 @@ pub async fn merge(
     })
 }
 
-/// Reorder the head of the fused list with a cross-encoder, then cut to `limit`.
+/// Reorder the head of the candidate list with a cross-encoder, then cut to `limit`.
 ///
-/// Everything the reranker never saw stays behind the part it did, in its fused
-/// order. That matters when the pool is narrower than the candidate list: without
-/// it, a tail candidate would vanish rather than simply rank below the judged ones.
+/// Everything the reranker never saw stays behind the part it did, in the order it
+/// arrived in. That matters when the pool is narrower than the candidate list:
+/// without it, a tail candidate would vanish rather than simply rank below the
+/// judged ones.
 async fn rerank_pool(
     reranker: &dyn Rerank,
     query: &str,
-    fused: &[(fusion::RecordKey, f64)],
+    candidates: &[(fusion::RecordKey, f64)],
     keyword: &[TypeResults],
     semantic: &[SemanticHit],
     limit: usize,
 ) -> Vec<RecordKey> {
     let pool_size = (limit * RERANK_POOL_FACTOR)
         .min(RERANK_POOL_MAX)
-        .min(fused.len());
-    let pool = &fused[..pool_size];
+        .min(candidates.len());
+    let pool = &candidates[..pool_size];
     let documents: Vec<String> = pool
         .iter()
         .map(|(key, _)| candidate_text(key, keyword, semantic))
@@ -157,7 +162,7 @@ async fn rerank_pool(
 
     let scored = reranker.rank(query, &documents).await;
     if scored.is_empty() {
-        return fusion::cut(fused, limit);
+        return fusion::cut(candidates, limit);
     }
 
     // Rebuilt rather than sorted in place: the reranker may return fewer entries
@@ -165,10 +170,10 @@ async fn rerank_pool(
     // rather than disappear.
     //
     // ⚠️ The scores in this vector are on **two different scales** — cross-encoder
-    // logits for what was judged, RRF weights for what was not. That is safe only
-    // because `fusion::cut` never compares them; it takes the order as given. Do
-    // not add a sort here.
-    let mut reordered: Vec<(RecordKey, f64)> = Vec::with_capacity(fused.len());
+    // logits for what was judged, positional weights for what was not. That is safe
+    // only because `fusion::cut` never compares them; it takes the order as given.
+    // Do not add a sort here.
+    let mut reordered: Vec<(RecordKey, f64)> = Vec::with_capacity(candidates.len());
     let mut placed = vec![false; pool.len()];
     for (index, score) in scored {
         let Some((key, _)) = pool.get(index) else {
@@ -188,7 +193,7 @@ async fn rerank_pool(
             reordered.push((key.clone(), *rrf));
         }
     }
-    reordered.extend(fused[pool_size..].iter().cloned());
+    reordered.extend(candidates[pool_size..].iter().cloned());
 
     fusion::cut(&reordered, limit)
 }
@@ -212,7 +217,7 @@ fn candidate_text(key: &RecordKey, keyword: &[TypeResults], semantic: &[Semantic
     }
 }
 
-/// Turn fused identities back into something a person could recognise.
+/// Turn ranked identities back into something a person could recognise.
 async fn describe(
     db: &Database,
     targets: &[&'static CatalogEntry],

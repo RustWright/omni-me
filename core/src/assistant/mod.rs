@@ -15,6 +15,7 @@ pub mod chunk;
 #[cfg(feature = "embeddings")]
 pub mod embedding;
 pub mod fusion;
+pub mod query_text;
 /// Cross-encoder reranking. Gated with [`embedding`] — same ONNX Runtime.
 #[cfg(feature = "embeddings")]
 pub mod rerank;

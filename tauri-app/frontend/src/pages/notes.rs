@@ -297,8 +297,8 @@ fn SearchView(on_select: EventHandler<String>) -> Element {
                         oninput: move |e| {
                             let q = e.value();
                             query.set(q.clone());
-                            // Empty query = empty results (per user preference:
-                            // see feedback_search_empty_query memory).
+                            // An empty query shows nothing, not everything. Search is
+                            // opt-in discovery here, not a filter over the full list.
                             if q.trim().is_empty() {
                                 results.set(vec![]);
                                 loading.set(false);

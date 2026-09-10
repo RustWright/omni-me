@@ -502,6 +502,39 @@ scorecard once produced from a binary eight minutes older than the fix it was te
 | + `jina-v2-multilingual` | 100% | **88%** | **0.922** | 0.893 | **0.944** | 621ms | 666ms | 1820M / +743M |
 | + `bge-reranker-v2-m3` | 100% | 75% | 0.849 | 0.929 | 0.787 | 1638ms | 1823ms | 1911M / +784M |
 
+### Re-run 2026-09-10, after the keyword pass was fixed
+
+Same fixture, same binary settings. The keyword pass no longer requires every word of the
+question (`@N,OR@` plus an application-side stopword filter), and the two retrievers are no
+longer fused as peers — the semantic ranking decides the order and keyword supplies only what
+it missed. Decision 6 below is the argument.
+
+| arm | found | top-1 | MRR | MRR lex | MRR sem | median | worst | RSS (abs / Δ) |
+|---|---|---|---|---|---|---|---|---|
+| keyword only | 50% | 38% | 0.438 | 0.857 | 0.111 | 2ms | 2ms | — |
+| combined `bge-small-en-v1.5` | 100% | 75% | 0.865 | **1.000** | 0.759 | 13ms | 21ms | 217M / +180M |
+| + `jina-turbo` | 94% | 62% | 0.750 | 1.000 | 0.556 | 191ms | 232ms | 409M / +175M |
+| + `bge-reranker-base` | 94% | 75% | 0.819 | 0.873 | 0.778 | 555ms | 700ms | 1793M / +1517M |
+| + `jina-v2-multilingual` | 100% | **88%** | **0.919** | 0.886 | **0.944** | 657ms | 773ms | 1848M / +772M |
+| + `bge-reranker-v2-m3` | 100% | 75% | 0.849 | 0.929 | 0.787 | 1762ms | 2189ms | 1952M / +826M |
+
+The keyword row roughly doubles on every metric; the combined row is unchanged to three
+decimals; every reranker row is within 0.006 of its previous value. Strictly better, nothing
+regressed — which is the whole claim.
+
+⚠️ **`MRR sem` on the keyword row should be 0.000 and is 0.111.** That is one case, and it is
+a fixture defect rather than a retrieval result: "the leak in the kitchen is getting worse" is
+labelled semantic against an entry reading "The tap has got **worse**". The label test excuses
+it because *its own* stop list contains "worse" — along with "day", "back", "up", "out", "get"
+and "much", none of which are function words. Two definitions of "function word" now exist in
+the repo and they disagree. Fixing it re-baselines this table, which is why it was not fixed in
+the same change that produced it.
+
+⚠️ **`jina-v2-multilingual` moved 0.922 → 0.919, and the cause is real rather than noise.** The
+reranker's candidate pool now includes records only the keyword pass found, so it is judging a
+slightly different set. That is deliberate — it is the one path by which a keyword-only find can
+reach the top — and it cost 0.003 MRR here.
+
 ### What it decided
 
 **1. Reranking stays OFF by default.** `assistant.rerank` defaults to `false`.
@@ -599,7 +632,42 @@ Two consequences, and they point in opposite directions:
   baseline, so which reranker wins is measured independently of this. The C2 decision does not
   rest on the handicapped row.
 
-**Not fixed here, deliberately.** `@N,OR@` is the opt-in, but `omni_text` has no stopword
-filter, so OR would match nearly every record on "is" or "my" and turn the `keyword_matches`
-tally — the assistant's "that is all of them" signal — into noise. It also changes the app's
-own search box. That is its own piece of work, carried in `NEXT.md`.
+**Fixed 2026-09-10** — see the re-run table above and decision 6 below. `@N,OR@` plus an
+application-side stopword filter took the keyword row from 0.188 to 0.438 and its lexical
+column from 0.429 to 0.857. ⚠️ The claim above that it "also changes the app's own search box"
+was **wrong**: the app's search UI calls `queries::search_generic_notes`, a `CONTAINS`
+substring match that never touches a full-text index.
+
+**6. Fusing the two retrievers as peers is retired — it was never doing anything, and once the
+keyword pass worked it did harm.**
+
+This is the finding the fix surfaced, and it is larger than the fix. Ranking on the semantic
+pass alone scores **100% / 75% / 0.865 / 1.000 / 0.759** — identical, to three decimals and on
+every column, to what this document has been calling the *fused* row. Adding the reranker on
+top of semantic-only reproduces the fused reranker rows too. **The keyword pass had never
+altered a single ranking**, because AND matching kept it silent on 81% of cases and `merge`
+drops an empty ranking before fusing. What was measured as fusion was the embedder wearing a
+second name.
+
+The moment the keyword pass started returning results, fusing them cost **19 points of top-1
+(75% → 56%) and 0.139 MRR (0.865 → 0.726)**.
+
+⚠️ **The cause is not a noisy tail, and that was tested.** Truncating the keyword ranking to
+its top 3, 5 or 10 before fusing changed MRR by at most 0.010 and left top-1 at 56% in every
+case. Reciprocal Rank Fusion at `k = 60` is nearly flat — rank 1 contributes `1/61`, rank 20
+contributes `1/80` — so *presence in both lists* outweighs *first place in one*. A wrong record
+placed fifth and eighth scores 0.031; the right record placed first in one list scores 0.016.
+RRF is built on the premise that agreement between retrievers is evidence, and a retriever that
+matches any record sharing any word with the question makes agreement cheap.
+
+So retrieval now combines by precedence: **semantic ranks, keyword contributes only what
+semantic missed, placed below it.** With no embedder the semantic ranking is empty and keyword
+order is the answer, which is what a build without the feature should do. `fusion::fuse`
+remains in the source, unwired — the argument for RRF survives, it just needs a second
+retriever of comparable precision to be true.
+
+⚠️ **What this does NOT establish.** Semantic-only scores a perfect **1.000** on the lexical
+column, so this fixture contains no case a keyword index could win. The claim is that fusion is
+unevidenced and currently harmful here, **not** that a keyword pass is worthless. Cases built
+to defeat an embedder — an account number, an error code, an exact date, an unusual proper noun
+— are the prerequisite for reopening this.

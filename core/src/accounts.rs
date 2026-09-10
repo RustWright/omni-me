@@ -25,8 +25,7 @@ pub const BUSINESS_HIERARCHY_PREFIX: &str = "Expenses:Business:";
 /// side is known (e.g., a Northwind withdrawal where the destination Globepay deposit
 /// hasn't been imported yet). Steady-state invariant: `Unmatched.balance == 0`
 /// — non-zero balance signals reconciliation pending OR a hidden fee that
-/// needs a balancing posting (wire fee, FX spread). See
-/// `MEMORY.md::project_unmatched_account_pattern.md` and Phase 5.6/5.7.
+/// needs a balancing posting (wire fee, FX spread).
 ///
 /// Deliberately has no `Assets:` / `Expenses:` prefix — it isn't either; it's
 /// a pending-reconciliation marker.

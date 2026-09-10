@@ -32,7 +32,7 @@
 //! (BM25 + vectors through RRF), and fused plus each reranker. Per arm: how often the
 //! right record came back at all, how often it came back *first*, and mean reciprocal
 //! rank. Per model: resident memory and per-query wall clock, because the deployment
-//! host has 2988 MB, no swap and two cores — a model that wins on rank and does not
+//! host has 3820 MB, no swap and two cores — a model that wins on rank and does not
 //! fit has not won.
 
 use std::path::PathBuf;

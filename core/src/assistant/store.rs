@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use surrealdb::types::SurrealValue;
 
 use super::catalog::{CatalogEntry, ChildCollection, DerivedView, FilterKind};
+use super::query_text;
 use crate::db::{Database, DbError};
 use crate::routines::CompletionRecord;
 
@@ -57,6 +58,10 @@ pub struct TypeResults {
     pub hits: Vec<SearchHit>,
     /// How many matched before the limit was applied, so the model can tell
     /// "that is all of them" from "there are more".
+    ///
+    /// ⚠️ Matching is **any** content word, not all of them, so this counts
+    /// records touching the question rather than records answering it. It is a
+    /// completeness signal and was never a relevance one.
     pub total_matches: usize,
 }
 
@@ -103,7 +108,12 @@ struct RawHit {
 /// ⚠️ **Never filter on `score > 0`.** Classic BM25's IDF term is
 /// `log((N - n + 0.5)/(n + 0.5))`, which is *exactly zero* when a term appears in
 /// one of two documents. On a fresh install with a handful of records a perfectly
-/// good match scores 0.0, and a threshold would silently drop it.
+/// good match scores 0.0, and a threshold would silently drop it. Matching on any
+/// word rather than all of them makes this more load-bearing, not less: a record
+/// caught by one common word is meant to arrive and rank last.
+///
+/// The query is passed through [`query_text::prepare`] first. Ranking is BM25's
+/// job; that function only keeps the tally from counting the whole corpus.
 pub async fn search(
     db: &Database,
     entry: &CatalogEntry,
@@ -113,11 +123,15 @@ pub async fn search(
     // The match clauses are numbered so `search::score(n)` can refer back to
     // them; the numbering is local to this statement. Each text field needs its
     // own FULLTEXT index, which is why they are separate clauses rather than one.
+    //
+    // ⚠️ `,OR@` is not decoration. A bare `@n@` defaults to requiring **every**
+    // word of the query, so a question never matched anything a person phrased as
+    // a question. Do not simplify it back.
     let where_clause = entry
         .text_fields
         .iter()
         .enumerate()
-        .map(|(i, f)| format!("{f} @{i}@ $q"))
+        .map(|(i, f)| format!("{f} @{i},OR@ $q"))
         .collect::<Vec<_>>()
         .join(" OR ");
     let score_expr = (0..entry.text_fields.len())
@@ -147,7 +161,11 @@ pub async fn search(
         table = entry.table,
     );
 
-    let mut resp = db.query(&sql).bind(("q", query.to_string())).await?;
+    // Prepared once and shared with the count below, so the tally can never be
+    // computed over a different query than the results were.
+    let prepared = query_text::prepare(query);
+
+    let mut resp = db.query(&sql).bind(("q", prepared.clone())).await?;
     let raw: Vec<RawHit> = resp.take(0)?;
 
     // A second query only to learn whether the limit hid anything. Cheaper than
@@ -157,7 +175,7 @@ pub async fn search(
         "SELECT count() AS n FROM {table} WHERE {where_clause} GROUP ALL",
         table = entry.table,
     );
-    let mut count_resp = db.query(&count_sql).bind(("q", query.to_string())).await?;
+    let mut count_resp = db.query(&count_sql).bind(("q", prepared)).await?;
     let counts: Vec<serde_json::Value> = count_resp.take(0)?;
     let total_matches = counts
         .first()
@@ -724,6 +742,59 @@ mod tests {
         let out = search(&db, entry("note"), "cycling", 3).await.unwrap();
         assert_eq!(out.hits.len(), 3);
         assert_eq!(out.total_matches, 9, "the limit must not hide the count");
+    }
+
+    /// ⚠️ **The defect this whole path was rebuilt for.** A bare `@n@` requires
+    /// every word of the query, so a question phrased as a question matched
+    /// nothing — the keyword arm scored 19% found on the retrieval fixture.
+    #[tokio::test]
+    async fn a_question_finds_the_record_its_content_words_name() {
+        let db = test_db().await;
+        seed_notes(&db).await;
+        db.query("CREATE type::record('generic_notes', $id) SET title = 'Dentist appointment', raw_text = 'Booked with the clinic downtown.', tags = [], created_at = time::now(), updated_at = time::now()")
+            .bind(("id", "01JKNOTE00000000000000000D"))
+            .await
+            .unwrap();
+
+        let out = search(&db, entry("note"), "when is my dentist appointment", 20)
+            .await
+            .unwrap();
+
+        assert!(
+            out.hits.iter().any(|h| h.handle == "Dentist appointment"),
+            "no record contains \"when\", and that used to be enough to lose it: {out:?}"
+        );
+    }
+
+    /// The risk the fix carries, pinned: matching on any word lets weak records in,
+    /// so BM25 has to keep sorting them below the strong one. A regression here is
+    /// worse than the defect above, because it degrades answers that already worked.
+    #[tokio::test]
+    async fn a_record_matching_more_of_the_question_ranks_first() {
+        let db = test_db().await;
+        seed_notes(&db).await;
+        db.query("CREATE type::record('generic_notes', $id) SET title = 'Dentist appointment', raw_text = 'Booked with the clinic downtown.', tags = [], created_at = time::now(), updated_at = time::now()")
+            .bind(("id", "01JKNOTE00000000000000000E"))
+            .await
+            .unwrap();
+        db.query("CREATE type::record('generic_notes', $id) SET title = 'Garage appointment', raw_text = 'Oil change, nothing else.', tags = [], created_at = time::now(), updated_at = time::now()")
+            .bind(("id", "01JKNOTE00000000000000000F"))
+            .await
+            .unwrap();
+
+        let out = search(&db, entry("note"), "when is my dentist appointment", 20)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            out.hits.len(),
+            2,
+            "both share a word, so both are matches: {out:?}"
+        );
+        assert_eq!(
+            out.hits[0].handle, "Dentist appointment",
+            "the record matching both words must lead: {out:?}"
+        );
     }
 
     /// The zero-score case, pinned deliberately: it is the shape that would make

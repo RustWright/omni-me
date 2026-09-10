@@ -28,14 +28,44 @@ journal entry scoring 1.7 were graded on different curves. A cosine distance is 
 corpus-relative at all. Averaging them, or thresholding them together, would be arithmetic on
 incomparable units.
 
-What *is* comparable is position. Both passes produce an ordering, and
-[Reciprocal Rank Fusion](https://dl.acm.org/doi/10.1145/1571941.1572114) merges orderings by
-summing `1 / (k + rank)` across the lists a record appears in, with `k = 60` from the original
-paper. A record both passes rank highly beats one that either ranks first alone.
+What *is* comparable is position, so combining the two passes is done on rank alone. Which
+raises the question of how much each ranking should count for, and that turned out to have a
+measured answer rather than an obvious one.
 
-⚠️ This is why `fusion::fuse` takes rankings and never scores. Feeding raw scores in would
-reintroduce exactly the incomparability that forced the older, worse design: results grouped
-per record type, because no honest ordering across types was available.
+## Why the two retrievers are not equals
+
+The first design fused them as peers, using
+[Reciprocal Rank Fusion](https://dl.acm.org/doi/10.1145/1571941.1572114): sum `1 / (k + rank)`
+across the lists a record appears in, `k = 60` from the original paper, so a record both passes
+rank highly beats one that either ranks first alone. It is a good default and it is wrong here.
+
+**It was measured, and it lost.** With the keyword pass returning results, fusing the two
+dropped top-1 accuracy from 75% to 56% and MRR from 0.865 to 0.726. Ranking on the semantic
+pass alone scored exactly what fusion scored before — identical on every metric, to three
+decimals — which is the more uncomfortable half of the finding: the keyword pass had never
+changed a single ranking. It had been silent, because it required every word of the question to
+be present, and fusion had been the vector ranking wearing a second name.
+
+The mechanism is that RRF at `k = 60` is nearly flat. Rank 1 contributes `1/61`, rank 20
+contributes `1/80` — a spread of 31%. So *appearing in both lists* outweighs *ranking first in
+one*: a mediocre record placed fifth and eighth scores 0.031, while the right record placed
+first in one list scores 0.016 and loses. That is the correct behaviour when both retrievers
+are about equally trustworthy, because then agreement really is evidence. When one of them
+matches any record sharing any word with the question, agreement is cheap and stops being
+evidence at all.
+
+So the passes are combined by precedence rather than by vote. **The semantic ranking is the
+order.** The keyword pass contributes records the semantic pass did not find, placed below
+everything it did — nothing is lost, and nothing is reordered. With no embedding model present
+the semantic ranking is empty and keyword order is the answer, which is exactly what a build
+without the feature should do.
+
+⚠️ **What this does not establish.** The fixture cannot show the keyword pass at its best:
+ranking on vectors alone scores a perfect 1.000 on the lexical half, so there is no case left
+for BM25 to win. Rare identifiers, error codes, account numbers and exact dates are where a
+keyword index earns its place, and the fixture has none. The honest claim is that fusion is
+*unevidenced and currently harmful*, not that it is useless — which is why `fusion::fuse`
+survives in the source, unwired, with the argument for it intact.
 
 One ranked list across every kind of record is the visible consequence. The guard against it is
 a **floor of one slot per matching type**, applied *after* ranking rather than during it, so a
@@ -188,17 +218,49 @@ Two operational notes follow from it:
   ⚠️ `SURREAL_HNSW_CACHE_SIZE` is parsed as a raw byte count. A value like `64MB` does not
   fail — it fails to parse and falls back to the default, silently.
 
-## What is still wrong
-
-The keyword pass is weaker than a BM25 baseline should be, and the reason is not tuning.
+## Questions are stripped before they reach the keyword index
 
 SurrealDB's full-text match operator defaults to requiring **every** word of the query to be
-present. "when is my dentist appointment" therefore returns nothing despite a note titled
-*Dentist appointment*, because no record contains the word "when". This affects the app's own
-search box, not only the assistant.
+present. "when is my dentist appointment" therefore returned nothing against a note titled
+*Dentist appointment*, because no record contains the word "when" — which is most of why the
+keyword pass had never contributed a ranking.
 
-An any-word mode exists, but the text analyzer has no stopword filter, so switching to it would
-match nearly everything on words like "is" and "my" and destroy the match tallies at the same
-time. The fix is a design change rather than a flag, and it has not been made yet.
+Matching now succeeds on any word. That alone would be worse, not better: the analyzer has no
+stopword filter, so every record containing "is" would match, and the tally reported next to
+results would become the size of the corpus. So function words are removed in the application
+before the query is sent — there is no analyzer filter to do it, and the one mechanism
+SurrealDB offers for token rewriting needs a file present on every device.
 
-Read the keyword-only row of the scorecard with this in mind. It is not BM25's ceiling.
+⚠️ **Stopwords here are not a ranking device.** BM25's own term weighting already scores a
+match on "the" near zero. Their job is to keep the match count meaningful.
+
+⚠️ **A question made entirely of function words is sent unchanged.** "who am I" could
+legitimately be answering to a note by that name, and the alternative is an empty query, which
+matches nothing and is indistinguishable from an honest miss. The rule means the step can
+weaken a ranking but can never remove an answer.
+
+The stopword list is deliberately shy: a missed function word costs a little tally precision,
+while a content word wrongly listed costs recall silently and permanently. So "may" and "march"
+are months, "can" and "will" are nouns, and none of them are on it.
+
+## What is still wrong
+
+**Stemming is not applied.** "appointments" does not match "appointment". SurrealDB ships a
+Snowball filter that would fix it, but the analyzer is defined with `IF NOT EXISTS`, so adding
+one changes nothing on any device that already has the old definition — and overwriting it
+means rebuilding every full-text index that names it. That is a migration, not a setting.
+
+**The benchmark cannot currently adjudicate the keyword pass.** Its lexical cases are ones the
+embedding model also happens to win, so the measurements above establish that fusion hurts here
+without establishing what a keyword index is worth. Cases built to defeat an embedder — an
+account number, an error code, an exact date, an unusual proper noun — are what the fixture
+needs before this question is reopened.
+
+**One benchmark case is mislabelled**, and the mechanism that was supposed to prevent it has a
+loophole. Cases are marked lexical or semantic, and a test asserts that a semantic case shares
+no distinctive word with its answer — but it checks against its own list of words to ignore,
+and that list has grown to include "worse", "day", "back", "up" and "out". Those are content
+words. "the leak in the kitchen is getting worse" is consequently labelled semantic against an
+entry reading "The tap has got worse", and the keyword pass finds it by that shared word. The
+split column exists precisely to stop the semantic half being flattered, so the fix is to hold
+both halves to one definition of a function word rather than two.

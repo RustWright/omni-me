@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action (user, 2026-09-10): the keyword-AND defect, then agent deployment**, in that order,
-then on to the next step in the intelligence deployment. Plan-mode session after a compact. The
-retrieval arc is finished; the box thread is closed. ⛔ No code-review debt exists — do not raise it.
-
-**C1–C3 DONE** (2026-09-10): embeddings, HNSW, RRF fusion, merged results, sweep, `--reindex`,
-reranking, `--bench-retrieval`, and `docs/src/retrieval.md`.
+**Next action: the ask/answer INTERFACE, planning-first — agent deployment folds into it.**
+Decided 2026-09-10, ahead of the roadmap's Phase D: a question authored as an event on any
+device, answered by the agent, the answer syncing back. D's proposals have no trigger until
+this or Phase F exists, so D first is as unobservable as a deployed mute agent. Deploy the
+agent in that session too, so it reaches the box once, resident *and* usable. ⛔ No
+code-review debt exists — do not raise it.
 
 ## Decisions in force — inherit, do not re-derive
-- **Reranking is OFF by default, on the measurement.** Three of four rerankers scored *worse*
-  than fusion alone (fusion: 100% found, 75% top-1, MRR 0.865). ⛔ Do not "turn it on for
-  quality" — tested, false for three of the four.
-- **Default `rerank_model` is `jina-v2-multilingual`, NOT the smallest** — `jina-turbo` degrades
-  ranking (MRR 0.865 → 0.756). Table: `MODEL_BENCH.md` § Part 5.
-- **Box stays as-is. ⛔ CLOSED** (user, 2026-09-10): box sizing only mattered if reranking ran,
-  and it does not. Measured 3820 MB / 2989 avail / 0 swap / 2 cores / 29 GB free, server 279 MB
-  — the old "2988 MB" was the *available* column read as total. Do not reopen without a reranker.
-- **Retrieval rationale lives in `docs/src/retrieval.md`**, not module headers; comments keep
-  traps only. ⚠️ `core/tests/doc_pointers.rs` fails the build on a pointer to a missing anchor.
-- **`search` returns ONE merged cross-type ranked list** + `keyword_matches` tallies + a floor
-  of one slot per matching type. ⛔ Never revert to per-type grouping.
-- **The agent lives on the box, permanently resident** (user, 2026-09-09). ⛔ Desktop hosting
-  and load-model-around-batches are CLOSED.
-- ⚠️ **`source scripts/fetch-onnxruntime.sh` from the REPO ROOT** before any linking build, or
-  `ort-sys` links statically and dies on glibc symbols. Clippy never links; green proves nothing.
-- ⚠️ **Only `<|K,EF|>` (two integers) uses the HNSW index**; `<|K,COSINE|>` silently
-  table-scans. `DISTANCE`, not `DIST`.
-- ⚠️ **`fusion::cut` does not sort** — the caller's order is the answer's. Do not add a sort.
-- **Do not re-survey:** SurrealDB KNN grammar, fastembed API, model sizes, the reranker
-  scorecard, box sizing. **DeepInfra GO; LLM model selection DEFERRED.**
+- **The retrievers are NOT equals** (measured; `MODEL_BENCH.md` § Retrieval decision 6).
+  Semantic ranks, keyword supplies only what it missed (`fusion::prefer`). ⛔ Do not re-wire
+  RRF: as peers it cost 19 points of top-1, and semantic-only scored *identical* to every
+  "fused" number ever recorded — the keyword arm had never voted. `fusion::fuse` stays
+  unwired, for a future retriever of comparable precision.
+- **Stopwords live in Rust, not the analyzer** — SurrealDB has no such filter. ⚠️ An
+  all-stopword query passes through unchanged, or `$q` is empty and matches nothing.
+- **The app's search box is SUPERSEDED, not deferred** (user). It uses `CONTAINS`, never the
+  FTS index, and the assistant replaces it. ⛔ Never file it as debt.
+- **Reranking OFF by default**; default `rerank_model` is `jina-v2-multilingual`, NOT the
+  smallest — `jina-turbo` degrades ranking. **Box stays as-is, ⛔ CLOSED.**
+- ⚠️ **Never add `-p omni-me-agent` to CI's release line** (`ci.yml:165`). Cargo unifies
+  features per invocation, so the server would link `libonnxruntime.so`, which the production
+  image lacks — green in CI, dead at container start. Own build step + an `ldd` assertion.
+- ⚠️ **Resident and askable are mutually exclusive today** — `surrealkv` holds an OS-level
+  exclusive lock, so `docker exec … --ask` cannot open a running agent's DB.
+- ⚠️ **`source scripts/fetch-onnxruntime.sh` from the REPO ROOT** before any linking build —
+  clippy never links, so green proves nothing. ⚠️ Only `<|K,EF|>` uses HNSW; `fusion::cut`
+  does not sort. **Do not re-survey:** SurrealDB KNN + match grammar, analyzer filters (there
+  is no stopword one), fastembed, the reranker scorecard, box sizing. **DeepInfra GO.**
 
 ## Open threads
-**Comment doctrine — user decision pending.** The pilot cut the six retrieval files 406 → 319
-comment lines (21% → 17%); codebase-wide it is 15,178 comment lines against **two** runnable
-doctest lines. Blanket ban not settled · **keyword search needs EVERY query word** (`@@` defaults
-to AND); own design pass, `@N,OR@` alone wrecks the tallies · `server/Dockerfile` needs ONNX and
-the agent is absent from CI's release build (`ci.yml:165`), both owed at deployment · `[llm]
-model` reads un-suffixed `openai/gpt-oss-120b` · `Usage`: `reasoning_tokens` + `estimated_cost` ·
-prompt caching unmeasured · `ExtractionResult.total` always `None`.
+**The retrieval fixture cannot adjudicate the keyword pass** — semantic-only scores 1.000 on
+its lexical column, so no case exists that a keyword index could win; and one case is
+mislabelled because the label test's own stop list excuses "worse"/"day"/"back"/"up"/"out".
+Fixing it re-baselines every MODEL_BENCH number, so it is its own change · **stemming needs a
+migration** (`DEFINE ANALYZER IF NOT EXISTS` silently no-ops on existing installs) ·
+`server/Dockerfile` has no ONNX · `[llm] model` un-suffixed · `Usage` lacks `reasoning_tokens`
++ `estimated_cost` · prompt caching unmeasured · `ExtractionResult.total` always `None` ·
+`MEMORY.md` is 20KB against a 25KB cap — prune before entries start dropping.
