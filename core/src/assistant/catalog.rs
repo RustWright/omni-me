@@ -339,6 +339,14 @@ mod tests {
         // ⛔ Finances is deferred indefinitely. `transaction_shape_is_expressible`
         // proves the catalog could describe it; nothing registers one.
         "budget",
+        // ⚠️ The assistant's own conversations, and the exclusion is a decision
+        // rather than an omission. Registering it reads as "the assistant
+        // remembers"; what it actually does is put every answer it has ever given
+        // into the corpus it retrieves from, so its earlier guesses come back as
+        // evidence about the user's life, indistinguishable from something he
+        // wrote. Recall with provenance and confidence is Phase E's job.
+        // `the_catalog_does_not_expose_conversations` holds this line.
+        "assistant",
     ];
 
     #[test]
@@ -355,6 +363,29 @@ mod tests {
                 "projection `{name}` has no catalog entry and is not listed in \
                  NOT_QUERYABLE, so the assistant cannot see its records and \
                  nothing else would report it"
+            );
+        }
+    }
+
+    /// Conversations must stay outside the retrieval corpus.
+    ///
+    /// `NOT_QUERYABLE` records the intent; this asserts the outcome, because the
+    /// two fail differently. Adding a catalog entry named `assistant` while
+    /// leaving the exclusion in place would satisfy the list and still put the
+    /// assistant's own answers in front of it — and it would look reviewed,
+    /// because one of the two lists was clearly edited on purpose.
+    #[test]
+    fn the_catalog_does_not_expose_conversations() {
+        for entry in ALL_ENTRIES {
+            assert_ne!(
+                entry.projection, "assistant",
+                "a catalog entry reaches the assistant's own conversations"
+            );
+            assert!(
+                !entry.table.starts_with("assistant_"),
+                "catalog entry `{}` reads {}, which is conversation state",
+                entry.name,
+                entry.table
             );
         }
     }

@@ -17,8 +17,8 @@ use crate::config::{ALL_FEATURES, Feature, ResolvedConfig};
 use crate::journal_file::JournalFile;
 
 use super::{
-    AutoImportProjection, BudgetProjection, ConfigProjection, NotesProjection, Projection,
-    RecordTypeProjection, RoutinesProjection,
+    AssistantProjection, AutoImportProjection, BudgetProjection, ConfigProjection, NotesProjection,
+    Projection, RecordTypeProjection, RoutinesProjection,
 };
 
 /// Projections that are never feature-gated.
@@ -42,6 +42,7 @@ pub const ALL_PROJECTIONS: &[&str] = &[
     BudgetProjection::NAME,
     AutoImportProjection::NAME,
     JournalFile::NAME,
+    AssistantProjection::NAME,
 ];
 
 /// The projections a feature owns.
@@ -54,9 +55,12 @@ pub const ALL_PROJECTIONS: &[&str] = &[
 ///   `journal_file` is deliberately *not* under `AutoImport`: it reads `budget`'s
 ///   `transactions` table, so it is only ever useful alongside the finances tab
 ///   that reads its output.
+/// - `Llm` owns two: `notes`, because `note_llm_processed` lands in its tables,
+///   and `assistant`, the conversation itself.
 pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
     match feature {
-        Feature::Journal | Feature::Notes | Feature::Llm => &[NotesProjection::NAME],
+        Feature::Journal | Feature::Notes => &[NotesProjection::NAME],
+        Feature::Llm => &[NotesProjection::NAME, AssistantProjection::NAME],
         Feature::Routines => &[RoutinesProjection::NAME],
         Feature::Finances => &[BudgetProjection::NAME, JournalFile::NAME],
         Feature::AutoImport => &[BudgetProjection::NAME, AutoImportProjection::NAME],
@@ -102,6 +106,9 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         Box::new(BudgetProjection),
         Box::new(AutoImportProjection),
         Box::new(JournalFile::new(journal_path)),
+        // Last, and order-independent: it reads nothing another projection
+        // writes, and nothing reads its tables but the client and the agent.
+        Box::new(AssistantProjection),
     ]
 }
 
@@ -220,6 +227,7 @@ mod tests {
             BudgetProjection.name(),
             AutoImportProjection.name(),
             journal_file.name(),
+            AssistantProjection.name(),
         ];
         let listed: BTreeSet<&str> = ALL_PROJECTIONS.iter().copied().collect();
         let actual: BTreeSet<&str> = live.iter().copied().collect();

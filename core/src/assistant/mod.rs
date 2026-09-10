@@ -8,8 +8,12 @@
 //!
 //! What reaches the model is decided by [`catalog`], not by this module.
 
+/// One run's outcome, rendered into the event that records it.
+pub mod answer;
 pub mod catalog;
 pub mod chunk;
+/// Reading conversations back: what is waiting for an answer, and what was said.
+pub mod conversation;
 /// Local embedding models. Absent unless the host opted into `embeddings` — the
 /// ONNX Runtime dependency must never enter the Android build.
 #[cfg(feature = "embeddings")]
@@ -27,7 +31,9 @@ pub mod store;
 pub mod vector_store;
 pub mod verbs;
 
+pub use answer::{answer_payload, records_read, skipped_payload};
 pub use catalog::{CatalogEntry, ChildCollection, FilterField, FilterKind, IdentityKind};
+pub use conversation::{PendingQuestion, Role, Turn, pending_questions};
 pub use retrieval::{Rerank, Retrievers, SemanticHit, SemanticSearch};
 pub use session::{MAX_TURNS, Outcome, Session, StopReason, TurnRecord};
 pub use store::{FullRecord, SearchHit, TypeResults};

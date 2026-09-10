@@ -62,6 +62,11 @@ pub enum EventType {
     ConfigSet,
     // Record types — the shape of the user's own records, shared across devices
     RecordTypeDeclared,
+    // Assistant — a conversation, carried as events so it reaches every device
+    // and so the resident agent can read a question out of the database it
+    // already holds open (see `docs/src/assistant.md`).
+    AssistantQuestionAsked,
+    AssistantAnswerGiven,
 }
 
 impl fmt::Display for EventType {
@@ -107,6 +112,8 @@ impl fmt::Display for EventType {
             EventType::FeedbackCaptured => "feedback_captured",
             EventType::ConfigSet => "config_set",
             EventType::RecordTypeDeclared => "record_type_declared",
+            EventType::AssistantQuestionAsked => "assistant_question_asked",
+            EventType::AssistantAnswerGiven => "assistant_answer_given",
         };
         write!(f, "{s}")
     }
@@ -157,6 +164,8 @@ impl FromStr for EventType {
             "feedback_captured" => Ok(EventType::FeedbackCaptured),
             "config_set" => Ok(EventType::ConfigSet),
             "record_type_declared" => Ok(EventType::RecordTypeDeclared),
+            "assistant_question_asked" => Ok(EventType::AssistantQuestionAsked),
+            "assistant_answer_given" => Ok(EventType::AssistantAnswerGiven),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -209,6 +218,8 @@ impl EventType {
         EventType::FeedbackCaptured,
         EventType::ConfigSet,
         EventType::RecordTypeDeclared,
+        EventType::AssistantQuestionAsked,
+        EventType::AssistantAnswerGiven,
     ];
 
     /// The features that may author this event, or `None` for an event no feature
@@ -282,6 +293,14 @@ impl EventType {
             EventType::AutoImportBatchProposed
             | EventType::AutoImportBatchCommitted
             | EventType::AutoImportBatchDismissed => &[Feature::AutoImport],
+
+            // Both halves of a conversation, and both under the same feature —
+            // which is what makes one switch stop the whole exchange. The client
+            // is refused when it tries to ask; the agent, resolving the same
+            // shared config, is refused when it tries to answer. Guarding only
+            // the question would leave answers arriving for questions the log
+            // says were never admitted.
+            EventType::AssistantQuestionAsked | EventType::AssistantAnswerGiven => &[Feature::Llm],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -926,6 +945,155 @@ pub struct RecordTypeDeclaredPayload {
     pub record_type: crate::record_type::RecordType,
 }
 
+// Assistant
+
+/// One question, as the user asked it.
+///
+/// `aggregate_id` is the `thread_id`, not the message id — a conversation is the
+/// aggregate, so `get_by_aggregate` yields a whole thread in order and two
+/// devices asking into the same thread converge on one row. That is the
+/// `config_set` discipline (key as aggregate), not the create-event one (id as
+/// aggregate), because the thing with identity here is the conversation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantQuestionAskedPayload {
+    pub thread_id: String,
+    /// Stable id for this message, referenced by the answer's `in_reply_to`.
+    pub message_id: String,
+    pub text: String,
+    /// Set on a thread's first question only, so a thread list has something to
+    /// show. Absent on follow-ups rather than repeated, which would let two
+    /// devices disagree about the title of the same conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+/// Why an answer stopped, at the write site.
+///
+/// ⚠️ This is **not** the type carried on the wire — the payload's `stopped` is a
+/// `String`, and this enum is how authors produce it. Same asymmetry as
+/// [`EventType`] against `NewEvent::event_type`, and for a sharper reason here: a
+/// newer build's stop reason must not make this one reject the payload, because a
+/// rejected answer leaves its question with no terminal event and the UI spinning
+/// forever — the exact state the field exists to end. Readers treat an
+/// unrecognised value as "finished, reason unknown", never as "not finished".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnswerStop {
+    /// The model replied in prose. The good ending.
+    Answered,
+    /// It used every turn still calling verbs.
+    TurnBudget,
+    /// The provider failed. Says nothing about the model's judgement.
+    Failed,
+    /// Never sent to a model: the question was older than the answering horizon
+    /// when the agent picked it up. An agent that was down for a day would
+    /// otherwise wake and pay for every question the user has since re-asked.
+    Stale,
+}
+
+impl AnswerStop {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AnswerStop::Answered => "answered",
+            AnswerStop::TurnBudget => "turn_budget",
+            AnswerStop::Failed => "failed",
+            AnswerStop::Stale => "stale",
+        }
+    }
+
+    /// `None` for a value this build does not know, which a reader must treat as
+    /// a terminal state rather than as an absent one.
+    pub fn parse(s: &str) -> Option<AnswerStop> {
+        match s {
+            "answered" => Some(AnswerStop::Answered),
+            "turn_budget" => Some(AnswerStop::TurnBudget),
+            "failed" => Some(AnswerStop::Failed),
+            "stale" => Some(AnswerStop::Stale),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for AnswerStop {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// What one request cost, as recorded.
+///
+/// Deliberately **not** `crate::llm::chat::Usage`. That type parses one provider
+/// family's response block and changes when a provider reports something new;
+/// this one is a permanent record and must not move underneath the log. The
+/// conversion is one `From` impl, and it drops `total_tokens` because a sum of
+/// three fields stored beside them is a second place to be wrong.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AnswerUsage {
+    #[serde(default)]
+    pub prompt_tokens: u32,
+    #[serde(default)]
+    pub completion_tokens: u32,
+    /// Separate because it is billed and rate-limited as output and was ~95% of
+    /// it on the baseline model. Folded in, it would misstate both the cost and
+    /// where the time went.
+    #[serde(default)]
+    pub reasoning_tokens: u32,
+}
+
+/// A record the assistant actually opened while answering.
+///
+/// Derived from the `read` calls in the run's trace, never from the model's
+/// prose: these are records it demonstrably had in hand, so a citation built
+/// from them cannot be invented. The client renders them as links back into
+/// journal and notes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordRef {
+    /// The catalog kind — `journal`, `note`, `routine`.
+    pub kind: String,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+/// The agent's reply to one question — including the replies that failed.
+///
+/// **One event covers every ending.** A separate failure type would double the
+/// event count for no gain, and a question with no terminal event is
+/// indistinguishable from one still being worked on. `text` is `None` for
+/// everything except [`AnswerStop::Answered`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantAnswerGivenPayload {
+    pub thread_id: String,
+    pub message_id: String,
+    /// The `message_id` of the question this answers.
+    pub in_reply_to: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// An [`AnswerStop`] rendered to its wire name. See that type for why this is
+    /// a `String`.
+    pub stopped: String,
+    /// The provider's failure sentence, when there was one. Kept apart from
+    /// `text` so a client never renders an error as if it were an answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Which model answered. Recorded per answer rather than read from config at
+    /// display time, because config moves and this is the audit trail — and,
+    /// once a proposal corpus exists, the eval set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub usage: AnswerUsage,
+    #[serde(default)]
+    pub elapsed_ms: u64,
+    /// The verbs called, in order — the trace, compressed to what a person
+    /// reading their own history would want. The arguments stay in the agent's
+    /// logs: they are re-derivable, they can be long, and every one of them
+    /// syncs to the phone if put here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verbs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub records_read: Vec<RecordRef>,
+}
+
 /// Validate that a payload JSON value matches the expected shape for the given event type.
 pub fn validate_payload(
     event_type: &EventType,
@@ -1056,6 +1224,12 @@ pub fn validate_payload(
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
         }
+        EventType::AssistantQuestionAsked => {
+            serde_json::from_value::<AssistantQuestionAskedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AssistantAnswerGiven => {
+            serde_json::from_value::<AssistantAnswerGivenPayload>(payload.clone()).map(|_| ())
+        }
     };
 
     result.map_err(|e| {
@@ -1164,10 +1338,12 @@ mod tests {
                 | EventType::DataWiped
                 | EventType::FeedbackCaptured
                 | EventType::ConfigSet
-                | EventType::RecordTypeDeclared => counted += 1,
+                | EventType::RecordTypeDeclared
+                | EventType::AssistantQuestionAsked
+                | EventType::AssistantAnswerGiven => counted += 1,
             }
         }
-        assert_eq!(counted, 40, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 42, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

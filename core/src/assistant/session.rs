@@ -247,7 +247,33 @@ impl<'a> Session<'a> {
     }
 
     /// Answer one question, calling verbs as needed.
+    ///
+    /// A thin wrapper over [`Session::ask_with_history`] with no prior turns, and
+    /// the shape every existing caller and test uses.
     pub async fn ask(&self, question: &str) -> Outcome {
+        self.ask_with_history(&[], question).await
+    }
+
+    /// Answer a question that continues a conversation.
+    ///
+    /// `history` is the thread's earlier turns, oldest first, as prose. It is
+    /// deliberately **not** the earlier runs' full message lists:
+    ///
+    /// - A prior assistant turn goes back with `tool_calls` empty. Its tool
+    ///   *results* are long gone, and a provider handed a tool call with no
+    ///   matching result rejects the request — a failure that would only appear
+    ///   on the second question in a thread.
+    /// - Replaying every earlier turn's retrieved snippets would grow the prompt
+    ///   without bound over a long conversation, and re-send record text the
+    ///   current question may have no business seeing.
+    ///
+    /// What the model gets is what a person would remember of the exchange: what
+    /// was asked, and what was said back.
+    pub async fn ask_with_history(
+        &self,
+        history: &[super::conversation::Turn],
+        question: &str,
+    ) -> Outcome {
         let started = Instant::now();
         // Constrained runs carry the verb documentation in the prompt because
         // their request cannot carry `tools`. Both variants therefore describe
@@ -260,10 +286,17 @@ impl<'a> Session<'a> {
             ),
             None => format!("{SYSTEM_PROMPT}{LOOP_RULES}"),
         };
-        let mut messages = vec![
-            ChatMessage::System(system),
-            ChatMessage::User(question.to_string()),
-        ];
+        let mut messages = vec![ChatMessage::System(system)];
+        for turn in history {
+            messages.push(match turn.role {
+                super::conversation::Role::User => ChatMessage::User(turn.text.clone()),
+                super::conversation::Role::Assistant => ChatMessage::Assistant {
+                    content: Some(turn.text.clone()),
+                    tool_calls: Vec::new(),
+                },
+            });
+        }
+        messages.push(ChatMessage::User(question.to_string()));
         let mut trace: Vec<TurnRecord> = Vec::new();
         let mut total = Usage::default();
         let mut seen: Vec<String> = Vec::new();
@@ -881,6 +914,94 @@ mod tests {
             "the loop rules must start on their own line, got: {:?}",
             &text[text.len().saturating_sub(400)..]
         );
+    }
+
+    /// A follow-up must reach the model with the earlier exchange in front of
+    /// it, in order, and with the new question last.
+    #[tokio::test]
+    async fn a_follow_up_carries_the_earlier_turns_before_the_new_question() {
+        use super::super::conversation::{Role, Turn};
+
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![prose_turn("last month you wrote…")]);
+        let cfg = config();
+        let history = vec![
+            Turn {
+                role: Role::User,
+                text: "what did I write about rent?".into(),
+            },
+            Turn {
+                role: Role::Assistant,
+                text: "you noted on 12 Aug that…".into(),
+            },
+        ];
+        let _ = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .ask_with_history(&history, "what about last month?")
+            .await;
+
+        let seen = llm.seen.lock().unwrap();
+        let msgs = &seen[0].messages;
+        assert!(matches!(msgs[0], ChatMessage::System(_)));
+        assert!(
+            matches!(&msgs[1], ChatMessage::User(t) if t == "what did I write about rent?"),
+            "the earlier question is missing or out of order: {msgs:?}"
+        );
+        assert!(
+            matches!(&msgs[2], ChatMessage::Assistant { content: Some(t), .. }
+                if t == "you noted on 12 Aug that…"),
+            "the earlier answer is missing or out of order: {msgs:?}"
+        );
+        assert!(
+            matches!(&msgs[3], ChatMessage::User(t) if t == "what about last month?"),
+            "the new question must come last: {msgs:?}"
+        );
+    }
+
+    /// ⚠️ A replayed assistant turn must carry **no** tool calls. Their results
+    /// are long gone, and a provider handed a call with no matching result
+    /// rejects the request — a failure that would surface only on the second
+    /// question in a thread, never in a single-question test.
+    #[tokio::test]
+    async fn a_replayed_assistant_turn_carries_no_tool_calls() {
+        use super::super::conversation::{Role, Turn};
+
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![prose_turn("ok")]);
+        let cfg = config();
+        let history = vec![Turn {
+            role: Role::Assistant,
+            text: "earlier answer".into(),
+        }];
+        let _ = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .ask_with_history(&history, "and now?")
+            .await;
+
+        let seen = llm.seen.lock().unwrap();
+        for message in &seen[0].messages {
+            if let ChatMessage::Assistant { tool_calls, .. } = message {
+                assert!(
+                    tool_calls.is_empty(),
+                    "a replayed turn reissued a tool call with no result behind it"
+                );
+            }
+        }
+    }
+
+    /// `ask` must stay exactly `ask_with_history` with nothing before the
+    /// question — every Phase B test and the whole bench depend on it.
+    #[tokio::test]
+    async fn ask_is_ask_with_history_with_no_history() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![prose_turn("hi")]);
+        let cfg = config();
+        let _ = Session::new(&db, &cfg, &llm).unwrap().ask("q").await;
+
+        let seen = llm.seen.lock().unwrap();
+        let msgs = &seen[0].messages;
+        assert_eq!(msgs.len(), 2, "an empty history added a message: {msgs:?}");
+        assert!(matches!(&msgs[1], ChatMessage::User(t) if t == "q"));
     }
 
     #[test]

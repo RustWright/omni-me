@@ -16,15 +16,15 @@
 const STOPWORDS: &[&str] = &[
     // Articles and determiners
     "a", "an", "the", "this", "that", "these", "those", "some", "any", "each", // Pronouns
-    "i", "me", "my", "mine", "you", "your", "yours", "he", "him", "his", "she", "her", "hers", "it",
-    "its", "we", "us", "our", "ours", "they", "them", "their", "theirs",
+    "i", "me", "my", "mine", "you", "your", "yours", "he", "him", "his", "she", "her", "hers",
+    "it", "its", "we", "us", "our", "ours", "they", "them", "their", "theirs",
     // Wh-words: the whole point of the fix, since a question leads with one
     "who", "whom", "whose", "what", "which", "when", "where", "why", "how",
     // Auxiliaries and copulas
     "am", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did", "have", "has",
     "had", "should", "would", "could", // Prepositions and conjunctions
-    "of", "in", "on", "at", "to", "for", "with", "from", "by", "about", "as", "into", "over", "and",
-    "or", "but", "if", "than", "then", "so",
+    "of", "in", "on", "at", "to", "for", "with", "from", "by", "about", "as", "into", "over",
+    "and", "or", "but", "if", "than", "then", "so",
     // Common filler in a spoken-style question
     "again", "just", "very", "there", "here", "please", "tell",
 ];

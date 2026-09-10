@@ -7,10 +7,12 @@
 //! and the shape that forces is also the one worth wanting — contained failure,
 //! inherited machinery, proposals that sync for free.
 //!
-//! **This phase registers no verbs and calls no model.** What it proves is that a
-//! second binary can backfill the log, run projections, and author an event that
-//! reaches the other devices — and that it inherits the feature guard and the
-//! non-production posture rather than re-implementing either.
+//! **It answers questions.** A question authored on any device arrives here the
+//! ordinary way — pulled, projected — and the answer goes back the same way. That
+//! is not an implementation detail: `surrealkv` holds an exclusive lock on its
+//! directory, so a resident agent's database cannot be opened by a second process
+//! to hand it work. Carrying the question as an event is what makes *resident*
+//! and *askable* the same process. The loop itself is in [`responder`].
 //!
 //! Two flags stand for the two postures, and they are opposites: `--read-only`
 //! refuses to build a writer at all, `--probe` authors one note through the one
@@ -19,16 +21,18 @@
 
 mod ask;
 mod bench;
+mod responder;
 mod retrieval_bench;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use omni_me_core::config::{ConfigKey, ResolvedConfig};
 use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
-    EventStore, EventWriter, NewEvent, ProjectionRunner, SurrealEventStore, load_persisted,
-    registry,
+    AssistantQuestionAskedPayload, EventStore, EventWriter, NewEvent, ProjectionRunner,
+    SurrealEventStore, load_persisted, registry,
 };
 use omni_me_core::runtime::{self, ServerUrlPolicy};
 use omni_me_core::sync::{
@@ -85,6 +89,35 @@ const LLM_MIN_INTERVAL_ENV: &str = "OMNI_AGENT_LLM_MIN_INTERVAL_MS";
 const LLM_BASE_URL_ENV: &str = "OMNI_AGENT_LLM_BASE_URL";
 const LLM_MODEL_ENV: &str = "OMNI_AGENT_LLM_MODEL";
 const LLM_API_KEY_ENV: &str = "OMNI_AGENT_LLM_API_KEY";
+
+/// How long the agent waits between sync pulls, in milliseconds.
+///
+/// ⚠️ Deliberately **not** [`sync::DEFAULT_PULL_INTERVAL`]'s 20s. That default is
+/// sized for a phone: a radio, a battery, and a person who does not notice a
+/// twenty-second lag on a note edit. This process sits on the same host as the
+/// server it polls, on mains power, and its pull latency is a limb of the
+/// interactive path — a question waits here before anything else can happen to
+/// it. See [`DEFAULT_PULL_INTERVAL_MS`].
+const PULL_INTERVAL_ENV: &str = "OMNI_AGENT_PULL_INTERVAL_MS";
+
+/// Minutes after which an unanswered question is closed without a model call.
+///
+/// An operational safety valve, not a preference — which is why it is an env var
+/// rather than a `ConfigKey`. The `assistant.*` config keys are things a person
+/// tunes from the settings screen (which embedder, whether to rerank); nobody
+/// adjusts a staleness horizon from a phone, and making it the first `Int` key
+/// would drag an `int_of` accessor and a numeric settings widget in behind it.
+const ANSWER_HORIZON_ENV: &str = "OMNI_AGENT_ANSWER_HORIZON_MINS";
+
+/// 3 seconds: fast enough that the agent's pull is not the dominant term in
+/// ask-to-answer latency, cheap because the request is loopback to a process on
+/// the same host.
+const DEFAULT_PULL_INTERVAL_MS: u64 = 3_000;
+
+/// 60 minutes. Long enough that a brief restart answers everything it missed,
+/// short enough that an overnight outage does not wake up and pay for a day of
+/// questions the user has already given up on.
+const DEFAULT_ANSWER_HORIZON_MINS: u64 = 60;
 
 /// Fresh-install default sync target, overridable at build time like the
 /// client's. Unset → localhost, so a zero-config agent talks to a local hub
@@ -165,6 +198,22 @@ struct Args {
     ///
     /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
     bench_retrieval: bool,
+
+    /// Author a question event, then exit — a stand-in for the client.
+    ///
+    /// Distinct from [`Args::ask`] in the thing that matters: that one calls the
+    /// model in this process, this one writes an event and lets whichever agent
+    /// is *resident* pick it up. It is how the ask/answer path gets exercised
+    /// end-to-end before the Assistant tab exists, and it exercises the real
+    /// path rather than a shortcut through it — two processes, separate data
+    /// roots, one hub, exactly as a phone and the box relate.
+    ///
+    /// ⚠️ Writes a real event into whatever log it is pointed at.
+    ask_event: Option<String>,
+
+    /// Continue an existing thread instead of starting one. Only meaningful
+    /// with [`Args::ask_event`].
+    thread: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -176,6 +225,8 @@ fn parse_args() -> Result<Args, String> {
         constrained: false,
         reindex: false,
         bench_retrieval: false,
+        ask_event: None,
+        thread: None,
     };
     let mut argv = std::env::args().skip(1);
     while let Some(arg) = argv.next() {
@@ -194,6 +245,21 @@ fn parse_args() -> Result<Args, String> {
                     return Err("--ask needs a non-empty question".to_string());
                 }
                 args.ask = Some(question);
+            }
+            "--ask-event" => {
+                let question = argv
+                    .next()
+                    .ok_or_else(|| "--ask-event needs a question".to_string())?;
+                if question.trim().is_empty() {
+                    return Err("--ask-event needs a non-empty question".to_string());
+                }
+                args.ask_event = Some(question);
+            }
+            "--thread" => {
+                args.thread = Some(
+                    argv.next()
+                        .ok_or_else(|| "--thread needs a thread id".to_string())?,
+                );
             }
             other => return Err(format!("unrecognised argument: {other}")),
         }
@@ -224,6 +290,20 @@ fn parse_args() -> Result<Args, String> {
     // chosen. Silence was the problem, not the halving.
     if args.constrained && args.ask.is_none() && !args.bench {
         return Err("--constrained applies to --ask or --bench".to_string());
+    }
+    // Same contradiction as `--probe --read-only`, and refused rather than
+    // resolved for the same reason: authoring needs a writer.
+    if args.ask_event.is_some() && args.read_only {
+        return Err("--ask-event needs a writer; --read-only refuses to build one".to_string());
+    }
+    // `--ask` answers in this process; `--ask-event` hands the question to
+    // whichever agent is resident. Running both would ask the same thing twice
+    // and pay twice.
+    if args.ask_event.is_some() && (args.ask.is_some() || args.bench || args.bench_retrieval) {
+        return Err("--ask-event is its own run; pick one".to_string());
+    }
+    if args.thread.is_some() && args.ask_event.is_none() {
+        return Err("--thread applies to --ask-event".to_string());
     }
     Ok(args)
 }
@@ -260,6 +340,7 @@ async fn main() {
             eprintln!(
                 "{e}\n\nusage: omni-me-agent [--read-only | --probe]\n       \
                  omni-me-agent [--reindex]\n       \
+                 omni-me-agent --ask-event \"<question>\" [--thread <id>]\n       \
                  omni-me-agent --ask \"<question>\" [--constrained]   (test scaffolding)\n       \
                  omni-me-agent --bench                              (test scaffolding)\n       \
                  omni-me-agent --bench-retrieval                    (test scaffolding)"
@@ -556,6 +637,18 @@ async fn run(args: Args) -> Result<(), String> {
         probe_once(writer).await;
     }
 
+    // Authoring a question is a client's job, so it exits like a client would —
+    // before any of the answering machinery below starts. The resident agent is
+    // a different process against a different data root.
+    if let Some(question) = &args.ask_event {
+        let writer = writer.as_ref().ok_or("--ask-event needs a writer")?;
+        ask_event_once(writer, question, args.thread.as_deref()).await?;
+        // Nudged, then given the debounce window: `run` returning drops the
+        // pusher, and a question that never left the process is not a question.
+        tokio::time::sleep(omni_me_core::sync::DEFAULT_PUSH_DELAY + Duration::from_secs(3)).await;
+        return Ok(());
+    }
+
     // One-shot diagnostics run against the log as it stands and then exit,
     // rather than starting the schedulers. They pull once first: asking about
     // records this device has not seen would answer "not there" for data that
@@ -615,8 +708,18 @@ async fn run(args: Args) -> Result<(), String> {
 
     // Inbound half: startup backfill, then interval and network-online pulls. On
     // a cold start this batch is the entire log arriving.
-    let (pull_scheduler, _pull) =
-        PullScheduler::spawn(sync_client, db.clone(), projections.clone());
+    //
+    // ⚠️ `spawn_with`, not `spawn`: the default 20s interval is a phone's, and
+    // here it would sit in the middle of the ask-to-answer path. See
+    // `PULL_INTERVAL_ENV`.
+    let pull_interval = Duration::from_millis(env_u64(PULL_INTERVAL_ENV, DEFAULT_PULL_INTERVAL_MS));
+    let (pull_scheduler, _pull) = PullScheduler::spawn_with(
+        sync_client,
+        db.clone(),
+        projections.clone(),
+        pull_interval,
+        sync::DEFAULT_PULL_WARMUP,
+    );
     let _pull_net = wire_puller_network(&network_monitor, pull_scheduler.clone());
 
     // Diagnostic only, and non-fatal: warns on the orphan signature (local events
@@ -626,12 +729,140 @@ async fn run(args: Args) -> Result<(), String> {
         Err(e) => tracing::warn!(error = %e, "device_id audit failed"),
     }
 
-    tracing::info!("agent running; no verbs registered");
-    tokio::signal::ctrl_c()
+    // A read-only agent has nothing to answer *with*: an answer is an event, and
+    // it cannot author one. Say so once, plainly, rather than letting it look
+    // like a working assistant that never replies.
+    let Some(writer) = writer.as_ref() else {
+        tracing::warn!(
+            "--read-only: questions will not be answered; this process cannot author events"
+        );
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|e| format!("could not listen for shutdown: {e}"))?;
+        tracing::info!("shutting down");
+        return Ok(());
+    };
+
+    let llm = build_assistant_llm()?;
+    // Built here rather than in a helper for the same reason the diagnostics
+    // branch does it: `Retrievers` borrows both services, so a function returning
+    // one would be returning references to its own locals.
+    let search = embedder
+        .as_ref()
+        .map(|e| omni_me_core::assistant::VectorSearch {
+            db: &db,
+            config: &config,
+            embedder: e,
+        });
+    let rerank_service = reranker
+        .as_ref()
+        .map(|r| omni_me_core::assistant::RerankService { reranker: r });
+    let retrievers = omni_me_core::assistant::Retrievers {
+        semantic: search
+            .as_ref()
+            .map(|s| s as &dyn omni_me_core::assistant::SemanticSearch),
+        reranker: rerank_service
+            .as_ref()
+            .map(|s| s as &dyn omni_me_core::assistant::Rerank),
+    };
+    let horizon = Duration::from_secs(
+        env_u64(ANSWER_HORIZON_ENV, DEFAULT_ANSWER_HORIZON_MINS).saturating_mul(60),
+    );
+
+    tracing::info!(
+        model = llm.model_name(),
+        pull_interval_ms = pull_interval.as_millis(),
+        horizon_mins = horizon.as_secs() / 60,
+        semantic = retrievers.semantic.is_some(),
+        reranked = retrievers.reranker.is_some(),
+        "agent running; answering questions"
+    );
+
+    let responder = responder::Responder {
+        db: &db,
+        config: &config,
+        llm: llm.as_ref(),
+        writer,
+        retrievers,
+        horizon,
+    };
+    match responder.run(&pull_scheduler).await {
+        responder::Stopped::Interrupted => Ok(()),
+    }
+}
+
+/// Read a positive integer out of the environment, or fall back.
+///
+/// A malformed value warns and falls back rather than refusing to boot. These
+/// are deployment knobs; an agent that will not start because a compose file has
+/// a typo in a poll interval is worse than one that starts on the default and
+/// says so.
+fn env_u64(var: &str, default: u64) -> u64 {
+    match std::env::var(var) {
+        Err(_) => default,
+        Ok(raw) => match raw.trim().parse::<u64>() {
+            Ok(v) if v > 0 => v,
+            _ => {
+                tracing::warn!(var, value = %raw, default, "unusable value; using the default");
+                default
+            }
+        },
+    }
+}
+
+/// Author one question event and report where it landed.
+///
+/// The client's half of the interface, standing in for the Assistant tab. It
+/// mints a thread id when none is given, because a bare question is the start of
+/// a conversation — continuing one is the deliberate act, which is what `--thread`
+/// is for.
+async fn ask_event_once(
+    writer: &EventWriter,
+    question: &str,
+    thread: Option<&str>,
+) -> Result<(), String> {
+    let thread_id = thread
+        .map(str::to_string)
+        .unwrap_or_else(|| ulid::Ulid::new().to_string());
+    let message_id = ulid::Ulid::new().to_string();
+    let payload = AssistantQuestionAskedPayload {
+        thread_id: thread_id.clone(),
+        message_id: message_id.clone(),
+        text: question.to_string(),
+        // Only a thread's first question titles it. A `--thread` continuation is
+        // by definition not the first.
+        title: thread.is_none().then(|| title_from(question)),
+    };
+    let event = NewEvent::assistant_question_asked(writer.device_id(), &payload)
+        .map_err(|e| format!("could not build the question event: {e}"))?;
+
+    let stored = writer
+        .append_new(event)
         .await
-        .map_err(|e| format!("could not listen for shutdown: {e}"))?;
-    tracing::info!("shutting down");
+        .map_err(|e| format!("question refused: {e}"))?;
+    tracing::info!(
+        thread = %thread_id,
+        message_id = %message_id,
+        event_id = %stored.id,
+        "question authored; a resident agent should answer it"
+    );
+    println!("thread {thread_id}");
     Ok(())
+}
+
+/// A thread's title: the question, trimmed to something a list can show.
+///
+/// Cut on a word boundary rather than mid-word — a list of threads is scanned,
+/// and a truncated word reads as corruption before it reads as an ellipsis.
+fn title_from(question: &str) -> String {
+    const MAX: usize = 60;
+    let q = question.trim();
+    if q.chars().count() <= MAX {
+        return q.to_string();
+    }
+    let head: String = q.chars().take(MAX).collect();
+    let cut = head.rfind(char::is_whitespace).unwrap_or(head.len());
+    format!("{}…", head[..cut].trim_end())
 }
 
 /// Author one note through the real writer and report what happened.

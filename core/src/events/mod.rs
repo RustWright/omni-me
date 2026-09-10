@@ -1,3 +1,4 @@
+mod assistant_projection;
 mod auto_import_projection;
 mod budget_projection;
 mod config_projection;
@@ -10,6 +11,7 @@ mod store;
 mod types;
 mod writer;
 
+pub use assistant_projection::AssistantProjection;
 pub use auto_import_projection::AutoImportProjection;
 pub use budget_projection::BudgetProjection;
 pub use config_projection::{ConfigProjection, load_persisted};

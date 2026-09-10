@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
 use super::types::{
-    ConfigSetPayload, EventType, FeedbackCapturedPayload, RecordTypeDeclaredPayload,
-    TransactionRecordedPayload,
+    AssistantAnswerGivenPayload, AssistantQuestionAskedPayload, ConfigSetPayload, EventType,
+    FeedbackCapturedPayload, RecordTypeDeclaredPayload, TransactionRecordedPayload,
 };
 use crate::db::Database;
 
@@ -213,6 +213,42 @@ impl NewEvent {
             timestamp: Utc::now(),
             device_id: device_id.into(),
             payload: serde_json::to_value(&payload)?,
+        })
+    }
+
+    /// Envelope for an `AssistantQuestionAsked` event.
+    ///
+    /// ⚠️ `aggregate_id == payload.thread_id`, **not** the message id — the
+    /// aggregate is the conversation. Both assistant factories derive it the same
+    /// way, which is what keeps a question and its answer on one aggregate and
+    /// lets `get_by_aggregate` read a thread in order.
+    pub fn assistant_question_asked(
+        device_id: impl Into<String>,
+        payload: &AssistantQuestionAskedPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::AssistantQuestionAsked.to_string(),
+            aggregate_id: payload.thread_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for an `AssistantAnswerGiven` event. See
+    /// [`NewEvent::assistant_question_asked`] for the aggregate discipline.
+    pub fn assistant_answer_given(
+        device_id: impl Into<String>,
+        payload: &AssistantAnswerGivenPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::AssistantAnswerGiven.to_string(),
+            aggregate_id: payload.thread_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
         })
     }
 }
