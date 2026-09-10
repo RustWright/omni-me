@@ -41,3 +41,10 @@ secrets/*
 
 # Local privacy guard: real bank/personal tokens for the pre-commit scan.
 .private-identity-denylist
+
+# Throwaway bench/agent hubs. `server`'s DB_PATH is relative, so the recipe in
+# `scripts/seed-bench-hub.py` creates one of these in the repo root — and the
+# SessionEnd hook commits whatever it finds. A SurrealKV database is not a
+# source artifact, and the seeded corpus is throwaway. (`runs/`, the scorecards,
+# is already covered above.)
+hub/

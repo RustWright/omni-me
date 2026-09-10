@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: create the DeepInfra account, walked live.** The user asked for this one step
-at a time — read the screen, hit the roadblock, handle it — not handed over as a checklist.
-Then point `[llm]` at `https://api.deepinfra.com/v1/openai` and re-run **only the two role-A
-finalists** (`openai/gpt-oss-120b` on a low-latency tier, and `deepseek/deepseek-v4-flash`).
-That doubles as the direct-path smoke test: multi-turn `chat`, tool calls, schema handling,
-and the model id accepted by the vendor allowlist.
+**Next action: Phase C — retrieval.** `fastembed` embeddings + SurrealDB HNSW + reranker, so
+`search` stops being BM25-only. Runs **locally, does not touch DeepInfra**, so model selection
+does not gate it. Plan §270 in `~/.claude/plans/lets-plan-how-to-sprightly-hartmanis.md`.
+Major cross-cutting phase — give it its own planning-first session, not another's tail.
 
 ## Decisions in force — inherit, do not re-derive
+- **DeepInfra is a GO. Model selection is DEFERRED** (user, 2026-09-09) until an agent is about
+  to go live and be wired to the app. The bench is a **recorded data point**, not a pending
+  decision. ⛔ Do not reopen it as "unfinished work".
+- **The go/no-go rests on verified API facts, not on the bench** — key, base URL, tool calling,
+  schema decoding, ids, retention, limits, cost. Verdict + non-blocker table top of
+  `MODEL_BENCH.md`. Low confidence in the *ranking* does not touch the verdict.
 - **Provider: DeepInfra, open weights only** (user, 2026-09-08). **Accepted risk, stated: US
   jurisdiction, no recourse against US legal process.** ⛔ Do not reopen; confidential
   computing is the one noted revisit, at the 3–6 month review.
-- **Role A has a leading candidate, not a decision** — `gpt-oss-120b` on the fast tier
-  (10/10, 3.5s median) with `deepseek-v4-flash` close behind (10/10 both arms, zero reasoning
-  tokens, cheapest). Numbers in `tasks.md`; confirm direct before pinning either.
-- **Role B is NOT decidable from the 2026-09-09 run — the bench saturated** at 10/10 for four
-  models. Do not break that tie by preference; that is the argued-not-measured choice the
-  role table exists to prevent. B's real jobs arrive in Phase E/F, and score it then.
-- **Roles C, D, E stay empty because they have no caller.** Benchmarking for work nothing
-  performs measures a config we cannot ship. Published as *unmeasured*, not *pending*.
-- **Role-keyed config stays deferred**, now for a third reason: only role A has a caller at
-  all. The interactive winner becomes the configured `[llm]` model; the refactor lands when a
-  second role has something to call it.
-- **`Session::constrained` STAYS.** The tax is zero where measurable, but zero means
-  *harmless*, not useless — and it is the only way to reach an endpoint with no `tools`
-  parameter, which is how `llama-4-scout` was benched at all. `--bench --constrained` runs
-  that arm alone and reports the tax as NOT APPLICABLE.
-- **Compare endpoints, never models.** Same weights + same gateway + different serving tier =
-  **3.7× latency**. Third time this has misled the project.
-- **Do not re-survey:** the provider field · the Phase 0 bake-off · Hetzner's
-  constrained-decoding failure · the slate pins, live-resolved and recorded in
-  `scripts/bench-slate.sh`.
+- **Zero-retention needs no configuration** — blanket policy; the Google/Anthropic carve-out is
+  guarded by `refusal_reason` alone. **Tier is the model id direct**, not a routing pin:
+  `-Ultra` 403s and `service_tier: priority` is not delivered, so the id is the only control.
+- **Gateway screening is a validated method** — direct `-Turbo` matched OpenRouter's
+  `deepinfra/turbo` within 0.1s. Screen cheap through a gateway, decide direct.
+- ⚠️ **Reasoning tokens are NOT reported by DeepInfra.** "of which reasoning 0" means *absent*.
+- **`gpt-oss` emits tool calls under a schema on every path** (R8), so its constraint tax is
+  un-measurable. A probe said otherwise and was wrong: a probe proves a capability exists,
+  never a behaviour absent.
+- **Roles B–E stay unfilled.** B saturated the bench; C, D, E have no caller. Published
+  *unmeasured*, not *pending*. Role-keyed config stays deferred for the same reason.
+- **`Session::constrained` STAYS** (only route to a `tools`-less endpoint) · **compare
+  endpoints, never models** · **do not re-survey** the provider field, the Phase 0 bake-off,
+  Hetzner's constrained-decoding failure, or the catalogue (ids + prices in `MODEL_BENCH.md`).
 
 ## Open threads
-`prompts.rs` asks for no `total`, so `ExtractionResult.total` is always `None` — travels with
-roles C/D · scanned PDFs need rasterization · confirm a LoRA adapter counts as "Customer
-Data" before the first upload (Phase D) · `llama-4-maverick` @ `deepinfra/base` returns
-`HTTP 405` on multi-turn; retry another tag if it is ever wanted · the agent is in CI's clippy
-and tests but still not its release build.
+`[llm] model` still reads un-suffixed `openai/gpt-oss-120b`, the slow 15.0s tier — harmless
+while nothing calls it, wrong to ship · `Usage` fix: `reasoning_tokens: Option<u32>` + parse
+`estimated_cost` (breaks test literals, own small task) · prompt caching unmeasured, acts on
+the term dominating cost 11–20:1 · bench de-saturation proposal (Part 4), unadopted · role C
+needs a vision model, only an `-Exp` one exists · LoRA as "Customer Data" pre-Phase D ·
+`ExtractionResult.total` always `None` · scanned PDFs need rasterization · agent not in CI's
+release build.
