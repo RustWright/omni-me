@@ -318,10 +318,7 @@ mod tests {
         let first = &out["results"][0];
         assert_eq!(first["handle"], "Lease renewal", "{out}");
         assert!(
-            first["snippet"]
-                .as_str()
-                .unwrap()
-                .contains("agreed to 4%"),
+            first["snippet"].as_str().unwrap().contains("agreed to 4%"),
             "{out}"
         );
     }

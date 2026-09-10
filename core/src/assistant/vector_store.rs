@@ -215,9 +215,9 @@ async fn is_current(
         .bind(("i", record_id.to_string()))
         .await?;
     let rows: Vec<StoredChunk> = resp.take(0)?;
-    Ok(rows.first().is_some_and(|r| {
-        r.text_hash.as_deref() == Some(hash) && r.model.as_deref() == Some(model)
-    }))
+    Ok(rows
+        .first()
+        .is_some_and(|r| r.text_hash.as_deref() == Some(hash) && r.model.as_deref() == Some(model)))
 }
 
 async fn delete_chunks(
@@ -313,7 +313,11 @@ pub async fn knn_search(
          WHERE vector <|{fetch},{SEARCH_EF}|> $q
          ORDER BY dist ASC"
     );
-    let mut resp = db.query(&sql).bind(("q", vector)).await.map_err(DbError::from)?;
+    let mut resp = db
+        .query(&sql)
+        .bind(("q", vector))
+        .await
+        .map_err(DbError::from)?;
     let raw: Vec<RawKnn> = resp.take(0).map_err(DbError::from)?;
 
     let visible: Vec<&str> = catalog::visible(config).iter().map(|e| e.name).collect();
@@ -540,8 +544,14 @@ mod tests {
 
         let report = sweep(&db, &config(), embedder).await.unwrap();
 
-        assert_eq!(report.failed, 1, "the missing type went unreported: {report:?}");
-        assert_eq!(report.embedded, 1, "the healthy type was skipped: {report:?}");
+        assert_eq!(
+            report.failed, 1,
+            "the missing type went unreported: {report:?}"
+        );
+        assert_eq!(
+            report.embedded, 1,
+            "the healthy type was skipped: {report:?}"
+        );
     }
 
     /// The silent failure this phase is most exposed to.
@@ -564,9 +574,8 @@ mod tests {
             .into_iter()
             .map(f64::from)
             .collect();
-        let sql = format!(
-            "SELECT record_id FROM {TABLE} WHERE vector <|4,{SEARCH_EF}|> $q EXPLAIN"
-        );
+        let sql =
+            format!("SELECT record_id FROM {TABLE} WHERE vector <|4,{SEARCH_EF}|> $q EXPLAIN");
         let mut resp = db.query(&sql).bind(("q", vector)).await.unwrap();
         let plan: Vec<Value> = resp.take(0).unwrap();
         let rendered = serde_json::to_string(&plan).unwrap();
@@ -583,15 +592,16 @@ mod tests {
             .await
             .unwrap();
         let rows: Vec<Value> = resp.take(0).unwrap();
-        rows.first()
-            .and_then(|v| v["n"].as_u64())
-            .unwrap_or(0) as usize
+        rows.first().and_then(|v| v["n"].as_u64()).unwrap_or(0) as usize
     }
 
     #[test]
     fn the_hash_is_stable_and_distinguishes_edits() {
         assert_eq!(content_hash("rent increase"), content_hash("rent increase"));
-        assert_ne!(content_hash("rent increase"), content_hash("rent increases"));
+        assert_ne!(
+            content_hash("rent increase"),
+            content_hash("rent increases")
+        );
         // Pinned, so a refactor that changes the algorithm fails loudly here rather
         // than silently re-embedding every record on the next sweep.
         assert_eq!(content_hash(""), "cbf29ce484222325");

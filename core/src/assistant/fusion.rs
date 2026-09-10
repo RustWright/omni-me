@@ -130,9 +130,7 @@ mod tests {
     /// The case the floor exists for: a large corpus must not crowd out a small one.
     #[test]
     fn a_small_type_keeps_a_slot_against_a_flood() {
-        let journal: Vec<RecordKey> = (0..50)
-            .map(|i| key("journal", &format!("j{i}")))
-            .collect();
+        let journal: Vec<RecordKey> = (0..50).map(|i| key("journal", &format!("j{i}"))).collect();
         let mut both = journal.clone();
         both.push(key("note", "n1"));
 
@@ -148,7 +146,11 @@ mod tests {
     /// Without the flood there is nothing to correct, and ranking alone should stand.
     #[test]
     fn the_floor_does_not_disturb_an_already_mixed_result() {
-        let ranking = vec![key("note", "n1"), key("journal", "j1"), key("routine", "r1")];
+        let ranking = vec![
+            key("note", "n1"),
+            key("journal", "j1"),
+            key("routine", "r1"),
+        ];
 
         let out = fuse(std::slice::from_ref(&ranking), 3);
 

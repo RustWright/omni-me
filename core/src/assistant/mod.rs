@@ -16,16 +16,16 @@ pub mod chunk;
 pub mod embedding;
 pub mod fusion;
 pub mod retrieval;
+pub mod session;
+pub mod store;
 /// The vector index and its sweep. Gated with [`embedding`] — it needs a model.
 #[cfg(feature = "embeddings")]
 pub mod vector_store;
-pub mod session;
-pub mod store;
 pub mod verbs;
 
 pub use catalog::{CatalogEntry, ChildCollection, FilterField, FilterKind, IdentityKind};
-pub use session::{MAX_TURNS, Outcome, Session, StopReason, TurnRecord};
 pub use retrieval::{SemanticHit, SemanticSearch};
+pub use session::{MAX_TURNS, Outcome, Session, StopReason, TurnRecord};
 pub use store::{FullRecord, SearchHit, TypeResults};
 pub use verbs::{SYSTEM_PROMPT, VERB_NAMES, dispatch, dispatch_with, tools, tools_as_prompt};
 

@@ -357,7 +357,11 @@ async fn build_embedder(db: &Database) -> Option<omni_me_core::assistant::Embedd
         tracing::warn!(error = %e, "could not define the vector index; keyword-only");
         return None;
     }
-    tracing::info!(model = embedder.name(), dim = embedder.dim(), "embedder ready");
+    tracing::info!(
+        model = embedder.name(),
+        dim = embedder.dim(),
+        "embedder ready"
+    );
     Some(embedder)
 }
 

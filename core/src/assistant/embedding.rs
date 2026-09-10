@@ -74,7 +74,10 @@ impl Embedder {
     }
 
     /// Embed stored text, for indexing.
-    pub async fn embed_passages(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+    pub async fn embed_passages(
+        &self,
+        texts: Vec<String>,
+    ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         self.run(texts).await
     }
 
