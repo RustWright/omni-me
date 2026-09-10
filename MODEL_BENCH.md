@@ -469,7 +469,9 @@ Remaining limits, stated rather than discovered later:
 
 ### Cost is half the result
 
-The deployment host has **2988 MB, no swap, 2 vCPU** (measured). A reranker is resident for as
+The deployment host has **3820 MB total, no swap, 2 vCPU** (re-measured on the box 2026-09-10;
+an earlier revision of this section said 2988 MB, which was the `free -m` **available** column
+mistaken for the total — see decision 3). A reranker is resident for as
 long as the agent is, so its memory is a permanent floor rather than a transient peak, and
 zero swap makes pressure an OOM kill rather than a slowdown — with no guarantee the kernel
 picks the agent over the sync server. So every arm reports resident memory and per-query wall
@@ -523,15 +525,62 @@ direction fusion alone already argues for. `jina-v2-multilingual`'s win — top-
 cases — is suggestive, not established. It is enough to pick between two models; it is not
 enough to claim reranking is worth its cost.
 
-**3. The reranker that helps does not fit the host.** `jina-v2-multilingual` costs ~750 MB
-resident (floor; likely nearer its 1.1 GB of weights) and 621 ms per query on *twelve* cores.
-The box has 2988 MB, no swap and **two** cores. It is a real option only on a larger box, and
-that is now a number rather than an estimate — which was the point of deferring box sizing to
-this measurement.
+**3. The reranker that helps is blocked by cores, not by memory.** ⚠️ **This reverses what this
+section said on 2026-09-10 before the host was re-measured.** `jina-v2-multilingual` costs
+~750 MB resident (floor; likely nearer its 1.1 GB of weights) and 621 ms per query on *twelve*
+cores.
+
+The host has **3820 MB total with 2989 MB available** and the sync server resident at 279 MB, so
+a 1.1 GB model plus the agent's own ~215 MB embedder and ≤256 MiB HNSW cache **does** fit, with
+roughly a gigabyte to spare. The earlier "does not fit" read the available column as the total
+and then subtracted from it a second time.
+
+What does not fit is the **wall clock**. 621 ms on twelve cores implies something in the region
+of three to four seconds per query on two, and a reranking pass is per-question latency the user
+waits on. Doubling the box to four cores would still leave roughly two seconds. So reranking is
+not a box-size problem with a purchase attached to it; it is a problem that this class of
+machine does not solve at any tier Hetzner sells cheaply.
 
 **4. It also trades, rather than simply winning.** `jina-v2-multilingual` lifts semantic MRR
 0.759 → 0.944 and *drops* lexical 1.000 → 0.893. Net positive here, but it is the split column
 doing its job: reranking is not free accuracy, it is a different set of mistakes.
+
+**5. Resizing the box is priced, and it does not buy the thing it looks like it buys.**
+
+The host is a Gen2 **CX22** (2 vCPU Intel Skylake, 4 GB, 40 GB, Nuremberg), created 2026-05-18 —
+*before* Hetzner's 15 June 2026 price increase, so it bills at a grandfathered rate. The nearest
+double-the-RAM tier is **CX33** (4 vCPU / 8 GB / 80 GB) at €8.49/mo.
+
+⚠️ **The rescale is technically reversible but financially one-way.** Hetzner's "CPU and RAM
+only" option keeps the disk and can be undone, and the operation costs a power-off and an
+automatic restart — minutes. But rescaling re-prices the server onto the current sheet, and
+scaling back down afterwards returns to CX23's €5.49, never to the pre-June rate. The real
+question is therefore not "+€4/mo" but "give up the grandfathered rate permanently".
+
+And it would buy the wrong resource. Per decision 3, memory is not the constraint — the current
+box already has the headroom. The constraint is two cores, and CX33's four still leave a
+reranking pass around two seconds per query.
+
+⛔ **CLOSED 2026-09-10: the box stays as it is.** The user's reasoning ends the thread rather
+than deciding it — box sizing is entirely downstream of running a reranker, and reranking is
+off on the measurement above. The sizing work is recorded here so it need not be redone, not
+because a purchase is pending. Reopen only if a reranker is actually adopted.
+
+Two things apply to the host regardless, and neither is about reranking:
+
+- **Add swap.** With none, memory pressure is an OOM kill rather than a slowdown, and nothing
+  guarantees the kernel picks the agent over the sync server.
+- **Set `SURREAL_HNSW_CACHE_SIZE` explicitly on the agent process** — it is the only process
+  that builds an HNSW index; the sync server never calls `init_schema`. ⚠️ Verified in
+  `surrealdb-core-3.0.4` (`cnf/mod.rs:199`): it parses as a **raw `u64` of bytes** via the plain
+  `lazy_env_parse!`, not the `bytes` variant, so `64MB` does not fail — it falls back to the
+  256 MiB default, silently.
+
+Measured on the box 2026-09-10, closing the half that was previously unmeasured: **3820 MB
+total, 830 MB used, 2989 MB available, 0 swap; 38 GB disk with 29 GB free (20% used); the sync
+server (`omni-me-private`) resident at 279 MB.** The agent is its own device with its own
+embedded SurrealKV, so it adds a **second full replica** — a disk cost as well as a memory one —
+and 29 GB of free disk is the budget it has to fit inside.
 
 ### The keyword baseline is handicapped, and the number must be read with that
 

@@ -1,8 +1,4 @@
-//! Local embedding models, via fastembed/ONNX. Rationale in `docs/src/assistant.md`.
-//!
-//! Nothing here reaches a network at query time: models download once into a cache
-//! directory and run on the CPU thereafter, which is what lets retrieval improve
-//! without widening what leaves the machine.
+//! Local embedding models, via fastembed/ONNX. Rationale in `docs/src/retrieval.md`.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -21,10 +17,9 @@ pub enum EmbeddingError {
 
 /// A loaded embedding model, shareable across tasks.
 ///
-/// The inner `Mutex` is not incidental: fastembed's `embed` takes `&mut self`, and
-/// ONNX Runtime sessions are not `Sync` for concurrent inference. Serialising here is
-/// also the behaviour we want on a 2-core host, where two concurrent inferences would
-/// contend for the same cores and finish no sooner.
+/// The inner `Mutex` is not incidental: fastembed's `embed` takes `&mut self`, and ONNX
+/// Runtime sessions are not `Sync` for concurrent inference. Serialising is wanted
+/// anyway on a two-core host, where concurrent inferences finish no sooner.
 #[derive(Clone)]
 pub struct Embedder {
     model: Arc<Mutex<TextEmbedding>>,
@@ -60,14 +55,14 @@ impl Embedder {
     ///
     /// ⚠️ Read from the model, never hardcoded. The HNSW index declares a fixed
     /// `DIMENSION`, so a config change to a differently-sized model makes every stored
-    /// vector meaningless — see [`Embedder::name`] and the re-index guard.
+    /// vector meaningless.
     pub fn dim(&self) -> usize {
         self.dim
     }
 
     /// The configured model name, stored alongside the vectors.
     ///
-    /// Two models of the *same* width still produce incompatible vector spaces, so
+    /// ⚠️ Two models of the *same* width still produce incompatible vector spaces, so
     /// width alone cannot detect a model swap. The name can.
     pub fn name(&self) -> &str {
         &self.name
@@ -84,7 +79,7 @@ impl Embedder {
     /// Embed a user's question, for searching.
     ///
     /// Asymmetric retrieval: the query gets an instruction prefix the passages do not.
-    /// See [`query_prefix`] for why that is per-model rather than a constant.
+    /// See [`query_prefix`].
     pub async fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         let prefixed = format!("{}{}", query_prefix(&self.name), text);
         let mut out = self.run(vec![prefixed]).await?;
@@ -128,9 +123,9 @@ impl std::fmt::Debug for Embedder {
 ///
 /// ⚠️ **Per-model, and wrong to generalise.** BGE v1.5 English is trained with this
 /// exact sentence on the query side only; E5 uses `query:`/`passage:`; MiniLM uses
-/// neither. Applying BGE's prefix to a model that was not trained with it does not
-/// error — it quietly shifts every query away from its passages and degrades recall,
-/// which looks like "semantic search is disappointing" rather than like a bug.
+/// neither. Applying BGE's prefix to a model not trained with it does not error — it
+/// quietly shifts every query away from its passages and degrades recall, which looks
+/// like "semantic search is disappointing" rather than like a bug.
 fn query_prefix(model_name: &str) -> &'static str {
     if model_name.starts_with("bge-") && model_name.contains("-en") {
         "Represent this sentence for searching relevant passages: "
@@ -141,8 +136,7 @@ fn query_prefix(model_name: &str) -> &'static str {
 
 /// Map a config string onto a fastembed model.
 ///
-/// A closed match rather than a parse of fastembed's `Display`: the config value is
-/// user-facing and must stay stable even if the upstream enum is renamed.
+/// Closed match: the config value is user-facing and must survive an upstream rename.
 fn parse_model(name: &str) -> Result<EmbeddingModel, EmbeddingError> {
     Ok(match name {
         "bge-small-en-v1.5" => EmbeddingModel::BGESmallENV15,
@@ -158,8 +152,8 @@ mod tests {
     use super::*;
     use crate::config::{ConfigKey, EMBED_MODEL_VALUES};
 
-    /// Same split contract as `rerank`: `config` offers the names because it
-    /// compiles everywhere, and this parser is the only thing that can honour them.
+    /// `config` offers the names because it compiles everywhere; this parser is the
+    /// only thing that can honour them. Nothing else holds the two together.
     #[test]
     fn every_offered_model_name_resolves() {
         for name in EMBED_MODEL_VALUES {
@@ -183,7 +177,6 @@ mod tests {
         assert!(err.contains("nope"), "got {err}");
     }
 
-    /// The prefix must not leak onto models that were not trained with it.
     #[test]
     fn only_bge_english_models_get_the_query_prefix() {
         assert!(!query_prefix("bge-small-en-v1.5").is_empty());

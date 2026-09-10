@@ -1,16 +1,8 @@
-//! Merging two rankings into one. Rationale in `docs/src/assistant.md` § retrieval.
-//!
-//! Deliberately free of any `embeddings` feature gate: this is arithmetic over ranks,
-//! so it stays testable on a build with no ONNX Runtime in it.
+//! Merging two rankings into one. Rationale in `docs/src/retrieval.md`.
 
 use std::collections::HashMap;
 
-/// Reciprocal Rank Fusion's smoothing constant.
-///
-/// 60 is the value from the original Cormack et al. paper and the one every
-/// implementation since has used; it is large enough that the top few ranks are
-/// close together, so a document ranked 1 by one retriever does not automatically
-/// beat one ranked 2 by both.
+/// Reciprocal Rank Fusion's smoothing constant, 60 as in the original paper.
 const RRF_K: f64 = 60.0;
 
 /// What both retrievers agree on as a record's identity.
@@ -22,27 +14,20 @@ pub struct RecordKey {
 
 /// Merge several ranked lists into one, then guarantee every type a seat.
 ///
-/// ⚠️ **Fuses ranks, never scores.** BM25 relevance is relative to its own corpus —
-/// its document count and average length — so a note scoring 1.7 and a journal entry
-/// scoring 1.7 were graded on different curves and cannot be compared. Positions can.
-/// Feeding raw scores in here would reintroduce exactly the incomparability that made
-/// the old per-type grouping necessary.
+/// ⚠️ **Fuses ranks, never scores.** The two retrievers' scores are on scales with
+/// nothing in common, so feeding raw scores here silently reintroduces the
+/// incomparability that ranks exist to avoid.
 ///
-/// The floor is applied *after* ranking: every type present anywhere in the input keeps
-/// at least one slot, so a 500-entry journal cannot bury the single relevant note.
-/// When `limit` is smaller than the number of types the floor cannot be honoured for
-/// all of them, and the plain ranking wins.
+/// The floor cannot be honoured when `limit` is below the number of matching types;
+/// the plain ranking wins there.
 pub fn fuse(rankings: &[Vec<RecordKey>], limit: usize) -> Vec<RecordKey> {
     cut(&rank(rankings), limit)
 }
 
 /// The fused ordering in full, scores included and nothing dropped.
 ///
-/// Split out from [`fuse`] because a reranker needs a *wider* candidate pool than the
-/// caller will finally show: a cross-encoder that only ever sees the final few can
-/// reorder them but can never rescue a right answer that RRF ranked eleventh. The
-/// scores ride along so [`cut`] can be applied to a reranked list just as well as to
-/// this one.
+/// Split out from [`fuse`] so a reranker can be handed a pool wider than the caller
+/// will finally show.
 pub fn rank(rankings: &[Vec<RecordKey>]) -> Vec<(RecordKey, f64)> {
     let mut scores: HashMap<&RecordKey, f64> = HashMap::new();
     for ranking in rankings {
@@ -62,16 +47,13 @@ pub fn rank(rankings: &[Vec<RecordKey>]) -> Vec<(RecordKey, f64)> {
 
 /// Take the top `limit` of an already-ordered list, then guarantee every type a seat.
 ///
-/// ⚠️ **Does not sort. The caller's order is the answer's order**, and the scores
-/// riding along are carried for [`apply_type_floor`]'s benefit, never compared. That
-/// is what lets a reranked list — whose scores are cross-encoder logits on a scale
-/// with nothing in common with RRF's — pass through here unharmed. Sorting would
-/// silently reorder such a list by whichever scale happened to produce bigger numbers.
+/// ⚠️ **Does not sort. The caller's order is the answer's order.** That is what lets a
+/// reranked list — scored in cross-encoder logits, not RRF weights — pass through
+/// unharmed. A sort would reorder it by whichever scale produced bigger numbers.
 ///
-/// ⚠️ **The floor belongs here, at the final width, not at the pool's.** Applying it
-/// to a wide rerank pool and then cutting would let the cut discard every member of
-/// the type the floor had just protected — the floor would still be "applied" and the
-/// guarantee would still be gone.
+/// ⚠️ **The floor belongs here, at the final width, not at the pool's.** Applied to a
+/// wide rerank pool and then cut, the cut can discard every member of the type the
+/// floor just protected: still "applied", guarantee gone.
 pub fn cut(ranked: &[(RecordKey, f64)], limit: usize) -> Vec<RecordKey> {
     if limit == 0 {
         return Vec::new();
@@ -83,10 +65,8 @@ pub fn cut(ranked: &[(RecordKey, f64)], limit: usize) -> Vec<RecordKey> {
 }
 
 /// Give every type that matched anything at least one slot, evicting from whichever
-/// type is over-represented rather than from the tail.
-///
-/// Evicting the plain tail would repeatedly displace the *second* type on a
-/// three-type corpus; taking from the largest group keeps the eviction proportional.
+/// type is over-represented rather than from the tail — evicting the tail would
+/// repeatedly displace the *second* type on a three-type corpus.
 fn apply_type_floor<'a>(
     selected: &mut Vec<&'a RecordKey>,
     ranked: &[(&'a RecordKey, f64)],
@@ -108,7 +88,6 @@ fn apply_type_floor<'a>(
             selected.push(candidate);
             continue;
         }
-        // Find the last (lowest-ranked) member of the most-represented type.
         let mut counts: HashMap<&str, usize> = HashMap::new();
         for key in selected.iter() {
             *counts.entry(key.record_type.as_str()).or_insert(0) += 1;
@@ -141,7 +120,6 @@ mod tests {
         }
     }
 
-    /// Agreement between the two retrievers should beat a single first place.
     #[test]
     fn a_document_both_retrievers_like_beats_one_retrievers_favourite() {
         let keyword = vec![key("journal", "a"), key("journal", "b")];
@@ -153,7 +131,6 @@ mod tests {
         assert_eq!(out[0], key("journal", "b"), "got {out:?}");
     }
 
-    /// The case the floor exists for: a large corpus must not crowd out a small one.
     #[test]
     fn a_small_type_keeps_a_slot_against_a_flood() {
         let journal: Vec<RecordKey> = (0..50).map(|i| key("journal", &format!("j{i}"))).collect();
@@ -169,7 +146,6 @@ mod tests {
         assert_eq!(out.len(), 5, "the floor must not change the result size");
     }
 
-    /// Without the flood there is nothing to correct, and ranking alone should stand.
     #[test]
     fn the_floor_does_not_disturb_an_already_mixed_result() {
         let ranking = vec![
@@ -183,7 +159,6 @@ mod tests {
         assert_eq!(out, ranking, "ranking was reordered for no reason");
     }
 
-    /// `HashMap` iteration order must never reach the output.
     #[test]
     fn equal_scores_produce_a_stable_order() {
         let ranking = vec![key("note", "b"), key("note", "a")];

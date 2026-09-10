@@ -1,28 +1,23 @@
-//! Splitting a record's text into embeddable pieces.
-//!
-//! Gate-free on purpose, like [`super::fusion`]: this is string handling, and it stays
-//! testable on a build with no ONNX Runtime in it.
+//! Splitting a record's text into embeddable pieces. Rationale in
+//! `docs/src/retrieval.md`.
 
 /// Longest chunk handed to the embedder, in bytes.
 ///
-/// ⚠️ **This is a correctness bound, not a tuning knob.** fastembed truncates at the
-/// model's `max_length` (512 tokens for the BGE small family) *silently* — an
-/// over-long chunk is not an error, its tail simply never reaches the index and is
-/// unfindable with no signal that anything was dropped. English runs about 4 bytes per
-/// token, but dates, IDs and code are far denser, so this sits well under 512 × 4.
+/// ⚠️ **A correctness bound, not a tuning knob.** fastembed truncates at the model's
+/// `max_length` (512 tokens for the BGE small family) *silently* — an over-long chunk
+/// is not an error, its tail simply never reaches the index and is unfindable, with no
+/// signal that anything was dropped. English runs about 4 bytes per token, but dates,
+/// IDs and code are far denser, so this sits well under 512 × 4.
 const MAX_CHUNK_BYTES: usize = 1200;
 
-/// How much of the previous chunk each chunk repeats.
-///
-/// Without it, a sentence spanning a boundary is split across two vectors and matches
-/// neither well — the retrieval equivalent of a torn page.
+/// How much of the previous chunk each chunk repeats, so a sentence spanning a
+/// boundary still matches something.
 const OVERLAP_BYTES: usize = 150;
 
 /// Split text into overlapping chunks, preferring paragraph boundaries.
 ///
-/// Returns one chunk for short text, and never returns an empty chunk. Whitespace-only
-/// input yields nothing at all rather than one blank vector, which would otherwise sit
-/// in the index matching everything weakly.
+/// Returns one chunk for short text, and never an empty one: whitespace-only input
+/// yields nothing rather than a blank vector that would match everything weakly.
 pub fn chunk(text: &str) -> Vec<String> {
     let text = text.trim();
     if text.is_empty() {
@@ -35,8 +30,7 @@ pub fn chunk(text: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
 
-    // Paragraphs first: a journal entry's blank lines are real structure, and cutting
-    // mid-paragraph loses more meaning than cutting between them.
+    // Paragraphs first: a journal entry's blank lines are real structure.
     for para in text.split("\n\n") {
         let para = para.trim();
         if para.is_empty() {
@@ -68,9 +62,9 @@ pub fn chunk(text: &str) -> Vec<String> {
 
 /// Split one over-long paragraph on whitespace, with overlap.
 ///
-/// Byte offsets are walked to a `char_indices` boundary before slicing: a naive
+/// ⚠️ Byte offsets are walked to a `char_indices` boundary before slicing: a naive
 /// `&s[a..b]` panics the moment a chunk edge lands inside a multi-byte character, and
-/// an accented word or an emoji in a journal entry is enough to hit it.
+/// one accented word or emoji in a journal entry is enough to hit it.
 fn split_hard(para: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut start = 0usize;
@@ -102,7 +96,6 @@ fn split_hard(para: &str) -> Vec<String> {
     out
 }
 
-/// Walk `i` down to the nearest character boundary at or below it.
 fn floor_boundary(s: &str, mut i: usize) -> usize {
     while i > 0 && !s.is_char_boundary(i) {
         i -= 1;
@@ -125,7 +118,6 @@ mod tests {
         assert!(chunk("").is_empty());
     }
 
-    /// The bound that keeps the embedder from silently truncating.
     #[test]
     fn no_chunk_exceeds_the_budget() {
         let long = "the landlord raised the rent again. ".repeat(400);
@@ -145,7 +137,6 @@ mod tests {
         assert!(joined.contains("paragraph 299"), "lost the tail");
     }
 
-    /// A chunk edge landing inside a multi-byte character used to panic.
     #[test]
     fn multi_byte_characters_do_not_panic() {
         for filler in ["é", "→", "🙂"] {
@@ -158,7 +149,6 @@ mod tests {
         }
     }
 
-    /// An unbroken token longer than the budget must still terminate.
     #[test]
     fn a_single_enormous_token_terminates() {
         let text = "x".repeat(MAX_CHUNK_BYTES * 3);

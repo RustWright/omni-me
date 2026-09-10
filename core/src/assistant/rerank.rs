@@ -1,15 +1,7 @@
 //! Cross-encoder reranking: the last, most expensive, most accurate pass.
 //!
-//! Rationale in `docs/src/assistant.md` § retrieval. The short version is that the
-//! embedder in [`super::embedding`] is a *bi-encoder* — it turns a passage into a
-//! vector once, offline, and never sees the question. That is what makes it fast
-//! enough to run over the whole corpus, and also what caps its accuracy: it has to
-//! summarise a passage without knowing what will be asked of it.
-//!
-//! A reranker is a *cross-encoder*. It reads the question and one document together
-//! and scores that pair directly, so nothing can be precomputed and every candidate
-//! costs an inference. That is affordable over twenty candidates and impossible over
-//! twenty thousand — which is the whole reason it runs last.
+//! Why it exists, why it costs what it does, and why it is off by default:
+//! `docs/src/retrieval.md`.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -28,15 +20,12 @@ pub enum RerankError {
 
 /// A loaded cross-encoder, shareable across tasks.
 ///
-/// ⚠️ **Measured 2026-09-10: a reranker is not automatically an improvement.** Three
-/// of the four models offered scored *worse* than the fused ranking they were given,
-/// because fusion already returns the right record every time on the retrieval
-/// fixture. Whether this pass helps is a per-model question with a per-model answer;
-/// `MODEL_BENCH.md` § Retrieval holds them, and it is why `assistant.rerank` is off.
+/// ⚠️ **A reranker is not automatically an improvement** — three of the four offered
+/// models measured *worse* than the fused ranking they were given. `MODEL_BENCH.md`
+/// § Retrieval holds the per-model numbers.
 ///
-/// Same `Arc<Mutex<..>>` shape and the same reasons as [`super::embedding::Embedder`]:
-/// fastembed's `rerank` takes `&mut self`, and serialising inference is what we want
-/// anyway on a host with two cores.
+/// The `Arc<Mutex<..>>` is not incidental: fastembed's `rerank` takes `&mut self`, and
+/// serialising inference is wanted anyway on a two-core host.
 #[derive(Clone)]
 pub struct Reranker {
     model: Arc<Mutex<TextRerank>>,
@@ -60,7 +49,6 @@ impl Reranker {
         })
     }
 
-    /// The configured model name, for logging and for the bench scorecard.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -68,9 +56,8 @@ impl Reranker {
     /// Score every document against the query, best first.
     ///
     /// Returns `(original index, score)` rather than reordered documents: the caller
-    /// holds identities this module knows nothing about, and handing back only
-    /// positions keeps it that way. `return_documents` is therefore `false` — asking
-    /// fastembed to clone every document back would be pure copying.
+    /// holds identities this module knows nothing about, and positions keep it that
+    /// way.
     pub async fn rank(
         &self,
         query: &str,
@@ -106,9 +93,8 @@ impl std::fmt::Debug for Reranker {
 
 /// The [`super::retrieval::Rerank`] implementation.
 ///
-/// A thin adapter rather than an `impl` on [`Reranker`] itself, so the trait — which
-/// is gate-free — never has to name a type that only exists behind the `embeddings`
-/// feature.
+/// An adapter rather than an `impl` on [`Reranker`] itself, so the gate-free trait
+/// never has to name a type that exists only behind the `embeddings` feature.
 pub struct RerankService<'a> {
     pub reranker: &'a Reranker,
 }
@@ -118,9 +104,8 @@ impl super::retrieval::Rerank for RerankService<'_> {
     async fn rank(&self, query: &str, documents: &[String]) -> Vec<(usize, f32)> {
         match self.reranker.rank(query, documents.to_vec()).await {
             Ok(scored) => scored,
-            // Degrade to the fused order rather than failing the question, exactly
-            // as the vector side degrades to keyword-only. An empty return is
-            // defined as "no opinion", never as "no results".
+            // ⚠️ An empty return is defined as "no opinion", never "no results":
+            // degrade the ordering, never the answer.
             Err(e) => {
                 tracing::warn!(error = %e, "reranking failed; keeping the fused order");
                 Vec::new()
@@ -131,8 +116,7 @@ impl super::retrieval::Rerank for RerankService<'_> {
 
 /// Map a config string onto a fastembed reranker.
 ///
-/// Closed match, same reasoning as [`super::embedding::parse_model`]: the config
-/// value is user-facing and must survive an upstream rename.
+/// Closed match: the config value is user-facing and must survive an upstream rename.
 fn parse_model(name: &str) -> Result<RerankerModel, RerankError> {
     Ok(match name {
         "jina-turbo" => RerankerModel::JINARerankerV1TurboEn,
@@ -148,9 +132,8 @@ mod tests {
     use super::*;
     use crate::config::{ConfigKey, RERANK_MODEL_VALUES};
 
-    /// The offered list and this parser are the two halves of one contract, split
-    /// across a feature gate because the settings screen must render on a build
-    /// that cannot load a model. Nothing but this test holds them together.
+    /// The offered list and this parser are two halves of one contract, split across a
+    /// feature gate. Nothing but this test holds them together.
     #[test]
     fn every_offered_model_name_resolves() {
         for name in RERANK_MODEL_VALUES {
@@ -161,8 +144,8 @@ mod tests {
         }
     }
 
-    /// A default the loader rejects would boot every agent into keyword-only
-    /// retrieval while the settings screen showed a perfectly valid choice.
+    /// A default the loader rejects would boot every agent into keyword-only retrieval
+    /// while the settings screen showed a valid choice.
     #[test]
     fn the_configured_default_resolves() {
         let default = ConfigKey::AssistantRerankModel.default_value();

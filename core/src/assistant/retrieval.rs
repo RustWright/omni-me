@@ -1,8 +1,5 @@
-//! Assembling one answer out of two retrievers.
-//!
-//! Gate-free by design: the vector side arrives as plain data, so this module — and
-//! its tests — compile on a build with no ONNX Runtime. Only the *caller* is gated.
-//! Rationale in `docs/src/assistant.md` § retrieval.
+//! Assembling one answer out of two retrievers. Rationale in
+//! `docs/src/retrieval.md`.
 
 use std::collections::BTreeMap;
 
@@ -15,27 +12,24 @@ use crate::db::Database;
 
 /// Longest passage returned per hit.
 ///
-/// The contract says `search` returns summaries, not bodies: a wide slice is both a
-/// privacy cost and a recurring one, since everything gathered is re-sent on every
-/// later turn of the loop.
+/// ⚠️ `search` returns summaries, not bodies. A wide slice is a privacy cost and a
+/// recurring one — everything gathered is re-sent on every later turn of the loop.
 const SNIPPET_CHARS: usize = 240;
 
 /// A hit from the vector side, reduced to what merging needs.
 #[derive(Debug, Clone)]
 pub struct SemanticHit {
     pub key: RecordKey,
-    /// The matched chunk. Better than a keyword window — it is the passage the
-    /// model actually judged relevant, rather than the neighbourhood of a word.
+    /// The matched chunk: the passage judged relevant, not a window around a word.
     pub text: String,
 }
 
 /// The semantic half of retrieval, as an interface rather than a type.
 ///
-/// A trait rather than a concrete `Embedder` so that **this signature carries no
-/// `#[cfg]`**: `dispatch` and `Session` take `Option<&dyn SemanticSearch>` and
-/// compile identically whether or not the host built with `embeddings`. `None` is
-/// keyword-only, which is exactly the behaviour that shipped before this phase.
-/// Same shape as [`crate::llm::LlmClient`], for the same reason.
+/// ⚠️ A trait, not a concrete `Embedder`, so that **this signature carries no
+/// `#[cfg]`** and compiles identically with or without the `embeddings` feature.
+/// `None` is keyword-only. Same shape as [`crate::llm::LlmClient`], for the same
+/// reason.
 #[async_trait::async_trait]
 pub trait SemanticSearch: Send + Sync {
     /// Nearest records to `query`, best first, at most one entry per record.
@@ -63,10 +57,8 @@ pub trait Rerank: Send + Sync {
 
 /// The optional halves of retrieval, as one argument.
 ///
-/// A struct rather than two parameters threaded through `dispatch`: both are
-/// `Option` because both are host capabilities rather than request options, and a
-/// default-constructed value is exactly the keyword-only behaviour that shipped
-/// before this phase. Adding a fourth pass later widens this and nothing else.
+/// Both are `Option` because both are host capabilities rather than request options;
+/// a default-constructed value is keyword-only.
 #[derive(Default, Clone, Copy)]
 pub struct Retrievers<'a> {
     pub semantic: Option<&'a dyn SemanticSearch>,
@@ -75,26 +67,19 @@ pub struct Retrievers<'a> {
 
 /// How many fused candidates a reranker gets to look at.
 ///
-/// Wider than the final list on purpose: a cross-encoder that only sees the top few
-/// can reorder them but can never rescue a right answer RRF ranked eleventh, which is
-/// most of what a reranker is for. Bounded absolutely rather than by a multiple alone
-/// because every candidate costs one inference on a two-core host — the pool is a
-/// latency budget as much as a quality knob. `MODEL_BENCH.md` § Retrieval holds the
-/// per-model cost this was set against.
+/// ⚠️ Bounded absolutely, not by a multiple alone: every candidate costs one inference
+/// on a two-core host, so this is a latency budget as much as a quality knob.
+/// `MODEL_BENCH.md` § Retrieval holds the per-model cost it was set against.
 const RERANK_POOL_FACTOR: usize = 3;
 const RERANK_POOL_MAX: usize = 24;
 
 /// Merge keyword and semantic results into the shape the model sees.
 ///
-/// The output is **one ranked list across every type**, which keyword search alone
-/// could never justify: BM25 scores are relative to their own corpus, so a note at
-/// 1.7 and a journal entry at 1.7 were graded on different curves. Cosine distance
-/// is corpus-independent, and fusing by *rank* rather than score keeps the merged
-/// order honest for both.
+/// The output is **one ranked list across every type**. ⛔ Never revert to per-type
+/// grouping; why, in `docs/src/retrieval.md`.
 ///
-/// `keyword_matches` counts BM25 matches only, and is named for it. There is no
-/// meaningful count on the semantic side — every record has *some* similarity to
-/// every query — so a combined total would be a number with no referent.
+/// `keyword_matches` counts BM25 matches only, and is named for it: there is no
+/// meaningful count on the semantic side, so a combined total would have no referent.
 pub async fn merge(
     db: &Database,
     targets: &[&'static CatalogEntry],
@@ -210,11 +195,9 @@ async fn rerank_pool(
 
 /// The best text we hold for a candidate, for the reranker to judge.
 ///
-/// Preference order is a quality ordering, not a convenience one: the semantic chunk
-/// is a whole passage the model already found relevant, the keyword snippet is a
-/// window around a term, and the handle is a title. A cross-encoder reads whatever it
-/// is given as the document, so feeding it a title where a passage exists would throw
-/// away most of what it is for.
+/// ⚠️ The preference order is a quality ordering, not a convenience one. A
+/// cross-encoder reads whatever it is given as the document, so handing it a title
+/// where a whole passage exists throws away most of what it is for.
 fn candidate_text(key: &RecordKey, keyword: &[TypeResults], semantic: &[SemanticHit]) -> String {
     if let Some(hit) = semantic.iter().find(|h| h.key == *key) {
         return hit.text.clone();

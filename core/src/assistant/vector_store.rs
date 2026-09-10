@@ -1,9 +1,5 @@
 //! The vector side of retrieval: one side table, one HNSW index, one sweep.
-//!
-//! Rationale in `docs/src/assistant.md` § retrieval. The short version is that
-//! vectors live beside the record tables rather than inside them, because a long
-//! journal entry needs several vectors and a column can only hold one — and because
-//! the record tables are shared with a client that will never run a model.
+//! Rationale in `docs/src/retrieval.md`.
 
 use serde_json::Value;
 use surrealdb::types::SurrealValue;
@@ -52,9 +48,9 @@ pub struct SweepReport {
 
 /// Create the table and its vector index.
 ///
-/// `dim` comes from the loaded model, never a constant: the index fixes `DIMENSION`
-/// at definition time, so a model of a different width would produce vectors the
-/// index cannot accept.
+/// ⚠️ `dim` comes from the loaded model, never a constant: the index fixes
+/// `DIMENSION` at definition time, so a model of another width would produce vectors
+/// the index cannot accept.
 pub async fn init_schema(db: &Database, dim: usize) -> Result<(), DbError> {
     let sql = format!(
         "DEFINE TABLE IF NOT EXISTS {TABLE} SCHEMAFULL;
@@ -77,10 +73,8 @@ pub async fn init_schema(db: &Database, dim: usize) -> Result<(), DbError> {
 
 /// Drop every stored vector, returning how many rows went.
 ///
-/// The escape hatch for the content hash: after an embedding-model change the
-/// stored vectors are the right shape and the wrong meaning, and the sweep's guard
-/// would happily skip all of them. `is_current` checks the model name for exactly
-/// that reason, so this is for a corrupted index or a forced rebuild.
+/// The escape hatch for the content hash: for a corrupted index or a forced rebuild.
+/// A model change is already handled — `is_current` checks the model name.
 pub async fn clear(db: &Database) -> Result<usize, DbError> {
     let mut resp = db
         .query(format!("DELETE FROM {TABLE} RETURN BEFORE"))
@@ -106,11 +100,8 @@ struct SourceRow {
 
 /// Bring the index up to date with the record tables.
 ///
-/// Deliberately **not** a `Projection`. A projection's `apply` fires per event, and
-/// journal autosave emits dozens of `journal_entry_updated` events for one day's
-/// entry — a replay would re-embed the same text dozens of times, slowest exactly on
-/// the cold start where it hurts most. Sweeping materialized rows against a content
-/// hash costs one pass and is naturally idempotent.
+/// ⚠️ Deliberately **not** a `Projection` — a per-event `apply` would re-embed one
+/// day's journal entry once per autosave. Why, in `docs/src/retrieval.md`.
 pub async fn sweep(
     db: &Database,
     config: &ResolvedConfig,
@@ -527,11 +518,9 @@ mod tests {
         assert_eq!(count_chunks(&db).await, 1, "stale chunks survived the edit");
     }
 
-    /// A type whose projection has not run yet must not abandon the whole sweep.
-    ///
-    /// Regression: the first version propagated the error, so a cold-start agent
-    /// with `routines` enabled but unmaterialized indexed *nothing at all* — and
-    /// the failure named a table the question was never about.
+    /// A type whose projection has not run yet must not abandon the whole sweep:
+    /// propagating the error leaves a cold-start agent indexing *nothing at all*,
+    /// naming a table the question was never about.
     #[tokio::test]
     async fn a_missing_table_is_counted_not_fatal() {
         let embedder = shared_embedder();

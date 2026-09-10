@@ -73,6 +73,9 @@ So this is a knob for a well-resourced machine and a corpus larger than the one 
 measured on, not a free upgrade. Switching it on, and choosing which model, are both
 settings — no rebuild, and nothing new leaves your machine either way.
 
+How all three passes are built, what they cost, and where the current implementation is
+still weak are covered in [How retrieval is built](retrieval.md).
+
 The interface did not change when any of this landed: the same `search` verb, the same
 arguments. What changed is what comes back.
 
