@@ -120,6 +120,25 @@ jobs:
       # it, ran its tests, or linted it — a regression in the assistant's own
       # binary would have landed green. It depends on `core` too, so it belongs
       # in the unified invocation rather than a second one.
+      # ⚠️ Required BECAUSE of the unified invocation above. `agent` enables core's
+      # `embeddings` feature, so cargo unifies it onto core here and every step
+      # below links ONNX Runtime — even the ones that look unrelated to the agent.
+      #
+      # We supply Microsoft's build rather than letting `ort` download its own:
+      # ort's binary needs glibc >= 2.38, which `debian:bookworm` (2.36, the deploy
+      # base) does not have. Pinning the same runtime here as in dev and in the
+      # image stops CI passing against a binary the deploy cannot use.
+      - name: Fetch ONNX Runtime
+        shell: bash
+        run: |
+          source scripts/fetch-onnxruntime.sh
+          {
+            echo "ORT_LIB_LOCATION=$ORT_LIB_LOCATION"
+            echo "ORT_PREFER_DYNAMIC_LINK=1"
+            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+            echo "FASTEMBED_CACHE_DIR=$FASTEMBED_CACHE_DIR"
+          } >> "$GITHUB_ENV"
+
       - name: Clippy
         run: cargo clippy -p omni-me-core -p omni-me-server -p omni-me-agent --all-targets -- -D warnings
 

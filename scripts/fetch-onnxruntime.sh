@@ -14,7 +14,13 @@
 #
 # The failure this avoids is a link error naming C++ symbols, which reads like a
 # missing compiler package and is not one.
-set -euo pipefail
+
+# ⚠️ Only when EXECUTED. `set -e` in a sourced script persists into the caller's
+# shell, so the intended usage — `source scripts/fetch-onnxruntime.sh` — would arm
+# an interactive terminal to exit on the next command that returns non-zero.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+	set -euo pipefail
+fi
 
 # Must stay in step with the ONNX Runtime version `ort-sys` expects (its
 # `build/download/dist.tsv` pins `ms@1.28.0`); a patch-level difference is ABI

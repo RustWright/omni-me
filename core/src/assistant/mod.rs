@@ -15,6 +15,9 @@ pub mod chunk;
 #[cfg(feature = "embeddings")]
 pub mod embedding;
 pub mod fusion;
+/// The vector index and its sweep. Gated with [`embedding`] — it needs a model.
+#[cfg(feature = "embeddings")]
+pub mod vector_store;
 pub mod session;
 pub mod store;
 pub mod verbs;
