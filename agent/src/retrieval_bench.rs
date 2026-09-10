@@ -553,7 +553,10 @@ pub async fn run(cache_dir: PathBuf) {
         JOURNAL.len(),
         CASES.len(),
         CASES.iter().filter(|c| c.kind == CaseKind::Lexical).count(),
-        CASES.iter().filter(|c| c.kind == CaseKind::Semantic).count(),
+        CASES
+            .iter()
+            .filter(|c| c.kind == CaseKind::Semantic)
+            .count(),
     );
 
     // A config with only the two types the fixture populates. Leaving finances and

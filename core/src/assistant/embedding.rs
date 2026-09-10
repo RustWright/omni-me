@@ -163,7 +163,10 @@ mod tests {
     #[test]
     fn every_offered_model_name_resolves() {
         for name in EMBED_MODEL_VALUES {
-            assert!(parse_model(name).is_ok(), "{name} is offered but unknown here");
+            assert!(
+                parse_model(name).is_ok(),
+                "{name} is offered but unknown here"
+            );
         }
     }
 

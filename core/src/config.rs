@@ -546,7 +546,10 @@ mod tests {
                 | ConfigKey::AssistantRerankModel => counted += 1,
             }
         }
-        assert_eq!(counted, 11, "ALL_KEYS does not list every ConfigKey variant");
+        assert_eq!(
+            counted, 11,
+            "ALL_KEYS does not list every ConfigKey variant"
+        );
 
         let unique: std::collections::BTreeSet<_> = ALL_KEYS.iter().collect();
         assert_eq!(unique.len(), ALL_KEYS.len(), "ALL_KEYS repeats a key");

@@ -53,8 +53,7 @@ impl Reranker {
         let options = RerankInitOptions::new(model)
             .with_cache_dir(cache_dir)
             .with_show_download_progress(false);
-        let loaded =
-            TextRerank::try_new(options).map_err(|e| RerankError::Load(e.to_string()))?;
+        let loaded = TextRerank::try_new(options).map_err(|e| RerankError::Load(e.to_string()))?;
         Ok(Self {
             model: Arc::new(Mutex::new(loaded)),
             name: model_name.to_string(),
@@ -99,7 +98,9 @@ impl Reranker {
 impl std::fmt::Debug for Reranker {
     // `TextRerank` derives `Debug`, but printing an ONNX session is noise.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Reranker").field("name", &self.name).finish()
+        f.debug_struct("Reranker")
+            .field("name", &self.name)
+            .finish()
     }
 }
 
@@ -153,7 +154,10 @@ mod tests {
     #[test]
     fn every_offered_model_name_resolves() {
         for name in RERANK_MODEL_VALUES {
-            assert!(parse_model(name).is_ok(), "{name} is offered but unknown here");
+            assert!(
+                parse_model(name).is_ok(),
+                "{name} is offered but unknown here"
+            );
         }
     }
 

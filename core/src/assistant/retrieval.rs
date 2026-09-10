@@ -161,7 +161,9 @@ async fn rerank_pool(
     semantic: &[SemanticHit],
     limit: usize,
 ) -> Vec<RecordKey> {
-    let pool_size = (limit * RERANK_POOL_FACTOR).min(RERANK_POOL_MAX).min(fused.len());
+    let pool_size = (limit * RERANK_POOL_FACTOR)
+        .min(RERANK_POOL_MAX)
+        .min(fused.len());
     let pool = &fused[..pool_size];
     let documents: Vec<String> = pool
         .iter()
@@ -477,7 +479,11 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, d)| {
-                    let hits = self.wants.split_whitespace().filter(|w| d.contains(w)).count();
+                    let hits = self
+                        .wants
+                        .split_whitespace()
+                        .filter(|w| d.contains(w))
+                        .count();
                     (i, hits as f32)
                 })
                 .collect();
