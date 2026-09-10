@@ -19,11 +19,12 @@
 
 mod ask;
 mod bench;
+mod retrieval_bench;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use omni_me_core::config::ResolvedConfig;
+use omni_me_core::config::{ConfigKey, ResolvedConfig};
 use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
     EventStore, EventWriter, NewEvent, ProjectionRunner, SurrealEventStore, load_persisted,
@@ -152,6 +153,18 @@ struct Args {
     /// until the turn budget runs out. Both have already produced a scorecard
     /// that measured the harness, and both cost one request to rule out.
     constrained: bool,
+
+    /// Score retrieval itself — keyword, fused, and fused-plus-reranked — over a
+    /// fixture corpus with known right answers, and report cost per model.
+    ///
+    /// Separate from [`Args::bench`] rather than a mode of it, because the two
+    /// measure different machines. That one scores an LLM over a network and
+    /// needs credentials, a rate limit and a chosen endpoint; this one is local,
+    /// deterministic and needs none of them. Folding them together would make the
+    /// retrieval number cost tokens to obtain.
+    ///
+    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    bench_retrieval: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -162,6 +175,7 @@ fn parse_args() -> Result<Args, String> {
         bench: false,
         constrained: false,
         reindex: false,
+        bench_retrieval: false,
     };
     let mut argv = std::env::args().skip(1);
     while let Some(arg) = argv.next() {
@@ -169,6 +183,7 @@ fn parse_args() -> Result<Args, String> {
             "--read-only" => args.read_only = true,
             "--probe" => args.probe = true,
             "--bench" => args.bench = true,
+            "--bench-retrieval" => args.bench_retrieval = true,
             "--constrained" => args.constrained = true,
             "--reindex" => args.reindex = true,
             "--ask" => {
@@ -190,6 +205,11 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.ask.is_some() && args.bench {
         return Err("--ask and --bench are separate runs; pick one".to_string());
+    }
+    // Each one-shot mode exits when it is done, so a second would never run. A
+    // refusal beats silently honouring whichever the branch happens to test first.
+    if args.bench_retrieval && (args.bench || args.ask.is_some()) {
+        return Err("--bench-retrieval is its own run; pick one".to_string());
     }
     // With `--bench` this means **bench the constrained arm only**, and it is
     // deliberate rather than a mistake: some endpoints offer `response_format`
@@ -241,11 +261,23 @@ async fn main() {
                 "{e}\n\nusage: omni-me-agent [--read-only | --probe]\n       \
                  omni-me-agent [--reindex]\n       \
                  omni-me-agent --ask \"<question>\" [--constrained]   (test scaffolding)\n       \
-                 omni-me-agent --bench                              (test scaffolding)"
+                 omni-me-agent --bench                              (test scaffolding)\n       \
+                 omni-me-agent --bench-retrieval                    (test scaffolding)"
             );
             std::process::exit(2);
         }
     };
+
+    // ⚠️ **Above `run`, deliberately.** `run` connects to the real database and
+    // sweeps the real corpus into the vector index before it reaches any
+    // one-shot branch. For every other mode that is what you want; for this one
+    // it would embed the whole journal to answer a question about a fixture, and
+    // do it on a machine chosen for having spare memory rather than for holding
+    // the data. The retrieval bench needs a model cache and nothing else.
+    if args.bench_retrieval {
+        retrieval_bench::run(model_cache_dir()).await;
+        return;
+    }
 
     if let Err(e) = run(args).await {
         tracing::error!(error = %e, "agent failed to start");
@@ -325,21 +357,31 @@ fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClie
 /// the agent answering with keyword search — worse, but available — and the warning
 /// says which mode it is in. Refusing to start would make a missing 133 MB download
 /// look like a broken agent.
-async fn build_embedder(db: &Database) -> Option<omni_me_core::assistant::Embedder> {
-    use omni_me_core::assistant::{DEFAULT_EMBED_MODEL, Embedder};
-
-    // Beside the data, not beside the binary: the cache is state, and on a deployed
-    // host `.` is not writable while the data volume is.
-    let cache = std::env::var("FASTEMBED_CACHE_DIR")
+/// Where downloaded ONNX weights live.
+///
+/// Beside the data, not beside the binary: the cache is state, and on a deployed
+/// host `.` is not writable while the data volume is. Both models share it, so a
+/// re-deploy re-downloads neither.
+fn model_cache_dir() -> PathBuf {
+    std::env::var("FASTEMBED_CACHE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             runtime::resolve_app_data(default_data_dir(), DATA_DIR_ENV)
                 .0
                 .join("models")
-        });
+        })
+}
+
+async fn build_embedder(
+    db: &Database,
+    config: &ResolvedConfig,
+) -> Option<omni_me_core::assistant::Embedder> {
+    use omni_me_core::assistant::Embedder;
+
+    let cache = model_cache_dir();
 
     // Blocking: model load reads hundreds of MB and, on a cold cache, downloads it.
-    let model = DEFAULT_EMBED_MODEL.to_string();
+    let model = config.text_of(ConfigKey::AssistantEmbedModel);
     let loaded = tokio::task::spawn_blocking(move || Embedder::load(&model, cache))
         .await
         .map_err(|e| e.to_string())
@@ -363,6 +405,38 @@ async fn build_embedder(db: &Database) -> Option<omni_me_core::assistant::Embedd
         "embedder ready"
     );
     Some(embedder)
+}
+
+/// Load the cross-encoder, if this host is configured to run one.
+///
+/// ⚠️ **`None` here is two different situations and the log must say which.** Off
+/// by config is a choice; failed to load is a degradation. Both leave retrieval
+/// working, which is exactly why the second one would otherwise go unnoticed.
+async fn build_reranker(config: &ResolvedConfig) -> Option<omni_me_core::assistant::Reranker> {
+    use omni_me_core::assistant::Reranker;
+
+    if !config.bool_of(ConfigKey::AssistantRerank) {
+        tracing::info!("reranking is off; results keep their fused order");
+        return None;
+    }
+
+    let cache = model_cache_dir();
+    let model = config.text_of(ConfigKey::AssistantRerankModel);
+    let loaded = tokio::task::spawn_blocking(move || Reranker::load(&model, cache))
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()));
+
+    match loaded {
+        Ok(r) => {
+            tracing::info!(model = r.name(), "reranker ready");
+            Some(r)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "no reranking model; results keep their fused order");
+            None
+        }
+    }
 }
 
 async fn run(args: Args) -> Result<(), String> {
@@ -433,7 +507,8 @@ async fn run(args: Args) -> Result<(), String> {
     // Retrieval is built AFTER `init_all`, never before: the sweep reads the
     // materialized record tables, so running it against a log that has not been
     // folded yet would index an empty corpus and report success.
-    let embedder = build_embedder(&db).await;
+    let embedder = build_embedder(&db, &config).await;
+    let reranker = build_reranker(&config).await;
 
     if let Some(embedder) = embedder.as_ref() {
         if args.reindex {
@@ -501,6 +576,9 @@ async fn run(args: Args) -> Result<(), String> {
 
         let llm = build_assistant_llm()?;
         tracing::info!(model = llm.model_name(), "assistant model");
+        // Built here rather than in a helper: `Retrievers` borrows both services,
+        // so a function returning one would be returning references to its own
+        // locals. The concrete values have to live in the scope that uses them.
         let search = embedder
             .as_ref()
             .map(|e| omni_me_core::assistant::VectorSearch {
@@ -508,9 +586,17 @@ async fn run(args: Args) -> Result<(), String> {
                 config: &config,
                 embedder: e,
             });
-        let semantic = search
+        let rerank_service = reranker
             .as_ref()
-            .map(|s| s as &dyn omni_me_core::assistant::SemanticSearch);
+            .map(|r| omni_me_core::assistant::RerankService { reranker: r });
+        let retrievers = omni_me_core::assistant::Retrievers {
+            semantic: search
+                .as_ref()
+                .map(|s| s as &dyn omni_me_core::assistant::SemanticSearch),
+            reranker: rerank_service
+                .as_ref()
+                .map(|s| s as &dyn omni_me_core::assistant::Rerank),
+        };
         if let Some(question) = &args.ask {
             ask::run(
                 &db,
@@ -518,7 +604,7 @@ async fn run(args: Args) -> Result<(), String> {
                 llm.as_ref(),
                 question,
                 args.constrained,
-                semantic,
+                retrievers,
             )
             .await;
         } else {

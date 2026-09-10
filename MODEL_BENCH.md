@@ -179,12 +179,17 @@ so A's tiebreak does not transfer.
 table exists to prevent. B's real work — derived beliefs, overnight review — does not exist
 yet. The seat is published as *unmeasured*, not *pending*.
 
-### Roles C, D, E — unmeasured, no caller
+### Roles C and D — unmeasured, no caller
 
 ⚠️ **On record (2026-09-08/09): these stay unbenched until something calls them.** C is a
 trust boundary rather than a performance tier; D is judged on *abstention*, which this
-instrument does not measure at all; E arrives with retrieval. Benchmarking work nothing
-performs measures a configuration we cannot ship.
+instrument does not measure at all. Benchmarking work nothing performs measures a
+configuration we cannot ship.
+
+**Role E is no longer in this bucket.** It gained a caller when retrieval landed, and it is
+measured by a *different instrument* — see Part 5. The two do not share a scorecard on
+purpose: E runs locally with no endpoint, no credentials and no token cost, so folding it in
+here would have tied a local, deterministic number to a vendor being up.
 
 *Open question carried into the next bench session:* raising bench difficulty (Part 4) was
 discussed as arriving "with category C". C specifically has no caller, so either the
@@ -420,3 +425,132 @@ The remembered POC result — needle obscurity plus token size made the differen
 ⚠️ **Any difficulty increase must not reintroduce the seven harness traps** that made an
 earlier constraint-tax number a measurement of the harness rather than the model. A harder
 bench has more places to hide one.
+
+---
+
+## Part 5 — Retrieval (role E) · `--bench-retrieval`
+
+A **different instrument** from Parts 1–4, deliberately. Those score an LLM's verb choice over
+a network: credentials, an endpoint, a rate limit, tokens spent. This one is local,
+deterministic and free, so it is a thing you can run on every change rather than once per
+provider decision. `agent/src/retrieval_bench.rs` holds it; `--bench-retrieval` runs it.
+
+### What it asks
+
+For a question whose correct answer is a known record: **does that record come back, and at
+what rank?** Three arms over identical data — keyword only (what shipped before retrieval
+landed), fused (BM25 + vectors combined by reciprocal rank), and fused plus each reranker.
+
+Reported per arm: `found` (the right record appeared in the top 10 at all), `top-1` (it
+appeared *first* — the number that matters most, because the model reads the head of the list
+and stops), and MRR, which separates "second" from "ninth" where `found` treats them alike.
+
+### The split column is the honesty mechanism
+
+Cases are labelled **lexical** (the question shares a distinctive term with its answer) or
+**semantic** (they share no content word at all), and MRR is reported for each separately.
+
+⚠️ **This exists because a fixture written by the same hand that writes the questions can
+prove anything.** A corpus of pure paraphrase cases would show embeddings winning by
+construction — keyword search cannot match words that are not there. The lexical column is the
+guard: it is the half BM25 can win and a vector index can *lose*, so a change that lifts the
+semantic column while sinking the lexical one shows up as what it is. A test in the module
+enforces the labels rather than trusting them, comparing whole words, and it has already
+caught two cases labelled semantic that shared a term with their answer.
+
+Remaining limits, stated rather than discovered later:
+
+- **44 records is not a corpus.** BM25 is corpus-relative, and rankings over a few dozen
+  documents behave unlike rankings over the ~14,412-event live log. Absolute numbers here are
+  weaker evidence than the *ordering between arms*, which is what the default is set from.
+- **Sixteen cases means one case is six points.** Differences smaller than that are noise.
+- The fixture is fictional throughout — no real names, places or amounts — which is a privacy
+  requirement and also means it does not carry the live corpus's idiosyncrasies.
+
+### Cost is half the result
+
+The deployment host has **2988 MB, no swap, 2 vCPU** (measured). A reranker is resident for as
+long as the agent is, so its memory is a permanent floor rather than a transient peak, and
+zero swap makes pressure an OOM kill rather than a slowdown — with no guarantee the kernel
+picks the agent over the sync server. So every arm reports resident memory and per-query wall
+clock alongside its rank metrics. **A model that wins on rank and does not fit has not won.**
+
+⚠️ Two caveats on those figures, both structural. RSS is process-wide and allocators rarely
+return freed pages, so a model measured after another reads smaller than it is — treat the
+deltas as a floor. And the timings are the dev machine's; the host has two cores, where
+per-query cost scales with the reranker and barely at all with the embedder.
+
+### Results · run 2026-09-10 · release build, dev machine (12 cores, 7.4 GB)
+
+Corpus: 24 notes, 20 journal entries. 16 cases, 7 lexical / 9 semantic. Top-10.
+
+**Run twice, and every rank metric reproduced exactly** — all six arms identical on found,
+top-1, MRR and both split columns. Only timings (±10%) and RSS (±5%) moved. Worth stating
+because it settles two things at once: the ranking half is deterministic, so a future
+difference is a real change rather than run-to-run noise, and the numbers are not from a stale
+binary — the second run rebuilt from source first. (`--bench`'s own documentation records a
+scorecard once produced from a binary eight minutes older than the fix it was testing.)
+
+| arm | found | top-1 | MRR | MRR lex | MRR sem | median | worst | RSS (abs / Δ) |
+|---|---|---|---|---|---|---|---|---|
+| keyword only | 19% | 19% | 0.188 | 0.429 | **0.000** | 1ms | 2ms | — |
+| fused `bge-small-en-v1.5` | 100% | 75% | 0.865 | **1.000** | 0.759 | 15ms | 22ms | 215M / +178M |
+| + `jina-turbo` | 100% | 62% | 0.756 | 1.000 | 0.567 | 204ms | 236ms | 411M / +179M |
+| + `bge-reranker-base` | 94% | 75% | 0.820 | 0.875 | 0.778 | 556ms | 623ms | 1792M / +1491M |
+| + `jina-v2-multilingual` | 100% | **88%** | **0.922** | 0.893 | **0.944** | 621ms | 666ms | 1820M / +743M |
+| + `bge-reranker-v2-m3` | 100% | 75% | 0.849 | 0.929 | 0.787 | 1638ms | 1823ms | 1911M / +784M |
+
+### What it decided
+
+**1. Reranking stays OFF by default.** `assistant.rerank` defaults to `false`.
+
+**Three of the four rerankers made retrieval worse than not reranking at all.** That is the
+finding, and it is not the one that was expected. Fusion alone already returns the right
+record 100% of the time and puts it first in 75% of cases; against that, a cross-encoder has
+little room to help and plenty to break. Only `jina-v2-multilingual` improved on it.
+
+**2. The default model changed from `jina-turbo` to `jina-v2-multilingual`** — because the
+default is what you get when you flip the switch, and flipping it must not make things worse.
+`jina-turbo` was the provisional default on size alone (151 MB, the only one that certainly
+fits the host). It is the worst performer here: MRR 0.865 → 0.756 and top-1 75% → 62%,
+almost entirely on semantic cases (0.759 → 0.567). A 37M-parameter cross-encoder is
+apparently too small to improve on a 384-dimension bi-encoder's ordering, and confident
+enough to damage it.
+
+⚠️ **Sample-size honesty: 16 cases means one case is six points of top-1.** The gap that
+carries weight is `jina-turbo` *hurting*, which shows in three separate columns and in the
+direction fusion alone already argues for. `jina-v2-multilingual`'s win — top-1 75% → 88%, two
+cases — is suggestive, not established. It is enough to pick between two models; it is not
+enough to claim reranking is worth its cost.
+
+**3. The reranker that helps does not fit the host.** `jina-v2-multilingual` costs ~750 MB
+resident (floor; likely nearer its 1.1 GB of weights) and 621 ms per query on *twelve* cores.
+The box has 2988 MB, no swap and **two** cores. It is a real option only on a larger box, and
+that is now a number rather than an estimate — which was the point of deferring box sizing to
+this measurement.
+
+**4. It also trades, rather than simply winning.** `jina-v2-multilingual` lifts semantic MRR
+0.759 → 0.944 and *drops* lexical 1.000 → 0.893. Net positive here, but it is the split column
+doing its job: reranking is not free accuracy, it is a different set of mistakes.
+
+### The keyword baseline is handicapped, and the number must be read with that
+
+⚠️ **19% is not BM25's ceiling. It is an AND.** SurrealDB's `@@` operator defaults to
+`BooleanOperator::And` (verified in `surrealdb-core-3.0.4`, `sql/operator.rs:249`), so
+`store::search` requires **every word of the question** to appear in the record. All three
+cases it won are ones where that holds — `sourdough`, `passport renewal`, `coffee grinder
+settings`. "when is my dentist appointment" returns nothing despite a note titled *Dentist
+appointment*, because no record contains "when".
+
+Two consequences, and they point in opposite directions:
+
+- **The keyword-vs-fused gap overstates the win.** A keyword system with OR semantics and
+  stopword handling would score well above 0.188. Nothing here measured one.
+- **The reranker comparison is unaffected.** Every reranker arm sits on the *same* fused
+  baseline, so which reranker wins is measured independently of this. The C2 decision does not
+  rest on the handicapped row.
+
+**Not fixed here, deliberately.** `@N,OR@` is the opt-in, but `omni_text` has no stopword
+filter, so OR would match nearly every record on "is" or "my" and turn the `keyword_matches`
+tally — the assistant's "that is all of them" signal — into noise. It also changes the app's
+own search box. That is its own piece of work, carried in `NEXT.md`.

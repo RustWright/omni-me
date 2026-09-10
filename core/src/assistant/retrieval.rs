@@ -47,6 +47,43 @@ pub trait SemanticSearch: Send + Sync {
     async fn search(&self, query: &str, limit: usize) -> Vec<SemanticHit>;
 }
 
+/// The optional third pass: a cross-encoder reordering what the first two found.
+///
+/// Gate-free for the same reason as [`SemanticSearch`], and returns positions rather
+/// than records so it never learns what a `RecordKey` is.
+#[async_trait::async_trait]
+pub trait Rerank: Send + Sync {
+    /// Score each document against `query`, returning `(index, score)` best first.
+    ///
+    /// ⚠️ **An empty return means "no opinion", never "no results".** Callers keep
+    /// the fused order when this is empty — a reranker that failed to load, timed
+    /// out, or was handed nothing must degrade the *ordering*, never the answer.
+    async fn rank(&self, query: &str, documents: &[String]) -> Vec<(usize, f32)>;
+}
+
+/// The optional halves of retrieval, as one argument.
+///
+/// A struct rather than two parameters threaded through `dispatch`: both are
+/// `Option` because both are host capabilities rather than request options, and a
+/// default-constructed value is exactly the keyword-only behaviour that shipped
+/// before this phase. Adding a fourth pass later widens this and nothing else.
+#[derive(Default, Clone, Copy)]
+pub struct Retrievers<'a> {
+    pub semantic: Option<&'a dyn SemanticSearch>,
+    pub reranker: Option<&'a dyn Rerank>,
+}
+
+/// How many fused candidates a reranker gets to look at.
+///
+/// Wider than the final list on purpose: a cross-encoder that only sees the top few
+/// can reorder them but can never rescue a right answer RRF ranked eleventh, which is
+/// most of what a reranker is for. Bounded absolutely rather than by a multiple alone
+/// because every candidate costs one inference on a two-core host — the pool is a
+/// latency budget as much as a quality knob. `MODEL_BENCH.md` § Retrieval holds the
+/// per-model cost this was set against.
+const RERANK_POOL_FACTOR: usize = 3;
+const RERANK_POOL_MAX: usize = 24;
+
 /// Merge keyword and semantic results into the shape the model sees.
 ///
 /// The output is **one ranked list across every type**, which keyword search alone
@@ -61,9 +98,11 @@ pub trait SemanticSearch: Send + Sync {
 pub async fn merge(
     db: &Database,
     targets: &[&'static CatalogEntry],
+    query: &str,
     keyword: Vec<TypeResults>,
     semantic: Vec<SemanticHit>,
     limit: usize,
+    reranker: Option<&dyn Rerank>,
 ) -> Value {
     let mut tallies: BTreeMap<String, usize> = BTreeMap::new();
     for group in &keyword {
@@ -96,13 +135,96 @@ pub async fn merge(
         });
     }
 
-    let ordered = fusion::fuse(&rankings, limit);
+    let fused = fusion::rank(&rankings);
+    let ordered = match reranker {
+        Some(r) => rerank_pool(r, query, &fused, &keyword, &semantic, limit).await,
+        None => fusion::cut(&fused, limit),
+    };
     let hits = describe(db, targets, &ordered, &keyword, &semantic).await;
 
     json!({
         "results": hits,
         "keyword_matches": tallies,
     })
+}
+
+/// Reorder the head of the fused list with a cross-encoder, then cut to `limit`.
+///
+/// Everything the reranker never saw stays behind the part it did, in its fused
+/// order. That matters when the pool is narrower than the candidate list: without
+/// it, a tail candidate would vanish rather than simply rank below the judged ones.
+async fn rerank_pool(
+    reranker: &dyn Rerank,
+    query: &str,
+    fused: &[(fusion::RecordKey, f64)],
+    keyword: &[TypeResults],
+    semantic: &[SemanticHit],
+    limit: usize,
+) -> Vec<RecordKey> {
+    let pool_size = (limit * RERANK_POOL_FACTOR).min(RERANK_POOL_MAX).min(fused.len());
+    let pool = &fused[..pool_size];
+    let documents: Vec<String> = pool
+        .iter()
+        .map(|(key, _)| candidate_text(key, keyword, semantic))
+        .collect();
+
+    let scored = reranker.rank(query, &documents).await;
+    if scored.is_empty() {
+        return fusion::cut(fused, limit);
+    }
+
+    // Rebuilt rather than sorted in place: the reranker may return fewer entries
+    // than it was given, and a candidate it declined to score must keep a position
+    // rather than disappear.
+    //
+    // ⚠️ The scores in this vector are on **two different scales** — cross-encoder
+    // logits for what was judged, RRF weights for what was not. That is safe only
+    // because `fusion::cut` never compares them; it takes the order as given. Do
+    // not add a sort here.
+    let mut reordered: Vec<(RecordKey, f64)> = Vec::with_capacity(fused.len());
+    let mut placed = vec![false; pool.len()];
+    for (index, score) in scored {
+        let Some((key, _)) = pool.get(index) else {
+            continue;
+        };
+        // A repeated index would otherwise emit the same record twice. Nothing in
+        // the trait forbids one, and a duplicated result row is the kind of defect
+        // that reads as a data problem rather than a ranking one.
+        if placed[index] {
+            continue;
+        }
+        placed[index] = true;
+        reordered.push((key.clone(), f64::from(score)));
+    }
+    for (i, (key, rrf)) in pool.iter().enumerate() {
+        if !placed[i] {
+            reordered.push((key.clone(), *rrf));
+        }
+    }
+    reordered.extend(fused[pool_size..].iter().cloned());
+
+    fusion::cut(&reordered, limit)
+}
+
+/// The best text we hold for a candidate, for the reranker to judge.
+///
+/// Preference order is a quality ordering, not a convenience one: the semantic chunk
+/// is a whole passage the model already found relevant, the keyword snippet is a
+/// window around a term, and the handle is a title. A cross-encoder reads whatever it
+/// is given as the document, so feeding it a title where a passage exists would throw
+/// away most of what it is for.
+fn candidate_text(key: &RecordKey, keyword: &[TypeResults], semantic: &[SemanticHit]) -> String {
+    if let Some(hit) = semantic.iter().find(|h| h.key == *key) {
+        return hit.text.clone();
+    }
+    match keyword_hit(keyword, key) {
+        Some(hit) => hit
+            .snippet
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| hit.handle.clone()),
+        None => String::new(),
+    }
 }
 
 /// Turn fused identities back into something a person could recognise.
@@ -236,9 +358,11 @@ mod tests {
         let out = merge(
             &db,
             &[entry("note")],
+            "a query",
             vec![group("note", &["a", "b"], 2)],
             vec![],
             10,
+            None,
         )
         .await;
 
@@ -256,9 +380,11 @@ mod tests {
         let out = merge(
             &db,
             &[entry("note")],
+            "a query",
             vec![group("note", &["a"], 14)],
             vec![],
             10,
+            None,
         )
         .await;
 
@@ -272,9 +398,11 @@ mod tests {
         let out = merge(
             &db,
             &[entry("note")],
+            "a query",
             vec![group("note", &["first", "second", "third"], 3)],
             vec![],
             10,
+            None,
         )
         .await;
 
@@ -303,6 +431,7 @@ mod tests {
         let out = merge(
             &db,
             &[entry("note")],
+            "a query",
             vec![],
             vec![SemanticHit {
                 key: RecordKey {
@@ -312,6 +441,7 @@ mod tests {
                 text: "agreed to 4% rather than the proposed 8%".to_string(),
             }],
             10,
+            None,
         )
         .await;
 
@@ -326,9 +456,121 @@ mod tests {
     #[tokio::test]
     async fn nothing_at_all_says_so_rather_than_returning_an_empty_array() {
         let db = test_db().await;
-        let out = merge(&db, &[entry("note")], vec![], vec![], 10).await;
+        let out = merge(&db, &[entry("note")], "a query", vec![], vec![], 10, None).await;
 
         assert!(out["results"].as_array().unwrap().is_empty());
         assert!(out["note"].is_string(), "the model needs to be told: {out}");
+    }
+
+    /// A stub cross-encoder, so the wiring is testable without ONNX Runtime.
+    ///
+    /// Scores by how many of `wants`'s words the document contains — enough to
+    /// express "this one is better" without pretending to be a model.
+    struct StubRerank {
+        wants: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl Rerank for StubRerank {
+        async fn rank(&self, _query: &str, documents: &[String]) -> Vec<(usize, f32)> {
+            let mut scored: Vec<(usize, f32)> = documents
+                .iter()
+                .enumerate()
+                .map(|(i, d)| {
+                    let hits = self.wants.split_whitespace().filter(|w| d.contains(w)).count();
+                    (i, hits as f32)
+                })
+                .collect();
+            scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+            scored
+        }
+    }
+
+    /// A reranker that returns nothing at all must cost the answer nothing.
+    struct SilentRerank;
+
+    #[async_trait::async_trait]
+    impl Rerank for SilentRerank {
+        async fn rank(&self, _query: &str, _documents: &[String]) -> Vec<(usize, f32)> {
+            Vec::new()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reranker_can_promote_a_candidate_the_fusion_ranked_last() {
+        let db = test_db().await;
+        let out = merge(
+            &db,
+            &[entry("note")],
+            "sourdough starter",
+            vec![group("note", &["a", "b", "c"], 3)],
+            vec![SemanticHit {
+                key: RecordKey {
+                    record_type: "note".to_string(),
+                    id: "c".to_string(),
+                },
+                text: "feeding the sourdough starter twice a day".to_string(),
+            }],
+            3,
+            Some(&StubRerank {
+                wants: "sourdough starter",
+            }),
+        )
+        .await;
+
+        let ids: Vec<&str> = out["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids.first(), Some(&"c"), "reranker was ignored: {out}");
+    }
+
+    /// The degrade-not-fail contract, in the direction that would be silent:
+    /// an empty score list must leave the fused order intact, not empty the results.
+    #[tokio::test]
+    async fn a_reranker_with_no_opinion_leaves_the_fused_order_alone() {
+        let db = test_db().await;
+        let out = merge(
+            &db,
+            &[entry("note")],
+            "a query",
+            vec![group("note", &["first", "second", "third"], 3)],
+            vec![],
+            10,
+            Some(&SilentRerank),
+        )
+        .await;
+
+        let ids: Vec<&str> = out["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["first", "second", "third"], "{out}");
+    }
+
+    /// A candidate outside the rerank pool must rank below the judged ones, not
+    /// fall out of the results entirely.
+    #[tokio::test]
+    async fn candidates_beyond_the_pool_survive_reranking() {
+        let db = test_db().await;
+        let ids: Vec<String> = (0..40).map(|i| format!("n{i:02}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+
+        let out = merge(
+            &db,
+            &[entry("note")],
+            "a query",
+            vec![group("note", &refs, refs.len())],
+            vec![],
+            30,
+            Some(&SilentRerank),
+        )
+        .await;
+
+        assert_eq!(out["results"].as_array().unwrap().len(), 30, "{out}");
     }
 }

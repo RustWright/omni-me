@@ -153,27 +153,25 @@ fn parse_model(name: &str) -> Result<EmbeddingModel, EmbeddingError> {
     })
 }
 
-/// What `[assistant] embed_model` defaults to.
-///
-/// 384 dimensions and 133 MB on disk: the largest model that leaves room for a
-/// reranker on a 4 GB host. See the sizing table in the Phase C plan.
-pub const DEFAULT_EMBED_MODEL: &str = "bge-small-en-v1.5";
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ConfigKey, EMBED_MODEL_VALUES};
 
+    /// Same split contract as `rerank`: `config` offers the names because it
+    /// compiles everywhere, and this parser is the only thing that can honour them.
     #[test]
     fn every_offered_model_name_resolves() {
-        for name in [
-            "bge-small-en-v1.5",
-            "bge-small-en-v1.5-q",
-            "bge-base-en-v1.5",
-            "all-minilm-l6-v2",
-        ] {
-            assert!(parse_model(name).is_ok(), "{name} did not resolve");
+        for name in EMBED_MODEL_VALUES {
+            assert!(parse_model(name).is_ok(), "{name} is offered but unknown here");
         }
-        assert!(parse_model(DEFAULT_EMBED_MODEL).is_ok());
+    }
+
+    #[test]
+    fn the_configured_default_resolves() {
+        let default = ConfigKey::AssistantEmbedModel.default_value();
+        let name = default.as_text().expect("embed_model must be a text key");
+        assert!(parse_model(name).is_ok(), "default {name} did not resolve");
     }
 
     #[test]

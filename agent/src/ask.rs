@@ -8,7 +8,7 @@
 //! the interesting question is which verbs the model chose and what it paid, not
 //! whether the prose reads well.
 
-use omni_me_core::assistant::{Outcome, SemanticSearch, Session, StopReason};
+use omni_me_core::assistant::{Outcome, Retrievers, Session, StopReason};
 use omni_me_core::config::ResolvedConfig;
 use omni_me_core::db::Database;
 use omni_me_core::llm::LlmClient;
@@ -18,16 +18,16 @@ use omni_me_core::llm::LlmClient;
 /// `constrained` runs it under the verb-call schema — the cheap rehearsal of the
 /// half of `--bench` that a serving stack can refuse outright.
 ///
-/// `semantic` is `None` when no embedding model loaded, in which case `search`
-/// falls back to keyword matching. Said out loud below rather than left implicit:
-/// a trace where retrieval quietly halved is one that gets misread later.
+/// `retrievers` carries whichever retrieval passes loaded. Both are optional and
+/// both are printed in the header rather than left implicit: a trace where
+/// retrieval quietly halved is one that gets misread later.
 pub async fn run(
     db: &Database,
     config: &ResolvedConfig,
     llm: &dyn LlmClient,
     question: &str,
     constrained: bool,
-    semantic: Option<&dyn SemanticSearch>,
+    retrievers: Retrievers<'_>,
 ) {
     let session = match Session::new(db, config, llm) {
         Ok(s) => s,
@@ -41,8 +41,12 @@ pub async fn run(
     } else {
         session
     };
-    let session = match semantic {
+    let session = match retrievers.semantic {
         Some(s) => session.with_semantic_search(s),
+        None => session,
+    };
+    let session = match retrievers.reranker {
+        Some(r) => session.with_reranker(r),
         None => session,
     };
 
@@ -55,10 +59,11 @@ pub async fn run(
         } else {
             "free-form"
         },
-        if semantic.is_some() {
-            "hybrid retrieval"
-        } else {
-            "keyword only"
+        match (retrievers.semantic.is_some(), retrievers.reranker.is_some()) {
+            (true, true) => "hybrid retrieval + reranked",
+            (true, false) => "hybrid retrieval",
+            (false, true) => "keyword, reranked",
+            (false, false) => "keyword only",
         }
     );
     let outcome = session.ask(question).await;

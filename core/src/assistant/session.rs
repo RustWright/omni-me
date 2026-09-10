@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::retrieval::SemanticSearch;
+use super::retrieval::{Rerank, Retrievers, SemanticSearch};
 use super::verbs::{self, SYSTEM_PROMPT};
 use crate::config::{Feature, ResolvedConfig};
 use crate::db::Database;
@@ -169,12 +169,12 @@ pub struct Session<'a> {
     /// one this surface gets.
     response_schema: Option<Value>,
     enable_thinking: Option<bool>,
-    /// The semantic half of `search`, when the host has a model loaded.
+    /// The optional passes of `search`, when the host has models loaded.
     ///
-    /// `None` is keyword-only rather than an error: a build without the
+    /// An empty set is keyword-only rather than an error: a build without the
     /// `embeddings` feature, or a host whose model failed to load, still answers
     /// questions — less well, and without pretending otherwise.
-    semantic: Option<&'a dyn SemanticSearch>,
+    retrievers: Retrievers<'a>,
 }
 
 impl<'a> Session<'a> {
@@ -198,13 +198,23 @@ impl<'a> Session<'a> {
             max_turns: MAX_TURNS,
             response_schema: None,
             enable_thinking: None,
-            semantic: None,
+            retrievers: Retrievers::default(),
         })
     }
 
     /// Give `search` a meaning-based retriever alongside keyword matching.
     pub fn with_semantic_search(mut self, semantic: &'a dyn SemanticSearch) -> Self {
-        self.semantic = Some(semantic);
+        self.retrievers.semantic = Some(semantic);
+        self
+    }
+
+    /// Give `search` a cross-encoder to reorder what the other two found.
+    ///
+    /// Independent of [`Session::with_semantic_search`] on purpose: reranking a
+    /// purely keyword-fused list is a smaller win but a real one, and coupling the
+    /// two would make the reranker unmeasurable on its own.
+    pub fn with_reranker(mut self, reranker: &'a dyn Rerank) -> Self {
+        self.retrievers.reranker = Some(reranker);
         self
     }
 
@@ -381,7 +391,7 @@ impl<'a> Session<'a> {
                         self.config,
                         &call.name,
                         &call.arguments,
-                        self.semantic,
+                        self.retrievers,
                     )
                     .await
                 };

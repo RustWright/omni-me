@@ -53,7 +53,27 @@ only keyword scores existed. Every kind that matched anything keeps at least one
 in the list, so a journal with hundreds of entries cannot bury the one note that
 actually held the answer.
 
-The interface did not change when this landed: the same `search` verb, the same
+A third pass is available and **off by default**: a *reranking* model that reads your
+question and a candidate record together and scores that pair directly. The two
+retrievers above cannot do this. The embedding model has to summarise a record into a
+fixed set of numbers before it knows what will be asked about it, which is what makes
+it fast enough to run over everything you have ever written — and also what caps how
+well it can judge any single one. A reranker has no such limit, and no such speed: it
+costs one model run per candidate, so it only ever sees the couple of dozen the first
+two passes agreed were plausible.
+
+It is **off by default, and that is a measured decision rather than a cautious one**. On
+the retrieval tests, three of the four available reranking models made results *worse*
+than not reranking at all — the first two passes already return the right record every
+time and put it first three times in four, which leaves a third pass little to improve
+and plenty to break. One model did better, and it needs more memory than a small
+machine has.
+
+So this is a knob for a well-resourced machine and a corpus larger than the one it was
+measured on, not a free upgrade. Switching it on, and choosing which model, are both
+settings — no rebuild, and nothing new leaves your machine either way.
+
+The interface did not change when any of this landed: the same `search` verb, the same
 arguments. What changed is what comes back.
 
 The obvious alternative is a tool per feature: `create_journal_entry`, `add_routine`,
@@ -322,7 +342,7 @@ each of these roles earns its own, benchmarked rather than argued:
 | **Batch reasoner** | overnight review, habits, derived beliefs | quality; it can afford to be slow | **not yet** — the benchmark saturates |
 | **Quarantined extractor** | receipts, statements, photographed documents | reads images, and **never holds tools** | **not yet** — no caller exists |
 | **High-volume structurer** | note extraction, categorization | cost per call, and knowing when to abstain | **not yet** — no caller exists |
-| **Local** | search embeddings, speech recognition | never leaves your machine at all | **not yet** — arrives with retrieval |
+| **Local** | search embeddings, reranking, speech recognition | never leaves your machine at all | **filled for search** — see `MODEL_BENCH.md` § Retrieval |
 
 An empty seat here means *unmeasured*, not *pending selection*. Three of them have no
 caller in the system yet, and benchmarking a model for work nothing performs would measure

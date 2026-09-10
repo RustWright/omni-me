@@ -181,6 +181,14 @@ pub enum ConfigLayer {
 pub enum ConfigGroup {
     Features,
     Appearance,
+    /// Retrieval settings the headless agent reads. Rendered here because this is
+    /// the only screen there is — the agent runs on a box and has none.
+    ///
+    /// ⚠️ **Mirrors `core::config::ConfigGroup` and must stay exhaustive.** The
+    /// backend sends this as a field of every `ConfigEntry`; a variant missing
+    /// here fails deserialization of the *whole* config list, so one unrecognised
+    /// group empties the settings screen rather than hiding one section.
+    Assistant,
 }
 
 /// A feature that can be switched off whole. Mirror of `core::config::Feature`.

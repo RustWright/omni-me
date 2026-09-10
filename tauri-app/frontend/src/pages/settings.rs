@@ -257,6 +257,9 @@ pub fn SettingsPage() -> Element {
             // --- Appearance ---
             ConfigSection { group: ConfigGroup::Appearance }
 
+            // --- Assistant retrieval ---
+            ConfigSection { group: ConfigGroup::Assistant }
+
             // Feature-owned sections below. A section whose feature is off is not
             // rendered at all rather than disabled — a control for something inert
             // is worse than its absence. The two `ConfigSection`s above are never
@@ -339,6 +342,15 @@ fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
             ),
         ),
         ConfigGroup::Appearance => ("Appearance", None),
+        ConfigGroup::Assistant => (
+            "Assistant retrieval",
+            Some(
+                "How the assistant finds records when you ask it something. These \
+                 run wherever the assistant runs, not on this device, and apply the \
+                 next time it starts. Changing the embedding model re-reads your \
+                 whole history once.",
+            ),
+        ),
     }
 }
 

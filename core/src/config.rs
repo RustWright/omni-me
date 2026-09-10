@@ -26,6 +26,9 @@ pub enum ConfigKey {
     FeatureLlm,
     AppearanceTheme,
     AppearanceAccent,
+    AssistantEmbedModel,
+    AssistantRerank,
+    AssistantRerankModel,
 }
 
 /// Display / persistence order, and the order the settings screen renders.
@@ -38,6 +41,9 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::FeatureLlm,
     ConfigKey::AppearanceTheme,
     ConfigKey::AppearanceAccent,
+    ConfigKey::AssistantEmbedModel,
+    ConfigKey::AssistantRerank,
+    ConfigKey::AssistantRerankModel,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -51,6 +57,38 @@ pub const THEME_VALUES: &[&str] = &["dark", "light", "system"];
 /// preference this whole phase exists to turn into data.
 pub const ACCENT_VALUES: &[&str] = &["blue", "violet", "teal", "green", "amber", "rose"];
 
+/// The embedding models `assistant.embed_model` accepts, smallest first.
+///
+/// ⚠️ **This list lives here, not beside the code that loads them**, because that
+/// code is behind the `embeddings` feature and this file compiles everywhere — the
+/// settings screen has to offer the choices on an Android build that can never run
+/// one. `assistant::embedding` holds a test asserting every name here resolves, so
+/// the two halves cannot drift apart silently.
+///
+/// ⚠️ Changing this key **invalidates every stored vector**: two models of the same
+/// width still produce unrelated vector spaces. The sweep stores the model name
+/// alongside each row and re-embeds on a mismatch, so a change costs a full re-index
+/// rather than wrong answers — but it does cost that.
+pub const EMBED_MODEL_VALUES: &[&str] = &[
+    "bge-small-en-v1.5-q",
+    "bge-small-en-v1.5",
+    "all-minilm-l6-v2",
+    "bge-base-en-v1.5",
+];
+
+/// The rerankers `assistant.rerank_model` accepts, smallest first.
+///
+/// Same split as [`EMBED_MODEL_VALUES`], and the same drift test in
+/// `assistant::rerank`. Sizes matter more here than anywhere else in the key space:
+/// the deployment host has 2988 MB and no swap, and the largest of these is 2.3 GB
+/// of weights on its own. `MODEL_BENCH.md` § Retrieval carries the measurements.
+pub const RERANK_MODEL_VALUES: &[&str] = &[
+    "jina-turbo",
+    "bge-reranker-base",
+    "jina-v2-multilingual",
+    "bge-reranker-v2-m3",
+];
+
 impl fmt::Display for ConfigKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
@@ -62,6 +100,9 @@ impl fmt::Display for ConfigKey {
             ConfigKey::FeatureLlm => "feature.llm",
             ConfigKey::AppearanceTheme => "appearance.theme",
             ConfigKey::AppearanceAccent => "appearance.accent",
+            ConfigKey::AssistantEmbedModel => "assistant.embed_model",
+            ConfigKey::AssistantRerank => "assistant.rerank",
+            ConfigKey::AssistantRerankModel => "assistant.rerank_model",
         };
         write!(f, "{s}")
     }
@@ -80,6 +121,9 @@ impl FromStr for ConfigKey {
             "feature.llm" => Ok(ConfigKey::FeatureLlm),
             "appearance.theme" => Ok(ConfigKey::AppearanceTheme),
             "appearance.accent" => Ok(ConfigKey::AppearanceAccent),
+            "assistant.embed_model" => Ok(ConfigKey::AssistantEmbedModel),
+            "assistant.rerank" => Ok(ConfigKey::AssistantRerank),
+            "assistant.rerank_model" => Ok(ConfigKey::AssistantRerankModel),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -151,6 +195,11 @@ impl ConfigValue {
 pub enum ConfigGroup {
     Features,
     Appearance,
+    /// Retrieval settings the *agent* reads, surfaced on the phone because the
+    /// phone is the only control surface — the agent runs headless on a box and
+    /// has no settings screen of its own. The values sync as the global layer;
+    /// the agent picks them up on its next start.
+    Assistant,
 }
 
 /// Which layer supplied the value that is actually in effect.
@@ -181,6 +230,23 @@ impl ConfigKey {
             | ConfigKey::FeatureLlm => ConfigValue::Bool(true),
             ConfigKey::AppearanceTheme => ConfigValue::Text("dark".to_string()),
             ConfigKey::AppearanceAccent => ConfigValue::Text("blue".to_string()),
+            // 384 dimensions and 133 MB: the largest embedder that leaves room for
+            // a reranker beside it on a 3 GB host.
+            ConfigKey::AssistantEmbedModel => ConfigValue::Text("bge-small-en-v1.5".to_string()),
+            // ⚠️ Off by default on the **measurement**, not on caution: three of the
+            // four rerankers scored worse than not reranking at all, because fusion
+            // alone already returns the right record every time and ranks it first
+            // three times in four. `MODEL_BENCH.md` § Retrieval has the table.
+            ConfigKey::AssistantRerank => ConfigValue::Bool(false),
+            // ⚠️ **Not the smallest model, deliberately.** `jina-turbo` fits any host
+            // and actively degrades ranking (MRR 0.865 → 0.756); a default that makes
+            // things worse when switched on is the worst of the four. This one is the
+            // only one that improved on fusion, and it needs a host bigger than the
+            // current box — which is a sizing input, not a reason to ship the harmful
+            // default instead.
+            ConfigKey::AssistantRerankModel => {
+                ConfigValue::Text("jina-v2-multilingual".to_string())
+            }
         }
     }
 
@@ -191,8 +257,12 @@ impl ConfigKey {
             | ConfigKey::FeatureRoutines
             | ConfigKey::FeatureFinances
             | ConfigKey::FeatureAutoImport
-            | ConfigKey::FeatureLlm => ValueKind::Bool,
-            ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => ValueKind::Text,
+            | ConfigKey::FeatureLlm
+            | ConfigKey::AssistantRerank => ValueKind::Bool,
+            ConfigKey::AppearanceTheme
+            | ConfigKey::AppearanceAccent
+            | ConfigKey::AssistantEmbedModel
+            | ConfigKey::AssistantRerankModel => ValueKind::Text,
         }
     }
 
@@ -210,7 +280,12 @@ impl ConfigKey {
             | ConfigKey::FeatureRoutines
             | ConfigKey::FeatureFinances
             | ConfigKey::FeatureAutoImport
-            | ConfigKey::FeatureLlm => false,
+            | ConfigKey::FeatureLlm
+            // Models are loaded once at startup and held resident. Reloading one
+            // mid-run would stall every question for the length of a download.
+            | ConfigKey::AssistantEmbedModel
+            | ConfigKey::AssistantRerank
+            | ConfigKey::AssistantRerankModel => false,
         }
     }
 
@@ -225,6 +300,9 @@ impl ConfigKey {
             ConfigKey::FeatureLlm => "LLM",
             ConfigKey::AppearanceTheme => "Theme",
             ConfigKey::AppearanceAccent => "Accent",
+            ConfigKey::AssistantEmbedModel => "Embedding model",
+            ConfigKey::AssistantRerank => "Rerank results",
+            ConfigKey::AssistantRerankModel => "Reranking model",
         }
     }
 
@@ -238,7 +316,13 @@ impl ConfigKey {
             ConfigKey::FeatureFinances => Some(Feature::Finances),
             ConfigKey::FeatureAutoImport => Some(Feature::AutoImport),
             ConfigKey::FeatureLlm => Some(Feature::Llm),
-            ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => None,
+            ConfigKey::AppearanceTheme
+            | ConfigKey::AppearanceAccent
+            // Not a `Feature`: these own no projection, no tab and no scheduler.
+            // They tune a capability the LLM feature already gates.
+            | ConfigKey::AssistantEmbedModel
+            | ConfigKey::AssistantRerank
+            | ConfigKey::AssistantRerankModel => None,
         }
     }
 
@@ -256,6 +340,9 @@ impl ConfigKey {
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm => ConfigGroup::Features,
             ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => ConfigGroup::Appearance,
+            ConfigKey::AssistantEmbedModel
+            | ConfigKey::AssistantRerank
+            | ConfigKey::AssistantRerankModel => ConfigGroup::Assistant,
         }
     }
 
@@ -268,6 +355,8 @@ impl ConfigKey {
         match self {
             ConfigKey::AppearanceTheme => Some(THEME_VALUES),
             ConfigKey::AppearanceAccent => Some(ACCENT_VALUES),
+            ConfigKey::AssistantEmbedModel => Some(EMBED_MODEL_VALUES),
+            ConfigKey::AssistantRerankModel => Some(RERANK_MODEL_VALUES),
             _ => None,
         }
     }
@@ -451,13 +540,30 @@ mod tests {
                 | ConfigKey::FeatureAutoImport
                 | ConfigKey::FeatureLlm
                 | ConfigKey::AppearanceTheme
-                | ConfigKey::AppearanceAccent => counted += 1,
+                | ConfigKey::AppearanceAccent
+                | ConfigKey::AssistantEmbedModel
+                | ConfigKey::AssistantRerank
+                | ConfigKey::AssistantRerankModel => counted += 1,
             }
         }
-        assert_eq!(counted, 8, "ALL_KEYS does not list every ConfigKey variant");
+        assert_eq!(counted, 11, "ALL_KEYS does not list every ConfigKey variant");
 
         let unique: std::collections::BTreeSet<_> = ALL_KEYS.iter().collect();
         assert_eq!(unique.len(), ALL_KEYS.len(), "ALL_KEYS repeats a key");
+    }
+
+    /// A default outside its own `choices` would be rejected the first time
+    /// anyone re-saved it — the key would work until touched, then refuse a value
+    /// it had been serving all along.
+    #[test]
+    fn every_default_passes_its_own_validation() {
+        for key in ALL_KEYS {
+            let default = key.default_value();
+            assert!(
+                key.validate(&default).is_ok(),
+                "{key}'s default {default:?} fails its own validate()"
+            );
+        }
     }
 
     /// Same shape, and the same acknowledged hole, as
@@ -530,16 +636,27 @@ mod tests {
         assert!(ConfigKey::from_str("feature.telepathy").is_err());
     }
 
+    /// A build that gains a key must behave as the build before it did for
+    /// anyone who never opens the control.
+    ///
+    /// ⚠️ That is **not** the same as "every boolean defaults on", which is what
+    /// this test used to assert. It held only while every boolean key was a
+    /// feature switch; `assistant.rerank` is a boolean whose backward-compatible
+    /// default is *off*, because reranking did not exist before it. Asserting
+    /// "on" would have forced the new key to change behaviour on upgrade in order
+    /// to pass a test named for not doing that.
     #[test]
     fn defaults_preserve_todays_behaviour() {
         let empty = ResolvedConfig::default();
-        for key in ALL_KEYS {
-            if key.value_kind() == ValueKind::Bool {
-                assert!(empty.bool_of(*key), "{key} should default on");
-            }
+        for feature in ALL_FEATURES {
+            assert!(empty.enabled(*feature), "{feature} should default on");
         }
         assert_eq!(empty.text_of(ConfigKey::AppearanceTheme), "dark");
         assert_eq!(empty.text_of(ConfigKey::AppearanceAccent), "blue");
+        assert!(
+            !empty.bool_of(ConfigKey::AssistantRerank),
+            "reranking must stay opt-in: it is a permanent memory cost on the host"
+        );
     }
 
     #[test]

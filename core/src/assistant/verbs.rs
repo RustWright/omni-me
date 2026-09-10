@@ -13,7 +13,7 @@
 use serde_json::{Value, json};
 
 use super::catalog::{self, CatalogEntry, IdentityKind};
-use super::retrieval::{self, SemanticSearch};
+use super::retrieval::{self, Retrievers};
 use super::store;
 use crate::config::ResolvedConfig;
 use crate::db::Database;
@@ -187,20 +187,21 @@ pub fn tools_as_prompt() -> String {
 /// stopping for, and it arrives here as an error message too, because the loop
 /// has a turn budget and will end on its own.
 pub async fn dispatch(db: &Database, config: &ResolvedConfig, name: &str, args: &Value) -> Value {
-    dispatch_with(db, config, name, args, None).await
+    dispatch_with(db, config, name, args, Retrievers::default()).await
 }
 
-/// [`dispatch`], with the semantic half of retrieval supplied.
+/// [`dispatch`], with whichever optional retrieval passes the host has.
 ///
-/// `None` is keyword-only and is exactly the behaviour that shipped before
-/// meaning-based retrieval existed — which is what lets a host without the
-/// `embeddings` feature call the identical code path rather than a parallel one.
+/// A default [`Retrievers`] is keyword-only and is exactly the behaviour that
+/// shipped before meaning-based retrieval existed — which is what lets a host
+/// without the `embeddings` feature call the identical code path rather than a
+/// parallel one.
 pub async fn dispatch_with(
     db: &Database,
     config: &ResolvedConfig,
     name: &str,
     args: &Value,
-    semantic: Option<&dyn SemanticSearch>,
+    retrievers: Retrievers<'_>,
 ) -> Value {
     match name {
         "list_types" => list_types(db, config).await,
@@ -214,7 +215,7 @@ pub async fn dispatch_with(
                     .as_u64()
                     .map(|l| (l as u32).min(MAX_LIMIT))
                     .unwrap_or(DEFAULT_LIMIT);
-                search(db, config, q, args["type"].as_str(), limit, semantic).await
+                search(db, config, q, args["type"].as_str(), limit, retrievers).await
             }
             None => json!({ "error": "search needs a `query`" }),
         },
@@ -312,7 +313,7 @@ async fn search(
     query: &str,
     only: Option<&str>,
     limit: u32,
-    semantic: Option<&dyn SemanticSearch>,
+    retrievers: Retrievers<'_>,
 ) -> Value {
     // An empty query returns nothing rather than everything. The same rule the
     // app's own search box follows: a blank query is a blank result, not "show
@@ -347,12 +348,21 @@ async fn search(
     // Fetch a wider semantic slice than the final limit. Fusion and the per-type
     // floor both need candidates below the cut to reorder; handing them exactly
     // `limit` would leave nothing to promote.
-    let semantic_hits = match semantic {
+    let semantic_hits = match retrievers.semantic {
         Some(s) => s.search(query, (limit as usize) * 2).await,
         None => Vec::new(),
     };
 
-    retrieval::merge(db, &targets, keyword, semantic_hits, limit as usize).await
+    retrieval::merge(
+        db,
+        &targets,
+        query,
+        keyword,
+        semantic_hits,
+        limit as usize,
+        retrievers.reranker,
+    )
+    .await
 }
 
 async fn list(

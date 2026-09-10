@@ -33,10 +33,17 @@ pub struct RecordKey {
 /// When `limit` is smaller than the number of types the floor cannot be honoured for
 /// all of them, and the plain ranking wins.
 pub fn fuse(rankings: &[Vec<RecordKey>], limit: usize) -> Vec<RecordKey> {
-    if limit == 0 {
-        return Vec::new();
-    }
+    cut(&rank(rankings), limit)
+}
 
+/// The fused ordering in full, scores included and nothing dropped.
+///
+/// Split out from [`fuse`] because a reranker needs a *wider* candidate pool than the
+/// caller will finally show: a cross-encoder that only ever sees the final few can
+/// reorder them but can never rescue a right answer that RRF ranked eleventh. The
+/// scores ride along so [`cut`] can be applied to a reranked list just as well as to
+/// this one.
+pub fn rank(rankings: &[Vec<RecordKey>]) -> Vec<(RecordKey, f64)> {
     let mut scores: HashMap<&RecordKey, f64> = HashMap::new();
     for ranking in rankings {
         for (i, key) in ranking.iter().enumerate() {
@@ -50,9 +57,28 @@ pub fn fuse(rankings: &[Vec<RecordKey>], limit: usize) -> Vec<RecordKey> {
     // Ties broken on the key so a given corpus always produces the same order —
     // otherwise `HashMap` iteration order leaks into results and into test flakes.
     ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    ranked.into_iter().map(|(k, s)| (k.clone(), s)).collect()
+}
 
-    let mut selected: Vec<&RecordKey> = ranked.iter().take(limit).map(|(k, _)| *k).collect();
-    apply_type_floor(&mut selected, &ranked, limit);
+/// Take the top `limit` of an already-ordered list, then guarantee every type a seat.
+///
+/// ⚠️ **Does not sort. The caller's order is the answer's order**, and the scores
+/// riding along are carried for [`apply_type_floor`]'s benefit, never compared. That
+/// is what lets a reranked list — whose scores are cross-encoder logits on a scale
+/// with nothing in common with RRF's — pass through here unharmed. Sorting would
+/// silently reorder such a list by whichever scale happened to produce bigger numbers.
+///
+/// ⚠️ **The floor belongs here, at the final width, not at the pool's.** Applying it
+/// to a wide rerank pool and then cutting would let the cut discard every member of
+/// the type the floor had just protected — the floor would still be "applied" and the
+/// guarantee would still be gone.
+pub fn cut(ranked: &[(RecordKey, f64)], limit: usize) -> Vec<RecordKey> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let refs: Vec<(&RecordKey, f64)> = ranked.iter().map(|(k, s)| (k, *s)).collect();
+    let mut selected: Vec<&RecordKey> = refs.iter().take(limit).map(|(k, _)| *k).collect();
+    apply_type_floor(&mut selected, &refs, limit);
     selected.into_iter().cloned().collect()
 }
 

@@ -4235,6 +4235,7 @@ version = "1.1.2"
 dependencies = [
  "omni-me-core",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -403,7 +403,7 @@ fn content_hash(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assistant::embedding::DEFAULT_EMBED_MODEL;
+    use crate::config::ConfigKey;
     use crate::config::ConfigMap;
     use crate::events::{NotesProjection, Projection, RoutinesProjection};
     use std::sync::OnceLock;
@@ -419,7 +419,9 @@ mod tests {
             let cache = std::env::var("FASTEMBED_CACHE_DIR")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::env::temp_dir().join("omni-fastembed-test"));
-            Embedder::load(DEFAULT_EMBED_MODEL, cache).expect(
+            let default = ConfigKey::AssistantEmbedModel.default_value();
+            let model = default.as_text().expect("embed_model must be a text key");
+            Embedder::load(model, cache).expect(
                 "could not load the embedding model — is scripts/fetch-onnxruntime.sh sourced?",
             )
         })

@@ -15,6 +15,9 @@ pub mod chunk;
 #[cfg(feature = "embeddings")]
 pub mod embedding;
 pub mod fusion;
+/// Cross-encoder reranking. Gated with [`embedding`] — same ONNX Runtime.
+#[cfg(feature = "embeddings")]
+pub mod rerank;
 pub mod retrieval;
 pub mod session;
 pub mod store;
@@ -24,12 +27,14 @@ pub mod vector_store;
 pub mod verbs;
 
 pub use catalog::{CatalogEntry, ChildCollection, FilterField, FilterKind, IdentityKind};
-pub use retrieval::{SemanticHit, SemanticSearch};
+pub use retrieval::{Rerank, Retrievers, SemanticHit, SemanticSearch};
 pub use session::{MAX_TURNS, Outcome, Session, StopReason, TurnRecord};
 pub use store::{FullRecord, SearchHit, TypeResults};
 pub use verbs::{SYSTEM_PROMPT, VERB_NAMES, dispatch, dispatch_with, tools, tools_as_prompt};
 
 #[cfg(feature = "embeddings")]
-pub use embedding::{DEFAULT_EMBED_MODEL, Embedder};
+pub use embedding::Embedder;
+#[cfg(feature = "embeddings")]
+pub use rerank::{RerankService, Reranker};
 #[cfg(feature = "embeddings")]
 pub use vector_store::{SweepReport, VectorSearch};
