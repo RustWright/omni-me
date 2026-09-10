@@ -3,12 +3,11 @@
 **Next action: C2 of Phase C — the reranker, and the measurement that sets its default.**
 Add `TextRerank` behind an `assistant.rerank` config key (model name a config key too), then
 extend `agent/src/bench.rs` with retrieval cases: for a question with a known correct record,
-does it come back, and at what rank? Report **BM25-only vs fused vs fused+reranked**, plus
-resident memory and wall-clock per model. The number picks the default — do not pick it first.
-Plan: `~/.claude/plans/lets-proceed-warm-stallman.md`.
+does it come back, and at what rank? Report **BM25-only vs fused vs fused+reranked**, plus RSS
+and wall-clock per model. The number picks the default — do not pick it first. Plan:
+`~/.claude/plans/lets-proceed-warm-stallman.md`.
 
-**C1 is DONE** (2026-09-10): local embeddings, SurrealDB HNSW, RRF fusion, merged results,
-agent sweep + `--reindex`. 763 core tests green, clippy clean with and without the feature.
+**C1 DONE** (2026-09-10): embeddings, HNSW, RRF fusion, merged results, sweep + `--reindex`.
 
 ## Decisions in force — inherit, do not re-derive
 - **`search` returns ONE merged cross-type ranked list** + `keyword_matches` tallies + a floor
@@ -27,8 +26,7 @@ agent sweep + `--reindex`. 763 core tests green, clippy clean with and without t
   **`source scripts/fetch-onnxruntime.sh` before building the agent.** CI has a step for it.
   The failure reads as undefined C++ symbols and looks like a missing compiler package.
 - ⚠️ **Only `<|K,EF|>` (two integers) uses the HNSW index**; `<|K,COSINE|>` parses fine and
-  silently table-scans. `the_knn_query_uses_the_hnsw_index` asserts the query plan and is
-  verified to fail if that regresses. Also `DISTANCE`, not `DIST`.
+  silently table-scans. `the_knn_query_uses_the_hnsw_index` asserts the plan. `DISTANCE`, not `DIST`.
 - **Do not re-survey:** SurrealDB 3.0.4 KNN grammar, the fastembed API, the model-size table —
   all in the plan file, verified against pinned sources. **DeepInfra GO; model selection
   DEFERRED** — Phase C is local and doesn't touch it. ⛔ Closed.
