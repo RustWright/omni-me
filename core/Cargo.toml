@@ -12,6 +12,11 @@ default = []
 # (per [[feedback-llm-server-side]] and [[project-auto-import-host]] the
 # scheduler lives in `omni-me-server`, not in the client).
 auto-import = ["dep:imap", "dep:native-tls", "dep:csv"]
+# Headless-host-only: local embedding + reranking models via ONNX Runtime, for the
+# assistant's semantic `search`. Same reasoning as `auto-import` — `fastembed` pulls
+# `ort` and a bundled ONNX Runtime, which must never enter the Android dep tree.
+# The agent enables it; Tauri and the server do not.
+embeddings = ["dep:fastembed"]
 
 [dependencies]
 surrealdb = { version = "3", features = ["kv-surrealkv"] }
@@ -40,6 +45,15 @@ tempfile = "3"
 imap = { version = "2", optional = true }
 native-tls = { version = "0.2", optional = true }
 csv = { version = "1", optional = true }
+# ⚠️ `default-features = false` is load-bearing. fastembed's defaults are
+# `ort-download-binaries-native-tls` + `hf-hub-native-tls` + `image-models`, which
+# would pull openssl-sys (this crate is rustls throughout — see `reqwest` above) and
+# an image-embedding pipeline nothing here uses. The rustls variants carry the same
+# capability; `image-models` has no caller.
+fastembed = { version = "6", default-features = false, features = [
+    "ort-download-binaries-rustls-tls",
+    "hf-hub-rustls-tls",
+], optional = true }
 
 
 [dev-dependencies]

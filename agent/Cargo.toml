@@ -9,7 +9,7 @@ name = "omni-me-agent"
 path = "src/main.rs"
 
 [dependencies]
-omni-me-core = { path = "../core" }
+omni-me-core = { path = "../core", features = ["embeddings"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = "0.1"

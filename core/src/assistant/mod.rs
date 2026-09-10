@@ -9,6 +9,12 @@
 //! What reaches the model is decided by [`catalog`], not by this module.
 
 pub mod catalog;
+pub mod chunk;
+/// Local embedding models. Absent unless the host opted into `embeddings` — the
+/// ONNX Runtime dependency must never enter the Android build.
+#[cfg(feature = "embeddings")]
+pub mod embedding;
+pub mod fusion;
 pub mod session;
 pub mod store;
 pub mod verbs;

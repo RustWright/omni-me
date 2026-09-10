@@ -15,6 +15,10 @@ surreal_data/
 blobs/
 .reference/
 .tmp/
+# ONNX Runtime + downloaded embedding models, fetched by
+# `scripts/fetch-onnxruntime.sh`. Hundreds of MB of redistributable binaries
+# with an upstream source of truth — never tracked.
+.ort/
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 .playwright-mcp/
