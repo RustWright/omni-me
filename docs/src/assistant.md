@@ -36,9 +36,25 @@ assistant is **read-only in the strongest sense** — there is no write path beh
 any tool it holds, so "it cannot change anything" is a property of the build
 rather than a promise about behaviour.
 
-Search today is keyword matching with relevance ranking, over the text fields each
-kind of record declares. Meaning-based retrieval is later work, and the interface
-does not change when it lands.
+Search matches on **meaning as well as wording**. Ask about a rent increase and an
+entry saying "the landlord bumped the rate again" comes back, despite sharing not one
+word with the question. Keyword matching alone could not find it, and that gap — not
+ranking quality — was the thing worth fixing.
+
+Two retrievers run over every question: the keyword index, and a vector index built by
+an embedding model that runs **on your own machine**. Neither sends anything anywhere.
+Their results are combined by *rank* rather than by score, because the two produce
+numbers that are not on a common scale — a keyword score is relative to the collection
+it was computed against, while a vector distance is not.
+
+That difference is also why results come back as **one ranked list across every kind of
+record**, rather than a pile per kind. A single honest ordering was not available while
+only keyword scores existed. Every kind that matched anything keeps at least one place
+in the list, so a journal with hundreds of entries cannot bury the one note that
+actually held the answer.
+
+The interface did not change when this landed: the same `search` verb, the same
+arguments. What changed is what comes back.
 
 The obvious alternative is a tool per feature: `create_journal_entry`, `add_routine`,
 `log_expense`. It is rejected, and the reason is not taste. Tool-calling accuracy degrades

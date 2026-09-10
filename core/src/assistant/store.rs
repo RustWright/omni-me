@@ -92,8 +92,13 @@ struct RawHit {
 /// ⚠️ **Scores are comparable within a type and not across types.** BM25 is
 /// relative to its own corpus — its document count and average length — so a note
 /// scoring 1.7 and a journal entry scoring 1.7 have not been measured against
-/// each other. That is why results come back grouped by type rather than merged
-/// into one ranked list, and why nothing here sorts across the groups.
+/// each other. This function therefore returns one type's results, ranked among
+/// themselves, and sorts nothing across types.
+///
+/// Merging across types happens in [`super::retrieval::merge`], which fuses by
+/// **rank** rather than score for exactly this reason — positions are comparable
+/// where these numbers are not. Do not "simplify" that by summing or normalising
+/// the scores; the arithmetic would look reasonable and mean nothing.
 ///
 /// ⚠️ **Never filter on `score > 0`.** Classic BM25's IDF term is
 /// `log((N - n + 0.5)/(n + 0.5))`, which is *exactly zero* when a term appears in
@@ -191,6 +196,44 @@ pub async fn search(
         hits,
         total_matches,
     })
+}
+
+/// Look up the human-facing handles for a set of identities.
+///
+/// Exists for hits that arrived from vector search only. Those carry an identity
+/// and a matched passage but no handle, and a result the model cannot name is one
+/// it cannot report back to the user.
+///
+/// Deliberately a lookup rather than a `handle` column denormalized onto the
+/// embedding rows: a title edit would leave that copy stale until the next sweep,
+/// and a search result showing a note's *old* title is worse than one extra query.
+pub async fn handles_for(
+    db: &Database,
+    entry: &CatalogEntry,
+    ids: &[String],
+) -> Result<std::collections::HashMap<String, String>, DbError> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let sql = format!(
+        "SELECT meta::id(id) AS id, {handle} AS handle FROM {table}
+         WHERE meta::id(id) IN $ids",
+        handle = entry.handle,
+        table = entry.table,
+    );
+    let mut resp = db.query(&sql).bind(("ids", ids.to_vec())).await?;
+    let rows: Vec<ListRow> = resp.take(0)?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let id = r.id?;
+            let handle = match r.handle? {
+                serde_json::Value::String(s) => s,
+                other => other.to_string(),
+            };
+            Some((id, handle))
+        })
+        .collect())
 }
 
 /// A listed row. Distinct from [`RawHit`] because a listing has no relevance —

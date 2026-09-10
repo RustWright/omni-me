@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use super::retrieval::SemanticSearch;
 use super::verbs::{self, SYSTEM_PROMPT};
 use crate::config::{Feature, ResolvedConfig};
 use crate::db::Database;
@@ -168,6 +169,12 @@ pub struct Session<'a> {
     /// one this surface gets.
     response_schema: Option<Value>,
     enable_thinking: Option<bool>,
+    /// The semantic half of `search`, when the host has a model loaded.
+    ///
+    /// `None` is keyword-only rather than an error: a build without the
+    /// `embeddings` feature, or a host whose model failed to load, still answers
+    /// questions — less well, and without pretending otherwise.
+    semantic: Option<&'a dyn SemanticSearch>,
 }
 
 impl<'a> Session<'a> {
@@ -191,7 +198,14 @@ impl<'a> Session<'a> {
             max_turns: MAX_TURNS,
             response_schema: None,
             enable_thinking: None,
+            semantic: None,
         })
+    }
+
+    /// Give `search` a meaning-based retriever alongside keyword matching.
+    pub fn with_semantic_search(mut self, semantic: &'a dyn SemanticSearch) -> Self {
+        self.semantic = Some(semantic);
+        self
     }
 
     pub fn with_max_turns(mut self, turns: usize) -> Self {
@@ -362,7 +376,14 @@ impl<'a> Session<'a> {
                     })
                 } else {
                     seen.push(signature);
-                    verbs::dispatch(self.db, self.config, &call.name, &call.arguments).await
+                    verbs::dispatch_with(
+                        self.db,
+                        self.config,
+                        &call.name,
+                        &call.arguments,
+                        self.semantic,
+                    )
+                    .await
                 };
 
                 trace.push(TurnRecord {

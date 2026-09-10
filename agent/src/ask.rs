@@ -8,7 +8,7 @@
 //! the interesting question is which verbs the model chose and what it paid, not
 //! whether the prose reads well.
 
-use omni_me_core::assistant::{Outcome, Session, StopReason};
+use omni_me_core::assistant::{Outcome, SemanticSearch, Session, StopReason};
 use omni_me_core::config::ResolvedConfig;
 use omni_me_core::db::Database;
 use omni_me_core::llm::LlmClient;
@@ -17,12 +17,17 @@ use omni_me_core::llm::LlmClient;
 ///
 /// `constrained` runs it under the verb-call schema — the cheap rehearsal of the
 /// half of `--bench` that a serving stack can refuse outright.
+///
+/// `semantic` is `None` when no embedding model loaded, in which case `search`
+/// falls back to keyword matching. Said out loud below rather than left implicit:
+/// a trace where retrieval quietly halved is one that gets misread later.
 pub async fn run(
     db: &Database,
     config: &ResolvedConfig,
     llm: &dyn LlmClient,
     question: &str,
     constrained: bool,
+    semantic: Option<&dyn SemanticSearch>,
 ) {
     let session = match Session::new(db, config, llm) {
         Ok(s) => s,
@@ -36,15 +41,24 @@ pub async fn run(
     } else {
         session
     };
+    let session = match semantic {
+        Some(s) => session.with_semantic_search(s),
+        None => session,
+    };
 
     // Named, because the two variants fail in different ways and a trace with no
     // label is the kind of evidence that gets misfiled later.
     println!(
-        "? {question}   [{}]\n",
+        "? {question}   [{}, {}]\n",
         if constrained {
             "schema-constrained"
         } else {
             "free-form"
+        },
+        if semantic.is_some() {
+            "hybrid retrieval"
+        } else {
+            "keyword only"
         }
     );
     let outcome = session.ask(question).await;

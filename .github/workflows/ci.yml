@@ -128,6 +128,22 @@ jobs:
       # ort's binary needs glibc >= 2.38, which `debian:bookworm` (2.36, the deploy
       # base) does not have. Pinning the same runtime here as in dev and in the
       # image stops CI passing against a binary the deploy cannot use.
+      # Holds both the runtime tarball and the embedding models fastembed pulls at
+      # test time (~133 MB), so a normal run downloads neither.
+      #
+      # Keyed on `embedding.rs` as well as the fetch script, which is deliberately
+      # over-sensitive: `actions/cache` only *saves* on an exact-key miss, so a key
+      # that ignored the model name would pin the first cache forever and
+      # re-download every newly added model on every run. `restore-keys` bounds the
+      # cost of that sensitivity — an unrelated edit to the file still restores the
+      # previous cache and re-downloads nothing.
+      - name: Cache ONNX Runtime and models
+        uses: actions/cache@v4
+        with:
+          path: .ort
+          key: ort-${{ runner.os }}-${{ hashFiles('scripts/fetch-onnxruntime.sh', 'core/src/assistant/embedding.rs') }}
+          restore-keys: ort-${{ runner.os }}-
+
       - name: Fetch ONNX Runtime
         shell: bash
         run: |

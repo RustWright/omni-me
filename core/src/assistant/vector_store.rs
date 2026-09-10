@@ -75,6 +75,20 @@ pub async fn init_schema(db: &Database, dim: usize) -> Result<(), DbError> {
     Ok(())
 }
 
+/// Drop every stored vector, returning how many rows went.
+///
+/// The escape hatch for the content hash: after an embedding-model change the
+/// stored vectors are the right shape and the wrong meaning, and the sweep's guard
+/// would happily skip all of them. `is_current` checks the model name for exactly
+/// that reason, so this is for a corrupted index or a forced rebuild.
+pub async fn clear(db: &Database) -> Result<usize, DbError> {
+    let mut resp = db
+        .query(format!("DELETE FROM {TABLE} RETURN BEFORE"))
+        .await?;
+    let gone: Vec<Value> = resp.take(0)?;
+    Ok(gone.len())
+}
+
 /// One row as stored, minus the vector.
 #[derive(Debug, SurrealValue)]
 struct StoredChunk {
@@ -332,6 +346,38 @@ pub async fn knn_search(
         }
     }
     Ok(out)
+}
+
+/// The [`SemanticSearch`] implementation, bound to a database and a loaded model.
+///
+/// Holds borrows rather than owning: it lives for one question, alongside the
+/// `Session` that consults it.
+pub struct VectorSearch<'a> {
+    pub db: &'a Database,
+    pub config: &'a ResolvedConfig,
+    pub embedder: &'a Embedder,
+}
+
+#[async_trait::async_trait]
+impl super::retrieval::SemanticSearch for VectorSearch<'_> {
+    async fn search(&self, query: &str, limit: usize) -> Vec<super::retrieval::SemanticHit> {
+        match knn_search(self.db, self.config, self.embedder, query, limit).await {
+            Ok(hits) => hits
+                .into_iter()
+                .map(|h| super::retrieval::SemanticHit {
+                    key: h.key,
+                    text: h.text,
+                })
+                .collect(),
+            // Degrade to keyword-only rather than failing the question. Loud in the
+            // log, silent to the model — it cannot act on this and would only burn
+            // a turn trying.
+            Err(e) => {
+                tracing::warn!(error = %e, "semantic search failed; keyword results only");
+                Vec::new()
+            }
+        }
+    }
 }
 
 /// FNV-1a over the record's text, hex-encoded.

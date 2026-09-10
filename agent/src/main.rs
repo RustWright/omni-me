@@ -136,6 +136,13 @@ struct Args {
     /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
     bench: bool,
 
+    /// Re-embed every record, even ones whose text has not changed.
+    ///
+    /// The sweep is content-hashed, so the only way to rebuild after changing the
+    /// embedding model — or after a corrupted index — is to clear it first. Not a
+    /// routine operation: on a real corpus it re-runs the model over everything.
+    reindex: bool,
+
     /// Run [`Args::ask`] under grammar-constrained decoding.
     ///
     /// Exists so the constrained half can be tried **once** before `--bench`
@@ -154,6 +161,7 @@ fn parse_args() -> Result<Args, String> {
         ask: None,
         bench: false,
         constrained: false,
+        reindex: false,
     };
     let mut argv = std::env::args().skip(1);
     while let Some(arg) = argv.next() {
@@ -162,6 +170,7 @@ fn parse_args() -> Result<Args, String> {
             "--probe" => args.probe = true,
             "--bench" => args.bench = true,
             "--constrained" => args.constrained = true,
+            "--reindex" => args.reindex = true,
             "--ask" => {
                 let question = argv
                     .next()
@@ -230,6 +239,7 @@ async fn main() {
         Err(e) => {
             eprintln!(
                 "{e}\n\nusage: omni-me-agent [--read-only | --probe]\n       \
+                 omni-me-agent [--reindex]\n       \
                  omni-me-agent --ask \"<question>\" [--constrained]   (test scaffolding)\n       \
                  omni-me-agent --bench                              (test scaffolding)"
             );
@@ -309,6 +319,48 @@ fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClie
     Ok(omni_me_core::llm::build_llm_client(&creds, options))
 }
 
+/// Load the embedding model and define the vector index, or explain why not.
+///
+/// Returns `None` rather than failing the boot. A model that will not load leaves
+/// the agent answering with keyword search — worse, but available — and the warning
+/// says which mode it is in. Refusing to start would make a missing 133 MB download
+/// look like a broken agent.
+async fn build_embedder(db: &Database) -> Option<omni_me_core::assistant::Embedder> {
+    use omni_me_core::assistant::{DEFAULT_EMBED_MODEL, Embedder};
+
+    // Beside the data, not beside the binary: the cache is state, and on a deployed
+    // host `.` is not writable while the data volume is.
+    let cache = std::env::var("FASTEMBED_CACHE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            runtime::resolve_app_data(default_data_dir(), DATA_DIR_ENV)
+                .0
+                .join("models")
+        });
+
+    // Blocking: model load reads hundreds of MB and, on a cold cache, downloads it.
+    let model = DEFAULT_EMBED_MODEL.to_string();
+    let loaded = tokio::task::spawn_blocking(move || Embedder::load(&model, cache))
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()));
+
+    let embedder = match loaded {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(error = %e, "no embedding model; search will be keyword-only");
+            return None;
+        }
+    };
+
+    if let Err(e) = omni_me_core::assistant::vector_store::init_schema(db, embedder.dim()).await {
+        tracing::warn!(error = %e, "could not define the vector index; keyword-only");
+        return None;
+    }
+    tracing::info!(model = embedder.name(), dim = embedder.dim(), "embedder ready");
+    Some(embedder)
+}
+
 async fn run(args: Args) -> Result<(), String> {
     let (data_dir, non_production) = runtime::resolve_app_data(default_data_dir(), DATA_DIR_ENV);
     std::fs::create_dir_all(&data_dir)
@@ -374,6 +426,27 @@ async fn run(args: Args) -> Result<(), String> {
         .await
         .map_err(|e| format!("could not initialize projections: {e}"))?;
 
+    // Retrieval is built AFTER `init_all`, never before: the sweep reads the
+    // materialized record tables, so running it against a log that has not been
+    // folded yet would index an empty corpus and report success.
+    let embedder = build_embedder(&db).await;
+
+    if let Some(embedder) = embedder.as_ref() {
+        if args.reindex {
+            match omni_me_core::assistant::vector_store::clear(&db).await {
+                Ok(n) => tracing::info!(removed = n, "--reindex: cleared the vector index"),
+                Err(e) => tracing::warn!(error = %e, "could not clear the vector index"),
+            }
+        }
+        match omni_me_core::assistant::vector_store::sweep(&db, &config, embedder).await {
+            Ok(report) => tracing::info!(?report, "vector index up to date"),
+            // Non-fatal by design: an agent that answers with keyword search only
+            // is degraded, and one that refuses to boot is unavailable. The report
+            // above is what says which of the two happened.
+            Err(e) => tracing::warn!(error = %e, "sweep failed; keyword retrieval only"),
+        }
+    }
+
     let (push_debouncer, _pusher) = PushDebouncer::spawn(sync_client.clone(), db.clone());
     let (retry_engine, _retry) =
         RetryEngine::spawn(sync_client.clone(), db.clone(), &push_debouncer);
@@ -424,8 +497,26 @@ async fn run(args: Args) -> Result<(), String> {
 
         let llm = build_assistant_llm()?;
         tracing::info!(model = llm.model_name(), "assistant model");
+        let search = embedder
+            .as_ref()
+            .map(|e| omni_me_core::assistant::VectorSearch {
+                db: &db,
+                config: &config,
+                embedder: e,
+            });
+        let semantic = search
+            .as_ref()
+            .map(|s| s as &dyn omni_me_core::assistant::SemanticSearch);
         if let Some(question) = &args.ask {
-            ask::run(&db, &config, llm.as_ref(), question, args.constrained).await;
+            ask::run(
+                &db,
+                &config,
+                llm.as_ref(),
+                question,
+                args.constrained,
+                semantic,
+            )
+            .await;
         } else {
             bench::run(&db, &config, llm.as_ref(), args.constrained).await;
         }

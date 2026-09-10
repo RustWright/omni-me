@@ -13,6 +13,7 @@
 use serde_json::{Value, json};
 
 use super::catalog::{self, CatalogEntry, IdentityKind};
+use super::retrieval::{self, SemanticSearch};
 use super::store;
 use crate::config::ResolvedConfig;
 use crate::db::Database;
@@ -82,12 +83,15 @@ pub fn tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "search".to_string(),
-            description: "Find records whose text contains the words you give. Returns short \
-                          summaries with an identity for each, never full bodies. Results are \
-                          grouped by record type; scores rank within a type and are not \
-                          comparable between types. For \"what X do I have\", or anything \
-                          scoped by date, use `list` instead — a record is not guaranteed to \
-                          contain the name of its own type."
+            description: "Find records related to what you describe, by meaning as well as by \
+                          wording — a record can match without sharing any of your words. \
+                          Returns one ranked list across all record types, best first, each \
+                          entry carrying its own type, an identity and a short passage, never \
+                          a full body. `keyword_matches` counts word matches per type, so you \
+                          can tell \"that is all of them\" from \"this is a slice\"; it does \
+                          not count meaning-based matches. For \"what X do I have\", or \
+                          anything scoped by date, use `list` instead — a record is not \
+                          guaranteed to contain the name of its own type."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -183,6 +187,21 @@ pub fn tools_as_prompt() -> String {
 /// stopping for, and it arrives here as an error message too, because the loop
 /// has a turn budget and will end on its own.
 pub async fn dispatch(db: &Database, config: &ResolvedConfig, name: &str, args: &Value) -> Value {
+    dispatch_with(db, config, name, args, None).await
+}
+
+/// [`dispatch`], with the semantic half of retrieval supplied.
+///
+/// `None` is keyword-only and is exactly the behaviour that shipped before
+/// meaning-based retrieval existed — which is what lets a host without the
+/// `embeddings` feature call the identical code path rather than a parallel one.
+pub async fn dispatch_with(
+    db: &Database,
+    config: &ResolvedConfig,
+    name: &str,
+    args: &Value,
+    semantic: Option<&dyn SemanticSearch>,
+) -> Value {
     match name {
         "list_types" => list_types(db, config).await,
         "describe_type" => match args["name"].as_str() {
@@ -195,7 +214,7 @@ pub async fn dispatch(db: &Database, config: &ResolvedConfig, name: &str, args: 
                     .as_u64()
                     .map(|l| (l as u32).min(MAX_LIMIT))
                     .unwrap_or(DEFAULT_LIMIT);
-                search(db, config, q, args["type"].as_str(), limit).await
+                search(db, config, q, args["type"].as_str(), limit, semantic).await
             }
             None => json!({ "error": "search needs a `query`" }),
         },
@@ -293,6 +312,7 @@ async fn search(
     query: &str,
     only: Option<&str>,
     limit: u32,
+    semantic: Option<&dyn SemanticSearch>,
 ) -> Value {
     // An empty query returns nothing rather than everything. The same rule the
     // app's own search box follows: a blank query is a blank result, not "show
@@ -313,35 +333,26 @@ async fn search(
         None => catalog::visible(config),
     };
 
-    let mut groups = Vec::new();
-    let mut found = 0usize;
-    for entry in targets {
+    let mut keyword = Vec::new();
+    for entry in &targets {
         match store::search(db, entry, query, limit).await {
-            Ok(r) if r.hits.is_empty() => {}
-            Ok(r) => {
-                found += r.hits.len();
-                groups.push(serde_json::to_value(r).unwrap_or(Value::Null));
-            }
-            Err(e) => {
-                tracing::warn!(record_type = entry.name, error = %e, "search failed");
-                groups.push(json!({
-                    "record_type": entry.name,
-                    "error": "this record type could not be searched",
-                }));
-            }
+            Ok(r) => keyword.push(r),
+            // One type failing must not lose the others' results. Logged rather
+            // than reported: the model cannot repair a broken index, and an error
+            // row in the list would only invite it to retry.
+            Err(e) => tracing::warn!(record_type = entry.name, error = %e, "search failed"),
         }
     }
 
-    if found == 0 {
-        // Said explicitly, because "no results" and "I should try again" look
-        // identical to a model handed an empty array, and it will spend its
-        // remaining turns re-searching.
-        return json!({
-            "results": [],
-            "note": "nothing matched. Try different words, or say that it is not there.",
-        });
-    }
-    json!({ "results": groups })
+    // Fetch a wider semantic slice than the final limit. Fusion and the per-type
+    // floor both need candidates below the cut to reorder; handing them exactly
+    // `limit` would leave nothing to promote.
+    let semantic_hits = match semantic {
+        Some(s) => s.search(query, (limit as usize) * 2).await,
+        None => Vec::new(),
+    };
+
+    retrieval::merge(db, &targets, keyword, semantic_hits, limit as usize).await
 }
 
 async fn list(
@@ -635,8 +646,11 @@ mod tests {
         );
     }
 
+    /// Results are one flat ranked list carrying its own types, not per-type
+    /// groups. Changed with meaning-based retrieval: cosine distance is
+    /// corpus-independent, so a single cross-type ranking is finally honest.
     #[tokio::test]
-    async fn search_groups_by_type_and_respects_the_limit_cap() {
+    async fn search_returns_one_merged_list_and_respects_the_limit_cap() {
         let db = test_db().await;
         for i in 0..9 {
             db.query("CREATE type::record('generic_notes', $id) SET title = $t, raw_text = 'shared keyword body', tags = [], created_at = time::now(), updated_at = time::now()")
@@ -653,13 +667,27 @@ mod tests {
             &json!({ "query": "keyword", "limit": 9999 }),
         )
         .await;
-        let groups = out["results"].as_array().unwrap();
-        assert_eq!(groups.len(), 1, "only notes matched: {out}");
-        assert_eq!(groups[0]["record_type"], "note");
+
+        let results = out["results"].as_array().unwrap();
         assert!(
-            groups[0]["hits"].as_array().unwrap().len() <= MAX_LIMIT as usize,
-            "the cap must hold against an absurd limit"
+            results.len() <= MAX_LIMIT as usize,
+            "the cap must hold against an absurd limit: {}",
+            results.len()
         );
+        assert!(!results.is_empty(), "{out}");
+        // Every hit names its own type, which is what makes the flat list usable.
+        for hit in results {
+            assert_eq!(hit["record_type"], "note", "{out}");
+            assert!(hit["id"].is_string(), "{out}");
+            assert!(hit["handle"].is_string(), "{out}");
+        }
+        assert!(
+            results[0]["hits"].is_null(),
+            "results must not be nested under a group: {out}"
+        );
+        // The tally survives the flattening: it is how the model tells "that is
+        // all of them" from "you are seeing a slice".
+        assert_eq!(out["keyword_matches"]["note"], 9, "{out}");
     }
 
     /// The question that failed live before `list` existed: six turns, no answer,
