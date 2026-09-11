@@ -737,7 +737,7 @@ mod tests {
             message_id: "m2".into(),
             action: "routine.complete".into(),
             args: serde_json::json!({
-                "item_id": "item-1",
+                "item_ids": ["item-1"],
                 "group_id": "group-1",
                 "date": "2026-08-14",
                 "evidence": [{ "kind": "journal", "id": "2026-08-14" }],
@@ -775,6 +775,68 @@ mod tests {
         assert_eq!(skipped, vec![false]);
     }
 
+    /// ⚠️ **The only test that proves a batch is worth anything.** `build_events`
+    /// returning three events is not the claim; three *rows* is. Approval writes
+    /// through the same `EventWriter` and the same projection fold a single tick
+    /// uses, so the way this breaks is a batch that appends all three events and
+    /// projects one row — which no unit test on `build_events` can see.
+    #[tokio::test]
+    async fn approving_a_batch_ticks_every_item_it_named() {
+        let (db, config, writer) = harness(&[]).await;
+
+        let payload = AssistantProposalMadePayload {
+            proposal_id: "p-batch".into(),
+            thread_id: "t1".into(),
+            message_id: "m2".into(),
+            action: "routine.complete".into(),
+            args: serde_json::json!({
+                "item_ids": ["item-1", "item-2", "item-3"],
+                "group_id": "group-1",
+                "date": "2026-08-14",
+                "evidence": [{ "kind": "journal", "id": "2026-08-14" }],
+            }),
+            rationale: "You wrote that you stretched, ran and showered before work.".into(),
+            reversible: true,
+        };
+        writer
+            .append_new(NewEvent::assistant_proposal_made("agent", &payload).unwrap())
+            .await
+            .unwrap();
+
+        decide(
+            &db,
+            &config,
+            &writer,
+            "p-batch",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .expect("approve");
+
+        let mut resp = db
+            .query("SELECT item_id, date FROM routine_completions ORDER BY item_id")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let items: Vec<String> = resp.take("item_id").unwrap_or_default();
+        let dates: Vec<String> = resp.take("date").unwrap_or_default();
+        assert_eq!(
+            items,
+            vec![
+                "item-1".to_string(),
+                "item-2".to_string(),
+                "item-3".to_string()
+            ],
+            "one approval must tick every item it named"
+        );
+        assert!(
+            dates.iter().all(|d| d == "2026-08-14"),
+            "every row shares the proposed day, got {dates:?}"
+        );
+    }
+
     /// A skip is a decision the user made, and the reason is the whole reason it
     /// is not just an untouched item — so it has to survive to the row.
     #[tokio::test]
@@ -787,7 +849,7 @@ mod tests {
             message_id: "m2".into(),
             action: "routine.skip".into(),
             args: serde_json::json!({
-                "item_id": "item-1",
+                "item_ids": ["item-1"],
                 "group_id": "group-1",
                 "date": "2026-08-14",
                 "reason": "Travelling.",
@@ -839,7 +901,7 @@ mod tests {
             message_id: "m2".into(),
             action: "routine.complete".into(),
             args: serde_json::json!({
-                "item_id": "item-1",
+                "item_ids": ["item-1"],
                 "group_id": "group-1",
                 "date": tomorrow,
             }),

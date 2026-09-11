@@ -30,8 +30,11 @@ impl Projection for NotesProjection {
         Self::NAME
     }
 
+    // 3: `generic_note_appended` and the `applied_appends` column it folds
+    // through. The bump is what replays the log into the new shape rather than
+    // leaving existing notes without the column.
     fn version(&self) -> u32 {
-        2
+        3
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -61,6 +64,22 @@ impl Projection for NotesProjection {
              DEFINE FIELD IF NOT EXISTS legacy_properties ON generic_notes TYPE option<object> FLEXIBLE;
              DEFINE FIELD IF NOT EXISTS created_at ON generic_notes TYPE datetime;
              DEFINE FIELD IF NOT EXISTS updated_at ON generic_notes TYPE datetime;
+             -- ⚠️ Bookkeeping, not content: the ids of the append events already
+             -- folded into `raw_text`. Every other arm here overwrites and is
+             -- replay-safe for free; concatenation is not, and `catch_up` can
+             -- re-apply into a live table when a projection's watermark regresses
+             -- (re-enabling the Notes feature does exactly that). ⛔ Never expose
+             -- this to the UI or the search index — it is how the fold converges,
+             -- not something the user wrote.
+             --
+             -- ⚠️ `option<` is load-bearing, unlike `tags` beside it. A writer must
+             -- decide a note's tags; no writer but `on_generic_appended` should
+             -- ever have to know this column exists, and SCHEMAFULL would reject
+             -- every row that left it out. Absent reads as nothing-folded-yet,
+             -- which is exactly right — and it is why the other arms can leave it
+             -- alone and still preserve it.
+             DEFINE FIELD IF NOT EXISTS applied_appends ON generic_notes TYPE option<array>;
+             DEFINE FIELD IF NOT EXISTS applied_appends.* ON generic_notes TYPE string;
              -- One index per field: a full-text index covers exactly one field,
              -- so a note's title and body are two indexes and a query ORs them.
              DEFINE INDEX IF NOT EXISTS idx_note_title_fts ON generic_notes
@@ -91,6 +110,7 @@ impl Projection for NotesProjection {
             "generic_note_created" => self.on_generic_created(event, db).await,
             "generic_note_updated" => self.on_generic_updated(event, db).await,
             "generic_note_renamed" => self.on_generic_renamed(event, db).await,
+            "generic_note_appended" => self.on_generic_appended(event, db).await,
             "note_llm_processed" => self.on_llm_processed(event, db).await,
             _ => Ok(()),
         }
@@ -289,6 +309,63 @@ impl NotesProjection {
         )
         .bind(("note_id", note_id))
         .bind(("title", title))
+        .bind(("ts", ts))
+        .await?;
+
+        Ok(())
+    }
+
+    /// Add text to the end of a note's body without restating the rest of it.
+    ///
+    /// ⚠️ **The only arm here that is not a plain overwrite, and the only one
+    /// that has to defend its own idempotency.** Every other fold sets an
+    /// absolute value, so replaying it changes nothing for free. Concatenation
+    /// replayed is text duplicated — and replay is routine: `rebuild()` clears
+    /// first, but `catch_up()` re-applies into a **live** table whenever the
+    /// minimum watermark regresses, which is exactly what turning the Notes
+    /// feature off and on does.
+    ///
+    /// So the event id is recorded on the row and the fold skips an id it has
+    /// already seen. ⛔ Do not replace this with a timestamp comparison: events
+    /// arrive from other devices whose clocks disagree, so a genuinely new
+    /// append can carry an older stamp than one already folded, and it would be
+    /// dropped in silence. Identity is skew-proof; time is not.
+    async fn on_generic_appended(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+        let note_id = event.aggregate_id.clone();
+        let added = event.payload["added_text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let ts = event.timestamp.to_rfc3339();
+
+        // ⚠️ Assignments in one SET clause are applied **in order**, so
+        // `applied_appends` has to be written *after* both clauses that read it.
+        // Moving it up makes every append a no-op on its own first application —
+        // and the note would silently never grow.
+        //
+        // ⚠️ `updated_at` is guarded too. Letting a skipped replay bump it would
+        // make replay change the answer, which is the invariant every projection
+        // here is built to hold, and it reorders anything sorted by recency.
+        //
+        // The separator is bound rather than written into the query so there is
+        // no question about how SurrealQL escapes it.
+        db.query(
+            "UPSERT type::record('generic_notes', $note_id) SET
+                raw_text = IF $eid IN (applied_appends ?? []) { raw_text ?? '' }
+                           ELSE IF (raw_text ?? '') = '' { $added }
+                           ELSE { (raw_text ?? '') + $sep + $added },
+                updated_at = IF $eid IN (applied_appends ?? []) { updated_at ?? type::datetime($ts) }
+                             ELSE { type::datetime($ts) },
+                applied_appends = array::union(applied_appends ?? [], [$eid]),
+                title = title ?? '',
+                tags = tags ?? [],
+                summary = summary ?? NONE,
+                created_at = created_at ?? type::datetime($ts)",
+        )
+        .bind(("note_id", note_id))
+        .bind(("eid", event.id.clone()))
+        .bind(("added", added))
+        .bind(("sep", "\n\n"))
         .bind(("ts", ts))
         .await?;
 
@@ -979,6 +1056,199 @@ mod tests {
         assert_eq!(title.as_deref(), Some("Renamed"));
         let raw: Option<String> = resp.take("raw_text").unwrap();
         assert_eq!(raw.as_deref(), Some("second"));
+    }
+
+    /// Appending adds to the body and leaves what was there, separated by a
+    /// blank line — and an append to an empty note does not lead with one.
+    #[tokio::test]
+    async fn appending_adds_to_the_body_without_replacing_it() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let nid = "01JKNOTE00000000000000000B";
+        for (et, payload) in [
+            (
+                "generic_note_created",
+                serde_json::json!({ "note_id": nid, "title": "Trip", "raw_text": "Book flights." }),
+            ),
+            (
+                "generic_note_appended",
+                serde_json::json!({ "note_id": nid, "added_text": "Booked, 3rd of May." }),
+            ),
+        ] {
+            let e = store
+                .append(NewEvent {
+                    id: None,
+                    event_type: et.into(),
+                    aggregate_id: nid.into(),
+                    timestamp: Utc::now(),
+                    device_id: "d1".into(),
+                    payload,
+                })
+                .await
+                .unwrap();
+            runner.apply_events(&[e]).await.unwrap();
+        }
+
+        let mut resp = db
+            .query("SELECT * FROM type::record('generic_notes', '01JKNOTE00000000000000000B')")
+            .await
+            .unwrap();
+        let raw: Option<String> = resp.take("raw_text").unwrap();
+        assert_eq!(
+            raw.as_deref(),
+            Some("Book flights.\n\nBooked, 3rd of May."),
+            "the original body must survive, with the addition after a blank line"
+        );
+        let title: Option<String> = resp.take("title").unwrap();
+        assert_eq!(title.as_deref(), Some("Trip"), "an append is not a rename");
+    }
+
+    /// ⚠️ **The test this whole design exists for.** Every other arm here
+    /// overwrites, so replay is free; concatenation replayed is text duplicated.
+    /// `rebuild()` clears first, but `catch_up()` re-applies into a **live** table
+    /// whenever the minimum watermark regresses — which is what re-enabling the
+    /// Notes feature does — so this is a real path, not a hypothetical one.
+    #[tokio::test]
+    async fn replaying_an_append_does_not_add_the_text_twice() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let nid = "01JKNOTE00000000000000000C";
+        let created = store
+            .append(NewEvent {
+                id: None,
+                event_type: "generic_note_created".into(),
+                aggregate_id: nid.into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "note_id": nid, "title": "Trip", "raw_text": "Book flights."
+                }),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[created]).await.unwrap();
+
+        let appended = store
+            .append(NewEvent {
+                id: None,
+                event_type: "generic_note_appended".into(),
+                aggregate_id: nid.into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({ "note_id": nid, "added_text": "Booked." }),
+            })
+            .await
+            .unwrap();
+
+        // The same event, three times — once live and twice as catch-up would.
+        for _ in 0..3 {
+            runner
+                .apply_events(std::slice::from_ref(&appended))
+                .await
+                .unwrap();
+        }
+
+        let mut resp = db
+            .query("SELECT * FROM type::record('generic_notes', '01JKNOTE00000000000000000C')")
+            .await
+            .unwrap();
+        let raw: Option<String> = resp.take("raw_text").unwrap();
+        assert_eq!(
+            raw.as_deref(),
+            Some("Book flights.\n\nBooked."),
+            "replay must not change the answer"
+        );
+    }
+
+    /// Two different appends both land, in order — the dedup key is the event,
+    /// not the text, so identical wording added twice on purpose is kept twice.
+    #[tokio::test]
+    async fn two_appends_both_land_even_with_the_same_words() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let nid = "01JKNOTE00000000000000000D";
+        let created = store
+            .append(NewEvent {
+                id: None,
+                event_type: "generic_note_created".into(),
+                aggregate_id: nid.into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({ "note_id": nid, "title": "Log", "raw_text": "" }),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[created]).await.unwrap();
+
+        for _ in 0..2 {
+            let e = store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "generic_note_appended".into(),
+                    aggregate_id: nid.into(),
+                    timestamp: Utc::now(),
+                    device_id: "d1".into(),
+                    payload: serde_json::json!({ "note_id": nid, "added_text": "ran" }),
+                })
+                .await
+                .unwrap();
+            runner.apply_events(&[e]).await.unwrap();
+        }
+
+        let mut resp = db
+            .query("SELECT * FROM type::record('generic_notes', '01JKNOTE00000000000000000D')")
+            .await
+            .unwrap();
+        let raw: Option<String> = resp.take("raw_text").unwrap();
+        assert_eq!(
+            raw.as_deref(),
+            Some("ran\n\nran"),
+            "an append to an empty body must not lead with a blank line, and two \
+             distinct events are two additions"
+        );
+    }
+
+    /// An append that arrives before the create it belongs to still materializes
+    /// the row — the same "content edits don't materialize on sync" guarantee
+    /// `on_generic_updated` carries, which an append must not quietly drop.
+    #[tokio::test]
+    async fn an_append_arriving_before_its_create_still_materializes_the_note() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let nid = "01JKNOTE00000000000000000E";
+        let e = store
+            .append(NewEvent {
+                id: None,
+                event_type: "generic_note_appended".into(),
+                aggregate_id: nid.into(),
+                timestamp: Utc::now(),
+                device_id: "d2".into(),
+                payload: serde_json::json!({ "note_id": nid, "added_text": "orphan line" }),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[e]).await.unwrap();
+
+        let mut resp = db
+            .query("SELECT * FROM type::record('generic_notes', '01JKNOTE00000000000000000E')")
+            .await
+            .unwrap();
+        let raw: Option<String> = resp.take("raw_text").unwrap();
+        assert_eq!(raw.as_deref(), Some("orphan line"));
+        let title: Option<String> = resp.take("title").unwrap();
+        assert_eq!(title.as_deref(), Some(""), "SCHEMAFULL title is backfilled");
     }
 
     #[tokio::test]

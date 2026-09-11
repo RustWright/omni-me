@@ -884,7 +884,7 @@ mod tests {
                     "action": "routine.complete",
                     "rationale": format!("you wrote about {item}"),
                     "args": {
-                        "item_id": item, "group_id": "g1", "date": "2026-03-19"
+                        "item_ids": [item], "group_id": "g1", "date": "2026-03-19"
                     }
                 }),
             )

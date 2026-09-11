@@ -1175,6 +1175,14 @@ impl AssistantProposal {
                 Some(title) => format!("Create a note: {title}"),
                 None => "Create a note".to_string(),
             },
+            // No title in the arguments — they carry the note's identity, not its
+            // name — so the summary says what kind of change it is and the
+            // rationale names the note. The added text is the detail.
+            "note.append" => "Add to an existing note".to_string(),
+            "note.rename" => match arg("title") {
+                Some(title) => format!("Rename a note to: {title}"),
+                None => "Rename a note".to_string(),
+            },
             "belief.record" => "Remember something about you".to_string(),
             "belief.supersede" => "Retire something it believed".to_string(),
             "routine.create" => match (arg("name"), arg("frequency")) {
@@ -1188,17 +1196,41 @@ impl AssistantProposal {
             },
             "routine.modify_item" => "Change an item in a routine".to_string(),
             // The day is the decision here — the rest of the card is the
-            // evidence for it — so it goes in the line the user scans.
-            "routine.complete" => match arg("date") {
-                Some(date) => format!("Mark a routine item done on {date}"),
-                None => "Mark a routine item done".to_string(),
+            // evidence for it — so it goes in the line the user scans. The count
+            // goes beside it because one proposal may tick several items, and a
+            // card that hides how many is asking for an approval the user has
+            // not actually given.
+            "routine.complete" => match (self.batch_size(), arg("date")) {
+                (n, Some(date)) if n > 1 => format!("Mark {n} routine items done on {date}"),
+                (_, Some(date)) => format!("Mark a routine item done on {date}"),
+                (n, None) if n > 1 => format!("Mark {n} routine items done"),
+                _ => "Mark a routine item done".to_string(),
             },
-            "routine.skip" => match arg("date") {
-                Some(date) => format!("Mark a routine item skipped on {date}"),
-                None => "Mark a routine item skipped".to_string(),
+            "routine.skip" => match (self.batch_size(), arg("date")) {
+                (n, Some(date)) if n > 1 => format!("Mark {n} routine items skipped on {date}"),
+                (_, Some(date)) => format!("Mark a routine item skipped on {date}"),
+                (n, None) if n > 1 => format!("Mark {n} routine items skipped"),
+                _ => "Mark a routine item skipped".to_string(),
             },
             other => other.to_string(),
         }
+    }
+
+    /// How many items a batched action names, or `0` when it names none as a
+    /// list.
+    ///
+    /// ⚠️ **Zero is the honest answer for an older proposal, not a bug.** Cards
+    /// stored before batching carry a singular `item_id`, and this deliberately
+    /// does not go looking for it: the callers all fall through to the "a
+    /// routine item" wording, which is exactly right for one item. ⛔ Do not
+    /// "fix" this by counting a singular key as 1 — the fallback already says
+    /// the true thing, and the special case would only add a way to disagree.
+    fn batch_size(&self) -> usize {
+        self.args
+            .get("item_ids")
+            .and_then(|v| v.as_array())
+            .map(Vec::len)
+            .unwrap_or(0)
     }
 
     /// The records the assistant had open when it proposed this.
@@ -1232,6 +1264,13 @@ impl AssistantProposal {
         let arg = |key: &str| self.args.get(key).and_then(|v| v.as_str());
         match self.action.as_str() {
             "note.create" => return arg("body").map(str::to_string),
+            // ⚠️ The added text is the whole decision — what the note already
+            // says is not being changed, so showing only this is showing all of
+            // it. A card that summarised instead would hide the thing approving
+            // actually writes.
+            "note.append" => return arg("added_text").map(str::to_string),
+            // The new title is already the summary line.
+            "note.rename" => return None,
             "belief.record" => {
                 let statement = arg("statement")?;
                 return Some(match arg("confidence") {
@@ -1569,7 +1608,7 @@ mod proposal_tests {
         let p = proposal(
             "routine.complete",
             serde_json::json!({
-                "item_id": "i1",
+                "item_ids": ["i1"],
                 "group_id": "g1",
                 "date": "2026-08-14",
                 "evidence": [{ "kind": "journal", "id": "2026-08-14" }],
@@ -1590,7 +1629,7 @@ mod proposal_tests {
         let p = proposal(
             "routine.skip",
             serde_json::json!({
-                "item_id": "i1",
+                "item_ids": ["i1"],
                 "group_id": "g1",
                 "date": "2026-08-14",
                 "reason": "Travelling.",
@@ -1600,6 +1639,87 @@ mod proposal_tests {
         assert_eq!(p.detail().as_deref(), Some("Reason given: Travelling."));
     }
 
+    /// ⚠️ An append card must show the text it would write, in full. What the
+    /// note already says is not changing, so the added text *is* the decision —
+    /// and it is the one part the user cannot check by remembering the note.
+    #[test]
+    fn an_append_card_shows_exactly_what_would_be_written() {
+        let p = proposal(
+            "note.append",
+            serde_json::json!({
+                "note_id": "01NOTE000000000000000001",
+                "added_text": "Booked the appointment for the 3rd.",
+            }),
+        );
+        assert_eq!(p.summary(), "Add to an existing note");
+        assert_eq!(
+            p.detail().as_deref(),
+            Some("Booked the appointment for the 3rd."),
+            "the added text is the decision, not a preview of it"
+        );
+        assert!(
+            !p.cites_evidence(),
+            "an append stands on its own wording, like a note"
+        );
+
+        let renamed = proposal(
+            "note.rename",
+            serde_json::json!({ "note_id": "01NOTE000000000000000001", "title": "Passport" }),
+        );
+        assert_eq!(renamed.summary(), "Rename a note to: Passport");
+        assert_eq!(renamed.detail(), None, "the title is already the summary");
+    }
+
+    /// ⚠️ **The count is not decoration — it is the scope of what is being
+    /// approved.** There is no partial approval, so a card reading "a routine
+    /// item" over a proposal that would tick five is asking for consent to four
+    /// things the user never saw.
+    ///
+    /// The last case pins the deliberate degradation: a card stored before
+    /// batching has a singular `item_id`, and the singular wording is the true
+    /// thing to say about it. See [`AssistantProposal::batch_size`].
+    #[test]
+    fn a_batch_card_says_how_many_it_would_tick() {
+        let many = proposal(
+            "routine.complete",
+            serde_json::json!({
+                "item_ids": ["i1", "i2", "i3"],
+                "group_id": "g1",
+                "date": "2026-08-14",
+            }),
+        );
+        assert_eq!(many.summary(), "Mark 3 routine items done on 2026-08-14");
+
+        let skipped = proposal(
+            "routine.skip",
+            serde_json::json!({
+                "item_ids": ["i1", "i2"],
+                "group_id": "g1",
+                "date": "2026-08-14",
+                "reason": "Travelling.",
+            }),
+        );
+        assert_eq!(
+            skipped.summary(),
+            "Mark 2 routine items skipped on 2026-08-14"
+        );
+        assert_eq!(
+            skipped.detail().as_deref(),
+            Some("Reason given: Travelling."),
+            "one reason covers the batch"
+        );
+
+        let old_shape = proposal(
+            "routine.complete",
+            serde_json::json!({ "item_id": "i1", "group_id": "g1", "date": "2026-08-14" }),
+        );
+        assert_eq!(
+            old_shape.summary(),
+            "Mark a routine item done on 2026-08-14",
+            "a proposal stored before batching still reads correctly"
+        );
+    }
+
     /// ⚠️ The case worth catching: an action whose whole argument is what it
     /// read, proposed having read nothing. The card has to be able to say so,
     /// which means distinguishing "cites nothing" from "does not cite".
@@ -1607,7 +1727,7 @@ mod proposal_tests {
     fn an_action_that_should_cite_is_distinguishable_from_one_that_never_does() {
         let bare = proposal(
             "routine.complete",
-            serde_json::json!({ "item_id": "i1", "group_id": "g1", "date": "2026-08-14" }),
+            serde_json::json!({ "item_ids": ["i1"], "group_id": "g1", "date": "2026-08-14" }),
         );
         assert!(bare.cites_evidence(), "a completion always owes evidence");
         assert!(bare.evidence().is_empty());

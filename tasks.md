@@ -434,21 +434,26 @@ defer-major-phases rule; do not run ahead to the next one.
        so "add a line to my packing list" means the model reads the note and retypes the
        entire body. Costs tokens proportional to note length and risks silent transcription
        drift in the part it was not asked to change.
-     - **Option B — add `GenericNoteAppended`.** Payload carries only the added text; the
-       projection concatenates. Cannot drop what it did not send, so the drift is impossible
-       rather than unlikely. Costs an event type, a `NotesProjection` arm and a version bump
-       (currently 2), and the projection's `on_generic_updated` UPSERT shape is the template.
-     - Either way `note.rename` (`GenericNoteRenamed`) is trivial and independent.
-   - **Batched `routine.complete` — agreed in principle, NOT started.** One proposal taking a
-     list of item ids, so a three-item routine is one approval card rather than three identical
-     ones. `build_events` already returns `Vec<NewEvent>` and no action has ever used that.
-     - ⚠️ **The budget argument for it is gone** — with `propose` off the budget the original
-       failure no longer reproduces. What remains is the *card*: "mark 3 items in Morning done
-       on 2026-03-19" is one decision a person makes once. A UX argument, not a correctness one.
-     - Blocked on a registry addition, not a registry entry: every model-supplied param is
-       `ActionParam::text`, so a list-valued param is new machinery (`validate_args` array
-       handling, and the `describe_type` rendering which today emits only key/required/
-       description with **no type at all**).
+     - ~~**Option B — add `GenericNoteAppended`**~~ — **CHOSEN by the user 2026-09-11, DONE.**
+       `note.append` and `note.rename` both ship; `note.update` was **not** built and is not
+       wanted. See § Notes appending below for what the build actually cost.
+   - ~~**Batched `routine.complete`**~~ — **DONE 2026-09-11.** `routine.complete` and
+     `routine.skip` now take `item_ids`, a list; one proposal is one card and N events.
+     - The registry gained `ParamShape { Text, TextList { max_items }, Records }`, an
+       `ActionParam::list` constructor, array handling in `validate_args`, and a `type` field in
+       `describe_type`'s `args` rendering — ⚠️ **that last one is a fix to every param, not just
+       lists.** Arguments were previously untyped in what the model reads, so shape was
+       discoverable only by sending the wrong one and reading the refusal.
+     - ⛔ **The batch stops at `build_events`.** Each event carries the singular `item_id` the
+       app's own tick writes, so the projection, sync and undo never learn batching exists.
+       Never add a plural payload key to "match" the argument.
+     - ⚠️ **No partial approval, and that is chosen.** A user who disagrees with one item
+       refuses the batch and lets the assistant re-propose. Refusing is the cheap outcome; an
+       inbox that trains reflex approval is the expensive one.
+     - `BATCH_LIMIT = 12`, sized by what a person can check against the rationale, not by what a
+       routine can hold. Duplicates, blanks and a bare string are all refused by position.
+     - Older proposals carrying singular `item_id` still render ("a routine item"), pinned by
+       `a_batch_card_says_how_many_it_would_tick`.
    - **Dev sync server — required before any real-device test (user, 2026-09-10).** A second
      server instance beside the live one: own port, own database, seeded data, dev Android
      phone pointed at it. ⚠️ The one gap is `LISTEN_ADDR`, a hardcoded const; everything else
@@ -671,6 +676,42 @@ other way round.
 - [ ] **Trailing, no deadline.** Preset picker UI, extra presets, record-type export/import;
   the small constants now that there is somewhere to put them (`FORCE_GENERIC_DIRS`, vault
   naming, routine frequency bounds); user-facing setup + customization guides in the mdbook.
+
+---
+
+## Notes appending — DONE 2026-09-11
+
+`note.append` (new `GenericNoteAppended`) and `note.rename` (event already existed) both ship.
+⛔ `note.update` was **rejected**, not deferred: it makes the model retype the whole body, so a
+quietly reworded paragraph is indistinguishable from the edit that was asked for.
+
+- ⚠️ **The cost we had NOT scoped: the fold is not idempotent.** Every other arm in
+  `NotesProjection` sets an absolute value, so replay is free. Concatenation replayed is text
+  duplicated — and replay is a real path, not a hypothetical one: `rebuild()` clears first, but
+  **`catch_up()` re-applies into a live table** whenever the minimum watermark regresses, which
+  is exactly what turning the Notes feature off and on does (`projection.rs` says so in a
+  comment). `replaying_an_append_does_not_add_the_text_twice` is the regression.
+- The fix is `generic_notes.applied_appends`, the ids of append events already folded in.
+  ⛔ **Never swap this for a timestamp comparison.** Events arrive from devices whose clocks
+  disagree, so a genuinely new append can carry an older stamp than one already folded and
+  would be dropped in silence. Identity is skew-proof; time is not.
+- ⚠️ The column is `option<array>` where `tags` beside it is a bare `array`, and the difference
+  is deliberate: a writer must decide a note's tags, but no writer except `on_generic_appended`
+  should have to know this column exists. Non-optional made SCHEMAFULL reject every note row
+  that omitted it — caught by ten unrelated search tests.
+- ⚠️ **SET clauses are applied in order** (`routines_projection` documents it), so
+  `applied_appends = array::union(…)` must come *after* the clauses that read it. Move it up and
+  every append no-ops on its first application and the note silently never grows.
+- ⚠️ SurrealDB v3 conditional syntax is `IF cond { … } ELSE { … }`, **not** `IF … THEN … END`.
+  Verified against the docs; the 1.x form would have been a silent wrong-syntax failure.
+- Projection version 2 → 3, so the log replays into the new shape on first launch.
+
+### Later — editing text in the middle (user, 2026-09-11: "later lets talk about")
+⛔ **Not started, and deliberately not designed yet.** Appending was chosen partly because it
+sidesteps this. ⚠️ Do NOT solve it by widening `GenericNoteAppendedPayload` with an offset: a
+byte index into a body another device has already rewritten points at the wrong place, and the
+corruption is silent. The real question is what a position means under concurrent edits, which
+is a CRDT/anchor design conversation the user has asked to have first.
 
 ---
 

@@ -506,7 +506,7 @@ mod tests {
             vec![proposal_turn(
                 "routine.complete",
                 json!({
-                    "item_id": "i1",
+                    "item_ids": ["i1"],
                     "group_id": "g1",
                     "date": "2026-08-14",
                     "evidence": [{"kind": "journal", "id": "2026-08-14"}]

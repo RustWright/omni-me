@@ -17,6 +17,7 @@ pub enum EventType {
     GenericNoteCreated,
     GenericNoteUpdated,
     GenericNoteRenamed,
+    GenericNoteAppended,
     // LLM (applies to either journal or generic via aggregate_id)
     NoteLlmProcessed,
     // Routines
@@ -93,6 +94,7 @@ impl fmt::Display for EventType {
             EventType::GenericNoteCreated => "generic_note_created",
             EventType::GenericNoteUpdated => "generic_note_updated",
             EventType::GenericNoteRenamed => "generic_note_renamed",
+            EventType::GenericNoteAppended => "generic_note_appended",
             EventType::NoteLlmProcessed => "note_llm_processed",
             EventType::RoutineGroupCreated => "routine_group_created",
             EventType::RoutineGroupReordered => "routine_group_reordered",
@@ -151,6 +153,7 @@ impl FromStr for EventType {
             "generic_note_created" => Ok(EventType::GenericNoteCreated),
             "generic_note_updated" => Ok(EventType::GenericNoteUpdated),
             "generic_note_renamed" => Ok(EventType::GenericNoteRenamed),
+            "generic_note_appended" => Ok(EventType::GenericNoteAppended),
             "note_llm_processed" => Ok(EventType::NoteLlmProcessed),
             "routine_group_created" => Ok(EventType::RoutineGroupCreated),
             "routine_group_reordered" => Ok(EventType::RoutineGroupReordered),
@@ -211,6 +214,7 @@ impl EventType {
         EventType::GenericNoteCreated,
         EventType::GenericNoteUpdated,
         EventType::GenericNoteRenamed,
+        EventType::GenericNoteAppended,
         EventType::NoteLlmProcessed,
         EventType::RoutineGroupCreated,
         EventType::RoutineGroupReordered,
@@ -283,7 +287,8 @@ impl EventType {
 
             EventType::GenericNoteCreated
             | EventType::GenericNoteUpdated
-            | EventType::GenericNoteRenamed => &[Feature::Notes],
+            | EventType::GenericNoteRenamed
+            | EventType::GenericNoteAppended => &[Feature::Notes],
 
             // Authored against either a journal entry or a generic note, so the
             // LLM feature carries it and the host feature has to be on too — the
@@ -428,6 +433,30 @@ pub struct GenericNoteUpdatedPayload {
 pub struct GenericNoteRenamedPayload {
     pub note_id: String,
     pub title: String,
+}
+
+/// Text added to the end of a note, without restating what is already there.
+///
+/// ⚠️ **The only payload in this file whose fold is not a plain overwrite**, and
+/// the reason it exists. [`GenericNoteUpdatedPayload`] carries the whole body, so
+/// an assistant asked to add a line has to reproduce the rest of the note
+/// exactly — costing tokens in proportion to the note's length and, worse, able
+/// to silently reword the part it was never asked to touch. This one cannot drop
+/// what it did not send.
+///
+/// ⛔ **Appending only.** Inserting or replacing text in the middle is a
+/// different problem — it needs a position that survives concurrent edits from
+/// two devices — and is deliberately not attempted here. Do not widen this
+/// payload with an offset; a byte index into a body another device has already
+/// rewritten points at the wrong place, and the corruption is silent.
+///
+/// ⚠️ Folding this is **not naturally idempotent** — concatenation applied twice
+/// is wrong, where an overwrite applied twice is not. `NotesProjection` keeps the
+/// applied event ids on the row to make replay safe; see `on_generic_appended`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenericNoteAppendedPayload {
+    pub note_id: String,
+    pub added_text: String,
 }
 
 // LLM — aggregate_id routes to either a journal_id or a note_id.
@@ -1384,6 +1413,9 @@ pub fn validate_payload(
         EventType::GenericNoteUpdated => {
             serde_json::from_value::<GenericNoteUpdatedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::GenericNoteAppended => {
+            serde_json::from_value::<GenericNoteAppendedPayload>(payload.clone()).map(|_| ())
+        }
         EventType::GenericNoteRenamed => {
             serde_json::from_value::<GenericNoteRenamedPayload>(payload.clone()).map(|_| ())
         }
@@ -1590,6 +1622,7 @@ mod tests {
                 | EventType::GenericNoteCreated
                 | EventType::GenericNoteUpdated
                 | EventType::GenericNoteRenamed
+                | EventType::GenericNoteAppended
                 | EventType::NoteLlmProcessed
                 | EventType::RoutineGroupCreated
                 | EventType::RoutineGroupReordered
@@ -1633,7 +1666,7 @@ mod tests {
                 | EventType::AutonomyRevoked => counted += 1,
             }
         }
-        assert_eq!(counted, 48, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 49, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

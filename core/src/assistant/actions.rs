@@ -50,6 +50,8 @@ pub enum Autonomy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionKind {
     NoteCreate,
+    NoteAppend,
+    NoteRename,
     BeliefRecord,
     BeliefSupersede,
     RoutineCreate,
@@ -83,6 +85,27 @@ pub enum ParamSource {
     /// belief that validation already guards this would silently hand the model
     /// its own citations.
     EvidenceFromTrace,
+}
+
+/// What an argument's JSON value looks like.
+///
+/// Separate from [`ParamSource`] because the two answer different questions —
+/// source is *who writes it*, shape is *what it looks like* — and an argument
+/// varies on both independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamShape {
+    /// One string. Every model-supplied argument was this until batching.
+    Text,
+    /// A list of strings, each held to the same `max_chars` and the same
+    /// validator a single [`ParamShape::Text`] argument would be.
+    ///
+    /// ⚠️ **The count bound is part of the shape, not decoration.** One approval
+    /// authors one event per element, and a card the user cannot check against
+    /// reality is not an approval — it is a rubber stamp with a number on it.
+    TextList { max_items: usize },
+    /// A list of `{kind, id}` objects. Only [`ParamSource::EvidenceFromTrace`]
+    /// carries this, and the system writes it.
+    Records,
 }
 
 /// A domain parser an argument must satisfy, returning its own error text.
@@ -125,6 +148,11 @@ pub struct ActionParam {
     /// than the user.
     pub validator: Option<ParamValidator>,
     pub source: ParamSource,
+    /// What the value looks like. ⚠️ Rendered to the model by `describe_type`,
+    /// which is the only way it can learn that an argument takes a list —
+    /// nothing else in the registry is typed, so leaving this out of the
+    /// rendering costs a turn per wrong guess.
+    pub shape: ParamShape,
 }
 
 impl ActionParam {
@@ -138,6 +166,35 @@ impl ActionParam {
             allowed: None,
             validator: None,
             source: ParamSource::Model,
+            shape: ParamShape::Text,
+        }
+    }
+
+    /// A list of plain text arguments, each checked exactly as a
+    /// [`ActionParam::text`] of the same `max_chars` would be.
+    ///
+    /// ⚠️ **A batch is one decision, so it has to stay one claim.** What varies
+    /// across the list is the identity; everything else about the proposal — the
+    /// day, the routine, the evidence — is shared, and that is what lets the card
+    /// state the batch in a sentence a person can accept or refuse as a whole.
+    /// ⛔ Do not reach for this to let one proposal span two days or two
+    /// routines: there is no partial approval, so a card the user half-agrees
+    /// with has no outcome they can choose.
+    pub const fn list(
+        key: &'static str,
+        description: &'static str,
+        max_chars: usize,
+        max_items: usize,
+    ) -> Self {
+        ActionParam {
+            key,
+            required: true,
+            description,
+            max_chars,
+            allowed: None,
+            validator: None,
+            source: ParamSource::Model,
+            shape: ParamShape::TextList { max_items },
         }
     }
 
@@ -168,6 +225,7 @@ impl ActionParam {
             allowed: None,
             validator: None,
             source: ParamSource::EvidenceFromTrace,
+            shape: ParamShape::Records,
         }
     }
 
@@ -270,6 +328,74 @@ const NOTE_CREATE: ActionType = ActionType {
     // opened has not been observed by anyone.
     reversible: true,
     reversibility: "Creating a note is undone by deleting it; nothing leaves the event log.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+/// Adding to the end of a note the user already has.
+///
+/// ⚠️ **Appending rather than rewriting is the whole point of the action.** The
+/// alternative considered and rejected was a `note.update` carrying the finished
+/// body: it costs tokens in proportion to the note's length, and — the real
+/// objection — the model has to reproduce the parts it was not asked to change,
+/// so a quietly reworded paragraph is indistinguishable from the edit that was
+/// asked for. This action cannot drop what it did not send.
+///
+/// ⛔ **The journal is not reachable from here**, and not because notes and
+/// journals happen to use different events. The user is the journal's sole
+/// author; see this module's ⛔ note and [`NEVER_PROPOSABLE`].
+const NOTE_APPEND: ActionType = ActionType {
+    name: "note.append",
+    kind: ActionKind::NoteAppend,
+    feature: Feature::Notes,
+    description: "Add text to the end of a note that already exists. Use this to add to \
+                  something rather than replace it — what is already in the note stays, and \
+                  you do not need to repeat any of it. Send only the new text.",
+    params: &[
+        ActionParam::text(
+            "note_id",
+            "Identity of the note to add to, from having read it.",
+            64,
+        ),
+        ActionParam::text(
+            "added_text",
+            "Only the new text, in markdown. It is placed after what is already there, \
+             separated by a blank line. Do not repeat the existing note.",
+            20_000,
+        ),
+    ],
+    produces: &[EventType::GenericNoteAppended],
+    // Rule 1: the added text is derivable from the log, so removing it restores
+    // the prior body. Rule 2: nothing leaves the log. Rule 3: text added to a
+    // note the user has not reopened has not been observed.
+    reversible: true,
+    reversibility: "The added text is in the log, so the note's previous body can be restored.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+/// Retitling a note. Independent of [`NOTE_APPEND`] — the event already existed.
+const NOTE_RENAME: ActionType = ActionType {
+    name: "note.rename",
+    kind: ActionKind::NoteRename,
+    feature: Feature::Notes,
+    description: "Change a note's title. The body is untouched. Use this when the title no \
+                  longer describes what the note has become.",
+    params: &[
+        ActionParam::text(
+            "note_id",
+            "Identity of the note to retitle, from having read it.",
+            64,
+        ),
+        ActionParam::text(
+            "title",
+            "The new title, as it will appear in their list.",
+            200,
+        ),
+    ],
+    produces: &[EventType::GenericNoteRenamed],
+    reversible: true,
+    reversibility: "The previous title is in the log, so a rename can be reversed.",
     autonomy: Autonomy::AlwaysAsk,
     trigger: Trigger::OnRequest,
 };
@@ -522,7 +648,16 @@ fn valid_future_date(value: &str) -> Result<(), String> {
     canonical_date(value).map(|_| ())
 }
 
-/// Marking a routine item done on a given day.
+/// How many routine items one proposal may name.
+///
+/// ⚠️ **Sized by what a person can check, not by what a routine can hold.** The
+/// card states the batch as a count and the rationale names the items; past a
+/// dozen or so the user is agreeing to a number rather than to a claim, and the
+/// approval stops being one. A longer routine is not refused — it is two
+/// proposals, which is also two chances to disagree.
+const BATCH_LIMIT: usize = 12;
+
+/// Marking routine items done on a given day.
 ///
 /// ⚠️ **This is the one action whose argument is a claim about the world**, and
 /// it is why `date` and `evidence` are both required in spirit. Everything else
@@ -538,19 +673,32 @@ fn valid_future_date(value: &str) -> Result<(), String> {
 /// what they did, and having to re-tick it by hand is the friction that left
 /// routines unused. Making completion permanently un-grantable would foreclose
 /// the behaviour the readability was for.
+///
+/// ⚠️ **One proposal, many items — and no partial approval.** A morning written
+/// up in one journal entry is one reading and one decision, so it is one card
+/// rather than five stacked ones the user clears by reflex. The cost is real and
+/// chosen: there is no way to accept four of five, and a user who disagrees with
+/// one item must refuse the batch and let the assistant re-propose. That is the
+/// right way round — refusing is the cheap outcome, and an inbox that trains
+/// reflex approval is the expensive one. ⛔ Do not "fix" this by splitting a
+/// batch at approval; the proposal the user read is the thing being approved.
 const ROUTINE_COMPLETE: ActionType = ActionType {
     name: "routine.complete",
     kind: ActionKind::RoutineComplete,
     feature: Feature::Routines,
-    description: "Mark one routine item done on a particular day. Use this when what you have \
-                  read says they did it — a journal entry describing it, for example. The day \
-                  is the day they did it, not today. Do not mark something done because it \
-                  was scheduled.",
+    description: "Mark routine items done on a particular day. Use this when what you have \
+                  read says they did them — a journal entry describing the morning, for \
+                  example. Name every item from the same routine and the same day in one \
+                  call; use another call for another day or another routine. The day is the \
+                  day they did it, not today. Do not mark something done because it was \
+                  scheduled.",
     params: &[
-        ActionParam::text(
-            "item_id",
-            "Identity of the item they did, from reading the routine it belongs to.",
+        ActionParam::list(
+            "item_ids",
+            "Identities of the items they did, from reading the routine they belong to. A \
+             list even when it names only one.",
             64,
+            BATCH_LIMIT,
         ),
         ActionParam::text(
             "group_id",
@@ -584,14 +732,17 @@ const ROUTINE_SKIP: ActionType = ActionType {
     name: "routine.skip",
     kind: ActionKind::RoutineSkip,
     feature: Feature::Routines,
-    description: "Mark one routine item deliberately skipped on a particular day, with the \
+    description: "Mark routine items deliberately skipped on a particular day, with the \
                   reason if they gave one. A skip is a decision they made, not an item left \
-                  undone — leave an unmentioned item alone.",
+                  undone — leave an unmentioned item alone. Name every item skipped for the \
+                  same reason on the same day in one call.",
     params: &[
-        ActionParam::text(
-            "item_id",
-            "Identity of the item they skipped, from reading the routine it belongs to.",
+        ActionParam::list(
+            "item_ids",
+            "Identities of the items they skipped, from reading the routine they belong to. \
+             A list even when it names only one.",
             64,
+            BATCH_LIMIT,
         ),
         ActionParam::text(
             "group_id",
@@ -602,7 +753,8 @@ const ROUTINE_SKIP: ActionType = ActionType {
             .checked_by(valid_completion_date),
         ActionParam::text(
             "reason",
-            "Why, in their words if they gave one. Omit rather than inventing one.",
+            "Why, in their words if they gave one — one reason covering everything in this \
+             call. Omit rather than inventing one.",
             300,
         )
         .optional(),
@@ -622,6 +774,8 @@ const ROUTINE_SKIP: ActionType = ActionType {
 /// Every action this build knows, enabled or not.
 pub const ALL_ACTIONS: &[ActionType] = &[
     NOTE_CREATE,
+    NOTE_APPEND,
+    NOTE_RENAME,
     BELIEF_RECORD,
     BELIEF_SUPERSEDE,
     ROUTINE_CREATE,
@@ -731,53 +885,129 @@ pub fn validate_args(action: &ActionType, args: &Value) -> Result<Value, ArgErro
                     return Err(format!("{} needs `{}`", action.name, param.key));
                 }
             }
-            Some(value) => {
-                let Some(text) = value.as_str() else {
-                    return Err(format!("{}'s `{}` must be text", action.name, param.key));
-                };
-                let text = text.trim();
-                if text.is_empty() {
-                    if param.required {
+            Some(value) => match param.shape {
+                ParamShape::Text => match checked_text(action, param, param.key, value)? {
+                    Some(checked) => {
+                        out.insert(param.key.to_string(), checked);
+                    }
+                    None if param.required => {
                         return Err(format!("{}'s `{}` is empty", action.name, param.key));
                     }
-                    continue;
-                }
-                if text.chars().count() > param.max_chars {
-                    return Err(format!(
-                        "{}'s `{}` is longer than {} characters",
-                        action.name, param.key, param.max_chars
-                    ));
-                }
-                // Compared case-insensitively and stored lowercased: a model
-                // writing "High" means the same thing, and refusing it would
-                // spend a turn on nothing.
-                if let Some(allowed) = param.allowed {
-                    let lowered = text.to_lowercase();
-                    if !allowed.contains(&lowered.as_str()) {
+                    // Blank and optional: dropped rather than stored, so an
+                    // argument the model declined to fill is absent from the
+                    // payload instead of present and meaningless.
+                    None => {}
+                },
+                ParamShape::TextList { max_items } => {
+                    let Some(items) = value.as_array() else {
                         return Err(format!(
-                            "{}'s `{}` must be one of {}",
-                            action.name,
-                            param.key,
-                            allowed.join(", ")
+                            "{}'s `{}` must be a list, even when it names only one",
+                            action.name, param.key
+                        ));
+                    };
+                    if items.is_empty() {
+                        return Err(format!("{}'s `{}` is empty", action.name, param.key));
+                    }
+                    if items.len() > max_items {
+                        return Err(format!(
+                            "{}'s `{}` takes at most {max_items} at a time; propose the rest \
+                             separately",
+                            action.name, param.key
                         ));
                     }
-                    out.insert(param.key.to_string(), json!(lowered));
-                    continue;
+                    let mut checked = Vec::with_capacity(items.len());
+                    for (index, item) in items.iter().enumerate() {
+                        let label = format!("{}[{index}]", param.key);
+                        match checked_text(action, param, &label, item)? {
+                            // Refused rather than quietly deduplicated. The same
+                            // identity twice means the model has lost track of
+                            // what it is acting on, and downstream the UPSERT
+                            // would make the second write a silent no-op — the
+                            // confusion would land in the log and nowhere else.
+                            Some(value) if checked.contains(&value) => {
+                                return Err(format!(
+                                    "{}'s `{}` names the same one twice",
+                                    action.name, param.key
+                                ));
+                            }
+                            Some(value) => checked.push(value),
+                            None => {
+                                return Err(format!("{}'s `{label}` is empty", action.name));
+                            }
+                        }
+                    }
+                    out.insert(param.key.to_string(), Value::Array(checked));
                 }
-                // The domain's own error text is passed through rather than
-                // rewritten: it already names the bounds, and the model reads
-                // this on the turn it called, while it can still fix the value.
-                if let Some(check) = param.validator
-                    && let Err(why) = check(text)
-                {
-                    return Err(format!("{}'s `{}`: {why}", action.name, param.key));
+                // Unreachable by construction — only `ActionParam::evidence`
+                // builds this shape and it sets the source the branch above
+                // catches — but said as a message rather than a panic, because
+                // this function's whole job is to be the thing model output
+                // cannot crash.
+                ParamShape::Records => {
+                    return Err(format!(
+                        "{}'s `{}` is filled in by the system",
+                        action.name, param.key
+                    ));
                 }
-                out.insert(param.key.to_string(), json!(text));
-            }
+            },
         }
     }
 
     Ok(Value::Object(out))
+}
+
+/// One text value held to a parameter's rules, or the reason it is not one.
+///
+/// Shared by [`ParamShape::Text`] and by every element of a
+/// [`ParamShape::TextList`], so that what counts as a valid text argument has
+/// exactly one definition. `label` is what the message names — the key itself
+/// for a lone value, `key[3]` for an element — because a batch refused without
+/// saying *which* element is a batch the model can only fix by guessing.
+///
+/// `Ok(None)` means blank. The caller decides what that is worth: dropped for a
+/// lone optional argument, refused inside a list, where it is a hole that would
+/// otherwise silently shorten the batch.
+fn checked_text(
+    action: &ActionType,
+    param: &ActionParam,
+    label: &str,
+    value: &Value,
+) -> Result<Option<Value>, ArgError> {
+    let Some(text) = value.as_str() else {
+        return Err(format!("{}'s `{label}` must be text", action.name));
+    };
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if text.chars().count() > param.max_chars {
+        return Err(format!(
+            "{}'s `{label}` is longer than {} characters",
+            action.name, param.max_chars
+        ));
+    }
+    // Compared case-insensitively and stored lowercased: a model writing "High"
+    // means the same thing, and refusing it would spend a turn on nothing.
+    if let Some(allowed) = param.allowed {
+        let lowered = text.to_lowercase();
+        if !allowed.contains(&lowered.as_str()) {
+            return Err(format!(
+                "{}'s `{label}` must be one of {}",
+                action.name,
+                allowed.join(", ")
+            ));
+        }
+        return Ok(Some(json!(lowered)));
+    }
+    // The domain's own error text is passed through rather than rewritten: it
+    // already names the bounds, and the model reads this on the turn it called,
+    // while it can still fix the value.
+    if let Some(check) = param.validator
+        && let Err(why) = check(text)
+    {
+        return Err(format!("{}'s `{label}`: {why}", action.name));
+    }
+    Ok(Some(json!(text)))
 }
 
 /// Whether an action takes system-filled evidence, and under which key.
@@ -815,6 +1045,33 @@ pub fn build_events(
             let note_id = ulid::Ulid::new().to_string();
             Ok(vec![NewEvent::generic_note_created(
                 device_id, &note_id, title, body, None,
+            )])
+        }
+        // ⚠️ Both key on the note they change, not on a fresh identity — the
+        // aggregate is the note, and `NotesProjection` addresses the row by
+        // `aggregate_id`. A minted id here would write to a note nobody has.
+        ActionKind::NoteAppend => {
+            let note_id = args["note_id"].as_str().unwrap_or_default().to_string();
+            Ok(vec![note_event(
+                EventType::GenericNoteAppended,
+                note_id.clone(),
+                device_id,
+                json!({
+                    "note_id": note_id,
+                    "added_text": args["added_text"].as_str().unwrap_or_default(),
+                }),
+            )])
+        }
+        ActionKind::NoteRename => {
+            let note_id = args["note_id"].as_str().unwrap_or_default().to_string();
+            Ok(vec![note_event(
+                EventType::GenericNoteRenamed,
+                note_id.clone(),
+                device_id,
+                json!({
+                    "note_id": note_id,
+                    "title": args["title"].as_str().unwrap_or_default(),
+                }),
             )])
         }
         ActionKind::BeliefRecord => {
@@ -901,43 +1158,78 @@ pub fn build_events(
                 json!({ "item_id": item_id, "changes": Value::Object(changes) }),
             )])
         }
+        // ⚠️ The batch stops here. One proposal fans out into one event per item,
+        // each carrying the singular `item_id` the app's own tick writes — so the
+        // projection, the sync payload and the undo path never learn that
+        // batching exists. ⛔ Do not add a plural payload key to "match" the
+        // argument: a second event shape for the same fact is a second thing the
+        // projection has to fold, and the app would still only write the first.
         ActionKind::RoutineComplete => {
-            let item_id = args["item_id"].as_str().unwrap_or_default().to_string();
-            Ok(vec![routine_event(
-                EventType::RoutineItemCompleted,
-                item_id.clone(),
-                device_id,
-                json!({
+            // ⚠️ Recorded once, outside the loop, so every tick in one approval
+            // shares a timestamp. Per-item clock reads would order the batch by
+            // nothing more than iteration, and this column is a tiebreak
+            // (`db::queries`) — a false ordering is worse than none.
+            let recorded_at = chrono::Utc::now().to_rfc3339();
+            Ok(item_ids(action, &args)?
+                .into_iter()
+                .map(|item_id| {
+                    routine_event(
+                        EventType::RoutineItemCompleted,
+                        item_id.to_string(),
+                        device_id,
+                        json!({
+                            "item_id": item_id,
+                            "group_id": args["group_id"].as_str().unwrap_or_default(),
+                            "date": args["date"].as_str().unwrap_or_default(),
+                            // ⚠️ When it was *recorded*, not when the activity
+                            // happened — `date` carries that, and a retroactive
+                            // tick must not invent a clock time it never read.
+                            // Safe because the column is only ever an ordering
+                            // tiebreak, never rendered.
+                            "completed_at": recorded_at,
+                        }),
+                    )
+                })
+                .collect())
+        }
+        ActionKind::RoutineSkip => Ok(item_ids(action, &args)?
+            .into_iter()
+            .map(|item_id| {
+                let mut payload = json!({
                     "item_id": item_id,
                     "group_id": args["group_id"].as_str().unwrap_or_default(),
                     "date": args["date"].as_str().unwrap_or_default(),
-                    // ⚠️ When it was *recorded*, not when the activity happened —
-                    // `date` carries that, and a retroactive tick must not invent
-                    // a clock time it never read. Safe because the column is only
-                    // ever an ordering tiebreak (`db::queries`), never rendered.
-                    "completed_at": chrono::Utc::now().to_rfc3339(),
-                }),
-            )])
-        }
-        ActionKind::RoutineSkip => {
-            let item_id = args["item_id"].as_str().unwrap_or_default().to_string();
-            let mut payload = json!({
-                "item_id": item_id,
-                "group_id": args["group_id"].as_str().unwrap_or_default(),
-                "date": args["date"].as_str().unwrap_or_default(),
-            });
-            // Absent rather than null: the payload skips serializing `None`, so a
-            // reason-less skip written here has to match one written by the app.
-            if let Some(reason) = args["reason"].as_str() {
-                payload["reason"] = json!(reason);
-            }
-            Ok(vec![routine_event(
-                EventType::RoutineItemSkipped,
-                item_id,
-                device_id,
-                payload,
-            )])
-        }
+                });
+                // Absent rather than null: the payload skips serializing `None`,
+                // so a reason-less skip written here has to match one written by
+                // the app. One reason covers the batch — see the entry.
+                if let Some(reason) = args["reason"].as_str() {
+                    payload["reason"] = json!(reason);
+                }
+                routine_event(
+                    EventType::RoutineItemSkipped,
+                    item_id.to_string(),
+                    device_id,
+                    payload,
+                )
+            })
+            .collect()),
+    }
+}
+
+/// Envelope for a note event that changes a note the user already has.
+///
+/// `NewEvent::generic_note_created` exists for the create because the notes
+/// command and the importer share it; these two have no second caller, so the
+/// envelope is built here rather than adding factories nothing else uses.
+fn note_event(event_type: EventType, note_id: String, device_id: &str, payload: Value) -> NewEvent {
+    NewEvent {
+        id: None,
+        event_type: event_type.to_string(),
+        aggregate_id: note_id,
+        timestamp: chrono::Utc::now(),
+        device_id: device_id.to_string(),
+        payload,
     }
 }
 
@@ -960,6 +1252,27 @@ fn routine_event(
         device_id: device_id.to_string(),
         payload,
     }
+}
+
+/// The item identities a batched routine action names, in the order proposed.
+///
+/// ⚠️ **Refuses an empty list rather than yielding one**, even though
+/// [`validate_args`] has already run and cannot let one through. An action that
+/// quietly builds no events would mark its proposal approved, write nothing, and
+/// leave the user believing the tick landed — the one failure this path must not
+/// have. The redundancy costs a branch; the silence would cost a lie.
+fn item_ids<'a>(action: &ActionType, args: &'a Value) -> Result<Vec<&'a str>, ArgError> {
+    let ids: Vec<&str> = args["item_ids"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    if ids.is_empty() {
+        return Err(format!("{} names no items", action.name));
+    }
+    Ok(ids)
 }
 
 /// A validated minute count, as the number the payload wants.
@@ -1077,18 +1390,29 @@ mod tests {
             .expect("200 characters is 200 characters");
     }
 
+    /// ⛔ The journal's empty list is the assertion that matters here, and it is a
+    /// product invariant rather than a gap: the user is its sole author. Notes
+    /// are checked by name rather than by count so that adding a fourth note
+    /// action does not silently pass a test about which ones exist.
     #[test]
     fn for_type_finds_a_types_actions() {
         let config = all_on();
-        let notes = for_type(&config, "note");
-        assert_eq!(notes.len(), 1);
-        assert_eq!(notes[0].name, "note.create");
+        let names: Vec<&str> = for_type(&config, "note").iter().map(|a| a.name).collect();
+        assert_eq!(names, ["note.create", "note.append", "note.rename"]);
         assert!(for_type(&config, "journal").is_empty());
     }
 
     fn sample_args(action: &ActionType) -> Value {
         match action.kind {
             ActionKind::NoteCreate => json!({ "title": "Renew passport", "body": "Expires May." }),
+            ActionKind::NoteAppend => json!({
+                "note_id": "01NOTE000000000000000001",
+                "added_text": "Booked the appointment for the 3rd.",
+            }),
+            ActionKind::NoteRename => json!({
+                "note_id": "01NOTE000000000000000001",
+                "title": "Passport renewal",
+            }),
             ActionKind::BeliefRecord => json!({
                 "statement": "You underestimate how long admin tasks take.",
                 "confidence": "medium",
@@ -1110,14 +1434,17 @@ mod tests {
             }),
             // A fixed past day rather than a computed one: the date validator
             // refuses the future, and a literal in the past stays in the past.
+            // One item, deliberately: this fixture is what the well-formedness
+            // tests run over, and a fixture that also exercises fan-out makes
+            // their failures ambiguous. Batching has its own tests below.
             ActionKind::RoutineComplete => json!({
-                "item_id": "01ITEM000000000000000001",
+                "item_ids": ["01ITEM000000000000000001"],
                 "group_id": "01GROUP00000000000000001",
                 "date": "2026-08-14",
                 "evidence": [{ "kind": "journal", "id": "2026-08-14" }],
             }),
             ActionKind::RoutineSkip => json!({
-                "item_id": "01ITEM000000000000000001",
+                "item_ids": ["01ITEM000000000000000001"],
                 "group_id": "01GROUP00000000000000001",
                 "date": "2026-08-14",
                 "reason": "Travelling.",
@@ -1261,7 +1588,7 @@ mod tests {
     /// which no record can evidence.
     #[test]
     fn a_completion_day_must_be_a_real_past_date() {
-        let base = json!({ "item_id": "i1", "group_id": "g1", "date": "2026-08-14" });
+        let base = json!({ "item_ids": ["i1"], "group_id": "g1", "date": "2026-08-14" });
         validate_args(&ROUTINE_COMPLETE, &base).expect("a past day is fine");
 
         let today = super::super::memory::today();
@@ -1297,7 +1624,7 @@ mod tests {
     fn a_day_must_be_spelled_the_way_the_app_spells_it() {
         let loose = validate_args(
             &ROUTINE_COMPLETE,
-            &json!({ "item_id": "i1", "group_id": "g1", "date": "2026-8-14" }),
+            &json!({ "item_ids": ["i1"], "group_id": "g1", "date": "2026-8-14" }),
         )
         .expect_err("chrono would take this; the row id must not");
         assert!(loose.contains("date"), "{loose}");
@@ -1337,6 +1664,110 @@ mod tests {
         );
     }
 
+    /// ⚠️ The batch is a proposal-layer idea and must not survive into the log:
+    /// each event has to be shaped exactly like the one the app writes when the
+    /// user ticks that item by hand, or the projection folds two spellings of
+    /// the same fact and the app's undo only knows one of them.
+    #[test]
+    fn a_batch_becomes_one_ordinary_event_per_item() {
+        let events = build_events(
+            &ROUTINE_COMPLETE,
+            &json!({
+                "item_ids": ["i1", "i2", "i3"],
+                "group_id": "g1",
+                "date": "2026-08-14",
+            }),
+            "d",
+        )
+        .expect("three items in one proposal");
+
+        assert_eq!(events.len(), 3, "one event per item named");
+        let ids: Vec<&str> = events
+            .iter()
+            .map(|e| e.payload["item_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["i1", "i2", "i3"], "in the order proposed");
+
+        for event in &events {
+            assert!(
+                event.payload.get("item_ids").is_none(),
+                "the plural argument must not reach the payload: {}",
+                event.payload
+            );
+            assert_eq!(event.payload["date"], json!("2026-08-14"));
+            assert_eq!(event.payload["group_id"], json!("g1"));
+        }
+        assert_eq!(
+            events[0].aggregate_id, "i1",
+            "each event still keys on its own item"
+        );
+        assert_eq!(events[2].aggregate_id, "i3");
+
+        // One approval, one recording time. Per-item clock reads would order the
+        // batch by iteration speed, and this column is a tiebreak.
+        let stamps: Vec<&Value> = events.iter().map(|e| &e.payload["completed_at"]).collect();
+        assert!(
+            stamps.iter().all(|s| *s == stamps[0]),
+            "a batch shares one recording timestamp, got {stamps:?}"
+        );
+    }
+
+    /// The three ways a list can be wrong, each refused loudly rather than
+    /// quietly repaired — a batch the model did not mean is a batch the user is
+    /// asked to approve.
+    #[test]
+    fn a_batch_is_bounded_and_refuses_a_repeat() {
+        let args = |ids: Value| json!({ "item_ids": ids, "group_id": "g1", "date": "2026-08-14" });
+
+        let bare = validate_args(&ROUTINE_COMPLETE, &args(json!("i1")))
+            .expect_err("a lone string is not a list of one");
+        assert!(bare.contains("list"), "{bare}");
+
+        let empty =
+            validate_args(&ROUTINE_COMPLETE, &args(json!([]))).expect_err("nothing to approve");
+        assert!(empty.contains("empty"), "{empty}");
+
+        // ⚠️ Deduplicating would hide the confusion entirely: the completion
+        // UPSERT makes the second write a no-op, so a model ticking one item
+        // twice looks identical to one ticking it once.
+        let repeat = validate_args(&ROUTINE_COMPLETE, &args(json!(["i1", "i2", "i1"])))
+            .expect_err("the same item twice");
+        assert!(repeat.contains("twice"), "{repeat}");
+
+        let over: Vec<String> = (0..=BATCH_LIMIT).map(|n| format!("i{n}")).collect();
+        let too_many =
+            validate_args(&ROUTINE_COMPLETE, &args(json!(over))).expect_err("past the limit");
+        assert!(too_many.contains(&BATCH_LIMIT.to_string()), "{too_many}");
+
+        let at_limit: Vec<String> = (0..BATCH_LIMIT).map(|n| format!("i{n}")).collect();
+        validate_args(&ROUTINE_COMPLETE, &args(json!(at_limit))).expect("the limit is inclusive");
+    }
+
+    /// A list element is checked by the same code a lone value is, so a rule
+    /// added to one cannot quietly miss the other — and the refusal names the
+    /// element, because a batch refused without saying which one is a batch the
+    /// model can only fix by guessing.
+    #[test]
+    fn a_bad_element_is_refused_by_position() {
+        let err = validate_args(
+            &ROUTINE_COMPLETE,
+            &json!({
+                "item_ids": ["i1", "x".repeat(65)],
+                "group_id": "g1",
+                "date": "2026-08-14",
+            }),
+        )
+        .expect_err("the same 64-character ceiling a lone id has");
+        assert!(err.contains("item_ids[1]"), "{err}");
+
+        let blank = validate_args(
+            &ROUTINE_COMPLETE,
+            &json!({ "item_ids": ["i1", "  "], "group_id": "g1", "date": "2026-08-14" }),
+        )
+        .expect_err("a hole in the list is not a shorter list");
+        assert!(blank.contains("item_ids[1]"), "{blank}");
+    }
+
     /// `RoutineItemSkippedPayload` skips serializing `None`, so a reason-less
     /// skip built here has to be shaped like one the app writes — a `null` would
     /// be a second spelling of the same absence.
@@ -1344,7 +1775,7 @@ mod tests {
     fn a_skip_without_a_reason_omits_the_key_rather_than_nulling_it() {
         let events = build_events(
             &ROUTINE_SKIP,
-            &json!({ "item_id": "i1", "group_id": "g1", "date": "2026-08-14" }),
+            &json!({ "item_ids": ["i1"], "group_id": "g1", "date": "2026-08-14" }),
             "d",
         )
         .expect("a reason is optional");

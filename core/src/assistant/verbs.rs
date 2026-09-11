@@ -376,14 +376,36 @@ async fn describe_type(db: &Database, config: &ResolvedConfig, name: &str) -> Va
             "name": a.name,
             "description": a.description,
             "reversible": a.reversible,
+            // ⚠️ `type` is the only place the model learns an argument is a
+            // list. Nothing else in the registry is typed and the description is
+            // prose, so leaving it out means the shape is discovered by sending
+            // the wrong one and reading the refusal — a turn spent on something
+            // the declaration already knew.
             "args": a.params.iter().map(|p| json!({
                 "key": p.key,
+                "type": arg_type(p),
                 "required": p.required,
                 "description": p.description,
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "count": count_rows(db, entry.table).await,
     })
+}
+
+/// An argument's shape, in the words the model reads.
+///
+/// Prose rather than a JSON-schema fragment, to match everything else
+/// `describe_type` emits: the list bound is stated because refusing a batch of
+/// thirty after the model has assembled it wastes the turn that assembling it
+/// cost.
+fn arg_type(param: &actions::ActionParam) -> String {
+    match param.shape {
+        actions::ParamShape::Text => "text".to_string(),
+        actions::ParamShape::TextList { max_items } => {
+            format!("list of text, at most {max_items}")
+        }
+        actions::ParamShape::Records => "list of records, filled in for you".to_string(),
+    }
 }
 
 /// Record an intention. Changes nothing — see this module's header.
