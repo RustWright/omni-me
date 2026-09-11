@@ -167,10 +167,13 @@ pub async fn pending_questions(db: &Database) -> Result<Vec<PendingQuestion>, Ev
                     thread_id: row.thread_id.clone(),
                     message_id: row.message_id.clone(),
                     text: row.text.clone().unwrap_or_default(),
-                    // Not read back: the payload is rebuilt only far enough to
-                    // author the answer, and a title is a property of the thread
-                    // row, which already has it.
+                    // Neither is read back: the payload is rebuilt only far enough
+                    // to author the answer. A title is a property of the thread
+                    // row, which already has it, and `scheduled` is a fact about
+                    // how the *question* was raised that only its own event and
+                    // the message row carry — the answer does not restate it.
                     title: None,
+                    scheduled: false,
                 },
                 asked_at: row.created_at,
                 history: turns(&rows[..i]),
@@ -230,6 +233,9 @@ pub struct ConversationMessage {
     pub verbs: Option<Vec<String>>,
     pub records_read: Option<DbValue>,
     pub usage: Option<DbValue>,
+    /// True when the agent raised this question on a schedule. `None` on answers
+    /// and on every question authored before the field existed.
+    pub scheduled: Option<bool>,
 }
 
 /// One thread, plus whether it is still waiting on an answer.
@@ -272,7 +278,7 @@ pub async fn read_thread(db: &Database, thread_id: &str) -> Result<ThreadView, E
     let mut resp = db
         .query(
             "SELECT message_id, thread_id, role, text, in_reply_to, stopped, detail,
-                    model, elapsed_ms, verbs, records_read, usage,
+                    model, elapsed_ms, verbs, records_read, usage, scheduled,
                     <string> created_at AS created_at
              FROM assistant_messages WHERE thread_id = $thread_id ORDER BY created_at",
         )
@@ -360,6 +366,7 @@ mod tests {
             message_id: message.into(),
             text: text.into(),
             title: Some(text.into()),
+            scheduled: false,
         };
         let ev = envelope(
             NewEvent::assistant_question_asked("phone", &payload).unwrap(),
@@ -709,6 +716,62 @@ mod tests {
         assert_eq!(
             view.messages[1].text, None,
             "a failed answer renders no prose"
+        );
+    }
+
+    /// ⚠️ The whole round trip for `scheduled`: event → projection → read model.
+    /// Every hop is somewhere the field can be silently dropped, and if it is,
+    /// the client's "asked on your behalf" marker simply never appears — a
+    /// failure that looks like nothing at all.
+    #[tokio::test]
+    async fn a_scheduled_question_is_marked_all_the_way_to_the_read_model() {
+        let db = test_db().await;
+        let now = Utc::now();
+
+        let payload = AssistantQuestionAskedPayload {
+            thread_id: "t1".into(),
+            message_id: "m1".into(),
+            text: "Review what is due.".into(),
+            title: Some("Daily check-in".into()),
+            scheduled: true,
+        };
+        let ev = envelope(
+            NewEvent::assistant_question_asked("agent", &payload).unwrap(),
+            now,
+        );
+        AssistantProjection.apply(&ev, &db).await.unwrap();
+
+        let view = read_thread(&db, "t1").await.unwrap();
+        assert_eq!(view.messages.len(), 1);
+        assert_eq!(view.messages[0].scheduled, Some(true));
+
+        // And the scheduler reads its own last run from exactly this row.
+        let last = crate::assistant::check_in::last_check_in(&db)
+            .await
+            .unwrap();
+        assert!(
+            last.is_some(),
+            "the check-in must be findable as its own record"
+        );
+    }
+
+    /// The mirror: an ordinary question must not look scheduled, or every answer
+    /// would carry a marker saying the user did not ask for it.
+    #[tokio::test]
+    async fn a_user_asked_question_is_not_marked_scheduled() {
+        let db = test_db().await;
+        let now = Utc::now();
+        ask(&db, now, "t1", "m1", "what did I write about rent?").await;
+
+        let view = read_thread(&db, "t1").await.unwrap();
+        assert_ne!(view.messages[0].scheduled, Some(true));
+        assert!(
+            crate::assistant::check_in::last_check_in(&db)
+                .await
+                .unwrap()
+                .is_none(),
+            "a user's question must never count as a check-in, or the schedule \
+             would skip a day every time they asked something"
         );
     }
 

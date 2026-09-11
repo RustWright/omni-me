@@ -32,7 +32,7 @@
 //! [`every_queryable_projection_is_catalogued`] is what stops that being silent.
 
 use crate::config::{Feature, ResolvedConfig};
-use crate::events::{NotesProjection, RoutinesProjection};
+use crate::events::{BeliefsProjection, NotesProjection, RoutinesProjection};
 use crate::record_type::JOURNAL;
 
 /// How a row's identity behaves, which decides whether the model can construct
@@ -295,8 +295,50 @@ const ROUTINE: CatalogEntry = CatalogEntry {
     record_type: None,
 };
 
+/// What the assistant has concluded about the user, and is allowed to read back.
+///
+/// ⚠️ **This is the one sanctioned form of recall, and the contrast with
+/// `assistant_messages` is the point.** Conversations are deliberately absent
+/// from this catalog, because letting the assistant search its own past answers
+/// means it cites its own earlier guesses as evidence about the user's life. A
+/// belief is the opposite: it was proposed, it carries the records it was drawn
+/// from, and a person accepted it before it existed. Recall is allowed here
+/// precisely because every entry has been through that gate.
+const BELIEF: CatalogEntry = CatalogEntry {
+    name: "belief",
+    table: "beliefs",
+    projection: BeliefsProjection::NAME,
+    feature: Feature::Llm,
+    description: "A lasting conclusion previously drawn about the user and accepted by them, \
+                  with the records it was drawn from. Retired ones are kept — filter on \
+                  `retired` to exclude them.",
+    identity: IdentityKind::Opaque,
+    handle: "statement",
+    text_fields: &["statement"],
+    filters: &[
+        FilterField {
+            key: "confidence",
+            kind: FilterKind::Exact,
+            description: "How well the evidence supported it: low, medium, or high.",
+        },
+        FilterField {
+            key: "review_after",
+            kind: FilterKind::Range,
+            description: "The date this was meant to be re-examined (YYYY-MM-DD). Use a range \
+                          ending today to find ones now due for review.",
+        },
+    ],
+    list_order: ListOrder {
+        column: "recorded_at",
+        descending: true,
+    },
+    children: &[],
+    derived: None,
+    record_type: None,
+};
+
 /// Every catalogued collection, before feature gating.
-pub const ALL_ENTRIES: &[CatalogEntry] = &[JOURNAL_ENTRY, NOTE, ROUTINE];
+pub const ALL_ENTRIES: &[CatalogEntry] = &[JOURNAL_ENTRY, NOTE, ROUTINE, BELIEF];
 
 /// The entries visible under this config.
 ///

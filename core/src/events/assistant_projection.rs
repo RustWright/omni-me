@@ -18,7 +18,10 @@ use crate::db::Database;
 
 use super::projection::Projection;
 use super::store::{Event, EventError};
-use super::types::{AssistantAnswerGivenPayload, AssistantQuestionAskedPayload};
+use super::types::{
+    AssistantAnswerGivenPayload, AssistantProposalDecidedPayload, AssistantProposalMadePayload,
+    AssistantQuestionAskedPayload,
+};
 
 pub struct AssistantProjection;
 
@@ -32,8 +35,13 @@ impl Projection for AssistantProjection {
         Self::NAME
     }
 
+    /// 2 added `assistant_proposals`; 3 added `assistant_messages.scheduled`;
+    /// 4 adds `assistant_autonomy`.
+    /// The bump is what replays the log into the new shape — see
+    /// `ProjectionRunner::init_all`, where a changed version rebuilds rather than
+    /// merely recording a number.
     fn version(&self) -> u32 {
-        1
+        4
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -53,6 +61,12 @@ impl Projection for AssistantProjection {
              DEFINE FIELD IF NOT EXISTS created_at ON assistant_messages TYPE datetime;
              DEFINE FIELD IF NOT EXISTS device_id ON assistant_messages TYPE string;
              DEFINE FIELD IF NOT EXISTS in_reply_to ON assistant_messages TYPE option<string>;
+             -- Whether the agent raised this question on the user's behalf. Also
+             -- what the check-in scheduler reads its own last-run time from, so
+             -- whether it has already checked in today is derived from the log
+             -- rather than from a state file that a restart or a second agent
+             -- could disagree with.
+             DEFINE FIELD IF NOT EXISTS scheduled ON assistant_messages TYPE option<bool>;
              DEFINE FIELD IF NOT EXISTS stopped ON assistant_messages TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS detail ON assistant_messages TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS model ON assistant_messages TYPE option<string>;
@@ -79,7 +93,59 @@ impl Projection for AssistantProjection {
              DEFINE FIELD IF NOT EXISTS records_read.*.title ON assistant_messages
                  TYPE option<string>;
              DEFINE INDEX IF NOT EXISTS assistant_messages_thread
-                 ON assistant_messages FIELDS thread_id;",
+                 ON assistant_messages FIELDS thread_id;
+
+             DEFINE TABLE IF NOT EXISTS assistant_proposals SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS proposal_id ON assistant_proposals TYPE string;
+             -- ⚠️ **Every column the proposal itself writes is `option<>`, and not
+             -- because any of them is optional.** The two events reach a third
+             -- device in *arrival* order, and this codebase has already been bitten
+             -- by the reason that is not authoring order: the pull filter runs on
+             -- the author's clock, so a decision written by a phone whose clock
+             -- trails the agent's can carry the earlier timestamp and be folded
+             -- first. Required columns here would make that inbound decision fail
+             -- the schema — and a decision that cannot land leaves its proposal
+             -- pending forever, which is the exact failure `ProposalDecision`'s
+             -- string-on-the-wire design exists to prevent. A row with a decision
+             -- and no detail is a real, transient state; it is never in the inbox,
+             -- because the inbox is `decision IS NONE`.
+             DEFINE FIELD IF NOT EXISTS thread_id ON assistant_proposals TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS message_id ON assistant_proposals TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS action ON assistant_proposals TYPE option<string>;
+             -- FLEXIBLE here, and unlike `records_read` above that is correct:
+             -- `args` is shaped by whichever action declared it, so there is no
+             -- closed struct to spell out. The closed-shape argument applies to
+             -- our own types; this one is genuinely open, and a per-action schema
+             -- in the table would have to be migrated every time an action is
+             -- added.
+             DEFINE FIELD IF NOT EXISTS args ON assistant_proposals TYPE option<object> FLEXIBLE;
+             DEFINE FIELD IF NOT EXISTS rationale ON assistant_proposals TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS reversible ON assistant_proposals TYPE option<bool>;
+             DEFINE FIELD IF NOT EXISTS created_at ON assistant_proposals TYPE option<datetime>;
+             DEFINE FIELD IF NOT EXISTS device_id ON assistant_proposals TYPE option<string>;
+             -- NONE while pending. The inbox is `WHERE decision IS NONE`, so a
+             -- decision this build cannot name still empties the inbox — the
+             -- `ProposalDecision::parse` contract, enforced by the schema rather
+             -- than only by the reader.
+             DEFINE FIELD IF NOT EXISTS decision ON assistant_proposals TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS decided_at ON assistant_proposals TYPE option<datetime>;
+             DEFINE FIELD IF NOT EXISTS decided_reason ON assistant_proposals TYPE option<string>;
+             DEFINE FIELD IF NOT EXISTS applied_event_ids ON assistant_proposals
+                 TYPE option<array<string>>;
+             DEFINE INDEX IF NOT EXISTS assistant_proposals_thread
+                 ON assistant_proposals FIELDS thread_id;
+
+             DEFINE TABLE IF NOT EXISTS assistant_autonomy SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS action ON assistant_autonomy TYPE string;
+             -- One row per action, holding the *current* permission rather than a
+             -- history of grants. The history is the log; this is what the write
+             -- path asks. A grant and a revocation are both last-write-wins on
+             -- this row, which is why each carries its own timestamp below.
+             DEFINE FIELD IF NOT EXISTS granted ON assistant_autonomy TYPE bool;
+             DEFINE FIELD IF NOT EXISTS reversible ON assistant_autonomy TYPE option<bool>;
+             DEFINE FIELD IF NOT EXISTS decided_at ON assistant_autonomy TYPE datetime;
+             DEFINE FIELD IF NOT EXISTS revoked_reason ON assistant_autonomy
+                 TYPE option<string>;",
         )
         .await?
         .check()?;
@@ -87,9 +153,14 @@ impl Projection for AssistantProjection {
     }
 
     async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
-        db.query("DELETE FROM assistant_messages; DELETE FROM assistant_threads")
-            .await?
-            .check()?;
+        db.query(
+            "DELETE FROM assistant_messages;
+             DELETE FROM assistant_threads;
+             DELETE FROM assistant_proposals;
+             DELETE FROM assistant_autonomy",
+        )
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -97,6 +168,10 @@ impl Projection for AssistantProjection {
         match event.event_type.as_str() {
             "assistant_question_asked" => self.on_question(event, db).await,
             "assistant_answer_given" => self.on_answer(event, db).await,
+            "assistant_proposal_made" => self.on_proposal_made(event, db).await,
+            "assistant_proposal_decided" => self.on_proposal_decided(event, db).await,
+            "autonomy_granted" => self.on_autonomy(event, db, true).await,
+            "autonomy_revoked" => self.on_autonomy(event, db, false).await,
             _ => Ok(()),
         }
     }
@@ -128,6 +203,9 @@ impl AssistantProjection {
             Some(&parsed.text),
             event,
             None,
+            // Only written for a question, and only when true: an answer has no
+            // opinion about how the question that prompted it was raised.
+            parsed.scheduled.then_some(true),
         )
         .await?;
 
@@ -157,11 +235,145 @@ impl AssistantProjection {
             parsed.text.as_deref(),
             event,
             Some(&parsed),
+            None,
         )
         .await?;
 
         // An answer never sets a title: only the thread's first question does.
         self.touch_thread(db, &parsed.thread_id, None, event).await
+    }
+
+    /// Fold a grant or a revocation onto the action's single permission row.
+    ///
+    /// One handler for both, because they differ only in the flag: the row holds
+    /// the *current* permission, and the history of how it got there is the log.
+    /// Last write wins, which is right for a setting and is why the row records
+    /// when it was decided.
+    async fn on_autonomy(
+        &self,
+        event: &Event,
+        db: &Database,
+        granted: bool,
+    ) -> Result<(), EventError> {
+        let action = event
+            .payload
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if action.is_empty() {
+            tracing::warn!(event_id = %event.id, "autonomy event with no action; skipping");
+            return Ok(());
+        }
+        let reversible = event.payload.get("reversible").and_then(|v| v.as_bool());
+        let reason = event
+            .payload
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        db.query(
+            "UPSERT type::record('assistant_autonomy', $action) SET
+                action = $action,
+                granted = $granted,
+                reversible = $reversible,
+                decided_at = type::datetime($ts),
+                revoked_reason = $reason",
+        )
+        .bind(("action", action))
+        .bind(("granted", granted))
+        .bind(("reversible", reversible))
+        .bind(("ts", event.timestamp.to_rfc3339()))
+        .bind(("reason", reason))
+        .await?
+        .check()?;
+
+        Ok(())
+    }
+
+    async fn on_proposal_made(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+        let parsed: AssistantProposalMadePayload =
+            match serde_json::from_value(event.payload.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(
+                        event_id = %event.id,
+                        error = %e,
+                        "skipping an assistant proposal this build cannot read"
+                    );
+                    return Ok(());
+                }
+            };
+
+        // ⚠️ The decision columns are **not** written here, and that is the whole
+        // reason this is an UPSERT that names its columns rather than a CREATE or
+        // a whole-row SET. Sync delivers events in arrival order, so the decision
+        // can land before the proposal that it decides; resetting `decision` to
+        // NONE here would put an already-answered proposal back in the inbox, and
+        // a rebuild would do it to every proposal the user has ever decided.
+        db.query(
+            "UPSERT type::record('assistant_proposals', $id) SET
+                proposal_id = $id,
+                thread_id = $thread_id,
+                message_id = $message_id,
+                action = $action,
+                args = $args,
+                rationale = $rationale,
+                reversible = $reversible,
+                created_at = type::datetime($ts),
+                device_id = $device_id",
+        )
+        .bind(("id", parsed.proposal_id.clone()))
+        .bind(("thread_id", parsed.thread_id.clone()))
+        .bind(("message_id", parsed.message_id.clone()))
+        .bind(("action", parsed.action.clone()))
+        .bind(("args", parsed.args.clone()))
+        .bind(("rationale", parsed.rationale.clone()))
+        .bind(("reversible", parsed.reversible))
+        .bind(("ts", event.timestamp.to_rfc3339()))
+        .bind(("device_id", event.device_id.clone()))
+        .await?
+        .check()?;
+
+        Ok(())
+    }
+
+    /// Record the decision, without touching what was proposed.
+    ///
+    /// The mirror of [`Self::on_proposal_made`]: each writes only its own
+    /// columns, so the two are order-independent and the pair converges on the
+    /// same row whichever arrives first.
+    async fn on_proposal_decided(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+        let parsed: AssistantProposalDecidedPayload =
+            match serde_json::from_value(event.payload.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(
+                        event_id = %event.id,
+                        error = %e,
+                        "skipping an assistant proposal decision this build cannot read"
+                    );
+                    return Ok(());
+                }
+            };
+
+        db.query(
+            "UPSERT type::record('assistant_proposals', $id) SET
+                proposal_id = $id,
+                decision = $decision,
+                decided_at = type::datetime($ts),
+                decided_reason = $reason,
+                applied_event_ids = $applied",
+        )
+        .bind(("id", parsed.proposal_id.clone()))
+        .bind(("decision", parsed.decision.clone()))
+        .bind(("ts", event.timestamp.to_rfc3339()))
+        .bind(("reason", parsed.reason.clone()))
+        .bind(("applied", parsed.applied_event_ids.clone()))
+        .await?
+        .check()?;
+
+        Ok(())
     }
 
     /// Write one message row, keyed by `message_id`.
@@ -179,6 +391,7 @@ impl AssistantProjection {
         text: Option<&str>,
         event: &Event,
         answer: Option<&AssistantAnswerGivenPayload>,
+        scheduled: Option<bool>,
     ) -> Result<(), EventError> {
         let usage = match answer {
             Some(a) => Some(serde_json::to_value(&a.usage).map_err(|e| {
@@ -208,7 +421,8 @@ impl AssistantProjection {
                 usage = $usage,
                 elapsed_ms = $elapsed_ms,
                 verbs = $verbs,
-                records_read = $records_read",
+                records_read = $records_read,
+                scheduled = $scheduled",
         )
         .bind(("id", message_id.to_string()))
         .bind(("thread_id", thread_id.to_string()))
@@ -224,6 +438,7 @@ impl AssistantProjection {
         .bind(("elapsed_ms", answer.map(|a| a.elapsed_ms as i64)))
         .bind(("verbs", answer.map(|a| a.verbs.clone())))
         .bind(("records_read", records_read))
+        .bind(("scheduled", scheduled))
         .await?
         // ⚠️ `.check()` is load-bearing, not belt-and-braces. `Surreal::query`
         // resolves to `Ok` for a statement that *failed* — the error rides in the
@@ -358,6 +573,7 @@ mod tests {
             message_id: message.into(),
             text: text.into(),
             title: title.map(str::to_string),
+            scheduled: false,
         };
         let new = NewEvent::assistant_question_asked("phone", &payload).unwrap();
         Event {
@@ -679,6 +895,7 @@ mod tests {
             message_id: "m1".into(),
             text: "how many gym days in July?".into(),
             title: Some("gym July".into()),
+            scheduled: false,
         };
         let stored = store
             .append(NewEvent::assistant_question_asked("phone", &payload).unwrap())
@@ -696,5 +913,146 @@ mod tests {
             text.first().cloned().flatten(),
             Some("how many gym days in July?".into())
         );
+    }
+
+    // Proposals
+
+    fn proposal_at(ts: chrono::DateTime<Utc>, proposal: &str, thread: &str) -> Event {
+        let payload = crate::events::types::AssistantProposalMadePayload {
+            proposal_id: proposal.into(),
+            thread_id: thread.into(),
+            message_id: "m1".into(),
+            action: "note.create".into(),
+            args: serde_json::json!({ "title": "Renew passport", "body": "Expires May." }),
+            rationale: "You said you would forget.".into(),
+            reversible: true,
+        };
+        let new = NewEvent::assistant_proposal_made("agent", &payload).unwrap();
+        Event {
+            id: ulid::Ulid::new().to_string(),
+            event_type: new.event_type,
+            aggregate_id: new.aggregate_id,
+            timestamp: ts,
+            device_id: new.device_id,
+            payload: new.payload,
+            received_at: None,
+        }
+    }
+
+    fn decision_at(ts: chrono::DateTime<Utc>, proposal: &str, decision: &str) -> Event {
+        let payload = crate::events::types::AssistantProposalDecidedPayload {
+            proposal_id: proposal.into(),
+            decision: decision.into(),
+            applied_event_ids: vec!["ev-1".into()],
+            reason: None,
+        };
+        Event {
+            id: ulid::Ulid::new().to_string(),
+            event_type: "assistant_proposal_decided".into(),
+            aggregate_id: proposal.into(),
+            timestamp: ts,
+            device_id: "phone".into(),
+            payload: serde_json::to_value(&payload).unwrap(),
+            received_at: None,
+        }
+    }
+
+    async fn decision_of(db: &Database, proposal: &str) -> Option<String> {
+        let mut resp = db
+            .query("SELECT decision FROM type::record('assistant_proposals', $id)")
+            .bind(("id", proposal.to_string()))
+            .await
+            .unwrap();
+        let got: Vec<Option<String>> = resp.take("decision").unwrap_or_default();
+        got.first().cloned().flatten()
+    }
+
+    #[tokio::test]
+    async fn a_proposal_lands_pending_and_then_takes_its_decision() {
+        let db = test_db().await;
+        AssistantProjection.init_schema(&db).await.unwrap();
+        let t0 = Utc::now();
+
+        AssistantProjection
+            .apply(&proposal_at(t0, "p1", "t1"), &db)
+            .await
+            .unwrap();
+        assert_eq!(decision_of(&db, "p1").await, None, "should be pending");
+
+        AssistantProjection
+            .apply(
+                &decision_at(t0 + Duration::seconds(5), "p1", "approved"),
+                &db,
+            )
+            .await
+            .unwrap();
+        assert_eq!(decision_of(&db, "p1").await, Some("approved".into()));
+    }
+
+    /// ⚠️ The arrival-order case the schema is built for. The pull filter runs on
+    /// the **author's** clock, so a decision written by a device whose clock
+    /// trails the agent's can carry the earlier timestamp and be folded first. If
+    /// that inbound event cannot land, its proposal stays pending forever.
+    #[tokio::test]
+    async fn a_decision_that_arrives_before_its_proposal_still_converges() {
+        let db = test_db().await;
+        AssistantProjection.init_schema(&db).await.unwrap();
+        let t0 = Utc::now();
+
+        AssistantProjection
+            .apply(&decision_at(t0, "p1", "approved"), &db)
+            .await
+            .unwrap();
+        assert_eq!(
+            decision_of(&db, "p1").await,
+            Some("approved".into()),
+            "the decision must land even with no proposal row to attach to"
+        );
+
+        AssistantProjection
+            .apply(&proposal_at(t0 + Duration::seconds(5), "p1", "t1"), &db)
+            .await
+            .unwrap();
+
+        let mut resp = db
+            .query("SELECT action, decision FROM type::record('assistant_proposals', 'p1')")
+            .await
+            .unwrap();
+        let action: Vec<Option<String>> = resp.take("action").unwrap_or_default();
+        let decision: Vec<Option<String>> = resp.take("decision").unwrap_or_default();
+        assert_eq!(
+            action.first().cloned().flatten(),
+            Some("note.create".into())
+        );
+        assert_eq!(
+            decision.first().cloned().flatten(),
+            Some("approved".into()),
+            "the late proposal must not reset the decision — that would put a \
+             handled proposal back in the inbox, and a rebuild would do it to \
+             every proposal the user has ever decided"
+        );
+    }
+
+    /// Replay is routine — `rebuild()` and `catch_up()` both re-apply. A second
+    /// fold of the same pair must not resurrect or duplicate anything.
+    #[tokio::test]
+    async fn replaying_a_decided_proposal_is_idempotent() {
+        let db = test_db().await;
+        AssistantProjection.init_schema(&db).await.unwrap();
+        let t0 = Utc::now();
+        let made = proposal_at(t0, "p1", "t1");
+        let decided = decision_at(t0 + Duration::seconds(5), "p1", "rejected");
+
+        for event in [&made, &decided, &made, &decided] {
+            AssistantProjection.apply(event, &db).await.unwrap();
+        }
+
+        let mut resp = db
+            .query("SELECT proposal_id FROM assistant_proposals")
+            .await
+            .unwrap();
+        let ids: Vec<String> = resp.take("proposal_id").unwrap_or_default();
+        assert_eq!(ids.len(), 1, "one row, whatever the replay order");
+        assert_eq!(decision_of(&db, "p1").await, Some("rejected".into()));
     }
 }

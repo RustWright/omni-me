@@ -67,6 +67,20 @@ pub enum EventType {
     // already holds open (see `docs/src/assistant.md`).
     AssistantQuestionAsked,
     AssistantAnswerGiven,
+    // Assistant proposals — the write half. The assistant records an intention;
+    // nothing changes until a person decides. See `docs/src/assistant.md`
+    // § "It proposes; you dispose".
+    AssistantProposalMade,
+    AssistantProposalDecided,
+    // Beliefs — what the assistant has concluded about the user, with the
+    // evidence behind it. Arrive only through a proposal the user accepted.
+    BeliefRecorded,
+    BeliefSuperseded,
+    // Autonomy — which action types the user has allowed the assistant to
+    // carry out without asking. Granted by the user, never requested by the
+    // assistant.
+    AutonomyGranted,
+    AutonomyRevoked,
 }
 
 impl fmt::Display for EventType {
@@ -114,6 +128,12 @@ impl fmt::Display for EventType {
             EventType::RecordTypeDeclared => "record_type_declared",
             EventType::AssistantQuestionAsked => "assistant_question_asked",
             EventType::AssistantAnswerGiven => "assistant_answer_given",
+            EventType::AssistantProposalMade => "assistant_proposal_made",
+            EventType::AssistantProposalDecided => "assistant_proposal_decided",
+            EventType::BeliefRecorded => "belief_recorded",
+            EventType::BeliefSuperseded => "belief_superseded",
+            EventType::AutonomyGranted => "autonomy_granted",
+            EventType::AutonomyRevoked => "autonomy_revoked",
         };
         write!(f, "{s}")
     }
@@ -166,6 +186,12 @@ impl FromStr for EventType {
             "record_type_declared" => Ok(EventType::RecordTypeDeclared),
             "assistant_question_asked" => Ok(EventType::AssistantQuestionAsked),
             "assistant_answer_given" => Ok(EventType::AssistantAnswerGiven),
+            "assistant_proposal_made" => Ok(EventType::AssistantProposalMade),
+            "assistant_proposal_decided" => Ok(EventType::AssistantProposalDecided),
+            "belief_recorded" => Ok(EventType::BeliefRecorded),
+            "belief_superseded" => Ok(EventType::BeliefSuperseded),
+            "autonomy_granted" => Ok(EventType::AutonomyGranted),
+            "autonomy_revoked" => Ok(EventType::AutonomyRevoked),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -220,6 +246,12 @@ impl EventType {
         EventType::RecordTypeDeclared,
         EventType::AssistantQuestionAsked,
         EventType::AssistantAnswerGiven,
+        EventType::AssistantProposalMade,
+        EventType::AssistantProposalDecided,
+        EventType::BeliefRecorded,
+        EventType::BeliefSuperseded,
+        EventType::AutonomyGranted,
+        EventType::AutonomyRevoked,
     ];
 
     /// The features that may author this event, or `None` for an event no feature
@@ -302,10 +334,38 @@ impl EventType {
             // says were never admitted.
             EventType::AssistantQuestionAsked | EventType::AssistantAnswerGiven => &[Feature::Llm],
 
+            // Making a proposal is the assistant acting, so it is gated like the
+            // rest of the conversation.
+            EventType::AssistantProposalMade => &[Feature::Llm],
+
+            // A belief exists only because the assistant concluded it, so it is
+            // the assistant's feature that owns it — even though the user is the
+            // one who accepted it.
+            EventType::BeliefRecorded | EventType::BeliefSuperseded => &[Feature::Llm],
+
+            // Granting is about the assistant, so it is gated with it. ⚠️ Note
+            // the asymmetry with `AssistantProposalDecided`, which is ungated:
+            // that one had to stay reachable so a feature switch could not
+            // strand a pending item. Nothing is stranded here — with the
+            // assistant off, a grant that cannot be changed also cannot be
+            // used, because nothing is proposing.
+            EventType::AutonomyGranted | EventType::AutonomyRevoked => &[Feature::Llm],
+
             EventType::DataWiped
             | EventType::FeedbackCaptured
             | EventType::ConfigSet
-            | EventType::RecordTypeDeclared => &[],
+            | EventType::RecordTypeDeclared
+            // ⚠️ **Deliberately ungated, and this differs from the auto-import
+            // precedent.** `AutoImportBatchDismissed` requires its own feature,
+            // so switching auto-import off strands every pending batch in the
+            // inbox with no way to clear it. Deciding a proposal is the *user*
+            // closing something already in front of them, not the assistant
+            // acting, and a feature switch must never be able to trap an item
+            // there permanently. Nothing is weakened by this: approving a
+            // proposal authors the real events in the same batch, and those
+            // carry their own guards — turn Notes off and the note is still
+            // refused. The guard belongs on the effect, not on the bookkeeping.
+            | EventType::AssistantProposalDecided => &[],
         }
     }
 }
@@ -965,6 +1025,17 @@ pub struct AssistantQuestionAskedPayload {
     /// devices disagree about the title of the same conversation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// True when the agent asked this on the user's behalf rather than the user
+    /// typing it.
+    ///
+    /// ⚠️ An explicit field rather than inferring it from `device_id`. The agent
+    /// is a device like any other, so "authored by the agent" is not the same
+    /// claim as "nobody asked for this" — and the difference is exactly what a
+    /// person needs to see before reading an answer they did not request.
+    /// Defaults to false, so every question in the log before this field existed
+    /// reads correctly as user-asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scheduled: bool,
 }
 
 /// Why an answer stopped, at the write site.
@@ -1092,6 +1163,201 @@ pub struct AssistantAnswerGivenPayload {
     pub verbs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub records_read: Vec<RecordRef>,
+}
+
+// Assistant proposals
+
+/// One thing the assistant offered to do.
+///
+/// `aggregate_id` is the `proposal_id`: a proposal is its own aggregate, unlike a
+/// message, which belongs to the thread that owns it. That is what lets the
+/// approval inbox pull one proposal by identity without reading the conversation
+/// it came out of — the inbox is reachable from the phone whether or not the user
+/// ever opens that thread.
+///
+/// ⚠️ **This event is the whole proposal, including everything needed to carry it
+/// out.** Same reasoning as [`AutoImportBatchProposedPayload`] keeping its draft
+/// rows: a decision may be taken days later, from another device, and must not
+/// depend on re-deriving anything from a model run that is long gone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantProposalMadePayload {
+    pub proposal_id: String,
+    /// The conversation it came out of, so the inbox can link back to the
+    /// reasoning. Not the aggregate — see the type's note.
+    pub thread_id: String,
+    /// The answer message that carried this proposal, for the same reason.
+    pub message_id: String,
+    /// The action type name, e.g. `note.create`. Matched against
+    /// `assistant::actions` at decision time.
+    pub action: String,
+    /// The validated arguments, exactly as they will be carried out.
+    pub args: serde_json::Value,
+    /// One sentence from the model on why it is proposing this. Shown in the
+    /// inbox, because "create a note titled X" without a reason is a decision the
+    /// user has to reconstruct.
+    pub rationale: String,
+    /// Whether the action declared itself reversible **at proposal time**.
+    ///
+    /// ⚠️ Snapshotted rather than looked up when rendering. The registry is code
+    /// and will move; the audit trail has to say what was claimed when the user
+    /// was asked, not what a later build believes. A mismatch between this and
+    /// the live declaration is a real signal, and it cannot be seen if the value
+    /// is read live.
+    pub reversible: bool,
+}
+
+/// What the user decided about one proposal.
+///
+/// ⚠️ **One event covers every ending**, and the reasoning is
+/// [`AssistantAnswerGivenPayload`]'s rather than auto-import's two-event shape: a
+/// proposal with no terminal event is indistinguishable from one still waiting,
+/// so a newer build's decision value must never make this build *reject* the
+/// payload and strand the proposal as pending forever.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantProposalDecidedPayload {
+    pub proposal_id: String,
+    /// A [`ProposalDecision`] rendered to its wire name. A `String` on the wire
+    /// for the reason above; see that type.
+    pub decision: String,
+    /// The ids of the events the approval authored, when it was approved.
+    ///
+    /// The audit link in the direction a person actually asks for it — "what did
+    /// accepting this actually do?" — and the reason it is recorded rather than
+    /// re-derived is that nothing else connects a note to the proposal that made
+    /// it. Empty on a rejection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub applied_event_ids: Vec<String>,
+    /// Free-form, optional, and only ever the user's own words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// How a proposal ended, at the write site.
+///
+/// ⚠️ Not the type carried on the wire — same asymmetry as [`AnswerStop`], and
+/// for the same reason. Readers treat an unrecognised value as "decided, outcome
+/// unknown", never as "still pending".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalDecision {
+    /// The user accepted it and the events were authored.
+    Approved,
+    /// The user declined. The proposal stays in the log as "seen and refused",
+    /// which is the evidence an approval rate is computed from.
+    Rejected,
+}
+
+impl ProposalDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProposalDecision::Approved => "approved",
+            ProposalDecision::Rejected => "rejected",
+        }
+    }
+
+    /// `None` for a value this build does not know, which a reader must treat as
+    /// terminal rather than as absent.
+    pub fn parse(s: &str) -> Option<ProposalDecision> {
+        match s {
+            "approved" => Some(ProposalDecision::Approved),
+            "rejected" => Some(ProposalDecision::Rejected),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for ProposalDecision {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+// Beliefs
+
+/// One conclusion the assistant reached and the user accepted.
+///
+/// ⚠️ **This event can only arrive through an approved proposal.** There is no
+/// other author: `belief.record` is an action, and an action only runs at
+/// approval. That is what makes the belief set auditable rather than merely
+/// inspectable — every entry was seen by a person before it existed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BeliefRecordedPayload {
+    pub belief_id: String,
+    /// The conclusion, one sentence, written about the user.
+    pub statement: String,
+    /// `low` | `medium` | `high`, per `assistant::actions::CONFIDENCE_LEVELS`.
+    ///
+    /// A `String` on the wire for [`AnswerStop`]'s reason, and three words rather
+    /// than a number because a model's numeric confidence is uncalibrated
+    /// precision that then reads as rigour.
+    pub confidence: String,
+    /// When to re-examine it, as `YYYY-MM-DD`.
+    ///
+    /// ⚠️ Chosen deliberately over decaying the confidence with age. Decay would
+    /// compute a new number from one that was never calibrated, which is false
+    /// precision squared; a review date says the honest thing instead — *this
+    /// should be looked at again*, and a person decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_after: Option<String>,
+    /// The records the run actually opened while reaching this.
+    ///
+    /// ⚠️ Derived from the trace, never written by the model — see
+    /// `assistant::actions::ParamSource::EvidenceFromTrace`. A belief cannot cite
+    /// a record the assistant never read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<RecordRef>,
+}
+
+/// A belief that no longer holds.
+///
+/// Retires rather than deletes: the statement and its evidence stay in the log,
+/// so "what did it used to think, and why did that stop being true" is a query
+/// rather than an archaeology exercise.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BeliefSupersededPayload {
+    pub belief_id: String,
+    /// What changed, in the assistant's words, for the user reading it later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The belief that replaced it, when one did. `None` means simply retired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
+}
+
+// Autonomy
+
+/// The user allowing one action type to be carried out without being asked.
+///
+/// ⚠️ **Authored by the user, never by the assistant.** There is no verb and no
+/// action that produces this; an assistant able to propose its own promotion is
+/// the thing the whole permission model exists to prevent. What it may do is
+/// accumulate the approval record that makes the user's decision an informed one.
+///
+/// ⚠️ **Only ever granted for a reversible action.** `docs/src/assistant.md`'s
+/// destination is "reversible things it may do freely; irreversible things it
+/// always asks about", so a grant on an irreversible action is refused at the
+/// write site rather than merely discouraged — see `promotion::grant`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutonomyGrantedPayload {
+    /// The action type name, e.g. `note.create`.
+    pub action: String,
+    /// Whether the action declared itself reversible **when the grant was made**.
+    ///
+    /// Snapshotted for [`AssistantProposalMadePayload::reversible`]'s reason: the
+    /// registry is code and moves, and the audit trail has to record what was
+    /// true when the user decided. A grant whose snapshot disagrees with the live
+    /// declaration is a signal worth seeing rather than one to paper over.
+    pub reversible: bool,
+}
+
+/// The user taking that permission back.
+///
+/// Every grant is revocable, and revoking is not the same as never granting: the
+/// log keeps both, so "it used to be allowed to do this" stays answerable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutonomyRevokedPayload {
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Validate that a payload JSON value matches the expected shape for the given event type.
@@ -1227,6 +1493,24 @@ pub fn validate_payload(
         EventType::AssistantQuestionAsked => {
             serde_json::from_value::<AssistantQuestionAskedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::AssistantProposalMade => {
+            serde_json::from_value::<AssistantProposalMadePayload>(payload.clone()).map(|_| ())
+        }
+        EventType::BeliefRecorded => {
+            serde_json::from_value::<BeliefRecordedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AutonomyGranted => {
+            serde_json::from_value::<AutonomyGrantedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AutonomyRevoked => {
+            serde_json::from_value::<AutonomyRevokedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::BeliefSuperseded => {
+            serde_json::from_value::<BeliefSupersededPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AssistantProposalDecided => {
+            serde_json::from_value::<AssistantProposalDecidedPayload>(payload.clone()).map(|_| ())
+        }
         EventType::AssistantAnswerGiven => {
             serde_json::from_value::<AssistantAnswerGivenPayload>(payload.clone()).map(|_| ())
         }
@@ -1340,10 +1624,16 @@ mod tests {
                 | EventType::ConfigSet
                 | EventType::RecordTypeDeclared
                 | EventType::AssistantQuestionAsked
-                | EventType::AssistantAnswerGiven => counted += 1,
+                | EventType::AssistantAnswerGiven
+                | EventType::AssistantProposalMade
+                | EventType::AssistantProposalDecided
+                | EventType::BeliefRecorded
+                | EventType::BeliefSuperseded
+                | EventType::AutonomyGranted
+                | EventType::AutonomyRevoked => counted += 1,
             }
         }
-        assert_eq!(counted, 42, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 48, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

@@ -1,5 +1,6 @@
 mod assistant_projection;
 mod auto_import_projection;
+mod beliefs_projection;
 mod budget_projection;
 mod config_projection;
 mod notes_projection;
@@ -13,6 +14,7 @@ mod writer;
 
 pub use assistant_projection::AssistantProjection;
 pub use auto_import_projection::AutoImportProjection;
+pub use beliefs_projection::BeliefsProjection;
 pub use budget_projection::BudgetProjection;
 pub use config_projection::{ConfigProjection, load_persisted};
 pub use notes_projection::NotesProjection;

@@ -332,8 +332,19 @@ mod tests {
     /// and the first-run seed is emitted at startup before any feature has been
     /// consulted. `events::registry` makes the same call on the read side, where
     /// `RecordTypeProjection` sits in `NEVER_GATED` beside config's.
+    ///
+    /// `assistant_proposal_decided` is the fifth, added 2026-09-10 with Phase D,
+    /// and it is the only one that is unowned for a *user-protection* reason
+    /// rather than a bootstrap one. Deciding a proposal is the user clearing
+    /// something already in their inbox, not the assistant acting. Gated on
+    /// `Llm`, switching the assistant off would strand every pending proposal
+    /// with no way to dismiss it — which is exactly what `AutoImportBatchDismissed`
+    /// does today, and the wart this deliberately does not copy. Nothing is
+    /// weakened: approving authors the action's real events in the same batch and
+    /// those carry their own guards, so the protection sits on the effect instead
+    /// of on the bookkeeping.
     #[test]
-    fn only_the_four_app_level_events_are_unowned() {
+    fn only_the_five_app_level_events_are_unowned() {
         let unowned: Vec<String> = EventType::ALL
             .iter()
             .filter(|t| t.authoring_features().is_empty())
@@ -345,7 +356,8 @@ mod tests {
                 "data_wiped",
                 "feedback_captured",
                 "config_set",
-                "record_type_declared"
+                "record_type_declared",
+                "assistant_proposal_decided"
             ],
             "an event type became unowned (ungated) — or a legitimately unowned \
              one gained an owner; if this is deliberate, update this list and say why"

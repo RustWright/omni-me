@@ -181,6 +181,203 @@ defer-major-phases rule; do not run ahead to the next one.
        `allow_fallbacks:false` makes upstream congestion arrive as a hard failure ·
        `scripts/seed-bench-hub.py` and `scripts/bench-openrouter.sh`, which were previously
        ad-hoc shell recoverable only from a session log.
+   - **Phase D built 2026-09-10 — `propose` + the approval inbox, verified live.** The
+     assistant can offer to make a change; nothing happens until the user accepts. One action
+     ships (`note.create`) behind the full spine, so widening is one registry entry plus a
+     mapper arm rather than new machinery.
+     - ⛔ **THE JOURNAL IS NEVER PROPOSABLE** (user, 2026-09-10). It is the one part of the app
+       he is the sole author of — *"essentially me writing what I want"* — while everything
+       else is *"an IO that's free game to the agent"*. It stays fully **readable** and
+       citable. This is a product invariant, **not a phase boundary**: it does not lapse when
+       autonomy is granted or when Phase E lands. `NEVER_PROPOSABLE` + a registry test enforce
+       it, because an absent entry is not a decision anyone can review.
+     - **`propose` is read-only at the verb layer, and that is the phase's main decision.** It
+       validates against the action registry and returns; it is handed no writer. The agent
+       records proposals *after* the loop, by walking the trace — the same derivation
+       `records_read` uses. Threading an `EventWriter` into `dispatch` was the alternative,
+       rejected: it buys only crash-survival of an unapproved proposal, and costs the literal
+       truth of the docs' strongest claim (no write path behind any tool the model holds).
+     - **Two events, not three.** `AssistantProposalMade` + `AssistantProposalDecided`, the
+       decision carrying a **string** — `AnswerStop`'s reasoning, not auto-import's two-event
+       shape: a newer build's decision value must never make an older build *reject* the
+       payload, because a rejected terminal event strands the proposal as pending forever.
+     - ⚠️ **Approval is ONE `append_batch`** — the action's events and the decision marker
+       together, with ids minted up front so the marker can name them. Split in two, a crash
+       between leaves the effect applied and the proposal still pending, and the next approval
+       applies it twice. Same reason `commit_batch` does it.
+     - ⚠️ **`assistant_proposal_decided` is deliberately UNGATED**, the fifth such event and the
+       only one ungated for user-protection rather than bootstrap. Gated on `Llm`, switching
+       the assistant off would strand every pending proposal undismissable — which is exactly
+       what `AutoImportBatchDismissed` does today, and the wart not copied. Nothing is
+       weakened: approving authors the real events in the same batch and those carry their own
+       guards, so the guard sits on the effect, not the bookkeeping.
+     - ⚠️ **Every proposal-detail column is `option<>` under SCHEMAFULL**, and not because any
+       is optional: the pull filter runs on the *author's* clock, so a decision from a device
+       whose clock trails the agent's can be folded **before** the proposal it decides.
+       Required columns would fail that inbound event and strand the proposal. Each handler
+       writes only its own columns, so the pair converges whichever lands first. Regression-
+       tested both orders.
+     - **Live end-to-end on a throwaway hub, `gpt-oss-120b-Turbo`.** Asked to build a checklist
+       from a seeded note, it ran `list_types → search → read → describe_type → propose` in
+       8.6s and proposed a real, correct note. Its prose said *"I've **proposed** creating…"*,
+       not "I've created" — the behaviour the system prompt exists to produce.
+     - **The journal invariant verified live, not just unit-tested.** Asked to add a journal
+       entry, it ran `list_types → describe_type`, saw an empty `actions` list and answered
+       *"there's no action available for creating or modifying journal records"* — **one event,
+       no proposal.** Whole-log check: 1 proposal, action `note.create`.
+     - **Autonomy is structurally deny-only**: one `Autonomy` variant exists, with a test that
+       nothing else appears, so Phase G's grants cannot arrive as a side effect of someone
+       adding an action type.
+     - **Not covered end-to-end:** the Tauri decide command itself and a decision *syncing
+       back* to another device. `inbox::decide` is tested against a real DB, real `EventWriter`
+       and real `NotesProjection` (the note row is asserted), and the command is a thin wrapper
+       over it — but the wrapper and the round trip have not been exercised on hardware.
+   - **Phases E, F and G built 2026-09-10 — memory, initiative, promotion.** The design
+     sequence from the plan is complete; what remains is widening the action set (user's
+     stated next step) and the trailing items below.
+     - **Phase E — beliefs.** `belief.record` / `belief.supersede` as actions, so a
+       conclusion reaches the log **only through the Phase D gate**. Own projection
+       (`beliefs`), catalogued so the assistant can read them back — the one sanctioned form
+       of recall, and the deliberate contrast with `assistant_messages`, which stays
+       uncatalogued so it cannot cite its own past guesses.
+       - ⚠️ **Evidence is system-filled from the trace, never model-supplied.** New
+         `ParamSource::EvidenceFromTrace`: the model is not shown the parameter and cannot
+         write it. Letting it name its own sources would reopen exactly the hole
+         `records_read` closes.
+       - **Confidence is three words, not a number** — a model asked for a numeric
+         confidence returns uncalibrated precision that then reads as rigour.
+       - **Review dates, not decaying confidence.** Decay would compute a new number from one
+         that was never calibrated. `review_after` says the honest thing and a person decides.
+       - **Retired, never deleted**, so "what did it used to think" stays a query. That is
+         the audit property the docs' whole mitigation rests on.
+       - ⛔ **Trigger is ask-only (user, 2026-09-10)** — it does not volunteer conclusions.
+         Prompt-enforced by necessity (no reliable way to classify the request) with the
+         approval gate as the structural backstop. `Trigger` is an enum with one variant so
+         the two wider policies are **deferred to during/after Phase F, not dropped**.
+     - **Phase F — the scheduled check-in.** ⚠️ **A check-in is a question, not a subsystem.**
+       The agent authors an ordinary `AssistantQuestionAsked` with `scheduled: true`; the
+       normal loop answers it and anything it wants goes through the normal gate. It
+       therefore inherits the journal refusal, the approval gate, sync and the thread list
+       rather than re-earning each — a parallel path would have been where one quietly
+       stopped holding.
+       - **Off by default**, and that is a product decision rather than a measurement: every
+         other default leaves the app as it was, and this is the first that would let the
+         assistant act unasked.
+       - ⚠️ **Due-ness is a calendar comparison, not an interval.** Restarts do not re-run it,
+         a missed hour still runs later the same day, and the schedule cannot drift later
+         each day. Ten tests, including the year-boundary case.
+       - **Last-run is derived from the log** (the newest `scheduled` message), not a state
+         file — correct across restarts, fresh data dirs and a second agent.
+       - Three config keys under the existing `Assistant` group; `check_in_hour` is
+         `ValueKind::Int`'s first real user, and `int_of` was added for it.
+     - **Phase G — earned autonomy.** `AutonomyGranted` / `AutonomyRevoked`, an
+       `assistant_autonomy` row per action, and a permissions screen showing the record
+       beside each switch.
+       - ⛔ **Irreversible actions cannot be granted, enforced at the write site.** A check
+         further downstream is one a later caller could route around. The mock carries an
+         irreversible fixture so a browser sweep reaches the refusal — verified live: a
+         **4/4 perfect record still shows no toggle**.
+       - ⚠️ **The user grants; the assistant has no route to it.** No verb, no action. An
+         assistant able to propose its own promotion inverts the model.
+       - **The evidence is a query over `assistant_proposals`, never a counter** — a
+         maintained tally is a second place to be wrong, and wrong quietly.
+       - ⚠️ **A granted action still produces a real proposal**, auto-approved through the
+         same `inbox::decide`. Writing directly would save an event and lose the record of
+         what was done under whose authority. Both halves are re-checked per use, so a build
+         that changes an action's reversibility drops old grants rather than honouring them.
+     - **Verified:** 874 core / 130 frontend / 82 app tests, clippy clean ×4, both memory and
+       permissions screens exercised in browser/mock with zero console errors.
+     - **Not verified on hardware:** a check-in actually firing on its schedule, and
+       auto-approval end to end against a live agent. Both are unit-tested; neither has run
+       on a box.
+   - ⛔ **APPROVAL LIVES WHERE THE DATA LIVES (user, 2026-09-10).** Do **not** route extracted
+     drafts, auto-import batches or any other domain object into the assistant's proposal
+     inbox — *"I don't want to be approving random finance related things in my assistant
+     chat."* The two flows share an event shape, which makes merging them tempting; what
+     varies is the **review UI**, and that is the whole value. A generic card cannot render a
+     receipt with editable line items, a re-run button and a correction flow.
+     - Intended shapes: photograph a receipt → proposed transaction **in that flow**, feedback
+       and re-run or hand-correct, then commit · inbox ingestion finds a task → **task
+       section** · PDF indexing → **archive page**.
+     - **The assistant notifies and routes.** "3 auto-imported receipts are waiting" plus a
+       deep link. That is a **read** — pending queues become catalogued types, which is also
+       what makes the Phase F check-in worth having. ⚠️ Needs no finance work: the batch
+       review screen has existed since Phase 3.
+     - Its own inbox keeps the narrow job it was built for: proposals with **no other home**
+       (a note, a belief).
+   - **Extraction, as it actually stands (surveyed 2026-09-10, untouched by Phases A–G).**
+     `core/src/extraction/` is 1,307 lines and works end to end: the `DocumentExtractor`
+     trait, an OpenAI-compatible **vision** impl, MIME routing, PDF→text, a verification pass,
+     a null impl, `/documents/extract` on the server and a Tauri command, with attachments
+     stored content-addressably.
+     - **The pipeline is general; only the output schema is not.** The trait, the 352-line
+       extractor (5 lines mention money), routing, PDF conversion and attachments are all
+       domain-neutral. `ExtractionResult` (`postings`/`total`/`commodity`/`account_hint`),
+       `prompt_for` ("You are a transaction extractor for a personal-finance journal") and 5
+       of 6 `ExtractionHint` variants are the finance-shaped half. Serving another domain is a
+       new result shape and prompt, **not** a new pipeline.
+     - ⚠️ **The dual-model boundary is NOT typed or enforced**, and `Provenance` does not
+       exist in the tree at all — both correctly still marked `(planned)` in
+       `docs/src/assistant.md`. What *is* true today is accidental: extraction runs in the
+       **server** process and the assistant in the **agent** process, so the two models are
+       already separated by deployment, with nothing asserting it.
+     - **No lock conflict from server-side writes.** The surrealkv lock is per *directory*;
+       server (`surreal_data/server.db`) and agent (`OMNI_AGENT_DATA`) hold different ones,
+       and the server already authors events today via `to_proposed_event`.
+   - ⚠️ **TWO GAPS BETWEEN THE POCs AND THE EXTRACTOR (user recalled one, 2026-09-11; the
+     second found while confirming it).** Both are in `extraction/openai_compat.rs`:
+     - **Rasterization is not built.** Open providers accept image formats, not PDF, so a
+       *scanned* PDF yields no text and the extractor returns an error naming the gap
+       (`:27`, `:152`). Generated PDFs work via `pdftotext`. Fixing it means rendering pages
+       to images (`pdftoppm`) before the model call.
+     - **Downscaling is not built either, and was never written down.** `content_for` (`:70`)
+       base64s whatever bytes it is handed straight into a `data:` URL with **no resize**.
+       The POC established that requests **413 above ~5 MB** and that 2048px-long-edge
+       downscaling is mandatory — that finding reached `tasks.md` as a plumbing note and
+       never reached the code. ⚠️ A modern phone photo is 3–8 MB, so **the capture path
+       would fail on real input today**.
+   - **Pointing extraction at DeepInfra is config, not code** (user, 2026-09-11 — correct).
+     `build_extractor` keys off `provider == "openai_compatible"` plus `vision`, so it is
+     `base_url` + `model` + `vision = true` in credentials. ⚠️ Do the two fixes above first;
+     the size limit bites hardest on the path this is for.
+   - **Action set widened 2026-09-11 — routines.** `routine.create`, `routine.add_item`,
+     `routine.modify_item`. Approving one now reaches `routine_groups` through the same gate
+     (`approving_a_routine_creates_it`), and a bad frequency is refused at approval.
+     - **New `ActionParam::validator`** (`ParamValidator`), used **instead of** `allowed`
+       wherever the domain owns a parser. Frequency forced it: the named variants would fit a
+       list, but `custom:N` carries bounds, and re-listing them here would be a second
+       definition free to drift — silently, since an unparseable frequency reaches the
+       projection rather than the user. The domain's own error text is passed through, so the
+       model can fix the value on the turn it called.
+     - ⚠️ **The model is never asked for `order`.** Position is relative to a list it cannot
+       see; new things sort last (`APPEND_ORDER`) and the user reorders on a screen built for
+       it.
+     - ⚠️ **`routine.modify_item` builds its `changes` object key by key.**
+       `RoutineItemModifiedPayload.changes` is free-form JSON, so passing a model-authored
+       blob through would hand it a write surface wider than the action declares — the one
+       place where the payload's own flexibility is the hazard.
+     - **Unknown actions now render their arguments verbatim** in the inbox. A test had
+       asserted the opposite while claiming the card stayed "decidable"; the assertion
+       contradicted its own premise and was corrected.
+   - ⛔ **`routine.complete` / `routine.skip` are NOT off the table — my reasoning was wrong**
+     (user, 2026-09-11). I argued they assert facts the assistant cannot verify. But the
+     **journal is readable precisely so it can see what the user wrote about their day**, and
+     that was a deliberate decision: *"sometimes I write about the routine things I've
+     done."* A completion inferred from the user's own entry is evidence-backed, not invented.
+     - **So when built, they take `ParamSource::EvidenceFromTrace`**, exactly like
+       `belief.record`: the card reads "mark 'morning run' done — you wrote about it on the
+       14th" rather than a bare assertion.
+     - ⚠️ Still worth a fourth `ActionType` field before granting these autonomy: they are
+       reversible, so they pass the grant test, but reversibility bounds damage to *state*
+       and the risk here is to the *truth* of a habit record. Deciding that is Phase G's, not
+       a reason to withhold the action.
+     - Context: the user has not set up routines since v1 because the initial setup is a lot
+       of work — naming, timing, ordering. That is what `routine.create`/`add_item` are for.
+   - **Dev sync server — required before any real-device test (user, 2026-09-10).** A second
+     server instance beside the live one: own port, own database, seeded data, dev Android
+     phone pointed at it. ⚠️ The one gap is `LISTEN_ADDR`, a hardcoded const; everything else
+     (relative `DB_PATH`, the client's non-production posture, repointing from Settings,
+     `seed-bench-hub.py`) already exists.
    - **First slate run, 2026-09-09 — 9 models, 11 runs, ~$3, all pinned to DeepInfra.**
      Scorecards in `runs/20260909-093234/` (gitignored). Free-form verb score, median/worst
      request latency, tokens:

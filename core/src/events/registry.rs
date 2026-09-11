@@ -17,8 +17,8 @@ use crate::config::{ALL_FEATURES, Feature, ResolvedConfig};
 use crate::journal_file::JournalFile;
 
 use super::{
-    AssistantProjection, AutoImportProjection, BudgetProjection, ConfigProjection, NotesProjection,
-    Projection, RecordTypeProjection, RoutinesProjection,
+    AssistantProjection, AutoImportProjection, BeliefsProjection, BudgetProjection,
+    ConfigProjection, NotesProjection, Projection, RecordTypeProjection, RoutinesProjection,
 };
 
 /// Projections that are never feature-gated.
@@ -43,6 +43,7 @@ pub const ALL_PROJECTIONS: &[&str] = &[
     AutoImportProjection::NAME,
     JournalFile::NAME,
     AssistantProjection::NAME,
+    BeliefsProjection::NAME,
 ];
 
 /// The projections a feature owns.
@@ -55,12 +56,19 @@ pub const ALL_PROJECTIONS: &[&str] = &[
 ///   `journal_file` is deliberately *not* under `AutoImport`: it reads `budget`'s
 ///   `transactions` table, so it is only ever useful alongside the finances tab
 ///   that reads its output.
-/// - `Llm` owns two: `notes`, because `note_llm_processed` lands in its tables,
-///   and `assistant`, the conversation itself.
+/// - `Llm` owns three: `notes`, because `note_llm_processed` lands in its tables;
+///   `assistant`, the conversation itself; and `beliefs`, which exists only
+///   because the assistant concluded something — turning the assistant off
+///   therefore stops beliefs being maintained, which is the intended reading of
+///   "the feature is inert".
 pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
     match feature {
         Feature::Journal | Feature::Notes => &[NotesProjection::NAME],
-        Feature::Llm => &[NotesProjection::NAME, AssistantProjection::NAME],
+        Feature::Llm => &[
+            NotesProjection::NAME,
+            AssistantProjection::NAME,
+            BeliefsProjection::NAME,
+        ],
         Feature::Routines => &[RoutinesProjection::NAME],
         Feature::Finances => &[BudgetProjection::NAME, JournalFile::NAME],
         Feature::AutoImport => &[BudgetProjection::NAME, AutoImportProjection::NAME],
@@ -106,9 +114,10 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         Box::new(BudgetProjection),
         Box::new(AutoImportProjection),
         Box::new(JournalFile::new(journal_path)),
-        // Last, and order-independent: it reads nothing another projection
-        // writes, and nothing reads its tables but the client and the agent.
+        // Last, and order-independent: neither reads anything another projection
+        // writes, and nothing reads their tables but the client and the agent.
         Box::new(AssistantProjection),
+        Box::new(BeliefsProjection),
     ]
 }
 
@@ -228,6 +237,7 @@ mod tests {
             AutoImportProjection.name(),
             journal_file.name(),
             AssistantProjection.name(),
+            BeliefsProjection.name(),
         ];
         let listed: BTreeSet<&str> = ALL_PROJECTIONS.iter().copied().collect();
         let actual: BTreeSet<&str> = live.iter().copied().collect();

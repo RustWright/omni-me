@@ -8,9 +8,13 @@
 //!
 //! What reaches the model is decided by [`catalog`], not by this module.
 
+/// What the assistant may offer to do. The write-side twin of [`catalog`].
+pub mod actions;
 /// One run's outcome, rendered into the event that records it.
 pub mod answer;
 pub mod catalog;
+/// The scheduled check-in: the assistant asking on the user's behalf.
+pub mod check_in;
 pub mod chunk;
 /// Reading conversations back: what is waiting for an answer, and what was said.
 pub mod conversation;
@@ -19,6 +23,12 @@ pub mod conversation;
 #[cfg(feature = "embeddings")]
 pub mod embedding;
 pub mod fusion;
+/// The approval inbox: reading proposals back, and deciding them.
+pub mod inbox;
+/// What the assistant believes about the user, and when to re-examine it.
+pub mod memory;
+/// Autonomy: the evidence for granting it, and the grant itself.
+pub mod promotion;
 pub mod query_text;
 /// Cross-encoder reranking. Gated with [`embedding`] — same ONNX Runtime.
 #[cfg(feature = "embeddings")]
@@ -31,12 +41,15 @@ pub mod store;
 pub mod vector_store;
 pub mod verbs;
 
-pub use answer::{answer_payload, records_read, skipped_payload};
+pub use actions::{ActionKind, ActionParam, ActionType, Autonomy};
+pub use answer::{ProposedAction, answer_payload, proposals, records_read, skipped_payload};
 pub use catalog::{CatalogEntry, ChildCollection, FilterField, FilterKind, IdentityKind};
 pub use conversation::{
     ConversationMessage, PendingQuestion, Role, ThreadSummary, ThreadView, Turn, list_threads,
     pending_questions, read_thread,
 };
+pub use inbox::{DecideError, Proposal};
+pub use memory::Belief;
 pub use retrieval::{Rerank, Retrievers, SemanticHit, SemanticSearch};
 pub use session::{MAX_TURNS, Outcome, Session, StopReason, TurnRecord};
 pub use store::{FullRecord, SearchHit, TypeResults};

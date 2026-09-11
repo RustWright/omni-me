@@ -10,11 +10,13 @@
 //! from the agent's own logs, all three can be long, and every one of them would
 //! sync to the phone.
 
+use crate::config::ResolvedConfig;
 use crate::events::{
     AnswerStop, AnswerUsage, AssistantAnswerGivenPayload, AssistantQuestionAskedPayload, RecordRef,
 };
 use crate::llm::chat::Usage;
 
+use super::actions;
 use super::session::{Outcome, StopReason};
 
 impl From<&Usage> for AnswerUsage {
@@ -63,6 +65,95 @@ pub fn records_read(outcome: &Outcome) -> Vec<RecordRef> {
         });
     }
     seen
+}
+
+/// The proposals a run actually made, in the order it made them.
+///
+/// Read off the `propose` calls in the trace, for [`records_read`]'s reason: a
+/// proposal derived from what the model *called* cannot be one it merely claimed
+/// in prose. This is also what keeps the verb layer writer-free — nothing is
+/// recorded until the loop has ended and the agent walks the trace.
+///
+/// ⚠️ **Re-validated here, not trusted from the trace.** The verb already
+/// rejected bad arguments on the turn they were sent, but the trace holds what
+/// the model asked for, not what the verb returned — a failed `propose` is in
+/// there looking exactly like a successful one. Skipping the re-check would put
+/// proposals the user cannot act on into their inbox.
+///
+/// A repeated proposal appears once. The loop flags repeats, and a model that
+/// proposes the same note twice in one run meant it once.
+pub fn proposals(config: &ResolvedConfig, outcome: &Outcome) -> Vec<ProposedAction> {
+    let mut out: Vec<ProposedAction> = Vec::new();
+    for turn in &outcome.trace {
+        if turn.verb.as_deref() != Some("propose") {
+            continue;
+        }
+        let Some(name) = turn.arguments.get("action").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(action) = actions::lookup(config, name) else {
+            continue;
+        };
+        let Some(rationale) = turn
+            .arguments
+            .get("rationale")
+            .and_then(|v| v.as_str())
+            .filter(|r| !r.trim().is_empty())
+        else {
+            continue;
+        };
+        let empty = serde_json::Value::Object(Default::default());
+        let Ok(mut args) =
+            actions::validate_args(action, turn.arguments.get("args").unwrap_or(&empty))
+        else {
+            continue;
+        };
+
+        // ⚠️ Evidence is attached **here**, from the run, and never taken from the
+        // model. Letting it name its own sources reopens the hole `records_read`
+        // closes: a citation is worth something only if the record was
+        // demonstrably in hand. An action that wants evidence and got none still
+        // goes through — the user sees an unsupported conclusion and can decline
+        // it, which is more useful than a silently dropped proposal.
+        if let Some(key) = actions::evidence_key(action)
+            && let Some(obj) = args.as_object_mut()
+        {
+            let cited = records_read(outcome);
+            if let Ok(value) = serde_json::to_value(&cited) {
+                obj.insert(key.to_string(), value);
+            }
+        }
+
+        if out
+            .iter()
+            .any(|p| p.action == action.name && p.args == args)
+        {
+            continue;
+        }
+        out.push(ProposedAction {
+            action: action.name.to_string(),
+            args,
+            rationale: rationale.to_string(),
+            // Snapshotted from the declaration that was live when it was
+            // proposed — see `AssistantProposalMadePayload::reversible`.
+            reversible: action.reversible,
+        });
+    }
+    out
+}
+
+/// One validated proposal, ready to become an event.
+///
+/// Deliberately not `AssistantProposalMadePayload`: that needs a `proposal_id`
+/// and the ids of the thread and message it belongs to, none of which this
+/// derivation knows. The caller owns identity — the same split as
+/// [`answer_payload`] taking its `message_id` from the agent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProposedAction {
+    pub action: String,
+    pub args: serde_json::Value,
+    pub rationale: String,
+    pub reversible: bool,
 }
 
 /// Build the answer payload for one completed run.
@@ -148,6 +239,7 @@ mod tests {
             message_id: "m1".into(),
             text: "what did I write about rent?".into(),
             title: Some("rent".into()),
+            scheduled: false,
         }
     }
 
@@ -279,5 +371,108 @@ mod tests {
         assert!(p.text.is_none());
         assert_eq!(p.usage.prompt_tokens, 0);
         assert_eq!(p.detail.as_deref(), Some("older than 60m"));
+    }
+
+    // proposals
+
+    fn config() -> ResolvedConfig {
+        ResolvedConfig::new(Default::default(), Default::default())
+    }
+
+    fn proposal_turn(action: &str, args: serde_json::Value) -> TurnRecord {
+        turn(
+            Some("propose"),
+            json!({ "action": action, "args": args, "rationale": "you asked me to" }),
+        )
+    }
+
+    #[test]
+    fn a_proposal_is_read_off_the_call_not_the_prose() {
+        let o = outcome(
+            StopReason::Answered,
+            vec![
+                turn(Some("search"), json!({"query": "passport"})),
+                proposal_turn(
+                    "note.create",
+                    json!({"title": "Renew passport", "body": "May"}),
+                ),
+            ],
+        );
+        let p = proposals(&config(), &o);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].action, "note.create");
+        assert_eq!(p[0].args["title"], json!("Renew passport"));
+        assert!(p[0].reversible, "note.create declares itself reversible");
+    }
+
+    /// A run with no `propose` call yields nothing, however confidently the
+    /// answer prose claims otherwise.
+    #[test]
+    fn prose_alone_proposes_nothing() {
+        let mut o = outcome(StopReason::Answered, vec![turn(None, json!({}))]);
+        o.answer = Some("I've created a note called Renew passport for you.".into());
+        assert!(proposals(&config(), &o).is_empty());
+    }
+
+    /// ⚠️ The trace holds what the model *asked for*, not what the verb returned —
+    /// a rejected `propose` sits in there looking exactly like an accepted one. A
+    /// proposal the user cannot act on must never reach their inbox.
+    #[test]
+    fn a_proposal_the_verb_refused_is_not_recorded() {
+        let o = outcome(
+            StopReason::Answered,
+            vec![
+                proposal_turn("note.create", json!({"title": "only a title"})),
+                proposal_turn("journal.append", json!({"text": "hi"})),
+                turn(
+                    Some("propose"),
+                    json!({ "action": "note.create", "args": {"title": "t", "body": "b"} }),
+                ),
+            ],
+        );
+        assert!(
+            proposals(&config(), &o).is_empty(),
+            "missing body, a journal action that does not exist, and no rationale"
+        );
+    }
+
+    #[test]
+    fn the_same_proposal_twice_in_one_run_is_recorded_once() {
+        let args = json!({"title": "Renew passport", "body": "May"});
+        let o = outcome(
+            StopReason::Answered,
+            vec![
+                proposal_turn("note.create", args.clone()),
+                proposal_turn("note.create", args),
+                proposal_turn(
+                    "note.create",
+                    json!({"title": "Book dentist", "body": "soon"}),
+                ),
+            ],
+        );
+        let p = proposals(&config(), &o);
+        assert_eq!(
+            p.len(),
+            2,
+            "identical twice is once; a different one counts"
+        );
+    }
+
+    /// ⛔ The journal invariant, at the derivation step. Even if the verb layer
+    /// were somehow bypassed, a journal proposal cannot become an event here.
+    #[test]
+    fn a_journal_proposal_never_survives_extraction() {
+        let o = outcome(
+            StopReason::Answered,
+            vec![turn(
+                Some("propose"),
+                json!({
+                    "action": "journal.append",
+                    "args": {"date": "2026-09-10", "text": "went running"},
+                    "rationale": "you mentioned it"
+                }),
+            )],
+        );
+        assert!(proposals(&config(), &o).is_empty());
     }
 }

@@ -1,11 +1,12 @@
 # The assistant, and what it is allowed to do
 
-> Status: **decided 2026-09-07**, ahead of the work it describes; the read half
-> **built 2026-09-08**. Most of this page is still marked **(planned)**: it is a
-> committed design written down before the implementation so the implementation can
-> be checked against it, following the same practice as
-> [What omni-me insists on](invariants.md). Sections marked **(today)** describe
-> machinery that exists now.
+> Status: **decided 2026-09-07**, ahead of the work it describes. The read half was
+> **built 2026-09-08**; proposals, memory, the scheduled check-in and earned
+> autonomy followed on **2026-09-10**. Sections marked **(today)** describe
+> machinery that exists now; the remaining **(planned)** ones are a committed
+> design written down before the implementation so the implementation can be
+> checked against it, following the same practice as
+> [What omni-me insists on](invariants.md).
 >
 > The design is checked against this page, not the other way round — but the page is
 > not frozen either. Where building something showed the design to be wrong, the page
@@ -19,7 +20,7 @@ same proportion. This page is the contract that makes the first true without the
 It is written for two readers: someone deciding whether to let software like this near
 their life, and someone extending omni-me who needs to know which lines are load-bearing.
 
-## Five verbs, and the list stays small **(read half today)**
+## Five verbs, and the list stays small **(today)**
 
 The assistant acts through exactly five tools:
 
@@ -29,12 +30,20 @@ The assistant acts through exactly five tools:
 | `read` | Fetch one record in full, by identity. | **(today)** |
 | `list_types` | List the kinds of record this app holds. | **(today)** |
 | `describe_type` | Describe one kind: how it is identified, and its properties. | **(today)** |
-| `propose` | Offer a change for approval. The only route to any write. | **(planned)** |
+| `propose` | Offer a change for approval. The only route to any write. | **(today)** |
 
-The four read verbs work. `propose` does not exist yet, and until it does the
-assistant is **read-only in the strongest sense** — there is no write path behind
-any tool it holds, so "it cannot change anything" is a property of the build
-rather than a promise about behaviour.
+All five verbs work. `propose` is the write half, and it is worth being precise
+about what shipping it did **not** change: the assistant is still **read-only in
+the strongest sense** — there is no write path behind any tool it holds.
+`propose` validates an intention and returns; it is handed nothing that can
+write. What records the intention is the agent, afterwards, by reading back which
+verbs were actually called. So "it cannot change anything" remains a property of
+the build rather than a promise about behaviour.
+
+That indirection has a second effect worth having. Because a proposal is derived
+from the **call**, not from the answer's prose, the assistant cannot claim to have
+proposed something it did not propose, and cannot propose something it did not
+tell you about. The two are the same record.
 
 Search matches on **meaning as well as wording**. Ask about a rent increase and an
 entry saying "the landlord bumped the rate again" comes back, despite sharing not one
@@ -106,7 +115,7 @@ could do in one, and it must be able to read a type declaration and work out wha
 it. That is a real tax on every single request, paid deliberately to avoid a surface that
 rots.
 
-## The assistant is a device, not a feature **(planned)**
+## The assistant is a device, not a feature **(today)**
 
 It runs as its own process, with its own database, its own device id, syncing over HTTP
 exactly as a phone does.
@@ -128,7 +137,7 @@ device shape is also the one worth wanting:
 **What it costs you:** a second copy of the log on whatever host runs it, and a second
 process to supervise.
 
-## Everything it does is signed **(planned)**
+## Everything it does is signed **(today)**
 
 The assistant authors under **its own device id**, never a shared one and never the id used
 by automated imports.
@@ -138,10 +147,28 @@ has the assistant done on its own?" has to be a query with an exact answer, not 
 reconstruction from timestamps and guesswork. Without it, granting autonomy is unauditable,
 and unwinding a misbehaving assistant means unpicking its work from yours by hand.
 
-## It proposes; you dispose **(planned)**
+## It proposes; you dispose **(today)**
 
 There is no write verb. `propose` records an intention, and nothing changes until you accept
 it.
+
+### What it may propose, and what it may never touch **(today)**
+
+Being *readable* and being *writable* are separate permissions over the same
+records, so they are separate declarations. Every kind of record the assistant can
+search is listed in one place; the actions it may offer to take are listed in
+another, and the second is much shorter than the first.
+
+**The journal is permanently in the first list and permanently absent from the
+second.** The assistant reads it, searches it, and cites it — and it may never
+offer to write a word into it. That is not a phase this feature is passing
+through on its way to more capability. The journal is the one part of omni-me with
+a single author, and an assistant that could put sentences there, even with
+approval, would end that. Everything else is fair game to propose.
+
+`describe_type` reports the actions available for each kind of record, and an
+empty list is a real answer rather than a gap: it means this kind cannot be
+changed by the assistant at all.
 
 The shape is not new: omni-me already proposes batches of imported transactions and waits
 for review **(today)**, and that design keeps the whole proposed set in the event rather than
@@ -158,7 +185,36 @@ That one structure does four jobs, which is why it is worth getting right:
 4. **An evaluation set**, so a candidate model can be scored on whether it would have
    proposed what you actually approved.
 
-## Autonomy is earned, one action type at a time **(planned)**
+## It can start a conversation, and you can tell **(today)**
+
+The assistant can check in on a schedule — once a day, at an hour you choose,
+with a prompt you control. It is **off until you turn it on**. Every other default
+in omni-me leaves the app behaving as it did before the setting existed; this is
+the first that would let the assistant act without being asked, and being
+interrupted is a choice only you can make.
+
+What a check-in actually is: **a question, asked on your behalf.** It is not a
+separate subsystem with its own outputs. The agent writes an ordinary question,
+the ordinary answering path picks it up, and anything it wants to change goes
+through the ordinary approval gate into the ordinary inbox. That is worth more
+than the code it saves — a check-in inherits every property the asking path
+already has, rather than having to re-earn each one, and a parallel path would be
+the obvious place for one of them to quietly not hold.
+
+Because the question is real, it is also visible: a check-in appears in your
+conversation list like anything else, marked as asked on your behalf. An answer to
+something you never asked, rendered identically to one you did, is the difference
+between a check-in and the assistant appearing to have opinions from nowhere.
+
+**It checks in once a day, by the calendar rather than by a countdown.** Restart
+the agent four times in an afternoon and it does not check in four times. Leave it
+off through the scheduled hour and it still checks in when it comes back, rather
+than silently skipping the day — a missed check-in is indistinguishable from the
+feature being broken. And the schedule does not drift: an interval-based rule
+would push each day's check-in a little later than the last until it wandered out
+of your waking hours.
+
+## Autonomy is earned, one action type at a time **(today)**
 
 The assistant starts able to do nothing but propose. Permission is granted per action type,
 recorded as events like everything else, and every grant is revocable.
@@ -167,11 +223,39 @@ The destination is a single rule: **reversible things it may do freely; irrevers
 it always asks about.** That is not the starting state, because trusting it on day one would
 be a guess. It is where sustained evidence is allowed to lead.
 
+Every action starts asking, and a new one cannot arrive already granted — a grant
+is a separate, deliberate act recorded as its own event. Nothing is granted by
+default, ever.
+
+**The rule is enforced, not advised.** Granting autonomy for an irreversible
+action is refused at the point of writing the grant, so there is no path by which
+one could be honoured. A permissions screen shows every action, what it has done,
+and how you decided about it; an irreversible one shows no switch at all, and says
+why instead. An action with a perfect record still gets no switch if it cannot be
+undone — the record is the argument for granting, and reversibility is the
+precondition that argument does not override.
+
+**The evidence is a query, never a counter.** How often you accepted something is
+derived from the proposals themselves, so there is no separate tally that can
+drift. And the assistant has no route to any of it: there is no verb and no action
+that asks for more permission. An assistant that could request its own promotion
+inverts the model this whole page describes.
+
+**Granting does not change what gets recorded.** A granted action still produces a
+real proposal first, which is then approved automatically — same proposal, same
+decision event, same audit trail, with the decision noting it was carried out
+under a standing grant. Writing directly would have saved an event and lost the
+only record that says what was done and under whose authority.
+
 ### Reversibility, precisely
 
 Every action type declares whether it is reversible **from the day it is defined**, including
 the ones that begin with no permission at all. The predicate is the destination of the whole
 model, so it cannot be retrofitted onto a hundred action types later.
+
+That declaration is **recorded onto the proposal when it is made**, not read back
+when you look at it. The registry is code and will change; what you were told when
+you were asked is what the log has to keep.
 
 An action is **reversible** only if all three hold:
 
@@ -220,7 +304,7 @@ receipt from steering a real action. As **epistemics**, it is what lets you ask 
 assistant believes something and get the actual evidence back rather than a plausible
 retelling.
 
-## What it believes is as reviewable as what it does **(planned)**
+## What it believes is as reviewable as what it does **(today)**
 
 The assistant will accumulate conclusions: that you sleep badly in weeks you travel, that you
 underestimate long tasks. These are stored as ordinary records with a statement, a confidence,
@@ -232,6 +316,25 @@ ways that compound quietly, and each wrong belief shapes the next suggestion. Th
 is that every belief cites its evidence and the whole set is listable, so it can be audited
 rather than merely trusted. That is a mitigation, not a solution, and it is the part of this
 design most likely to need revisiting once it meets real use.
+
+Four things about how it was built, each of which could reasonably have gone the
+other way:
+
+- **It only concludes something when you ask it to.** It does not volunteer
+  conclusions in the course of answering. That is the starting policy, not the
+  ceiling — noticing patterns unprompted is a later decision, to be taken on
+  purpose — and either way nothing is recorded without your approval.
+- **The evidence is taken from what it actually read**, not from what it says it
+  read. A belief cites the records the run demonstrably opened, so it cannot name
+  a journal entry it never looked at. A conclusion drawn without opening anything
+  says so on its face.
+- **Confidence is three words, not a number.** A model asked for a numeric
+  confidence returns something like `0.87` with no calibration behind it, and that
+  false precision then reads as rigour. Low, medium and high are what it can
+  actually distinguish.
+- **Beliefs are retired, never deleted**, and retired ones stay readable. A memory
+  you can only see the current state of can be inspected but not audited — you
+  could never ask what it used to think, or why that changed.
 
 ## Capture: who authored the content, not who pressed the shutter **(planned)**
 

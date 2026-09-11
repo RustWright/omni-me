@@ -29,6 +29,9 @@ pub enum ConfigKey {
     AssistantEmbedModel,
     AssistantRerank,
     AssistantRerankModel,
+    AssistantCheckIn,
+    AssistantCheckInPrompt,
+    AssistantCheckInHour,
 }
 
 /// Display / persistence order, and the order the settings screen renders.
@@ -44,6 +47,9 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::AssistantEmbedModel,
     ConfigKey::AssistantRerank,
     ConfigKey::AssistantRerankModel,
+    ConfigKey::AssistantCheckIn,
+    ConfigKey::AssistantCheckInPrompt,
+    ConfigKey::AssistantCheckInHour,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -103,6 +109,9 @@ impl fmt::Display for ConfigKey {
             ConfigKey::AssistantEmbedModel => "assistant.embed_model",
             ConfigKey::AssistantRerank => "assistant.rerank",
             ConfigKey::AssistantRerankModel => "assistant.rerank_model",
+            ConfigKey::AssistantCheckIn => "assistant.check_in",
+            ConfigKey::AssistantCheckInPrompt => "assistant.check_in_prompt",
+            ConfigKey::AssistantCheckInHour => "assistant.check_in_hour",
         };
         write!(f, "{s}")
     }
@@ -124,6 +133,9 @@ impl FromStr for ConfigKey {
             "assistant.embed_model" => Ok(ConfigKey::AssistantEmbedModel),
             "assistant.rerank" => Ok(ConfigKey::AssistantRerank),
             "assistant.rerank_model" => Ok(ConfigKey::AssistantRerankModel),
+            "assistant.check_in" => Ok(ConfigKey::AssistantCheckIn),
+            "assistant.check_in_prompt" => Ok(ConfigKey::AssistantCheckInPrompt),
+            "assistant.check_in_hour" => Ok(ConfigKey::AssistantCheckInHour),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -145,9 +157,13 @@ impl<'de> Deserialize<'de> for ConfigKey {
     }
 }
 
-/// What kind of value a key holds. `Int` has no key today and is here anyway:
-/// widening the value type later is an event-schema migration, while widening the
-/// key set is not, so the expensive half is paid up front.
+/// What kind of value a key holds.
+///
+/// `Int` was added before anything used it, on the reasoning that widening the
+/// value type later is an event-schema migration while widening the key set is
+/// not — so the expensive half was paid up front. `assistant.check_in_hour`
+/// became its first user in Phase F, which is the bet paying out rather than a
+/// reason to restate it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueKind {
     Bool,
@@ -247,6 +263,28 @@ impl ConfigKey {
             ConfigKey::AssistantRerankModel => {
                 ConfigValue::Text("jina-v2-multilingual".to_string())
             }
+            // ⚠️ **Off by default, and this one is a product decision rather than
+            // a measurement.** Every other default here leaves the app behaving
+            // as it did before the key existed; this is the first that would let
+            // the assistant act without being asked. Initiative is opt-in because
+            // the user has to choose to be interrupted — a default-on check-in
+            // would start proposing on an install that never asked for one.
+            ConfigKey::AssistantCheckIn => ConfigValue::Bool(false),
+            // Deliberately about *reviewing what is already recorded* rather than
+            // finding new things to conclude. The user's Phase E decision was that
+            // beliefs are proposed only on request; a default prompt that told the
+            // agent to go looking for patterns would route around that decision
+            // through the back door.
+            ConfigKey::AssistantCheckInPrompt => ConfigValue::Text(
+                "Review anything you concluded about me that is now due for \
+                 re-examination, and tell me what still holds and what does not. \
+                 Do not draw new conclusions."
+                    .to_string(),
+            ),
+            // 07:00 in the agent's local time. Early enough to be waiting when the
+            // user wakes, late enough that a machine asleep overnight has usually
+            // come back.
+            ConfigKey::AssistantCheckInHour => ConfigValue::Int(7),
         }
     }
 
@@ -258,11 +296,14 @@ impl ConfigKey {
             | ConfigKey::FeatureFinances
             | ConfigKey::FeatureAutoImport
             | ConfigKey::FeatureLlm
-            | ConfigKey::AssistantRerank => ValueKind::Bool,
+            | ConfigKey::AssistantRerank
+            | ConfigKey::AssistantCheckIn => ValueKind::Bool,
             ConfigKey::AppearanceTheme
             | ConfigKey::AppearanceAccent
             | ConfigKey::AssistantEmbedModel
-            | ConfigKey::AssistantRerankModel => ValueKind::Text,
+            | ConfigKey::AssistantRerankModel
+            | ConfigKey::AssistantCheckInPrompt => ValueKind::Text,
+            ConfigKey::AssistantCheckInHour => ValueKind::Int,
         }
     }
 
@@ -285,7 +326,14 @@ impl ConfigKey {
             // mid-run would stall every question for the length of a download.
             | ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerank
-            | ConfigKey::AssistantRerankModel => false,
+            | ConfigKey::AssistantRerankModel
+            // The agent reads the schedule when it starts its timer, so a
+            // change lands on its next launch — the same contract as the
+            // models above, and for the same reason: the value is consumed
+            // once at startup rather than per run.
+            | ConfigKey::AssistantCheckIn
+            | ConfigKey::AssistantCheckInPrompt
+            | ConfigKey::AssistantCheckInHour => false,
         }
     }
 
@@ -303,6 +351,9 @@ impl ConfigKey {
             ConfigKey::AssistantEmbedModel => "Embedding model",
             ConfigKey::AssistantRerank => "Rerank results",
             ConfigKey::AssistantRerankModel => "Reranking model",
+            ConfigKey::AssistantCheckIn => "Daily check-in",
+            ConfigKey::AssistantCheckInPrompt => "Check-in prompt",
+            ConfigKey::AssistantCheckInHour => "Check-in hour",
         }
     }
 
@@ -310,6 +361,10 @@ impl ConfigKey {
     /// switch at all.
     pub fn feature(self) -> Option<Feature> {
         match self {
+            // ⚠️ The check-in keys return `None`: they configure the LLM
+            // feature's behaviour but do not *switch* it, and a key that
+            // reported a feature here would be treated as that feature's
+            // on/off control by the settings screen.
             ConfigKey::FeatureJournal => Some(Feature::Journal),
             ConfigKey::FeatureNotes => Some(Feature::Notes),
             ConfigKey::FeatureRoutines => Some(Feature::Routines),
@@ -322,7 +377,10 @@ impl ConfigKey {
             // They tune a capability the LLM feature already gates.
             | ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerank
-            | ConfigKey::AssistantRerankModel => None,
+            | ConfigKey::AssistantRerankModel
+            | ConfigKey::AssistantCheckIn
+            | ConfigKey::AssistantCheckInPrompt
+            | ConfigKey::AssistantCheckInHour => None,
         }
     }
 
@@ -342,7 +400,10 @@ impl ConfigKey {
             ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => ConfigGroup::Appearance,
             ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerank
-            | ConfigKey::AssistantRerankModel => ConfigGroup::Assistant,
+            | ConfigKey::AssistantRerankModel
+            | ConfigKey::AssistantCheckIn
+            | ConfigKey::AssistantCheckInPrompt
+            | ConfigKey::AssistantCheckInHour => ConfigGroup::Assistant,
         }
     }
 
@@ -498,6 +559,24 @@ impl ResolvedConfig {
             },
         }
     }
+
+    /// The effective value of an integer key, with the same fall-back reasoning
+    /// as [`ResolvedConfig::bool_of`].
+    ///
+    /// ⚠️ Range is **not** checked here. The bounds belong to whoever reads the
+    /// value — an hour and a retry count have nothing in common — and enforcing a
+    /// guess at this layer would silently rewrite a value the caller could have
+    /// clamped meaningfully.
+    pub fn int_of(&self, key: ConfigKey) -> i64 {
+        let (value, _) = self.get(key);
+        match value {
+            ConfigValue::Int(n) => n,
+            _ => match key.default_value() {
+                ConfigValue::Int(n) => n,
+                _ => 0,
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -543,11 +622,14 @@ mod tests {
                 | ConfigKey::AppearanceAccent
                 | ConfigKey::AssistantEmbedModel
                 | ConfigKey::AssistantRerank
-                | ConfigKey::AssistantRerankModel => counted += 1,
+                | ConfigKey::AssistantRerankModel
+                | ConfigKey::AssistantCheckIn
+                | ConfigKey::AssistantCheckInPrompt
+                | ConfigKey::AssistantCheckInHour => counted += 1,
             }
         }
         assert_eq!(
-            counted, 11,
+            counted, 14,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

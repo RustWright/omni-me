@@ -1053,11 +1053,24 @@ pub struct AssistantMessage {
     pub records_read: Option<Vec<RecordCitation>>,
     #[serde(default)]
     pub usage: Option<AssistantUsage>,
+    /// True when the agent raised this question on the user's behalf rather than
+    /// the user typing it.
+    ///
+    /// ⚠️ Worth showing. An answer to something you never asked, rendered
+    /// identically to one you did, is the difference between a check-in and the
+    /// assistant appearing to have opinions out of nowhere.
+    #[serde(default)]
+    pub scheduled: Option<bool>,
 }
 
 impl AssistantMessage {
     pub fn is_user(&self) -> bool {
         self.role == "user"
+    }
+
+    /// Whether the assistant raised this itself, on a schedule.
+    pub fn is_scheduled(&self) -> bool {
+        self.scheduled.unwrap_or(false)
     }
 
     /// The sentence to show in place of an answer that never arrived.
@@ -1105,6 +1118,417 @@ pub struct AssistantThreadView {
 pub struct AssistantAsked {
     pub thread_id: String,
     pub message_id: String,
+}
+
+/// Something the assistant has offered to do, waiting on the user.
+///
+/// ⚠️ Nothing has happened when one of these exists. The assistant has no write
+/// path — accepting it here is what authors the change.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AssistantProposal {
+    pub proposal_id: String,
+    pub thread_id: String,
+    pub message_id: String,
+    /// `{type}.{operation}`, e.g. `note.create`.
+    pub action: String,
+    pub args: serde_json::Value,
+    /// The assistant's one-sentence reason, written to stand alone — the inbox
+    /// shows it without the conversation around it.
+    pub rationale: String,
+    /// What the action declared **when it was proposed**, not now.
+    pub reversible: bool,
+    pub created_at: String,
+    /// `None` while waiting. `approved` | `rejected`, or a value a newer build
+    /// wrote — any value at all means it is no longer in the inbox.
+    #[serde(default)]
+    pub decision: Option<String>,
+}
+
+impl AssistantProposal {
+    pub fn is_pending(&self) -> bool {
+        self.decision.is_none()
+    }
+
+    /// What accepting this would do, in the user's words rather than the
+    /// action's name.
+    ///
+    /// ⚠️ Falls back to the raw action name for anything this build does not
+    /// recognise. A proposal made by a newer build must render as *something* a
+    /// person can decide on — a blank card is the one outcome that makes the
+    /// inbox unusable.
+    pub fn summary(&self) -> String {
+        let arg = |key: &str| self.args.get(key).and_then(|v| v.as_str());
+        match self.action.as_str() {
+            "note.create" => match arg("title") {
+                Some(title) => format!("Create a note: {title}"),
+                None => "Create a note".to_string(),
+            },
+            "belief.record" => "Remember something about you".to_string(),
+            "belief.supersede" => "Retire something it believed".to_string(),
+            "routine.create" => match (arg("name"), arg("frequency")) {
+                (Some(name), Some(freq)) => format!("Create a {} routine: {name}", readable(freq)),
+                (Some(name), None) => format!("Create a routine: {name}"),
+                _ => "Create a routine".to_string(),
+            },
+            "routine.add_item" => match arg("name") {
+                Some(name) => format!("Add to a routine: {name}"),
+                None => "Add something to a routine".to_string(),
+            },
+            "routine.modify_item" => "Change an item in a routine".to_string(),
+            other => other.to_string(),
+        }
+    }
+
+    /// What the assistant is proposing, in enough detail to decide on.
+    ///
+    /// ⚠️ Falls back to the raw arguments for an action this build does not know,
+    /// rather than showing nothing. A proposal from a newer build must still be
+    /// decidable — an empty card is the one outcome that makes the inbox useless.
+    pub fn detail(&self) -> Option<String> {
+        let arg = |key: &str| self.args.get(key).and_then(|v| v.as_str());
+        match self.action.as_str() {
+            "note.create" => return arg("body").map(str::to_string),
+            "belief.record" => {
+                let statement = arg("statement")?;
+                return Some(match arg("confidence") {
+                    Some(c) => format!("{statement}\n\nHow sure it is: {c}"),
+                    None => statement.to_string(),
+                });
+            }
+            "belief.supersede" => return arg("reason").map(str::to_string),
+            "routine.add_item" => {
+                return arg("estimated_duration_min").map(|m| format!("About {m} minutes"));
+            }
+            "routine.modify_item" => {
+                let mut parts = Vec::new();
+                if let Some(name) = arg("name") {
+                    parts.push(format!("New wording: {name}"));
+                }
+                if let Some(minutes) = arg("estimated_duration_min") {
+                    parts.push(format!("New estimate: {minutes} minutes"));
+                }
+                return (!parts.is_empty()).then(|| parts.join("\n"));
+            }
+            "routine.create" => return None,
+            _ => {}
+        }
+        // An action this build does not know: show its arguments verbatim so the
+        // card is still something a person can weigh up.
+        let obj = self.args.as_object()?;
+        let rendered: Vec<String> = obj
+            .iter()
+            .map(|(key, value)| match value.as_str() {
+                Some(text) => format!("{key}: {text}"),
+                None => format!("{key}: {value}"),
+            })
+            .collect();
+        (!rendered.is_empty()).then(|| rendered.join("\n"))
+    }
+}
+
+/// A routine frequency as a person says it.
+///
+/// ⚠️ `custom:N` is the wire form and must never reach the screen as-is — it is
+/// the app's encoding, not language. An unrecognised value is shown verbatim
+/// rather than guessed at.
+fn readable(frequency: &str) -> String {
+    match frequency {
+        "daily" => "daily".to_string(),
+        "weekly" => "weekly".to_string(),
+        "biweekly" => "fortnightly".to_string(),
+        "monthly" => "monthly".to_string(),
+        other => match other.strip_prefix("custom:") {
+            Some(n) => format!("every {n} days"),
+            None => other.to_string(),
+        },
+    }
+}
+
+/// One record a belief was drawn from.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EvidenceRef {
+    pub kind: String,
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// A lasting conclusion the assistant drew and the user accepted.
+///
+/// ⚠️ Nothing here was written by the assistant alone — every belief went through
+/// the approval gate, which is what makes the set auditable rather than merely
+/// visible.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Belief {
+    pub belief_id: String,
+    pub statement: String,
+    /// `low` | `medium` | `high`, or anything a newer build recorded.
+    pub confidence: String,
+    pub recorded_at: String,
+    #[serde(default)]
+    pub review_after: Option<String>,
+    /// The records the assistant had actually opened. May be empty — an
+    /// unsupported conclusion is shown as unsupported rather than hidden.
+    #[serde(default)]
+    pub evidence: Vec<EvidenceRef>,
+    /// `None` while it still holds.
+    #[serde(default)]
+    pub superseded_at: Option<String>,
+    #[serde(default)]
+    pub superseded_reason: Option<String>,
+}
+
+impl Belief {
+    pub fn is_live(&self) -> bool {
+        self.superseded_at.is_none()
+    }
+
+    /// How well supported it is, in words a person can act on.
+    ///
+    /// ⚠️ Falls through to the raw value rather than guessing. A confidence this
+    /// build does not know was recorded by a newer one, and showing it verbatim
+    /// is honest where silently calling it "low" would be a lie about the record.
+    pub fn confidence_label(&self) -> String {
+        match self.confidence.as_str() {
+            "high" => "Well supported".to_string(),
+            "medium" => "Some support".to_string(),
+            "low" => "Thin evidence".to_string(),
+            other => other.to_string(),
+        }
+    }
+}
+
+/// How one action has fared at the approval gate, and whether it is granted.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ActionRecord {
+    pub action: String,
+    pub approved: u32,
+    pub rejected: u32,
+    /// Still waiting. Not evidence either way.
+    pub pending: u32,
+    /// Whether the assistant may currently do this without asking.
+    pub granted: bool,
+    /// Whether it can be undone. ⛔ An irreversible action can never be granted.
+    pub reversible: bool,
+}
+
+impl ActionRecord {
+    pub fn decided(&self) -> u32 {
+        self.approved + self.rejected
+    }
+
+    /// Share of decided proposals that were approved, or `None` when none have
+    /// been decided.
+    ///
+    /// ⚠️ `None` rather than zero: "never used" and "always rejected" are
+    /// opposite facts, and one number cannot say both.
+    pub fn approval_rate(&self) -> Option<f64> {
+        let decided = self.decided();
+        (decided > 0).then(|| f64::from(self.approved) / f64::from(decided))
+    }
+
+    /// The evidence, as a sentence rather than a bare ratio.
+    pub fn evidence_label(&self) -> String {
+        match self.approval_rate() {
+            None => "Never proposed yet".to_string(),
+            Some(rate) => format!(
+                "You accepted {} of {} ({:.0}%)",
+                self.approved,
+                self.decided(),
+                rate * 100.0
+            ),
+        }
+    }
+
+    /// Whether it makes sense to offer the toggle at all.
+    pub fn can_be_granted(&self) -> bool {
+        self.reversible
+    }
+}
+
+#[cfg(test)]
+mod action_record_tests {
+    use super::*;
+
+    fn record(approved: u32, rejected: u32, reversible: bool) -> ActionRecord {
+        ActionRecord {
+            action: "note.create".into(),
+            approved,
+            rejected,
+            pending: 0,
+            granted: false,
+            reversible,
+        }
+    }
+
+    #[test]
+    fn an_unused_action_says_so_rather_than_showing_zero_percent() {
+        assert_eq!(record(0, 0, true).evidence_label(), "Never proposed yet");
+        assert_eq!(record(0, 0, true).approval_rate(), None);
+    }
+
+    #[test]
+    fn the_evidence_reads_as_a_count_and_a_share() {
+        assert_eq!(
+            record(3, 1, true).evidence_label(),
+            "You accepted 3 of 4 (75%)"
+        );
+    }
+
+    /// A pending proposal must not move the number — it is not evidence yet.
+    #[test]
+    fn pending_proposals_do_not_count() {
+        let mut r = record(2, 0, true);
+        r.pending = 5;
+        assert_eq!(r.decided(), 2);
+        assert_eq!(r.evidence_label(), "You accepted 2 of 2 (100%)");
+    }
+
+    /// ⚠️ `custom:N` is the wire encoding, not language. It must never reach a
+    /// card as-is.
+    #[test]
+    fn a_custom_frequency_reads_as_words_not_as_its_encoding() {
+        assert_eq!(readable("custom:3"), "every 3 days");
+        assert_eq!(readable("biweekly"), "fortnightly");
+        assert_eq!(readable("daily"), "daily");
+        // Unrecognised: shown verbatim rather than guessed at.
+        assert_eq!(readable("whenever"), "whenever");
+    }
+
+    /// ⛔ The published rule, at the surface that offers the choice.
+    #[test]
+    fn an_irreversible_action_is_not_grantable() {
+        assert!(!record(9, 0, false).can_be_granted());
+        assert!(record(0, 9, true).can_be_granted());
+    }
+}
+
+#[cfg(test)]
+mod belief_tests {
+    use super::*;
+
+    fn belief(confidence: &str) -> Belief {
+        Belief {
+            belief_id: "b1".into(),
+            statement: "You underestimate admin tasks.".into(),
+            confidence: confidence.into(),
+            recorded_at: "2026-09-10T00:00:00Z".into(),
+            review_after: None,
+            evidence: Vec::new(),
+            superseded_at: None,
+            superseded_reason: None,
+        }
+    }
+
+    #[test]
+    fn the_three_levels_read_as_prose() {
+        assert_eq!(belief("high").confidence_label(), "Well supported");
+        assert_eq!(belief("medium").confidence_label(), "Some support");
+        assert_eq!(belief("low").confidence_label(), "Thin evidence");
+    }
+
+    /// A value from a newer build must show as itself, not be flattened into one
+    /// of ours — that would misreport what is actually in the log.
+    #[test]
+    fn an_unknown_confidence_is_shown_verbatim() {
+        assert_eq!(belief("certain").confidence_label(), "certain");
+    }
+
+    #[test]
+    fn any_supersession_timestamp_retires_it() {
+        let mut b = belief("low");
+        assert!(b.is_live());
+        b.superseded_at = Some("2026-09-11T00:00:00Z".into());
+        assert!(!b.is_live());
+    }
+}
+
+#[cfg(test)]
+mod proposal_tests {
+    use super::*;
+
+    fn proposal(action: &str, args: serde_json::Value) -> AssistantProposal {
+        AssistantProposal {
+            proposal_id: "p1".into(),
+            thread_id: "t1".into(),
+            message_id: "m1".into(),
+            action: action.into(),
+            args,
+            rationale: "because".into(),
+            reversible: true,
+            created_at: "2026-09-10T00:00:00Z".into(),
+            decision: None,
+        }
+    }
+
+    #[test]
+    fn a_note_proposal_reads_as_what_it_would_do() {
+        let p = proposal(
+            "note.create",
+            serde_json::json!({ "title": "Renew passport", "body": "Expires May." }),
+        );
+        assert_eq!(p.summary(), "Create a note: Renew passport");
+        assert_eq!(p.detail().as_deref(), Some("Expires May."));
+    }
+
+    /// ⚠️ A proposal from a newer build must still render something decidable.
+    /// A blank card is the one outcome that makes the inbox unusable — the user
+    /// cannot accept or decline what they cannot read.
+    #[test]
+    fn an_unknown_action_still_renders_a_decidable_card() {
+        let p = proposal("routine.complete", serde_json::json!({ "item": "x" }));
+        assert_eq!(p.summary(), "routine.complete");
+        // Its arguments, verbatim. This test previously asserted `None` here,
+        // which contradicted its own premise: a card showing only an action name
+        // is not something a person can weigh up.
+        assert_eq!(p.detail().as_deref(), Some("item: x"));
+    }
+
+    /// A note proposal missing its title must not render an empty heading.
+    #[test]
+    fn a_note_proposal_without_a_title_still_says_what_it_is() {
+        let p = proposal("note.create", serde_json::json!({ "body": "b" }));
+        assert_eq!(p.summary(), "Create a note");
+    }
+
+    #[test]
+    fn a_routine_proposal_reads_as_a_sentence() {
+        let p = proposal(
+            "routine.create",
+            serde_json::json!({ "name": "Morning", "frequency": "custom:3" }),
+        );
+        assert_eq!(p.summary(), "Create a every 3 days routine: Morning");
+
+        let item = proposal(
+            "routine.add_item",
+            serde_json::json!({ "name": "Stretch", "estimated_duration_min": "10" }),
+        );
+        assert_eq!(item.summary(), "Add to a routine: Stretch");
+        assert_eq!(item.detail().as_deref(), Some("About 10 minutes"));
+    }
+
+    /// ⚠️ An unknown action must still render something decidable — its
+    /// arguments verbatim rather than a blank card.
+    #[test]
+    fn an_unknown_actions_arguments_are_shown_verbatim() {
+        let p = proposal(
+            "future.thing",
+            serde_json::json!({ "target": "x", "count": 3 }),
+        );
+        let detail = p.detail().expect("some detail");
+        assert!(detail.contains("target: x"), "{detail}");
+        assert!(detail.contains("count: 3"), "{detail}");
+    }
+
+    /// Any decision at all takes it out of the inbox — including one this build
+    /// cannot name, which the projection and `core` both treat as terminal.
+    #[test]
+    fn any_decision_value_means_it_is_no_longer_waiting() {
+        let mut p = proposal("note.create", serde_json::json!({ "title": "t" }));
+        assert!(p.is_pending());
+        p.decision = Some("superseded-by-a-later-build".into());
+        assert!(!p.is_pending());
+    }
 }
 
 #[cfg(test)]

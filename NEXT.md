@@ -1,40 +1,42 @@
 # NEXT
 
-**Next action: Phase D — `propose` + the approval inbox.** The first time the assistant
-*does* something rather than answering. ⛔ No code-review debt exists.
+**Next action: `routine.complete` / `routine.skip`, carrying evidence from the trace** —
+agreed 2026-09-11. ⚠️ Then the two extraction gaps (below) **before** pointing it at
+DeepInfra. ⛔ No code-review debt.
 
 ## Decisions in force — inherit, do not re-derive
-- **The ask/answer interface is DONE and verified, 2026-09-10.** Stage 1: a question authored
-  on one device is answered by the resident agent and syncs back — **model 6.6s**. Stage 2
-  (the tab): ask → thread → answer → citation → follow-up → Back, zero console errors, no
-  overflow at 390px. 799 core / 119 frontend tests green, clippy ×4. ⛔ Do not re-verify.
-- ⛔ **Deploying the agent to the box is DEFERRED (user, 2026-09-10)** until they are ready
-  to release a new app version, which they are not. **Do not propose it.** Phase D was
-  unblocked by the ask/answer surface and is what makes the thing useful.
-- **Memory is NOT the constraint — measured 2026-09-10: agent peak RSS 278 MiB** with the
-  embedder loaded (budget said 0.1–1 GB); + server/SurrealKV 106 MiB = ~384 MiB of a CX22's
-  ~3.1 GiB. ⚠️ Debug binary, empty-corpus sweep.
-- ⛔ **`--ask` and `--bench` STAY** — the "goes when the chat surface lands" note was wrong,
-  now corrected in `ask.rs` + `tasks.md`: the tab prints prose, `--ask` prints the **trace**,
-  and `--ask --constrained` is the smoke test `bench-openrouter.sh` branches on.
-- ⛔ **Role A DECIDED: `openai/gpt-oss-120b-Turbo`** (`MODEL_BENCH.md` § Role A). Base was
-  **13.7× slower**, same model and accuracy. ⛔ Do not "optimize" the verb loop for latency.
-- ⚠️ **`dx serve` needs `npm run copy:editor:dev` (from `tauri-app/`) or the app FREEZES** —
-  without `editor.bundle.js` the first tab switch calls the undefined `destroyEditor` through
-  an uncaught wasm-bindgen import and **aborts the wasm**, which looks exactly like broken nav.
-  Tell: "Initializing editor environment...". ⚠️ Playwright's `[active]` is DOM focus, not tab
-  state; read `window.__omniCanGoBack`.
-- ⚠️ **Every `db.query` needs `.check()?`** (`.await?` catches only transport errors) · ⚠️
-  **array-of-objects under SCHEMAFULL: declare the subfields**, not `FLEXIBLE` · ⛔
-  **`assistant_messages` stays out of `assistant::catalog`** — Phase E's call.
-- **Retrieval is CLOSED**: semantic ranks, keyword supplies what it missed; ⛔ never re-wire
-  RRF. **Stopwords in Rust. Reranking OFF.** `CONTAINS` box **SUPERSEDED** — ⛔ never debt.
-  ⛔ **Do not re-survey** KNN/match grammar, analyzer filters, fastembed, box sizing.
-- ⚠️ **`source scripts/fetch-onnxruntime.sh` from the REPO ROOT** before any linking build
-  (clippy never links). `CARGO_BUILD_JOBS=1`; this box OOMs. ⚠️ Two `dx serve` both bind.
+- ⛔ **THE JOURNAL IS NEVER PROPOSABLE** (user, 2026-09-10). He is its sole author;
+  everything else is "free game to the agent". Fully **readable** and citable. A product
+  invariant, not a phase boundary — it does not lapse because the machinery would support it.
+- ⛔ **APPROVAL LIVES WHERE THE DATA LIVES** (user, 2026-09-10). Never route extracted drafts
+  or auto-import batches into the assistant inbox: the two share an event shape, but the
+  **review UI** is what varies and it is the whole value. The assistant **notifies and
+  deep-links** — a read. Its inbox keeps only proposals with no other home (note, belief).
+- ⛔ **`propose` holds no writer.** It validates and returns; the agent records proposals
+  afterwards from the run's **trace**. ⛔ Never thread an `EventWriter` into `dispatch`.
+- ⛔ **Beliefs are ask-only** (user, 2026-09-10). ⚠️ He wanted the two wider triggers built
+  *with* Phase F and I did not — **deferred, not rejected**. ⛔ **Evidence is system-filled
+  from the trace**, never offered to the model; confidence stays three words.
+- ⚠️ **`routine.complete` is evidence-backed, not an unverifiable assertion** — I argued the
+  opposite and was wrong. The journal is readable *precisely* so it can see what he wrote
+  about his day. Build it with `EvidenceFromTrace`, like `belief.record`.
+- ⛔ **Irreversible actions can never be granted autonomy**, refused at the write site; a
+  perfect record does not override it. ⛔ **The user grants; the assistant has no route** —
+  no verb, no action. ⚠️ A granted action still produces a real proposal, auto-approved: the
+  proposal *is* the audit trail.
+- ⛔ **Box deploy DEFERRED** until a new app release · **`--ask`/`--bench` STAY** · **Role A
+  DECIDED** (`MODEL_BENCH.md`); do not "optimize" the verb loop for latency.
+
+## Do not re-survey
+Retrieval is **closed** — semantic ranks, keyword fills the gap; never re-wire RRF,
+stopwords in Rust, reranking off. ⛔ Do not re-survey KNN/match grammar, analyzer filters,
+fastembed, box sizing. ⛔ Do not re-verify Phases D–G. ⛔ **Extraction surveyed 2026-09-11**
+— findings in `tasks.md`; don't re-read the module to answer "what exists".
 
 ## Open threads
-Citation chips show the record *kind*; a real title needs a local lookup + a deleted-record
-fallback · untested: Shift+Enter, hardware back, "Thinking…", failure-sentence rendering ·
-prompt caching unexploited (needs a DeepSeek id Role A declines) · stemming needs a migration
-· `server/Dockerfile` has no ONNX · `MEMORY.md` 20KB / 25KB cap.
+⚠️ **Extraction: no downscaling and no rasterization** — a phone photo 413s today; fix both
+before switching provider · **dev sync server before any real-device test** (only
+`LISTEN_ADDR`, a hardcoded const, is missing) · untested on hardware: the Tauri decide
+command, a decision syncing to a second device, a check-in firing, auto-approval · the
+dual-model boundary is untyped and `Provenance` does not exist · citation chips show the
+*kind*, not a title · prompt caching unexploited · stemming needs a migration.

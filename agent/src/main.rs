@@ -832,6 +832,9 @@ async fn ask_event_once(
         // Only a thread's first question titles it. A `--thread` continuation is
         // by definition not the first.
         title: thread.is_none().then(|| title_from(question)),
+        // `--ask` is a person at a terminal, which is the opposite of scheduled
+        // however headless the binary is.
+        scheduled: false,
     };
     let event = NewEvent::assistant_question_asked(writer.device_id(), &payload)
         .map_err(|e| format!("could not build the question event: {e}"))?;

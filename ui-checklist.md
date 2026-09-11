@@ -4,7 +4,7 @@ Verification checklist for the omni-me UI. Run per `UI_WORKFLOW.md`
 (`dx serve --platform web --features mock --port 8080` + Playwright MCP), at **390px and
 1280px**.
 
-**Status: rewritten 2026-08-28 against the current UI. Only § Assistant has been run since (2026-09-10, browser/mock); every other section is still untested.**
+**Status: rewritten 2026-08-28 against the current UI. Only the § Assistant sections have been run since (2026-09-10, browser/mock); every other section is still untested.**
 
 > ⚠️ **Run `npm run copy:editor:dev` (from `tauri-app/`) before trusting a browser sweep.**
 > Without `editor.bundle.js` in the dx asset dir the Journal editor never initializes, and
@@ -128,6 +128,56 @@ never latency, retrieval or real citations.
 - [D] The ~90s offline hint — needs the agent genuinely stopped
 - [D] A question asked with the app offline is answered once it reconnects
 - [D] An answer authored on another device appears here after a pull
+
+## Assistant — proposals and the approval inbox
+
+⚠️ The mock records a decision and **nothing else**. A green sweep here proves the
+inbox *flow*; it says nothing about whether accepting actually creates the record. Ask
+anything containing the word "note" to make the mock propose one — a deterministic
+trigger, because otherwise these rows are unreachable from a browser.
+
+- [x] A proposal renders under the answer that made it, with its summary, the
+      assistant's rationale, and the body it would write
+- [x] Accept settles the card in place — buttons replaced by "You approved this."
+- [x] Decline settles it the same way and creates nothing
+- [x] The thread list shows a count banner only while something is waiting, and the
+      wording is singular at 1
+- [x] The banner opens a Suggestions inbox listing **only pending** proposals
+- [x] Deciding the last one leaves the inbox's empty state, which says the assistant
+      cannot change anything on its own
+- [x] Back from the inbox returns to the thread list and the banner is gone
+- [x] A thread re-opened later still shows each proposal's outcome under its own answer
+- [x] 0 console errors across the whole flow; no horizontal overflow at 390px
+- [ ] An irreversible proposal shows "This one cannot be undone" — **no action declares
+      itself irreversible yet**, so this is unreachable, not untested
+- [ ] A proposal from a newer build (unknown action) renders a decidable card —
+      covered by a unit test, never seen on screen
+- [D] Accepting actually creates the record — the mock cannot author events
+- [D] A proposal made by the agent on the box appears here after a pull
+- [D] A proposal decided on one device shows as decided on the other
+
+## Assistant — memory and permissions
+
+⚠️ Both screens are reached from links under the thread list. The mock's permission
+fixtures include one **irreversible** action (`message.send`) deliberately: every real
+action today is reversible, so without it the "cannot be granted" half of the rule is
+unreachable from a browser.
+
+- [x] "What it believes about you" lists live beliefs with confidence and review date
+- [x] Evidence renders as chips under the statement
+- [x] A belief drawn without opening any record says so, rather than showing nothing
+- [x] "Show retired" reveals retired beliefs with the reason they were retired; hiding
+      them again works
+- [x] The permissions screen lists each action with its approval record
+- [x] An action never proposed says "Never proposed yet", not "0%"
+- [x] ⛔ An **irreversible** action shows no toggle and explains why — verified with a
+      perfect 4/4 record, so evidence does not override reversibility
+- [x] Granting shows "Does this without asking"; revoking returns it to asking
+- [x] 0 console errors; no horizontal overflow at 390px
+- [ ] A scheduled check-in renders "Asked on your behalf" — **the mock has no scheduler**,
+      so this is unreachable in browser, not untested
+- [D] A check-in actually fires at its hour
+- [D] A granted action is carried out without reaching the inbox
 
 ## Settings
 

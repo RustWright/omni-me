@@ -4540,16 +4540,139 @@ pub async fn invoke_read_assistant_thread(
     }
 }
 
+/// Everything the assistant has offered to do and the user has not decided.
+pub async fn invoke_list_assistant_proposals()
+-> Result<Vec<crate::types::AssistantProposal>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::pending_proposals())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_assistant_proposals", &Args {}).await
+    }
+}
+
+/// The proposals made on one conversation, decided or not.
+pub async fn invoke_read_thread_proposals(
+    thread_id: &str,
+) -> Result<Vec<crate::types::AssistantProposal>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::thread_proposals(thread_id))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            thread_id: &'a str,
+        }
+        invoke("read_thread_proposals", &Args { thread_id }).await
+    }
+}
+
+/// Accept or decline one proposal. Accepting is what authors the change.
+pub async fn invoke_decide_assistant_proposal(
+    proposal_id: &str,
+    approve: bool,
+    reason: Option<&str>,
+) -> Result<crate::types::AssistantProposal, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = reason;
+        mock_assistant::decide(proposal_id, approve)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            proposal_id: &'a str,
+            approve: bool,
+            reason: Option<&'a str>,
+        }
+        invoke(
+            "decide_assistant_proposal",
+            &Args {
+                proposal_id,
+                approve,
+                reason,
+            },
+        )
+        .await
+    }
+}
+
+/// What the assistant believes about the user.
+pub async fn invoke_list_beliefs(
+    include_retired: bool,
+) -> Result<Vec<crate::types::Belief>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::beliefs(include_retired))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            include_retired: bool,
+        }
+        invoke("list_beliefs", &Args { include_retired }).await
+    }
+}
+
+/// How each action has fared, and whether it is granted autonomy.
+pub async fn invoke_list_action_records() -> Result<Vec<crate::types::ActionRecord>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::action_records())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_action_records", &Args {}).await
+    }
+}
+
+/// Allow or stop allowing one action without asking.
+pub async fn invoke_set_action_autonomy(action: &str, granted: bool) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        mock_assistant::set_autonomy(action, granted)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            action: &'a str,
+            granted: bool,
+            reason: Option<&'a str>,
+        }
+        invoke(
+            "set_action_autonomy",
+            &Args {
+                action,
+                granted,
+                reason: None,
+            },
+        )
+        .await
+    }
+}
+
 #[cfg(feature = "mock")]
 mod mock_assistant {
     use crate::types::{
-        AssistantAsked, AssistantMessage, AssistantThread, AssistantThreadView, AssistantUsage,
-        RecordCitation,
+        AssistantAsked, AssistantMessage, AssistantProposal, AssistantThread, AssistantThreadView,
+        AssistantUsage, RecordCitation,
     };
     use std::cell::RefCell;
 
     thread_local! {
         static STORE: RefCell<Vec<AssistantMessage>> = const { RefCell::new(Vec::new()) };
+        static PROPOSALS: RefCell<Vec<AssistantProposal>> = const { RefCell::new(Vec::new()) };
         static SEQ: RefCell<u32> = const { RefCell::new(0) };
     }
 
@@ -4585,6 +4708,9 @@ mod mock_assistant {
                 verbs: None,
                 records_read: None,
                 usage: None,
+                // The mock has no scheduler; a check-in only ever comes from a
+                // real agent, so this fixture must not claim to be one.
+                scheduled: None,
             })
         });
         AssistantAsked {
@@ -4606,13 +4732,38 @@ mod mock_assistant {
                 .cloned()
                 .collect();
             for q in waiting {
+                let asked = q.text.clone().unwrap_or_default();
+                let answer_id = next_id("mock-msg");
+
+                // ⚠️ The proposal path needs a **deterministic** trigger, not a
+                // random one: it is the only way a browser sweep can reach the
+                // approval cards at all. Asking anything containing "note" makes
+                // the mock propose one.
+                if asked.to_lowercase().contains("note") {
+                    PROPOSALS.with(|p| {
+                        p.borrow_mut().push(AssistantProposal {
+                            proposal_id: next_id("mock-proposal"),
+                            thread_id: q.thread_id.clone(),
+                            message_id: answer_id.clone(),
+                            action: "note.create".into(),
+                            args: serde_json::json!({
+                                "title": "Renew passport",
+                                "body": "Expires in May. Book the appointment first.",
+                            }),
+                            rationale: "You said you would forget this one.".into(),
+                            reversible: true,
+                            created_at: now(),
+                            decision: None,
+                        })
+                    });
+                }
+
                 store.push(AssistantMessage {
-                    message_id: next_id("mock-msg"),
+                    message_id: answer_id,
                     thread_id: q.thread_id.clone(),
                     role: "assistant".into(),
                     text: Some(format!(
-                        "This is mock data — no model ran. You asked: “{}”",
-                        q.text.unwrap_or_default()
+                        "This is mock data — no model ran. You asked: “{asked}”"
                     )),
                     created_at: now(),
                     in_reply_to: Some(q.message_id.clone()),
@@ -4631,9 +4782,144 @@ mod mock_assistant {
                         completion_tokens: 120,
                         reasoning_tokens: 0,
                     }),
+                    scheduled: None,
                 });
             }
         });
+    }
+
+    /// ⚠️ Two fixtures, one of them retired, because the retired case is the one
+    /// a browser sweep would otherwise never reach — and it is the half that
+    /// carries the audit claim.
+    pub fn beliefs(include_retired: bool) -> Vec<crate::types::Belief> {
+        use crate::types::{Belief, EvidenceRef};
+        let all = vec![
+            Belief {
+                belief_id: "mock-belief-1".into(),
+                statement: "You underestimate how long admin tasks take.".into(),
+                confidence: "medium".into(),
+                recorded_at: now(),
+                review_after: Some("2026-12-01".into()),
+                evidence: vec![EvidenceRef {
+                    kind: "journal".into(),
+                    id: "2026-08-14".into(),
+                    title: None,
+                }],
+                superseded_at: None,
+                superseded_reason: None,
+            },
+            Belief {
+                belief_id: "mock-belief-2".into(),
+                statement: "You prefer working late in the evening.".into(),
+                confidence: "low".into(),
+                recorded_at: now(),
+                review_after: None,
+                evidence: Vec::new(),
+                superseded_at: Some(now()),
+                superseded_reason: Some("Their schedule changed in August.".into()),
+            },
+        ];
+        all.into_iter()
+            .filter(|b| include_retired || b.is_live())
+            .collect()
+    }
+
+    thread_local! {
+        static GRANTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// ⚠️ One fixture is **irreversible**, so a browser sweep reaches the case
+    /// where the toggle must not be offered. Every real action today is
+    /// reversible, which means that half of the rule is otherwise unreachable.
+    pub fn action_records() -> Vec<crate::types::ActionRecord> {
+        use crate::types::ActionRecord;
+        let granted = GRANTS.with(|g| g.borrow().clone());
+        vec![
+            ActionRecord {
+                action: "note.create".into(),
+                approved: 6,
+                rejected: 1,
+                pending: 0,
+                granted: granted.contains(&"note.create".to_string()),
+                reversible: true,
+            },
+            ActionRecord {
+                action: "belief.record".into(),
+                approved: 0,
+                rejected: 0,
+                pending: 1,
+                granted: false,
+                reversible: true,
+            },
+            ActionRecord {
+                action: "message.send".into(),
+                approved: 4,
+                rejected: 0,
+                pending: 0,
+                granted: false,
+                reversible: false,
+            },
+        ]
+    }
+
+    /// ⛔ Refuses an irreversible action, mirroring `core`. A mock that allowed
+    /// it would make a browser sweep prove the opposite of the real rule.
+    pub fn set_autonomy(action: &str, granted: bool) -> Result<(), String> {
+        if granted
+            && action_records()
+                .iter()
+                .any(|r| r.action == action && !r.reversible)
+        {
+            return Err(format!(
+                "`{action}` cannot be granted autonomy: it is irreversible, and \
+                 irreversible actions always ask"
+            ));
+        }
+        GRANTS.with(|g| {
+            let mut list = g.borrow_mut();
+            list.retain(|a| a != action);
+            if granted {
+                list.push(action.to_string());
+            }
+        });
+        Ok(())
+    }
+
+    pub fn pending_proposals() -> Vec<AssistantProposal> {
+        PROPOSALS.with(|p| {
+            p.borrow()
+                .iter()
+                .filter(|p| p.is_pending())
+                .cloned()
+                .collect()
+        })
+    }
+
+    pub fn thread_proposals(thread_id: &str) -> Vec<AssistantProposal> {
+        PROPOSALS.with(|p| {
+            p.borrow()
+                .iter()
+                .filter(|p| p.thread_id == thread_id)
+                .cloned()
+                .collect()
+        })
+    }
+
+    /// ⚠️ Records the decision and **nothing else**. The real command authors the
+    /// note; this one cannot, so a green browser sweep proves the inbox flow and
+    /// says nothing about whether approving actually creates anything.
+    pub fn decide(proposal_id: &str, approve: bool) -> Result<AssistantProposal, String> {
+        PROPOSALS.with(|p| {
+            let mut list = p.borrow_mut();
+            let Some(found) = list.iter_mut().find(|p| p.proposal_id == proposal_id) else {
+                return Err(format!("no proposal with id `{proposal_id}`"));
+            };
+            if !found.is_pending() {
+                return Err(format!("proposal `{proposal_id}` was already decided"));
+            }
+            found.decision = Some(if approve { "approved" } else { "rejected" }.to_string());
+            Ok(found.clone())
+        })
     }
 
     pub fn threads() -> Vec<AssistantThread> {

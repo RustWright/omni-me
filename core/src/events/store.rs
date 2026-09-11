@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
 use super::types::{
-    AssistantAnswerGivenPayload, AssistantQuestionAskedPayload, ConfigSetPayload, EventType,
+    AssistantAnswerGivenPayload, AssistantProposalMadePayload, AssistantQuestionAskedPayload,
+    BeliefRecordedPayload, BeliefSupersededPayload, ConfigSetPayload, EventType,
     FeedbackCapturedPayload, RecordTypeDeclaredPayload, TransactionRecordedPayload,
 };
 use crate::db::Database;
@@ -246,6 +247,60 @@ impl NewEvent {
             id: None,
             event_type: EventType::AssistantAnswerGiven.to_string(),
             aggregate_id: payload.thread_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for an `AssistantProposalMade` event.
+    ///
+    /// ⚠️ `aggregate_id == payload.proposal_id`, and this deliberately breaks the
+    /// two factories above. A message belongs to its conversation; a proposal is
+    /// its own aggregate, so the approval inbox can fetch one by identity without
+    /// reading the thread it came out of — an inbox on the phone must not depend
+    /// on the user having opened that conversation.
+    pub fn assistant_proposal_made(
+        device_id: impl Into<String>,
+        payload: &AssistantProposalMadePayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::AssistantProposalMade.to_string(),
+            aggregate_id: payload.proposal_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `BeliefRecorded` event. `aggregate_id == payload.belief_id`
+    /// — a belief is its own aggregate, so its record and its later supersession
+    /// read back together.
+    pub fn belief_recorded(
+        device_id: impl Into<String>,
+        payload: &BeliefRecordedPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::BeliefRecorded.to_string(),
+            aggregate_id: payload.belief_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `BeliefSuperseded` event. Same aggregate as the belief it
+    /// retires, per [`NewEvent::belief_recorded`].
+    pub fn belief_superseded(
+        device_id: impl Into<String>,
+        payload: &BeliefSupersededPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::BeliefSuperseded.to_string(),
+            aggregate_id: payload.belief_id.clone(),
             timestamp: Utc::now(),
             device_id: device_id.into(),
             payload: serde_json::to_value(payload)?,

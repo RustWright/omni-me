@@ -809,6 +809,13 @@ pub fn run() {
             commands::assistant::ask_assistant,
             commands::assistant::list_assistant_threads,
             commands::assistant::read_assistant_thread,
+            commands::assistant::list_assistant_proposals,
+            commands::assistant::read_thread_proposals,
+            commands::assistant::decide_assistant_proposal,
+            commands::assistant::list_beliefs,
+            commands::assistant::list_beliefs_due_for_review,
+            commands::assistant::list_action_records,
+            commands::assistant::set_action_autonomy,
             // Feedback capture
             commands::feedback::get_app_context,
             commands::feedback::submit_feedback,

@@ -19,9 +19,10 @@
 use tauri::State;
 
 use omni_me_core::assistant::conversation::{ThreadSummary, ThreadView};
-use omni_me_core::assistant::{list_threads, read_thread};
+use omni_me_core::assistant::promotion::{self, ActionRecord};
+use omni_me_core::assistant::{Belief, Proposal, inbox, list_threads, memory, read_thread};
 use omni_me_core::config::Feature;
-use omni_me_core::events::{AssistantQuestionAskedPayload, NewEvent};
+use omni_me_core::events::{AssistantQuestionAskedPayload, NewEvent, ProposalDecision};
 
 use super::shared::{append_new_and_apply, require_feature};
 use crate::AppState;
@@ -77,6 +78,9 @@ pub async fn ask_assistant(
         message_id: message_id.clone(),
         text,
         title,
+        // This command exists because a person typed something. A scheduled
+        // question comes from the agent's own loop and never from here.
+        scheduled: false,
     };
 
     tracing::info!(
@@ -119,6 +123,147 @@ pub async fn read_assistant_thread(
     read_thread(&state.db, &thread_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Everything the assistant has offered to do and the user has not decided.
+///
+/// ⚠️ Refetch on tab entry, same as [`list_assistant_threads`]: a proposal is
+/// made by the agent on another machine and arrives through sync.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_assistant_proposals(state: State<'_, AppState>) -> Result<Vec<Proposal>, String> {
+    require_feature(&state, Feature::Llm)?;
+    inbox::pending(&state.db).await.map_err(|e| e.to_string())
+}
+
+/// The proposals made on one conversation, decided or not, so a thread can show
+/// what came of it.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn read_thread_proposals(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<Vec<Proposal>, String> {
+    require_feature(&state, Feature::Llm)?;
+    inbox::for_thread(&state.db, &thread_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Accept or decline one proposal.
+///
+/// ⚠️ **Deliberately not behind `require_feature(Llm)`.** Switching the assistant
+/// off must not strand a proposal the user has already been shown — see
+/// `EventType::authoring_features`, where `AssistantProposalDecided` is ungated
+/// for this reason. Approving still authors the action's own events, and those
+/// carry their own guards, so the protection sits on the effect rather than here.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn decide_assistant_proposal(
+    state: State<'_, AppState>,
+    proposal_id: String,
+    approve: bool,
+    reason: Option<String>,
+) -> Result<Proposal, String> {
+    let decision = if approve {
+        ProposalDecision::Approved
+    } else {
+        ProposalDecision::Rejected
+    };
+
+    tracing::info!(
+        proposal_id = %proposal_id,
+        decision = %decision,
+        "decide_assistant_proposal"
+    );
+
+    // A live read, unlike the feature snapshot the guards use: this decides
+    // whether an action is still available to carry out, which is a question
+    // about now, not about what was registered at boot.
+    let config = state.config.read().await.clone();
+    inbox::decide(
+        &state.db,
+        &config,
+        &state.writer,
+        &proposal_id,
+        decision,
+        reason.filter(|r| !r.trim().is_empty()),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// What the assistant currently believes about the user.
+///
+/// ⚠️ `include_retired` exists because a memory you can only see the *current*
+/// state of can be inspected but not audited, and auditability is the entire
+/// mitigation for a system that accumulates opinions about a person. The default
+/// is the live set; the full history is one flag away, never unavailable.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_beliefs(
+    state: State<'_, AppState>,
+    include_retired: Option<bool>,
+) -> Result<Vec<Belief>, String> {
+    require_feature(&state, Feature::Llm)?;
+    let result = if include_retired.unwrap_or(false) {
+        memory::all(&state.db).await
+    } else {
+        memory::live(&state.db).await
+    };
+    result.map_err(|e| e.to_string())
+}
+
+/// Live beliefs whose review date has passed.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_beliefs_due_for_review(
+    state: State<'_, AppState>,
+) -> Result<Vec<Belief>, String> {
+    require_feature(&state, Feature::Llm)?;
+    memory::due_for_review(&state.db, memory::today())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// How each action has fared at the approval gate, and whether it is granted.
+///
+/// The evidence a person needs before deciding to stop being asked about
+/// something. Computed from the proposal history rather than a counter — see
+/// `assistant::promotion`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_action_records(state: State<'_, AppState>) -> Result<Vec<ActionRecord>, String> {
+    require_feature(&state, Feature::Llm)?;
+    let config = state.config.read().await.clone();
+    promotion::records(&state.db, &config)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Allow or stop allowing one action to be carried out without asking.
+///
+/// ⚠️ **There is no assistant-facing route to this.** Granting is the user's act
+/// alone; an assistant able to propose its own promotion would invert the whole
+/// permission model. Granting an irreversible action is refused in `core`.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_action_autonomy(
+    state: State<'_, AppState>,
+    action: String,
+    granted: bool,
+    reason: Option<String>,
+) -> Result<(), String> {
+    require_feature(&state, Feature::Llm)?;
+    let config = state.config.read().await.clone();
+
+    tracing::info!(action = %action, granted, "set_action_autonomy");
+    if granted {
+        promotion::grant(&config, &state.writer, &action)
+            .await
+            .map_err(|e| e.to_string())
+    } else {
+        promotion::revoke(
+            &state.writer,
+            &action,
+            reason.filter(|r| !r.trim().is_empty()),
+        )
+        .await
+        .map_err(|e| e.to_string())
+    }
 }
 
 /// A thread's display name, taken from the question that started it.
