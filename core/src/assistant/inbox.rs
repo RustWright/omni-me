@@ -722,6 +722,156 @@ mod tests {
         assert!(names.is_empty(), "nothing should have been created");
     }
 
+    /// ⚠️ The row id the projection builds is `{item_id}-{date}-done`, so this
+    /// asserts the *date reached it intact* rather than merely that a row
+    /// exists. A completion landing on the wrong day is indistinguishable from
+    /// one the user never made, and it would not be undone by ticking the item
+    /// in the app either — that undo deletes a different key.
+    #[tokio::test]
+    async fn approving_a_completion_ticks_the_day_it_named() {
+        let (db, config, writer) = harness(&[]).await;
+
+        let payload = AssistantProposalMadePayload {
+            proposal_id: "p-done".into(),
+            thread_id: "t1".into(),
+            message_id: "m2".into(),
+            action: "routine.complete".into(),
+            args: serde_json::json!({
+                "item_id": "item-1",
+                "group_id": "group-1",
+                "date": "2026-08-14",
+                "evidence": [{ "kind": "journal", "id": "2026-08-14" }],
+            }),
+            rationale: "You wrote on the 14th that you ran before work.".into(),
+            reversible: true,
+        };
+        writer
+            .append_new(NewEvent::assistant_proposal_made("agent", &payload).unwrap())
+            .await
+            .unwrap();
+
+        decide(
+            &db,
+            &config,
+            &writer,
+            "p-done",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .expect("approve");
+
+        let mut resp = db
+            .query("SELECT item_id, date, skipped FROM routine_completions")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let items: Vec<String> = resp.take("item_id").unwrap_or_default();
+        let dates: Vec<String> = resp.take("date").unwrap_or_default();
+        let skipped: Vec<bool> = resp.take("skipped").unwrap_or_default();
+        assert_eq!(items, vec!["item-1".to_string()]);
+        assert_eq!(dates, vec!["2026-08-14".to_string()], "wrong day ticked");
+        assert_eq!(skipped, vec![false]);
+    }
+
+    /// A skip is a decision the user made, and the reason is the whole reason it
+    /// is not just an untouched item — so it has to survive to the row.
+    #[tokio::test]
+    async fn approving_a_skip_keeps_the_reason() {
+        let (db, config, writer) = harness(&[]).await;
+
+        let payload = AssistantProposalMadePayload {
+            proposal_id: "p-skip".into(),
+            thread_id: "t1".into(),
+            message_id: "m2".into(),
+            action: "routine.skip".into(),
+            args: serde_json::json!({
+                "item_id": "item-1",
+                "group_id": "group-1",
+                "date": "2026-08-14",
+                "reason": "Travelling.",
+            }),
+            rationale: "You said you were away that week.".into(),
+            reversible: true,
+        };
+        writer
+            .append_new(NewEvent::assistant_proposal_made("agent", &payload).unwrap())
+            .await
+            .unwrap();
+
+        decide(
+            &db,
+            &config,
+            &writer,
+            "p-skip",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .expect("approve");
+
+        let mut resp = db
+            .query("SELECT skipped, reason FROM routine_completions")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let skipped: Vec<bool> = resp.take("skipped").unwrap_or_default();
+        let reasons: Vec<Option<String>> = resp.take("reason").unwrap_or_default();
+        assert_eq!(skipped, vec![true]);
+        assert_eq!(reasons, vec![Some("Travelling.".to_string())]);
+    }
+
+    /// ⚠️ Re-validated at approval, and the future is the one date no record can
+    /// evidence. A proposal made yesterday for "tomorrow" must not become a tick
+    /// simply because it sat in the inbox.
+    #[tokio::test]
+    async fn a_completion_dated_in_the_future_is_refused_at_approval() {
+        let (db, config, writer) = harness(&[]).await;
+
+        let tomorrow = (chrono::Utc::now().date_naive() + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let payload = AssistantProposalMadePayload {
+            proposal_id: "p-future".into(),
+            thread_id: "t1".into(),
+            message_id: "m2".into(),
+            action: "routine.complete".into(),
+            args: serde_json::json!({
+                "item_id": "item-1",
+                "group_id": "group-1",
+                "date": tomorrow,
+            }),
+            rationale: "because".into(),
+            reversible: true,
+        };
+        writer
+            .append_new(NewEvent::assistant_proposal_made("agent", &payload).unwrap())
+            .await
+            .unwrap();
+
+        let out = decide(
+            &db,
+            &config,
+            &writer,
+            "p-future",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await;
+        assert!(matches!(out, Err(DecideError::Invalid(_))), "{out:?}");
+
+        let mut resp = db
+            .query("SELECT item_id FROM routine_completions")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let items: Vec<String> = resp.take("item_id").unwrap_or_default();
+        assert!(items.is_empty(), "nothing should have been ticked");
+    }
+
     #[tokio::test]
     async fn a_threads_proposals_are_findable_from_the_conversation() {
         let (db, _config, writer) = harness(&[]).await;

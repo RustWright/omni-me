@@ -458,6 +458,71 @@ mod tests {
         );
     }
 
+    /// ⚠️ **The whole guarantee behind `EvidenceFromTrace` is this overwrite**,
+    /// and nothing else enforced it. `describe_type` shows the parameter and
+    /// `validate_args` accepts a well-formed one — it has to, because a stored
+    /// proposal re-checked at approval legitimately carries evidence. So the
+    /// only thing standing between the model and its own citations is the insert
+    /// here, and it was untested.
+    #[test]
+    fn evidence_the_model_wrote_is_replaced_by_what_it_actually_read() {
+        let o = outcome(
+            StopReason::Answered,
+            // It read the 12th. It claims the 1st, and a note it never opened.
+            vec![
+                turn(Some("read"), json!({"type": "journal", "id": "2026-08-12"})),
+                proposal_turn(
+                    "belief.record",
+                    json!({
+                        "statement": "You plan in bursts.",
+                        "confidence": "high",
+                        "evidence": [
+                            {"kind": "journal", "id": "2026-08-01"},
+                            {"kind": "note", "id": "01NEVEROPENED"}
+                        ]
+                    }),
+                ),
+            ],
+        );
+
+        let p = proposals(&config(), &o);
+        assert_eq!(p.len(), 1);
+        let cited = p[0].args["evidence"].as_array().expect("a list");
+        assert_eq!(
+            cited.len(),
+            1,
+            "the fabricated citations are gone: {cited:?}"
+        );
+        assert_eq!(cited[0]["kind"], "journal");
+        assert_eq!(cited[0]["id"], "2026-08-12");
+    }
+
+    /// The same overwrite with nothing to overwrite from: a run that opened no
+    /// record cites none, rather than keeping what the model offered.
+    #[test]
+    fn a_proposal_from_a_run_that_read_nothing_cites_nothing() {
+        let o = outcome(
+            StopReason::Answered,
+            vec![proposal_turn(
+                "routine.complete",
+                json!({
+                    "item_id": "i1",
+                    "group_id": "g1",
+                    "date": "2026-08-14",
+                    "evidence": [{"kind": "journal", "id": "2026-08-14"}]
+                }),
+            )],
+        );
+
+        let p = proposals(&config(), &o);
+        assert_eq!(p.len(), 1);
+        assert_eq!(
+            p[0].args["evidence"].as_array().map(Vec::len),
+            Some(0),
+            "an unsupported completion must look unsupported"
+        );
+    }
+
     /// ⛔ The journal invariant, at the derivation step. Even if the verb layer
     /// were somehow bypassed, a journal proposal cannot become an event here.
     #[test]

@@ -32,12 +32,33 @@ use crate::db::Database;
 use crate::llm::chat::{ChatMessage, ChatRequest, Usage};
 use crate::llm::{LlmClient, LlmError};
 
-/// How many model calls one request may make.
+/// How many model calls one request may make, when nothing configures it.
 ///
 /// Discovery legitimately costs two or three (`list_types`, `describe_type`,
 /// then the real work), so a budget below about five would score a model as
 /// failing for planning correctly.
+///
+/// ⚠️ **This is the fallback, not the authority.** The live value is
+/// `ConfigKey::AssistantMaxTurns`, because the quality/cost balance is something
+/// to be found by trying rather than argued to once — see [`Session::new`]. The
+/// constant stays for tests and for callers with no config in hand.
 pub const MAX_TURNS: usize = 6;
+
+/// Extra turns a request may spend on `propose`, beyond its budget.
+///
+/// ⚠️ **Exempt, but bounded — and the bound is the point.** The turn budget is
+/// the loop's only halting guarantee: there is no terminal verb, so a model that
+/// never emits prose never finishes. Making `propose` free without a separate
+/// ceiling would hand that guarantee back.
+///
+/// It is exempt at all because the risk the budget guards against is a
+/// *progress-free retrieval loop* — repeating searches until the turns run out,
+/// measured on the prototype at 11 of 24 episodes. `propose` cannot do that: it
+/// reads nothing, validates its arguments and returns, and `answer::proposals`
+/// discards a duplicate of one already made this run. Charging it the same rate
+/// as a search made a three-item routine unanswerable, which is what surfaced
+/// this.
+pub const PROPOSAL_TURNS: usize = 4;
 
 /// Cap on one tool result going back into the conversation.
 ///
@@ -195,7 +216,11 @@ impl<'a> Session<'a> {
             db,
             config,
             llm,
-            max_turns: MAX_TURNS,
+            // Read from config rather than the constant: this is the dial for the
+            // quality-against-cost balance, and it is expected to move often.
+            // `int_of` clamps it to `ConfigKey::int_range`, so no stored value can
+            // take the budget below a workable floor or above its ceiling.
+            max_turns: config.int_of(crate::config::ConfigKey::AssistantMaxTurns) as usize,
             response_schema: None,
             enable_thinking: None,
             retrievers: Retrievers::default(),
@@ -302,7 +327,16 @@ impl<'a> Session<'a> {
         let mut seen: Vec<String> = Vec::new();
         let mut off_schema = 0usize;
 
-        for _ in 0..self.max_turns {
+        // Two counters, because `propose` is exempt from the budget but not from
+        // termination. `spent` is what the budget governs; `ceiling` bounds the
+        // loop outright, so even a model that does nothing but propose halts.
+        let mut spent = 0usize;
+        let ceiling = self.max_turns.saturating_add(PROPOSAL_TURNS);
+
+        for _ in 0..ceiling {
+            if spent >= self.max_turns {
+                break;
+            }
             // ⚠️ Exactly one channel, never both. See `Session::constrained`.
             let mut request = ChatRequest::new(messages.clone());
             if let Some(schema) = &self.response_schema {
@@ -441,6 +475,18 @@ impl<'a> Session<'a> {
                     name: call.name.clone(),
                     content: cap(&serde_json::to_string(&result).unwrap_or_default()),
                 });
+            }
+
+            // ⚠️ Free only when the turn was *entirely* proposals. A reply mixing
+            // a `search` with a `propose` is a retrieval turn wearing a proposal,
+            // and exempting it would let a model buy unlimited searches by
+            // stapling a proposal to each one.
+            if !reply
+                .tool_calls
+                .iter()
+                .all(|call| call.name == verbs::PROPOSE)
+            {
+                spent += 1;
             }
 
             messages.push(ChatMessage::Assistant {
@@ -821,6 +867,157 @@ mod tests {
         assert_eq!(out.stopped, StopReason::TurnBudget);
         assert_eq!(out.trace.len(), 4);
         assert!(out.answer.is_none());
+    }
+
+    /// ⚠️ The case that forced the exemption: a three-item routine costs three
+    /// proposals, and charging each one a turn left nothing to answer with — the
+    /// user got two cards out of three and no explanation. Observed live against
+    /// `openai/gpt-oss-120b-Turbo` on 2026-09-11.
+    #[tokio::test]
+    async fn proposing_does_not_spend_the_turn_budget() {
+        let db = test_db().await;
+        let propose = |id: &str, item: &str| {
+            tool_turn(
+                id,
+                "propose",
+                json!({
+                    "action": "routine.complete",
+                    "rationale": format!("you wrote about {item}"),
+                    "args": {
+                        "item_id": item, "group_id": "g1", "date": "2026-03-19"
+                    }
+                }),
+            )
+        };
+        let llm = ScriptedLlm::new(vec![
+            tool_turn("c1", "list_types", json!({})),
+            tool_turn("c2", "search", json!({ "query": "morning routine" })),
+            propose("c3", "stretch"),
+            propose("c4", "coffee"),
+            propose("c5", "journal"),
+            prose_turn("I've proposed all three."),
+        ]);
+        let cfg = config();
+
+        // Three of the six turns are proposals, so a budget of three is enough:
+        // two retrieval turns and the answer. Before the exemption this ran out.
+        let out = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .with_max_turns(3)
+            .ask("mark my morning routine done")
+            .await;
+
+        assert_eq!(out.stopped, StopReason::Answered, "{:?}", out.stopped);
+        assert_eq!(out.answer.as_deref(), Some("I've proposed all three."));
+        assert_eq!(out.verbs().iter().filter(|v| *v == &"propose").count(), 3);
+    }
+
+    /// ⚠️ Exempt is not unbounded. The loop has no terminal verb, so without a
+    /// separate ceiling a model that only ever proposes would never halt — and
+    /// this one never emits prose.
+    #[tokio::test]
+    async fn proposing_forever_still_terminates() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(
+            (0..100)
+                .map(|i| {
+                    tool_turn(
+                        &format!("c{i}"),
+                        "propose",
+                        json!({
+                            "action": "note.create",
+                            "rationale": "because",
+                            "args": { "title": format!("note {i}"), "body": "b" }
+                        }),
+                    )
+                })
+                .collect(),
+        );
+        let cfg = config();
+
+        let out = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .with_max_turns(3)
+            .ask("q")
+            .await;
+
+        assert_eq!(out.stopped, StopReason::TurnBudget);
+        assert_eq!(
+            out.trace.len(),
+            3 + PROPOSAL_TURNS,
+            "a proposal-only run must stop at the budget plus its proposal ceiling"
+        );
+    }
+
+    /// ⚠️ A turn mixing retrieval with a proposal is a retrieval turn. Exempting
+    /// it would let a model buy unlimited searches by stapling a proposal to each.
+    #[tokio::test]
+    async fn a_turn_that_also_searches_is_not_free() {
+        let db = test_db().await;
+        // Built by merging two single-call turns, so this test keeps using the
+        // same helper as every other one rather than restating the response shape.
+        let mixed = || {
+            let mut turn = tool_turn("a", "search", json!({ "query": "x" }));
+            turn.tool_calls.extend(
+                tool_turn(
+                    "b",
+                    "propose",
+                    json!({
+                        "action": "note.create",
+                        "rationale": "because",
+                        "args": { "title": "t", "body": "b" }
+                    }),
+                )
+                .tool_calls,
+            );
+            turn
+        };
+        let llm = ScriptedLlm::new(vec![mixed(), mixed(), mixed()]);
+        let cfg = config();
+
+        let out = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .with_max_turns(2)
+            .ask("q")
+            .await;
+
+        assert_eq!(out.stopped, StopReason::TurnBudget);
+        // Two turns, each carrying two calls — the budget was charged, not waived.
+        assert_eq!(out.trace.len(), 4);
+    }
+
+    /// The dial the user tunes. A stored value outside the range cannot take the
+    /// budget below a workable floor, whatever wrote it.
+    #[tokio::test]
+    async fn the_turn_budget_comes_from_config_and_is_clamped() {
+        use crate::config::{ConfigKey, ConfigValue};
+
+        let mut global = crate::config::ConfigMap::new();
+        global.insert(ConfigKey::AssistantMaxTurns, ConfigValue::Int(9));
+        let cfg = ResolvedConfig::new(global, Default::default());
+        assert_eq!(cfg.int_of(ConfigKey::AssistantMaxTurns), 9);
+
+        let mut absurd = crate::config::ConfigMap::new();
+        absurd.insert(ConfigKey::AssistantMaxTurns, ConfigValue::Int(0));
+        let cfg = ResolvedConfig::new(absurd, Default::default());
+        assert_eq!(
+            cfg.int_of(ConfigKey::AssistantMaxTurns),
+            3,
+            "a zero budget would make the assistant unable to do anything at all"
+        );
+
+        assert!(
+            ConfigKey::AssistantMaxTurns
+                .validate(&ConfigValue::Int(0))
+                .is_err(),
+            "the write path must refuse it too, not just the reader"
+        );
+        assert!(
+            ConfigKey::AssistantCheckInHour
+                .validate(&ConfigValue::Int(99))
+                .is_err(),
+            "the sibling key had no bounds before this"
+        );
     }
 
     /// An empty reply that ran out of budget is a configuration failure, and

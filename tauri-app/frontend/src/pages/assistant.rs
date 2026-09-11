@@ -302,6 +302,8 @@ fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -> El
 
     let summary = proposal.summary();
     let detail = proposal.detail();
+    let evidence = proposal.evidence();
+    let cites_evidence = proposal.cites_evidence();
     // Resolved to a finished sentence up front. Any value at all means settled,
     // including one a newer build wrote that this one cannot name.
     let decided = proposal
@@ -343,6 +345,31 @@ fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -> El
             if let Some(body) = detail {
                 div { class: "text-obsidian-text text-xs whitespace-pre-wrap bg-obsidian-border/10 rounded px-2 py-2 max-h-40 overflow-y-auto",
                     "{body}"
+                }
+            }
+
+            // ⚠️ Shown **before** the buttons, and said out loud when absent. A
+            // completion asserts that something happened; the user reads their
+            // own history back as fact afterwards, so the moment to see what the
+            // claim rests on is the moment they are deciding. A card that simply
+            // omits the row when there is nothing reads identically to one whose
+            // evidence is off-screen — which is the case most worth catching.
+            if cites_evidence {
+                if evidence.is_empty() {
+                    div { class: "text-obsidian-text-muted text-xs italic",
+                        "Proposed without opening any record."
+                    }
+                } else {
+                    div { class: "flex flex-wrap gap-1 items-center",
+                        span { class: "text-obsidian-text-muted text-xs", "From:" }
+                        for cite in evidence.iter() {
+                            span {
+                                key: "{cite.kind}-{cite.id}",
+                                class: "text-obsidian-text-muted text-xs px-1.5 py-0.5 rounded bg-obsidian-border/10",
+                                "{cite.title.clone().unwrap_or_else(|| cite.kind.clone())}"
+                            }
+                        }
+                    }
                 }
             }
 

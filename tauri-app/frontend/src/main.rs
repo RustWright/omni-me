@@ -971,6 +971,7 @@ mod tab_visibility_tests {
                 default: types::ConfigValue::Bool(true),
                 applies_immediately: false,
                 choices: None,
+                int_range: None,
             })
             .collect();
         Features::from_entries(&entries)

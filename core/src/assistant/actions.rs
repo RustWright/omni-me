@@ -55,6 +55,8 @@ pub enum ActionKind {
     RoutineCreate,
     RoutineAddItem,
     RoutineModifyItem,
+    RoutineComplete,
+    RoutineSkip,
 }
 
 /// Where an argument's value comes from.
@@ -65,11 +67,21 @@ pub enum ParamSource {
     /// **The system fills it from the run's trace** — the records the assistant
     /// actually opened while reaching this conclusion.
     ///
-    /// ⚠️ Deliberately not something the model can write. Letting it list its own
-    /// evidence reopens exactly the hallucination surface `records_read` closes:
-    /// a citation is only worth anything if it names a record that was
-    /// demonstrably in hand. The model is never shown this parameter and cannot
-    /// pass it.
+    /// ⚠️ Deliberately not something the model can author. Letting it list its
+    /// own evidence reopens exactly the hallucination surface `records_read`
+    /// closes: a citation is only worth anything if it names a record that was
+    /// demonstrably in hand.
+    ///
+    /// ⚠️ **The guarantee is an overwrite, not a refusal — do not mistake one for
+    /// the other.** `describe_type` renders this parameter like any other (its
+    /// description is what tells the model it cannot set it), and
+    /// [`validate_args`] *accepts* a well-shaped value, because it cannot tell a
+    /// model's fresh call from a stored proposal being re-checked at approval,
+    /// where the evidence is legitimately present. What makes model-authored
+    /// evidence impossible is `answer::proposals`, which inserts the
+    /// trace-derived list over whatever is there. ⛔ Removing that insert on the
+    /// belief that validation already guards this would silently hand the model
+    /// its own citations.
     EvidenceFromTrace,
 }
 
@@ -299,7 +311,12 @@ const BELIEF_RECORD: ActionType = ActionType {
              changes, not by a default.",
             10,
         )
-        .optional(),
+        .optional()
+        // The sibling of the completion dates, and checked the same way. Here an
+        // odd spelling would not corrupt anything — `is_due_for_review` parses
+        // the loose form too — but one spelling across the app is what stops the
+        // next date field deciding for itself.
+        .checked_by(valid_future_date),
         ActionParam::evidence(
             "evidence",
             "Filled in automatically from the records you opened. You cannot set it.",
@@ -467,6 +484,141 @@ const ROUTINE_MODIFY_ITEM: ActionType = ActionType {
     trigger: Trigger::OnRequest,
 };
 
+/// A day in exactly the app's spelling, or the reason it is not one.
+///
+/// ⚠️ **The round-trip check is the point, not pedantry.** `chrono` accepts
+/// `2026-8-14` for `%Y-%m-%d`, and a routine completion's row id is
+/// `{item_id}-{date}-done` built by concatenation — so an unpadded day keys a
+/// *different* row than the same tick made in the app, and the app's undo would
+/// then leave the assistant's copy behind. Refusing is the loud failure the
+/// model fixes on its next turn; accepting is a duplicate nobody sees.
+fn canonical_date(value: &str) -> Result<chrono::NaiveDate, String> {
+    let date = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| "must be a day written as YYYY-MM-DD".to_string())?;
+    if date.format("%Y-%m-%d").to_string() != value {
+        return Err("must be a day written as YYYY-MM-DD, with the zeroes".to_string());
+    }
+    Ok(date)
+}
+
+/// A day something is claimed to have happened on: canonical, and not ahead of
+/// today.
+///
+/// ⚠️ Time-dependent, which a validator otherwise is not, and the direction is
+/// what makes it safe. A stored proposal is re-validated at approval, so a
+/// clock-sensitive rule risks refusing something the user was already shown.
+/// Here the clock can only move a date the permissive way — future becomes past
+/// — so waiting can legalise a refused proposal and can never invalidate a live
+/// one.
+fn valid_completion_date(value: &str) -> Result<(), String> {
+    if canonical_date(value)? > super::memory::today() {
+        return Err("cannot be a day that has not happened yet".to_string());
+    }
+    Ok(())
+}
+
+/// A day that is allowed to be in the future, for scheduling something.
+fn valid_future_date(value: &str) -> Result<(), String> {
+    canonical_date(value).map(|_| ())
+}
+
+/// Marking a routine item done on a given day.
+///
+/// ⚠️ **This is the one action whose argument is a claim about the world**, and
+/// it is why `date` and `evidence` are both required in spirit. Everything else
+/// here proposes a change the user can evaluate on its face — a note's wording
+/// is right there. A completion asserts that something happened, and the user
+/// reads their own history back as fact. So the proposal has to carry what it
+/// read: the card says *you wrote about it on the 14th*, not *done*.
+///
+/// It is nonetheless **grantable like any other reversible action**, and that is
+/// deliberate rather than an oversight of the three rules. Undo is derivable,
+/// nothing leaves the log, and nothing outside observed it. The user's stated
+/// reason for making the journal readable was precisely this — they write about
+/// what they did, and having to re-tick it by hand is the friction that left
+/// routines unused. Making completion permanently un-grantable would foreclose
+/// the behaviour the readability was for.
+const ROUTINE_COMPLETE: ActionType = ActionType {
+    name: "routine.complete",
+    kind: ActionKind::RoutineComplete,
+    feature: Feature::Routines,
+    description: "Mark one routine item done on a particular day. Use this when what you have \
+                  read says they did it — a journal entry describing it, for example. The day \
+                  is the day they did it, not today. Do not mark something done because it \
+                  was scheduled.",
+    params: &[
+        ActionParam::text(
+            "item_id",
+            "Identity of the item they did, from reading the routine it belongs to.",
+            64,
+        ),
+        ActionParam::text(
+            "group_id",
+            "Identity of the routine that item belongs to, from the same read.",
+            64,
+        ),
+        ActionParam::text(
+            "date",
+            "The day it was done, as YYYY-MM-DD. Take it from what you read, not from \
+             today's date.",
+            10,
+        )
+        .checked_by(valid_completion_date),
+        ActionParam::evidence(
+            "evidence",
+            "Filled in automatically from the records you opened. You cannot set it.",
+        ),
+    ],
+    produces: &[EventType::RoutineItemCompleted],
+    // Rule 1: `routine_item_completion_undone` deletes the row outright, and the
+    // completion event stays in the log. Rule 2: nothing leaves the log. Rule 3:
+    // a tick is not shown to anyone at the moment it lands.
+    reversible: true,
+    reversibility: "A completion is undone by the undo event, which deletes the row; the log \
+                    keeps both.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+const ROUTINE_SKIP: ActionType = ActionType {
+    name: "routine.skip",
+    kind: ActionKind::RoutineSkip,
+    feature: Feature::Routines,
+    description: "Mark one routine item deliberately skipped on a particular day, with the \
+                  reason if they gave one. A skip is a decision they made, not an item left \
+                  undone — leave an unmentioned item alone.",
+    params: &[
+        ActionParam::text(
+            "item_id",
+            "Identity of the item they skipped, from reading the routine it belongs to.",
+            64,
+        ),
+        ActionParam::text(
+            "group_id",
+            "Identity of the routine that item belongs to, from the same read.",
+            64,
+        ),
+        ActionParam::text("date", "The day it was skipped, as YYYY-MM-DD.", 10)
+            .checked_by(valid_completion_date),
+        ActionParam::text(
+            "reason",
+            "Why, in their words if they gave one. Omit rather than inventing one.",
+            300,
+        )
+        .optional(),
+        ActionParam::evidence(
+            "evidence",
+            "Filled in automatically from the records you opened. You cannot set it.",
+        ),
+    ],
+    produces: &[EventType::RoutineItemSkipped],
+    reversible: true,
+    reversibility: "A skip is undone by the skip-undo event, which deletes the row; the log \
+                    keeps both.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
 /// Every action this build knows, enabled or not.
 pub const ALL_ACTIONS: &[ActionType] = &[
     NOTE_CREATE,
@@ -475,6 +627,8 @@ pub const ALL_ACTIONS: &[ActionType] = &[
     ROUTINE_CREATE,
     ROUTINE_ADD_ITEM,
     ROUTINE_MODIFY_ITEM,
+    ROUTINE_COMPLETE,
+    ROUTINE_SKIP,
 ];
 
 /// The actions whose feature is on, which is the set the model is told about.
@@ -747,6 +901,43 @@ pub fn build_events(
                 json!({ "item_id": item_id, "changes": Value::Object(changes) }),
             )])
         }
+        ActionKind::RoutineComplete => {
+            let item_id = args["item_id"].as_str().unwrap_or_default().to_string();
+            Ok(vec![routine_event(
+                EventType::RoutineItemCompleted,
+                item_id.clone(),
+                device_id,
+                json!({
+                    "item_id": item_id,
+                    "group_id": args["group_id"].as_str().unwrap_or_default(),
+                    "date": args["date"].as_str().unwrap_or_default(),
+                    // ⚠️ When it was *recorded*, not when the activity happened —
+                    // `date` carries that, and a retroactive tick must not invent
+                    // a clock time it never read. Safe because the column is only
+                    // ever an ordering tiebreak (`db::queries`), never rendered.
+                    "completed_at": chrono::Utc::now().to_rfc3339(),
+                }),
+            )])
+        }
+        ActionKind::RoutineSkip => {
+            let item_id = args["item_id"].as_str().unwrap_or_default().to_string();
+            let mut payload = json!({
+                "item_id": item_id,
+                "group_id": args["group_id"].as_str().unwrap_or_default(),
+                "date": args["date"].as_str().unwrap_or_default(),
+            });
+            // Absent rather than null: the payload skips serializing `None`, so a
+            // reason-less skip written here has to match one written by the app.
+            if let Some(reason) = args["reason"].as_str() {
+                payload["reason"] = json!(reason);
+            }
+            Ok(vec![routine_event(
+                EventType::RoutineItemSkipped,
+                item_id,
+                device_id,
+                payload,
+            )])
+        }
     }
 }
 
@@ -917,6 +1108,20 @@ mod tests {
                 "item_id": "01ITEM000000000000000001",
                 "estimated_duration_min": "15",
             }),
+            // A fixed past day rather than a computed one: the date validator
+            // refuses the future, and a literal in the past stays in the past.
+            ActionKind::RoutineComplete => json!({
+                "item_id": "01ITEM000000000000000001",
+                "group_id": "01GROUP00000000000000001",
+                "date": "2026-08-14",
+                "evidence": [{ "kind": "journal", "id": "2026-08-14" }],
+            }),
+            ActionKind::RoutineSkip => json!({
+                "item_id": "01ITEM000000000000000001",
+                "group_id": "01GROUP00000000000000001",
+                "date": "2026-08-14",
+                "reason": "Travelling.",
+            }),
         }
     }
 
@@ -1024,6 +1229,133 @@ mod tests {
         }
         let events = build_events(&ROUTINE_CREATE, &sample_args(&ROUTINE_CREATE), "d").unwrap();
         assert_eq!(events[0].payload["order"], json!(APPEND_ORDER));
+    }
+
+    /// ⚠️ A completion asserts something happened. The user reads their own
+    /// history back as fact, so the proposal has to be able to show what it read
+    /// — the same reason `belief.record` carries evidence, applied to a claim
+    /// about the world rather than about the user.
+    #[test]
+    fn a_completion_carries_evidence_and_cannot_source_it_from_the_model() {
+        for action in [&ROUTINE_COMPLETE, &ROUTINE_SKIP] {
+            assert_eq!(
+                evidence_key(action),
+                Some("evidence"),
+                "{} must carry what it read",
+                action.name
+            );
+            assert!(
+                !action
+                    .params
+                    .iter()
+                    .filter(|p| p.is_model_supplied())
+                    .any(|p| p.key == "evidence"),
+                "{} must not let the model name its own sources",
+                action.name
+            );
+        }
+    }
+
+    /// ⚠️ The day comes from what was read, so a model reaching for "today" by
+    /// default is the error worth catching — but the hard refusal is the future,
+    /// which no record can evidence.
+    #[test]
+    fn a_completion_day_must_be_a_real_past_date() {
+        let base = json!({ "item_id": "i1", "group_id": "g1", "date": "2026-08-14" });
+        validate_args(&ROUTINE_COMPLETE, &base).expect("a past day is fine");
+
+        let today = super::super::memory::today();
+        let mut same_day = base.clone();
+        same_day["date"] = json!(today.format("%Y-%m-%d").to_string());
+        validate_args(&ROUTINE_COMPLETE, &same_day).expect("today has happened");
+
+        let mut tomorrow = base.clone();
+        tomorrow["date"] = json!(
+            (today + chrono::Duration::days(1))
+                .format("%Y-%m-%d")
+                .to_string()
+        );
+        let err = validate_args(&ROUTINE_COMPLETE, &tomorrow).expect_err("the future");
+        assert!(err.contains("date"), "{err}");
+
+        for bad in ["14/08/2026", "yesterday", "2026-02-30"] {
+            let mut args = base.clone();
+            args["date"] = json!(bad);
+            assert!(
+                validate_args(&ROUTINE_COMPLETE, &args).is_err(),
+                "{bad} should be refused"
+            );
+        }
+    }
+
+    /// ⚠️ `chrono` accepts `2026-8-14` for `%Y-%m-%d`, and a completion's row id
+    /// is `{item_id}-{date}-done` built by concatenation — so an unpadded day
+    /// keys a different row than the same tick made in the app, and the app's
+    /// undo would leave this one behind. Every date field is checked the same
+    /// way so the next one does not decide for itself.
+    #[test]
+    fn a_day_must_be_spelled_the_way_the_app_spells_it() {
+        let loose = validate_args(
+            &ROUTINE_COMPLETE,
+            &json!({ "item_id": "i1", "group_id": "g1", "date": "2026-8-14" }),
+        )
+        .expect_err("chrono would take this; the row id must not");
+        assert!(loose.contains("date"), "{loose}");
+
+        let belief = validate_args(
+            &BELIEF_RECORD,
+            &json!({ "statement": "s", "confidence": "low", "review_after": "2026-8-14" }),
+        )
+        .expect_err("the same rule reaches the belief's date");
+        assert!(belief.contains("review_after"), "{belief}");
+
+        validate_args(
+            &BELIEF_RECORD,
+            &json!({ "statement": "s", "confidence": "low", "review_after": "2027-01-05" }),
+        )
+        .expect("a review date is allowed to be in the future");
+    }
+
+    /// The tick is keyed on `{item_id}-{date}`, so both halves have to reach the
+    /// payload intact — a completion that silently lands on the wrong day is
+    /// indistinguishable from one the user did not make.
+    #[test]
+    fn a_completion_lands_on_the_day_it_names() {
+        let events = build_events(&ROUTINE_COMPLETE, &sample_args(&ROUTINE_COMPLETE), "d").unwrap();
+        assert_eq!(events[0].payload["date"], json!("2026-08-14"));
+        assert_eq!(
+            events[0].payload["item_id"],
+            json!("01ITEM000000000000000001")
+        );
+        assert_eq!(
+            events[0].aggregate_id, "01ITEM000000000000000001",
+            "a completion keys on the item it ticks"
+        );
+        assert!(
+            events[0].payload["completed_at"].is_string(),
+            "the projection needs a recording timestamp"
+        );
+    }
+
+    /// `RoutineItemSkippedPayload` skips serializing `None`, so a reason-less
+    /// skip built here has to be shaped like one the app writes — a `null` would
+    /// be a second spelling of the same absence.
+    #[test]
+    fn a_skip_without_a_reason_omits_the_key_rather_than_nulling_it() {
+        let events = build_events(
+            &ROUTINE_SKIP,
+            &json!({ "item_id": "i1", "group_id": "g1", "date": "2026-08-14" }),
+            "d",
+        )
+        .expect("a reason is optional");
+        assert!(
+            events[0].payload.get("reason").is_none(),
+            "got {}",
+            events[0].payload
+        );
+
+        let with_reason = build_events(&ROUTINE_SKIP, &sample_args(&ROUTINE_SKIP), "d").unwrap();
+        assert_eq!(with_reason[0].payload["reason"], json!("Travelling."));
     }
 
     // Belief-specific rules

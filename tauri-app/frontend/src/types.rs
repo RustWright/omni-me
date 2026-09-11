@@ -164,6 +164,13 @@ impl ConfigValue {
             }
         }
     }
+
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            ConfigValue::Int(n) => Some(*n),
+            _ => None,
+        }
+    }
 }
 
 /// Which layer supplied the value in effect.
@@ -292,6 +299,11 @@ pub struct ConfigEntry {
     pub default: ConfigValue,
     pub applies_immediately: bool,
     pub choices: Option<Vec<String>>,
+    /// Inclusive bounds for an `Int` key. `#[serde(default)]` so a payload from
+    /// a build predating the field still decodes — every other field here is
+    /// required, and a missing one would empty the whole settings screen.
+    #[serde(default)]
+    pub int_range: Option<(i64, i64)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1175,8 +1187,40 @@ impl AssistantProposal {
                 None => "Add something to a routine".to_string(),
             },
             "routine.modify_item" => "Change an item in a routine".to_string(),
+            // The day is the decision here — the rest of the card is the
+            // evidence for it — so it goes in the line the user scans.
+            "routine.complete" => match arg("date") {
+                Some(date) => format!("Mark a routine item done on {date}"),
+                None => "Mark a routine item done".to_string(),
+            },
+            "routine.skip" => match arg("date") {
+                Some(date) => format!("Mark a routine item skipped on {date}"),
+                None => "Mark a routine item skipped".to_string(),
+            },
             other => other.to_string(),
         }
+    }
+
+    /// The records the assistant had open when it proposed this.
+    ///
+    /// ⚠️ System-filled at proposal time and never model-authored, so it is the
+    /// one part of the card that cannot be talked into existence. An action that
+    /// does not take evidence returns empty, which the card must distinguish
+    /// from an action that takes it and got none.
+    pub fn evidence(&self) -> Vec<EvidenceRef> {
+        self.args
+            .get("evidence")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    /// Whether this action's whole case rests on what it read, so a card with no
+    /// evidence has to say so out loud rather than simply omitting the row.
+    pub fn cites_evidence(&self) -> bool {
+        matches!(
+            self.action.as_str(),
+            "belief.record" | "routine.complete" | "routine.skip"
+        )
     }
 
     /// What the assistant is proposing, in enough detail to decide on.
@@ -1209,7 +1253,11 @@ impl AssistantProposal {
                 }
                 return (!parts.is_empty()).then(|| parts.join("\n"));
             }
-            "routine.create" => return None,
+            "routine.skip" => return arg("reason").map(|r| format!("Reason given: {r}")),
+            // The date is already in the summary and the evidence renders as its
+            // own row, so there is nothing left to add — and a line repeating
+            // either would make the card look like it says more than it does.
+            "routine.create" | "routine.complete" => return None,
             _ => {}
         }
         // An action this build does not know: show its arguments verbatim so the
@@ -1471,19 +1519,6 @@ mod proposal_tests {
         assert_eq!(p.detail().as_deref(), Some("Expires May."));
     }
 
-    /// ⚠️ A proposal from a newer build must still render something decidable.
-    /// A blank card is the one outcome that makes the inbox unusable — the user
-    /// cannot accept or decline what they cannot read.
-    #[test]
-    fn an_unknown_action_still_renders_a_decidable_card() {
-        let p = proposal("routine.complete", serde_json::json!({ "item": "x" }));
-        assert_eq!(p.summary(), "routine.complete");
-        // Its arguments, verbatim. This test previously asserted `None` here,
-        // which contradicted its own premise: a card showing only an action name
-        // is not something a person can weigh up.
-        assert_eq!(p.detail().as_deref(), Some("item: x"));
-    }
-
     /// A note proposal missing its title must not render an empty heading.
     #[test]
     fn a_note_proposal_without_a_title_still_says_what_it_is() {
@@ -1507,17 +1542,82 @@ mod proposal_tests {
         assert_eq!(item.detail().as_deref(), Some("About 10 minutes"));
     }
 
-    /// ⚠️ An unknown action must still render something decidable — its
-    /// arguments verbatim rather than a blank card.
+    /// ⚠️ A proposal from a newer build must still render something decidable:
+    /// the raw action name, and its arguments verbatim. A blank card is the one
+    /// outcome that makes the inbox unusable — the user cannot accept or decline
+    /// what they cannot read.
+    ///
+    /// The stand-in name is deliberately one no action will ever take. A version
+    /// of this test used `routine.complete`, which stopped testing anything the
+    /// day that action was built.
     #[test]
-    fn an_unknown_actions_arguments_are_shown_verbatim() {
+    fn an_unknown_action_still_renders_a_decidable_card() {
         let p = proposal(
             "future.thing",
             serde_json::json!({ "target": "x", "count": 3 }),
         );
+        assert_eq!(p.summary(), "future.thing");
         let detail = p.detail().expect("some detail");
         assert!(detail.contains("target: x"), "{detail}");
         assert!(detail.contains("count: 3"), "{detail}");
+    }
+
+    /// ⚠️ The day is the decision, so it belongs in the line the user scans —
+    /// not folded into a detail block they may not open.
+    #[test]
+    fn a_completion_proposal_leads_with_the_day_it_claims() {
+        let p = proposal(
+            "routine.complete",
+            serde_json::json!({
+                "item_id": "i1",
+                "group_id": "g1",
+                "date": "2026-08-14",
+                "evidence": [{ "kind": "journal", "id": "2026-08-14" }],
+            }),
+        );
+        assert_eq!(p.summary(), "Mark a routine item done on 2026-08-14");
+        // Nothing more to say: the date is in the summary and the evidence
+        // renders as its own row.
+        assert_eq!(p.detail(), None);
+        assert_eq!(p.evidence().len(), 1);
+        assert!(p.cites_evidence());
+    }
+
+    /// A skip's reason is what makes it a decision rather than an untouched
+    /// item, so it has to be on the card.
+    #[test]
+    fn a_skip_proposal_shows_the_reason_given() {
+        let p = proposal(
+            "routine.skip",
+            serde_json::json!({
+                "item_id": "i1",
+                "group_id": "g1",
+                "date": "2026-08-14",
+                "reason": "Travelling.",
+            }),
+        );
+        assert_eq!(p.summary(), "Mark a routine item skipped on 2026-08-14");
+        assert_eq!(p.detail().as_deref(), Some("Reason given: Travelling."));
+    }
+
+    /// ⚠️ The case worth catching: an action whose whole argument is what it
+    /// read, proposed having read nothing. The card has to be able to say so,
+    /// which means distinguishing "cites nothing" from "does not cite".
+    #[test]
+    fn an_action_that_should_cite_is_distinguishable_from_one_that_never_does() {
+        let bare = proposal(
+            "routine.complete",
+            serde_json::json!({ "item_id": "i1", "group_id": "g1", "date": "2026-08-14" }),
+        );
+        assert!(bare.cites_evidence(), "a completion always owes evidence");
+        assert!(bare.evidence().is_empty());
+
+        let note = proposal(
+            "note.create",
+            serde_json::json!({ "title": "t", "body": "b" }),
+        );
+        assert!(!note.cites_evidence(), "a note stands on its own wording");
+        assert!(note.evidence().is_empty());
     }
 
     /// Any decision at all takes it out of the inbox — including one this build
@@ -1547,6 +1647,7 @@ mod feature_tests {
             default: ConfigValue::Bool(true),
             applies_immediately: false,
             choices: None,
+            int_range: None,
         }
     }
 

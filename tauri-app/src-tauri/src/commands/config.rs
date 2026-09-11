@@ -34,6 +34,10 @@ pub struct ConfigEntryView {
     /// Admissible values for a text key, so the domain lives in one place rather
     /// than being restated in the frontend.
     pub choices: Option<Vec<String>>,
+    /// Inclusive bounds for an `Int` key, so the control cannot offer a value
+    /// the backend would refuse. Same reasoning as `choices`: the domain has
+    /// one definition, in `ConfigKey`.
+    pub int_range: Option<(i64, i64)>,
 }
 
 fn parse_key(key: &str) -> Result<ConfigKey, String> {
@@ -69,6 +73,7 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<Vec<ConfigEntryVie
                 default: key.default_value(),
                 applies_immediately: key.applies_immediately(),
                 choices: choices_for(*key),
+                int_range: key.int_range(),
             }
         })
         .collect())

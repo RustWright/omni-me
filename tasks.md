@@ -359,20 +359,96 @@ defer-major-phases rule; do not run ahead to the next one.
      - **Unknown actions now render their arguments verbatim** in the inbox. A test had
        asserted the opposite while claiming the card stayed "decidable"; the assertion
        contradicted its own premise and was corrected.
-   - ⛔ **`routine.complete` / `routine.skip` are NOT off the table — my reasoning was wrong**
-     (user, 2026-09-11). I argued they assert facts the assistant cannot verify. But the
-     **journal is readable precisely so it can see what the user wrote about their day**, and
-     that was a deliberate decision: *"sometimes I write about the routine things I've
-     done."* A completion inferred from the user's own entry is evidence-backed, not invented.
-     - **So when built, they take `ParamSource::EvidenceFromTrace`**, exactly like
-       `belief.record`: the card reads "mark 'morning run' done — you wrote about it on the
-       14th" rather than a bare assertion.
-     - ⚠️ Still worth a fourth `ActionType` field before granting these autonomy: they are
-       reversible, so they pass the grant test, but reversibility bounds damage to *state*
-       and the risk here is to the *truth* of a habit record. Deciding that is Phase G's, not
-       a reason to withhold the action.
+   - **Action set widened 2026-09-11 — routine completion.** `routine.complete`,
+     `routine.skip`, both carrying `ParamSource::EvidenceFromTrace`.
+     - ⛔ **These were NOT off the table — my reasoning was wrong** (user, 2026-09-11). I
+       argued they assert facts the assistant cannot verify. But the **journal is readable
+       precisely so it can see what the user wrote about their day**, and that was a
+       deliberate decision: *"sometimes I write about the routine things I've done."* A
+       completion inferred from the user's own entry is evidence-backed, not invented.
+     - ⚠️ **The fourth `ActionType` field was considered and rejected.** These pass the three
+       reversibility rules honestly (undo deletes the row, nothing leaves the log, nobody
+       observed the tick), so they are grantable like anything else. A never-grantable flag
+       would foreclose exactly the behaviour the journal's readability was *for* — the user
+       writes about what they did, and re-ticking it by hand is the friction that left
+       routines unused since v1. The safeguard is evidence on the card, not a permanent veto.
+     - 🐛 **Found while building: `chrono` accepts `2026-8-14` for `%Y-%m-%d`.** A completion's
+       row id is `{item_id}-{date}-done` built by concatenation, so an unpadded day keys a
+       *different* row than the same tick made in the app — and the app's undo would leave the
+       assistant's copy behind, invisibly. Every date argument now round-trips through
+       `canonical_date`; `belief.record`'s `review_after`, which had **no validator at all**,
+       is checked the same way (`valid_future_date`, since a review date may be in the
+       future). `user_date.rs` already guaranteed padding on the app's side — only the
+       assistant's half was loose.
+     - **`completed_at` means "when this was recorded", not when the activity happened** —
+       `date` carries that. Safe because the column is only ever an ordering tiebreak
+       (`db/queries.rs`), never rendered, so a retroactive tick need not invent a clock time.
+     - **Evidence now renders on the proposal card**, not just on the memory screen, with
+       "Proposed without opening any record." said out loud when there is none — a card that
+       omits the row reads identically to one whose evidence is off-screen.
+     - **`propose`'s `rationale` now asks the model to name the record it is acting on.**
+       Fixes the class, not the instance: `add_item`, `modify_item` and `belief.supersede`
+       all carry opaque identities too, and the rationale is the only field shown verbatim.
      - Context: the user has not set up routines since v1 because the initial setup is a lot
        of work — naming, timing, ordering. That is what `routine.create`/`add_item` are for.
+   - **The turn budget is now tunable, and `propose` is off it (2026-09-11).** Both came out
+     of the first live run of `routine.complete`, which hit `stopped=TurnBudget` and **gave up
+     after 6 turns without answering** — a routine has N items, so completing one cost N
+     proposals, and four discovery turns left nothing to answer with. The user would have got
+     two cards out of three and no explanation.
+     - **`ConfigKey::AssistantMaxTurns`**, Int, default 6. Three tuning surfaces, one
+       resolution path: a config event (deployed value), `OMNI_AGENT_MAX_TURNS` (the bench
+       loop — injected as the agent's **device layer** so it lands in the same clamp rather
+       than bypassing it), and a bounded stepper in Settings.
+     - ⛔ **Tunable is not uncappable.** New `ConfigKey::int_range` bounds it to 3–50, enforced
+       in `validate` **and** in `int_of`. ⚠️ The reader-side clamp is the one that matters:
+       validation never runs over a value already stored by an older build, and the turn
+       budget is the loop's *only* halting guarantee — there is no terminal verb, so a model
+       that never emits prose never stops.
+     - 🐛 **Sibling with no bounds: `assistant.check_in_hour` would have accepted hour 99.**
+       There was no numeric range checking anywhere. Fixed with the same mechanism.
+     - **`propose` is exempt from the budget, `PROPOSAL_TURNS = 4` on top.** Exempt because
+       the risk the budget guards is a *progress-free retrieval loop*; `propose` reads nothing
+       and duplicates are already dropped. ⚠️ Bounded because exempt-and-unbounded would hand
+       back the halting guarantee. ⚠️ A turn mixing `search` with `propose` is **charged** —
+       otherwise a model buys unlimited searches by stapling a proposal to each.
+   - 🐛 **`ParamSource::EvidenceFromTrace` was documented as a refusal; it is an overwrite
+     (2026-09-11).** The comment said the model "is never shown this parameter and cannot pass
+     it". Both halves were false: `describe_type` renders it, and `validate_args` accepts a
+     well-formed value — it must, because a stored proposal re-checked at approval legitimately
+     carries evidence. ⛔ The guarantee is `answer::proposals` inserting the trace-derived list
+     over whatever is there, and **nothing tested it** — every existing test checked the
+     registry data rather than the runtime path. Two tests added; comment corrected to point
+     at the real mechanism, because deleting that insert while trusting the old comment would
+     silently let the model write its own citations.
+   - **Next widening candidate: notes — and it opens a fork. NOT started, ask first.**
+     Notes are the only remaining domain the assistant's *own* inbox owns; finances and
+     auto-import are ⛔ barred from it by the approval-lives-with-the-domain rule, so widening
+     there means building a different review surface and is its own phase.
+     - ⚠️ **The constraint that forces the fork: `build_events` is pure** — args in, events
+       out, no DB and no async, which is what lets the whole registry be tested without a
+       harness. So an action must be expressible **from its arguments alone**, and
+       append / toggle / increment cannot be. This bounds every future action, not just notes.
+     - **Option A — `note.update` only.** Buildable today with no new event types:
+       `GenericNoteUpdatedPayload` is `{ note_id, raw_text }` and replaces the body wholesale,
+       so "add a line to my packing list" means the model reads the note and retypes the
+       entire body. Costs tokens proportional to note length and risks silent transcription
+       drift in the part it was not asked to change.
+     - **Option B — add `GenericNoteAppended`.** Payload carries only the added text; the
+       projection concatenates. Cannot drop what it did not send, so the drift is impossible
+       rather than unlikely. Costs an event type, a `NotesProjection` arm and a version bump
+       (currently 2), and the projection's `on_generic_updated` UPSERT shape is the template.
+     - Either way `note.rename` (`GenericNoteRenamed`) is trivial and independent.
+   - **Batched `routine.complete` — agreed in principle, NOT started.** One proposal taking a
+     list of item ids, so a three-item routine is one approval card rather than three identical
+     ones. `build_events` already returns `Vec<NewEvent>` and no action has ever used that.
+     - ⚠️ **The budget argument for it is gone** — with `propose` off the budget the original
+       failure no longer reproduces. What remains is the *card*: "mark 3 items in Morning done
+       on 2026-03-19" is one decision a person makes once. A UX argument, not a correctness one.
+     - Blocked on a registry addition, not a registry entry: every model-supplied param is
+       `ActionParam::text`, so a list-valued param is new machinery (`validate_args` array
+       handling, and the `describe_type` rendering which today emits only key/required/
+       description with **no type at all**).
    - **Dev sync server — required before any real-device test (user, 2026-09-10).** A second
      server instance beside the live one: own port, own database, seeded data, dev Android
      phone pointed at it. ⚠️ The one gap is `LISTEN_ADDR`, a hardcoded const; everything else
@@ -598,9 +674,19 @@ other way round.
 
 ---
 
-## Awaiting on-device confirmation — none open
+## Awaiting on-device confirmation
 
-All three cleared by the user on 2026-09-05, from real use rather than a staged test:
+**Open, from Phases D–G and 2026-09-11** — all unit-tested, none exercised on hardware. Moved
+here from `NEXT.md`, which must carry decisions rather than a state snapshot:
+- [ ] The Tauri **decide** command approving a proposal end to end.
+- [ ] A decision **syncing to a second device** (the arrival-order hazard is handled per-handler,
+      but only in tests).
+- [ ] A **check-in firing** on its own schedule, rather than being invoked directly.
+- [ ] **Auto-approval** of a granted action against a live agent.
+- [ ] The **Int stepper** in Settings — ⚠️ a new control, and per the webkit2gtk note in memory,
+      native-control styling is *not* Playwright-verifiable. Needs the user's on-device pass.
+
+**Cleared previously.** All three cleared by the user on 2026-09-05, from real use rather than a staged test:
 note/journal body edits and ledger transaction edits both propagate across devices (the
 session's own feedback dump was written on mobile and copy-pasted from desktop; committed
 Unmatched auto-import transactions showed as committed on the other device), and Android
@@ -1028,6 +1114,19 @@ This was needed because **pausing does not survive a restart**, which had gone u
 ---
 
 ## Carried backlog
+
+**Assistant backlog (moved out of `NEXT.md` 2026-09-11 — they had lived only there, and
+they are backlog rather than threads from the current stretch):**
+- [ ] **Citation chips show the record's *kind*, not its title.** `EvidenceRef.title` is
+  `Option` and nothing fills it, so a belief drawn from three journal entries renders three
+  chips all reading "journal". ⚠️ Now visible in **two** places, not one — the proposal card
+  started rendering evidence on 2026-09-11, and that card is where the user decides. [S]
+- [ ] **Prompt caching unexploited.** The system prompt and the whole tool block are resent
+  verbatim every turn of every run. Cheapest remaining latency and cost win on the verb loop;
+  ⛔ not a licence to restructure the loop, which is decided (`MODEL_BENCH.md`). [S]
+- [ ] **Stemming needs a migration.** The `omni_text` analyzer has no stemmer, so "running"
+  misses "run". Adding one changes the index definition, which means a projection version
+  bump and a rebuild rather than an edit. [M]
 
 **Phase-5 reconciliation / import deferrals (from Cycle 3):**
 - [ ] Inline-edit per detected recurring pattern before confirm (today: dismiss + rescan). [S]

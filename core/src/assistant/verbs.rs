@@ -43,6 +43,13 @@ const MAX_LIMIT: u32 = 50;
 /// not the order of [`tools`], which is a prompt-engineering choice — do not
 /// "fix" the two to agree; `the_tool_list_matches_the_verb_names` checks
 /// membership, not sequence.
+/// The write verb's name, as the model calls it.
+///
+/// Named because [`super::session`] has to recognise it to keep it off the turn
+/// budget, and a string literal compared in two files is one rename away from
+/// silently re-charging every proposal.
+pub const PROPOSE: &str = "propose";
+
 pub const VERB_NAMES: &[&str] = &[
     "search",
     "list",
@@ -199,7 +206,10 @@ pub fn tools() -> Vec<ToolDef> {
                         "type": "string",
                         "description": "One sentence on why, shown to the user beside the \
                                         proposal. They see this without the conversation \
-                                        around it, so make it stand alone."
+                                        around it, so make it stand alone. Name the thing \
+                                        you are acting on — the arguments carry identities, \
+                                        not titles, so this sentence is the only place the \
+                                        user learns which record you mean."
                     }
                 },
                 "required": ["action", "args", "rationale"]

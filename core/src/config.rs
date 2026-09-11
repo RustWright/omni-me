@@ -32,6 +32,7 @@ pub enum ConfigKey {
     AssistantCheckIn,
     AssistantCheckInPrompt,
     AssistantCheckInHour,
+    AssistantMaxTurns,
 }
 
 /// Display / persistence order, and the order the settings screen renders.
@@ -50,6 +51,7 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::AssistantCheckIn,
     ConfigKey::AssistantCheckInPrompt,
     ConfigKey::AssistantCheckInHour,
+    ConfigKey::AssistantMaxTurns,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -112,6 +114,7 @@ impl fmt::Display for ConfigKey {
             ConfigKey::AssistantCheckIn => "assistant.check_in",
             ConfigKey::AssistantCheckInPrompt => "assistant.check_in_prompt",
             ConfigKey::AssistantCheckInHour => "assistant.check_in_hour",
+            ConfigKey::AssistantMaxTurns => "assistant.max_turns",
         };
         write!(f, "{s}")
     }
@@ -136,6 +139,7 @@ impl FromStr for ConfigKey {
             "assistant.check_in" => Ok(ConfigKey::AssistantCheckIn),
             "assistant.check_in_prompt" => Ok(ConfigKey::AssistantCheckInPrompt),
             "assistant.check_in_hour" => Ok(ConfigKey::AssistantCheckInHour),
+            "assistant.max_turns" => Ok(ConfigKey::AssistantMaxTurns),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -200,6 +204,13 @@ impl ConfigValue {
     pub fn as_text(&self) -> Option<&str> {
         match self {
             ConfigValue::Text(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            ConfigValue::Int(n) => Some(*n),
             _ => None,
         }
     }
@@ -285,6 +296,10 @@ impl ConfigKey {
             // user wakes, late enough that a machine asleep overnight has usually
             // come back.
             ConfigKey::AssistantCheckInHour => ConfigValue::Int(7),
+            // Six: discovery legitimately costs two or three turns, then the
+            // real work, then the answer. Sized when the loop was read-only —
+            // see `assistant::session`, where `propose` no longer counts.
+            ConfigKey::AssistantMaxTurns => ConfigValue::Int(6),
         }
     }
 
@@ -303,7 +318,7 @@ impl ConfigKey {
             | ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerankModel
             | ConfigKey::AssistantCheckInPrompt => ValueKind::Text,
-            ConfigKey::AssistantCheckInHour => ValueKind::Int,
+            ConfigKey::AssistantCheckInHour | ConfigKey::AssistantMaxTurns => ValueKind::Int,
         }
     }
 
@@ -333,7 +348,8 @@ impl ConfigKey {
             // once at startup rather than per run.
             | ConfigKey::AssistantCheckIn
             | ConfigKey::AssistantCheckInPrompt
-            | ConfigKey::AssistantCheckInHour => false,
+            | ConfigKey::AssistantCheckInHour
+            | ConfigKey::AssistantMaxTurns => false,
         }
     }
 
@@ -354,6 +370,7 @@ impl ConfigKey {
             ConfigKey::AssistantCheckIn => "Daily check-in",
             ConfigKey::AssistantCheckInPrompt => "Check-in prompt",
             ConfigKey::AssistantCheckInHour => "Check-in hour",
+            ConfigKey::AssistantMaxTurns => "Assistant turn budget",
         }
     }
 
@@ -380,7 +397,8 @@ impl ConfigKey {
             | ConfigKey::AssistantRerankModel
             | ConfigKey::AssistantCheckIn
             | ConfigKey::AssistantCheckInPrompt
-            | ConfigKey::AssistantCheckInHour => None,
+            | ConfigKey::AssistantCheckInHour
+            | ConfigKey::AssistantMaxTurns => None,
         }
     }
 
@@ -403,7 +421,8 @@ impl ConfigKey {
             | ConfigKey::AssistantRerankModel
             | ConfigKey::AssistantCheckIn
             | ConfigKey::AssistantCheckInPrompt
-            | ConfigKey::AssistantCheckInHour => ConfigGroup::Assistant,
+            | ConfigKey::AssistantCheckInHour
+            | ConfigKey::AssistantMaxTurns => ConfigGroup::Assistant,
         }
     }
 
@@ -418,6 +437,31 @@ impl ConfigKey {
             ConfigKey::AppearanceAccent => Some(ACCENT_VALUES),
             ConfigKey::AssistantEmbedModel => Some(EMBED_MODEL_VALUES),
             ConfigKey::AssistantRerankModel => Some(RERANK_MODEL_VALUES),
+            _ => None,
+        }
+    }
+
+    /// The inclusive range an [`ValueKind::Int`] key accepts.
+    ///
+    /// ⚠️ [`ConfigKey::AssistantMaxTurns`] is the reason this exists, and its
+    /// **lower bound is a correctness property, not a preference**. The agent
+    /// loop has no terminal verb — it ends when the model stops calling tools —
+    /// so the turn budget is its only guarantee of halting. A key that could be
+    /// set to zero, or left unbounded, would hand that guarantee to whoever last
+    /// edited a settings field. Tunable and uncappable are different things.
+    ///
+    /// `AssistantCheckInHour` had no bounds before this and would have accepted
+    /// hour 99 — a sibling of the same gap, fixed here rather than left to look
+    /// deliberate next to a neighbour that is clearly checked.
+    pub fn int_range(self) -> Option<(i64, i64)> {
+        match self {
+            ConfigKey::AssistantCheckInHour => Some((0, 23)),
+            // Floor: discovery alone costs `list_types` + `describe_type`, so
+            // below about three the assistant is scored as failing for planning
+            // correctly. Ceiling: the prompt carries every prior result, so cost
+            // grows superlinearly per turn — 50 is well past useful and exists to
+            // bound the damage, not to be reached.
+            ConfigKey::AssistantMaxTurns => Some((3, 50)),
             _ => None,
         }
     }
@@ -438,6 +482,12 @@ impl ConfigKey {
             let t = value.as_text().unwrap_or_default();
             if !allowed.contains(&t) {
                 return Err(format!("{self} must be one of {allowed:?}, got {t:?}"));
+            }
+        }
+        if let Some((lo, hi)) = self.int_range() {
+            let n = value.as_int().unwrap_or_default();
+            if n < lo || n > hi {
+                return Err(format!("{self} must be between {lo} and {hi}, got {n}"));
             }
         }
         Ok(())
@@ -567,14 +617,26 @@ impl ResolvedConfig {
     /// value — an hour and a retry count have nothing in common — and enforcing a
     /// guess at this layer would silently rewrite a value the caller could have
     /// clamped meaningfully.
+    /// An `Int` key's effective value, clamped to its own range.
+    ///
+    /// ⚠️ **The clamp is here as well as in `validate`, deliberately.** Validation
+    /// guards the write path and the projection fold, but neither runs over a
+    /// value that was already stored — by an older build, or by one whose range
+    /// was wider. For [`ConfigKey::AssistantMaxTurns`] that difference is the
+    /// halting guarantee, so the reader refuses to hand back a value it would not
+    /// have accepted.
     pub fn int_of(&self, key: ConfigKey) -> i64 {
         let (value, _) = self.get(key);
-        match value {
+        let n = match value {
             ConfigValue::Int(n) => n,
             _ => match key.default_value() {
                 ConfigValue::Int(n) => n,
                 _ => 0,
             },
+        };
+        match key.int_range() {
+            Some((lo, hi)) => n.clamp(lo, hi),
+            None => n,
         }
     }
 }
@@ -625,11 +687,12 @@ mod tests {
                 | ConfigKey::AssistantRerankModel
                 | ConfigKey::AssistantCheckIn
                 | ConfigKey::AssistantCheckInPrompt
-                | ConfigKey::AssistantCheckInHour => counted += 1,
+                | ConfigKey::AssistantCheckInHour
+                | ConfigKey::AssistantMaxTurns => counted += 1,
             }
         }
         assert_eq!(
-            counted, 14,
+            counted, 15,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

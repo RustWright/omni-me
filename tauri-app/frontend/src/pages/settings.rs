@@ -342,13 +342,16 @@ fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
             ),
         ),
         ConfigGroup::Appearance => ("Appearance", None),
+        // Not "Assistant retrieval" any more: the turn budget governs the loop,
+        // not how records are found, and a heading that named only retrieval
+        // would make the one non-retrieval key here look misfiled.
         ConfigGroup::Assistant => (
-            "Assistant retrieval",
+            "Assistant",
             Some(
-                "How the assistant finds records when you ask it something. These \
-                 run wherever the assistant runs, not on this device, and apply the \
-                 next time it starts. Changing the embedding model re-reads your \
-                 whole history once.",
+                "How the assistant finds records and how far it may go answering \
+                 one question. These run wherever the assistant runs, not on this \
+                 device, and apply the next time it starts. Changing the embedding \
+                 model re-reads your whole history once.",
             ),
         ),
     }
@@ -549,22 +552,41 @@ fn ConfigRow(
                 }
             }
 
-            if expanded && !segments.is_empty() {
+            if expanded && (!segments.is_empty() || entry.int_range.is_some()) {
                 div { class: "mt-3 pl-1 space-y-3",
                     div {
                         label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-1.5 block",
                             "Shared"
                         }
-                        SegmentedNav {
-                            items: segments.clone(),
-                            active: shared_active,
-                            on_select: {
-                                let row_key = entry.key.clone();
-                                let row = entry.clone();
-                                move |seg: String| {
-                                    on_change.call((row_key.clone(), false, segment_to_value(&row, &seg)))
-                                }
-                            },
+                        if let Some(range) = entry.int_range {
+                            Stepper {
+                                // The shared row falls back to the built-in default
+                                // when nothing is set, which is what it is serving.
+                                value: entry.global.as_ref().and_then(ConfigValue::as_int)
+                                    .or_else(|| entry.default.as_int())
+                                    .unwrap_or(range.0),
+                                range,
+                                unset_label: None,
+                                on_select: {
+                                    let row_key = entry.key.clone();
+                                    let row = entry.clone();
+                                    move |seg: String| {
+                                        on_change.call((row_key.clone(), false, segment_to_value(&row, &seg)))
+                                    }
+                                },
+                            }
+                        } else {
+                            SegmentedNav {
+                                items: segments.clone(),
+                                active: shared_active,
+                                on_select: {
+                                    let row_key = entry.key.clone();
+                                    let row = entry.clone();
+                                    move |seg: String| {
+                                        on_change.call((row_key.clone(), false, segment_to_value(&row, &seg)))
+                                    }
+                                },
+                            }
                         }
                         if entry.global.is_none() {
                             p { class: "text-xs text-obsidian-text-muted mt-1.5",
@@ -576,16 +598,54 @@ fn ConfigRow(
                         label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-1.5 block",
                             "This device"
                         }
-                        SegmentedNav {
-                            items: device_segments,
-                            active: device_active,
-                            on_select: {
-                                let row_key = entry.key.clone();
-                                let row = entry.clone();
-                                move |seg: String| {
-                                    on_change.call((row_key.clone(), true, segment_to_value(&row, &seg)))
+                        if let Some(range) = entry.int_range {
+                            div { class: "flex items-center gap-3 flex-wrap",
+                                Stepper {
+                                    value: entry.device.as_ref().and_then(ConfigValue::as_int)
+                                        .unwrap_or_else(|| {
+                                            entry.global.as_ref().and_then(ConfigValue::as_int)
+                                                .or_else(|| entry.default.as_int())
+                                                .unwrap_or(range.0)
+                                        }),
+                                    range,
+                                    // ⚠️ A stepper cannot show "no value of its own" —
+                                    // it always has a number under the cursor. Said in
+                                    // words instead, or following the shared value
+                                    // would look identical to overriding it with the
+                                    // same number.
+                                    unset_label: entry.device.is_none().then(|| "Follow".to_string()),
+                                    on_select: {
+                                        let row_key = entry.key.clone();
+                                        let row = entry.clone();
+                                        move |seg: String| {
+                                            on_change.call((row_key.clone(), true, segment_to_value(&row, &seg)))
+                                        }
+                                    },
                                 }
-                            },
+                                if entry.device.is_some() {
+                                    button {
+                                        r#type: "button",
+                                        class: "text-xs text-obsidian-accent underline",
+                                        onclick: {
+                                            let row_key = entry.key.clone();
+                                            move |_| on_change.call((row_key.clone(), true, None))
+                                        },
+                                        "Follow shared"
+                                    }
+                                }
+                            }
+                        } else {
+                            SegmentedNav {
+                                items: device_segments,
+                                active: device_active,
+                                on_select: {
+                                    let row_key = entry.key.clone();
+                                    let row = entry.clone();
+                                    move |seg: String| {
+                                        on_change.call((row_key.clone(), true, segment_to_value(&row, &seg)))
+                                    }
+                                },
+                            }
                         }
                         p { class: "text-xs text-obsidian-text-muted mt-1.5",
                             if entry.applies_immediately {
@@ -597,6 +657,58 @@ fn ConfigRow(
                     }
                 }
             }
+        }
+    }
+}
+
+/// A bounded number control for an `Int` config key.
+///
+/// ⚠️ Emits the same `String` the segmented control does, so
+/// [`segment_to_value`] and the row's `on_change` are untouched — a second
+/// encoding of a config value is a second place for it to be wrong.
+///
+/// The bounds come from the entry, which gets them from `ConfigKey::int_range`.
+/// They are not restated here: the backend refuses an out-of-range value, and a
+/// control that could offer one would produce an error the user did not earn.
+#[component]
+fn Stepper(
+    value: i64,
+    range: (i64, i64),
+    /// Shown in place of a number when the layer has no value of its own.
+    unset_label: Option<String>,
+    on_select: EventHandler<String>,
+) -> Element {
+    let (lo, hi) = range;
+    let showing_unset = unset_label.is_some();
+    let step = move |delta: i64| {
+        let next = (value + delta).clamp(lo, hi);
+        on_select.call(next.to_string());
+    };
+
+    rsx! {
+        div { class: "flex items-center gap-2",
+            button {
+                r#type: "button",
+                class: "w-9 h-9 rounded-md border border-obsidian-border/20 text-obsidian-text disabled:opacity-30",
+                disabled: !showing_unset && value <= lo,
+                onclick: move |_| step(-1),
+                "−"
+            }
+            span { class: "min-w-[5rem] text-center text-sm text-obsidian-text tabular-nums",
+                if let Some(label) = unset_label.clone() {
+                    "{label}"
+                } else {
+                    "{value}"
+                }
+            }
+            button {
+                r#type: "button",
+                class: "w-9 h-9 rounded-md border border-obsidian-border/20 text-obsidian-text disabled:opacity-30",
+                disabled: !showing_unset && value >= hi,
+                onclick: move |_| step(1),
+                "+"
+            }
+            span { class: "text-xs text-obsidian-text-muted ml-1", "{lo}–{hi}" }
         }
     }
 }

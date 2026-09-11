@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use omni_me_core::config::{ConfigKey, ResolvedConfig};
+use omni_me_core::config::{ConfigKey, ConfigMap, ConfigValue, ResolvedConfig};
 use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
     AssistantQuestionAskedPayload, EventStore, EventWriter, NewEvent, ProjectionRunner,
@@ -89,6 +89,16 @@ const LLM_MIN_INTERVAL_ENV: &str = "OMNI_AGENT_LLM_MIN_INTERVAL_MS";
 const LLM_BASE_URL_ENV: &str = "OMNI_AGENT_LLM_BASE_URL";
 const LLM_MODEL_ENV: &str = "OMNI_AGENT_LLM_MODEL";
 const LLM_API_KEY_ENV: &str = "OMNI_AGENT_LLM_API_KEY";
+
+/// Override the assistant's turn budget for one run.
+///
+/// The quality-against-cost balance is found by trying, and a tuning loop
+/// runs from here rather than from a phone's settings screen. Injected as the
+/// **device layer** of the resolved config (see [`learn_config`]) so it lands
+/// in the same resolution and the same clamp as a value set from Settings —
+/// an override that bypassed `int_of` could set a budget the app itself would
+/// refuse.
+const MAX_TURNS_ENV: &str = "OMNI_AGENT_MAX_TURNS";
 
 /// How long the agent waits between sync pulls, in milliseconds.
 ///
@@ -899,6 +909,28 @@ async fn probe_once(writer: &EventWriter) {
     }
 }
 
+/// Env overrides for this run, as the config's device layer.
+///
+/// ⚠️ An unparseable value is **named, not ignored**. Silently falling back to
+/// the configured budget during a tuning run would attribute the resulting
+/// numbers to a setting that was never applied.
+fn device_overrides() -> ConfigMap {
+    let mut device = ConfigMap::new();
+    if let Ok(raw) = std::env::var(MAX_TURNS_ENV) {
+        match raw.trim().parse::<i64>() {
+            Ok(n) => {
+                device.insert(ConfigKey::AssistantMaxTurns, ConfigValue::Int(n));
+                tracing::info!(turns = n, "turn budget overridden from the environment");
+            }
+            Err(_) => tracing::warn!(
+                value = %raw,
+                "{MAX_TURNS_ENV} is not a whole number; using the configured budget"
+            ),
+        }
+    }
+    device
+}
+
 /// Resolve the config this agent should run under, pulling first if it has to.
 ///
 /// Reads the materialized `app_config` table. If that is empty — a cold start —
@@ -911,7 +943,7 @@ async fn probe_once(writer: &EventWriter) {
 /// than one that starts with default features and corrects itself on the next
 /// tick — the pull scheduler runs regardless.
 async fn learn_config(db: &Database, client: &SyncClient) -> Result<ResolvedConfig, String> {
-    let resolve = |global| ResolvedConfig::new(global, Default::default());
+    let resolve = |global| ResolvedConfig::new(global, device_overrides());
 
     let persisted = load_persisted(db).await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "could not read shared config; using defaults");

@@ -1713,6 +1713,7 @@ pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
             default: ConfigValue::Bool(true),
             applies_immediately: false,
             choices: None,
+            int_range: None,
         };
         Ok(vec![
             feature("feature.journal", "Journal", true),
@@ -1736,6 +1737,7 @@ pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
                     "light".to_string(),
                     "system".to_string(),
                 ]),
+                int_range: None,
             },
             ConfigEntry {
                 key: "appearance.accent".to_string(),
@@ -1753,6 +1755,7 @@ pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
                         .map(|s| (*s).to_string())
                         .collect(),
                 ),
+                int_range: None,
             },
         ])
     }
