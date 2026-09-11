@@ -4,7 +4,14 @@ Verification checklist for the omni-me UI. Run per `UI_WORKFLOW.md`
 (`dx serve --platform web --features mock --port 8080` + Playwright MCP), at **390px and
 1280px**.
 
-**Status: rewritten 2026-08-28 against the current UI; not yet re-run.**
+**Status: rewritten 2026-08-28 against the current UI. Only § Assistant has been run since (2026-09-10, browser/mock); every other section is still untested.**
+
+> ⚠️ **Run `npm run copy:editor:dev` (from `tauri-app/`) before trusting a browser sweep.**
+> Without `editor.bundle.js` in the dx asset dir the Journal editor never initializes, and
+> the first tab switch calls the undefined `destroyEditor` through a wasm-bindgen import
+> that is not marked `catch` — which **aborts the wasm**. The app then stops responding to
+> every click and presents as "navigation is broken". The tell is "Initializing editor
+> environment..." on the Journal page.
 
 > **The previous results were voided, not carried forward.** This file last recorded a
 > passing sweep on 2026-04-24 against a three-tab bottom nav (Journal / Routines /
@@ -20,7 +27,7 @@ cannot exercise this**, needs a real backend.
 
 ## Shell and navigation
 
-- [ ] Five destinations reachable: Journal, Notes, Routines, Finances, Settings
+- [ ] Six destinations reachable: Journal, Notes, Routines, Finances, Assistant, Settings
 - [ ] Desktop (1280px): SideNav visible, active destination visually distinguished
 - [ ] Mobile (390px): SideNav is off-viewport; hamburger opens the drawer
 - [ ] Drawer closes after selecting a destination
@@ -101,6 +108,27 @@ cannot exercise this**, needs a real backend.
 - [D] Extraction actually calls the model and returns drafts
 - [D] Imported data appears after commit **and syncs to a second device**
 
+## Assistant
+
+⚠️ The mock answers instantly with canned prose, so it exercises the *shape* of the flow,
+never latency, retrieval or real citations.
+
+- [x] Empty state explains what the assistant is for, and that answers arrive later
+- [x] Composer: Enter sends, the Ask button sends — ⚠️ Shift+Enter untested
+- [x] Asking from the thread list opens the new thread immediately
+- [x] The question appears in the transcript before any answer arrives
+- [ ] Pending state shows "Thinking…" and clears when the answer lands
+- [x] A follow-up appends to the same thread — ⚠️ that the *answer* depends on the earlier
+      turns is proven at the agent layer (Stage 1, zero verbs), not through the mock
+- [ ] Thread list is ordered most-recently-active first, and refetches on tab entry
+- [x] Back from a thread returns to the list — ⚠️ hardware back untested (desktop)
+- [x] Citations render under an answer — ⚠️ the chip shows the record *kind*; resolving the
+      real title is not built yet
+- [ ] A failed / turn-budget / stale answer renders its sentence, not a blank bubble
+- [D] The ~90s offline hint — needs the agent genuinely stopped
+- [D] A question asked with the app offline is answered once it reconnects
+- [D] An answer authored on another device appears here after a pull
+
 ## Settings
 
 - [ ] Base currency section reads and writes
@@ -132,8 +160,13 @@ Listed once so a green browser sweep is not mistaken for a green app:
 - Only *today's* journal entry exists; every other date falls back to a template.
 - `closed` / `complete` are never returned, so day-completion and read-only paths are
   unreachable.
-- Four bridge mocks are stateful (`MOCK_ACCOUNT_OVERRIDES`, `MOCK_PAUSED`,
-  `MOCK_SOURCE_CONFIGS`, `MOCK_LLM_CONFIG`) and re-implement backend semantics by hand —
-  they can agree with the UI and still disagree with the device.
+- Five bridge mocks are stateful (`MOCK_ACCOUNT_OVERRIDES`, `MOCK_PAUSED`,
+  `MOCK_SOURCE_CONFIGS`, `MOCK_LLM_CONFIG`, and `mock_assistant`) and re-implement backend
+  semantics by hand — they can agree with the UI and still disagree with the device.
+  `mock_assistant` answers instantly with canned prose: never read a latency, a citation or
+  a verb list off it.
 - No real latency, no real data volume, no sync.
+- ⚠️ A Playwright snapshot's `[active]` marker is DOM **focus**, not the app's tab state.
+  To check which tab is really active read `window.__omniCanGoBack` or the nav button
+  carrying `text-obsidian-accent`.
 - Native control rendering differs from webkit2gtk.

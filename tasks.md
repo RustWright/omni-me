@@ -141,8 +141,12 @@ defer-major-phases rule; do not run ahead to the next one.
        touching ⛔-deferred finance data.
      - **The five-verb set is flexible** (user, 2026-09-08). What is load-bearing is why it
        stays small, not the number. Changes get proposed and discussed, with a reason.
-     - **`--ask` and `--bench` are test scaffolding**, unlike `--probe`. They exist because the
-       verbs have no interface yet and go when the chat surface lands.
+     - **`--ask` and `--bench` are dev tools**, unlike `--probe`. ⛔ **Superseded 2026-09-10:
+       they do NOT go when the chat surface lands.** The Assistant tab shipped and both stay —
+       the tab prints prose where `--ask` prints the trace, `--ask --constrained` is the
+       constrained-path smoke test `bench-openrouter.sh` branches on, and model re-evaluation
+       needs `--bench` on a standing basis. `--ask` is dead only *on the box*, where a resident
+       agent holds the `surrealkv` lock.
      - Search is SurrealDB `FULLTEXT` + BM25 + `HIGHLIGHTS` — verified working on the embedded
        `kv-surrealkv` engine before anything depended on it, and the same `DEFINE INDEX` family
        Phase C's `HNSW` will use. The app gets its first real search as a side effect.

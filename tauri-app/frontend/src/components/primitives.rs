@@ -198,13 +198,9 @@ pub enum BannerKind {
     #[default]
     Info,
     Success,
-    /// No caller today. Kept — and scoped to this one variant rather than
-    /// silenced module-wide — because it is the missing rung of a conventional
-    /// Info/Success/Warn/Error ladder whose `bg-warn` / `text-warn` tokens
-    /// already exist in the token layer. Deleting it would orphan those tokens
-    /// and leave the next warning-level banner with nowhere to go. Drop this
-    /// attribute the moment something constructs it.
-    #[allow(dead_code)]
+    /// The warning rung of the Info/Success/Warn/Error ladder. Constructed by
+    /// the Assistant page, for a question that has gone unanswered long enough
+    /// that the agent is probably not running.
     Warn,
     Error,
 }

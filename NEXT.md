@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: the ask/answer INTERFACE, planning-first — agent deployment folds into it.**
-Decided 2026-09-10, ahead of the roadmap's Phase D: a question authored as an event on any
-device, answered by the agent, the answer syncing back. D's proposals have no trigger until
-this or Phase F exists, so D first is as unobservable as a deployed mute agent. Deploy the
-agent in that session too, so it reaches the box once, resident *and* usable. ⛔ No
-code-review debt exists — do not raise it.
+**Next action: Phase D — `propose` + the approval inbox.** The first time the assistant
+*does* something rather than answering. ⛔ No code-review debt exists.
 
 ## Decisions in force — inherit, do not re-derive
-- **The retrievers are NOT equals** (measured; `MODEL_BENCH.md` § Retrieval decision 6).
-  Semantic ranks, keyword supplies only what it missed (`fusion::prefer`). ⛔ Do not re-wire
-  RRF: as peers it cost 19 points of top-1, and semantic-only scored *identical* to every
-  "fused" number ever recorded — the keyword arm had never voted. `fusion::fuse` stays
-  unwired, for a future retriever of comparable precision.
-- **Stopwords live in Rust, not the analyzer** — SurrealDB has no such filter. ⚠️ An
-  all-stopword query passes through unchanged, or `$q` is empty and matches nothing.
-- **The app's search box is SUPERSEDED, not deferred** (user). It uses `CONTAINS`, never the
-  FTS index, and the assistant replaces it. ⛔ Never file it as debt.
-- **Reranking OFF by default**; default `rerank_model` is `jina-v2-multilingual`, NOT the
-  smallest — `jina-turbo` degrades ranking. **Box stays as-is, ⛔ CLOSED.**
-- ⚠️ **Never add `-p omni-me-agent` to CI's release line** (`ci.yml:165`). Cargo unifies
-  features per invocation, so the server would link `libonnxruntime.so`, which the production
-  image lacks — green in CI, dead at container start. Own build step + an `ldd` assertion.
-- ⚠️ **Resident and askable are mutually exclusive today** — `surrealkv` holds an OS-level
-  exclusive lock, so `docker exec … --ask` cannot open a running agent's DB.
-- ⚠️ **`source scripts/fetch-onnxruntime.sh` from the REPO ROOT** before any linking build —
-  clippy never links, so green proves nothing. ⚠️ Only `<|K,EF|>` uses HNSW; `fusion::cut`
-  does not sort. **Do not re-survey:** SurrealDB KNN + match grammar, analyzer filters (there
-  is no stopword one), fastembed, the reranker scorecard, box sizing. **DeepInfra GO.**
+- **The ask/answer interface is DONE and verified, 2026-09-10.** Stage 1: a question authored
+  on one device is answered by the resident agent and syncs back — **model 6.6s**. Stage 2
+  (the tab): ask → thread → answer → citation → follow-up → Back, zero console errors, no
+  overflow at 390px. 799 core / 119 frontend tests green, clippy ×4. ⛔ Do not re-verify.
+- ⛔ **Deploying the agent to the box is DEFERRED (user, 2026-09-10)** until they are ready
+  to release a new app version, which they are not. **Do not propose it.** Phase D was
+  unblocked by the ask/answer surface and is what makes the thing useful.
+- **Memory is NOT the constraint — measured 2026-09-10: agent peak RSS 278 MiB** with the
+  embedder loaded (budget said 0.1–1 GB); + server/SurrealKV 106 MiB = ~384 MiB of a CX22's
+  ~3.1 GiB. ⚠️ Debug binary, empty-corpus sweep.
+- ⛔ **`--ask` and `--bench` STAY** — the "goes when the chat surface lands" note was wrong,
+  now corrected in `ask.rs` + `tasks.md`: the tab prints prose, `--ask` prints the **trace**,
+  and `--ask --constrained` is the smoke test `bench-openrouter.sh` branches on.
+- ⛔ **Role A DECIDED: `openai/gpt-oss-120b-Turbo`** (`MODEL_BENCH.md` § Role A). Base was
+  **13.7× slower**, same model and accuracy. ⛔ Do not "optimize" the verb loop for latency.
+- ⚠️ **`dx serve` needs `npm run copy:editor:dev` (from `tauri-app/`) or the app FREEZES** —
+  without `editor.bundle.js` the first tab switch calls the undefined `destroyEditor` through
+  an uncaught wasm-bindgen import and **aborts the wasm**, which looks exactly like broken nav.
+  Tell: "Initializing editor environment...". ⚠️ Playwright's `[active]` is DOM focus, not tab
+  state; read `window.__omniCanGoBack`.
+- ⚠️ **Every `db.query` needs `.check()?`** (`.await?` catches only transport errors) · ⚠️
+  **array-of-objects under SCHEMAFULL: declare the subfields**, not `FLEXIBLE` · ⛔
+  **`assistant_messages` stays out of `assistant::catalog`** — Phase E's call.
+- **Retrieval is CLOSED**: semantic ranks, keyword supplies what it missed; ⛔ never re-wire
+  RRF. **Stopwords in Rust. Reranking OFF.** `CONTAINS` box **SUPERSEDED** — ⛔ never debt.
+  ⛔ **Do not re-survey** KNN/match grammar, analyzer filters, fastembed, box sizing.
+- ⚠️ **`source scripts/fetch-onnxruntime.sh` from the REPO ROOT** before any linking build
+  (clippy never links). `CARGO_BUILD_JOBS=1`; this box OOMs. ⚠️ Two `dx serve` both bind.
 
 ## Open threads
-**The retrieval fixture cannot adjudicate the keyword pass** — semantic-only scores 1.000 on
-its lexical column, so no case exists that a keyword index could win; and one case is
-mislabelled because the label test's own stop list excuses "worse"/"day"/"back"/"up"/"out".
-Fixing it re-baselines every MODEL_BENCH number, so it is its own change · **stemming needs a
-migration** (`DEFINE ANALYZER IF NOT EXISTS` silently no-ops on existing installs) ·
-`server/Dockerfile` has no ONNX · `[llm] model` un-suffixed · `Usage` lacks `reasoning_tokens`
-+ `estimated_cost` · prompt caching unmeasured · `ExtractionResult.total` always `None` ·
-`MEMORY.md` is 20KB against a 25KB cap — prune before entries start dropping.
+Citation chips show the record *kind*; a real title needs a local lookup + a deleted-record
+fallback · untested: Shift+Enter, hardware back, "Thinking…", failure-sentence rendering ·
+prompt caching unexploited (needs a DeepSeek id Role A declines) · stemming needs a migration
+· `server/Dockerfile` has no ONNX · `MEMORY.md` 20KB / 25KB cap.

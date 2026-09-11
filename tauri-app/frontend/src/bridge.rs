@@ -4478,3 +4478,226 @@ pub async fn invoke_install_desktop_update() -> Result<(), String> {
         invoke_unit("install_desktop_update", &Args {}).await
     }
 }
+
+// --- Assistant (Phase D-1) ---
+//
+// ⚠️ The mock half below re-implements *behaviour*, not just canned values — it
+// is a fifth store of the kind this file's header flags. It is kept deliberately
+// crude: one canned answer, no verbs, no retrieval. Its whole job is to let the
+// pending → answered transition be driven in a browser. **Never read a latency
+// or a citation off it**, and mirror any change to the pending rule in
+// `conversation::read_thread` here in the same commit.
+
+/// Append one question. `thread_id` continues a conversation; `None` starts one.
+pub async fn invoke_ask_assistant(
+    text: &str,
+    thread_id: Option<&str>,
+) -> Result<crate::types::AssistantAsked, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::ask(text, thread_id))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            text: &'a str,
+            thread_id: Option<&'a str>,
+        }
+        invoke("ask_assistant", &Args { text, thread_id }).await
+    }
+}
+
+/// Every conversation, most recently active first.
+pub async fn invoke_list_assistant_threads() -> Result<Vec<crate::types::AssistantThread>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::threads())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_assistant_threads", &Args {}).await
+    }
+}
+
+/// One conversation, oldest first, with its pending question resolved.
+pub async fn invoke_read_assistant_thread(
+    thread_id: &str,
+) -> Result<crate::types::AssistantThreadView, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::read(thread_id))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            thread_id: &'a str,
+        }
+        invoke("read_assistant_thread", &Args { thread_id }).await
+    }
+}
+
+#[cfg(feature = "mock")]
+mod mock_assistant {
+    use crate::types::{
+        AssistantAsked, AssistantMessage, AssistantThread, AssistantThreadView, AssistantUsage,
+        RecordCitation,
+    };
+    use std::cell::RefCell;
+
+    thread_local! {
+        static STORE: RefCell<Vec<AssistantMessage>> = const { RefCell::new(Vec::new()) };
+        static SEQ: RefCell<u32> = const { RefCell::new(0) };
+    }
+
+    fn next_id(prefix: &str) -> String {
+        SEQ.with(|s| {
+            let mut s = s.borrow_mut();
+            *s += 1;
+            format!("{prefix}-{}", *s)
+        })
+    }
+
+    fn now() -> String {
+        chrono::Utc::now().to_rfc3339()
+    }
+
+    pub fn ask(text: &str, thread_id: Option<&str>) -> AssistantAsked {
+        let thread_id = thread_id
+            .map(str::to_string)
+            .unwrap_or_else(|| next_id("mock-thread"));
+        let message_id = next_id("mock-msg");
+        STORE.with(|s| {
+            s.borrow_mut().push(AssistantMessage {
+                message_id: message_id.clone(),
+                thread_id: thread_id.clone(),
+                role: "user".into(),
+                text: Some(text.to_string()),
+                created_at: now(),
+                in_reply_to: None,
+                stopped: None,
+                detail: None,
+                model: None,
+                elapsed_ms: None,
+                verbs: None,
+                records_read: None,
+                usage: None,
+            })
+        });
+        AssistantAsked {
+            thread_id,
+            message_id,
+        }
+    }
+
+    /// Answer whatever is waiting. Called by the page's poll so the mock walks
+    /// through pending → answered the way the real loop does, only faster.
+    pub fn settle() {
+        STORE.with(|s| {
+            let mut store = s.borrow_mut();
+            let answered: Vec<String> =
+                store.iter().filter_map(|m| m.in_reply_to.clone()).collect();
+            let waiting: Vec<AssistantMessage> = store
+                .iter()
+                .filter(|m| m.is_user() && !answered.contains(&m.message_id))
+                .cloned()
+                .collect();
+            for q in waiting {
+                store.push(AssistantMessage {
+                    message_id: next_id("mock-msg"),
+                    thread_id: q.thread_id.clone(),
+                    role: "assistant".into(),
+                    text: Some(format!(
+                        "This is mock data — no model ran. You asked: “{}”",
+                        q.text.unwrap_or_default()
+                    )),
+                    created_at: now(),
+                    in_reply_to: Some(q.message_id.clone()),
+                    stopped: Some("answered".into()),
+                    detail: None,
+                    model: Some("mock".into()),
+                    elapsed_ms: Some(1200),
+                    verbs: Some(vec!["search".into(), "read".into()]),
+                    records_read: Some(vec![RecordCitation {
+                        kind: "note".into(),
+                        id: "mock-note-1".into(),
+                        title: None,
+                    }]),
+                    usage: Some(AssistantUsage {
+                        prompt_tokens: 900,
+                        completion_tokens: 120,
+                        reasoning_tokens: 0,
+                    }),
+                });
+            }
+        });
+    }
+
+    pub fn threads() -> Vec<AssistantThread> {
+        STORE.with(|s| {
+            let store = s.borrow();
+            let mut ids: Vec<String> = Vec::new();
+            for m in store.iter() {
+                if !ids.contains(&m.thread_id) {
+                    ids.push(m.thread_id.clone());
+                }
+            }
+            let mut threads: Vec<AssistantThread> = ids
+                .into_iter()
+                .map(|id| {
+                    let msgs: Vec<&AssistantMessage> =
+                        store.iter().filter(|m| m.thread_id == id).collect();
+                    AssistantThread {
+                        title: msgs
+                            .iter()
+                            .find(|m| m.is_user())
+                            .and_then(|m| m.text.clone()),
+                        created_at: msgs
+                            .first()
+                            .map(|m| m.created_at.clone())
+                            .unwrap_or_default(),
+                        last_message_at: msgs
+                            .last()
+                            .map(|m| m.created_at.clone())
+                            .unwrap_or_default(),
+                        message_count: msgs.len() as i64,
+                        thread_id: id,
+                    }
+                })
+                .collect();
+            threads.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
+            threads
+        })
+    }
+
+    pub fn read(thread_id: &str) -> AssistantThreadView {
+        // The mock settles on read rather than on a timer: it keeps the fake
+        // loop entirely demand-driven, so nothing keeps ticking in a background
+        // tab.
+        settle();
+        STORE.with(|s| {
+            let messages: Vec<AssistantMessage> = s
+                .borrow()
+                .iter()
+                .filter(|m| m.thread_id == thread_id)
+                .cloned()
+                .collect();
+            let answered: Vec<&str> = messages
+                .iter()
+                .filter_map(|m| m.in_reply_to.as_deref())
+                .collect();
+            let pending = messages
+                .iter()
+                .rev()
+                .find(|m| m.is_user() && !answered.contains(&m.message_id.as_str()));
+            AssistantThreadView {
+                pending: pending.map(|m| m.message_id.clone()),
+                pending_since: pending.map(|m| m.created_at.clone()),
+                messages,
+            }
+        })
+    }
+}

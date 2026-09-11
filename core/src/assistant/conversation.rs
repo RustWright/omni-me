@@ -8,6 +8,9 @@
 
 use chrono::{DateTime, Utc};
 
+use serde::Serialize;
+use surrealdb::types::{SurrealValue, Value as DbValue};
+
 use crate::db::Database;
 use crate::events::{AssistantQuestionAskedPayload, EventError};
 
@@ -181,6 +184,124 @@ pub async fn pending_questions(db: &Database) -> Result<Vec<PendingQuestion>, Ev
     Ok(pending)
 }
 
+/// A thread as the thread list renders it.
+///
+/// The list reads this table rather than aggregating `assistant_messages`,
+/// which is the whole reason the projection keeps two tables: opening the
+/// Assistant tab must not drag every message body it has ever stored across
+/// the IPC boundary to show a dozen titles.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct ThreadSummary {
+    pub thread_id: String,
+    /// Set from the thread's first question only, so it can be `None` on a
+    /// thread whose opening question has not synced yet.
+    pub title: Option<String>,
+    pub created_at: String,
+    pub last_message_at: String,
+    pub message_count: i64,
+}
+
+/// One message, with everything the client needs to render it.
+///
+/// `usage` and `records_read` stay [`DbValue`] rather than typed structs: they
+/// are stored shapes owned by the event payload, and re-declaring them here
+/// would be a second definition to keep in step with the first. The client
+/// reads them as JSON either way.
+///
+/// ⚠️ **`records_read` carries no title** — see
+/// [`crate::assistant::answer::records_read`] for why, and resolve the display
+/// name against the record tables at render time.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct ConversationMessage {
+    pub message_id: String,
+    pub thread_id: String,
+    /// `user` or `assistant`.
+    pub role: String,
+    /// `None` on an answer that failed, ran out of turns, or was skipped as
+    /// stale — [`stopped`](Self::stopped) says which.
+    pub text: Option<String>,
+    pub created_at: String,
+    pub in_reply_to: Option<String>,
+    pub stopped: Option<String>,
+    /// The provider's failure sentence, when there was one.
+    pub detail: Option<String>,
+    pub model: Option<String>,
+    pub elapsed_ms: Option<i64>,
+    pub verbs: Option<Vec<String>>,
+    pub records_read: Option<DbValue>,
+    pub usage: Option<DbValue>,
+}
+
+/// One thread, plus whether it is still waiting on an answer.
+///
+/// **The pending flag is computed here, not in the client.** "Unanswered" is the
+/// same judgement the responder's sweep makes, and two implementations of it
+/// would disagree the first time a `stopped` variant is added — the client would
+/// spin on a question the agent considers closed.
+#[derive(Debug, Clone, Serialize)]
+pub struct ThreadView {
+    pub messages: Vec<ConversationMessage>,
+    /// The `message_id` of the question still waiting, if any.
+    pub pending: Option<String>,
+    /// When that question was asked, so the UI can decide when to say the
+    /// assistant may be offline without needing a second clock source.
+    pub pending_since: Option<String>,
+}
+
+/// Every thread, most recently active first.
+pub async fn list_threads(db: &Database) -> Result<Vec<ThreadSummary>, EventError> {
+    // ⚠️ `last_message_at` is selected as well as ordered on — SurrealDB v3
+    // rejects `ORDER BY` over a field the projection does not return, and names
+    // it a "missing order idiom", which does not read as the cause. Ordering on
+    // the `<string>` alias is chronological because SurrealDB renders datetimes
+    // in a fixed RFC 3339 form, so lexical order matches.
+    let mut resp = db
+        .query(
+            "SELECT thread_id, title, message_count,
+                    <string> created_at AS created_at,
+                    <string> last_message_at AS last_message_at
+             FROM assistant_threads ORDER BY last_message_at DESC",
+        )
+        .await?
+        .check()?;
+    Ok(resp.take(0)?)
+}
+
+/// One thread's messages, oldest first, with its pending question resolved.
+pub async fn read_thread(db: &Database, thread_id: &str) -> Result<ThreadView, EventError> {
+    let mut resp = db
+        .query(
+            "SELECT message_id, thread_id, role, text, in_reply_to, stopped, detail,
+                    model, elapsed_ms, verbs, records_read, usage,
+                    <string> created_at AS created_at
+             FROM assistant_messages WHERE thread_id = $thread_id ORDER BY created_at",
+        )
+        .bind(("thread_id", thread_id.to_string()))
+        .await?
+        .check()?;
+    let messages: Vec<ConversationMessage> = resp.take(0)?;
+
+    // Any answer closes a question, including a failed one — the same rule the
+    // sweep applies (see `pending_questions`). Only the newest unanswered
+    // question is reported: an older one the agent has already passed over is
+    // not something the client should keep a spinner on.
+    let answered: std::collections::BTreeSet<&str> = messages
+        .iter()
+        .filter(|m| m.role == "assistant")
+        .filter_map(|m| m.in_reply_to.as_deref())
+        .collect();
+    let pending = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user" && !answered.contains(m.message_id.as_str()));
+
+    Ok(ThreadView {
+        pending: pending.map(|m| m.message_id.clone()),
+        pending_since: pending.map(|m| m.created_at.clone()),
+        messages,
+    })
+}
+
 /// Rows to model turns, dropping anything with nothing to say.
 ///
 /// A failed or budget-exhausted answer has no `text`, and putting it in the
@@ -208,7 +329,7 @@ mod tests {
     use super::*;
     use crate::events::{
         AnswerStop, AnswerUsage, AssistantAnswerGivenPayload, AssistantProjection, Event, NewEvent,
-        Projection,
+        Projection, RecordRef,
     };
     use chrono::Duration;
 
@@ -268,6 +389,37 @@ mod tests {
             elapsed_ms: 0,
             verbs: vec![],
             records_read: vec![],
+        };
+        let ev = envelope(
+            NewEvent::assistant_answer_given("agent", &payload).unwrap(),
+            ts,
+        );
+        AssistantProjection.apply(&ev, db).await.unwrap();
+    }
+
+    /// Like [`reply`], but carrying citations — the shape the SCHEMAFULL table
+    /// rejected until `records_read`'s subfields were declared.
+    async fn reply_citing(
+        db: &Database,
+        ts: DateTime<Utc>,
+        thread: &str,
+        message: &str,
+        in_reply_to: &str,
+        text: Option<&str>,
+        records_read: Vec<RecordRef>,
+    ) {
+        let payload = AssistantAnswerGivenPayload {
+            thread_id: thread.into(),
+            message_id: message.into(),
+            in_reply_to: in_reply_to.into(),
+            text: text.map(str::to_string),
+            stopped: AnswerStop::Answered.to_string(),
+            detail: None,
+            model: Some("test-model".into()),
+            usage: AnswerUsage::default(),
+            elapsed_ms: 0,
+            verbs: vec!["read".into()],
+            records_read,
         };
         let ev = envelope(
             NewEvent::assistant_answer_given("agent", &payload).unwrap(),
@@ -468,5 +620,133 @@ mod tests {
     async fn a_database_with_no_conversations_yields_nothing() {
         let db = test_db().await;
         assert!(pending_questions(&db).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn threads_list_most_recently_active_first() {
+        let db = test_db().await;
+        let now = Utc::now();
+        ask(&db, now, "old", "m1", "asked first").await;
+        ask(&db, now + Duration::seconds(60), "new", "m2", "asked later").await;
+        // The older thread then gets a reply, which should lift it back to the top.
+        reply(
+            &db,
+            now + Duration::seconds(120),
+            "old",
+            "m3",
+            "m1",
+            Some("late answer"),
+            AnswerStop::Answered,
+        )
+        .await;
+
+        let threads = list_threads(&db).await.unwrap();
+        assert_eq!(
+            threads
+                .iter()
+                .map(|t| t.thread_id.as_str())
+                .collect::<Vec<_>>(),
+            ["old", "new"],
+            "ordering is by last activity, not by when the thread was started"
+        );
+        let old = &threads[0];
+        assert_eq!(old.message_count, 2);
+        assert_eq!(old.title.as_deref(), Some("asked first"));
+    }
+
+    #[tokio::test]
+    async fn a_thread_read_reports_the_question_still_waiting() {
+        let db = test_db().await;
+        let now = Utc::now();
+        ask(&db, now, "t1", "m1", "first").await;
+        reply(
+            &db,
+            now + Duration::seconds(5),
+            "t1",
+            "m2",
+            "m1",
+            Some("answered"),
+            AnswerStop::Answered,
+        )
+        .await;
+        ask(&db, now + Duration::seconds(10), "t1", "m3", "second").await;
+
+        let view = read_thread(&db, "t1").await.unwrap();
+        assert_eq!(
+            view.messages
+                .iter()
+                .map(|m| m.message_id.as_str())
+                .collect::<Vec<_>>(),
+            ["m1", "m2", "m3"],
+            "oldest first, so the client can render it as a transcript"
+        );
+        assert_eq!(view.pending.as_deref(), Some("m3"));
+        assert!(view.pending_since.is_some());
+    }
+
+    /// The same rule the sweep applies: any answer closes a question. If these
+    /// two ever disagree the client spins forever on a question the agent is
+    /// finished with.
+    #[tokio::test]
+    async fn a_failed_answer_leaves_nothing_pending_for_the_client_either() {
+        let db = test_db().await;
+        let now = Utc::now();
+        ask(&db, now, "t1", "m1", "q").await;
+        reply(
+            &db,
+            now + Duration::seconds(1),
+            "t1",
+            "m2",
+            "m1",
+            None,
+            AnswerStop::Failed,
+        )
+        .await;
+
+        let view = read_thread(&db, "t1").await.unwrap();
+        assert_eq!(view.pending, None);
+        assert_eq!(view.messages[1].stopped.as_deref(), Some("failed"));
+        assert_eq!(
+            view.messages[1].text, None,
+            "a failed answer renders no prose"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_answers_citations_survive_the_read() {
+        let db = test_db().await;
+        let now = Utc::now();
+        ask(&db, now, "t1", "m1", "what did I write about rent?").await;
+        reply_citing(
+            &db,
+            now + Duration::seconds(3),
+            "t1",
+            "m2",
+            "m1",
+            Some("you wrote a note"),
+            vec![RecordRef {
+                kind: "note".into(),
+                id: "note-1".into(),
+                title: None,
+            }],
+        )
+        .await;
+
+        let view = read_thread(&db, "t1").await.unwrap();
+        let cited = view.messages[1]
+            .records_read
+            .clone()
+            .expect("the citation should survive the round trip");
+        let json = cited.into_json_value();
+        assert_eq!(json[0]["kind"], "note");
+        assert_eq!(json[0]["id"], "note-1");
+    }
+
+    #[tokio::test]
+    async fn reading_a_thread_that_does_not_exist_is_empty_rather_than_an_error() {
+        let db = test_db().await;
+        let view = read_thread(&db, "nope").await.unwrap();
+        assert!(view.messages.is_empty());
+        assert_eq!(view.pending, None);
     }
 }

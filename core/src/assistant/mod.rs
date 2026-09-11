@@ -33,7 +33,10 @@ pub mod verbs;
 
 pub use answer::{answer_payload, records_read, skipped_payload};
 pub use catalog::{CatalogEntry, ChildCollection, FilterField, FilterKind, IdentityKind};
-pub use conversation::{PendingQuestion, Role, Turn, pending_questions};
+pub use conversation::{
+    ConversationMessage, PendingQuestion, Role, ThreadSummary, ThreadView, Turn, list_threads,
+    pending_questions, read_thread,
+};
 pub use retrieval::{Rerank, Retrievers, SemanticHit, SemanticSearch};
 pub use session::{MAX_TURNS, Outcome, Session, StopReason, TurnRecord};
 pub use store::{FullRecord, SearchHit, TypeResults};

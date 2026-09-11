@@ -21,6 +21,7 @@ use dioxus::prelude::*;
 use futures::StreamExt;
 
 use components::nav::{NavDrawer, SideNav};
+use pages::assistant::AssistantPage;
 use pages::finances::FinancesPage;
 use pages::journal::JournalPage;
 use pages::notes::NotesPage;
@@ -34,6 +35,7 @@ use sync_refresh::SyncRefresh;
 pub enum Tab {
     Journal,
     Notes,
+    Assistant,
     Routines,
     Finances,
     Settings,
@@ -47,6 +49,7 @@ impl Tab {
         match self {
             Tab::Journal => "journal",
             Tab::Notes => "notes",
+            Tab::Assistant => "assistant",
             Tab::Routines => "routines",
             Tab::Finances => "finances",
             Tab::Settings => "settings",
@@ -57,6 +60,7 @@ impl Tab {
         match s {
             "journal" => Some(Tab::Journal),
             "notes" => Some(Tab::Notes),
+            "assistant" => Some(Tab::Assistant),
             "routines" => Some(Tab::Routines),
             "finances" => Some(Tab::Finances),
             "settings" => Some(Tab::Settings),
@@ -72,6 +76,7 @@ impl Tab {
         match self {
             Tab::Journal => Some(types::Feature::Journal),
             Tab::Notes => Some(types::Feature::Notes),
+            Tab::Assistant => Some(types::Feature::Llm),
             Tab::Routines => Some(types::Feature::Routines),
             Tab::Finances => Some(types::Feature::Finances),
             Tab::Settings => None,
@@ -910,6 +915,7 @@ fn App() -> Element {
                             Tab::Notes => rsx! { NotesPage {} },
                             Tab::Routines => rsx! { RoutinesPage {} },
                             Tab::Finances => rsx! { FinancesPage {} },
+                            Tab::Assistant => rsx! { AssistantPage {} },
                             Tab::Settings => rsx! { SettingsPage {} },
                         }
                     }
@@ -985,7 +991,7 @@ mod tab_visibility_tests {
     #[test]
     fn all_tabs_show_by_default() {
         let features = Features::default();
-        assert_eq!(components::nav::ALL_TABS.len(), 5);
+        assert_eq!(components::nav::ALL_TABS.len(), 6);
         for tab in components::nav::ALL_TABS {
             assert!(tab.visible(&features), "{} hidden by default", tab.as_key());
         }
@@ -1030,14 +1036,35 @@ mod tab_visibility_tests {
         assert_eq!(visible, vec!["settings"]);
     }
 
-    /// Auto-import and LLM own no tab — they live as sub-surfaces of Finances.
-    /// Switching them off must not remove a tab.
+    /// Auto-import owns no tab — it lives as a sub-surface of Finances, so
+    /// switching it off must not remove one.
+    ///
+    /// ⚠️ **LLM used to be in this list and no longer is.** It gained the
+    /// Assistant tab, which is exactly the case the next test pins down.
     #[test]
     fn the_tabless_features_do_not_hide_a_tab() {
-        let features = features_without(&[Feature::AutoImport, Feature::Llm]);
+        let features = features_without(&[Feature::AutoImport]);
         for tab in components::nav::ALL_TABS {
             assert!(tab.visible(&features), "{} hidden", tab.as_key());
         }
+    }
+
+    /// Turning the LLM feature off must take the Assistant tab with it. Without
+    /// this the tab survives into a state where every command behind it refuses,
+    /// which reads as the feature being broken rather than off.
+    #[test]
+    fn switching_off_the_llm_hides_the_assistant_tab() {
+        let features = features_without(&[Feature::Llm]);
+        assert!(!Tab::Assistant.visible(&features));
+        let visible: Vec<&str> = components::nav::ALL_TABS
+            .iter()
+            .filter(|t| t.visible(&features))
+            .map(|t| t.as_key())
+            .collect();
+        assert_eq!(
+            visible,
+            vec!["journal", "notes", "routines", "finances", "settings"]
+        );
     }
 
     /// A persisted tab whose feature went off must not survive a restore. This is

@@ -805,6 +805,10 @@ pub fn run() {
             commands::config::set_global_config,
             commands::config::set_device_override,
             commands::record_types::get_record_type,
+            // Assistant — questions go out as events; the agent answers
+            commands::assistant::ask_assistant,
+            commands::assistant::list_assistant_threads,
+            commands::assistant::read_assistant_thread,
             // Feedback capture
             commands::feedback::get_app_context,
             commands::feedback::submit_feedback,

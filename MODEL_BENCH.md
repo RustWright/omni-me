@@ -80,7 +80,34 @@ This is the main reason the instrument saturates — see Part 4.
 
 ## Part 2 — Results by role
 
-### Role A — interactive reasoner · benched 2026-09-09 · leading candidate, not decided
+### Role A — interactive reasoner · benched 2026-09-09 · **DECIDED 2026-09-10: `openai/gpt-oss-120b-Turbo`**
+
+⛔ **Settled — `[llm] model` is pinned to the `-Turbo` id.** The assistant had been running the
+**base** tier because `openai/gpt-oss-120b` is the one slug identical in OpenRouter's dialect
+and DeepInfra's (R2), so the migration re-resolved every other row and waved this one through.
+Direct, the tier is not a routing pin but a separately-priced model id (R1) — so "no suffix"
+silently meant "slowest tier".
+
+**Measured on the live ask/answer loop, same question, same corpus, same 5,366-token prompt:**
+
+| Tier | Per-call latency | Whole answer | End to end at the hub |
+|---|---|---|---|
+| `openai/gpt-oss-120b` (base) | 11.7 / 13.4 / 4.8s | **90,804ms** | +99s |
+| `openai/gpt-oss-120b-Turbo` | 0.97 / 1.24 / 1.74 / 2.62s | **6,642ms** | **+18s** |
+
+**13.7× on the answer**, against 4.1× the input rate — ~$0.0006 a question. Accuracy is not a
+trade here: both rows are the *same model*, and the bench scored `deepinfra/turbo` 10/10 on the
+free-form arm, equal to `bf16`. ⚠️ The 9s of the 18s is the test harness's own cold process
+start (`--ask-event` boots a second agent); a real client authors in-process, so the
+user-facing figure is **~9s** — 6.6s model, ~2.4s sync.
+
+⛔ **Do not "optimize" the verb loop for latency.** Turn count was the obvious-looking lever and
+it was the wrong one: `list_types` cost 11.7s on base and 0.97s on Turbo. The tier was the whole
+effect. Prompt caching (R4b) remains genuinely unexploited but needs a DeepSeek id, which this
+decision declines.
+
+⚠️ **Stage 3 must set this in the box's own `credentials.toml`.** The deployed agent reads a
+mounted file, not this repo's.
 
 Nine slate rows over eight distinct models, all pinned to DeepInfra tags through OpenRouter.
 Scorecards in `runs/20260909-093234/` (gitignored). Latency is the **free-form** arm's,

@@ -983,6 +983,130 @@ pub struct JournalImportResult {
     pub a2_rewrites: usize,
 }
 
+// --- Assistant (Phase D-1) ---
+
+/// A conversation in the thread list.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AssistantThread {
+    pub thread_id: String,
+    /// Taken from the thread's opening question. `None` only while that question
+    /// has not synced to this device yet.
+    pub title: Option<String>,
+    pub created_at: String,
+    pub last_message_at: String,
+    pub message_count: i64,
+}
+
+/// A record an answer actually opened, for the citation links under it.
+///
+/// ⚠️ **`title` is always `None` off the wire** — the event deliberately does not
+/// freeze one, so a renamed record still cites correctly. Resolve the display
+/// name locally; see `docs`/`assistant::answer::records_read`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RecordCitation {
+    /// `journal`, `note`, `routine`.
+    pub kind: String,
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// What an answer cost and how it ended.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct AssistantUsage {
+    #[serde(default)]
+    pub prompt_tokens: u32,
+    #[serde(default)]
+    pub completion_tokens: u32,
+    /// Billed and rate-limited separately, and were ~95% of output on the
+    /// baseline model — folded into a total it would misstate both cost and
+    /// where the time went.
+    #[serde(default)]
+    pub reasoning_tokens: u32,
+}
+
+/// One turn of a conversation.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AssistantMessage {
+    pub message_id: String,
+    pub thread_id: String,
+    /// `user` or `assistant`.
+    pub role: String,
+    /// `None` on an answer that failed, exhausted its turns, or was skipped as
+    /// stale — `stopped` says which, and `detail` may carry the reason.
+    pub text: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    /// `answered` | `turn_budget` | `failed` | `stale`.
+    #[serde(default)]
+    pub stopped: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub elapsed_ms: Option<i64>,
+    #[serde(default)]
+    pub verbs: Option<Vec<String>>,
+    #[serde(default)]
+    pub records_read: Option<Vec<RecordCitation>>,
+    #[serde(default)]
+    pub usage: Option<AssistantUsage>,
+}
+
+impl AssistantMessage {
+    pub fn is_user(&self) -> bool {
+        self.role == "user"
+    }
+
+    /// The sentence to show in place of an answer that never arrived.
+    ///
+    /// Returns `None` for a normal answer. Every other ending gets prose rather
+    /// than a status code, because `turn_budget` on screen tells a person
+    /// nothing about what to do next.
+    pub fn failure_note(&self) -> Option<String> {
+        match self.stopped.as_deref() {
+            None | Some("answered") => None,
+            Some("turn_budget") => Some(
+                "The assistant ran out of steps before it finished. Try asking for one thing at a time."
+                    .into(),
+            ),
+            Some("stale") => Some(
+                "This question sat unanswered too long, so the assistant skipped it. Ask again to retry."
+                    .into(),
+            ),
+            Some("failed") => Some(match self.detail.as_deref() {
+                Some(why) if !why.trim().is_empty() => format!("The assistant could not answer: {why}"),
+                _ => "The assistant could not answer this one.".into(),
+            }),
+            // An ending this build does not know about. Say so plainly rather
+            // than rendering a blank bubble — a new `stopped` variant shipping
+            // from another device must not read as the app hanging.
+            Some(other) => Some(format!("The assistant stopped early ({other}).")),
+        }
+    }
+}
+
+/// One conversation, with whether it is still waiting on an answer.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AssistantThreadView {
+    pub messages: Vec<AssistantMessage>,
+    /// The `message_id` of the question still waiting, if any. Computed in
+    /// `core` so this screen and the agent's sweep cannot disagree about it.
+    #[serde(default)]
+    pub pending: Option<String>,
+    #[serde(default)]
+    pub pending_since: Option<String>,
+}
+
+/// What `ask_assistant` hands back.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AssistantAsked {
+    pub thread_id: String,
+    pub message_id: String,
+}
+
 #[cfg(test)]
 mod feature_tests {
     use super::*;

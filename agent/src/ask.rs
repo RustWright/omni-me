@@ -1,8 +1,22 @@
 //! `--ask`: put one question through the assistant and print what happened.
 //!
-//! ⚠️ **Test scaffolding.** It exists because the verbs have no real interface
-//! yet — the chat surface that replaces it is separate, later work. Nothing
-//! should be built on this output format.
+//! ⚠️ **A dev tool, and it STAYS.** This doc used to say it goes when the chat
+//! surface lands. That surface landed (the Assistant tab, 2026-09-10) and the
+//! trigger was still wrong, because by then this flag had acquired a second job
+//! the note never mentioned:
+//!
+//! - The chat surface prints **prose**; this prints the **trace** — which verbs
+//!   the model chose, the turn sequence, what it paid. Model re-evaluation is a
+//!   standing commitment and the trace is what that reads.
+//! - `--ask --constrained` is the cheap one-request rehearsal of the
+//!   schema-constrained path. `scripts/bench-openrouter.sh` branches on exactly
+//!   that pairing to decide whether its preflight needs `tools` or a schema;
+//!   delete the flag and that branch guards a case that can no longer happen.
+//!
+//! What *is* true is narrower: `--ask` cannot run **on the box**, because a
+//! resident agent holds an exclusive `surrealkv` lock on the directory. It is
+//! dead as a production flag, not as a local one. Nothing should be built on
+//! this output format.
 //!
 //! What it prints is the *trace*, not just the answer, because during Phase B
 //! the interesting question is which verbs the model chose and what it paid, not
