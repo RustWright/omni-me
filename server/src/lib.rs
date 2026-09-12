@@ -43,6 +43,19 @@ const DB_PATH: &str = "surreal_data/server.db";
 const LISTEN_ADDR: &str = "0.0.0.0:3000";
 const DEFAULT_BLOB_DIR: &str = "blobs";
 
+/// Where blobs live, from `BLOB_DIR` or the default.
+///
+/// ⚠️ **Public because the overlay needs the same answer.** It builds the IMAP
+/// sources (handler composition is per-app policy) and those archive every
+/// message they fetch — resolving the path independently there would let the
+/// two disagree, and a document written to the wrong directory is one the
+/// `/blobs/{hash}` route cannot serve.
+pub fn blob_dir_from_env() -> PathBuf {
+    std::env::var("BLOB_DIR")
+        .unwrap_or_else(|_| DEFAULT_BLOB_DIR.into())
+        .into()
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Database>,
@@ -162,9 +175,7 @@ pub async fn run(cfg: RunConfig) {
     // `core::llm::ClientOptions`.
     let llm_client = build_llm_client(&creds, ClientOptions::default());
 
-    let blob_dir: PathBuf = std::env::var("BLOB_DIR")
-        .unwrap_or_else(|_| DEFAULT_BLOB_DIR.into())
-        .into();
+    let blob_dir: PathBuf = blob_dir_from_env();
     tokio::fs::create_dir_all(&blob_dir)
         .await
         .expect("failed to create blob dir");

@@ -23,7 +23,9 @@ pub mod csv;
 pub mod imap;
 pub mod imap_real;
 pub mod imap_source;
-pub mod mime;
+// Moved to `crate::mime` so the archive can read an .eml without this
+// feature. Re-exported so `super::mime::…` keeps resolving in here.
+pub use crate::mime;
 pub mod paused;
 pub mod receipts;
 pub mod rest;

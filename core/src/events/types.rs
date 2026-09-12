@@ -1451,6 +1451,24 @@ pub struct DocumentArchivedPayload {
     /// trustworthy — and a reader who cannot tell the two apart will trust both
     /// equally.
     pub text_source: String,
+    /// The document this one arrived *inside*, when it arrived inside anything.
+    ///
+    /// An email is archived whole and each of its attachments is archived as a
+    /// document of its own, pointing back here. That is what lets the review
+    /// screen show a draft transaction beside the message it was derived from,
+    /// and what answers "where did this statement come from" years later —
+    /// [`Self::source`] names the channel, never the specific message.
+    ///
+    /// ⚠️ **`Option`, and it stays optional forever.** Most documents arrive on
+    /// their own, and every event written before this field existed must keep
+    /// deserializing.
+    ///
+    /// ⛔ **A link, not ownership.** The child is a full document — its own
+    /// text, its own fields, correctable on its own. ⛔ Do not infer a
+    /// cascading delete from it: the same attachment bytes may be filed again
+    /// from another channel, and each filing is real.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_document_id: Option<String>,
 }
 
 /// One extracted value, with an honest account of where it came from.

@@ -51,11 +51,11 @@ pub static OMNI_MOCK_BUILD_SENTINEL: &[u8; 32] = b"OMNI_MOCK_BUILD__DO_NOT_SHIP_
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AutoImportSourceView, BalanceCheckView,
     BudgetProgress, BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView,
-    ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementResult, JournalDayStat,
-    JournalEntryItem, LlmResult, MatchCandidateView, NetWorthSeriesView, PendingBatchView,
-    PendingShareCapture, ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem,
-    ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
-    TransactionFormDraft, TransactionView, TxnFilter,
+    DocumentItem, ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementResult,
+    JournalDayStat, JournalEntryItem, LlmResult, MatchCandidateView, NetWorthSeriesView,
+    PendingBatchView, PendingShareCapture, ReconciliationTxnPreview, RecurringPattern,
+    RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot,
+    TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
 };
 #[cfg(feature = "mock")]
 use crate::types::{
@@ -292,6 +292,76 @@ pub fn blur_active_element() {
     {
         let _ = el.blur();
     }
+}
+
+/// Inject a bundled script (once) and resolve when `global_name` is a callable
+/// on `window`. `false` if it never appeared within the polling window.
+///
+/// **POLLING, not `script.onload`.** The old release-only onload path could hang
+/// forever in an embedded Tauri webview — the script loads, but the awaited
+/// onload never resolves — stranding the caller on its loading state. Polling is
+/// robust across `dx serve`, embedded release builds, and Android. ⚠️ One path
+/// for all build modes: a previous `cfg(debug_assertions)` split meant the
+/// release path was never exercised until a real desktop webview ran it.
+///
+/// ⚠️ **The window must be generous.** On a cold first launch — empty webview
+/// cache, a ~1 MB bundle parsed for the first time while the wasm frontend and
+/// DB init compete for the main thread — the embedded webkit webview can take
+/// well over 5s to define its global. A 5s cap stranded the editor on
+/// "Initializing…" on first launch while working on relaunch, once webkit had
+/// cached the bundle.
+pub async fn ensure_js_bundle(src: &str, global_name: &str, max_attempts: u16) -> bool {
+    const POLL_INTERVAL_MS: i32 = 100;
+
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let Some(document) = window.document() else {
+        return false;
+    };
+
+    // Dedupe by `src` so repeated mounts (and any warm-up call) don't stack
+    // copies of the bundle.
+    let existing = document
+        .query_selector(&format!("script[src='{src}']"))
+        .ok()
+        .flatten();
+    if existing.is_none() {
+        let inject = || -> Option<()> {
+            let script = document.create_element("script").ok()?;
+            script.set_attribute("src", src).ok()?;
+            script.set_attribute("async", "").ok()?;
+            document.body()?.append_child(&script).ok()?;
+            Some(())
+        };
+        if inject().is_none() {
+            return false;
+        }
+    }
+
+    for _ in 0..max_attempts {
+        let defined = js_sys::Reflect::get(&window, &JsValue::from_str(global_name))
+            .ok()
+            .and_then(|val| val.dyn_ref::<js_sys::Function>().map(|_| ()))
+            .is_some();
+        if defined {
+            return true;
+        }
+
+        let timeout = js_sys::Promise::new(&mut |resolve, _| {
+            let _ = window
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, POLL_INTERVAL_MS);
+        });
+        if wasm_bindgen_futures::JsFuture::from(timeout).await.is_err() {
+            return false;
+        }
+    }
+
+    web_sys::console::error_1(&JsValue::from_str(&format!(
+        "{global_name} still undefined after polling — {src} likely failed to load \
+         (check the Network tab for a 404 or MIME error)."
+    )));
+    false
 }
 
 // CodeMirror interop
@@ -2041,6 +2111,14 @@ const LOBLAWS_RECEIPT_SHA256: &str =
 
 #[cfg(feature = "mock")]
 const LOBLAWS_RECEIPT_BYTES: &[u8] = include_bytes!("mocks/receipt-loblaws.png");
+/// A stand-in for a photographed page, so the archive's image branch renders
+/// something real rather than a broken-image icon during UI work.
+#[cfg(feature = "mock")]
+const SCAN_PAGE_BYTES: &[u8] = include_bytes!("mocks/scan-page.jpg");
+/// A two-page stand-in so the PDF branch — the corpus's 765 files — can be
+/// rendered during UI work rather than only reasoned about.
+#[cfg(feature = "mock")]
+const NOTICE_PDF_BYTES: &[u8] = include_bytes!("mocks/notice.pdf");
 
 #[cfg(feature = "mock")]
 fn mock_transactions() -> Vec<TransactionView> {
@@ -2403,6 +2481,8 @@ pub async fn invoke_fetch_attachment(sha256: &str) -> Result<Vec<u8>, String> {
     {
         if sha256 == LOBLAWS_RECEIPT_SHA256 {
             Ok(LOBLAWS_RECEIPT_BYTES.to_vec())
+        } else if let Some(bytes) = mock_document_bytes(sha256) {
+            Ok(bytes)
         } else {
             Err(format!("mock attachment not found: {sha256}"))
         }
@@ -4988,5 +5068,344 @@ mod mock_assistant {
                 messages,
             }
         })
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Document archive
+// -----------------------------------------------------------------------------
+
+/// Documents matching an optional search string and an optional kind.
+///
+/// ⚠️ The mock deliberately covers the *awkward* states rather than a tidy
+/// three: a document with no extracted text, one with no fields at all, and one
+/// whose fields are unverified. Mock data that is uniformly complete is how a
+/// blank-render bug reaches a device — see `project-fresh-device-refetch-on-use`.
+pub async fn invoke_list_documents(
+    query: Option<String>,
+    kind: Option<String>,
+    mime: Option<String>,
+    offset: Option<u32>,
+) -> Result<Vec<DocumentItem>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = offset;
+        let all = mock_documents();
+        let needle = query.unwrap_or_default().to_lowercase();
+        Ok(all
+            .into_iter()
+            .filter(|d| {
+                needle.is_empty()
+                    || d.display_name().to_lowercase().contains(&needle)
+                    || d.kind.as_deref().unwrap_or_default().contains(&needle)
+            })
+            .filter(|d| match &kind {
+                Some(k) if !k.is_empty() => d.kind.as_deref() == Some(k.as_str()),
+                _ => true,
+            })
+            .filter(|d| match &mime {
+                Some(m) if !m.is_empty() => d.mime_type.as_deref() == Some(m.as_str()),
+                _ => true,
+            })
+            .collect())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            query: Option<String>,
+            kind: Option<String>,
+            mime: Option<String>,
+            offset: Option<u32>,
+        }
+        invoke(
+            "list_documents",
+            &Args {
+                query,
+                kind,
+                mime,
+                offset,
+            },
+        )
+        .await
+    }
+}
+
+/// The documents that arrived inside this one — an email's attachments.
+pub async fn invoke_document_children(document_id: &str) -> Result<Vec<DocumentItem>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_documents()
+            .into_iter()
+            .filter(|d| d.parent_document_id.as_deref() == Some(document_id))
+            .collect())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            document_id: &'a str,
+        }
+        invoke("document_children", &Args { document_id }).await
+    }
+}
+
+pub async fn invoke_get_document(document_id: &str) -> Result<Option<DocumentItem>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_documents()
+            .into_iter()
+            .find(|d| d.document_id == document_id))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            document_id: &'a str,
+        }
+        invoke("get_document", &Args { document_id }).await
+    }
+}
+
+pub async fn invoke_document_kinds() -> Result<Vec<String>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let mut kinds: Vec<String> = mock_documents()
+            .into_iter()
+            .filter_map(|d| d.kind)
+            .collect();
+        kinds.sort();
+        kinds.dedup();
+        Ok(kinds)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("document_kinds", &Args {}).await
+    }
+}
+
+/// One document's extracted text. ⚠️ Not on `DocumentItem` — see
+/// `queries::document_text` for why the list path never carries text.
+pub async fn invoke_get_document_text(document_id: &str) -> Result<Option<String>, String> {
+    #[cfg(feature = "mock")]
+    {
+        // Shaped exactly as `archive::derive_text` writes it for an email:
+        // `From:` / `Subject:` then a blank line then the body. The email view
+        // splits on that blank line, so a mock without it would render one
+        // undifferentiated block and the header/body split would go unchecked.
+        Ok(mock_documents()
+            .into_iter()
+            .find(|d| d.document_id == document_id)
+            .map(|d| {
+                if d.is_email() {
+                    "From: statements@globepay.example\n\
+                     Subject: Your February statement is available\n\n\
+                     Hello,\n\n\
+                     Your statement for February 2026 is attached as a PDF.\n\
+                     The closing balance was 12,480.55.\n\n\
+                     This is an automated message; please do not reply."
+                        .to_string()
+                } else {
+                    format!(
+                        "From: shop@example.com\nSubject: {}\n\nMock body for {}.",
+                        d.display_name(),
+                        d.document_id
+                    )
+                }
+            }))
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            document_id: &'a str,
+        }
+        invoke("get_document_text", &Args { document_id }).await
+    }
+}
+
+/// Record a correction. ⛔ Only callable from a surface showing the document —
+/// the value lands `verified: true`, and the person reading it is the oracle.
+pub async fn invoke_correct_document_field(
+    document_id: &str,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (document_id, key, value);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            document_id: &'a str,
+            key: &'a str,
+            value: &'a str,
+        }
+        invoke(
+            "correct_document_field",
+            &Args {
+                document_id,
+                key,
+                value,
+            },
+        )
+        .await
+    }
+}
+
+#[cfg(feature = "mock")]
+fn mock_documents() -> Vec<DocumentItem> {
+    use crate::types::DocumentField;
+
+    let parsed = |key: &str, value: &str, verified: bool| DocumentField {
+        key: key.into(),
+        value: value.into(),
+        source: "parser:statement-brokerage".into(),
+        verified,
+    };
+
+    vec![
+        DocumentItem {
+            document_id: "doc-statement".into(),
+            sha256: Some("a".repeat(64)),
+            filename: Some("brokerage-2026-01.csv".into()),
+            mime_type: Some("text/csv".into()),
+            size: Some(18_402),
+            archived_at: Some("2026-02-01T09:00:00Z".into()),
+            ingest_source: Some("bulk".into()),
+            text_source: Some("extracted".into()),
+            kind: Some("brokerage_statement".into()),
+            title: None,
+            document_date: Some("2026-01-31".into()),
+            fields: Some(vec![
+                parsed("kind", "brokerage_statement", false),
+                parsed("period_start", "2026-01-02", true),
+                parsed("period_end", "2026-01-31", true),
+                parsed("closing_balance", "12480.55", true),
+                parsed("verifiability", "against_own_running_balance", false),
+            ]),
+            parent_document_id: None,
+        },
+        DocumentItem {
+            document_id: "doc-model-read".into(),
+            sha256: Some("b".repeat(64)),
+            filename: Some("notice-2023.pdf".into()),
+            mime_type: Some("application/pdf".into()),
+            size: Some(82_140),
+            archived_at: Some("2026-01-15T12:30:00Z".into()),
+            ingest_source: Some("email".into()),
+            text_source: Some("extracted".into()),
+            kind: Some("notice_of_assessment".into()),
+            title: Some("Notice of assessment, 2023 tax year".into()),
+            document_date: Some("2024-06-14".into()),
+            fields: Some(vec![
+                DocumentField {
+                    key: "kind".into(),
+                    value: "notice_of_assessment".into(),
+                    source: "model:qwen/qwen3.6-35b-a3b".into(),
+                    verified: false,
+                },
+                DocumentField {
+                    key: "tax_year".into(),
+                    value: "2023".into(),
+                    source: "model:qwen/qwen3.6-35b-a3b".into(),
+                    verified: false,
+                },
+            ]),
+            parent_document_id: None,
+        },
+        // ⚠️ The case a tidy fixture would omit: archived, unreadable, and
+        // uncatalogued. It must still render and still be clickable.
+        DocumentItem {
+            document_id: "doc-scan".into(),
+            sha256: Some("c".repeat(64)),
+            filename: Some("IMG_2291.jpg".into()),
+            mime_type: Some("image/jpeg".into()),
+            size: Some(2_104_882),
+            archived_at: Some("2026-03-02T18:05:00Z".into()),
+            ingest_source: Some("scan".into()),
+            text_source: Some("none".into()),
+            kind: None,
+            title: None,
+            document_date: None,
+            fields: None,
+            parent_document_id: None,
+        },
+        // ⚠️ An email and the attachment that arrived inside it — the pair, not
+        // just the email. A lone email fixture would render its body fine and
+        // leave the children list permanently empty, which is the half of the
+        // view that cannot be checked any other way.
+        //
+        // ⛔ No `kind`, deliberately: `kind` comes from field extraction, which
+        // has not run for mail. A fixture that gave mail a kind would hide the
+        // reason `is_email` keys on the MIME type instead.
+        DocumentItem {
+            document_id: "doc-email".into(),
+            sha256: Some("d".repeat(64)),
+            filename: Some("Your February statement is available.eml".into()),
+            mime_type: Some("message/rfc822".into()),
+            size: Some(214_882),
+            archived_at: Some("2026-03-04T07:12:00Z".into()),
+            ingest_source: Some("email".into()),
+            text_source: Some("extracted".into()),
+            kind: None,
+            title: None,
+            document_date: None,
+            fields: None,
+            parent_document_id: None,
+        },
+        DocumentItem {
+            document_id: "doc-email-attachment".into(),
+            sha256: Some("e".repeat(64)),
+            filename: Some("statement-february.pdf".into()),
+            mime_type: Some("application/pdf".into()),
+            size: Some(96_420),
+            archived_at: Some("2026-03-04T07:12:00Z".into()),
+            ingest_source: Some("email".into()),
+            text_source: Some("extracted".into()),
+            kind: None,
+            title: None,
+            document_date: None,
+            fields: None,
+            parent_document_id: Some("doc-email".into()),
+        },
+    ]
+}
+
+/// Bytes behind the archive fixtures, so the viewer's branches are actually
+/// reachable in the browser.
+///
+/// ⚠️ Without these the CSV table — the branch covering 276 real files — can only
+/// ever render its error state during UI work, which is how a viewer ships
+/// having never been looked at.
+#[cfg(feature = "mock")]
+fn mock_document_bytes(sha256: &str) -> Option<Vec<u8>> {
+    let a = "a".repeat(64);
+    let c = "c".repeat(64);
+
+    if sha256 == a {
+        // Quoted cell with a comma, so the raw-row splitter is exercised too.
+        Some(
+            b"Date,Description,Amount,Balance\n\
+              2026-01-02,OPENING,0.00,12000.00\n\
+              2026-01-09,\"BUY ACME, LTD\",-320.00,11680.00\n\
+              2026-01-18,DIVIDEND,45.55,11725.55\n\
+              2026-01-31,BUY WIDGETCO,755.00,12480.55\n"
+                .to_vec(),
+        )
+    } else if sha256 == c {
+        Some(SCAN_PAGE_BYTES.to_vec())
+    } else if sha256 == "b".repeat(64) || sha256 == "e".repeat(64) {
+        // The email's attachment reuses the notice PDF: what it is testing is
+        // that a child document opens through the ordinary viewer, not what the
+        // bytes contain.
+        Some(NOTICE_PDF_BYTES.to_vec())
+    } else {
+        None
     }
 }

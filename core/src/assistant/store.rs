@@ -658,7 +658,7 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use crate::assistant::catalog::ALL_ENTRIES;
-    use crate::events::{NotesProjection, Projection, RoutinesProjection};
+    use crate::events::{DocumentsProjection, NotesProjection, Projection, RoutinesProjection};
 
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
@@ -666,8 +666,35 @@ mod tests {
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         NotesProjection.init_schema(&db).await.unwrap();
         RoutinesProjection.init_schema(&db).await.unwrap();
+        DocumentsProjection.init_schema(&db).await.unwrap();
         std::mem::forget(dir);
         db
+    }
+
+    /// Every optional column left unset unless named, which is the archive's
+    /// normal state rather than a contrived one: `filename` and `sha256` are
+    /// written at ingest, everything else waits on field extraction that may
+    /// never happen.
+    async fn seed_document(
+        db: &Database,
+        id: &str,
+        filename: &str,
+        text: Option<&str>,
+        parent: Option<&str>,
+    ) {
+        db.query(
+            "UPSERT type::record('documents', $id) SET document_id = $id,
+             filename = $f, sha256 = $s, device_id = 'test-device',
+             archived_at = time::now(), ingest_source = 'email',
+             text = $x, parent_document_id = $p",
+        )
+        .bind(("id", id.to_string()))
+        .bind(("f", filename.to_string()))
+        .bind(("s", format!("sha-of-{filename}")))
+        .bind(("x", text.map(str::to_string)))
+        .bind(("p", parent.map(str::to_string)))
+        .await
+        .unwrap();
     }
 
     fn entry(name: &str) -> &'static CatalogEntry {
@@ -1128,5 +1155,108 @@ mod tests {
         assert_eq!(truncate("abcdefghij", 5), "abcde…");
         // Multi-byte: naive byte slicing would panic here.
         assert_eq!(truncate("ααααα", 3), "ααα…");
+    }
+
+    /// The verbs must survive a row whose text columns are all absent.
+    ///
+    /// ⚠️ Every catalogued type before `document` declares its text columns
+    /// `TYPE string`, so nothing here had ever met a NONE. The failure would not
+    /// be this record rendering oddly — `search` and `list` build one statement
+    /// per type, so a deserialization error takes the whole archive out at once.
+    #[tokio::test]
+    async fn a_document_with_nothing_but_a_filename_is_still_searchable() {
+        let db = test_db().await;
+        for i in 0..9 {
+            seed_document(
+                &db,
+                &format!("01JKDOCFILL{i:015}"),
+                "filler.pdf",
+                None,
+                None,
+            )
+            .await;
+        }
+        seed_document(
+            &db,
+            "01JKDOC0000000000000000001",
+            "hydro-bill-april.pdf",
+            None,
+            None,
+        )
+        .await;
+
+        let out = search(&db, entry("document"), "hydro", 20).await.unwrap();
+        assert_eq!(out.hits.len(), 1, "{out:?}");
+        assert_eq!(
+            out.hits[0].handle, "hydro-bill-april.pdf",
+            "the filename is the handle precisely so an untitled scan still has one"
+        );
+
+        let listed = list(&db, entry("document"), &[], 20).await.unwrap();
+        assert_eq!(listed.hits.len(), 10, "list choked on the absent columns");
+    }
+
+    /// ⛔ The blob address and the ingesting device must never reach the model.
+    #[tokio::test]
+    async fn reading_a_document_hides_its_plumbing() {
+        let db = test_db().await;
+        seed_document(
+            &db,
+            "01JKDOC0000000000000000002",
+            "notice.pdf",
+            Some("A notice about the assessment."),
+            None,
+        )
+        .await;
+
+        let rec = read(&db, entry("document"), "01JKDOC0000000000000000002")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(rec.fields.get("sha256").is_none(), "{:?}", rec.fields);
+        assert!(rec.fields.get("device_id").is_none(), "{:?}", rec.fields);
+        assert!(
+            rec.fields.get("text").is_some(),
+            "hiding went too far — the text is the document: {:?}",
+            rec.fields
+        );
+    }
+
+    /// The one self-referential child collection: an attachment is a document.
+    ///
+    /// Without it the parent link is recorded and unreachable — reading the email
+    /// would say nothing about the PDF that arrived inside it.
+    #[tokio::test]
+    async fn reading_an_email_returns_the_files_that_arrived_inside_it() {
+        let db = test_db().await;
+        const EMAIL: &str = "01JKDOC0000000000000000003";
+        seed_document(&db, EMAIL, "statement available.eml", Some("From: …"), None).await;
+        seed_document(
+            &db,
+            "01JKDOC0000000000000000004",
+            "statement.pdf",
+            Some("Closing balance …"),
+            Some(EMAIL),
+        )
+        .await;
+        // A document of its own, to prove the link is what selects the child and
+        // not merely "every other row".
+        seed_document(
+            &db,
+            "01JKDOC0000000000000000005",
+            "unrelated.pdf",
+            None,
+            None,
+        )
+        .await;
+
+        let rec = read(&db, entry("document"), EMAIL).await.unwrap().unwrap();
+        let attachments = rec.children["attachments"].as_array().unwrap();
+        assert_eq!(attachments.len(), 1, "{attachments:?}");
+        assert_eq!(attachments[0]["filename"], "statement.pdf");
+        assert!(
+            attachments[0].get("sha256").is_none(),
+            "the child rows skipped the hidden-field pass: {attachments:?}"
+        );
     }
 }

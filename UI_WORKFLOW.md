@@ -2,7 +2,7 @@
 
 How to develop and iterate on the omni-me UI. Read this before any UI work.
 
-**Last verified against the code:** 2026-08-28.
+**Last verified against the code:** 2026-09-12.
 
 ## Two modes
 
@@ -30,7 +30,8 @@ scripts override `frontendDist` and then run the mock-sentinel check on the resu
 
 ```
 tauri-app/
-  assets/js/editor.js        ← CodeMirror 6 editor (the only non-Rust UI source)
+  assets/js/editor.js        ← CodeMirror 6 editor
+  assets/js/pdfview.js       ← pdf.js page renderer (Android WebView has none)
   frontend/
     input.css                ← CSS custom-property token layer + base styles
     tailwind.config.js       ← maps Tailwind names onto those tokens
@@ -50,9 +51,11 @@ tauri-app/
         editor.rs            ← CodeMirror wrapper (browser + Tauri)
         month_grid.rs        ← shared month cells + prev_month/next_month
         date_field.rs        ← the app-wide date input (never native <input type=date>)
+        attachment_viewer.rs ← every document type the archive can draw
         account_input.rs, tag_editor.rs, sync_status.rs
       pages/
         journal.rs, notes.rs, routines.rs, finances.rs, settings.rs, import_export.rs
+        archive.rs           ← the document archive: list, search, document beside fields
 ```
 
 `finances.rs` is one ~7,000-line file covering three surfaces (Overview / Ledger /
@@ -90,6 +93,16 @@ cd tauri-app && npm run build:editor && npm run copy:editor:dev
 
 Only `assets/js/editor.bundle.js` is tracked; the desktop/Android copies are regenerated,
 not committed.
+
+**`pdfview.js` has the same trap, and one more.** Rebuild and copy it the same way
+(`npm run build:pdfview && npm run copy:editor:dev` — that copy step moves all three
+bundles). The extra catch is that pdf.js parses in a **web worker**, so
+`pdf.worker.bundle.js` must sit beside `pdfview.bundle.js` at the path
+`pdfview.js` names — the archive's PDF branch renders nothing if only the main bundle
+was copied. ⚠️ Verify the worker actually loaded rather than trusting a rendered page:
+pdf.js falls back to parsing on the main thread without saying so, which renders fine
+and janks on a real document. `performance.getEntriesByType('resource')` should list
+`pdf.worker.bundle.js`.
 
 **Native form controls are NOT Playwright-verifiable.** Playwright drives Chromium; the
 desktop app runs **webkit2gtk**. They disagree on `<select>`, scrollbars and date pickers.

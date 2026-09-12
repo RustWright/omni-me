@@ -4,7 +4,7 @@
 //! Holds a fetcher + a list of handlers + a persistent cursor. Each `pull()`
 //! tick:
 //!   1. Loads cursor from store (else in-memory fallback for tests)
-//!   2. Calls `poll_once(fetcher, handlers, cursor)`
+//!   2. Calls `poll_once(fetcher, handlers, cursor, archive)`
 //!   3. Appends emitted events via `EventStore::append_batch`
 //!   4. Runs projections on the batch
 //!   5. Persists the advanced cursor
@@ -23,7 +23,7 @@ use crate::auto_import_scheduler::{
 use crate::db::Database;
 use crate::events::{EventStore, ProjectionRunner};
 
-use super::imap::{FetchCursor, ImapFetcher, ImapHandler, poll_once};
+use super::imap::{ArchiveTarget, FetchCursor, ImapFetcher, ImapHandler, poll_once};
 
 #[async_trait]
 pub trait CursorStore: Send + Sync {
@@ -100,6 +100,13 @@ pub struct ImapSource {
     cursor_store: Option<Arc<dyn CursorStore>>,
     store: Arc<dyn EventStore>,
     projections: ProjectionRunner,
+    /// Where fetched messages are archived, and as whose device.
+    ///
+    /// ⚠️ `Option` because a caller with no blob store legitimately cannot
+    /// archive — ⛔ not because archiving is optional policy. Production passes
+    /// it; leaving it `None` files every statement email as transactions only,
+    /// with the message itself gone.
+    archive: Option<(std::path::PathBuf, String)>,
 }
 
 impl ImapSource {
@@ -111,6 +118,7 @@ impl ImapSource {
         cursor_store: Option<Arc<dyn CursorStore>>,
         store: Arc<dyn EventStore>,
         projections: ProjectionRunner,
+        archive: Option<(std::path::PathBuf, String)>,
     ) -> Result<Self, ImportError> {
         let name = name.into();
         let initial = if let Some(cs) = &cursor_store {
@@ -128,6 +136,7 @@ impl ImapSource {
             cursor_store,
             store,
             projections,
+            archive,
         })
     }
 }
@@ -140,7 +149,17 @@ impl AutoImportSource for ImapSource {
 
     async fn pull(&self) -> Result<ImportSummary, ImportError> {
         let cursor_snapshot = self.cursor.lock().await.clone();
-        let outcome = poll_once(self.fetcher.as_ref(), &self.handlers, &cursor_snapshot).await?;
+        let target = self.archive.as_ref().map(|(dir, device_id)| ArchiveTarget {
+            blob_dir: dir.as_path(),
+            device_id,
+        });
+        let outcome = poll_once(
+            self.fetcher.as_ref(),
+            &self.handlers,
+            &cursor_snapshot,
+            target.as_ref(),
+        )
+        .await?;
         let next_cursor = outcome.next_cursor.clone();
 
         // The accounting unit here is the **message**, not the event: one
@@ -258,6 +277,7 @@ mod tests {
             Some(cursor_store.clone()),
             store,
             projections,
+            None,
         )
         .await
         .unwrap();
@@ -280,6 +300,7 @@ mod tests {
             Some(cursor_store),
             store,
             projections,
+            None,
         )
         .await
         .unwrap();

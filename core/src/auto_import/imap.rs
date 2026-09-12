@@ -33,7 +33,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 use crate::auto_import_scheduler::ImportError;
-use crate::events::NewEvent;
+use crate::events::{EventType, NewEvent};
 
 /// One IMAP message's metadata + body bytes. Body is the raw RFC 5322 message
 /// — MIME-parsing is the handler's responsibility (different handlers care
@@ -102,15 +102,72 @@ pub fn dispatch_to<'a>(
         .map(|h| h.as_ref())
 }
 
+/// The `source_metadata` key naming the archived message a draft came from.
+///
+/// ⚠️ Read by the review UI to put the email beside the transactions it
+/// produced. `source_metadata` is deliberately opaque at the core layer, so
+/// this const is the only thing keeping writer and reader on the same spelling.
+pub const EMAIL_DOCUMENT_ID_KEY: &str = "email_document_id";
+
+/// Record which archived document a proposed batch was derived from.
+///
+/// ⚠️ **Merges into `source_metadata` rather than replacing it** — the handler
+/// has already put `from`/`subject`/`uid` there, and the review UI reads those.
+/// A non-object or absent value is replaced with a fresh object; anything else
+/// would mean dropping the link rather than the label, and the link is the half
+/// that cannot be reconstructed later.
+///
+/// Silently does nothing for any other event type: a handler may legitimately
+/// return events that are not batch proposals.
+fn stamp_email_document(event: &mut NewEvent, document_id: &str) {
+    if event.event_type != EventType::AutoImportBatchProposed.to_string() {
+        return;
+    }
+    let Some(payload) = event.payload.as_object_mut() else {
+        return;
+    };
+    let metadata = payload
+        .entry("source_metadata")
+        .or_insert_with(|| serde_json::json!({}));
+    if !metadata.is_object() {
+        *metadata = serde_json::json!({});
+    }
+    if let Some(obj) = metadata.as_object_mut() {
+        obj.insert(
+            EMAIL_DOCUMENT_ID_KEY.to_string(),
+            serde_json::Value::String(document_id.to_string()),
+        );
+    }
+}
+
+/// Where to file fetched messages, when they are being archived.
+///
+/// ⛔ **Archiving happens here, not in a handler.** Whether a message is kept is
+/// a property of the *message*, not of whichever handler happened to claim it —
+/// and the handlers differ per deployment (the overlay adds its own). Put this
+/// in `ReceiptHandler` and a bank statement claimed by another handler would go
+/// unarchived, which is exactly backwards: those are the ones most worth having.
+pub struct ArchiveTarget<'a> {
+    pub blob_dir: &'a std::path::Path,
+    pub device_id: &'a str,
+}
+
 /// Run one polling pass for one account: fetch new messages, dispatch each to
 /// the first willing handler, and return a [`PollOutcome`] accounting for every
 /// message fetched. The caller is responsible for persisting the cursor +
 /// appending events — keeps this function pure-ish + testable without an
 /// EventStore handle.
+///
+/// With `archive` set, **every fetched message is archived** as a document plus
+/// one per real attachment, before dispatch and regardless of its outcome.
+/// ⚠️ Including the ones no handler claims: everything here is in a label the
+/// user deliberately applied, and an unrouted message is precisely the one they
+/// will later want to look at to ask why it produced nothing.
 pub async fn poll_once(
     fetcher: &dyn ImapFetcher,
     handlers: &[Box<dyn ImapHandler>],
     cursor: &FetchCursor,
+    archive: Option<&ArchiveTarget<'_>>,
 ) -> Result<PollOutcome, ImportError> {
     let (messages, max_uid) = fetcher.fetch_new(cursor).await?;
     let mut events = Vec::new();
@@ -121,9 +178,58 @@ pub async fn poll_once(
     let mut failed: Vec<(u32, String)> = Vec::new();
 
     for msg in &messages {
+        // Archive first, and independently of routing. ⚠️ A failure here must
+        // not cost the transaction: the draft is the thing the user is waiting
+        // on, and a blob-store error is recoverable by re-fetching later, while
+        // an aborted pass pins the cursor (see the `failed` arm below).
+        let mut email_document_id: Option<String> = None;
+        if let Some(target) = archive {
+            match crate::mime::parse_eml(&msg.body) {
+                Ok(parsed) => {
+                    match crate::archive::ingest_email(
+                        target.blob_dir,
+                        &msg.body,
+                        &parsed,
+                        target.device_id,
+                    )
+                    .await
+                    {
+                        Ok(mut archived) => {
+                            email_document_id = Some(archived.email_document_id.clone());
+                            events.append(&mut archived.events);
+                        }
+                        Err(e) => tracing::warn!(
+                            account = fetcher.name(),
+                            uid = msg.uid,
+                            error = %e,
+                            "imap: could not archive a message — continuing to its transactions",
+                        ),
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    account = fetcher.name(),
+                    uid = msg.uid,
+                    error = %e,
+                    "imap: message did not parse as MIME — not archived",
+                ),
+            }
+        }
+
         match dispatch_to(msg, handlers) {
             Some(handler) => match handler.handle(msg).await {
-                Ok(mut handler_events) => events.append(&mut handler_events),
+                Ok(mut handler_events) => {
+                    // ⛔ Stamped here, not in the handler. Every handler would
+                    // otherwise have to remember to do it — including the
+                    // overlay's private ones, which this crate cannot see — and
+                    // the one that forgot would produce a draft whose source is
+                    // unviewable, which is the exact failure the link prevents.
+                    if let Some(doc_id) = &email_document_id {
+                        for event in &mut handler_events {
+                            stamp_email_document(event, doc_id);
+                        }
+                    }
+                    events.append(&mut handler_events);
+                }
                 // A per-message failure must NOT abort the pass.
                 //
                 // This used to be `handler.handle(msg).await?`, and the cursor
@@ -371,7 +477,7 @@ mod tests {
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
         };
-        let outcome = poll_once(&fetcher, &handlers, &cursor).await.unwrap();
+        let outcome = poll_once(&fetcher, &handlers, &cursor, None).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
         assert_eq!(events.len(), 2, "two messages routed to handlers");
         assert_eq!(next.last_seen_uid, Some(103));
@@ -387,7 +493,7 @@ mod tests {
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
         };
-        let outcome = poll_once(&fetcher, &[], &cursor).await.unwrap();
+        let outcome = poll_once(&fetcher, &[], &cursor, None).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
         assert!(events.is_empty());
         assert_eq!(next.last_seen_uid, Some(101));
@@ -400,7 +506,7 @@ mod tests {
         let cursor = FetchCursor {
             last_seen_uid: Some(500),
         };
-        let outcome = poll_once(&fetcher, &[], &cursor).await.unwrap();
+        let outcome = poll_once(&fetcher, &[], &cursor, None).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
         assert!(events.is_empty());
         assert_eq!(
@@ -431,7 +537,7 @@ mod tests {
             last_seen_uid: Some(100),
         };
 
-        let outcome = poll_once(&fetcher, &handlers, &cursor)
+        let outcome = poll_once(&fetcher, &handlers, &cursor, None)
             .await
             .expect("a per-message handler failure must not fail the whole pass");
         let (events, next) = (outcome.events, outcome.next_cursor);
@@ -471,7 +577,7 @@ mod tests {
             last_seen_uid: Some(100),
         };
 
-        let outcome = poll_once(&fetcher, &handlers, &cursor).await.unwrap();
+        let outcome = poll_once(&fetcher, &handlers, &cursor, None).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
 
         assert_eq!(
@@ -481,5 +587,190 @@ mod tests {
         );
         assert_eq!(events[0].aggregate_id, "imap-statements-102");
         assert_eq!(next.last_seen_uid, Some(102));
+    }
+
+    /// The whole chain in one pass: archive the message, keep its document id,
+    /// dispatch, and stamp the draft the handler produced.
+    ///
+    /// ⚠️ The unit tests above prove the stamping function; this proves the
+    /// **wiring** — that `poll_once` actually threads the id from the archive
+    /// step through to the handler's output, which is where it could silently
+    /// not happen.
+    #[tokio::test]
+    async fn a_draft_carries_the_id_of_the_email_it_came_from() {
+        /// Emits a batch proposal, the shape a real receipt handler returns.
+        struct ProposingHandler;
+        #[async_trait]
+        impl ImapHandler for ProposingHandler {
+            fn name(&self) -> &str {
+                "proposer"
+            }
+            fn accepts(&self, _message: &ImapMessage) -> bool {
+                true
+            }
+            async fn handle(&self, message: &ImapMessage) -> Result<Vec<NewEvent>, ImportError> {
+                Ok(vec![NewEvent {
+                    id: None,
+                    event_type: EventType::AutoImportBatchProposed.to_string(),
+                    aggregate_id: "batch-x".into(),
+                    timestamp: message.date,
+                    device_id: "test".into(),
+                    payload: serde_json::json!({
+                        "batch_id": "batch-x",
+                        "source_metadata": { "subject": message.subject.clone() },
+                    }),
+                }])
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let fetcher = MockFetcher::new("gmail");
+        let mut msg = make_message(1, "shop@example.com");
+        msg.body = b"From: shop@example.com\r\nSubject: Receipt\r\n\r\nTotal 9.99\r\n".to_vec();
+        fetcher.push_response(vec![msg], Some(1));
+
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(ProposingHandler)];
+        let target = ArchiveTarget {
+            blob_dir: dir.path(),
+            device_id: "dev",
+        };
+        let outcome = poll_once(
+            &fetcher,
+            &handlers,
+            &FetchCursor {
+                last_seen_uid: None,
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+
+        let archived_id = outcome
+            .events
+            .iter()
+            .find(|e| e.event_type == "document_archived")
+            .map(|e| e.aggregate_id.clone())
+            .expect("the message was archived");
+        let draft = outcome
+            .events
+            .iter()
+            .find(|e| e.event_type == EventType::AutoImportBatchProposed.to_string())
+            .expect("the handler proposed a batch");
+
+        assert_eq!(
+            draft.payload["source_metadata"][EMAIL_DOCUMENT_ID_KEY], archived_id,
+            "⛔ the draft must name the document a reviewer can open"
+        );
+        assert_eq!(
+            draft.payload["source_metadata"]["subject"], "test",
+            "the handler's own metadata survives"
+        );
+    }
+
+    /// ⛔ The link must survive beside the handler's own metadata, not replace
+    /// it: the review UI reads `from`/`subject` from the same object, and
+    /// clobbering them would trade a visible label for an invisible link.
+    #[test]
+    fn stamping_a_draft_adds_the_link_without_dropping_the_label() {
+        let mut event = NewEvent {
+            id: None,
+            event_type: EventType::AutoImportBatchProposed.to_string(),
+            aggregate_id: "batch-1".into(),
+            timestamp: Utc::now(),
+            device_id: "dev".into(),
+            payload: serde_json::json!({
+                "batch_id": "batch-1",
+                "source_metadata": { "from": "shop@example.com", "uid": 7 },
+            }),
+        };
+        stamp_email_document(&mut event, "doc-42");
+
+        let meta = &event.payload["source_metadata"];
+        assert_eq!(meta[EMAIL_DOCUMENT_ID_KEY], "doc-42");
+        assert_eq!(meta["from"], "shop@example.com", "label preserved");
+        assert_eq!(meta["uid"], 7);
+    }
+
+    #[test]
+    fn stamping_creates_the_object_when_a_handler_supplied_none() {
+        let mut event = NewEvent {
+            id: None,
+            event_type: EventType::AutoImportBatchProposed.to_string(),
+            aggregate_id: "batch-2".into(),
+            timestamp: Utc::now(),
+            device_id: "dev".into(),
+            payload: serde_json::json!({ "batch_id": "batch-2" }),
+        };
+        stamp_email_document(&mut event, "doc-9");
+        assert_eq!(
+            event.payload["source_metadata"][EMAIL_DOCUMENT_ID_KEY],
+            "doc-9"
+        );
+    }
+
+    /// ⚠️ A handler may return events that are not batch proposals; stamping
+    /// one would invent a `source_metadata` field on a payload without one.
+    #[test]
+    fn stamping_leaves_an_unrelated_event_alone() {
+        let mut event = NewEvent {
+            id: None,
+            event_type: "journal_entry_created".into(),
+            aggregate_id: "j-1".into(),
+            timestamp: Utc::now(),
+            device_id: "dev".into(),
+            payload: serde_json::json!({ "journal_id": "j-1" }),
+        };
+        let before = event.payload.clone();
+        stamp_email_document(&mut event, "doc-1");
+        assert_eq!(event.payload, before);
+    }
+
+    /// ⚠️ Archiving is a property of the message, so it must happen for a
+    /// message **no handler wants** too — that is the one the user will later
+    /// open to ask why it produced nothing.
+    #[tokio::test]
+    async fn every_fetched_message_is_archived_including_the_unrouted_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let eml = b"From: shop@example.com\r\n\
+                    Subject: Your receipt\r\n\
+                    Content-Type: text/plain\r\n\r\n\
+                    Total CAD 9.99\r\n";
+
+        let fetcher = MockFetcher::new("gmail");
+        let mut claimed = make_message(1, "shop@example.com");
+        claimed.body = eml.to_vec();
+        let mut ignored = make_message(2, "nobody@elsewhere.com");
+        ignored.body = eml.to_vec();
+        fetcher.push_response(vec![claimed, ignored], Some(2));
+
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(NeedleHandler {
+            name: "shop".into(),
+            needle: "shop@example.com".into(),
+        })];
+        let target = ArchiveTarget {
+            blob_dir: dir.path(),
+            device_id: "dev",
+        };
+        let outcome = poll_once(
+            &fetcher,
+            &handlers,
+            &FetchCursor {
+                last_seen_uid: None,
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.unrouted, vec![2], "the second message is unrouted");
+        let archived = outcome
+            .events
+            .iter()
+            .filter(|e| e.event_type == "document_archived")
+            .count();
+        assert_eq!(
+            archived, 2,
+            "⛔ both messages archived — routing decides transactions, not keeping"
+        );
     }
 }

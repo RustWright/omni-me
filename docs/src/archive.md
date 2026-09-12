@@ -51,6 +51,14 @@ The parser goes first, and the model is asked only when no parser recognises the
 model about a document a parser can read spends money to produce a value that would lose the fold
 anyway.
 
+They also run at different times, and the line between them is the network rather than the kind of
+answer they give. The parser needs nothing remote, so it runs at ingest, wherever ingest happens —
+a device's background queue, the server, a backfill — and a recognised statement is filed already
+searchable by period, row count and closing balance. The model is the half that pays a round-trip
+per document, which makes it work for a scheduled batch that can be rate-limited, retried and
+paused, not for the request that files a document. So a statement gets its fields immediately and
+everything else gets them on the next pass, and neither wait blocks a capture.
+
 Recognising a format is stricter than parsing one, and deliberately so. The import path is told
 which format a file is, so its parsers can treat a column they can work without as optional — the
 transfer-service map does exactly that with its running balance and its row ids. The archive is
@@ -132,20 +140,71 @@ It does not append its own events — it returns them, and the caller persists. 
 owns an event store cannot be tested without one, and everything interesting about ingest is in
 what it makes of a file.
 
-It does not run a model. Deriving text from a PDF's text layer is deterministic and happens here;
-reading a scan is not, and arrives later as `document_text_transcribed`.
+It does not run a model. Lifting a PDF's text layer and parsing a statement's rows are both
+deterministic and both happen here; reading a scan is not, and arrives later as
+`document_text_transcribed`.
+
+Deriving the parser's fields belongs to ingest itself rather than to each caller of it, and that
+placement is the point. Ingest is the one function that knows a document has just been created;
+every caller — the HTTP route today, a device capture or a backfill later — gets fields without
+opting in, and none of them can forget. Ingest returns two events instead of one, and the caller
+appends what it is given.
+
+## Reading a document back
+
+Everything renders on the device, from bytes the attachment cache already holds. The archive
+exists so a filed document stays readable offline, and a viewer that needed the server would
+undo that for the one case it matters in.
+
+That constraint is what decides how each type is drawn. Images go straight into an `<img>`.
+A CSV becomes a table of the file's own rows, never the statement parser's reading of them —
+correcting a misread value means seeing what the file actually says, so an interpreted table
+would hide the very thing being checked. Text and JSON go into a `<pre>`.
+
+**PDFs render through pdf.js, onto a canvas per page.** They used to sit in an `<iframe>`, which
+works on desktop webkit and displays *nothing* on Android WebView — it ships no PDF renderer at
+all. So the most common type in the corpus failed silently on the device most likely to read it.
+Canvases behave identically everywhere. Rasterizing server-side was the alternative and loses on
+every axis that matters here: a round-trip per page, no offline viewing, no text selection, and
+storage for images derived from files already stored. The rasterizer that does exist belongs to
+extraction, where it feeds a vision model, and its page budget is about a model's input size and
+has nothing to say about reading.
+
+Only the first thirty pages are drawn, because one canvas per page at device pixel ratio will
+exhaust an Android WebView on a long statement. Every page is still counted, and the viewer says
+how many it left out: a document that appears to end at page thirty otherwise reads as a
+document that does.
+
+A type nothing can draw says so and names the format. It does **not** offer a download link,
+which is what the old fallback did for everything it did not understand — and on Android that
+link silently does nothing, so the user gets a button that looks like an answer and is not one.
+HEIC is in that category today: neither Chrome nor Android WebView decodes it, and the image
+pipeline refuses it too, so it was previously classified as viewable and rendered an empty frame.
+Transcoding it at ingest remains open; saying so plainly beats a blank.
+
+Classification reads the declared type first and the filename only when that says nothing
+specific. Bulk ingest labels files `application/octet-stream` whenever the extension is
+unfamiliar, so a viewer keyed on the MIME alone would route most of the corpus's CSVs to "no
+preview".
 
 ## Counting a backfill honestly
 
-A batch run reports `seen`, `archived`, `failed`, and separately `without_text`, with
-`seen == archived + failed` asserted rather than assumed.
+A batch run reports `seen`, `archived`, `failed`, and separately `without_text` and
+`with_parser_fields`, with `seen == archived + failed` asserted rather than assumed.
 
 A bare count of successes is unfalsifiable: a file that falls out of the loop unclassified is
 invisible, and over several hundred documents a clean-looking partial import is the failure that
 costs the most to find later. `without_text` is broken out because a run that archives seven
 hundred files and can read none of them is technically a complete success and practically a
-problem. Failures are sampled into the log rather than counted, because a number tells nobody
-which files to go and look at.
+problem. `with_parser_fields` is the same measure from the other side: format discovery matches a
+signature against real exports, so a run over several hundred statements that recognises none of
+them has quietly degraded to filename search while every other number still reads as perfect.
+Failures are sampled into the log rather than counted, because a number tells nobody which files
+to go and look at.
+
+`archived` counts documents, not events, and the two are no longer the same number: a file a parser
+recognises yields two. Deriving the count from the event list instead would make the check written
+to catch a miscount produce one, and produce it only on the runs that went well.
 
 ## Blobs, and what content-addressing does not mean
 
@@ -156,3 +215,78 @@ blob cannot exist.
 the same statement scanned from paper are one file on disk and two entries in the archive — they
 arrived differently, and each filing is real. That is why an archive entry carries its own
 identity rather than keying on the hash, which would silently merge them.
+
+## What the assistant can see
+
+The archive is one catalogue entry, which is the whole of its assistant integration: the
+catalogue drives keyword search, the embedding sweep, `list` and `read` alike, so registering
+`document` brings all four at once and forgetting to register it would have removed all four
+just as quietly.
+
+### It is the first corpus the user did not write
+
+Every catalogued type before it is authored or accepted by the user: journal entries and notes
+are written by them, routines arranged by them, beliefs proposed and then accepted by them. A
+document is neither. An archived email was written by whoever sent it, and its attachments by
+whoever made them — the archive takes every fetched message unconditionally, which is what
+makes it useful and is also the whole of the change in trust level.
+
+The consequences are worth stating rather than discovering. The retrieval corpus now contains
+text an outsider chose; a passage retrieved from an email is cited to the user the same way a
+passage from their own journal is, and only the record type distinguishes them. The system
+prompt already says that record text is data and never instructions, which was written when
+every record was the user's own words and matters considerably more now.
+
+Two structural properties carry the weight, and neither is new: the assistant changes nothing
+without a proposal the user accepts, and the read verbs reach no network. Both were designed
+against exactly this, and both predate the archive.
+
+**This is also the point where the planned dual-model split stops being a nicety.** The
+assistant documentation describes a privileged model that holds the verbs and never sees a raw
+email body, with extraction quarantined behind it, and notes that the separation "partly exists
+already" only as a coincidence of how things were built. That coincidence ends here: `read` on
+an archived `.eml` returns its headers and body straight to the model holding the tools. The
+split is now load-bearing rather than tidy, and the archive is the reason.
+
+Three of its declarations are not the obvious choice, and each is a consequence of the same
+fact — **every archive column is optional**, because fields extracted on one device can be
+folded before the event that created the row.
+
+**The handle is the filename, not the title.** A title only exists once fields have been
+extracted, which for most of the corpus has not happened and may never; a filename is written at
+ingest for everything. A handle that is usually absent degrades to a bare ULID in front of the
+model, which is worse than a plain filename in every case and better in none.
+
+**The filename is also a search field.** A scan carries no extracted text until a model
+transcribes it, so for those documents the filename is the only thing any index can match.
+Leaving it out would make a large and growing part of the archive reachable only by already
+knowing its identifier.
+
+**Listing is ordered by when a document was archived, not by the date printed on it.** The
+printed date comes from field extraction and is absent wherever that has not run, which would
+sort most of the corpus into one undifferentiated block at whichever end nulls land.
+
+An email's attachments are returned as a child collection of the email, which makes `documents`
+the only self-referential entry in the catalogue — an attachment is a document, independently
+searchable and readable, and the parent link is a link rather than ownership. Without the
+collection the link is recorded and unreachable: reading the email would say nothing about the
+statement that arrived inside it.
+
+Two columns are withheld. `sha256` is the blob's content address and `device_id` names the
+machine that ingested it; both are plumbing, and a model handed a 64-character hex string inside
+a record described as a document will quote it back as though it identified something a person
+would recognise.
+
+### The trap in optional text columns
+
+The embedding sweep concatenates a record's text fields in SurrealQL. `string::concat` renders an
+absent column as the literal string `NONE` rather than erroring or propagating emptiness, so an
+untitled scan with no readable text embeds and indexes the word "NONE" as though the document
+said it — and a chunk retrieved on that basis is handed to the model as the document's content.
+Nothing about the run looks wrong: the sweep succeeds and reports a healthy count.
+
+Every catalogued type before this one declares its text columns `TYPE string`, so the sweep had
+never met an absent one. The fix is a coalesce in the concatenation, and the test asserts the
+uncoalesced expression's return value directly — a test that only checked the indexed text would
+pass whether or not the hazard still existed, and would therefore stop meaning anything the day
+someone simplified the coalesce away.

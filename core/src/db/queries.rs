@@ -918,6 +918,177 @@ pub async fn list_feedback(
     Ok((reports, skipped))
 }
 
+// --- Documents (the archive) ---
+
+/// One field folded onto a document.
+///
+/// ⚠️ Mirrors `events::DocumentField` rather than reusing it: `.take()` needs the
+/// `SurrealValue` derive and the event type carries serde's, which is the right
+/// derive for the wire and the wrong one for reading a row back.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct DocumentFieldRow {
+    pub key: String,
+    pub value: String,
+    pub source: String,
+    pub verified: bool,
+}
+
+/// One document from the `documents` projection table.
+///
+/// ⛔ **No `text` column, deliberately.** A document's extracted text exists so
+/// the archive can be *searched*; it is matched inside the query below and never
+/// shipped. Returning it would put the whole corpus's text through the IPC
+/// boundary to render a list of filenames, and the detail view renders the
+/// document itself rather than the text lifted out of it.
+#[derive(Debug, Clone, Serialize, SurrealValue)]
+pub struct DocumentRow {
+    pub document_id: String,
+    pub sha256: Option<String>,
+    pub filename: Option<String>,
+    pub mime_type: Option<String>,
+    pub size: Option<i64>,
+    pub archived_at: Option<String>,
+    pub ingest_source: Option<String>,
+    pub text_source: Option<String>,
+    pub kind: Option<String>,
+    pub title: Option<String>,
+    pub document_date: Option<String>,
+    pub fields: Option<Vec<DocumentFieldRow>>,
+    /// The document this one arrived inside, for an email's attachments.
+    ///
+    /// ⛔ A link, never ownership — an attachment is a document in its own right
+    /// and stays independently listed and searchable. Carried on the row so the
+    /// UI can say "arrived inside …" rather than presenting a statement PDF as
+    /// though it had been filed on its own.
+    pub parent_document_id: Option<String>,
+}
+
+/// Every column the archive reads, in one place so list and detail cannot drift.
+///
+/// ⚠️ `archived_at` is cast to a string because the column is a `datetime`; the
+/// same cast the journal and note queries do. It stays in the selection because
+/// ⛔ **v3 refuses `ORDER BY` over a field the selection omits.**
+const DOCUMENT_COLUMNS: &str = "document_id, sha256, filename, mime_type, size,
+     <string> archived_at AS archived_at, ingest_source, text_source,
+     kind, title, document_date, fields, parent_document_id";
+
+/// Documents matching an optional free-text query and an optional kind.
+///
+/// ⚠️ **Both filters are always bound and an empty string means "no filter".**
+/// Building the `WHERE` clause by string concatenation instead would be one
+/// interpolation away from a query a filename could steer.
+///
+/// The text search covers `filename`, `title` and the document's own `text`, so
+/// a statement is findable by a merchant printed inside it and not only by
+/// whatever the exporting bank named the file.
+pub async fn list_documents(
+    db: &Database,
+    query: &str,
+    kind: &str,
+    mime: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<DocumentRow>, DbError> {
+    let sql = format!(
+        "SELECT {DOCUMENT_COLUMNS}
+         FROM documents
+         -- ⚠️ `?? ''` is load-bearing on every one of these. All three columns
+         -- are `option<>` (a document with no fields extracted has no title),
+         -- and `string::lowercase(NONE)` is a hard query ERROR, not NONE — so
+         -- without the coalesce one untitled document fails the whole search.
+         WHERE ($q = '' OR string::lowercase(filename ?? '') CONTAINS $q
+                       OR string::lowercase(title ?? '') CONTAINS $q
+                       OR string::lowercase(text ?? '') CONTAINS $q)
+           AND ($kind = '' OR kind = $kind)
+           AND ($mime = '' OR mime_type = $mime)
+         ORDER BY archived_at DESC
+         LIMIT $limit START $offset"
+    );
+    let mut resp = db
+        .query(sql)
+        .bind(("q", query.to_ascii_lowercase()))
+        .bind(("kind", kind.to_string()))
+        .bind(("mime", mime.to_string()))
+        .bind(("limit", limit))
+        .bind(("offset", offset))
+        .await?;
+
+    let rows: Vec<DocumentRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+/// The documents that arrived inside this one — an email's attachments.
+///
+/// ⚠️ **Ordered by filename, not by time.** Every part of one message is
+/// archived in a single operation, so `archived_at` orders them arbitrarily and
+/// the order would change between rebuilds.
+///
+/// ⛔ Attachments stay in [`list_documents`] as well. They are documents in
+/// their own right — a statement PDF is worth finding whether or not the reader
+/// remembers it came by email — and hiding them from the list would make the
+/// archive's own breadth claim false.
+pub async fn document_children(
+    db: &Database,
+    parent_id: &str,
+) -> Result<Vec<DocumentRow>, DbError> {
+    let sql = format!(
+        "SELECT {DOCUMENT_COLUMNS} FROM documents
+         WHERE parent_document_id = $parent
+         ORDER BY filename"
+    );
+    let mut resp = db
+        .query(sql)
+        .bind(("parent", parent_id.to_string()))
+        .await?;
+
+    let rows: Vec<DocumentRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+/// One document by its id, or `None` when nothing has folded onto that row.
+pub async fn get_document(db: &Database, id: &str) -> Result<Option<DocumentRow>, DbError> {
+    let sql = format!("SELECT {DOCUMENT_COLUMNS} FROM type::record('documents', $id)");
+    let mut resp = db.query(sql).bind(("id", id.to_string())).await?;
+
+    let rows: Vec<DocumentRow> = resp.take(0)?;
+    Ok(rows.into_iter().next())
+}
+
+/// One document's extracted text.
+///
+/// ⚠️ **Its own query, deliberately.** [`DocumentRow`] omits `text` so a list of
+/// a thousand filenames does not drag the whole corpus's text through the IPC
+/// boundary. This is the single-document read for the surfaces that genuinely
+/// need the words: an archived email shown beside the draft transactions it
+/// produced, where the reviewer's only alternative is approving a value whose
+/// source they cannot see.
+pub async fn document_text(db: &Database, id: &str) -> Result<Option<String>, DbError> {
+    let mut resp = db
+        .query("SELECT VALUE text FROM type::record('documents', $id)")
+        .bind(("id", id.to_string()))
+        .await?;
+
+    let rows: Vec<Option<String>> = resp.take(0)?;
+    Ok(rows.into_iter().flatten().next())
+}
+
+/// Every distinct `kind` present, for the filter control.
+///
+/// ⛔ Derived from the data, never a hardcoded list. Kinds come from parsers and
+/// from an open-ended model vocabulary, so a fixed list would silently hide any
+/// document whose kind the UI had not been taught about.
+pub async fn document_kinds(db: &Database) -> Result<Vec<String>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT VALUE kind FROM documents
+             WHERE kind != NONE GROUP BY kind ORDER BY kind",
+        )
+        .await?;
+
+    let rows: Vec<Option<String>> = resp.take(0)?;
+    Ok(rows.into_iter().flatten().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -957,6 +1128,285 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    // --- Documents (the archive) ---
+
+    async fn doc_db() -> (tempfile::TempDir, Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("documents.db");
+        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+        crate::events::DocumentsProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        (dir, db)
+    }
+
+    /// Fold one document in through the real projection, so a schema or fold
+    /// change breaks these reads rather than only production.
+    async fn fold_doc(
+        db: &Database,
+        id: &str,
+        filename: &str,
+        text: &str,
+        archived_at: &str,
+        kind: Option<&str>,
+    ) {
+        use crate::events::{Event, EventType, Projection, validate_payload};
+
+        let mut events = vec![serde_json::json!({
+            "document_id": id,
+            "sha256": "a".repeat(64),
+            "filename": filename,
+            "mime_type": "application/pdf",
+            "size": 1024u64,
+            "archived_at": archived_at,
+            "source": "bulk",
+            "text": text,
+            "text_source": "extracted",
+        })]
+        .into_iter()
+        .map(|p| (EventType::DocumentArchived, p))
+        .collect::<Vec<_>>();
+
+        if let Some(kind) = kind {
+            events.push((
+                EventType::DocumentFieldsExtracted,
+                serde_json::json!({
+                    "document_id": id,
+                    "extracted_at": archived_at,
+                    "fields": [
+                        { "key": "kind", "value": kind,
+                          "source": "parser:statement-brokerage", "verified": false },
+                        { "key": "closing_balance", "value": "950.00",
+                          "source": "parser:statement-brokerage", "verified": true },
+                    ],
+                }),
+            ));
+        }
+
+        for (event_type, payload) in events {
+            validate_payload(&event_type, &payload).expect("payload must be valid");
+            let event = Event {
+                id: ulid::Ulid::new().to_string(),
+                event_type: event_type.to_string(),
+                aggregate_id: id.to_string(),
+                timestamp: chrono::Utc::now(),
+                device_id: "test-device".to_string(),
+                payload,
+                received_at: None,
+            };
+            crate::events::DocumentsProjection
+                .apply(&event, db)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn documents_come_back_newest_first() {
+        let (_d, db) = doc_db().await;
+        fold_doc(&db, "old", "a.pdf", "", "2024-01-01T00:00:00Z", None).await;
+        fold_doc(&db, "new", "b.pdf", "", "2026-09-01T00:00:00Z", None).await;
+
+        let rows = list_documents(&db, "", "", "", 50, 0).await.unwrap();
+
+        let ids: Vec<&str> = rows.iter().map(|r| r.document_id.as_str()).collect();
+        assert_eq!(ids, vec!["new", "old"]);
+    }
+
+    #[tokio::test]
+    async fn a_search_reaches_inside_the_document_not_only_its_name() {
+        // ⚠️ The point of storing text on the event. A bank names its export
+        // `stmt_0041.pdf`; the only way to find it is by what it says.
+        let (_d, db) = doc_db().await;
+        fold_doc(
+            &db,
+            "stmt",
+            "stmt_0041.pdf",
+            "Payment to HYDRO QUEBEC",
+            "2026-01-01T00:00:00Z",
+            None,
+        )
+        .await;
+        fold_doc(
+            &db,
+            "other",
+            "lease.pdf",
+            "nothing relevant",
+            "2026-01-02T00:00:00Z",
+            None,
+        )
+        .await;
+
+        let hits = list_documents(&db, "hydro quebec", "", "", 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].document_id, "stmt");
+
+        // Case-insensitive both ways, and the filename still matches.
+        assert_eq!(
+            list_documents(&db, "LEASE", "", "", 50, 0)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // An empty query is not a filter.
+        assert_eq!(
+            list_documents(&db, "", "", "", 50, 0).await.unwrap().len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn a_kind_filter_narrows_and_kinds_come_from_the_data() {
+        let (_d, db) = doc_db().await;
+        fold_doc(
+            &db,
+            "s1",
+            "s1.csv",
+            "",
+            "2026-01-01T00:00:00Z",
+            Some("brokerage_statement"),
+        )
+        .await;
+        fold_doc(&db, "u1", "u1.pdf", "", "2026-01-02T00:00:00Z", None).await;
+
+        let narrowed = list_documents(&db, "", "brokerage_statement", "", 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(narrowed.len(), 1);
+        assert_eq!(narrowed[0].document_id, "s1");
+
+        assert_eq!(
+            document_kinds(&db).await.unwrap(),
+            vec!["brokerage_statement"],
+            "⛔ derived from the data — a hardcoded list would hide any new kind"
+        );
+    }
+
+    /// Fold one archived document with an explicit MIME type and parent link —
+    /// the two columns `fold_doc` hardcodes, and the two the mail view turns on.
+    async fn fold_part(db: &Database, id: &str, filename: &str, mime: &str, parent: Option<&str>) {
+        use crate::events::{Event, EventType, Projection, validate_payload};
+
+        let mut payload = serde_json::json!({
+            "document_id": id,
+            "sha256": "a".repeat(64),
+            "filename": filename,
+            "mime_type": mime,
+            "size": 1024u64,
+            "archived_at": "2026-03-04T07:12:00Z",
+            "source": "email",
+            "text": "",
+            "text_source": "extracted",
+        });
+        if let Some(parent) = parent {
+            payload["parent_document_id"] = serde_json::json!(parent);
+        }
+        validate_payload(&EventType::DocumentArchived, &payload).expect("payload must be valid");
+        crate::events::DocumentsProjection
+            .apply(
+                &Event {
+                    id: ulid::Ulid::new().to_string(),
+                    event_type: EventType::DocumentArchived.to_string(),
+                    aggregate_id: id.to_string(),
+                    timestamp: chrono::Utc::now(),
+                    device_id: "test-device".to_string(),
+                    payload,
+                    received_at: None,
+                },
+                db,
+            )
+            .await
+            .unwrap();
+    }
+
+    /// ⛔ Scoping the archive to mail filters on `mime_type`, never on `kind`.
+    /// Mail has no kind — field extraction has not run for it — so a kind-based
+    /// filter would return an empty list and read as an empty archive.
+    #[tokio::test]
+    async fn the_mime_filter_scopes_the_archive_to_mail() {
+        let (_d, db) = doc_db().await;
+        fold_part(&db, "mail", "statement.eml", "message/rfc822", None).await;
+        fold_part(&db, "pdf", "statement.pdf", "application/pdf", Some("mail")).await;
+
+        let mail = list_documents(&db, "", "", "message/rfc822", 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(mail.len(), 1, "{mail:?}");
+        assert_eq!(mail[0].document_id, "mail");
+        assert_eq!(mail[0].kind, None, "the filter must not depend on a kind");
+
+        assert_eq!(
+            list_documents(&db, "", "", "", 50, 0).await.unwrap().len(),
+            2,
+            "⛔ an attachment stays listed in its own right — hiding it would \
+             make the archive's breadth claim false"
+        );
+    }
+
+    /// The email view's second half: what arrived inside the message.
+    #[tokio::test]
+    async fn an_emails_children_are_the_documents_that_arrived_inside_it() {
+        let (_d, db) = doc_db().await;
+        fold_part(&db, "mail", "statement.eml", "message/rfc822", None).await;
+        fold_part(&db, "b-att", "b.pdf", "application/pdf", Some("mail")).await;
+        fold_part(&db, "a-att", "a.pdf", "application/pdf", Some("mail")).await;
+        // A document of its own, to prove the parent link selects the children
+        // rather than the query simply returning everything else.
+        fold_part(&db, "loose", "loose.pdf", "application/pdf", None).await;
+
+        let kids = document_children(&db, "mail").await.unwrap();
+        assert_eq!(kids.len(), 2, "{kids:?}");
+        assert_eq!(
+            kids.iter()
+                .map(|k| k.document_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a-att", "b-att"],
+            "⚠️ ordered by filename — every part is archived in one operation, \
+             so archived_at orders them arbitrarily"
+        );
+        assert_eq!(kids[0].parent_document_id.as_deref(), Some("mail"));
+
+        assert!(
+            document_children(&db, "loose").await.unwrap().is_empty(),
+            "a document with no children must come back empty, not with siblings"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_document_carries_its_fields_and_their_provenance() {
+        let (_d, db) = doc_db().await;
+        fold_doc(
+            &db,
+            "s1",
+            "s1.csv",
+            "",
+            "2026-01-01T00:00:00Z",
+            Some("brokerage_statement"),
+        )
+        .await;
+
+        let doc = get_document(&db, "s1").await.unwrap().expect("exists");
+        assert_eq!(doc.kind.as_deref(), Some("brokerage_statement"));
+        assert_eq!(doc.filename.as_deref(), Some("s1.csv"));
+
+        let fields = doc.fields.expect("fields folded onto the row");
+        let balance = fields
+            .iter()
+            .find(|f| f.key == "closing_balance")
+            .expect("closing_balance");
+        assert!(balance.verified, "a walked balance chain is an oracle");
+        assert!(balance.source.starts_with("parser:"));
+
+        assert!(
+            get_document(&db, "nope").await.unwrap().is_none(),
+            "a missing document is None, not an error"
+        );
     }
 
     /// The regression guard for the reconciliation-screen crash.

@@ -985,6 +985,110 @@ field, human beats parser beats model). Correcting a field requires the document
 beside it, so the viewer widens to cover CSV and PDF rather than dropping them to a download
 link. **Phase 1 (event types, `DocumentsProjection`, `Feature::Documents`) is built.**
 
+**Phases 1–5 are built as of 2026-09-12** — ingest with parser fields, the archive page and
+its viewers, email → 1 + N documents, draft → archived-email linking, and the assistant
+catalogue entry. ⛔ **One named piece of Phase 5 is NOT built and is blocked on decisions
+rather than typing: "the assistant notifies and routes"** — the `"3 auto-imported receipts are
+waiting" + deep link` item recorded further up this file. Two things stand in the way.
+- **"Needs review" cannot be expressed as a query.** `verified` lives inside the `fields`
+  array rather than as a column, so no `FilterField` can reach it. Hoisting a count is the
+  obvious fix and has precedent — `kind`, `title` and `document_date` are already hoisted out
+  of `fields` for exactly this reason.
+- **There is no deep-link mechanism in the codebase at all.** The phrase appears in this file
+  and nowhere in the source. Whatever it becomes, ⛔ approval still lives on the archive page.
+
+Also open, found while building Phase 5: **`store::read` truncates nothing.** `search` and
+`list` cut bodies to `SNIPPET_CHARS`, but `read` returns the whole row. That was harmless while
+every catalogued type held human-written text; a document's text is machine-extracted from an
+arbitrary PDF, so reading a 40-page scan hands the model all of it. ⛔ Not a one-line cap: a
+silently truncated document is one the model answers from believing it saw the whole thing, so
+the cut has to be stated in what `read` returns.
+
+### Auto-import design review — decisions taken 2026-09-12
+
+⛔ **The v1 objection, restated so it is not misremembered:** *"The objection is open-ended gate
+config, not automation and not email as a source. Any replacement has to make 'which mail is
+relevant' self-maintaining."* The archive splits that one question into two — what is worth
+**keeping** and what becomes a **transaction** — and only the second still needs an answer.
+
+✅ **The fetcher watches ALL MAIL** (user, 2026-09-12). ⚠️ **This is a credentials change, not a
+code change**: `watched_label` is passed straight to `select()`, and `imap_real.rs` already
+names `"[Gmail]/All Mail"` as a valid value. It retires the hand-maintained Gmail label, which
+was the *upstream* gate — mail outside it could never be archived, searched or reviewed, which
+contradicted the archive holding everything worth looking at later.
+
+✅ **Full history is backfilled, paced** (user, 2026-09-12). ⚠️ **Also no code change.** The
+range logic is `None => "*"` (latest only, a guard against *accidental* backfill) but
+`Some(uid) => "{uid+1}:*"` — so **seeding the cursor to `Some(0)` enumerates every UID** and the
+existing `truncate(MAX_UIDS_PER_TICK)` drains it at 200 per tick / 30 min ≈ 9,600 a day, exactly
+the backlog path the fetcher's comment already describes. ⛔ The "don't backfill accidentally"
+guard is not wrong, it is now pointed the wrong way for a deliberate run — **seed the cursor, do
+not delete the guard.**
+
+✅ **DRAFTING IS A TWO-TIER GATE, AND THE FAST PATH MAINTAINS ITSELF** (user, 2026-09-12).
+Tier 1: a **fast path** of sender patterns routes straight to its deterministic parser — cheap,
+immediate, no model call. Tier 2: everything else falls to the **scheduled model pass** over
+archived documents, so ⛔ **nothing is silently missed** the way a patterns-only gate misses
+every receipt from an unlisted sender. ✅ **The self-maintaining part is the point:** after a
+sender recurs enough times, ⛔ **the model proposes adding it to the fast path and the user only
+approves or rejects** — he never edits the list. That is the v1 requirement met exactly: *"which
+mail is relevant"* becomes derived-and-approved rather than hand-maintained.
+
+Three consequences, and the first is structural:
+- 🔴 **`RECEIPT_SENDER_PATTERNS` CAN NO LONGER BE A HARDCODED `const`.** A list that grows by
+  approval is **data**, not source — today it is a `&[&str]` in the overlay needing a recompile.
+  ✅ **This improves the open-core split rather than complicating it**: real sender domains stop
+  being source code and move into the user's own database, where they were always supposed to be.
+- ⚠️ **Recurrence should count APPROVED DRAFTS, not model classifications.** A sender the model
+  merely *thought* was financial three times is a weaker claim than one whose drafts the user
+  actually committed three times — and building the fast path out of unconfirmed model output is
+  the same dishonesty `verified` exists to prevent. ⛔ Count what an oracle confirmed.
+- ⚠️ **N is unset; defaulting to 3** — 2 is within coincidence for a shared domain, 3 reads as a
+  pattern. Revisitable, and cheap to change once it is data. ⚠️ The promotion proposal is itself
+  an approval, so ⛔ it routes to the **auto-import review surface**, never the assistant inbox.
+
+🔴 **NEW REQUIREMENT — purge-with-review, and NOTHING for it exists yet** (user, 2026-09-12):
+all-mail means spam lands in the archive, so the model must be able to *flag* junk for deletion,
+⛔ **gated behind the user reviewing and confirming each one**. Deferred to when model review
+exists (Role C), but recorded now because three things constrain it and one of them is a trap:
+- ⛔ **Deletion is irreversible, so it can NEVER be granted autonomy** — the user alone confirms,
+  per-item. This is the standing autonomy rule, not a new one.
+- ⛔ **Approval lives with the domain** → the purge queue belongs on the **archive page**, never
+  the assistant inbox.
+- ⚠️ **Soft-delete is the codebase's pattern (routines' `removed`) and DOES NOT MEET THE GOAL.**
+  The purpose is reclaiming storage, so the bytes must go. 🔴 **But blobs are shared** — the test
+  `identical bytes are one blob` asserts two documents can reference one `sha256`, so purging
+  bytes requires proving no *other* document references them. ⚠️ And a purged blob with its
+  `DocumentArchived` event still in the log means a projection rebuild recreates a row pointing
+  at bytes that are gone: the row must read as **purged**, never as broken.
+- ⚠️ **Sequencing:** a backfill run *before* purge exists puts spam in the archive with no way
+  out. Not a blocker — the backfill is real-data work and deferred with that batch — but the
+  order should be deliberate rather than discovered.
+- ⚠️ Nothing built so far forecloses this; a `DocumentPurged` event plus a projection column is
+  purely additive. There is precedent for a hard-delete event (`TransactionDeleted`).
+
+✅ **"A PROPER EMAIL INBOX" = EMAILS RENDER IN THE ARCHIVE** (user, 2026-09-12) — ⛔ **not a
+separate tab and not a mail client.** A `message/rfc822` branch in the viewer (headers, body,
+attachments shown as the child documents they already are) plus a filter to scope the archive to
+mail. It reuses the list, search, filter and detail view already built, matches the user's own
+phrase *"reviewing the archive of emails"*, and ⛔ **builds nothing the LLM-primary push intends
+to retire** — a threaded read/unread inbox is exactly that kind of screen.
+🔴 **Concrete gap this names:** `attachment_viewer.rs` has **no `message/rfc822` branch**, so an
+archived email currently falls through to `Unpreviewable`. The only place an email renders today
+is the draft-review panel added 2026-09-12. ⚠️ Filter on **`mime_type`, not `kind`** — `kind`
+comes from field extraction, which for mail has not run and may never.
+
+⛔ **IMAP STAYS OFF FOR NOW — this follows from decisions already made, and was not re-asked.**
+Turning it on is real-data work, deferred into the on-device batch. ⚠️ Turning it on *today*
+would archive all mail while drafting still ran the **old hardcoded patterns**, with **no purge
+path** for the spam all-mail necessarily brings in. ⛔ **Never flip `OMNI_ENABLE_IMAP` without
+the user.** Sequence: two-tier drafting + purge exist → then enable → then seed the cursor for
+backfill.
+
+**Buildable now from this review** (needs no model, no real data, no device): the
+`message/rfc822` viewer branch and the mail filter. **Blocked on Role C:** the scheduled model
+pass, fast-path promotion, and purge — all three need model review to exist first.
+
 Three findings from that session that are not derivable from the code:
 - 🔴 **Blob bytes do not sync** — `attachments.rs` is a 200 MB LRU cache, so documents live
   only on the box. Server backup is a **dependency of the real backfill**, not a chore.
@@ -1110,26 +1214,28 @@ This was needed because **pausing does not survive a restart**, which had gone u
   Fixing it properly means giving the server a resolved config at boot and an `EventWriter`;
   ⚠️ do not do it piecemeal, or two write paths will disagree about what "off" means. [M]
 
-### Document viewing — two silent gaps found 2026-09-11
+### Document viewing — all three RESOLVED 2026-09-12 by Phase 4
 
-Both surfaced while planning the archive, both predate it, and both affect the **existing**
-`AttachmentViewer` in `pages/finances.rs` today. Neither was recorded anywhere. Archive Phase 4
-closes them; they are listed here because they are live bugs in shipped code, not new work.
+All three surfaced while planning the archive and all three predated it, affecting the
+`AttachmentViewer` that lived in `pages/finances.rs`. The viewer now lives in
+`components/attachment_viewer.rs` (one viewer, two callers) and each is fixed below.
+⚠️ **One caveat carried forward, not closed:** the Android PDF fix is verified in Chromium via
+Playwright, and Chromium is not the renderer that was broken. It rides the on-device pass.
 
-- [ ] 🔴 **PDF attachments almost certainly do not render on Android.** The viewer puts PDFs in
+- [x] 🔴 **PDF attachments almost certainly do not render on Android.** **FIXED** — `assets/js/pdfview.js` renders a canvas per page through pdf.js (30-page render cap, count reported); the `<iframe>` is gone. ⚠️ Worker is a second bundle and both must reach both copy targets. ⚠️ Still unproven on hardware. Original entry follows. The viewer puts PDFs in
   an `<iframe>` pointing at an object URL. Android System WebView has **no built-in PDF
   renderer**, and blob URLs inside iframes are its worst case — so a statement PDF opened from a
   transaction on the phone is likely a blank box. ⚠️ **Unverified on hardware**; desktop
   (WebKitGTK) is where it has always been looked at. Fix is pdf.js through the esbuild step
   CodeMirror already uses — ⛔ **not** server-side rasterization, which would break offline
   viewing, the whole reason the LRU cache exists. [S, frontend]
-- [ ] 🔴 **HEIC is classified as viewable and cannot be rendered.** `classify_attachment` routes
+- [x] 🔴 **HEIC is classified as viewable and cannot be rendered.** **FIXED** — decided explicitly as `Unpreviewable(reason)` rather than transcoded: transcoding needs libheif in core and nothing in the corpus is HEIC. The regression test asserts both the MIME and extension routes. ⛔ Transcode-on-ingest stays open if share-sheet intake makes it real. Original entry follows. `classify_attachment` routes
   `image/heic` to the `<img>` branch and a test asserts it (`finances.rs:7442`), while
   `media.rs:456` asserts `prepare_image` **refuses** HEIC and neither Chrome nor Android WebView
   decodes it. So the classification test passes and the picture is blank. ⚠️ Reachable through
   share-sheet intake (`classify_share_mime` accepts `heic`/`heif`). Decide it explicitly:
   transcode on ingest, or classify it unpreviewable and say so in words. [S, frontend]
-- [ ] **CSVs cannot be viewed at all** — they fall to the `Other` branch, which offers a
+- [x] **CSVs cannot be viewed at all** — **FIXED** — rendered as a table of the file's own raw rows with file line numbers, capped at 500 rows with the remainder stated. ⛔ Raw rows, never the parser's interpretation. Original entry follows. — they fall to the `Other` branch, which offers a
   download link that is itself unreliable in Android WebView. Matters beyond tidiness: the
   archive's first corpus holds **276 CSVs**, and correcting an extracted field means seeing the
   row it came from. [S, frontend]

@@ -613,7 +613,7 @@ async fn count_rows(db: &Database, table: &str) -> u64 {
 mod tests {
     use super::*;
     use crate::config::Feature;
-    use crate::events::{NotesProjection, Projection, RoutinesProjection};
+    use crate::events::{DocumentsProjection, NotesProjection, Projection, RoutinesProjection};
 
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
@@ -621,6 +621,7 @@ mod tests {
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         NotesProjection.init_schema(&db).await.unwrap();
         RoutinesProjection.init_schema(&db).await.unwrap();
+        DocumentsProjection.init_schema(&db).await.unwrap();
         std::mem::forget(dir);
         db
     }
@@ -734,7 +735,14 @@ mod tests {
         let out = list_types(&db, &config()).await;
         let types = out["types"].as_array().unwrap();
         let names: Vec<&str> = types.iter().filter_map(|t| t["name"].as_str()).collect();
-        assert_eq!(names, vec!["journal", "note", "routine", "belief"]);
+        // ⚠️ Spelled out rather than derived from the catalogue, unlike the counts
+        // elsewhere in these tests. Widening what the assistant can see is meant
+        // to be a deliberate edit here — a derived list would accept a new type
+        // silently, which is the one change on this surface worth noticing.
+        assert_eq!(
+            names,
+            vec!["journal", "note", "routine", "belief", "document"]
+        );
         let note = types.iter().find(|t| t["name"] == "note").unwrap();
         assert_eq!(note["count"], 1);
         assert!(

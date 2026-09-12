@@ -1,19 +1,24 @@
-//! Document ingest — bytes in, a blob and a `DocumentArchived` event out.
+//! Document ingest — bytes in, a blob and the events that record them out.
 //!
 //! Why the archive is three events, how fields fold, and why text travels in
 //! the event: `docs/src/archive.md`.
 //!
-//! ⛔ **Do not wire an extractor in here.** Only deterministic text is produced
-//! in this module. A scan carries no text layer, so reading one needs a model,
-//! and a model's reading travels in its own event: `DocumentTextTranscribed`.
-//! Transcribing at ingest instead would put a network round-trip in the path
-//! that files a document — a capture taken offline would fail to archive — and
-//! would still leave every document filed before today unreachable, because
+//! ⛔ **No model in here.** The line is the network, not the event type:
+//! deterministic work that needs nothing remote runs at ingest, and everything
+//! that reaches an endpoint is scheduled and batched elsewhere. So a PDF's text
+//! layer is lifted here, and a statement's fields are parsed here — but reading
+//! a scan needs a model, and its answer arrives later as
+//! `DocumentTextTranscribed`.
+//!
+//! Doing either remotely at ingest would put a round-trip in the path that files
+//! a document: a capture taken offline would fail to archive, and every document
+//! filed before the feature existed would stay unreadable anyway, because
 //! `DocumentArchived` is written once and never revised.
 
 use std::path::Path;
 
 use crate::blob;
+use crate::document_fields;
 use crate::events::{DocumentArchivedPayload, NewEvent};
 use crate::statement::pdf;
 
@@ -117,7 +122,14 @@ pub enum IngestError {
 pub struct IngestReport {
     /// Files the walk yielded, before anything was attempted.
     pub seen: usize,
-    pub archived: Vec<NewEvent>,
+    /// Documents filed. ⚠️ **Counted, not `events.len()`** — one file now yields
+    /// two events when a parser recognises it, and counting envelopes would make
+    /// [`Self::check_accounting`] fail on precisely the runs that went well.
+    pub archived: usize,
+    /// Everything to append, in the order it happened.
+    ///
+    /// ⛔ Not one document's worth. Read [`Self::archived`] for a count.
+    pub events: Vec<NewEvent>,
     /// `(path, reason)` per file that could not be archived at all.
     pub failed: Vec<(String, String)>,
     /// Archived, but with no text layer — so findable by name and not by content.
@@ -126,18 +138,27 @@ pub struct IngestReport {
     /// separately because a batch that archives 700 files and can read none of
     /// them is technically a success and practically a problem.
     pub without_text: usize,
+    /// Archived with parser-derived fields, so findable by *condition* and not
+    /// only by content.
+    ///
+    /// ⚠️ Reported for `without_text`'s reason, inverted. Format discovery is a
+    /// signature match against real exports the fixtures only approximate, so a
+    /// run over 276 CSVs that claims none of them has silently degraded to
+    /// filename search — and every other number in this report would still look
+    /// perfect.
+    pub with_parser_fields: usize,
 }
 
 impl IngestReport {
     pub fn check_accounting(&self) -> Result<(), String> {
-        let accounted = self.archived.len() + self.failed.len();
+        let accounted = self.archived + self.failed.len();
         if accounted != self.seen {
             return Err(format!(
                 "ingest did not account for every file: saw {} but classified {} \
                  ({} archived + {} failed)",
                 self.seen,
                 accounted,
-                self.archived.len(),
+                self.archived,
                 self.failed.len()
             ));
         }
@@ -168,6 +189,23 @@ pub async fn derive_text(bytes: &[u8], mime: &str) -> (Option<String>, TextSourc
                 None
             }
         }
+    } else if is_email(mime) {
+        // ⚠️ **Its headers and body, not its raw source.** An `.eml` is mostly
+        // MIME scaffolding and base64 attachment payloads; indexing those bytes
+        // makes every message match nothing a person would search for while
+        // looking perfectly searchable. Three of the real fixtures carry their
+        // receipt *in the body*, so this is the only text those documents have.
+        match crate::mime::parse_eml(bytes) {
+            Ok(parsed) => Some(format!(
+                "From: {}\nSubject: {}\n\n{}",
+                parsed.from, parsed.subject, parsed.body_text
+            )),
+            Err(e) => {
+                // Same rule as a PDF with no text layer: still a document.
+                tracing::debug!(error = %e, "could not read an email's body");
+                None
+            }
+        }
     } else if mime.starts_with("text/") {
         // Lossy on purpose: a CSV with one bad byte is still worth indexing, and
         // refusing the whole file over it would be the wrong trade.
@@ -189,9 +227,48 @@ fn is_pdf(mime: &str) -> bool {
     mime == "application/pdf" || mime == "application/x-pdf"
 }
 
-/// Store one document's bytes and build the event that records it.
+/// ⚠️ Both spellings: `message/rfc822` is what this project files an email
+/// under, and `.eml` arriving from a share sheet or a file picker is commonly
+/// labelled `application/mbox` or nothing at all — `mime_for` recovers the
+/// former from the extension.
+fn is_email(mime: &str) -> bool {
+    let mime = mime.to_ascii_lowercase();
+    mime == "message/rfc822" || mime == "message/global"
+}
+
+/// Everything one ingest produced.
 ///
-/// ⛔ Returns the event rather than appending it — see the module note.
+/// A struct rather than a tuple because the events are no longer one: a file a
+/// parser recognises yields its fields too, and a caller that pattern-matched
+/// `(event, source)` would go on compiling while dropping them.
+#[derive(Debug)]
+pub struct Ingested {
+    /// Append all of these, in this order.
+    ///
+    /// `DocumentArchived` first, then a `DocumentFieldsExtracted` if a parser
+    /// claimed the file. ⚠️ The projection tolerates either order — it has to,
+    /// since sync delivers by the authoring device's clock — but there is no
+    /// reason to hand it a puzzle it only has to solve for the cross-device case.
+    pub events: Vec<NewEvent>,
+    pub document_id: String,
+    pub sha256: String,
+    pub text_source: TextSource,
+    /// Whether a parser recognised the file and produced fields for it.
+    pub parsed_fields: bool,
+}
+
+/// Store one document's bytes and build the events that record it.
+///
+/// ⛔ Returns them rather than appending them — see the module note.
+///
+/// Fields are derived here, and only the parser's: it is deterministic and needs
+/// nothing remote. ⛔ **Here rather than in the callers**, because this is the
+/// one function that knows a document has just been created — `POST
+/// /documents/archive` is the only caller today, and the Tauri app links this
+/// crate directly, so a device capture would be the second. A derivation copied
+/// into each of them drifts apart the first time one is touched.
+/// ⚠️ If a large file ever makes [`document_fields::parser_fields`] block long
+/// enough to matter, move the call off this await — never back into the callers.
 pub async fn ingest_one(
     blob_dir: &Path,
     bytes: &[u8],
@@ -199,7 +276,8 @@ pub async fn ingest_one(
     mime: &str,
     source: IngestSource,
     device_id: &str,
-) -> Result<(NewEvent, TextSource), IngestError> {
+    parent_document_id: Option<&str>,
+) -> Result<Ingested, IngestError> {
     let sha256 = blob::store(blob_dir, bytes).await?;
     let (text, text_source) = derive_text(bytes, mime).await;
 
@@ -208,7 +286,7 @@ pub async fn ingest_one(
         // arriving twice from two sources is two archive entries — see
         // `DocumentArchivedPayload::document_id`.
         document_id: ulid::Ulid::new().to_string(),
-        sha256,
+        sha256: sha256.clone(),
         filename: filename.to_string(),
         mime_type: mime.to_string(),
         size: bytes.len() as u64,
@@ -216,12 +294,142 @@ pub async fn ingest_one(
         source: source.as_str().to_string(),
         text,
         text_source: text_source.as_str().to_string(),
+        parent_document_id: parent_document_id.map(str::to_string),
+    };
+    let document_id = payload.document_id.clone();
+
+    let mut events = vec![NewEvent::document_archived(device_id, &payload)?];
+    let parsed_fields = match document_fields::parser_fields(&document_id, bytes) {
+        Some(fields) => {
+            events.push(NewEvent::document_fields_extracted(device_id, &fields)?);
+            true
+        }
+        None => false,
     };
 
-    Ok((
-        NewEvent::document_archived(device_id, &payload)?,
+    Ok(Ingested {
+        events,
+        document_id,
+        sha256,
         text_source,
-    ))
+        parsed_fields,
+    })
+}
+
+/// What one email put into the archive.
+#[derive(Debug)]
+pub struct IngestedEmail {
+    /// Every event, message first then its attachments in order.
+    pub events: Vec<NewEvent>,
+    /// The message's own document. ⚠️ **This is what a draft transaction should
+    /// reference**, not an attachment: the batch is per-message, and a reviewer
+    /// reaching the message can walk down to whatever came with it, while one
+    /// starting at an attachment cannot see the envelope that carried it.
+    pub email_document_id: String,
+    /// One per `disposition: attachment` part, in the order they appeared.
+    pub attachment_document_ids: Vec<String>,
+    /// Parts deliberately left uncatalogued — the `cid:` images an HTML body
+    /// renders. ⚠️ Reported rather than dropped quietly, because "this email
+    /// had 6 parts and the archive shows 1" is otherwise unexplainable, and
+    /// because a sender mislabelling a real file as inline would be invisible.
+    pub inline_parts_skipped: usize,
+}
+
+/// Archive an email as a document, plus one document per real attachment.
+///
+/// ⛔ **The message is archived WHOLE, raw bytes.** Three of the five real
+/// fixtures carry no attachment at all — the receipt *is* the body — so an
+/// attachment-only rule files nothing for them. It is also what makes skipping
+/// the inline parts lossless: those images are still inside this document,
+/// they just do not each get a catalogue entry.
+///
+/// Attachments become documents in their own right — own text, own parser
+/// fields, correctable on their own — linked back by
+/// [`DocumentArchivedPayload::parent_document_id`].
+///
+/// `raw` is the `.eml` as fetched; `parsed` is [`crate::mime::parse_eml`]'s
+/// reading of those same bytes. Both are taken because the caller has already
+/// parsed it to decide whether the message was interesting at all, and parsing
+/// twice to save one argument would be the wrong trade.
+///
+/// ⛔ Returns events rather than appending them, like every other ingest here.
+pub async fn ingest_email(
+    blob_dir: &Path,
+    raw: &[u8],
+    parsed: &crate::mime::ParsedMessage,
+    device_id: &str,
+) -> Result<IngestedEmail, IngestError> {
+    // A subject is the only name a person would recognise, but it is
+    // sender-controlled and may be empty or absurd. `.eml` keeps it openable.
+    let subject = parsed.subject.trim();
+    let filename = if subject.is_empty() {
+        "message.eml".to_string()
+    } else {
+        format!("{}.eml", sanitize_filename(subject))
+    };
+
+    let email = ingest_one(
+        blob_dir,
+        raw,
+        &filename,
+        "message/rfc822",
+        IngestSource::Email,
+        device_id,
+        None,
+    )
+    .await?;
+
+    let email_document_id = email.document_id.clone();
+    let mut events = email.events;
+    let mut attachment_document_ids = Vec::new();
+
+    for att in parsed.real_attachments() {
+        let child = ingest_one(
+            blob_dir,
+            &att.bytes,
+            &att.filename,
+            &att.content_type,
+            IngestSource::Email,
+            device_id,
+            Some(&email_document_id),
+        )
+        .await?;
+        attachment_document_ids.push(child.document_id);
+        events.extend(child.events);
+    }
+
+    let inline_parts_skipped = parsed.attachments.len() - attachment_document_ids.len();
+    Ok(IngestedEmail {
+        events,
+        email_document_id,
+        attachment_document_ids,
+        inline_parts_skipped,
+    })
+}
+
+/// Make a subject safe to use as a filename without making it unrecognisable.
+///
+/// ⚠️ Path separators and control characters only. A subject is the one human
+/// label the message has, so stripping punctuation or transliterating emoji
+/// would trade a real identifier for a tidy one — and `📫 oxio invoice` is an
+/// actual fixture.
+fn sanitize_filename(subject: &str) -> String {
+    const MAX: usize = 120;
+    let cleaned: String = subject
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | '\0' => '-',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    // Truncate on a char boundary; byte slicing would panic on the emoji.
+    cleaned
+        .chars()
+        .take(MAX)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 /// Ingest every path given, carrying on past the ones that fail.
@@ -255,12 +463,16 @@ pub async fn ingest_paths(
             .unwrap_or_else(|| "document".to_string());
         let mime = mime_for(path, &bytes);
 
-        match ingest_one(blob_dir, &bytes, &filename, &mime, source, device_id).await {
-            Ok((event, text_source)) => {
-                if text_source == TextSource::None {
+        match ingest_one(blob_dir, &bytes, &filename, &mime, source, device_id, None).await {
+            Ok(ingested) => {
+                if ingested.text_source == TextSource::None {
                     report.without_text += 1;
                 }
-                report.archived.push(event);
+                if ingested.parsed_fields {
+                    report.with_parser_fields += 1;
+                }
+                report.archived += 1;
+                report.events.extend(ingested.events);
             }
             Err(e) => report.failed.push((shown, e.to_string())),
         }
@@ -339,6 +551,10 @@ fn mime_for(path: &Path, bytes: &[u8]) -> String {
         Some("txt") => "text/plain".to_string(),
         Some("md") => "text/markdown".to_string(),
         Some("json") => "application/json".to_string(),
+        // ⚠️ Load-bearing, not completeness: without it a bulk-ingested `.eml`
+        // is `application/octet-stream`, `derive_text` skips its body, and the
+        // message is filed searchable by filename only.
+        Some("eml") => "message/rfc822".to_string(),
         _ => "application/octet-stream".to_string(),
     }
 }
@@ -351,24 +567,30 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
+    /// The archive event, which is always `events[0]`.
+    fn archived_payload(ingested: &Ingested) -> DocumentArchivedPayload {
+        assert_eq!(ingested.events[0].event_type, "document_archived");
+        serde_json::from_value(ingested.events[0].payload.clone()).unwrap()
+    }
+
     #[tokio::test]
     async fn a_csv_is_archived_with_its_text_readable() {
         let d = dir();
         let csv = b"date,description,amount\n2026-03-01,RENT,-1450.00\n";
-        let (event, source) = ingest_one(
+        let ingested = ingest_one(
             d.path(),
             csv,
             "chequing.csv",
             "text/csv",
             IngestSource::Bulk,
             "dev",
+            None,
         )
         .await
         .unwrap();
 
-        assert_eq!(source, TextSource::Extracted);
-        assert_eq!(event.event_type, "document_archived");
-        let payload: DocumentArchivedPayload = serde_json::from_value(event.payload).unwrap();
+        assert_eq!(ingested.text_source, TextSource::Extracted);
+        let payload = archived_payload(&ingested);
         assert!(payload.text.unwrap().contains("RENT"));
         assert_eq!(payload.size, csv.len() as u64);
     }
@@ -379,19 +601,21 @@ mod tests {
         // carries no text layer, and refusing it would mean the archive cannot
         // hold a photograph of a document.
         let d = dir();
-        let (event, source) = ingest_one(
+        let ingested = ingest_one(
             d.path(),
             &[0xFF, 0xD8, 0xFF, 0xE0, 0x00],
             "receipt.jpg",
             "image/jpeg",
             IngestSource::Scan,
             "dev",
+            None,
         )
         .await
         .unwrap();
 
-        assert_eq!(source, TextSource::None);
-        let payload: DocumentArchivedPayload = serde_json::from_value(event.payload).unwrap();
+        assert_eq!(ingested.text_source, TextSource::None);
+        assert_eq!(ingested.events.len(), 1, "no parser claims a jpeg");
+        let payload = archived_payload(&ingested);
         assert!(payload.text.is_none());
         assert_eq!(payload.text_source, "none");
     }
@@ -409,29 +633,31 @@ mod tests {
     async fn the_same_bytes_from_two_sources_are_two_documents_one_blob() {
         let d = dir();
         let bytes = b"date,amount\n2026-03-01,-10.00\n";
-        let (a, _) = ingest_one(
+        let a = ingest_one(
             d.path(),
             bytes,
             "s.csv",
             "text/csv",
             IngestSource::Email,
             "dev",
+            None,
         )
         .await
         .unwrap();
-        let (b, _) = ingest_one(
+        let b = ingest_one(
             d.path(),
             bytes,
             "s.csv",
             "text/csv",
             IngestSource::Scan,
             "dev",
+            None,
         )
         .await
         .unwrap();
 
-        let pa: DocumentArchivedPayload = serde_json::from_value(a.payload).unwrap();
-        let pb: DocumentArchivedPayload = serde_json::from_value(b.payload).unwrap();
+        let pa = archived_payload(&a);
+        let pb = archived_payload(&b);
         assert_eq!(pa.sha256, pb.sha256, "identical bytes are one blob");
         assert_ne!(
             pa.document_id, pb.document_id,
@@ -458,7 +684,7 @@ mod tests {
         .await;
 
         assert_eq!(report.seen, 2);
-        assert_eq!(report.archived.len(), 1);
+        assert_eq!(report.archived, 1);
         assert_eq!(report.failed.len(), 1);
         report.check_accounting().expect("every file classified");
         assert!(report.sample_failures(5)[0].0.contains("not-here.pdf"));
@@ -477,9 +703,164 @@ mod tests {
 
         let report = ingest_paths(d.path(), &[readable, opaque], IngestSource::Bulk, "dev").await;
 
-        assert_eq!(report.archived.len(), 2);
+        assert_eq!(report.archived, 2);
         assert_eq!(report.without_text, 1);
         report.check_accounting().unwrap();
+    }
+
+    /// A real bank's statement email: 5 inline JPEGs of branding and 1 PDF.
+    /// ⚠️ Against the actual fixture, not a hand-built message — the whole risk
+    /// here is what a real sender does.
+    #[tokio::test]
+    async fn an_email_becomes_a_document_with_its_attachment_beneath_it() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".reference/imap poller")
+            .join("Your Estatement on 30042026 now available.eml");
+        let Ok(raw) = std::fs::read(&path) else {
+            eprintln!("fixture missing — skipping");
+            return;
+        };
+        let parsed = crate::mime::parse_eml(&raw).expect("fixture parses");
+
+        let d = dir();
+        let out = ingest_email(d.path(), &raw, &parsed, "dev").await.unwrap();
+
+        assert_eq!(out.attachment_document_ids.len(), 1, "one real attachment");
+        assert_eq!(
+            out.inline_parts_skipped, 5,
+            "⛔ the branding images must not each become a document"
+        );
+
+        // The message is archived whole, so the skipped images are still in it.
+        let email: DocumentArchivedPayload =
+            serde_json::from_value(out.events[0].payload.clone()).unwrap();
+        assert_eq!(email.mime_type, "message/rfc822");
+        assert!(email.parent_document_id.is_none(), "the email is the root");
+        assert_eq!(
+            email.size as usize,
+            raw.len(),
+            "⚠️ the RAW message — that is what makes dropping the inline parts lossless"
+        );
+        assert!(
+            email.text.unwrap_or_default().len() > 20,
+            "the body is the email's text, so it stays searchable by content"
+        );
+
+        // The attachment is a document in its own right, linked back.
+        let child = out
+            .events
+            .iter()
+            .filter_map(|e| {
+                serde_json::from_value::<DocumentArchivedPayload>(e.payload.clone()).ok()
+            })
+            .find(|p| p.mime_type.starts_with("application/pdf"))
+            .expect("the statement PDF is archived");
+        assert_eq!(
+            child.parent_document_id.as_deref(),
+            Some(out.email_document_id.as_str())
+        );
+        assert_ne!(
+            child.sha256, email.sha256,
+            "different bytes, different blob"
+        );
+        assert_eq!(child.source, "email");
+    }
+
+    /// ⚠️ Three of five real fixtures are like this: the receipt IS the body.
+    /// Attachment-only archiving would file nothing at all for them.
+    #[tokio::test]
+    async fn an_email_with_no_attachments_is_still_one_document() {
+        let raw = b"From: shop@example.com\r\n\
+                    Subject: Thanks, your order is complete\r\n\
+                    Content-Type: text/plain\r\n\r\n\
+                    Order total CAD 42.10. Thanks!\r\n";
+        let parsed = crate::mime::parse_eml(raw).expect("parses");
+
+        let d = dir();
+        let out = ingest_email(d.path(), raw, &parsed, "dev").await.unwrap();
+
+        assert!(out.attachment_document_ids.is_empty());
+        assert_eq!(out.events.len(), 1, "one document, no children");
+        let email: DocumentArchivedPayload =
+            serde_json::from_value(out.events[0].payload.clone()).unwrap();
+        assert!(email.text.unwrap().contains("42.10"));
+        assert_eq!(
+            email.filename, "Thanks, your order is complete.eml",
+            "named by its subject, so it is recognisable in a list"
+        );
+    }
+
+    #[test]
+    fn a_subject_stays_recognisable_but_cannot_escape_its_directory() {
+        assert_eq!(sanitize_filename("a/b\\c"), "a-b-c");
+        // ⚠️ An actual fixture is named `📫 oxio invoice available.` — dropping
+        // non-ASCII would trade a real identifier for a tidy one.
+        assert_eq!(sanitize_filename("📫 oxio invoice"), "📫 oxio invoice");
+        assert_eq!(sanitize_filename("  padded  "), "padded");
+        // Truncation counts chars, not bytes: byte slicing would panic here.
+        let long = "📫".repeat(200);
+        assert_eq!(sanitize_filename(&long).chars().count(), 120);
+    }
+
+    #[tokio::test]
+    async fn a_statement_is_archived_and_parsed_in_one_ingest() {
+        let d = dir();
+        let csv = b"Date,Amount,Balance\n2026-01-05,-20.00,980.00\n2026-01-09,-30.00,950.00\n";
+        let ingested = ingest_one(
+            d.path(),
+            csv,
+            "brokerage.csv",
+            "text/csv",
+            IngestSource::Bulk,
+            "dev",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(ingested.parsed_fields);
+        assert_eq!(
+            ingested
+                .events
+                .iter()
+                .map(|e| e.event_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["document_archived", "document_fields_extracted"],
+            "the archive event first — they are appended in the order they happened"
+        );
+        assert!(
+            ingested
+                .events
+                .iter()
+                .all(|e| e.aggregate_id == ingested.document_id),
+            "both fold onto the row the bytes created, or the fields belong to nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_counters_still_add_up_when_one_file_yields_two_events() {
+        // ⚠️ The regression this guards: `archived` counted envelopes once, so a
+        // parsed file scored 2 and `check_accounting` — the thing built to catch
+        // a miscount — would fail on precisely the runs that went well.
+        let d = dir();
+        let src = dir();
+        let parsed = src.path().join("brokerage.csv");
+        std::fs::write(
+            &parsed,
+            b"Date,Amount,Balance\n2026-01-05,-20.00,980.00\n2026-01-09,-30.00,950.00\n",
+        )
+        .unwrap();
+        let plain = src.path().join("letter.txt");
+        std::fs::write(&plain, b"a letter no parser claims\n").unwrap();
+
+        let report = ingest_paths(d.path(), &[parsed, plain], IngestSource::Bulk, "dev").await;
+
+        report.check_accounting().expect("two files, two documents");
+        assert_eq!(report.archived, 2);
+        assert_eq!(report.with_parser_fields, 1);
+        assert_eq!(report.events.len(), 3, "2 archived + 1 fields");
     }
 
     #[test]

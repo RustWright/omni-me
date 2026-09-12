@@ -1,4 +1,5 @@
 pub mod account_input;
+pub mod attachment_viewer;
 pub mod date_field;
 pub mod editor;
 pub mod feedback;

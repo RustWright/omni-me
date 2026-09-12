@@ -32,7 +32,7 @@
 //! [`every_queryable_projection_is_catalogued`] is what stops that being silent.
 
 use crate::config::{Feature, ResolvedConfig};
-use crate::events::{BeliefsProjection, NotesProjection, RoutinesProjection};
+use crate::events::{BeliefsProjection, DocumentsProjection, NotesProjection, RoutinesProjection};
 use crate::record_type::JOURNAL;
 
 /// How a row's identity behaves, which decides whether the model can construct
@@ -373,8 +373,94 @@ const BELIEF: CatalogEntry = CatalogEntry {
     hidden_fields: &[],
 };
 
+/// Columns on `documents` that mean nothing to a reader.
+///
+/// `sha256` is the blob's content address and `device_id` names the machine that
+/// ingested it. Both are plumbing, both are long, and a model handed a 64-char
+/// hex string inside a record described as a document will quote it back as
+/// though it identified something the user would recognise. Shared with the
+/// attachments collection below, which reads the same table.
+const DOCUMENT_INTERNALS: &[&str] = &["sha256", "device_id"];
+
+/// The archive: everything ingested, whatever could be read out of it.
+///
+/// ⚠️ **The first entry whose text columns are `option<>`**, because every
+/// archive column is — see `DocumentsProjection`'s schema for why. Two things
+/// depend on that and are easy to undo by accident: `vector_store::sweep_one`
+/// coalesces before concatenating, and `filename` is a text field so that a scan
+/// with no text and no title is still reachable.
+const DOCUMENT: CatalogEntry = CatalogEntry {
+    name: "document",
+    table: "documents",
+    projection: DocumentsProjection::NAME,
+    feature: Feature::Documents,
+    description: "An archived file — a statement, receipt, notice, scan or email — with \
+                  whatever text could be read out of it. Text may be missing or \
+                  model-transcribed; check `text_source` before relying on it.",
+    identity: IdentityKind::Opaque,
+    // ⚠️ Not `title`. A title only exists once fields have been extracted, so most
+    // of the corpus has none, while `filename` is written at ingest for every
+    // document. A handle that is usually absent degrades to a bare ULID.
+    handle: "filename",
+    // Order matters: the last field is the body `search` snippets and highlights,
+    // and the text layer is the only one worth showing a window into.
+    text_fields: &["filename", "title", "text"],
+    filters: &[
+        FilterField {
+            key: "kind",
+            kind: FilterKind::Exact,
+            description: "What sort of document it is: statement, receipt, notice, or similar.",
+        },
+        FilterField {
+            key: "document_date",
+            kind: FilterKind::Range,
+            description: "The date printed on the document, YYYY-MM-DD. Absent until fields \
+                          have been extracted — this is not the date it was archived.",
+        },
+        FilterField {
+            key: "ingest_source",
+            kind: FilterKind::Exact,
+            description: "How it arrived: scan, upload, email, or bulk.",
+        },
+        FilterField {
+            key: "text_source",
+            kind: FilterKind::Exact,
+            description: "Where the text came from: extracted (read from the file itself), \
+                          transcribed (a model read a scan, so it may be wrong), or none \
+                          (unreadable — only the filename is searchable).",
+        },
+    ],
+    // By when it was archived, not by `document_date`: the latter is absent for
+    // anything whose fields have not been extracted, which would sort most of the
+    // corpus into one undifferentiated block.
+    list_order: ListOrder {
+        column: "archived_at",
+        descending: true,
+    },
+    children: &[ChildCollection {
+        name: "attachments",
+        // ⚠️ The same table — an attachment is a document. The only
+        // self-referential collection here; `parent_document_id` is a link and
+        // not ownership, so a child is independently searchable and readable.
+        table: "documents",
+        foreign_key: "parent_document_id",
+        // By name, not by time: an email's attachments are all archived in one
+        // operation, so `archived_at` orders them arbitrarily.
+        order: ListOrder {
+            column: "filename",
+            descending: false,
+        },
+        limit: 20,
+        description: "Files that arrived inside this one, for an email.",
+        hidden_fields: DOCUMENT_INTERNALS,
+    }],
+    derived: None,
+    record_type: None,
+    hidden_fields: DOCUMENT_INTERNALS,
+};
+
 /// Every catalogued collection, before feature gating.
-pub const ALL_ENTRIES: &[CatalogEntry] = &[JOURNAL_ENTRY, NOTE, ROUTINE, BELIEF];
+pub const ALL_ENTRIES: &[CatalogEntry] = &[JOURNAL_ENTRY, NOTE, ROUTINE, BELIEF, DOCUMENT];
 
 /// The entries visible under this config.
 ///
@@ -425,19 +511,6 @@ mod tests {
         // wrote. Recall with provenance and confidence is Phase E's job.
         // `the_catalog_does_not_expose_conversations` holds this line.
         "assistant",
-        // ⚠️ **TEMPORARY, and the only entry here that is.** Every other name on
-        // this list is a decision; this one is a build order. The archive's
-        // projection exists (Phase 1) and its ingest path does not (Phase 2), so
-        // cataloguing it now would hand the assistant a table that is always
-        // empty and a `list` verb that always answers nothing.
-        //
-        // ⛔ **Phase 5 deletes this line.** It is the whole of the assistant
-        // integration: `catalog::visible` drives both `vector_store::sweep` and
-        // `retrieval::describe`, so a `document` entry brings keyword search,
-        // embedding and the read verbs with it. If this comment is still here
-        // once documents are being archived, the archive is invisible to the
-        // assistant and nothing else will say so.
-        "documents",
     ];
 
     #[test]

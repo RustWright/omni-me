@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod assistant;
 pub mod finances;
 pub mod import_export;

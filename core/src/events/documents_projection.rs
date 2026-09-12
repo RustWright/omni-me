@@ -59,6 +59,10 @@ impl Projection for DocumentsProjection {
              DEFINE FIELD IF NOT EXISTS text ON documents TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS text_source ON documents TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS device_id ON documents TYPE option<string>;
+             -- The document this one arrived inside (an email, for its
+             -- attachments). ⛔ A link, never ownership — see
+             -- `DocumentArchivedPayload::parent_document_id`.
+             DEFINE FIELD IF NOT EXISTS parent_document_id ON documents TYPE option<string>;
              -- Hoisted from `fields` so the archive list and date filters read
              -- them directly. ⛔ They are still ordinary folded keys — see
              -- `DocumentFieldsExtractedPayload::fields`.
@@ -77,7 +81,19 @@ impl Projection for DocumentsProjection {
              DEFINE FIELD IF NOT EXISTS fields.*.verified ON documents TYPE bool;
              DEFINE INDEX IF NOT EXISTS documents_sha256 ON documents FIELDS sha256;
              DEFINE INDEX IF NOT EXISTS documents_kind ON documents FIELDS kind;
-             DEFINE INDEX IF NOT EXISTS documents_date ON documents FIELDS document_date;",
+             DEFINE INDEX IF NOT EXISTS documents_date ON documents FIELDS document_date;
+             DEFINE INDEX IF NOT EXISTS documents_parent ON documents FIELDS parent_document_id;
+             -- One index per field, as the catalog's `text_fields` requires.
+             -- ⚠️ `filename` is indexed and the other two may be absent: a scan
+             -- carries `text_source: none` and never gains a title, so its name
+             -- is the only thing search can match. Drop it and that document is
+             -- reachable only by knowing its id.
+             DEFINE INDEX IF NOT EXISTS documents_filename_fts ON documents
+                 FIELDS filename FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;
+             DEFINE INDEX IF NOT EXISTS documents_title_fts ON documents
+                 FIELDS title FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;
+             DEFINE INDEX IF NOT EXISTS documents_text_fts ON documents
+                 FIELDS text FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;",
         )
         .await?
         .check()?;
@@ -127,7 +143,8 @@ impl DocumentsProjection {
                 size = $size,
                 archived_at = type::datetime($archived_at),
                 ingest_source = $source,
-                device_id = $device_id",
+                device_id = $device_id,
+                parent_document_id = $parent_document_id",
         )
         .bind(("id", parsed.document_id.clone()))
         .bind(("sha256", parsed.sha256))
@@ -137,6 +154,7 @@ impl DocumentsProjection {
         .bind(("archived_at", parsed.archived_at))
         .bind(("source", parsed.source))
         .bind(("device_id", event.device_id.clone()))
+        .bind(("parent_document_id", parsed.parent_document_id))
         .await?
         .check()?;
 

@@ -35,6 +35,10 @@ fn tab_meta(tab: Tab) -> (&'static str, &'static str) {
             "Finances",
             "M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z",
         ),
+        Tab::Archive => (
+            "Archive",
+            "M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10",
+        ),
         Tab::Assistant => (
             "Assistant",
             "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
@@ -53,6 +57,7 @@ pub const ALL_TABS: &[Tab] = &[
     Tab::Notes,
     Tab::Routines,
     Tab::Finances,
+    Tab::Archive,
     // Placed last rather than first *for now*. It is meant to become the primary
     // interface, but `home_tab` lands on the first visible tab, so promoting it
     // also changes where the app opens for everyone — a separate decision from

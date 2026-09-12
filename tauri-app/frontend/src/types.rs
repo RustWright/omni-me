@@ -49,6 +49,96 @@ pub struct JournalDayStat {
     pub raw_text: String,
 }
 
+/// One value folded onto a document. Mirrors `DocumentFieldRow`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DocumentField {
+    pub key: String,
+    pub value: String,
+    /// `parser:<id>` | `model:<name>` | `human`.
+    pub source: String,
+    /// ⚠️ **Not "is this right"** — it is "did something check this against a
+    /// figure the document states about itself". A model's value is never
+    /// verified however plausible it looks, so the UI marks unverified values
+    /// rather than hiding the distinction.
+    pub verified: bool,
+}
+
+impl DocumentField {
+    /// Who produced this, in words for a person.
+    pub fn origin(&self) -> &str {
+        if self.source == "human" {
+            "you"
+        } else if self.source.starts_with("parser:") {
+            "parser"
+        } else if self.source.starts_with("model:") {
+            "model"
+        } else {
+            "unknown"
+        }
+    }
+}
+
+/// One archived document. Mirrors `DocumentRow`.
+///
+/// ⚠️ Almost everything is optional because the projection's columns are: a
+/// document can be archived long before anything reads it, and fields extracted
+/// on another device can arrive before the archive event itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DocumentItem {
+    pub document_id: String,
+    pub sha256: Option<String>,
+    pub filename: Option<String>,
+    pub mime_type: Option<String>,
+    pub size: Option<i64>,
+    pub archived_at: Option<String>,
+    pub ingest_source: Option<String>,
+    pub text_source: Option<String>,
+    pub kind: Option<String>,
+    pub title: Option<String>,
+    pub document_date: Option<String>,
+    #[serde(default)]
+    pub fields: Option<Vec<DocumentField>>,
+    /// The document this one arrived inside. ⛔ A link, not ownership — an
+    /// attachment stays independently listed and searchable.
+    #[serde(default)]
+    pub parent_document_id: Option<String>,
+}
+
+impl DocumentItem {
+    /// Whether this document is an email, and so renders as a message rather
+    /// than through the byte-based viewer.
+    ///
+    /// ⚠️ Keyed on the MIME type, not on `kind`. `kind` comes from field
+    /// extraction, which for mail has not run and may never — a check on it
+    /// would report every archived email as "not an email".
+    pub fn is_email(&self) -> bool {
+        self.mime_type.as_deref() == Some("message/rfc822")
+    }
+
+    /// What to show in a list. ⛔ Never an empty row: a document with no title
+    /// and no filename is still a real entry and must stay clickable.
+    pub fn display_name(&self) -> String {
+        match (&self.title, &self.filename) {
+            (Some(t), _) if !t.trim().is_empty() => t.clone(),
+            (_, Some(f)) if !f.trim().is_empty() => f.clone(),
+            _ => format!("Untitled document ({})", self.document_id),
+        }
+    }
+
+    /// Fields a person has not yet confirmed, and that no oracle checked.
+    pub fn unverified_count(&self) -> usize {
+        self.fields
+            .as_ref()
+            .map(|f| f.iter().filter(|f| !f.verified).count())
+            .unwrap_or(0)
+    }
+
+    /// Whether the archive can find this by its contents rather than its name.
+    pub fn is_searchable_by_content(&self) -> bool {
+        !matches!(self.text_source.as_deref(), None | Some("none"))
+    }
+}
+
 /// A free-form (generic) note. Mirrors `GenericNoteRow` from the backend.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenericNoteItem {

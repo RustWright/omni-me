@@ -81,72 +81,10 @@ const EDITOR_BUNDLE_SRC: &str = "/assets/js/editor.bundle.js";
 /// already in the DOM and usually finds `createEditor` already defined, so it
 /// proceeds straight to creating the editor.
 pub async fn ensure_editor_bundle() -> bool {
-    let Some(window) = web_sys::window() else {
-        return false;
-    };
-    let Some(document) = window.document() else {
-        return false;
-    };
-
-    // Dedupe by `src` so repeated mounts (and the root warm-up) don't stack
-    // copies of the bundle.
-    let existing = document
-        .query_selector(&format!("script[src='{EDITOR_BUNDLE_SRC}']"))
-        .ok()
-        .flatten();
-    if existing.is_none() {
-        let inject = || -> Option<()> {
-            let script = document.create_element("script").ok()?;
-            script.set_attribute("src", EDITOR_BUNDLE_SRC).ok()?;
-            script.set_attribute("async", "").ok()?;
-            document.body()?.append_child(&script).ok()?;
-            Some(())
-        };
-        if inject().is_none() {
-            return false;
-        }
-    }
-
-    // POLL for `window.createEditor` rather than awaiting `script.onload`. The
-    // old release-only onload path could hang forever in an embedded Tauri
-    // webview (the script loads, but the awaited onload never resolved),
-    // stranding the editor on "Initializing…". Polling is robust across dx
-    // serve, embedded release builds, and Android. One path for all build modes
-    // — the previous `cfg(debug_assertions)` split meant the release path was
-    // never exercised until a real desktop webview ran it.
-    //
-    // The window must be GENEROUS: on a cold first launch (empty webview cache,
-    // the ~1 MB bundle parsed for the first time while the wasm frontend and DB
-    // init compete for the main thread) the embedded webkit webview can take
-    // well over 5s to define createEditor. The old 5s cap stranded the editor on
-    // "Initializing…" on first launch, yet worked on relaunch once webkit had
-    // cached the bundle. ~20s covers the cold case; a remount (navigate away +
-    // back) re-runs the Editor effect as a backstop.
-    const MAX_ATTEMPTS: u8 = 200;
-    const POLL_INTERVAL_MS: i32 = 100;
-
-    for _ in 0..MAX_ATTEMPTS {
-        let defined = js_sys::Reflect::get(&window, &JsValue::from_str("createEditor"))
-            .ok()
-            .and_then(|val| val.dyn_ref::<js_sys::Function>().map(|_| ()))
-            .is_some();
-        if defined {
-            return true;
-        }
-
-        let timeout = js_sys::Promise::new(&mut |resolve, _| {
-            let _ = window
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, POLL_INTERVAL_MS);
-        });
-        if wasm_bindgen_futures::JsFuture::from(timeout).await.is_err() {
-            return false;
-        }
-    }
-
-    web_sys::console::error_1(&JsValue::from_str(
-        "CodeMirror editor: createEditor still undefined after ~20s — editor.bundle.js likely failed to load (check the Network tab for a 404 or MIME error).",
-    ));
-    false
+    // ~20s of polling: a cold parse of this bundle can exceed 5s (see
+    // `ensure_js_bundle`). A remount — navigate away and back — re-runs the
+    // Editor effect as a backstop.
+    crate::bridge::ensure_js_bundle(EDITOR_BUNDLE_SRC, "createEditor", 200).await
 }
 
 #[component]

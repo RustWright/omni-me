@@ -25,6 +25,7 @@ pub mod attachments;
 pub mod auto_import;
 pub mod budget;
 pub mod config;
+pub mod documents;
 pub mod extract;
 pub mod feedback;
 pub mod import;

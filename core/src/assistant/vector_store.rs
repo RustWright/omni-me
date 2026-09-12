@@ -129,10 +129,18 @@ async fn sweep_one(
 ) -> Result<(), VectorError> {
     // Every text field concatenated, in catalogue order: a note's title carries
     // meaning its body often omits, and embedding the body alone loses it.
+    //
+    // ⚠️ `?? ''` is load-bearing, not defensive. `string::concat` stringifies an
+    // absent column to the literal text `NONE` rather than erroring, so an
+    // untitled scan with no extracted text embeds and indexes the word "NONE" as
+    // though the document said it — and a chunk retrieved on that basis is
+    // handed to the model as the document's content. Documents is the first
+    // catalogued type whose text columns are `option<>`; every earlier one is
+    // `TYPE string`, which is why this never bit before.
     let text_expr = entry
         .text_fields
         .iter()
-        .map(|f| format!("string::concat({f}, '\n')"))
+        .map(|f| format!("string::concat({f} ?? '', '\n')"))
         .collect::<Vec<_>>()
         .join(" + ");
 
@@ -396,7 +404,7 @@ mod tests {
     use super::*;
     use crate::config::ConfigKey;
     use crate::config::ConfigMap;
-    use crate::events::{NotesProjection, Projection, RoutinesProjection};
+    use crate::events::{DocumentsProjection, NotesProjection, Projection, RoutinesProjection};
     use std::sync::OnceLock;
 
     /// One model for the whole test binary.
@@ -428,9 +436,26 @@ mod tests {
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         NotesProjection.init_schema(&db).await.unwrap();
         RoutinesProjection.init_schema(&db).await.unwrap();
+        DocumentsProjection.init_schema(&db).await.unwrap();
         init_schema(&db, dim).await.unwrap();
         std::mem::forget(dir);
         db
+    }
+
+    /// A document carrying only a filename — no title, no readable text.
+    ///
+    /// The common case in the real corpus, not an edge case: a scan has
+    /// `text_source: none` until a model transcribes it, and gains a title only
+    /// once fields are extracted.
+    async fn seed_bare_document(db: &Database, id: &str, filename: &str) {
+        db.query(
+            "UPSERT type::record('documents', $id) SET document_id = $id,
+             filename = $f, archived_at = time::now(), text_source = 'none'",
+        )
+        .bind(("id", id.to_string()))
+        .bind(("f", filename.to_string()))
+        .await
+        .unwrap();
     }
 
     async fn seed_note(db: &Database, id: &str, title: &str, body: &str) {
@@ -552,6 +577,53 @@ mod tests {
         assert_eq!(
             report.embedded, 1,
             "the healthy type was skipped: {report:?}"
+        );
+    }
+
+    /// ⚠️ Asserts on the **indexed text**, not on the sweep succeeding. An absent
+    /// column concatenates to the literal `NONE` rather than erroring, so the
+    /// broken form embeds cheerfully and returns a clean report — there is no
+    /// failure to catch, only a wrong string sitting in the index.
+    #[tokio::test]
+    async fn a_document_with_no_title_or_text_does_not_index_the_word_none() {
+        let embedder = shared_embedder();
+        let db = test_db(embedder.dim()).await;
+        seed_bare_document(&db, "01JKDOC0000000000000000001", "hydro-bill-april.pdf").await;
+
+        sweep(&db, &config(), embedder).await.unwrap();
+
+        let mut resp = db
+            .query(format!(
+                "SELECT text FROM {TABLE} WHERE record_type = 'document'"
+            ))
+            .await
+            .unwrap();
+        let rows: Vec<Value> = resp.take(0).unwrap();
+        assert_eq!(rows.len(), 1, "the document was not indexed at all");
+        let text = rows[0]["text"].as_str().unwrap();
+        assert!(
+            !text.contains("NONE"),
+            "an absent column was stringified into the index: {text:?}"
+        );
+        assert!(
+            text.contains("hydro-bill-april.pdf"),
+            "the filename is the only searchable thing this record has: {text:?}"
+        );
+
+        // The trap itself, asserted rather than assumed: without the coalesce the
+        // assertions above would still be checking real behaviour, but nothing
+        // would show that the behaviour was ever in danger. This is what the
+        // uncoalesced expression returns from this same row.
+        let mut raw = db
+            .query("SELECT string::concat(title, '|') AS t FROM documents")
+            .await
+            .unwrap();
+        let raw: Vec<Value> = raw.take(0).unwrap();
+        assert_eq!(
+            raw[0]["t"].as_str().unwrap(),
+            "NONE|",
+            "string::concat no longer stringifies an absent column — if it now \
+             errors or yields NONE, the `?? ''` in sweep_one can be revisited"
         );
     }
 

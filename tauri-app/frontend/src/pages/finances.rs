@@ -23,6 +23,7 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::account_input::{AccountInput, AccountMode, AccountSuggestions};
+use crate::components::attachment_viewer::{AttachmentViewer, extract_attachment_meta};
 use crate::components::date_field::DateField;
 use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{
@@ -2508,6 +2509,72 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
     }
 }
 
+/// The archived email a batch came from, when it came from one.
+///
+/// ⚠️ The key is written by `core::auto_import::imap::EMAIL_DOCUMENT_ID_KEY`.
+/// `source_metadata` is opaque JSON by design, so nothing but agreement on this
+/// spelling connects the two — ⛔ change one and change the other.
+fn email_document_id(batch: &PendingBatchView) -> Option<String> {
+    batch
+        .source_metadata
+        .as_ref()?
+        .get("email_document_id")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// The message a batch was derived from, shown beside its drafts.
+///
+/// ⚠️ Renders the archive's **extracted** text (headers + body), not the raw
+/// `.eml`: the raw form is mostly MIME scaffolding and base64 attachment
+/// payloads, so showing it would technically display the source while hiding
+/// what it says. Attachments are documents of their own in the archive — this
+/// panel links there rather than duplicating a viewer.
+#[component]
+fn SourceEmailPanel(document_id: String) -> Element {
+    let id_for_text = document_id.clone();
+    let text = use_resource(move || {
+        let id = id_for_text.clone();
+        async move { bridge::invoke_get_document_text(&id).await }
+    });
+
+    rsx! {
+        details { class: "mb-4", open: true,
+            summary { class: "cursor-pointer text-xs text-obsidian-text-muted hover:text-obsidian-text",
+                "Source email"
+            }
+            div { class: "mt-2",
+                match text.read().as_ref() {
+                    None => rsx! {
+                        p { class: "text-xs text-obsidian-text-muted", "Loading the message…" }
+                    },
+                    Some(Err(e)) => rsx! {
+                        p { class: "text-xs text-red-300", "Couldn't load the message: {e}" }
+                    },
+                    // ⚠️ Says which, rather than rendering an empty box: a
+                    // message with no readable body is a real outcome, and the
+                    // reviewer needs to know that is why they see nothing.
+                    Some(Ok(None)) => rsx! {
+                        p { class: "text-xs text-amber-400/80",
+                            "This message is archived but carries no readable text."
+                        }
+                    },
+                    Some(Ok(Some(body))) => rsx! {
+                        pre {
+                            class: "max-h-64 overflow-auto p-3 rounded border border-obsidian-border/10 \
+                                    bg-obsidian-bg text-[11px] font-mono text-obsidian-text whitespace-pre-wrap",
+                            "{body}"
+                        }
+                    },
+                }
+                p { class: "mt-1 text-[10px] text-obsidian-text-muted/70",
+                    "Archived as {document_id} — attachments are separate entries in the Archive."
+                }
+            }
+        }
+    }
+}
+
 fn pretty_source(source: &str) -> &str {
     match source {
         "globepay" => "Globepay",
@@ -2596,6 +2663,16 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                         onclick: move |_| on_done.call(()),
                         "← List"
                     }
+                }
+
+                // ⛔ The source, shown — not a JSON dump of its metadata. This
+                // review step is the only control between a crafted email and a
+                // fabricated ledger entry (`receipts.rs` says so explicitly, and
+                // there is no SPF/DKIM check), and it cannot be that while the
+                // reviewer can see the proposed amounts but not where they came
+                // from. The raw metadata stays available underneath.
+                if let Some(doc_id) = email_document_id(&b) {
+                    SourceEmailPanel { document_id: doc_id }
                 }
 
                 if let Some(meta_str) = metadata_pretty {
@@ -3890,79 +3967,6 @@ fn TransactionListRow(
 // data URIs; the URL is revoked when the component unmounts via a guard.
 // =============================================================================
 
-/// Owns a blob: URL for an attachment and revokes it on Drop so the WebView
-/// doesn't accumulate orphaned object URLs across navigations. Holding this
-/// inside a `Signal<Option<ObjectUrlGuard>>` ties the URL's lifetime to the
-/// detail view component.
-struct ObjectUrlGuard(String);
-
-impl ObjectUrlGuard {
-    fn from_bytes(bytes: &[u8], mime: &str) -> Result<Self, String> {
-        use wasm_bindgen::JsCast;
-        let arr = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
-        arr.copy_from(bytes);
-        let parts = js_sys::Array::new();
-        parts.push(&arr.buffer());
-        let opts = web_sys::BlobPropertyBag::new();
-        opts.set_type(mime);
-        let blob =
-            web_sys::Blob::new_with_u8_array_sequence_and_options(parts.unchecked_ref(), &opts)
-                .map_err(|e| format!("blob construct: {e:?}"))?;
-        let url = web_sys::Url::create_object_url_with_blob(&blob)
-            .map_err(|e| format!("object url: {e:?}"))?;
-        Ok(Self(url))
-    }
-
-    fn url(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Drop for ObjectUrlGuard {
-    fn drop(&mut self) {
-        let _ = web_sys::Url::revoke_object_url(&self.0);
-    }
-}
-
-/// What kind of inline rendering the attachment supports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AttachmentRender {
-    Image,
-    Pdf,
-    Other,
-}
-
-fn classify_attachment(mime: &str) -> AttachmentRender {
-    let mime = mime.to_ascii_lowercase();
-    if mime.starts_with("image/") {
-        AttachmentRender::Image
-    } else if mime == "application/pdf" || mime == "application/x-pdf" {
-        AttachmentRender::Pdf
-    } else {
-        AttachmentRender::Other
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AttachmentMeta {
-    sha256: String,
-    filename: String,
-    mime_type: String,
-    size: u64,
-}
-
-/// Pull the four `AttachmentRef` fields out of the serde_json::Value the
-/// backend ships. Returns None when the field is null or any required key
-/// is missing — defensive only; `record_transaction` validates upstream.
-fn extract_attachment_meta(value: &serde_json::Value) -> Option<AttachmentMeta> {
-    Some(AttachmentMeta {
-        sha256: value.get("sha256")?.as_str()?.to_string(),
-        filename: value.get("filename")?.as_str()?.to_string(),
-        mime_type: value.get("mime_type")?.as_str()?.to_string(),
-        size: value.get("size")?.as_u64().unwrap_or(0),
-    })
-}
-
 #[component]
 fn TransactionDetailView(
     txn_id: String,
@@ -4508,87 +4512,6 @@ fn seed_edit_postings(value: &serde_json::Value) -> Vec<EditPosting> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-#[component]
-fn AttachmentViewer(meta: AttachmentMeta) -> Element {
-    let mut url_guard: Signal<Option<ObjectUrlGuard>> = use_signal(|| None);
-    let mut error: Signal<Option<String>> = use_signal(|| None);
-
-    let sha256 = meta.sha256.clone();
-    let mime = meta.mime_type.clone();
-    use_effect(move || {
-        let sha = sha256.clone();
-        let mime = mime.clone();
-        spawn(async move {
-            match bridge::invoke_fetch_attachment(&sha).await {
-                Ok(bytes) => match ObjectUrlGuard::from_bytes(&bytes, &mime) {
-                    Ok(guard) => url_guard.set(Some(guard)),
-                    Err(e) => error.set(Some(e)),
-                },
-                Err(e) => error.set(Some(e)),
-            }
-        });
-    });
-
-    let render = classify_attachment(&meta.mime_type);
-    let size_kb = (meta.size as f64 / 1024.0).round() as u64;
-
-    rsx! {
-        div {
-            h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2",
-                "Attachment"
-            }
-            div { class: "p-3 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg space-y-3",
-                div { class: "flex items-center gap-2 text-xs text-obsidian-text-muted",
-                    svg { class: "w-3.5 h-3.5 text-obsidian-accent",
-                        fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
-                        path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
-                            d: "M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-                        }
-                    }
-                    span { class: "font-mono text-obsidian-text", "{meta.filename}" }
-                    span { " · {size_kb} KB · {meta.mime_type}" }
-                }
-
-                if let Some(msg) = error.read().clone() {
-                    div { class: "p-3 bg-red-950/30 border border-red-500/30 rounded text-xs text-red-300",
-                        "Couldn't load attachment: {msg}"
-                    }
-                } else {
-                    match url_guard.read().as_ref().map(|g| g.url().to_string()) {
-                        None => rsx! {
-                            div { class: "text-xs text-obsidian-text-muted", "Loading attachment…" }
-                        },
-                        Some(url) => match render {
-                            AttachmentRender::Image => rsx! {
-                                img {
-                                    src: "{url}",
-                                    alt: "{meta.filename}",
-                                    class: "max-w-full max-h-[600px] rounded border border-obsidian-border/10",
-                                }
-                            },
-                            AttachmentRender::Pdf => rsx! {
-                                iframe {
-                                    src: "{url}",
-                                    class: "w-full h-[600px] rounded border border-obsidian-border/10 bg-white",
-                                    title: "{meta.filename}",
-                                }
-                            },
-                            AttachmentRender::Other => rsx! {
-                                a {
-                                    href: "{url}",
-                                    download: "{meta.filename}",
-                                    class: "inline-block px-3 py-1.5 text-xs bg-obsidian-accent text-black font-medium rounded hover:opacity-90",
-                                    "Download {meta.filename}"
-                                }
-                            },
-                        },
-                    }
-                }
-            }
-        }
-    }
 }
 
 // =============================================================================
@@ -7433,68 +7356,8 @@ mod tests {
         );
     }
 
-    // --- Phase 4.2 attachment-render classifier --------------------------
-
-    #[test]
-    fn classify_attachment_routes_images_to_image_render() {
-        assert_eq!(classify_attachment("image/jpeg"), AttachmentRender::Image);
-        assert_eq!(classify_attachment("image/png"), AttachmentRender::Image);
-        assert_eq!(classify_attachment("IMAGE/HEIC"), AttachmentRender::Image);
-    }
-
-    #[test]
-    fn classify_attachment_routes_pdf_variants_to_pdf_render() {
-        assert_eq!(
-            classify_attachment("application/pdf"),
-            AttachmentRender::Pdf
-        );
-        assert_eq!(
-            classify_attachment("APPLICATION/PDF"),
-            AttachmentRender::Pdf
-        );
-        assert_eq!(
-            classify_attachment("application/x-pdf"),
-            AttachmentRender::Pdf
-        );
-    }
-
-    #[test]
-    fn classify_attachment_falls_back_to_other_for_unknown_mime() {
-        assert_eq!(classify_attachment("text/plain"), AttachmentRender::Other);
-        assert_eq!(
-            classify_attachment("application/zip"),
-            AttachmentRender::Other
-        );
-        assert_eq!(classify_attachment(""), AttachmentRender::Other);
-    }
-
-    #[test]
-    fn extract_attachment_meta_decodes_complete_ref() {
-        let v = serde_json::json!({
-            "sha256": "abc123",
-            "filename": "receipt.jpg",
-            "mime_type": "image/jpeg",
-            "size": 1024,
-        });
-        let meta = extract_attachment_meta(&v).unwrap();
-        assert_eq!(meta.sha256, "abc123");
-        assert_eq!(meta.filename, "receipt.jpg");
-        assert_eq!(meta.mime_type, "image/jpeg");
-        assert_eq!(meta.size, 1024);
-    }
-
-    #[test]
-    fn extract_attachment_meta_returns_none_when_required_field_missing() {
-        let v = serde_json::json!({
-            "filename": "x.pdf",
-            "mime_type": "application/pdf",
-            "size": 5000,
-        });
-        assert!(
-            extract_attachment_meta(&v).is_none(),
-            "missing sha256 should fail"
-        );
-    }
+    // Attachment classification and metadata decoding moved with the viewer to
+    // `components::attachment_viewer`, and their tests moved with them.
 
     // --- Phase 4.4 money formatter --------------------------------------
 

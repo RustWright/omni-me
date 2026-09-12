@@ -161,6 +161,59 @@ pub fn claim_statement(csv: &str) -> Option<(StatementFormat, StatementParse)> {
         .map(|parse| (StatementFormat::Chequing, parse))
 }
 
+/// The `source` a person's own correction carries. Outranks every machine.
+pub const HUMAN_SOURCE: &str = "human";
+
+/// Turn one hand-entered value into the event that folds it onto a document.
+///
+/// ✅ **`verified: true`, and this is the one path where that is honest.** The
+/// flag means a value was checked against something real, and the archive page
+/// ⛔ **requires the document to be visible beside the field being edited** — so
+/// the oracle is the person reading the document. That UI constraint is what
+/// this function's `verified` depends on; ⛔ do not call it from anywhere that
+/// cannot show the document, because then nothing checked anything.
+///
+/// ⚠️ One key per event. Fields fold by key, so correcting three values writes
+/// three events and each is independently attributable — a single batched event
+/// would make a later reader unable to tell which value the person actually
+/// looked at.
+pub fn human_correction(
+    document_id: &str,
+    key: &str,
+    value: &str,
+) -> DocumentFieldsExtractedPayload {
+    DocumentFieldsExtractedPayload {
+        document_id: document_id.to_string(),
+        extracted_at: Utc::now().to_rfc3339(),
+        fields: vec![DocumentField {
+            key: key.to_string(),
+            value: value.to_string(),
+            source: HUMAN_SOURCE.to_string(),
+            verified: true,
+        }],
+    }
+}
+
+/// The deterministic half: what a parser can say about the bytes alone.
+///
+/// Synchronous, and takes no reader — which is the point. Ingest calls this one,
+/// so ⛔ *no model at ingest* is a fact about what is in scope rather than a
+/// comment someone has to remember to obey. It needs nothing remote, so it can
+/// run wherever a document enters: a device's background queue, the server, a
+/// backfill. The model half pays network latency and is scheduled separately.
+///
+/// ⚠️ **No MIME gate.** Bulk ingest labels plenty of files
+/// `application/octet-stream`, and gating on a declared type would silently send
+/// those to a model instead. Valid UTF-8 is the only precondition — which
+/// excludes PDFs and images by construction — and [`claim_statement`]'s
+/// signature test is strict enough to be the real filter. Putting a second,
+/// weaker test in front of it would only ever subtract.
+pub fn parser_fields(document_id: &str, bytes: &[u8]) -> Option<DocumentFieldsExtractedPayload> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let (format, parse) = claim_statement(text)?;
+    Some(fields_from_statement(document_id, format, &parse))
+}
+
 /// Derive a document's fields, preferring the answer that can be checked.
 ///
 /// The parser is tried first and the model only on its refusal, which is the
@@ -168,12 +221,10 @@ pub fn claim_statement(csv: &str) -> Option<(StatementFormat, StatementParse)> {
 /// file a parser can read costs money to produce a value that would lose the
 /// fold anyway.
 ///
-/// ⚠️ **No MIME gate on the parser attempt.** Bulk ingest labels plenty of files
-/// `application/octet-stream`, and gating on a declared type would silently send
-/// those to a model instead. Valid UTF-8 is the only precondition — which
-/// excludes PDFs and images by construction — and [`claim_statement`]'s
-/// signature test is strict enough to be the real filter. Putting a second,
-/// weaker test in front of it would only ever subtract.
+/// ⚠️ Ingest does not call this; it calls [`parser_fields`] directly. This is the
+/// scheduled path, and the two are not interchangeable: the reader is the half
+/// that reaches the network, so it belongs to a batch that can be retried, rated
+/// and paused, not to the request that files a document.
 ///
 /// `None` means no fields could be derived: no parser recognised the file and
 /// either no reader is configured or it failed. ⛔ That is a normal outcome, not
@@ -184,10 +235,8 @@ pub async fn derive_fields(
     mime: &str,
     reader: Option<&dyn DocumentReader>,
 ) -> Option<DocumentFieldsExtractedPayload> {
-    if let Ok(text) = std::str::from_utf8(bytes)
-        && let Some((format, parse)) = claim_statement(text)
-    {
-        return Some(fields_from_statement(document_id, format, &parse));
+    if let Some(parsed) = parser_fields(document_id, bytes) {
+        return Some(parsed);
     }
 
     let reader = reader?;
@@ -335,6 +384,24 @@ Date,Description,Amount,Balance
 2024-01-05,Dividend ACME,10.00,110.00
 2024-01-20,Buy ACME,-50.00,60.00
 ";
+
+    #[test]
+    fn a_correction_outranks_every_machine_source_and_is_verified() {
+        let payload = human_correction("doc-9", DOCUMENT_KIND_KEY, "lease");
+        let field = &payload.fields[0];
+
+        assert_eq!(field.source, "human");
+        assert!(
+            field.verified,
+            "the person read the document beside the field — that is the oracle"
+        );
+        assert!(
+            DocumentField::rank(&field.source)
+                > DocumentField::rank(StatementFormat::Chequing.source()),
+            "⛔ a re-run parser must never undo a correction"
+        );
+        assert_eq!(payload.fields.len(), 1, "one key per correction event");
+    }
 
     #[test]
     fn a_recognised_statement_yields_parser_sourced_fields() {

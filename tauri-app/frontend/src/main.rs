@@ -21,6 +21,7 @@ use dioxus::prelude::*;
 use futures::StreamExt;
 
 use components::nav::{NavDrawer, SideNav};
+use pages::archive::ArchivePage;
 use pages::assistant::AssistantPage;
 use pages::finances::FinancesPage;
 use pages::journal::JournalPage;
@@ -38,6 +39,7 @@ pub enum Tab {
     Assistant,
     Routines,
     Finances,
+    Archive,
     Settings,
 }
 
@@ -52,6 +54,7 @@ impl Tab {
             Tab::Assistant => "assistant",
             Tab::Routines => "routines",
             Tab::Finances => "finances",
+            Tab::Archive => "archive",
             Tab::Settings => "settings",
         }
     }
@@ -63,6 +66,7 @@ impl Tab {
             "assistant" => Some(Tab::Assistant),
             "routines" => Some(Tab::Routines),
             "finances" => Some(Tab::Finances),
+            "archive" => Some(Tab::Archive),
             "settings" => Some(Tab::Settings),
             _ => None,
         }
@@ -79,6 +83,7 @@ impl Tab {
             Tab::Assistant => Some(types::Feature::Llm),
             Tab::Routines => Some(types::Feature::Routines),
             Tab::Finances => Some(types::Feature::Finances),
+            Tab::Archive => Some(types::Feature::Documents),
             Tab::Settings => None,
         }
     }
@@ -915,6 +920,7 @@ fn App() -> Element {
                             Tab::Notes => rsx! { NotesPage {} },
                             Tab::Routines => rsx! { RoutinesPage {} },
                             Tab::Finances => rsx! { FinancesPage {} },
+                            Tab::Archive => rsx! { ArchivePage {} },
                             Tab::Assistant => rsx! { AssistantPage {} },
                             Tab::Settings => rsx! { SettingsPage {} },
                         }
@@ -992,7 +998,7 @@ mod tab_visibility_tests {
     #[test]
     fn all_tabs_show_by_default() {
         let features = Features::default();
-        assert_eq!(components::nav::ALL_TABS.len(), 6);
+        assert_eq!(components::nav::ALL_TABS.len(), 7);
         for tab in components::nav::ALL_TABS {
             assert!(tab.visible(&features), "{} hidden by default", tab.as_key());
         }
@@ -1064,7 +1070,23 @@ mod tab_visibility_tests {
             .collect();
         assert_eq!(
             visible,
-            vec!["journal", "notes", "routines", "finances", "settings"]
+            vec![
+                "journal", "notes", "routines", "finances", "archive", "settings"
+            ]
+        );
+    }
+
+    /// The archive tab follows `feature.documents`, for the same reason the
+    /// assistant follows `feature.llm`: every command behind it calls
+    /// `require_feature`, so a surviving tab would read as a broken feature
+    /// rather than a switched-off one.
+    #[test]
+    fn switching_off_documents_hides_the_archive_tab() {
+        let features = features_without(&[Feature::Documents]);
+        assert!(!Tab::Archive.visible(&features));
+        assert!(
+            Tab::Finances.visible(&features),
+            "the archive switch must not take an unrelated tab with it"
         );
     }
 

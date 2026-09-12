@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use omni_me_core::archive;
 use omni_me_core::blob;
-use omni_me_core::events::{AttachmentRef, DocumentArchivedPayload};
+use omni_me_core::events::AttachmentRef;
 use omni_me_core::extraction::{ExtractionHint, ExtractionResult};
 
 use crate::AppState;
@@ -97,28 +97,30 @@ async fn archive_handler(
         )
     })?;
 
-    let (event, text_source) = archive::ingest_one(
+    let ingested = archive::ingest_one(
         &state.blob_dir,
         &body,
         filename,
         mime,
         source,
         &state.device_id,
+        // ⛔ A single uploaded file has no container. Only email ingest nests.
+        None,
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let document_id = event.aggregate_id.clone();
-    let payload: DocumentArchivedPayload = serde_json::from_value(event.payload.clone())
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Append then project, matching `auto_import::rest`. ⚠️ Note this path is
     // NOT feature-gated: the server resolves no `ResolvedConfig`, so
     // `EventWriter`'s guard has nothing to read here. Pre-existing and shared
     // with every auto-import source — see `tasks.md`.
+    //
+    // ⚠️ **One batch, not one call per event.** The fields event is about the
+    // document the archive event creates; appending them separately would let a
+    // crash in between leave fields for a document nothing else records.
     let appended = state
         .store
-        .append_batch(vec![event])
+        .append_batch(ingested.events)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("append: {e}")))?;
     state
@@ -128,17 +130,18 @@ async fn archive_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("project: {e}")))?;
 
     tracing::info!(
-        document_id = %document_id,
+        document_id = %ingested.document_id,
         bytes = body.len(),
         mime = %mime,
-        text_source = %payload.text_source,
+        text_source = %ingested.text_source.as_str(),
+        parsed_fields = ingested.parsed_fields,
         "document_archived"
     );
 
     Ok(Json(ArchiveResponse {
-        document_id,
-        sha256: payload.sha256,
-        text_source: text_source.as_str().to_string(),
+        document_id: ingested.document_id,
+        sha256: ingested.sha256,
+        text_source: ingested.text_source.as_str().to_string(),
     }))
 }
 

@@ -869,6 +869,12 @@ pub fn run() {
             commands::attachments::fetch_attachment,
             commands::attachments::attachment_cache_size,
             commands::attachments::clear_attachment_cache,
+            commands::documents::list_documents,
+            commands::documents::get_document,
+            commands::documents::document_kinds,
+            commands::documents::get_document_text,
+            commands::documents::document_children,
+            commands::documents::correct_document_field,
             // Auto-import observability (Phase 3.9)
             commands::auto_import::list_auto_import_sources,
             commands::auto_import::trigger_auto_import_tick,

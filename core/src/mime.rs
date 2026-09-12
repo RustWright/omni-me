@@ -32,6 +32,16 @@ pub struct MimeAttachment {
     pub filename: String,
     pub content_type: String,
     pub bytes: Vec<u8>,
+    /// True for a part the message body *renders* — a logo or banner carried by
+    /// `Content-Disposition: inline` with a `Content-ID` the HTML references.
+    ///
+    /// ⚠️ **Not a formality.** A real bank statement email in the fixtures
+    /// carries **five** inline JPEGs of branding beside its one real PDF, so
+    /// anything treating every part as a file ends up handling ~173 KB of
+    /// furniture per message. Kept as a flag rather than filtered here, because
+    /// the two callers want different sets: the archive catalogues only real
+    /// attachments, while text extraction should still read an oddly-inline PDF.
+    pub is_inline: bool,
 }
 
 impl ParsedMessage {
@@ -42,6 +52,16 @@ impl ParsedMessage {
         self.attachments
             .iter()
             .find(|a| a.content_type.to_ascii_lowercase().starts_with(&needle))
+    }
+
+    /// The parts a person would call attachments — what the archive catalogues.
+    ///
+    /// ⛔ Dropping the inline parts is **lossless here only because the raw
+    /// message is archived whole**: the images are still inside that document,
+    /// they simply do not each get a catalogue entry of their own. Filter these
+    /// out anywhere the message itself is *not* kept and they are gone.
+    pub fn real_attachments(&self) -> impl Iterator<Item = &MimeAttachment> {
+        self.attachments.iter().filter(|a| !a.is_inline)
     }
 }
 
@@ -94,11 +114,21 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
                 s
             })
             .unwrap_or_else(|| "application/octet-stream".to_string());
+        // Two independent signals, ORed on purpose. `mail-parser` classifies a
+        // cid-referenced image as `PartType::InlineBinary`, and the header can
+        // also say so directly; senders are inconsistent about which they set,
+        // and treating furniture as a document is the worse error of the two.
+        let is_inline = matches!(att.body, mail_parser::PartType::InlineBinary(_))
+            || att
+                .content_disposition()
+                .is_some_and(|disposition| disposition.is_inline());
+
         let bytes = att.contents().to_vec();
         attachments.push(MimeAttachment {
             filename,
             content_type,
             bytes,
+            is_inline,
         });
     }
 
@@ -143,6 +173,69 @@ mod tests {
             .join(".reference/imap poller")
             .join(name);
         std::fs::read(&path).ok()
+    }
+
+    /// ⚠️ **The measurement this filter exists for**, pinned against a real
+    /// bank email rather than asserted in the abstract: one PDF statement
+    /// arrives alongside five inline JPEGs of branding. An archive that
+    /// catalogued every part would file five logos as five documents per
+    /// message, and the count is the only thing that makes that concrete.
+    #[test]
+    fn branding_images_are_inline_and_the_statement_is_not() {
+        let bytes = match read_fixture("Your Estatement on 30042026 now available.eml") {
+            Some(b) => b,
+            None => {
+                eprintln!("fixture missing — skipping");
+                return;
+            }
+        };
+        let parsed = parse_eml(&bytes).expect("SC eml parses");
+
+        let inline = parsed.attachments.iter().filter(|a| a.is_inline).count();
+        let real: Vec<&MimeAttachment> = parsed.real_attachments().collect();
+
+        assert_eq!(inline, 5, "five cid-referenced JPEGs of branding");
+        assert_eq!(
+            real.len(),
+            1,
+            "exactly one thing a person would call a file"
+        );
+        assert!(real[0].content_type.starts_with("application/pdf"));
+        assert!(
+            parsed
+                .attachments
+                .iter()
+                .filter(|a| a.is_inline)
+                .all(|a| a.content_type.starts_with("image/")),
+            "the filter must not be swallowing a real document"
+        );
+    }
+
+    /// ⚠️ Three of the five real fixtures carry no attachment at all — the
+    /// receipt is the body. This is why the email itself has to be archived:
+    /// attachment-only archiving files nothing for these.
+    #[test]
+    fn an_inline_body_receipt_has_nothing_to_catalogue_but_itself() {
+        for name in [
+            "Thanks, your order is complete_audible.eml",
+            "Your Walmart order was delivered.eml",
+            "Manitoba Hydro Online Account - New Online Bill.eml",
+        ] {
+            let Some(bytes) = read_fixture(name) else {
+                eprintln!("fixture {name} missing — skipping");
+                continue;
+            };
+            let parsed = parse_eml(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(
+                parsed.real_attachments().count(),
+                0,
+                "{name} has no real attachment"
+            );
+            assert!(
+                !parsed.body_text.trim().is_empty(),
+                "{name}: the body is the document, so it must not be empty"
+            );
+        }
     }
 
     #[test]
@@ -257,8 +350,38 @@ mod tests {
                 filename: "x.pdf".into(),
                 content_type: "Application/PDF".into(),
                 bytes: vec![],
+                is_inline: false,
             }],
         };
         assert!(parsed.find_attachment("application/pdf").is_some());
+    }
+
+    /// ⚠️ `find_attachment` deliberately still sees inline parts — it is what
+    /// text extraction uses, and a sender that marks a real PDF `inline` should
+    /// not make its contents unreadable. Only the archive's
+    /// [`ParsedMessage::real_attachments`] filters them.
+    #[test]
+    fn the_two_attachment_views_differ_on_an_inline_part() {
+        let parsed = ParsedMessage {
+            from: String::new(),
+            subject: String::new(),
+            date: None,
+            body_text: String::new(),
+            attachments: vec![MimeAttachment {
+                filename: "statement.pdf".into(),
+                content_type: "application/pdf".into(),
+                bytes: vec![],
+                is_inline: true,
+            }],
+        };
+        assert!(
+            parsed.find_attachment("application/pdf").is_some(),
+            "text extraction must still reach it"
+        );
+        assert_eq!(
+            parsed.real_attachments().count(),
+            0,
+            "but the archive does not give it a catalogue entry of its own"
+        );
     }
 }
