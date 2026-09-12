@@ -34,6 +34,8 @@ pub mod query_text;
 #[cfg(feature = "embeddings")]
 pub mod rerank;
 pub mod retrieval;
+/// Resolving an anchored mid-note edit against the note's live body.
+pub mod revise;
 pub mod session;
 pub mod store;
 /// The vector index and its sweep. Gated with [`embedding`] — it needs a model.

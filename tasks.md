@@ -253,7 +253,13 @@ defer-major-phases rule; do not run ahead to the next one.
        - ⛔ **Trigger is ask-only (user, 2026-09-10)** — it does not volunteer conclusions.
          Prompt-enforced by necessity (no reliable way to classify the request) with the
          approval gate as the structural backstop. `Trigger` is an enum with one variant so
-         the two wider policies are **deferred to during/after Phase F, not dropped**.
+         the two wider policies are **deferred, not dropped**: propose whenever a durable
+         pattern is noticed, and propose only on repeated independent evidence.
+       - ⚠️ **Re-anchored 2026-09-11: Phase F has shipped and neither policy was taken**, so
+         the old wording ("deferred to during/after Phase F") now reads as overdue when it is
+         simply undated. ⛔ Both remain **unbuilt and live** — no schedule, and the user has
+         not been asked for one. Do not read the check-in's existence as having settled it:
+         a scheduled question is still a question he asked for, not an opinion volunteered.
      - **Phase F — the scheduled check-in.** ⚠️ **A check-in is a question, not a subsystem.**
        The agent authors an ordinary `AssistantQuestionAsked` with `scheduled: true`; the
        normal loop answers it and anything it wants goes through the normal gate. It
@@ -896,18 +902,49 @@ quietly reworded paragraph is indistinguishable from the edit that was asked for
   Verified against the docs; the 1.x form would have been a silent wrong-syntax failure.
 - Projection version 2 → 3, so the log replays into the new shape on first launch.
 
-### Later — editing text in the middle (user, 2026-09-11: "later lets talk about")
-⛔ **Not started, and deliberately not designed yet.** Appending was chosen partly because it
-sidesteps this. ⚠️ Do NOT solve it by widening `GenericNoteAppendedPayload` with an offset: a
-byte index into a body another device has already rewritten points at the wrong place, and the
-corruption is silent. The real question is what a position means under concurrent edits, which
-is a CRDT/anchor design conversation the user has asked to have first.
+### Editing text in the middle — `note.revise`, DESIGNED AND BUILT 2026-09-11
 
-**Scheduled 2026-09-11** — third in the user's sequence, after the extraction live test and the
-IMAP swap. He restated the bar himself: the design must handle it "in a way that doesn't lead to
-widespread data corruption in any note it's used on". ⚠️ Read that as the acceptance criterion,
-not as encouragement — the failure mode he is guarding against is a `note.update` that works on
-the note in front of you and quietly mangles every other one it later touches.
+⛔ **The offset approach stays refused** — a byte index into a body another device has already
+rewritten points at the wrong place and the corruption is silent. The anchor is **text**: `find`
+plus `replace`, matched **exactly once** in the note's body or the approval refuses. Strictness
+decided by the user: unique match only, ⛔ **never a fuzzy or nearest-paragraph fallback**.
+
+⛔ **The anchor resolves at APPROVAL, on one device, and the log carries the finished body** — an
+ordinary `GenericNoteUpdated`, the same event every autosave writes. ⛔ Do not "simplify" this
+into an anchored `GenericNoteRevised` event resolved in the projection, however well it seems to
+fit: `EventStore::get_since` orders by **`received_at`** (local arrival), used by both `catch_up`
+and `rebuild`, so two devices fold the same events in different orders. An anchor evaluated per
+device can match on one and miss on another, permanently, with nothing to reconcile it. Logging
+the outcome instead of the intent is the whole design. ⚠️ Consequence worth keeping: **no new
+event type, no projection arm, no version bump, no second non-idempotent fold.**
+
+⚠️ **Two traps found in the build, neither in the design:**
+- `checked_text` **trims every argument**. A trimmed `replace` can come back byte-identical to
+  the `find` it replaces — the splice applies, the note does not change, the card says it
+  worked. Fixed by `ActionParam::verbatim`, set on `find` and `replace`. ⛔ Never drop it:
+  markdown indentation is nesting.
+- A splice can legitimately resolve to an **empty body** (deleting a note's last line), and
+  blank-and-optional is *dropped* by `validate_args` — which would reach `build_events` looking
+  exactly like a resolution that never ran. `ParamSource::ResolvedAtApproval` has its own
+  validation branch so an empty resolved body survives; an **absent** one is refused.
+
+⚠️ What this does NOT fix is last-write-wins itself: a device holding an older copy writes an
+overwrite computed from it, exactly as that device's own editor would. No new exposure, but not
+a fix either. Prose for the adopter is in `docs/src/assistant.md` § "Changing a note it did not
+write"; the rationale that must not be simplified away is on `NOTE_REVISE` and `resolve_args`.
+
+**Found and fixed alongside it — `applied_appends` was reaching the model.** `store::read` does
+`SELECT *`, so the assistant was handed `generic_notes.applied_appends` (append event ids, growing
+one per append) inside a record described as a note — ⚠️ event ids it could quote back as if the
+user had written them. The projection said "⛔ never expose this to the UI or the search index";
+the read verb was a third surface, built later, that the note did not anticipate. Fixed with
+`CatalogEntry::hidden_fields`, stripped in `read`. ⚠️ **`fetch_children` has the same `SELECT *`**,
+so `ChildCollection::hidden_fields` exists too and is empty for both of today's collections —
+fixing only the parent row would have left the twin shipping and looking deliberate. ⛔ **The two
+ends live in different files**: a bookkeeping column added to a projection must be listed in the
+catalogue, and nothing connects them but the comment at each end. Keep both.
+
+**Open:** on-device confirmation (see the section below).
 
 ---
 
@@ -916,6 +953,10 @@ the note in front of you and quietly mangles every other one it later touches.
 **Open, from Phases D–G and 2026-09-11** — all unit-tested, none exercised on hardware. Moved
 here from `NEXT.md`, which must carry decisions rather than a state snapshot:
 - [ ] The Tauri **decide** command approving a proposal end to end.
+- [ ] **`note.revise` on a real note** — both halves: an accepted revision leaving the
+      frontmatter and the untouched paragraphs byte-identical, *and* the refusal path (edit the
+      anchored sentence in the editor between proposing and accepting, then confirm the card
+      refuses with a readable sentence and the note is unchanged).
 - [ ] A decision **syncing to a second device** (the arrival-order hazard is handled per-handler,
       but only in tests).
 - [ ] A **check-in firing** on its own schedule, rather than being invoked directly.
@@ -938,8 +979,8 @@ reopened finance himself, having deferred it 2026-09-05 because too much was blo
 thought about it. Some of that is now unblocked (extraction reads documents; the assistant can
 review drafts) — **but he named the rest as still open, and they are bigger than finance**:
 
-- A set of **propose actions for finance** — the assistant has none today (the 10 actions are
-  beliefs, notes, routines).
+- A set of **propose actions for finance** — the assistant has none today (every action is a
+  belief, a note or a routine).
 - **Inbox management**, and how processed emails are **handled and stored after extraction**.
 - **Reviewing the archive of emails** — which he named as opening onto the real ambition:
 - A **document archive he can scan and retrieve all his documents from**.

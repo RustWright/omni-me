@@ -119,15 +119,51 @@ fn parse_frontmatter_yaml(raw: &str) -> Result<JsonValue, ImportError> {
 /// Implementation handles both `\n` and `\r\n` line endings (Obsidian on
 /// Windows writes CRLF).
 fn split_frontmatter_and_body(content: &str) -> (&str, String) {
-    // 1. Detect opening fence. Must be `---` on line 1, with either
-    //    `\n` or `\r\n` as the terminator.
-    let after_open = if let Some(rest) = content.strip_prefix("---\n") {
-        rest
-    } else if let Some(rest) = content.strip_prefix("---\r\n") {
-        rest
-    } else {
+    let Some(spans) = scan_fences(content) else {
         return ("", content.to_string());
     };
+
+    // Strip trailing newlines from the frontmatter slice so the YAML parser
+    // doesn't see stray blank lines.
+    let fm_slice = content[spans.frontmatter].trim_end_matches(['\n', '\r']);
+
+    (fm_slice, content[spans.body_start..].to_string())
+}
+
+/// Where the body of a markdown document starts, in bytes.
+///
+/// `0` for a document with no usable frontmatter — no opening fence, or an
+/// unterminated one — which is the same fallback [`split_frontmatter_and_body`]
+/// takes, since that is exactly the case where the whole input *is* the body.
+///
+/// ⚠️ Exists so a caller that must **not** touch the frontmatter can slice past
+/// it and keep its bytes. [`split_frontmatter_and_body`] cannot serve that
+/// caller: it hands back an owned body with a leading blank line trimmed, so the
+/// offsets it was built from are gone and nothing can be written back.
+pub(crate) fn body_start_offset(content: &str) -> usize {
+    scan_fences(content).map_or(0, |spans| spans.body_start)
+}
+
+/// The byte spans a fenced document's two halves occupy.
+struct DocSpans {
+    /// Between the fences, exclusive. Not yet trimmed of trailing newlines.
+    frontmatter: std::ops::Range<usize>,
+    /// After the closing fence, with one blank line trimmed.
+    body_start: usize,
+}
+
+/// The single fence scan behind both of the above.
+///
+/// One scanner rather than two, because the two answers must agree about where
+/// the frontmatter ends: a caller slicing past it from a second implementation
+/// that disagreed by one line would splice *into* the frontmatter, and the YAML
+/// would keep parsing. `None` means there is no usable frontmatter.
+fn scan_fences(content: &str) -> Option<DocSpans> {
+    // 1. Detect opening fence. Must be `---` on line 1, with either
+    //    `\n` or `\r\n` as the terminator.
+    let after_open = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))?;
 
     // 2. Scan line-by-line for a closing fence (`---` or `...`), tolerating
     //    trailing `\r` on CRLF files. Track the byte index in `content` so
@@ -147,27 +183,22 @@ fn split_frontmatter_and_body(content: &str) -> (&str, String) {
         cursor += line.len();
     }
 
-    let (Some(fm_end), Some(mut body_start)) = (frontmatter_end, body_start) else {
-        // Unterminated fence — fall back to body-only.
-        return ("", content.to_string());
-    };
+    // Unterminated fence — the whole input is the body.
+    let (fm_end, mut body_start) = (frontmatter_end?, body_start?);
 
     // 3. Trim one leading blank line after the closing fence so body doesn't
     //    start with spurious whitespace.
     let body_tail = &content[body_start..];
-    if let Some(rest) = body_tail.strip_prefix("\r\n") {
+    if body_tail.starts_with("\r\n") {
         body_start += 2;
-        let _ = rest;
-    } else if let Some(rest) = body_tail.strip_prefix('\n') {
+    } else if body_tail.starts_with('\n') {
         body_start += 1;
-        let _ = rest;
     }
 
-    // 4. Strip trailing newlines from the frontmatter slice so the YAML
-    //    parser doesn't see stray blank lines.
-    let fm_slice = content[opening_len..fm_end].trim_end_matches(['\n', '\r']);
-
-    (fm_slice, content[body_start..].to_string())
+    Some(DocSpans {
+        frontmatter: opening_len..fm_end,
+        body_start,
+    })
 }
 
 // ---------------------------------------------------------------------------

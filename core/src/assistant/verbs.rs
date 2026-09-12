@@ -400,6 +400,14 @@ async fn describe_type(db: &Database, config: &ResolvedConfig, name: &str) -> Va
 /// cost.
 fn arg_type(param: &actions::ActionParam) -> String {
     match param.shape {
+        // ⚠️ A system-filled argument says so in its *type*, not only in its
+        // description. `Records` gets that for free because evidence is the only
+        // thing shaped like one; a system-filled text argument is shaped exactly
+        // like an argument the model is meant to write, so without this it reads
+        // as one and costs a turn to find out otherwise.
+        actions::ParamShape::Text if !param.is_model_supplied() => {
+            "text, filled in for you".to_string()
+        }
         actions::ParamShape::Text => "text".to_string(),
         actions::ParamShape::TextList { max_items } => {
             format!("list of text, at most {max_items}")
@@ -1070,6 +1078,25 @@ mod tests {
                 .any(|a| a["name"] == "note.create"),
             "notes should be proposable: {notes}"
         );
+
+        // ⚠️ A system-filled text argument is shaped exactly like one the model
+        // should write, so the *type* has to say otherwise. Without this the
+        // model reads `raw_text` as a required body and spends a turn learning
+        // it is not — which is the failure a declaration is supposed to prevent.
+        let revise = notes["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["name"] == "note.revise")
+            .expect("note.revise should be offered");
+        let raw_text = revise["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["key"] == "raw_text")
+            .expect("note.revise declares a resolved body");
+        assert_eq!(raw_text["type"], "text, filled in for you", "{revise}");
+        assert_eq!(raw_text["required"], false);
     }
 
     #[tokio::test]

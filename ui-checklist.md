@@ -150,6 +150,11 @@ trigger, because otherwise these rows are unreachable from a browser.
 - [x] 0 console errors across the whole flow; no horizontal overflow at 390px
 - [ ] An irreversible proposal shows "This one cannot be undone" — **no action declares
       itself irreversible yet**, so this is unreachable, not untested
+- [ ] A `note.revise` card shows **both** halves, labelled "Replacing:" and "With:", and a
+      revision with no replacement reads "Deleting:" — covered by unit tests; the mock has no
+      trigger for it, so this needs a real proposal
+- [D] A revise whose anchor the user edited away shows the refusal on the card — the mock
+      records decisions without resolving anything, so only a real backend can refuse
 - [ ] A proposal from a newer build (unknown action) renders a decidable card —
       covered by a unit test, never seen on screen
 - [D] Accepting actually creates the record — the mock cannot author events

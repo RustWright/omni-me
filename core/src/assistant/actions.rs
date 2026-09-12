@@ -51,6 +51,7 @@ pub enum Autonomy {
 pub enum ActionKind {
     NoteCreate,
     NoteAppend,
+    NoteRevise,
     NoteRename,
     BeliefRecord,
     BeliefSupersede,
@@ -85,6 +86,25 @@ pub enum ParamSource {
     /// belief that validation already guards this would silently hand the model
     /// its own citations.
     EvidenceFromTrace,
+    /// **The system fills it at approval, from the record being changed.**
+    ///
+    /// The one argument that exists because of *when* it can be known rather than
+    /// who knows it: `note.revise` sends an anchor and a replacement, and the
+    /// finished body only exists once the anchor has been resolved against the
+    /// note as it stands at the moment of approval. Resolving it when the
+    /// proposal was made would bake in a body that may be stale by the time
+    /// anyone reads the card.
+    ///
+    /// ⚠️ Same guarantee and same non-guarantee as
+    /// [`ParamSource::EvidenceFromTrace`]: `validate_args` *accepts* a
+    /// well-shaped value, because a stored proposal being re-checked at approval
+    /// legitimately carries one. What makes a model-authored value impossible to
+    /// apply is `inbox::resolve_args` writing over it.
+    ///
+    /// ⛔ Never `required`. It is absent on the model's call and present on the
+    /// re-check, and a declaration that demanded it would refuse every proposal
+    /// at the moment it was made.
+    ResolvedAtApproval,
 }
 
 /// What an argument's JSON value looks like.
@@ -147,6 +167,16 @@ pub struct ActionParam {
     /// silently, since an unparseable frequency reaches the projection rather
     /// than the user.
     pub validator: Option<ParamValidator>,
+    /// Keep the value's leading and trailing whitespace instead of trimming it.
+    ///
+    /// ⚠️ **Trimming is right for a name and wrong for an anchor.** Every
+    /// argument here was a title, an id or a whole added block until
+    /// `note.revise`, and for those a stray newline is noise. For an anchored
+    /// splice the whitespace *is* the edit: markdown indentation nests a list
+    /// item, and a trimmed replacement can come out byte-identical to the text it
+    /// replaces — which applies cleanly, changes nothing, and reports success.
+    /// That is the exact failure this feature was required not to have.
+    pub verbatim: bool,
     pub source: ParamSource,
     /// What the value looks like. ⚠️ Rendered to the model by `describe_type`,
     /// which is the only way it can learn that an argument takes a list —
@@ -165,6 +195,7 @@ impl ActionParam {
             max_chars,
             allowed: None,
             validator: None,
+            verbatim: false,
             source: ParamSource::Model,
             shape: ParamShape::Text,
         }
@@ -193,13 +224,48 @@ impl ActionParam {
             max_chars,
             allowed: None,
             validator: None,
+            verbatim: false,
             source: ParamSource::Model,
             shape: ParamShape::TextList { max_items },
         }
     }
 
+    /// A value the system resolves at approval. See
+    /// [`ParamSource::ResolvedAtApproval`].
+    ///
+    /// `max_chars` bounds it like any other argument. The bound is not the
+    /// interesting part — the *applied* event carries the same body whatever the
+    /// bound is — but leaving it unbounded would mean one declaration in this
+    /// file with no ceiling at all, and the reason every other one has a ceiling
+    /// (an argument is stored in an event, and every event syncs to the phone)
+    /// applies here too.
+    ///
+    /// ⚠️ `verbatim` is set but inert today: [`validate_args`] gives this source
+    /// its own branch and never reaches `checked_text`. It is declared anyway so
+    /// that removing that branch degrades to trimming-off rather than to silently
+    /// trimming a note's trailing newline off every body it writes.
+    pub const fn resolved(key: &'static str, description: &'static str, max_chars: usize) -> Self {
+        ActionParam {
+            key,
+            required: false,
+            description,
+            max_chars,
+            allowed: None,
+            validator: None,
+            verbatim: true,
+            source: ParamSource::ResolvedAtApproval,
+            shape: ParamShape::Text,
+        }
+    }
+
     pub const fn optional(mut self) -> Self {
         self.required = false;
+        self
+    }
+
+    /// Keep the value's surrounding whitespace. See [`ActionParam::verbatim`].
+    pub const fn verbatim(mut self) -> Self {
+        self.verbatim = true;
         self
     }
 
@@ -224,6 +290,7 @@ impl ActionParam {
             max_chars: 0,
             allowed: None,
             validator: None,
+            verbatim: false,
             source: ParamSource::EvidenceFromTrace,
             shape: ParamShape::Records,
         }
@@ -370,6 +437,95 @@ const NOTE_APPEND: ActionType = ActionType {
     // note the user has not reopened has not been observed.
     reversible: true,
     reversibility: "The added text is in the log, so the note's previous body can be restored.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+/// Changing text in the middle of a note the user already has.
+///
+/// ## Why this is not the `note.update` that was rejected
+///
+/// [`NOTE_APPEND`]'s note records the objection: a model handed the finished body
+/// has to reproduce the parts it was not asked to change, so a quietly reworded
+/// paragraph is indistinguishable from the edit that was asked for. That
+/// objection is about **the model authoring the body**, not about the event that
+/// overwrites one — `GenericNoteUpdated` is what every autosave from the notes
+/// editor already writes. So the model sends only the region it touched, and the
+/// **system** splices it into the live body at approval. Nothing that can reword a
+/// paragraph ever sees the paragraphs it was not asked about.
+///
+/// ## ⛔ Why the anchor is text and the splice happens at approval
+///
+/// A byte offset into a body another device has already rewritten points at the
+/// wrong place; `GenericNoteAppendedPayload` refuses to carry one for that reason.
+/// Text carries its own identity instead.
+///
+/// The anchor is resolved **once, on the approving device**, and the event that
+/// reaches the log is the finished body. ⛔ Do not move the resolution into the
+/// projection, however naturally an anchored `GenericNoteRevised` event seems to
+/// fit there: projections consume events in `received_at` order, which is local
+/// arrival time, so two devices legitimately fold the same events in different
+/// orders. An anchor evaluated per device can match on one and miss on another,
+/// and nothing afterwards reconciles them — a note that silently differs between
+/// the phone and the desktop, permanently. Logging the outcome instead of the
+/// intent is what makes every device agree.
+///
+/// ⚠️ What this does *not* fix is last-write-wins itself (`architecture.md`): a
+/// device holding an older copy of the note writes an overwrite computed from it,
+/// exactly as that device's own editor would. This action adds no new exposure to
+/// that; it inherits the note editor's.
+const NOTE_REVISE: ActionType = ActionType {
+    name: "note.revise",
+    kind: ActionKind::NoteRevise,
+    feature: Feature::Notes,
+    description: "Change text inside a note that already exists, rather than adding to the end. \
+                  Give the exact text to find and what to put in its place. The text you give \
+                  must appear once and only once in the note, or the change will not be applied.",
+    params: &[
+        ActionParam::text(
+            "note_id",
+            "Identity of the note to change, from having read it.",
+            64,
+        ),
+        // ⚠️ The description carries the whole accuracy burden of this action.
+        // The match is exact and unique or it is refused, so a paraphrase of what
+        // the model *remembers* reading is the failure mode to expect, and the
+        // only place to head it off is here.
+        ActionParam::text(
+            "find",
+            "The exact text to replace, copied character for character from the note you read, \
+             including punctuation, capitalisation and line breaks. Give enough of it to appear \
+             only once in the note. Do not paraphrase it and do not tidy it up: if it does not \
+             match exactly, nothing is changed.",
+            20_000,
+        )
+        .verbatim(),
+        ActionParam::text(
+            "replace",
+            "What to put in its place, in markdown. Leave it out to delete the text instead. \
+             Indentation matters: markdown uses it for nesting.",
+            20_000,
+        )
+        .optional()
+        .verbatim(),
+        // Bounded well above any real note rather than at a note's own limits:
+        // a note has no aggregate size cap (the editor imposes none and appends
+        // accumulate), so a ceiling anywhere near one would refuse the approval
+        // of a long note that was never anyone's mistake.
+        ActionParam::resolved(
+            "raw_text",
+            "Filled in automatically when the user approves, by finding your text in the note as \
+             it stands then. You cannot set it.",
+            200_000,
+        ),
+    ],
+    produces: &[EventType::GenericNoteUpdated],
+    // Rule 1: the replaced text is in the log — the proposal carries it — and the
+    // body before the change replays from the note's own earlier events, so the
+    // prior state is recoverable. Rule 2: nothing leaves the log. Rule 3: a change
+    // to a note the user has not reopened has not been observed.
+    reversible: true,
+    reversibility: "The replaced text is in the log, so the note's previous body can be restored.",
     autonomy: Autonomy::AlwaysAsk,
     trigger: Trigger::OnRequest,
 };
@@ -775,6 +931,7 @@ const ROUTINE_SKIP: ActionType = ActionType {
 pub const ALL_ACTIONS: &[ActionType] = &[
     NOTE_CREATE,
     NOTE_APPEND,
+    NOTE_REVISE,
     NOTE_RENAME,
     BELIEF_RECORD,
     BELIEF_SUPERSEDE,
@@ -879,6 +1036,30 @@ pub fn validate_args(action: &ActionType, args: &Value) -> Result<Value, ArgErro
             continue;
         }
 
+        // ⚠️ Its own branch rather than the optional-text path below, for one
+        // reason that path cannot give it: **an empty value has to survive.**
+        // Blank-and-optional is dropped down there, which is right for an
+        // argument the model declined to fill and wrong here — a splice that
+        // deletes a note's last line resolves to an empty body, and dropping it
+        // would reach `build_events` looking exactly like a resolution that never
+        // ran. Those two must stay distinguishable: one is a legal edit, the
+        // other is a bug that would overwrite a note with nothing.
+        if param.source == ParamSource::ResolvedAtApproval {
+            if let Some(value) = obj.get(param.key) {
+                let Some(text) = value.as_str() else {
+                    return Err(format!("{}'s `{}` must be text", action.name, param.key));
+                };
+                if text.chars().count() > param.max_chars {
+                    return Err(format!(
+                        "{}'s `{}` is longer than {} characters",
+                        action.name, param.key, param.max_chars
+                    ));
+                }
+                out.insert(param.key.to_string(), json!(text));
+            }
+            continue;
+        }
+
         match obj.get(param.key) {
             None => {
                 if param.required {
@@ -976,8 +1157,13 @@ fn checked_text(
     let Some(text) = value.as_str() else {
         return Err(format!("{}'s `{label}` must be text", action.name));
     };
-    let text = text.trim();
-    if text.is_empty() {
+    // ⚠️ Trimmed unless the parameter asked not to be. See
+    // [`ActionParam::verbatim`] for why an anchored splice is the exception: a
+    // trimmed replacement can come back byte-identical to what it replaces.
+    // Blankness is still judged on the trimmed form either way, so a verbatim
+    // argument holding only spaces is blank rather than a value made of nothing.
+    let text = if param.verbatim { text } else { text.trim() };
+    if text.trim().is_empty() {
         return Ok(None);
     }
     if text.chars().count() > param.max_chars {
@@ -1060,6 +1246,27 @@ pub fn build_events(
                     "note_id": note_id,
                     "added_text": args["added_text"].as_str().unwrap_or_default(),
                 }),
+            )])
+        }
+        // ⛔ Reads the body it writes, never builds one. The splice lives in
+        // `revise::splice` and runs in `inbox::resolve_args`, which is the only
+        // place that can see the note as it stands at approval. An absent
+        // `raw_text` means that step did not run, and the only safe answer is to
+        // refuse: the alternatives are writing an empty body over the note, or
+        // writing the anchor as if it were the body.
+        ActionKind::NoteRevise => {
+            let note_id = args["note_id"].as_str().unwrap_or_default().to_string();
+            let Some(raw_text) = args.get("raw_text").and_then(|v| v.as_str()) else {
+                return Err(format!(
+                    "{} cannot be built until its `raw_text` is resolved against the note",
+                    action.name
+                ));
+            };
+            Ok(vec![note_event(
+                EventType::GenericNoteUpdated,
+                note_id.clone(),
+                device_id,
+                json!({ "note_id": note_id, "raw_text": raw_text }),
             )])
         }
         ActionKind::NoteRename => {
@@ -1220,8 +1427,8 @@ pub fn build_events(
 /// Envelope for a note event that changes a note the user already has.
 ///
 /// `NewEvent::generic_note_created` exists for the create because the notes
-/// command and the importer share it; these two have no second caller, so the
-/// envelope is built here rather than adding factories nothing else uses.
+/// command and the importer share it; these have no caller outside this module,
+/// so the envelope is built here rather than adding factories nothing else uses.
 fn note_event(event_type: EventType, note_id: String, device_id: &str, payload: Value) -> NewEvent {
     NewEvent {
         id: None,
@@ -1398,7 +1605,10 @@ mod tests {
     fn for_type_finds_a_types_actions() {
         let config = all_on();
         let names: Vec<&str> = for_type(&config, "note").iter().map(|a| a.name).collect();
-        assert_eq!(names, ["note.create", "note.append", "note.rename"]);
+        assert_eq!(
+            names,
+            ["note.create", "note.append", "note.revise", "note.rename"]
+        );
         assert!(for_type(&config, "journal").is_empty());
     }
 
@@ -1408,6 +1618,16 @@ mod tests {
             ActionKind::NoteAppend => json!({
                 "note_id": "01NOTE000000000000000001",
                 "added_text": "Booked the appointment for the 3rd.",
+            }),
+            // ⚠️ Carries `raw_text`, because this is the shape at *approval* —
+            // which is the only point `build_events` is reached from. A sample
+            // without it would make `declared_events_match_what_is_built` assert
+            // over an input the builder is designed to refuse.
+            ActionKind::NoteRevise => json!({
+                "note_id": "01NOTE000000000000000001",
+                "find": "due in May.",
+                "replace": "due in June.",
+                "raw_text": "Renewal is due in June.",
             }),
             ActionKind::NoteRename => json!({
                 "note_id": "01NOTE000000000000000001",
@@ -1449,6 +1669,107 @@ mod tests {
                 "date": "2026-08-14",
                 "reason": "Travelling.",
             }),
+        }
+    }
+
+    // note.revise
+
+    /// The model's call carries no `raw_text` — it cannot know one — and must
+    /// still validate, or the proposal is refused at the moment it is made.
+    #[test]
+    fn a_revise_proposal_validates_without_its_resolved_body() {
+        let args = validate_args(
+            &NOTE_REVISE,
+            &json!({ "note_id": "01NOTE000000000000000001", "find": "May", "replace": "June" }),
+        )
+        .expect("the model's own call must validate");
+        assert!(
+            args.get("raw_text").is_none(),
+            "nothing should invent a body here: {args}"
+        );
+    }
+
+    /// ⛔ The guard that stops an unresolved proposal from authoring an event. The
+    /// two things it prevents are writing an empty body over the note and writing
+    /// the anchor as if it were the body.
+    #[test]
+    fn building_a_revise_without_a_resolved_body_is_refused() {
+        let err = build_events(
+            &NOTE_REVISE,
+            &json!({ "note_id": "01NOTE000000000000000001", "find": "May", "replace": "June" }),
+            "d",
+        )
+        .expect_err("an unresolved revise must not build");
+        assert!(err.contains("resolved"), "{err}");
+    }
+
+    /// ⚠️ An emptied body is a legal outcome — deleting a note's last line — and
+    /// must not read as a resolution that never ran. Blank-and-optional is dropped
+    /// for every model-supplied argument, which is exactly why the resolved source
+    /// has its own branch in `validate_args`.
+    #[test]
+    fn a_resolved_body_survives_being_empty() {
+        let args = validate_args(
+            &NOTE_REVISE,
+            &json!({
+                "note_id": "01NOTE000000000000000001",
+                "find": "gone",
+                "raw_text": "",
+            }),
+        )
+        .expect("an empty resolved body is valid");
+        assert_eq!(args.get("raw_text").and_then(|v| v.as_str()), Some(""));
+        let events = build_events(&NOTE_REVISE, &args, "d").expect("and it must build");
+        assert_eq!(events[0].payload["raw_text"], json!(""));
+    }
+
+    /// ⚠️ The trap [`ActionParam::verbatim`] exists for. A trimmed `replace` can
+    /// come back byte-identical to the `find` it replaces — the splice applies,
+    /// the note does not change, and the card says it worked.
+    #[test]
+    fn a_revise_keeps_the_whitespace_that_is_the_edit() {
+        let args = validate_args(
+            &NOTE_REVISE,
+            &json!({
+                "note_id": "01NOTE000000000000000001",
+                "find": "- item",
+                "replace": "  - item",
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            args["replace"], "  - item",
+            "indentation is markdown nesting, not decoration"
+        );
+    }
+
+    /// A resolved body is bounded like every other argument, and the bound sits
+    /// far above any note a person or an append loop produces.
+    #[test]
+    fn a_long_note_still_approves() {
+        let body = "x".repeat(150_000);
+        let args = validate_args(
+            &NOTE_REVISE,
+            &json!({
+                "note_id": "01NOTE000000000000000001",
+                "find": "x",
+                "raw_text": body,
+            }),
+        )
+        .expect("a 150k-character note is not a mistake");
+        assert_eq!(args["raw_text"].as_str().map(str::len), Some(150_000));
+    }
+
+    /// ⛔ The whole feature refuses rather than guesses, so an anchor the model
+    /// left blank cannot be accepted: it would match everywhere.
+    #[test]
+    fn a_blank_anchor_is_refused() {
+        for blank in ["", "   ", "\n"] {
+            validate_args(
+                &NOTE_REVISE,
+                &json!({ "note_id": "01NOTE000000000000000001", "find": blank }),
+            )
+            .expect_err("a blank anchor must be refused");
         }
     }
 

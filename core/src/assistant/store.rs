@@ -459,7 +459,7 @@ pub async fn read(
     );
     let mut resp = db.query(&sql).bind(("id", id.to_string())).await?;
     let rows: Vec<serde_json::Value> = resp.take(0)?;
-    let Some(fields) = rows.into_iter().next() else {
+    let Some(mut fields) = rows.into_iter().next() else {
         return Ok(None);
     };
 
@@ -471,12 +471,19 @@ pub async fn read(
         })
         .unwrap_or_else(|| id.to_string());
 
+    // ⚠️ **After the handle is taken, deliberately.** The handle is what a person
+    // recognises the row by, and a mis-declared hidden field should not be able to
+    // turn it into a bare ULID — a degradation that would show up in the model's
+    // answer rather than here. Stripping afterwards keeps the two independent.
+    hide_fields(&mut fields, entry.hidden_fields);
+
     let mut children = serde_json::Map::new();
     for child in entry.children {
-        children.insert(
-            child.name.to_string(),
-            Value::Array(fetch_children(db, child, id).await?),
-        );
+        let mut rows = fetch_children(db, child, id).await?;
+        for row in &mut rows {
+            hide_fields(row, child.hidden_fields);
+        }
+        children.insert(child.name.to_string(), Value::Array(rows));
     }
 
     let derived = entry.derived.map(|view| derive(view, &children));
@@ -539,6 +546,29 @@ fn derive(view: DerivedView, children: &serde_json::Map<String, Value>) -> Value
                          row. A deliberate skip counts as done; `skipped` says how \
                          many of that day's items were skipped.",
             })
+        }
+    }
+}
+
+/// Drop a row's bookkeeping columns before anyone sees it.
+///
+/// ⚠️ Exists because both queries that feed the model select `*`, which is the
+/// right default — a column added to a projection reaches the assistant without
+/// anyone having to remember a second list, and the alternative (naming every
+/// column here) fails by silently *omitting* a real field. The cost of that
+/// default is that internal columns arrive too, and this is where they stop. See
+/// [`CatalogEntry::hidden_fields`].
+///
+/// A non-object row is left alone rather than treated as an error: `SELECT *`
+/// always yields objects, and inventing a failure path for something the query
+/// cannot produce would be the only untested branch in the function.
+fn hide_fields(row: &mut Value, hidden: &[&str]) {
+    if hidden.is_empty() {
+        return;
+    }
+    if let Some(obj) = row.as_object_mut() {
+        for key in hidden {
+            obj.remove(*key);
         }
     }
 }
@@ -982,6 +1012,46 @@ mod tests {
         assert_eq!(days[1]["date"], "2026-03-14");
         assert_eq!(days[1]["complete"], true, "a skip counts as done");
         assert_eq!(days[1]["skipped"], 1, "but stays visible as a skip");
+    }
+
+    /// ⛔ Bookkeeping columns must not reach the model. `applied_appends` holds the
+    /// ids of append events already folded in; handed over inside a record called a
+    /// note, those are event ids the assistant can quote back as if the user had
+    /// written them.
+    ///
+    /// ⚠️ The row is created *with* the column populated, which is the only version
+    /// of this test worth having — against a row that never had one it passes
+    /// whether or not anything is stripped.
+    #[tokio::test]
+    async fn a_note_read_carries_no_bookkeeping_columns() {
+        let db = test_db().await;
+        db.query(
+            "CREATE type::record('generic_notes', $id) SET title = 'Passport',
+             raw_text = 'Renewal is due in May.', tags = [],
+             applied_appends = ['01JKAPPEND000000000000001'],
+             created_at = time::now(), updated_at = time::now()",
+        )
+        .bind(("id", "01JKNOTE00000000000000000E"))
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+
+        let got = read(&db, entry("note"), "01JKNOTE00000000000000000E")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            got.fields.get("applied_appends").is_none(),
+            "bookkeeping reached the model: {}",
+            got.fields
+        );
+        assert_eq!(
+            got.fields["raw_text"], "Renewal is due in May.",
+            "and the content it sits beside must still be there"
+        );
+        assert_eq!(got.handle, "Passport", "the handle survives the strip");
     }
 
     /// Kinds with nothing to derive say nothing rather than an empty object.

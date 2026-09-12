@@ -65,6 +65,24 @@ pub enum DecideError {
     UnknownAction(String),
     #[error("{0}")]
     Invalid(String),
+    /// The record the proposal changes no longer supports the change it describes
+    /// — the anchored text of a `note.revise` is gone, or appears more than once.
+    ///
+    /// ⚠️ Its own variant rather than a [`DecideError::Invalid`], because the two
+    /// mean opposite things to the person reading the card: `Invalid` says the
+    /// proposal was never coherent, this says the proposal was fine and *the
+    /// record moved*. The proposal stays pending either way, which is deliberate —
+    /// the user can reread the note and reject it themselves, and nothing has been
+    /// written in the meantime.
+    #[error("{0}")]
+    RecordMoved(String),
+    /// Reading the record to resolve against failed. ⚠️ Distinct from
+    /// [`DecideError::RecordMoved`] on purpose: that one says the proposal is
+    /// stale and the user should look again, this one says the read did not
+    /// happen and retrying is the right response. Collapsing them would tell
+    /// someone their note had changed when the database merely hiccupped.
+    #[error(transparent)]
+    Db(#[from] crate::db::DbError),
     #[error(transparent)]
     Write(#[from] WriteError),
     #[error(transparent)]
@@ -186,11 +204,14 @@ pub async fn decide(
     if decision == ProposalDecision::Approved {
         let action: &ActionType = actions::lookup(config, &proposal.action)
             .ok_or_else(|| DecideError::UnknownAction(proposal.action.clone()))?;
+        // Resolved against the record as it stands **now**, before anything is
+        // built. See [`resolve_args`].
+        let args = resolve_args(db, action, &proposal.args).await?;
         // Re-validated against the live declaration, deliberately. A proposal may
         // be approved long after it was made, by a build whose action has moved;
         // carrying out arguments that no longer validate is worse than refusing
         // and telling the user why.
-        events = actions::build_events(action, &proposal.args, writer.device_id())
+        events = actions::build_events(action, &args, writer.device_id())
             .map_err(DecideError::Invalid)?;
     }
 
@@ -228,6 +249,63 @@ pub async fn decide(
     get(db, proposal_id)
         .await?
         .ok_or_else(|| DecideError::NotFound(proposal_id.to_string()))
+}
+
+/// Fill in the arguments only the moment of approval can know.
+///
+/// Today that is `note.revise`'s finished body: the proposal carries an anchor and
+/// a replacement, and the body they produce depends on what the note says *now*,
+/// not on what it said when the assistant read it.
+///
+/// ⛔ **This is the only place the anchor is resolved, and it is deliberately not
+/// the projection.** Projections consume events in `received_at` order — local
+/// arrival time — so two devices legitimately fold the same events in different
+/// orders. An anchor evaluated inside a fold can match on one device and miss on
+/// another, leaving the note permanently different between them with nothing to
+/// reconcile it. Resolving once and logging the finished body makes every device
+/// agree, because there is nothing left for them to disagree about.
+///
+/// ⚠️ A refusal here is the feature working. Zero matches means the note moved
+/// under the proposal; more than one means there is no single place the edit
+/// belongs. ⛔ Never widen this into a fuzzy or nearest-match fallback.
+///
+/// Every other action passes through untouched — there is nothing about them that
+/// approval-time knows and propose-time did not.
+async fn resolve_args(
+    db: &Database,
+    action: &ActionType,
+    args: &serde_json::Value,
+) -> Result<serde_json::Value, DecideError> {
+    if action.kind != actions::ActionKind::NoteRevise {
+        return Ok(args.clone());
+    }
+
+    let note_id = args
+        .get("note_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| DecideError::Invalid("the proposal names no note".to_string()))?;
+    let find = args
+        .get("find")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| DecideError::Invalid("the proposal names no text to replace".to_string()))?;
+    // Absent means deletion — see the `replace` parameter's declaration.
+    let replace = args.get("replace").and_then(|v| v.as_str()).unwrap_or("");
+
+    let note = crate::db::queries::get_generic_note(db, note_id)
+        .await?
+        .ok_or_else(|| DecideError::RecordMoved("That note no longer exists.".to_string()))?;
+
+    let resolved = crate::assistant::revise::splice(&note.raw_text, find, replace)
+        .map_err(|e| DecideError::RecordMoved(e.message()))?;
+
+    let mut out = args.clone();
+    // ⚠️ Inserted over whatever is there, which is what makes the value
+    // un-authorable by the model rather than merely undeclared. See
+    // `ParamSource::ResolvedAtApproval`.
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("raw_text".to_string(), serde_json::json!(resolved));
+    }
+    Ok(out)
 }
 
 /// The timestamp helper the inbox uses to age a pending proposal.
@@ -275,13 +353,22 @@ mod tests {
         (db, config, writer)
     }
 
-    /// Put a proposal in the inbox the way the agent does.
+    /// Put a `note.create` proposal in the inbox the way the agent does.
     async fn propose(writer: &EventWriter, proposal_id: &str, args: serde_json::Value) {
+        propose_action(writer, proposal_id, "note.create", args).await
+    }
+
+    async fn propose_action(
+        writer: &EventWriter,
+        proposal_id: &str,
+        action: &str,
+        args: serde_json::Value,
+    ) {
         let payload = AssistantProposalMadePayload {
             proposal_id: proposal_id.into(),
             thread_id: "t1".into(),
             message_id: "m2".into(),
-            action: "note.create".into(),
+            action: action.into(),
             args,
             rationale: "You said you would forget.".into(),
             reversible: true,
@@ -940,5 +1027,257 @@ mod tests {
         propose(&writer, "p1", good_args()).await;
         assert_eq!(for_thread(&db, "t1").await.unwrap().len(), 1);
         assert!(for_thread(&db, "t-other").await.unwrap().is_empty());
+    }
+
+    // note.revise — the anchor is resolved here or nowhere
+
+    const NOTE_ID: &str = "01NOTE000000000000000001";
+
+    async fn seed_note(writer: &EventWriter, body: &str) {
+        writer
+            .append_new(NewEvent::generic_note_created(
+                "phone", NOTE_ID, "Passport", body, None,
+            ))
+            .await
+            .expect("seed the note");
+    }
+
+    async fn note_body(db: &Database) -> String {
+        crate::db::queries::get_generic_note(db, NOTE_ID)
+            .await
+            .unwrap()
+            .expect("the note exists")
+            .raw_text
+    }
+
+    fn revise_args(find: &str, replace: &str) -> serde_json::Value {
+        serde_json::json!({ "note_id": NOTE_ID, "find": find, "replace": replace })
+    }
+
+    /// The end-to-end shape of the whole feature: the model sent two short
+    /// strings, and what landed in the log is a finished body.
+    #[tokio::test]
+    async fn approving_a_revise_changes_only_the_anchored_text() {
+        let (db, config, writer) = harness(&[]).await;
+        seed_note(
+            &writer,
+            "---\nsummary: due in May\n---\n\nRenewal is due in May.\n\nThe letter came on the 3rd.\n",
+        )
+        .await;
+        propose_action(
+            &writer,
+            "p1",
+            "note.revise",
+            revise_args("due in May.", "due in June."),
+        )
+        .await;
+
+        decide(
+            &db,
+            &config,
+            &writer,
+            "p1",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .expect("approve");
+
+        assert_eq!(
+            note_body(&db).await,
+            "---\nsummary: due in May\n---\n\nRenewal is due in June.\n\nThe letter came on the 3rd.\n",
+            "the frontmatter and the untouched paragraph must come back verbatim"
+        );
+    }
+
+    /// ⚠️ The one event it authors is the same one the notes editor authors. That
+    /// is the reason this design needs no projection work at all, and a second
+    /// event type appearing here would mean the design has drifted.
+    #[tokio::test]
+    async fn a_revise_authors_an_ordinary_note_update() {
+        let (db, config, writer) = harness(&[]).await;
+        seed_note(&writer, "Renewal is due in May.\n").await;
+        propose_action(&writer, "p1", "note.revise", revise_args("May", "June")).await;
+
+        decide(
+            &db,
+            &config,
+            &writer,
+            "p1",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .expect("approve");
+
+        // ⚠️ `received_at` is selected because it is ordered on: SurrealDB v3
+        // refuses `ORDER BY` over a field the selection does not return. See the
+        // same note in `assistant_projection`.
+        let mut resp = db
+            .query(
+                "SELECT event_type, received_at FROM events
+                 WHERE aggregate_id = $id ORDER BY received_at",
+            )
+            .bind(("id", NOTE_ID.to_string()))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let types: Vec<String> = resp.take("event_type").unwrap_or_default();
+        assert_eq!(
+            types,
+            vec![
+                "generic_note_created".to_string(),
+                "generic_note_updated".to_string()
+            ]
+        );
+    }
+
+    /// ⛔ The acceptance criterion for the feature, as a test. The user edited that
+    /// sentence between the proposal and the approval; the edit must not land
+    /// somewhere else, and it must not land approximately.
+    #[tokio::test]
+    async fn a_revise_whose_anchor_is_gone_refuses_and_changes_nothing() {
+        let (db, config, writer) = harness(&[]).await;
+        seed_note(&writer, "Renewal is due in May.\n").await;
+        propose_action(
+            &writer,
+            "p1",
+            "note.revise",
+            revise_args("due in May.", "due in June."),
+        )
+        .await;
+
+        // The user rewords it themselves, the way the editor does: a whole-body
+        // update.
+        writer
+            .append_new(NewEvent {
+                id: None,
+                event_type: EventType::GenericNoteUpdated.to_string(),
+                aggregate_id: NOTE_ID.to_string(),
+                timestamp: Utc::now(),
+                device_id: "phone".into(),
+                payload: serde_json::json!({
+                    "note_id": NOTE_ID,
+                    "raw_text": "Renewal expires at the end of May.\n",
+                }),
+            })
+            .await
+            .expect("the user's own edit");
+
+        let err = decide(
+            &db,
+            &config,
+            &writer,
+            "p1",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .expect_err("the anchor is gone, so approving must refuse");
+        assert!(
+            matches!(err, DecideError::RecordMoved(_)),
+            "the proposal was fine and the record moved: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("no longer in the note"),
+            "the card has to say why: {err}"
+        );
+        assert_eq!(
+            note_body(&db).await,
+            "Renewal expires at the end of May.\n",
+            "a refused approval writes nothing"
+        );
+        assert!(
+            pending(&db).await.unwrap().iter().any(|p| p.is_pending()),
+            "a refusal leaves the decision with the user, rather than consuming it"
+        );
+    }
+
+    /// Two matches is not a coin toss. ⛔ There is no rule that picks one, and
+    /// inventing one here is what would make this feature dangerous.
+    #[tokio::test]
+    async fn a_revise_whose_anchor_repeats_refuses_with_the_count() {
+        let (db, config, writer) = harness(&[]).await;
+        seed_note(&writer, "Call the office.\n\nCall the office.\n").await;
+        propose_action(
+            &writer,
+            "p1",
+            "note.revise",
+            revise_args("Call the office.", "Emailed instead."),
+        )
+        .await;
+
+        let err = decide(
+            &db,
+            &config,
+            &writer,
+            "p1",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .expect_err("an ambiguous anchor must refuse");
+        assert!(err.to_string().contains("2 times"), "{err}");
+        assert_eq!(
+            note_body(&db).await,
+            "Call the office.\n\nCall the office.\n"
+        );
+    }
+
+    /// A note deleted between the proposal and the approval is the same class of
+    /// refusal, and must not read as a validation failure.
+    #[tokio::test]
+    async fn a_revise_against_a_note_that_no_longer_exists_refuses() {
+        let (db, config, writer) = harness(&[]).await;
+        propose_action(
+            &writer,
+            "p1",
+            "note.revise",
+            revise_args("anything", "something"),
+        )
+        .await;
+
+        let err = decide(
+            &db,
+            &config,
+            &writer,
+            "p1",
+            ProposalDecision::Approved,
+            None,
+        )
+        .await
+        .expect_err("there is no note to change");
+        assert!(matches!(err, DecideError::RecordMoved(_)), "{err:?}");
+    }
+
+    /// ⛔ Rejecting must not resolve anything. The refusal path runs before the
+    /// build, so a stale anchor on a proposal the user wants *gone* would otherwise
+    /// make it un-rejectable — the state `rejecting_changes_nothing` guards for
+    /// every other action.
+    #[tokio::test]
+    async fn a_stale_revise_can_still_be_rejected() {
+        let (db, config, writer) = harness(&[]).await;
+        seed_note(&writer, "Nothing matching here.\n").await;
+        propose_action(
+            &writer,
+            "p1",
+            "note.revise",
+            revise_args("due in May.", "due in June."),
+        )
+        .await;
+
+        let decided = decide(
+            &db,
+            &config,
+            &writer,
+            "p1",
+            ProposalDecision::Rejected,
+            None,
+        )
+        .await
+        .expect("rejecting resolves nothing, so it cannot fail on the anchor");
+        assert_eq!(decided.decision.as_deref(), Some("rejected"));
+        assert_eq!(note_body(&db).await, "Nothing matching here.\n");
     }
 }

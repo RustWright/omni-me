@@ -72,6 +72,12 @@ impl Projection for NotesProjection {
              -- this to the UI or the search index — it is how the fold converges,
              -- not something the user wrote.
              --
+             -- ⛔ **Nor to the assistant**, and that one needs a second place:
+             -- `store::read` selects `*`, so the column reached the model until it
+             -- was listed in `CatalogEntry::hidden_fields` for `note`. Any
+             -- bookkeeping column added here must be added there too — nothing
+             -- connects them but this comment.
+             --
              -- ⚠️ `option<` is load-bearing, unlike `tags` beside it. A writer must
              -- decide a note's tags; no writer but `on_generic_appended` should
              -- ever have to know this column exists, and SCHEMAFULL would reject

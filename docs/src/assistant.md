@@ -170,6 +170,37 @@ approval, would end that. Everything else is fair game to propose.
 empty list is a real answer rather than a gap: it means this kind cannot be
 changed by the assistant at all.
 
+### Changing a note it did not write **(today)**
+
+The assistant can add to the end of a note, retitle it, or change text inside it. The third
+one is the interesting case, because a note is edited on more than one device and omni-me's
+sync is last-write-wins with no merge.
+
+It never sends a rewritten note. A mid-note change is proposed as two short strings: the exact
+text to find, and what to put in its place. Three things follow from that, and all three are
+deliberate.
+
+**The model never reproduces what it was not asked to change.** A verb that carried the
+finished body would make a quietly reworded paragraph indistinguishable from the edit you
+asked for. This one cannot drop or alter what it did not send.
+
+**The anchor is text, not a position.** A character offset into a note that another device has
+already edited points at the wrong place, and the resulting damage is silent. Text carries its
+own identity, so it is either still there or it is not.
+
+**It must match exactly once, or nothing happens.** If you reworded that sentence yourself
+between the proposal and your approval, the anchor is gone and the approval is refused, with
+the reason on the card. If the text now appears twice, there is no single place the change
+belongs, and that is refused too. The proposal stays in your inbox either way, so you can
+reread the note and decide for yourself. There is no fuzzy match and no nearest-paragraph
+fallback: a near miss is exactly the case where a guess is most likely to look right and be
+wrong.
+
+The anchor is resolved once, on the device where you approve, and what enters the log is the
+finished note — the same kind of event the editor writes when you type. Every other device
+receives a result rather than an instruction, so there is nothing left for two devices to
+disagree about.
+
 The shape is not new: omni-me already proposes batches of imported transactions and waits
 for review **(today)**, and that design keeps the whole proposed set in the event rather than
 only the accepted part, so a rejection stays legible as *"this was seen and declined"* rather

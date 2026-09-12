@@ -1179,6 +1179,7 @@ impl AssistantProposal {
             // name — so the summary says what kind of change it is and the
             // rationale names the note. The added text is the detail.
             "note.append" => "Add to an existing note".to_string(),
+            "note.revise" => "Change text in an existing note".to_string(),
             "note.rename" => match arg("title") {
                 Some(title) => format!("Rename a note to: {title}"),
                 None => "Rename a note".to_string(),
@@ -1269,6 +1270,20 @@ impl AssistantProposal {
             // it. A card that summarised instead would hide the thing approving
             // actually writes.
             "note.append" => return arg("added_text").map(str::to_string),
+            // ⚠️ Both halves, labelled, and never just the replacement. The old
+            // text is what makes this checkable: the card is the only place anyone
+            // sees *what is being overwritten* before it is, and a card showing
+            // only the new wording is an approval given without the comparison.
+            // ⛔ Not `raw_text` — the resolved body is not in these arguments (the
+            // app fills it when the user accepts), and showing a whole note here
+            // would bury the two lines that are actually the decision.
+            "note.revise" => {
+                let find = arg("find")?;
+                return Some(match arg("replace") {
+                    Some(replace) => format!("Replacing:\n{find}\n\nWith:\n{replace}"),
+                    None => format!("Deleting:\n{find}"),
+                });
+            }
             // The new title is already the summary line.
             "note.rename" => return None,
             "belief.record" => {
@@ -1668,6 +1683,43 @@ mod proposal_tests {
         );
         assert_eq!(renamed.summary(), "Rename a note to: Passport");
         assert_eq!(renamed.detail(), None, "the title is already the summary");
+    }
+
+    /// ⚠️ A revise card is the only place the **old** text is visible before it
+    /// stops existing. Showing only the replacement would be asking for consent to
+    /// a comparison the user cannot make.
+    #[test]
+    fn a_revise_card_shows_both_halves_of_the_change() {
+        let p = proposal(
+            "note.revise",
+            serde_json::json!({
+                "note_id": "01NOTE000000000000000001",
+                "find": "Renewal is due in May.",
+                "replace": "Renewal is due in June.",
+            }),
+        );
+        assert_eq!(p.summary(), "Change text in an existing note");
+        assert_eq!(
+            p.detail().as_deref(),
+            Some("Replacing:\nRenewal is due in May.\n\nWith:\nRenewal is due in June."),
+        );
+    }
+
+    /// A revise with no `replace` is a deletion, and the card has to say so —
+    /// "Replacing … With:" followed by nothing reads as a rendering bug.
+    #[test]
+    fn a_revise_card_names_a_deletion_as_one() {
+        let p = proposal(
+            "note.revise",
+            serde_json::json!({
+                "note_id": "01NOTE000000000000000001",
+                "find": "The old plan is fine.",
+            }),
+        );
+        assert_eq!(
+            p.detail().as_deref(),
+            Some("Deleting:\nThe old plan is fine.")
+        );
     }
 
     /// ⚠️ **The count is not decoration — it is the scope of what is being

@@ -109,6 +109,15 @@ pub struct ChildCollection {
     /// Cap on rows returned, applied after ordering.
     pub limit: u32,
     pub description: &'static str,
+    /// Columns on [`ChildCollection::table`] the model must never be handed.
+    ///
+    /// ⚠️ Empty for both of today's collections, and present anyway:
+    /// `fetch_children` selects `*` exactly as `read` does, so a bookkeeping
+    /// column on a child table is the same defect in the same function. Fixing
+    /// only the parent row would have left the twin shipping — and made it look
+    /// deliberate, since the other half had clearly been reviewed. See
+    /// [`CatalogEntry::hidden_fields`].
+    pub hidden_fields: &'static [&'static str],
 }
 
 /// A computed view `read` returns alongside the raw child rows.
@@ -167,6 +176,24 @@ pub struct CatalogEntry {
     /// Name of the [`crate::record_type::RecordType`] declaration whose properties
     /// `describe_type` should merge in, when this type has one.
     pub record_type: Option<&'static str>,
+    /// Columns on [`CatalogEntry::table`] the model must never be handed.
+    ///
+    /// ⚠️ **Bookkeeping columns exist, and `read` selects `*`.** A projection is
+    /// free to keep state on a row that makes the *fold* work and means nothing to
+    /// a reader — `generic_notes.applied_appends` is the ids of the append events
+    /// already folded in, which is how replay converges. Handed to a model inside
+    /// a record described as a note, those become event ids it can quote back as
+    /// though the user had written them.
+    ///
+    /// ⛔ **The two ends of this live in different files**, which is the whole
+    /// hazard: the column is declared in the projection's schema and hidden here.
+    /// Adding a bookkeeping column without adding it to this list is silent. The
+    /// projection's own definition carries a pointer back to this field; keep it.
+    ///
+    /// ⚠️ Deliberately *not* an allow-list of visible columns. That would make the
+    /// failure "a real column silently stopped reaching the model", which is far
+    /// harder to notice than one extra key.
+    pub hidden_fields: &'static [&'static str],
 }
 
 const JOURNAL_ENTRY: CatalogEntry = CatalogEntry {
@@ -207,6 +234,7 @@ const JOURNAL_ENTRY: CatalogEntry = CatalogEntry {
     children: &[],
     derived: None,
     record_type: Some(JOURNAL),
+    hidden_fields: &[],
 };
 
 const NOTE: CatalogEntry = CatalogEntry {
@@ -230,6 +258,10 @@ const NOTE: CatalogEntry = CatalogEntry {
     children: &[],
     derived: None,
     record_type: None,
+    // ⚠️ The ids of the append events already folded into `raw_text`. Declared in
+    // `NotesProjection`'s schema, where the comment explains why the fold needs
+    // them; they are how replay converges and not a word the user wrote.
+    hidden_fields: &["applied_appends"],
 };
 
 const ROUTINE: CatalogEntry = CatalogEntry {
@@ -274,6 +306,7 @@ const ROUTINE: CatalogEntry = CatalogEntry {
             },
             limit: 200,
             description: "The individual things done as part of this routine.",
+            hidden_fields: &[],
         },
         ChildCollection {
             name: "completions",
@@ -286,6 +319,7 @@ const ROUTINE: CatalogEntry = CatalogEntry {
             },
             limit: 60,
             description: "Recent completion history, newest first, including skips.",
+            hidden_fields: &[],
         },
     ],
     derived: Some(DerivedView::CompletionRollup {
@@ -293,6 +327,7 @@ const ROUTINE: CatalogEntry = CatalogEntry {
         completions: "completions",
     }),
     record_type: None,
+    hidden_fields: &[],
 };
 
 /// What the assistant has concluded about the user, and is allowed to read back.
@@ -335,6 +370,7 @@ const BELIEF: CatalogEntry = CatalogEntry {
     children: &[],
     derived: None,
     record_type: None,
+    hidden_fields: &[],
 };
 
 /// Every catalogued collection, before feature gating.
@@ -481,6 +517,7 @@ mod tests {
             children: &[],
             derived: None,
             record_type: None,
+            hidden_fields: &[],
         };
 
         // The load-bearing assertions: a range filter over a non-text column, and

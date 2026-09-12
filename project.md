@@ -23,15 +23,27 @@ ledger transaction edits do too, and Android predictive text commits on space.
 
 Work now follows a **three-item sequence set by the user 2026-09-05, taken one at a
 time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.** Items 1 and
-2 are done; **item 3 is designed (2026-09-07) and building** — Phase 0, A and B are in.
+2 are done; **item 3 is designed (2026-09-07) and building** — Phases 0 through G are in.
 
 **The assistant can read (2026-09-08).** Phase B put the four read verbs behind a
 multi-turn loop with cost instrumentation, and it works end-to-end against a real
 endpoint: asked what he had written about a rent notice, it discovered the record
 kinds, searched, read a journal entry and a note, and answered citing both. Free-form
-verb selection scored 10/10. It still cannot change anything — `propose` is Phase D,
-and until it exists the read-only claim is a property of the build rather than a
-promise about behaviour.
+verb selection scored 10/10.
+
+**It proposes; the user disposes (Phases D–G).** There is no write verb. `propose`
+records an intention over notes, beliefs and routines, and nothing reaches the log
+until he accepts it — at which point one approval and the events it authored go out in
+a single batch. ⛔ The journal is permanently absent from that list, and that is a
+product invariant rather than a phase it is passing through.
+
+⛔ **What it does not have is initiative about him.** Beliefs are proposed **only when
+asked for** (his decision, 2026-09-10). The two wider policies considered — propose
+whenever a durable pattern is noticed, and propose only on repeated independent
+evidence — are **deferred, not dropped**, and neither is built. That is why `Trigger`
+is an enum with one variant rather than a comment: an absent policy should be a
+declaration someone can review, not a silence. ⚠️ Nothing in this build volunteers an
+opinion about him, and "the assistant can write" must not be read as saying otherwise.
 
 The phase's real decision was one it did **not** take. Reaching for `RecordType` — the
 only declaration mechanism the codebase has — would have meant widening a permanent,
