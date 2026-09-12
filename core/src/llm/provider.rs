@@ -245,6 +245,7 @@ mod tests {
             api_key: Some("k".into()),
             vision: false,
             allow_closed_weights: false,
+            ..Default::default()
         }
     }
 

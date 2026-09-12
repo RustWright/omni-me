@@ -100,6 +100,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # poppler-utils is a hard RUNTIME dependency of the server, not a build
+      # one: `pdftotext` converts generated PDFs and `pdftoppm` rasterizes
+      # scanned ones, both before any extraction call. Without it here the PDF
+      # tests degrade to asserting that poppler is missing — which passes — so
+      # a regression in either path would land green. Runners may ship it
+      # already; naming it keeps the dependency visible and the job honest.
+      - name: Install poppler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

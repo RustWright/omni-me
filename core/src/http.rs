@@ -35,6 +35,22 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// exists to remove.
 pub const LLM_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// Vision extraction gets its own, longer budget — measured, not guessed.
+///
+/// A single 2048px receipt through `Qwen3-VL-30B-A3B` on DeepInfra took 34s,
+/// 66s, 144s and ~194s on four real photos (2026-09-11). The last one sat
+/// **right on** the 180s LLM budget and failed intermittently, surfacing as an
+/// opaque "error sending request" three minutes after the user took the photo.
+///
+/// ⛔ Do NOT fix that by raising [`LLM_TIMEOUT`]: the assistant's verb loop
+/// shares it, and a five-minute hang there is far worse than a failed turn.
+/// The two workloads have genuinely different shapes — one is interactive and
+/// should give up, the other is a user-initiated batch that should finish.
+///
+/// ⚠️ This is a floor under a latency problem, not a solution to it. 194s for
+/// one receipt is bad on its own terms and wants a faster model or endpoint.
+pub const VISION_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Separate from the total budget so a dead host fails fast even on the long
 /// LLM budget: unreachable is knowable in seconds, whereas "still generating"
 /// is not.
@@ -60,6 +76,11 @@ pub fn client() -> reqwest::Client {
 /// Client for model inference calls. See [`LLM_TIMEOUT`].
 pub fn llm_client() -> reqwest::Client {
     build(LLM_TIMEOUT)
+}
+
+/// Client for multimodal document extraction. See [`VISION_TIMEOUT`].
+pub fn vision_client() -> reqwest::Client {
+    build(VISION_TIMEOUT)
 }
 
 /// `expect` rather than a fallback to `reqwest::Client::new()`, deliberately.
@@ -91,6 +112,15 @@ mod tests {
         // out on a long receipt", which reads as a model failure, not a config one.
         assert!(LLM_TIMEOUT > DEFAULT_TIMEOUT);
         assert!(CONNECT_TIMEOUT < DEFAULT_TIMEOUT);
+        // Vision sits above the text budget for the reason on `VISION_TIMEOUT`:
+        // collapsing them back together reintroduces the intermittent timeout
+        // that was measured on a real receipt.
+        assert!(VISION_TIMEOUT > LLM_TIMEOUT);
+    }
+
+    #[test]
+    fn the_vision_client_builds() {
+        let _ = vision_client();
     }
 
     /// Nothing in `core` may construct a client outside this module.

@@ -34,6 +34,13 @@ pub enum CredentialError {
     Parse(#[from] toml::de::Error),
     #[error("toml serialize error: {0}")]
     Serialize(#[from] toml::ser::Error),
+    #[error(
+        "unknown role `[llm.{name}]` — expected one of: {known}. \
+         A misspelt role is silently ignored by serde, so it is rejected here \
+         instead: the role would fall back to `[llm]` and, for the extractor, \
+         that means sending documents to a model that may not read images."
+    )]
+    UnknownRole { name: String, known: String },
 }
 
 /// Public-engine credentials — only the generic kinds. Bank-specific sections
@@ -89,7 +96,10 @@ pub struct ServerConfig {
 /// Text-LLM provider selection + its connection config. Lives in
 /// `credentials.toml` because `api_key` is a secret; the non-secret fields ride
 /// along so one section fully describes the provider.
-#[derive(Clone, Serialize, Deserialize)]
+/// `Default` exists so a struct literal can spread the per-role fields rather
+/// than restate four `None`s. An empty `provider` is the "absent or incomplete"
+/// case `llm::provider::build_llm_client` already handles with a `NullLlmClient`.
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct LlmProviderConfig {
     /// `"openai_compatible"` — the only supported value. Anything else yields
     /// a `NullLlmClient`; see `llm::provider::build_llm_client`.
@@ -127,6 +137,157 @@ pub struct LlmProviderConfig {
     /// `docs/src/assistant.md`.
     #[serde(default)]
     pub allow_closed_weights: bool,
+
+    // --- Per-role overrides (`docs/src/assistant.md` § One model per job) ---
+    //
+    // ⚠️ The roles are NOT interchangeable and never were: A is chosen on
+    // latency, B on quality, C on reading images, D on cost-per-call and
+    // knowing when to abstain. One endpoint cannot be right for all four, and
+    // A vs C already proves it — A's leading candidate (`gpt-oss-120b`) is
+    // text-only while C must read receipts.
+    //
+    // ⛔ Role E (local: embeddings, reranking, speech) is deliberately absent.
+    // It is `fastembed` running on the machine, not an HTTP endpoint, and
+    // forcing it into this table would describe a connection it does not make.
+    /// Role A — the assistant loop and chat. Chosen on latency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interactive: Option<LlmRoleOverride>,
+    /// Role B — overnight review, habits, derived beliefs. Chosen on quality;
+    /// it can afford to be slow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<LlmRoleOverride>,
+    /// Role C — the quarantined extractor: receipts, statements, photographed
+    /// documents. ⚠️ Reads images, and **never holds tools**.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extractor: Option<LlmRoleOverride>,
+    /// Role D — high-volume structurer: note extraction, categorization.
+    /// Chosen on cost per call and on knowing when to abstain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structurer: Option<LlmRoleOverride>,
+}
+
+/// Which job a model is being selected for. Letters map to the table in
+/// `docs/src/assistant.md` § One model per job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmRole {
+    /// A — interactive reasoner.
+    Interactive,
+    /// B — batch reasoner.
+    Batch,
+    /// C — quarantined extractor.
+    Extractor,
+    /// D — high-volume structurer.
+    Structurer,
+}
+
+/// A per-role override of `[llm]`. **Every field is optional**, and that is the
+/// whole design: a role names only what differs, and inherits the rest.
+///
+/// ```toml
+/// [llm]                        # applies to every unset role
+/// provider = "openai_compatible"
+/// base_url = "https://openrouter.ai/api/v1"
+/// api_key  = "..."
+/// model    = "openai/gpt-oss-120b"
+///
+/// [llm.extractor]              # role C: same endpoint and key, different model
+/// model  = "z-ai/glm-5.3-flash"
+/// vision = true
+/// ```
+///
+/// ⚠️ `deny_unknown_fields` is load-bearing here. A misspelt key inside a role
+/// table would otherwise parse cleanly and do nothing — the silent-config
+/// failure this project has been bitten by repeatedly. A typo in the role
+/// *name* (`[llm.extracter]`) is caught separately, by [`check_role_names`].
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LlmRoleOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_closed_weights: Option<bool>,
+}
+
+impl LlmProviderConfig {
+    /// Resolve the endpoint config for one role: the override's set fields laid
+    /// over `[llm]`, everything else inherited.
+    ///
+    /// The returned config carries **no** role tables of its own, so a resolved
+    /// config cannot be resolved again — the recursion a caller might otherwise
+    /// write by accident is not representable.
+    pub fn for_role(&self, role: LlmRole) -> LlmProviderConfig {
+        let over = match role {
+            LlmRole::Interactive => &self.interactive,
+            LlmRole::Batch => &self.batch,
+            LlmRole::Extractor => &self.extractor,
+            LlmRole::Structurer => &self.structurer,
+        };
+        let mut out = LlmProviderConfig {
+            provider: self.provider.clone(),
+            base_url: self.base_url.clone(),
+            model: self.model.clone(),
+            api_key: self.api_key.clone(),
+            vision: self.vision,
+            allow_closed_weights: self.allow_closed_weights,
+            interactive: None,
+            batch: None,
+            extractor: None,
+            structurer: None,
+        };
+        let Some(o) = over else { return out };
+        if let Some(v) = &o.provider {
+            out.provider = v.clone();
+        }
+        if o.base_url.is_some() {
+            out.base_url = o.base_url.clone();
+        }
+        if o.model.is_some() {
+            out.model = o.model.clone();
+        }
+        if o.api_key.is_some() {
+            out.api_key = o.api_key.clone();
+        }
+        if let Some(v) = o.vision {
+            out.vision = v;
+        }
+        if let Some(v) = o.allow_closed_weights {
+            out.allow_closed_weights = v;
+        }
+        out
+    }
+}
+
+/// Role names understood inside `[llm]`. Anything else under it is a typo.
+const ROLE_KEYS: [&str; 4] = ["interactive", "batch", "extractor", "structurer"];
+
+/// Reject an unknown sub-table under `[llm]`.
+///
+/// ⚠️ Serde cannot do this for us. `LlmProviderConfig` must stay permissive at
+/// the top level — a `[gemini]`-era file still parses, by design — so
+/// `[llm.extracter]` would deserialize to nothing and the misconfigured role
+/// would silently fall back to `[llm]`, quietly sending receipts to a text-only
+/// model. Failing the load instead makes the typo cost one error message.
+fn check_role_names(raw: &toml::Value) -> Result<(), CredentialError> {
+    let Some(llm) = raw.get("llm").and_then(|v| v.as_table()) else {
+        return Ok(());
+    };
+    for (key, value) in llm {
+        if value.is_table() && !ROLE_KEYS.contains(&key.as_str()) {
+            return Err(CredentialError::UnknownRole {
+                name: key.clone(),
+                known: ROLE_KEYS.join(", "),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// IMAP poller — host + port + account + app-password (NOT main login).
@@ -211,6 +372,30 @@ impl std::fmt::Debug for LlmProviderConfig {
             .field("model", &self.model)
             .field("api_key", &self.api_key.as_deref().map(redacted))
             .field("vision", &self.vision)
+            // Roles are printed because *which* are configured is exactly the
+            // shape this Debug exists to show — "extraction is on a different
+            // model" is the first thing you want from a startup dump. Their
+            // keys redact through `LlmRoleOverride`'s own impl.
+            .field("interactive", &self.interactive)
+            .field("batch", &self.batch)
+            .field("extractor", &self.extractor)
+            .field("structurer", &self.structurer)
+            .finish()
+    }
+}
+
+/// Same contract as [`LlmProviderConfig`]'s: shape visible, secret redacted.
+/// ⛔ Never derive `Debug` here — a role override carries its own `api_key`,
+/// and a key hidden on `[llm]` but printed from `[llm.extractor]` is the same
+/// leak through a new door.
+impl std::fmt::Debug for LlmRoleOverride {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmRoleOverride")
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("api_key", &self.api_key.as_deref().map(redacted))
+            .field("vision", &self.vision)
             .finish()
     }
 }
@@ -248,7 +433,12 @@ pub fn default_path() -> Result<PathBuf, CredentialError> {
 /// startup.
 pub fn load(path: &Path) -> Result<Credentials, CredentialError> {
     match std::fs::read_to_string(path) {
-        Ok(contents) => Ok(toml::from_str(&contents)?),
+        Ok(contents) => {
+            // Parsed twice on purpose: serde cannot see an unknown sub-table
+            // under a permissive struct, so the raw tree is checked first.
+            check_role_names(&toml::from_str::<toml::Value>(&contents)?)?;
+            Ok(toml::from_str(&contents)?)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Credentials::default()),
         Err(e) => Err(CredentialError::Io(e)),
     }
@@ -306,6 +496,53 @@ pub fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The promise the typed-role design was chosen for. ⚠️ Serde alone does
+    /// NOT deliver it — `LlmProviderConfig` stays permissive at the top level so
+    /// a `[gemini]`-era file still parses, which means `[llm.extracter]` would
+    /// deserialize to nothing and the role would silently fall back to `[llm]`.
+    /// For the extractor that means quietly sending receipts to a text-only
+    /// model and getting an empty draft back.
+    #[test]
+    fn a_misspelt_role_name_is_rejected_not_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        std::fs::write(
+            &path,
+            "[llm]\nprovider = \"openai_compatible\"\nmodel = \"a\"\n\n\
+             [llm.extracter]\nmodel = \"b\"\n",
+        )
+        .unwrap();
+        let err = load(&path).expect_err("a misspelt role must fail the load");
+        assert!(
+            matches!(&err, CredentialError::UnknownRole { name, .. } if name == "extracter"),
+            "unexpected: {err}"
+        );
+        // The message has to name the fix, not just the fault.
+        assert!(err.to_string().contains("extractor"), "{err}");
+    }
+
+    /// A correctly spelled role must still load, or the check above is just a
+    /// ban on roles.
+    #[test]
+    fn a_correctly_spelled_role_loads_and_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        std::fs::write(
+            &path,
+            "[llm]\nprovider = \"openai_compatible\"\n\
+             base_url = \"https://example.test/v1\"\nmodel = \"text-only\"\n\
+             api_key = \"k\"\n\n[llm.extractor]\nmodel = \"sees-images\"\nvision = true\n",
+        )
+        .unwrap();
+        let creds = load(&path).expect("valid role must load");
+        let role = creds.llm.unwrap().for_role(LlmRole::Extractor);
+        assert_eq!(role.model.as_deref(), Some("sees-images"));
+        assert!(role.vision);
+        // Inherited, not restated.
+        assert_eq!(role.base_url.as_deref(), Some("https://example.test/v1"));
+        assert_eq!(role.api_key.as_deref(), Some("k"));
+    }
 
     #[test]
     fn load_missing_file_returns_default() {
@@ -402,6 +639,7 @@ mod tests {
                 api_key: Some("k".into()),
                 vision: false,
                 allow_closed_weights: false,
+                ..Default::default()
             }),
             ..Credentials::default()
         };
@@ -423,6 +661,7 @@ mod tests {
                 api_key: Some("sk-local".into()),
                 vision: true,
                 allow_closed_weights: false,
+                ..Default::default()
             }),
             ..Credentials::default()
         };
@@ -609,6 +848,16 @@ mod tests {
             api_key: Some("sk-do-not-log-me".into()),
             vision: false,
             allow_closed_weights: false,
+            // A role override carries its own `api_key`, so the redaction test
+            // must cover one too — a key hidden on `[llm]` and printed from
+            // `[llm.extractor]` would be the same leak through a new door.
+            extractor: Some(LlmRoleOverride {
+                model: Some("z-ai/glm-5.3-flash".into()),
+                api_key: Some("sk-role-key-must-not-appear".into()),
+                vision: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
         });
         creds
             .secrets
@@ -624,6 +873,7 @@ mod tests {
             "sk-do-not-log-me",
             "value-must-not-appear",
             "bearer-token-must-not-appear",
+            "sk-role-key-must-not-appear",
         ] {
             assert!(
                 !rendered.contains(secret),

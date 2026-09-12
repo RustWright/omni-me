@@ -38,6 +38,16 @@ ledger-parser = "6"
 ledger-utils = "0.6"
 glob = "0.3"
 base64 = "0.22"
+# Downscaling before the vision call — see `extraction::media`. `default-features
+# = false` keeps the codec set to the three MIME types `OpenAiCompatExtractor`
+# accepts; the defaults add a dozen decoders (avif, tiff, exr…) that nothing
+# routes to. All three are pure Rust, so this stays out of the openssl/native
+# story that gates `auto-import` and `embeddings`.
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "webp",
+] }
 toml = "0.8"
 tracing = "0.1"
 mail-parser = "0.10"

@@ -407,6 +407,11 @@ fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClie
                 api_key: None,
                 vision: false,
                 allow_closed_weights: false,
+                // Per-role overrides are never synthesised from env: these env
+                // vars configure the agent's own endpoint (role A), and a role
+                // table invented here would silently outrank the credentials
+                // file the user actually wrote.
+                ..Default::default()
             });
         llm.provider = "openai_compatible".to_string();
         if let Ok(v) = std::env::var(LLM_BASE_URL_ENV) {

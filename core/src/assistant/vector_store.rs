@@ -524,7 +524,8 @@ mod tests {
     #[tokio::test]
     async fn a_missing_table_is_counted_not_fatal() {
         let embedder = shared_embedder();
-        // Deliberately only the notes tables — `routine_groups` will be absent.
+        // Deliberately only the tables `NotesProjection` defines; every other
+        // visible type's table is absent.
         let dir = tempfile::tempdir().unwrap();
         let db = crate::db::connect(dir.path().join("v.db").to_str().unwrap())
             .await
@@ -535,8 +536,17 @@ mod tests {
 
         let report = sweep(&db, &config(), embedder).await.unwrap();
 
+        // ⚠️ Derived, never hardcoded: this count is a function of the catalogue,
+        // so a new entry changes it. A literal here reads as a real regression
+        // the next time one lands — which is exactly how it last went stale.
+        const SEEDED_TABLES: [&str; 2] = ["generic_notes", "journal_entries"];
+        let expected_failures = catalog::visible(&config())
+            .iter()
+            .filter(|e| !SEEDED_TABLES.contains(&e.table))
+            .count();
+
         assert_eq!(
-            report.failed, 1,
+            report.failed, expected_failures,
             "the missing type went unreported: {report:?}"
         );
         assert_eq!(

@@ -31,7 +31,7 @@ use tower_http::trace::TraceLayer;
 
 use omni_me_core::auto_import::setup::{DEFAULT_INTERVAL, spawn_sources};
 use omni_me_core::auto_import_scheduler::{AutoImportSource, SourceRegistry};
-use omni_me_core::credentials::{self, Credentials};
+use omni_me_core::credentials::{self, Credentials, LlmRole};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::{
@@ -392,10 +392,16 @@ async fn health() -> Json<serde_json::Value> {
 /// images, because support varies across OpenAI-compatible servers and a silent
 /// POST to one that cannot would surface as a confusing upstream error.
 fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
-    if let Some(cfg) = &creds.llm
+    // ⚠️ Role C, not `[llm]` directly. The two are genuinely different models:
+    // `[llm]`'s leading candidate is chosen on latency and is **text-only**, so
+    // reading `[llm]` here meant `vision = true` pointed the extractor at a
+    // model that cannot see. `[llm.extractor]` overrides only what differs;
+    // absent, `for_role` returns `[llm]` unchanged and behaviour is as before.
+    if let Some(cfg) = creds.llm.as_ref().map(|c| c.for_role(LlmRole::Extractor))
         && cfg.provider == "openai_compatible"
         && cfg.vision
     {
+        let cfg = &cfg;
         match (cfg.base_url.as_deref(), cfg.model.as_deref()) {
             (Some(base_url), Some(model)) if !base_url.is_empty() && !model.is_empty() => {
                 tracing::info!(model = %model, "Document extractor: OpenAI-compatible vision");
@@ -405,11 +411,12 @@ fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
                     cfg.api_key.clone().unwrap_or_default(),
                 ));
             }
-            _ => tracing::warn!("[llm] vision=true but base_url/model missing"),
+            _ => tracing::warn!("[llm.extractor] vision=true but base_url/model missing"),
         }
     }
     tracing::warn!(
-        "no vision-capable [llm] configured — handlers will use NullExtractor (no events)"
+        "no vision-capable extractor configured ([llm.extractor], or [llm] as \
+         fallback) — handlers will use NullExtractor (no events)"
     );
     Arc::new(NullExtractor)
 }
@@ -453,7 +460,55 @@ mod tests {
             api_key: Some("k".into()),
             vision,
             allow_closed_weights: false,
+            ..Default::default()
         }
+    }
+
+    /// Role C overriding `[llm]`: the case the role split exists for — the
+    /// assistant on a text-only model while the extractor reads images.
+    fn llm_with_extractor_role(model: &str) -> LlmProviderConfig {
+        LlmProviderConfig {
+            model: Some("openai/gpt-oss-120b".into()),
+            vision: false,
+            extractor: Some(omni_me_core::credentials::LlmRoleOverride {
+                model: Some(model.into()),
+                vision: Some(true),
+                ..Default::default()
+            }),
+            ..openai_llm(false)
+        }
+    }
+
+    #[test]
+    fn the_extractor_role_overrides_the_shared_llm_section() {
+        // `[llm]` is text-only with vision off; `[llm.extractor]` turns vision
+        // on and names a different model. Reading `[llm]` directly — what this
+        // did before 2026-09-11 — would build a NullExtractor here.
+        let creds = Credentials {
+            llm: Some(llm_with_extractor_role("z-ai/glm-5.3-flash")),
+            ..Default::default()
+        };
+        assert_eq!(build_extractor(&creds).name(), "z-ai/glm-5.3-flash");
+    }
+
+    #[test]
+    fn an_unset_role_inherits_the_shared_section() {
+        // No `[llm.extractor]` at all: behaviour must be exactly as before the
+        // role split, or every existing credentials.toml changes meaning.
+        let creds = Credentials {
+            llm: Some(openai_llm(true)),
+            ..Default::default()
+        };
+        assert_eq!(build_extractor(&creds).name(), "llava");
+    }
+
+    #[test]
+    fn a_role_inherits_base_url_and_key_it_does_not_restate() {
+        let cfg = llm_with_extractor_role("z-ai/glm-5.3-flash")
+            .for_role(omni_me_core::credentials::LlmRole::Extractor);
+        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"));
+        assert_eq!(cfg.api_key.as_deref(), Some("k"));
+        assert_eq!(cfg.provider, "openai_compatible");
     }
 
     #[test]
