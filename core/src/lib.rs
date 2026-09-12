@@ -13,6 +13,7 @@ pub mod config;
 pub mod credentials;
 pub mod dashboard;
 pub mod db;
+pub mod document_fields;
 pub mod events;
 pub mod extraction;
 pub mod fx;

@@ -88,6 +88,7 @@ pub enum EventType {
     // because a correction is necessarily a second event in an append-only log.
     DocumentArchived,
     DocumentFieldsExtracted,
+    DocumentTextTranscribed,
 }
 
 impl fmt::Display for EventType {
@@ -144,6 +145,7 @@ impl fmt::Display for EventType {
             EventType::AutonomyRevoked => "autonomy_revoked",
             EventType::DocumentArchived => "document_archived",
             EventType::DocumentFieldsExtracted => "document_fields_extracted",
+            EventType::DocumentTextTranscribed => "document_text_transcribed",
         };
         write!(f, "{s}")
     }
@@ -205,6 +207,7 @@ impl FromStr for EventType {
             "autonomy_revoked" => Ok(EventType::AutonomyRevoked),
             "document_archived" => Ok(EventType::DocumentArchived),
             "document_fields_extracted" => Ok(EventType::DocumentFieldsExtracted),
+            "document_text_transcribed" => Ok(EventType::DocumentTextTranscribed),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -268,6 +271,7 @@ impl EventType {
         EventType::AutonomyRevoked,
         EventType::DocumentArchived,
         EventType::DocumentFieldsExtracted,
+        EventType::DocumentTextTranscribed,
     ];
 
     /// The features that may author this event, or `None` for an event no feature
@@ -368,9 +372,9 @@ impl EventType {
             // used, because nothing is proposing.
             EventType::AutonomyGranted | EventType::AutonomyRevoked => &[Feature::Llm],
 
-            EventType::DocumentArchived | EventType::DocumentFieldsExtracted => {
-                &[Feature::Documents]
-            }
+            EventType::DocumentArchived
+            | EventType::DocumentFieldsExtracted
+            | EventType::DocumentTextTranscribed => &[Feature::Documents],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1516,6 +1520,40 @@ pub struct DocumentFieldsExtractedPayload {
     pub fields: Vec<DocumentField>,
 }
 
+/// A model's reading of a document that carried no text layer of its own.
+///
+/// A third event rather than either of the obvious alternatives. It is not a
+/// second [`DocumentArchivedPayload`], because that one is written once at
+/// ingest and a scan filed today would have no route to gain text later. It is
+/// not a reserved key on [`DocumentFieldsExtractedPayload`], because fields fold
+/// through a read-modify-write of the whole array — a document body would be
+/// re-serialized on every subsequent extraction — and because
+/// [`DocumentField::source`] speaks `human`/`parser:`/`model:` while text
+/// provenance speaks `extracted`/`transcribed`/`none`. One mechanism carrying
+/// two vocabularies is how the rank rule gets got wrong.
+///
+/// Re-emittable, like fields: a better model later is simply another of these.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentTextTranscribedPayload {
+    /// The archive entry this reading belongs to — `DocumentArchivedPayload::document_id`.
+    pub document_id: String,
+    /// What the model read off the document.
+    ///
+    /// ⚠️ Always `TextSource::Transcribed` at the projection, never `extracted`:
+    /// this event exists precisely because nothing deterministic could read the
+    /// file. ⛔ The two must stay distinguishable downstream — search over a
+    /// model's reading is less trustworthy than search over what a file states.
+    pub text: String,
+    /// `<name>@<ver>`, matching the `model:` half of [`DocumentField::source`].
+    ///
+    /// ⛔ No confidence score beside it, for `DocumentField::verified`'s reason:
+    /// nothing here checks a transcription against an oracle, and a number would
+    /// imply a calibration that does not exist.
+    pub model: String,
+    /// RFC3339, from the transcribing device's clock.
+    pub transcribed_at: String,
+}
+
 /// Keys the projection hoists into columns. See [`DocumentFieldsExtractedPayload::fields`].
 pub const DOCUMENT_KIND_KEY: &str = "kind";
 pub const DOCUMENT_TITLE_KEY: &str = "title";
@@ -1684,6 +1722,9 @@ pub fn validate_payload(
         EventType::DocumentFieldsExtracted => {
             serde_json::from_value::<DocumentFieldsExtractedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::DocumentTextTranscribed => {
+            serde_json::from_value::<DocumentTextTranscribedPayload>(payload.clone()).map(|_| ())
+        }
     };
 
     result.map_err(|e| {
@@ -1803,10 +1844,11 @@ mod tests {
                 | EventType::AutonomyGranted
                 | EventType::AutonomyRevoked
                 | EventType::DocumentArchived
-                | EventType::DocumentFieldsExtracted => counted += 1,
+                | EventType::DocumentFieldsExtracted
+                | EventType::DocumentTextTranscribed => counted += 1,
             }
         }
-        assert_eq!(counted, 51, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 52, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

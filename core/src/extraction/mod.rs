@@ -22,6 +22,7 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+pub mod document;
 pub mod event_mapper;
 pub mod media;
 pub mod null;

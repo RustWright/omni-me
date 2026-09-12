@@ -20,6 +20,9 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
+use super::document::{
+    DocumentReader, DocumentSummary, document_prompt, document_schema, parse_summary,
+};
 use super::media::{self, PreparedImage};
 use super::{
     DocumentExtractor, ExtractionError, ExtractionHint, ExtractionResult, parse_response,
@@ -196,6 +199,57 @@ impl DocumentExtractor for OpenAiCompatExtractor {
         mime: &str,
         hint: ExtractionHint,
     ) -> Result<ExtractionResult, ExtractionError> {
+        let raw = self
+            .ask(
+                bytes,
+                mime,
+                prompt_for(hint),
+                response_schema(),
+                "extraction_result",
+            )
+            .await?;
+        parse_response(raw, &self.model)
+    }
+}
+
+#[async_trait]
+impl DocumentReader for OpenAiCompatExtractor {
+    fn name(&self) -> &str {
+        &self.model
+    }
+
+    async fn read_document(
+        &self,
+        bytes: &[u8],
+        mime: &str,
+    ) -> Result<DocumentSummary, ExtractionError> {
+        let raw = self
+            .ask(
+                bytes,
+                mime,
+                document_prompt(),
+                document_schema(),
+                "document_summary",
+            )
+            .await?;
+        parse_summary(raw, &self.model)
+    }
+}
+
+impl OpenAiCompatExtractor {
+    /// One schema-constrained request, shared by both questions this endpoint is
+    /// asked. Only the instructions, the schema and its name differ; the media
+    /// preparation, the `json_schema` enforcement, the timeout wording and the
+    /// URL scrubbing are identical, and a second copy of them is how one path
+    /// quietly loses a guard the other keeps.
+    async fn ask(
+        &self,
+        bytes: &[u8],
+        mime: &str,
+        instructions: String,
+        schema: Value,
+        schema_name: &str,
+    ) -> Result<Value, ExtractionError> {
         if !self.supports(mime) {
             return Err(ExtractionError::UnsupportedMime {
                 extractor: self.model.clone(),
@@ -223,11 +277,9 @@ impl DocumentExtractor for OpenAiCompatExtractor {
         // silently mislabelled money, and four of five bake-off candidates
         // passed schema output. The schema stays in the prompt too, which costs
         // nothing and helps endpoints that treat it as advisory.
-        let schema = response_schema();
         let prompt = format!(
-            "{}\n\nRespond with a single JSON object conforming to this JSON Schema. \
-             Output JSON only, no prose or code fences:\n{}",
-            prompt_for(hint),
+            "{instructions}\n\nRespond with a single JSON object conforming to this \
+             JSON Schema. Output JSON only, no prose or code fences:\n{}",
             serde_json::to_string(&schema).unwrap_or_default()
         );
 
@@ -237,7 +289,7 @@ impl DocumentExtractor for OpenAiCompatExtractor {
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "extraction_result",
+                    "name": schema_name,
                     // Non-strict: strict mode on several endpoints requires every
                     // property to be `required`, which would force the model to
                     // emit a value for fields it should leave null.
@@ -284,8 +336,7 @@ impl DocumentExtractor for OpenAiCompatExtractor {
             return Err(ExtractionError::Upstream(format!("HTTP {status}: {msg}")));
         }
 
-        let raw = Self::content_json(&response_body)?;
-        parse_response(raw, &self.model)
+        Self::content_json(&response_body)
     }
 }
 
@@ -308,6 +359,50 @@ mod tests {
             .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
             .unwrap();
         out
+    }
+
+    #[tokio::test]
+    async fn read_document_asks_the_cataloguing_question_and_parses_a_summary() {
+        let server = MockServer::start().await;
+        let content = r#"{"kind":"notice_of_assessment",
+            "title":"Notice of assessment, 2023 tax year",
+            "document_date":"2024-06-14",
+            "fields":[{"key":"tax_year","value":"2023"}]}"#;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(extraction_response(content)))
+            .mount(&server)
+            .await;
+
+        let ext = OpenAiCompatExtractor::new(server.uri(), "llava", "k");
+        let summary = ext.read_document(&one_png(), "image/png").await.unwrap();
+
+        assert_eq!(summary.kind, "notice_of_assessment");
+        assert_eq!(summary.document_date.as_deref(), Some("2024-06-14"));
+        assert_eq!(summary.fields.len(), 1);
+        assert_eq!(summary.model, "llava");
+
+        // The request that carried it asked the document question under the
+        // document schema — a reader wired to the finance schema by mistake
+        // still returns a plausible-looking summary, so this is checked rather
+        // than inferred from the parse succeeding.
+        let sent = &server.received_requests().await.unwrap()[0];
+        let body: Value = serde_json::from_slice(&sent.body).unwrap();
+        assert_eq!(
+            body["response_format"]["json_schema"]["name"],
+            "document_summary"
+        );
+        let prompt = body["messages"][0]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            prompt.contains("cataloguing a personal document archive"),
+            "got: {prompt}"
+        );
+        assert!(
+            prompt.contains("UNTRUSTED INPUT"),
+            "⚠️ the injection guard must not be lost on the second path"
+        );
     }
 
     #[tokio::test]

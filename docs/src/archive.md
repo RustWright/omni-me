@@ -5,10 +5,12 @@ whatever anyone has since worked out about them. It answers two different questi
 difference between them shapes everything below: *find me the document about X*, which the
 document's own text answers, and *which documents match this condition*, which it does not.
 
-## Two events, not one
+## Three events, not one
 
 A file entering the archive writes `document_archived`. Anything later read out of it writes
-`document_fields_extracted`, as often as needed. They fold onto one row.
+`document_fields_extracted`, as often as needed. A model's reading of a document that carried no
+text of its own writes `document_text_transcribed`, also as often as needed. They fold onto one
+row.
 
 The split is not bookkeeping. **Ingest knows the bytes and may know nothing else.** A forty-page
 scan that no parser understands and no model has read is still a document worth keeping, and an
@@ -37,6 +39,31 @@ Verified is not derivable from source, which is why it is stored. A parser can l
 produce an unverified value: one of the chequing exports carries no balance column at all, so its
 parse is clean and unchecked, and collapsing those two states is exactly how an unverified import
 comes to read as a verified one.
+
+## Who produces fields, and in what order
+
+Two producers, tried in the order their answers rank. A statement export is read by
+`statement::parse`, which already knows not just what the rows say but *what it was able to
+check*. Everything else is described by a model: what kind of document this is, a title a person
+would recognise, the date it states, and whatever else is worth finding it by.
+
+The parser goes first, and the model is asked only when no parser recognises the file. Asking a
+model about a document a parser can read spends money to produce a value that would lose the fold
+anyway.
+
+Recognising a format is stricter than parsing one, and deliberately so. The import path is told
+which format a file is, so its parsers can treat a column they can work without as optional — the
+transfer-service map does exactly that with its running balance and its row ids. The archive is
+told nothing, so it matches the file's header against a signature first and only then parses.
+Without that, two parsers accept the same export and neither can be preferred. A file two
+signatures both match gets no parser fields at all rather than a guess, because picking one would
+make the winner depend on the order the formats happen to be declared in.
+
+A model's fields are never verified, and there is no confidence score beside them. The finance
+extractor has one because arithmetic can check it — postings summing to a stated total. Nothing
+here can be checked that way: there is no sum to reconcile in "this is a 2023 notice of
+assessment". A number would imply a calibration nothing provides, so the flag says the honest
+thing on its own and the archive page is where a person corrects what it marks.
 
 ## Why fields fold by origin rather than by arrival
 
@@ -69,6 +96,36 @@ apart will trust both the same.
 `none` is an ordinary outcome. The document is archived and findable by name, and gains text if
 something can ever read it.
 
+## How a scan gains text later
+
+`document_archived` is written once, at ingest, and never revised — the same bytes filed twice
+are two entries, so there is no second archive event to hide a text update inside. A scan
+therefore cannot gain text through the event that created it, and transcribing during ingest
+instead would put a network round-trip in the path that files a document: a capture taken offline
+would fail to archive, and every document filed before the feature existed would stay unreadable
+anyway.
+
+So a transcription is its own event. It is not a reserved key on `document_fields_extracted`
+either, for two reasons. Fields fold through a read-modify-write of the whole array, so a
+document body would be re-serialized on every later extraction. And field source speaks
+`human`/`parser:`/`model:` while text provenance speaks `extracted`/`transcribed`/`none` — one
+mechanism made to carry two vocabularies is how a fold rule gets got wrong.
+
+Text folds by origin, exactly as fields do: `extracted` beats `transcribed` beats `none`, with
+equal ranks falling back to arrival order so that re-running transcription with a better model
+lands rather than silently doing nothing.
+
+**The guard this buys is needed on the archive event, not the transcription.** Events fold in the
+order the pull filter delivers them, and that filter runs on the authoring device's clock — so a
+phone's transcription can fold *ahead* of the laptop's archive event for the same document. That
+archive event carries the absence of text that made transcription necessary. Writing it
+unconditionally would overwrite the reading with nothing, report nothing, and leave no way back:
+blobs do not sync, so on most devices there are no bytes to re-read.
+
+An unrecognized text source — one a later build introduces — ranks above `none` rather than below
+it, so that an older build folding the same log preserves text it cannot account for instead of
+erasing it.
+
 ## What ingest deliberately does not do
 
 It does not append its own events — it returns them, and the caller persists. A function that
@@ -76,7 +133,7 @@ owns an event store cannot be tested without one, and everything interesting abo
 what it makes of a file.
 
 It does not run a model. Deriving text from a PDF's text layer is deterministic and happens here;
-reading a scan is not, and belongs with the rest of the extraction work.
+reading a scan is not, and arrives later as `document_text_transcribed`.
 
 ## Counting a backfill honestly
 

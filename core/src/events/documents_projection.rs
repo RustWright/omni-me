@@ -1,24 +1,27 @@
 //! SurrealDB projection over the document archive.
 //!
 //! One table, `documents`. A row is a file that entered the archive plus
-//! everything anything has since read out of it. Why that is two events and how
-//! fields fold: `docs/src/archive.md`.
+//! everything anything has since read out of it. Why that is three events and
+//! how fields fold: `docs/src/archive.md`.
 //!
 //! ⚠️ **Rank is compared before arrival order, never after** — see
-//! [`DocumentField::rank`] and [`merge_fields`]. Reversing the two would make a
+//! [`DocumentField::rank`] and [`merge_fields`] for fields, [`TextSource::rank`]
+//! and [`write_text_if_it_outranks`] for text. Reversing the two would make a
 //! re-extraction silently overwrite every value a person corrected by hand, and
-//! nothing would report it.
+//! would let an archive event's absent text erase a transcription that reached
+//! this device first. Neither would report anything.
 
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 
+use crate::archive::TextSource;
 use crate::db::Database;
 
 use super::projection::Projection;
 use super::store::{Event, EventError};
 use super::types::{
     DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DOCUMENT_TITLE_KEY, DocumentArchivedPayload,
-    DocumentField, DocumentFieldsExtractedPayload,
+    DocumentField, DocumentFieldsExtractedPayload, DocumentTextTranscribedPayload,
 };
 
 pub struct DocumentsProjection;
@@ -90,6 +93,7 @@ impl Projection for DocumentsProjection {
         match event.event_type.as_str() {
             "document_archived" => self.on_archived(event, db).await,
             "document_fields_extracted" => self.on_fields(event, db).await,
+            "document_text_transcribed" => self.on_transcribed(event, db).await,
             _ => Ok(()),
         }
     }
@@ -123,23 +127,56 @@ impl DocumentsProjection {
                 size = $size,
                 archived_at = type::datetime($archived_at),
                 ingest_source = $source,
-                text = $text,
-                text_source = $text_source,
                 device_id = $device_id",
         )
-        .bind(("id", parsed.document_id))
+        .bind(("id", parsed.document_id.clone()))
         .bind(("sha256", parsed.sha256))
         .bind(("filename", parsed.filename))
         .bind(("mime_type", parsed.mime_type))
         .bind(("size", parsed.size))
         .bind(("archived_at", parsed.archived_at))
         .bind(("source", parsed.source))
-        .bind(("text", parsed.text))
-        .bind(("text_source", parsed.text_source))
         .bind(("device_id", event.device_id.clone()))
         .await?
         .check()?;
-        Ok(())
+
+        // ⚠️ Text is written through the same guard as a transcription, and it is
+        // this handler — not the new one — that needed it. The pull filter runs
+        // on the author's clock (see `init_schema`), so a transcription authored
+        // on another device can fold *before* the archive event that created the
+        // row. An unconditional `text = $text` here would then overwrite a real
+        // reading with the `None` that made transcription necessary in the first
+        // place, and nothing would report it.
+        write_text_if_it_outranks(db, &parsed.document_id, parsed.text, &parsed.text_source).await
+    }
+
+    async fn on_transcribed(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+        // Skip, never error — `on_archived`'s rule, for its reason.
+        let parsed: DocumentTextTranscribedPayload =
+            match serde_json::from_value(event.payload.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(
+                        event_id = %event.id,
+                        error = %e,
+                        "skipping a transcription this build cannot read"
+                    );
+                    return Ok(());
+                }
+            };
+
+        // ⛔ `document_id` only. A transcription never creates the columns that
+        // identify a file — no `sha256`, no `filename`. If it folds before the
+        // archive event, the row it leaves behind is a text-only stub that
+        // `on_archived` completes on arrival, which is exactly what the
+        // `option<>` columns exist for.
+        write_text_if_it_outranks(
+            db,
+            &parsed.document_id,
+            Some(parsed.text),
+            TextSource::Transcribed.as_str(),
+        )
+        .await
     }
 
     async fn on_fields(&self, event: &Event, db: &Database) -> Result<(), EventError> {
@@ -226,6 +263,58 @@ fn merge_fields(existing: Vec<DocumentField>, incoming: Vec<DocumentField>) -> V
     }
 
     by_key.into_values().collect()
+}
+
+/// Write a document's text only when its provenance is at least as good as what
+/// the row already holds.
+///
+/// ⚠️ `>=`, matching [`merge_fields`] and for the same reason: equal ranks let
+/// the newer value through, so re-running transcription with a better model
+/// lands rather than being silently discarded. What the ordering itself is —
+/// and therefore what can shadow what — is [`TextSource::rank`].
+///
+/// Read-modify-write rather than one statement, because the comparison is a rank
+/// lookup SurrealQL cannot express. Safe without a transaction for
+/// [`DocumentsProjection::on_fields`]'s reason: `ProjectionRunner` applies one
+/// event at a time and each device owns its own database.
+async fn write_text_if_it_outranks(
+    db: &Database,
+    document_id: &str,
+    text: Option<String>,
+    text_source: &str,
+) -> Result<(), EventError> {
+    let held: String = db
+        .query("SELECT VALUE text_source FROM type::record('documents', $id)")
+        .bind(("id", document_id.to_string()))
+        .await?
+        .check()?
+        .take::<Vec<Option<String>>>(0)
+        .ok()
+        .and_then(|rows| rows.into_iter().next().flatten())
+        .unwrap_or_else(|| TextSource::None.as_str().to_string());
+
+    if TextSource::rank(text_source) < TextSource::rank(&held) {
+        tracing::debug!(
+            document_id,
+            incoming = text_source,
+            held = %held,
+            "keeping the better-sourced text already on the row"
+        );
+        return Ok(());
+    }
+
+    db.query(
+        "UPSERT type::record('documents', $id) SET
+            document_id = $id,
+            text = $text,
+            text_source = $text_source",
+    )
+    .bind(("id", document_id.to_string()))
+    .bind(("text", text))
+    .bind(("text_source", text_source.to_string()))
+    .await?
+    .check()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -486,5 +575,207 @@ mod tests {
         );
         assert!(!merged[0].verified);
         assert_eq!(DocumentField::rank(&merged[0].source), 1);
+    }
+
+    /// A scan: archived successfully, but nothing deterministic could read it.
+    fn archived_without_text(document_id: &str) -> Event {
+        event(
+            EventType::DocumentArchived,
+            document_id,
+            serde_json::json!({
+                "document_id": document_id,
+                "sha256": "b".repeat(64),
+                "filename": "scan-0042.pdf",
+                "mime_type": "application/pdf",
+                "size": 1_204_880u64,
+                "archived_at": "2026-09-12T10:00:00Z",
+                "source": "scan",
+                "text_source": "none",
+            }),
+        )
+    }
+
+    fn transcribed(document_id: &str, text: &str, model: &str) -> Event {
+        event(
+            EventType::DocumentTextTranscribed,
+            document_id,
+            serde_json::json!({
+                "document_id": document_id,
+                "text": text,
+                "model": model,
+                "transcribed_at": "2026-09-12T11:00:00Z",
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_transcription_gives_text_to_a_scan_that_had_none() {
+        let db = test_db().await;
+
+        DocumentsProjection
+            .apply(&archived_without_text("scan-1"), &db)
+            .await
+            .unwrap();
+        assert_eq!(
+            column(&db, "scan-1", "text_source").await.as_deref(),
+            Some("none"),
+            "a scan with no text layer is archived text-less — an ordinary outcome"
+        );
+
+        DocumentsProjection
+            .apply(
+                &transcribed("scan-1", "NOTICE OF ASSESSMENT 2023", "vision@1"),
+                &db,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            column(&db, "scan-1", "text").await.as_deref(),
+            Some("NOTICE OF ASSESSMENT 2023")
+        );
+        assert_eq!(
+            column(&db, "scan-1", "text_source").await.as_deref(),
+            Some("transcribed"),
+            "⛔ the provenance must change with the text — a reader who cannot \
+             tell a model's reading from a text layer will trust both equally"
+        );
+        assert_eq!(
+            column(&db, "scan-1", "filename").await.as_deref(),
+            Some("scan-0042.pdf"),
+            "a transcription writes text only; it must not disturb identity"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_transcription_folded_before_its_archive_event_survives_it() {
+        // ⚠️ The case the rank guard exists for, and it is `on_archived` that
+        // needed it. The pull filter runs on the author's clock, so a phone's
+        // transcription can fold ahead of the laptop's archive event. That event
+        // carries `None` — the absence that made transcription necessary — and
+        // writing it unconditionally would wipe the reading with nothing to
+        // report it and no way back: blobs do not sync, so only the capturing
+        // device could ever re-read the file.
+        let db = test_db().await;
+
+        DocumentsProjection
+            .apply(
+                &transcribed("scan-2", "NOTICE OF ASSESSMENT 2023", "vision@1"),
+                &db,
+            )
+            .await
+            .unwrap();
+        DocumentsProjection
+            .apply(&archived_without_text("scan-2"), &db)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            column(&db, "scan-2", "text").await.as_deref(),
+            Some("NOTICE OF ASSESSMENT 2023"),
+            "the archive event's `None` must not outrank a transcription"
+        );
+        assert_eq!(
+            column(&db, "scan-2", "text_source").await.as_deref(),
+            Some("transcribed")
+        );
+        assert_eq!(
+            column(&db, "scan-2", "filename").await.as_deref(),
+            Some("scan-0042.pdf"),
+            "the stub row a transcription leaves must still be completed by the \
+             archive event when it lands"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_transcription_never_shadows_a_real_text_layer() {
+        let db = test_db().await;
+
+        DocumentsProjection
+            .apply(&archived("doc-9"), &db)
+            .await
+            .unwrap();
+        DocumentsProjection
+            .apply(
+                &transcribed("doc-9", "a model's guess at the page", "vision@1"),
+                &db,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            column(&db, "doc-9", "text")
+                .await
+                .unwrap()
+                .contains("2023 tax year"),
+            "extracted text outranks transcribed — what the file states beats a \
+             reading of it"
+        );
+        assert_eq!(
+            column(&db, "doc-9", "text_source").await.as_deref(),
+            Some("extracted")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_better_model_replaces_an_earlier_transcription() {
+        // Equal ranks let the newer value through, matching `merge_fields`. A
+        // re-run that silently did nothing would be the worse failure.
+        let db = test_db().await;
+
+        DocumentsProjection
+            .apply(&archived_without_text("scan-3"), &db)
+            .await
+            .unwrap();
+        DocumentsProjection
+            .apply(
+                &transcribed("scan-3", "N0TICE 0F ASSESSMEN7", "vision@1"),
+                &db,
+            )
+            .await
+            .unwrap();
+        DocumentsProjection
+            .apply(
+                &transcribed("scan-3", "NOTICE OF ASSESSMENT 2023", "vision@2"),
+                &db,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            column(&db, "scan-3", "text").await.as_deref(),
+            Some("NOTICE OF ASSESSMENT 2023")
+        );
+    }
+
+    #[test]
+    fn an_unknown_text_source_outranks_none() {
+        // ⚠️ Asymmetric on purpose. A source a later build introduced must not be
+        // erasable by an archive event carrying `None`, because that loss is
+        // unrecoverable on any device that does not hold the blob.
+        assert!(TextSource::rank("ocr-v2") > TextSource::rank(TextSource::None.as_str()));
+        assert!(
+            TextSource::rank(TextSource::Extracted.as_str()) > TextSource::rank("ocr-v2"),
+            "a real text layer still wins"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_transcription_is_skipped_rather_than_failing_the_batch() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived_without_text("scan-4"), &db)
+            .await
+            .unwrap();
+
+        let mut bad = transcribed("scan-4", "unused", "vision@1");
+        bad.payload = serde_json::json!({ "document_id": "scan-4" });
+
+        DocumentsProjection.apply(&bad, &db).await.unwrap();
+        assert_eq!(
+            column(&db, "scan-4", "text_source").await.as_deref(),
+            Some("none"),
+            "a payload this build cannot read leaves the row untouched"
+        );
     }
 }

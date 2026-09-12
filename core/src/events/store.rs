@@ -6,8 +6,8 @@ use surrealdb::types::{SurrealValue, Value as DbValue};
 use super::types::{
     AssistantAnswerGivenPayload, AssistantProposalMadePayload, AssistantQuestionAskedPayload,
     BeliefRecordedPayload, BeliefSupersededPayload, ConfigSetPayload, DocumentArchivedPayload,
-    DocumentFieldsExtractedPayload, EventType, FeedbackCapturedPayload, RecordTypeDeclaredPayload,
-    TransactionRecordedPayload,
+    DocumentFieldsExtractedPayload, DocumentTextTranscribedPayload, EventType,
+    FeedbackCapturedPayload, RecordTypeDeclaredPayload, TransactionRecordedPayload,
 };
 use crate::db::Database;
 
@@ -322,6 +322,25 @@ impl NewEvent {
         Ok(NewEvent {
             id: None,
             event_type: EventType::DocumentFieldsExtracted.to_string(),
+            aggregate_id: payload.document_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `DocumentTextTranscribed` event. Same aggregate again, so a
+    /// model's reading folds onto the row the bytes created — which is the whole
+    /// reason it is a separate event: `document_archived` is written once at
+    /// ingest, and a scan filed before transcription existed has no other route
+    /// to gain text.
+    pub fn document_text_transcribed(
+        device_id: impl Into<String>,
+        payload: &DocumentTextTranscribedPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::DocumentTextTranscribed.to_string(),
             aggregate_id: payload.document_id.clone(),
             timestamp: Utc::now(),
             device_id: device_id.into(),

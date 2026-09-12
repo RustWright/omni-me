@@ -1,14 +1,15 @@
 //! Document ingest — bytes in, a blob and a `DocumentArchived` event out.
 //!
-//! Why the archive is two events, how fields fold, and why text travels in the
-//! event: `docs/src/archive.md`.
+//! Why the archive is three events, how fields fold, and why text travels in
+//! the event: `docs/src/archive.md`.
 //!
 //! ⛔ **Do not wire an extractor in here.** Only deterministic text is produced
-//! in this module. A scan carries no text layer, so reading one needs a model —
-//! and *which event carries model-transcribed text* is an open design question
-//! rather than an oversight: `DocumentArchived` is the only carrier today and it
-//! is written once, at ingest. A transcription quietly added here would be
-//! unreachable for every document already filed.
+//! in this module. A scan carries no text layer, so reading one needs a model,
+//! and a model's reading travels in its own event: `DocumentTextTranscribed`.
+//! Transcribing at ingest instead would put a network round-trip in the path
+//! that files a document — a capture taken offline would fail to archive — and
+//! would still leave every document filed before today unreachable, because
+//! `DocumentArchived` is written once and never revised.
 
 use std::path::Path;
 
@@ -38,6 +39,34 @@ impl TextSource {
             TextSource::Extracted => "extracted",
             TextSource::Transcribed => "transcribed",
             TextSource::None => "none",
+        }
+    }
+
+    /// How far one origin for a document's text outranks another.
+    ///
+    /// The counterpart to `DocumentField::rank`, and load-bearing for the same
+    /// reason: `documents_projection::write_text_if_it_outranks` compares this
+    /// before arrival order, so two events racing over one row settle by where
+    /// their text came from rather than by which device's clock ran ahead.
+    ///
+    /// Takes `&str` rather than `Self` because the value it compares against is
+    /// read back out of the projection as a column.
+    pub fn rank(source: &str) -> u8 {
+        match source {
+            // What the file itself states, above any reading of it.
+            "extracted" => 2,
+            // ⚠️ Nothing may rank below `none`, or an un-transcribed scan could
+            // not be given text at all — which is the entire point of the
+            // transcription pass.
+            "none" => 0,
+            // `transcribed`, and deliberately anything a later build introduces.
+            // ⚠️ An unrecognized source ranks **above** `none` on purpose. The
+            // two errors are not symmetric: overwriting real text with `None`
+            // makes a document unsearchable on every device and unrecoverable on
+            // most, because blobs do not sync and only the capturing device
+            // holds the bytes to re-read. Keeping text of uncertain origin costs
+            // a less trustworthy search hit. Preservation is the cheaper mistake.
+            _ => 1,
         }
     }
 }

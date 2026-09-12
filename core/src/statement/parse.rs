@@ -92,6 +92,24 @@ fn missing(name: &str, header: &[String]) -> String {
 /// confirmed against the raw exports rather than assumed, which is why this
 /// source cannot dedup on identity and uses a date floor instead — no algorithm
 /// reconstructs an identifier the source never wrote.
+/// The first non-blank line's cells, for a caller that has to **discover** a
+/// format rather than being told it.
+///
+/// ⚠️ The import path never needs this: the user picks the format, so each
+/// parser can afford to be lenient about columns it merely *prefers*. The
+/// archive has no such caller — a bulk-ingested file arrives with nothing but
+/// bytes — and that leniency then makes two parsers accept the same file. See
+/// `document_fields::claim_statement`, which layers a real signature test on
+/// top of these parsers rather than tightening them and breaking import.
+///
+/// Exposed rather than re-splitting the line at the call site so that quoted
+/// cells stay the business of one function.
+pub fn header_columns(csv: &str) -> Option<Vec<String>> {
+    csv.lines()
+        .find(|l| !l.trim().is_empty())
+        .map(split_csv_line)
+}
+
 pub fn parse_brokerage_statement(csv: &str) -> Result<StatementParse, String> {
     parse_with(csv, &["date", "amount", "balance"], |header| {
         Ok(ColumnMap {
