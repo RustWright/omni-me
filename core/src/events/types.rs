@@ -82,6 +82,12 @@ pub enum EventType {
     // assistant.
     AutonomyGranted,
     AutonomyRevoked,
+    // Document archive — the file itself, and what was read out of it. Two
+    // events rather than one because ingest has to succeed when structuring
+    // cannot (a scan nothing can parse is still a document worth keeping), and
+    // because a correction is necessarily a second event in an append-only log.
+    DocumentArchived,
+    DocumentFieldsExtracted,
 }
 
 impl fmt::Display for EventType {
@@ -136,6 +142,8 @@ impl fmt::Display for EventType {
             EventType::BeliefSuperseded => "belief_superseded",
             EventType::AutonomyGranted => "autonomy_granted",
             EventType::AutonomyRevoked => "autonomy_revoked",
+            EventType::DocumentArchived => "document_archived",
+            EventType::DocumentFieldsExtracted => "document_fields_extracted",
         };
         write!(f, "{s}")
     }
@@ -195,6 +203,8 @@ impl FromStr for EventType {
             "belief_superseded" => Ok(EventType::BeliefSuperseded),
             "autonomy_granted" => Ok(EventType::AutonomyGranted),
             "autonomy_revoked" => Ok(EventType::AutonomyRevoked),
+            "document_archived" => Ok(EventType::DocumentArchived),
+            "document_fields_extracted" => Ok(EventType::DocumentFieldsExtracted),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -256,6 +266,8 @@ impl EventType {
         EventType::BeliefSuperseded,
         EventType::AutonomyGranted,
         EventType::AutonomyRevoked,
+        EventType::DocumentArchived,
+        EventType::DocumentFieldsExtracted,
     ];
 
     /// The features that may author this event, or `None` for an event no feature
@@ -355,6 +367,10 @@ impl EventType {
             // assistant off, a grant that cannot be changed also cannot be
             // used, because nothing is proposing.
             EventType::AutonomyGranted | EventType::AutonomyRevoked => &[Feature::Llm],
+
+            EventType::DocumentArchived | EventType::DocumentFieldsExtracted => {
+                &[Feature::Documents]
+            }
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1389,6 +1405,122 @@ pub struct AutonomyRevokedPayload {
     pub reason: Option<String>,
 }
 
+// Document archive
+
+/// A file entering the archive: the bytes, and the text they were found to hold.
+///
+/// ⚠️ **The text travels in the event, and that is deliberate.** Every instinct
+/// says to derive it on each device from the blob — but blobs do **not** sync.
+/// `tauri-app/src-tauri/src/commands/attachments.rs` is a 200 MB LRU cache, so a
+/// device that has never opened a document does not hold its bytes and never
+/// will. Text left out of the event would make the archive searchable only on
+/// whichever machine happened to have cached the file, which is not an archive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentArchivedPayload {
+    /// Identity of the **archive entry**.
+    ///
+    /// ⚠️ Deliberately not `sha256`. The same bytes can legitimately be archived
+    /// twice — the statement that arrived by email and the one scanned from
+    /// paper are one file and two events, with different sources and dates — and
+    /// keying on content would silently collapse them into whichever landed last.
+    pub document_id: String,
+    /// Content address of the bytes in the blob store, as `AttachmentRef` uses.
+    pub sha256: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size: u64,
+    /// RFC3339, from the archiving device's clock.
+    pub archived_at: String,
+    /// How it arrived: `scan` | `upload` | `email` | `bulk`.
+    pub source: String,
+    /// The document's text, when anything could read one out of it.
+    ///
+    /// `None` is an ordinary outcome, not a failure — an image with no legible
+    /// text is still archived, and stays findable by filename and by its fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Where [`Self::text`] came from: `extracted` (a text layer the file
+    /// actually carried) | `transcribed` (a model read it off an image) | `none`.
+    ///
+    /// ⚠️ Not decoration. Transcribed text is a model's reading and can be wrong
+    /// in ways extracted text cannot, so search over it is correspondingly less
+    /// trustworthy — and a reader who cannot tell the two apart will trust both
+    /// equally.
+    pub text_source: String,
+}
+
+/// One extracted value, with an honest account of where it came from.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentField {
+    pub key: String,
+    pub value: String,
+    /// `parser:<id>` | `model:<name>@<ver>` | `human`.
+    ///
+    /// A string rather than an enum because the model and parser identifiers are
+    /// open sets that move with the build, and an enum would force a payload
+    /// change every time either did.
+    pub source: String,
+    /// Whether anything actually checked this value against something.
+    ///
+    /// ⚠️ **True only for a value with a real oracle** — a statement's closing
+    /// balance agreeing with figures the bank states about itself. ⛔ A model's
+    /// output is never verified, however confident it sounded: the existing
+    /// verification pass inspects arithmetic, and there is no arithmetic in
+    /// "this is a 2023 notice of assessment". ⛔ Do not add a confidence score
+    /// beside this; a number would imply a calibration nothing here provides.
+    pub verified: bool,
+}
+
+impl DocumentField {
+    /// How far this field's origin outranks another's when both claim one key.
+    ///
+    /// ⚠️ **This is what stops a re-extraction quietly undoing the user's work.**
+    /// Fields fold by key, and the obvious rule — latest arrival wins — means a
+    /// model re-run months later overwrites every correction a person made by
+    /// hand. Ranking the *source* instead: a human beats anything, a parser
+    /// checked against declared figures beats a model, and equal ranks fall back
+    /// to arrival order.
+    pub fn rank(source: &str) -> u8 {
+        if source == "human" {
+            2
+        } else if source.starts_with("parser:") {
+            1
+        } else {
+            0
+        }
+    }
+}
+
+/// What was read out of a document — re-emittable, and expected to be re-emitted.
+///
+/// Separate from [`DocumentArchivedPayload`] because the two answer different
+/// questions at different times. Ingest knows the bytes; it may know nothing
+/// else, and a document nothing can structure still belongs in the archive. Later
+/// a parser, a model, or the user supplies fields — each emitting one of these,
+/// each folding by key under [`DocumentField::rank`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentFieldsExtractedPayload {
+    pub document_id: String,
+    /// RFC3339, from the extracting device's clock.
+    pub extracted_at: String,
+    /// Every extracted value, folded by key.
+    ///
+    /// ⚠️ **`kind`, `title` and `document_date` are keys in here, not fields of
+    /// their own.** The projection hoists those three into real columns because
+    /// the archive list and every date filter read them directly — but they are
+    /// ranked, folded and corrected by exactly the same rule as any other key.
+    /// Giving them their own payload fields was the first shape tried and it
+    /// bought a second provenance mechanism running beside the first, which is
+    /// two places for the human-beats-model rule to be got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<DocumentField>,
+}
+
+/// Keys the projection hoists into columns. See [`DocumentFieldsExtractedPayload::fields`].
+pub const DOCUMENT_KIND_KEY: &str = "kind";
+pub const DOCUMENT_TITLE_KEY: &str = "title";
+pub const DOCUMENT_DATE_KEY: &str = "document_date";
+
 /// Validate that a payload JSON value matches the expected shape for the given event type.
 pub fn validate_payload(
     event_type: &EventType,
@@ -1546,6 +1678,12 @@ pub fn validate_payload(
         EventType::AssistantAnswerGiven => {
             serde_json::from_value::<AssistantAnswerGivenPayload>(payload.clone()).map(|_| ())
         }
+        EventType::DocumentArchived => {
+            serde_json::from_value::<DocumentArchivedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::DocumentFieldsExtracted => {
+            serde_json::from_value::<DocumentFieldsExtractedPayload>(payload.clone()).map(|_| ())
+        }
     };
 
     result.map_err(|e| {
@@ -1663,10 +1801,12 @@ mod tests {
                 | EventType::BeliefRecorded
                 | EventType::BeliefSuperseded
                 | EventType::AutonomyGranted
-                | EventType::AutonomyRevoked => counted += 1,
+                | EventType::AutonomyRevoked
+                | EventType::DocumentArchived
+                | EventType::DocumentFieldsExtracted => counted += 1,
             }
         }
-        assert_eq!(counted, 49, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 51, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

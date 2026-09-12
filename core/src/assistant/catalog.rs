@@ -425,6 +425,19 @@ mod tests {
         // wrote. Recall with provenance and confidence is Phase E's job.
         // `the_catalog_does_not_expose_conversations` holds this line.
         "assistant",
+        // ⚠️ **TEMPORARY, and the only entry here that is.** Every other name on
+        // this list is a decision; this one is a build order. The archive's
+        // projection exists (Phase 1) and its ingest path does not (Phase 2), so
+        // cataloguing it now would hand the assistant a table that is always
+        // empty and a `list` verb that always answers nothing.
+        //
+        // ⛔ **Phase 5 deletes this line.** It is the whole of the assistant
+        // integration: `catalog::visible` drives both `vector_store::sweep` and
+        // `retrieval::describe`, so a `document` entry brings keyword search,
+        // embedding and the read verbs with it. If this comment is still here
+        // once documents are being archived, the archive is invisible to the
+        // assistant and nothing else will say so.
+        "documents",
     ];
 
     #[test]

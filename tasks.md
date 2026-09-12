@@ -972,7 +972,29 @@ predictive text commits on space. The resolved narratives are in the post-v1 arc
 
 ---
 
-## Finances — DEFERRED TO A DEDICATED PLANNING SESSION (user, 2026-09-11)
+## Finances / inbox / document-archive — ⛔ PLANNED 2026-09-11, NOW BUILDING
+
+⛔ **The planning session is DONE and its plan is APPROVED.** Plan:
+`~/.claude/plans/lets-continue-sharded-minsky.md`. ⛔ Do not re-open the planning question or
+re-survey what it settled; `NEXT.md` carries the decisions.
+
+**What it decided.** The **document archive is the spine** — email ingestion and finance
+statements become *producers* into it, and finance propose actions are a separate, smaller,
+later item. Model-extracted fields are **allowed and flagged** (`source` + `verified` per
+field, human beats parser beats model). Correcting a field requires the document visible
+beside it, so the viewer widens to cover CSV and PDF rather than dropping them to a download
+link. **Phase 1 (event types, `DocumentsProjection`, `Feature::Documents`) is built.**
+
+Three findings from that session that are not derivable from the code:
+- 🔴 **Blob bytes do not sync** — `attachments.rs` is a 200 MB LRU cache, so documents live
+  only on the box. Server backup is a **dependency of the real backfill**, not a chore.
+- 🔴 **Android WebView has no PDF renderer**, and **HEIC is classified viewable but is not**.
+- **Capacity is not a constraint**: 38G disk, 29G free, 71M used, against a 233 MB corpus.
+
+⚠️ **The items below are the pre-planning record.** They describe where finance work stopped
+in 2026-09; read them for what was established, not as the current plan.
+
+---
 
 ⚠️ **Status changed 2026-09-11. Read this before acting on anything below.** The user
 reopened finance himself, having deferred it 2026-09-05 because too much was blocking clear
@@ -1071,6 +1093,46 @@ This was needed because **pausing does not survive a restart**, which had gone u
 ---
 
 ## Open — from daily use
+
+### The server writes events with no feature gate (found 2026-09-11)
+
+- [ ] ⚠️ **`EventWriter`'s stated invariant does not hold on the server.** Its module doc says
+  *"Every binary that authors events constructs an `EventWriter`; nothing else may call
+  `EventStore::append` directly"* — but `auto_import/rest.rs:417` calls `store.append_batch` +
+  `projections.apply_events` directly, and `AppState` never resolves a `ResolvedConfig`, so
+  there is nothing for a guard to read. The enforcement test
+  (`commands/shared.rs::no_command_appends_events_directly`) only scans the **Tauri commands
+  dir**, which is why this has never failed.
+  **Consequence:** a feature switched off still has its events authored server-side. Turning
+  `feature.documents` off stops the *projection* registering but not the *ingest*, and the same
+  is true of every auto-import source today. **Not introduced by the archive** —
+  `/documents/archive` follows the established server pattern and says so in a comment.
+  Fixing it properly means giving the server a resolved config at boot and an `EventWriter`;
+  ⚠️ do not do it piecemeal, or two write paths will disagree about what "off" means. [M]
+
+### Document viewing — two silent gaps found 2026-09-11
+
+Both surfaced while planning the archive, both predate it, and both affect the **existing**
+`AttachmentViewer` in `pages/finances.rs` today. Neither was recorded anywhere. Archive Phase 4
+closes them; they are listed here because they are live bugs in shipped code, not new work.
+
+- [ ] 🔴 **PDF attachments almost certainly do not render on Android.** The viewer puts PDFs in
+  an `<iframe>` pointing at an object URL. Android System WebView has **no built-in PDF
+  renderer**, and blob URLs inside iframes are its worst case — so a statement PDF opened from a
+  transaction on the phone is likely a blank box. ⚠️ **Unverified on hardware**; desktop
+  (WebKitGTK) is where it has always been looked at. Fix is pdf.js through the esbuild step
+  CodeMirror already uses — ⛔ **not** server-side rasterization, which would break offline
+  viewing, the whole reason the LRU cache exists. [S, frontend]
+- [ ] 🔴 **HEIC is classified as viewable and cannot be rendered.** `classify_attachment` routes
+  `image/heic` to the `<img>` branch and a test asserts it (`finances.rs:7442`), while
+  `media.rs:456` asserts `prepare_image` **refuses** HEIC and neither Chrome nor Android WebView
+  decodes it. So the classification test passes and the picture is blank. ⚠️ Reachable through
+  share-sheet intake (`classify_share_mime` accepts `heic`/`heif`). Decide it explicitly:
+  transcode on ingest, or classify it unpreviewable and say so in words. [S, frontend]
+- [ ] **CSVs cannot be viewed at all** — they fall to the `Other` branch, which offers a
+  download link that is itself unreliable in Android WebView. Matters beyond tidiness: the
+  archive's first corpus holds **276 CSVs**, and correcting an extracted field means seeing the
+  row it came from. [S, frontend]
 
 ### Editor and mobile
 

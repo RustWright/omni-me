@@ -6,4 +6,5 @@
 - [Turning features off](features.md)
 - [The assistant](assistant.md)
 - [Reading documents](extraction.md)
+- [The document archive](archive.md)
 - [How retrieval is built](retrieval.md)

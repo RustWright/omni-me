@@ -6,7 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::put,
 };
-use sha2::{Digest, Sha256};
+use omni_me_core::blob;
 use thiserror::Error;
 
 use crate::AppState;
@@ -17,22 +17,25 @@ const MAX_BLOB_BYTES: usize = 5 * 1024 * 1024;
 pub enum BlobError {
     #[error("hash must be 64 hex characters (sha-256)")]
     InvalidHashFormat,
-    #[error("hash mismatch: expected {expected}, got {actual}")]
-    HashMismatch { expected: String, actual: String },
     #[error("blob not found")]
     NotFound,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Blob(#[from] blob::BlobError),
 }
 
 impl IntoResponse for BlobError {
     fn into_response(self) -> Response {
         let status = match &self {
-            BlobError::InvalidHashFormat | BlobError::HashMismatch { .. } => {
-                StatusCode::BAD_REQUEST
-            }
+            BlobError::InvalidHashFormat => StatusCode::BAD_REQUEST,
             BlobError::NotFound => StatusCode::NOT_FOUND,
             BlobError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            // The store's own errors keep the same split this enum already
+            // makes: a caller's bad hash is a 400, a failed write is a 500.
+            BlobError::Blob(blob::BlobError::InvalidHash)
+            | BlobError::Blob(blob::BlobError::HashMismatch { .. }) => StatusCode::BAD_REQUEST,
+            BlobError::Blob(blob::BlobError::Io { .. }) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, self.to_string()).into_response()
     }
@@ -58,27 +61,14 @@ async fn put_blob_handler(
     body: Bytes,
 ) -> Result<StatusCode, BlobError> {
     let hash = validate_hash_format(&hash)?;
-    let final_path = state.blob_dir.join(&hash);
-
-    if tokio::fs::try_exists(&final_path).await? {
-        return Ok(StatusCode::OK);
+    // Storage semantics live in `core::blob` — hash check, temp-then-rename,
+    // idempotent. This handler's own job is the status code: `CREATED` when the
+    // blob is new, `OK` when it was already there.
+    match blob::store_as(&state.blob_dir, &hash, &body).await {
+        Ok(true) => Ok(StatusCode::CREATED),
+        Ok(false) => Ok(StatusCode::OK),
+        Err(e) => Err(e.into()),
     }
-
-    let actual = Sha256::digest(&body)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    if actual != hash {
-        return Err(BlobError::HashMismatch {
-            expected: hash,
-            actual,
-        });
-    }
-
-    let tmp = state.blob_dir.join(format!(".tmp-{}", ulid::Ulid::new()));
-    tokio::fs::write(&tmp, &body).await?;
-    tokio::fs::rename(&tmp, &final_path).await?;
-    Ok(StatusCode::CREATED)
 }
 
 async fn get_blob_handler(

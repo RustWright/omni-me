@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod archive;
 pub mod assistant;
 pub mod auto_close;
 #[cfg(feature = "auto-import")]
@@ -6,6 +7,7 @@ pub mod auto_import;
 #[cfg(feature = "auto-import")]
 pub mod auto_import_scheduler;
 pub mod balances;
+pub mod blob;
 pub mod budget;
 pub mod config;
 pub mod credentials;

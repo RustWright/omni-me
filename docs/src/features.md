@@ -1,6 +1,6 @@
 # Turning features off
 
-omni-me ships six features. Any of them can be switched off, globally or on one
+omni-me ships seven features. Any of them can be switched off, globally or on one
 device, and "off" means the feature stops existing rather than being hidden: its tab
 disappears, its background work never starts, and it can no longer write anything or
 reach your server.
@@ -20,10 +20,15 @@ app, switching a feature off and on again would mean losing what it held.
 | Finances | `feature.finances` | Double-entry transactions, accounts, budgets, reconciliation |
 | Auto-import | `feature.auto_import` | Pulling transactions from your banks and brokerages |
 | LLM | `feature.llm` | Extracting structure from documents, photos and email |
+| Documents | `feature.documents` | The document archive — files you scan or upload, and what was read out of them |
 
-Journal, Notes, Routines and Finances each own a tab. Auto-import and the LLM do not:
-they appear as flows inside Finances, so switching either off removes those flows and
-its settings section but no tab.
+Journal, Notes, Routines, Finances and Documents each own a tab. Auto-import and the
+LLM do not: they appear as flows inside Finances, so switching either off removes those
+flows and its settings section but no tab.
+
+Documents is deliberately its own feature rather than part of Finances. The archive
+holds tax notices, paystubs and leases as readily as bank statements, so filing it
+under Finances would mean switching Finances off took your tax records with it.
 
 ## What "off" actually stops
 

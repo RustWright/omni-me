@@ -5,8 +5,9 @@ use surrealdb::types::{SurrealValue, Value as DbValue};
 
 use super::types::{
     AssistantAnswerGivenPayload, AssistantProposalMadePayload, AssistantQuestionAskedPayload,
-    BeliefRecordedPayload, BeliefSupersededPayload, ConfigSetPayload, EventType,
-    FeedbackCapturedPayload, RecordTypeDeclaredPayload, TransactionRecordedPayload,
+    BeliefRecordedPayload, BeliefSupersededPayload, ConfigSetPayload, DocumentArchivedPayload,
+    DocumentFieldsExtractedPayload, EventType, FeedbackCapturedPayload, RecordTypeDeclaredPayload,
+    TransactionRecordedPayload,
 };
 use crate::db::Database;
 
@@ -285,6 +286,43 @@ impl NewEvent {
             id: None,
             event_type: EventType::BeliefRecorded.to_string(),
             aggregate_id: payload.belief_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `DocumentArchived` event.
+    ///
+    /// ⚠️ `aggregate_id == payload.document_id`, **not the blob hash**. The
+    /// document is the aggregate, so its archive event and every later extraction
+    /// over it read back together — and identical bytes filed twice from two
+    /// sources are two aggregates, which keying on the hash would silently merge.
+    pub fn document_archived(
+        device_id: impl Into<String>,
+        payload: &DocumentArchivedPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::DocumentArchived.to_string(),
+            aggregate_id: payload.document_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `DocumentFieldsExtracted` event. Same aggregate as the
+    /// document it describes, per [`NewEvent::document_archived`] — which is what
+    /// lets a re-extraction years later fold onto the row it belongs to.
+    pub fn document_fields_extracted(
+        device_id: impl Into<String>,
+        payload: &DocumentFieldsExtractedPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::DocumentFieldsExtracted.to_string(),
+            aggregate_id: payload.document_id.clone(),
             timestamp: Utc::now(),
             device_id: device_id.into(),
             payload: serde_json::to_value(payload)?,

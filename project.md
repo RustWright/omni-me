@@ -25,6 +25,32 @@ Work now follows a **three-item sequence set by the user 2026-09-05, taken one a
 time: 1. feedback capture · 2. generalization · 3. AI/LLM/ML integration.** Items 1 and
 2 are done; **item 3 is designed (2026-09-07) and building** — Phases 0 through G are in.
 
+**The document archive is the next block, planned 2026-09-11 and started the same
+day.** The user reopened finance and named six threads; the planning session found they
+share one blocker, and it is not finance — nothing in the system can represent a
+document that is not a transaction. `ExtractionResult` is `postings`/`commodity`/
+`total`, while the pipeline around it is domain-neutral, so serving another domain is a
+new output schema rather than a new pipeline. **The archive became the spine**: email
+ingestion and finance statements become producers into it, and finance propose actions
+drop to a separate, smaller, later item.
+
+Two decisions shape it. **Extracted fields are allowed from a model and are flagged** —
+each carries where it came from and whether anything verified it, folding by origin so
+a human correction survives any later machine pass. That is the honest answer to a trap
+the project already hit: a model once put "HAND WASH" in `commodity` with the arithmetic
+perfect, and every guard here inspects numbers while none inspects whether a field means
+what it claims. And **a field cannot be corrected without the document visible beside
+it**, which turned out to matter more than it sounds — the existing viewer renders
+images and iframes PDFs, so the 276 CSVs in the first corpus have no viewer at all.
+
+The survey also found three things the code does not say. Retrieval is already
+catalogue-driven, so a new record kind inherits search, embedding and the assistant's
+read verbs for free. **Blob bytes do not sync** — the on-device store is a 200 MB LRU
+cache, not a replica, so documents live in exactly one durable place and a server backup
+became a dependency of the real backfill rather than a chore. And capacity, which the
+user had flagged as a worry, is measured and not a constraint: 29 GB free against a
+233 MB corpus, on a box currently holding 71 MB.
+
 **The assistant can read (2026-09-08).** Phase B put the four read verbs behind a
 multi-turn loop with cost instrumentation, and it works end-to-end against a real
 endpoint: asked what he had written about a rent notice, it discovered the record

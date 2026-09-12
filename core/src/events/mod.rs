@@ -3,6 +3,7 @@ mod auto_import_projection;
 mod beliefs_projection;
 mod budget_projection;
 mod config_projection;
+mod documents_projection;
 mod notes_projection;
 mod projection;
 mod record_type_projection;
@@ -17,6 +18,7 @@ pub use auto_import_projection::AutoImportProjection;
 pub use beliefs_projection::BeliefsProjection;
 pub use budget_projection::BudgetProjection;
 pub use config_projection::{ConfigProjection, load_persisted};
+pub use documents_projection::DocumentsProjection;
 pub use notes_projection::NotesProjection;
 pub use projection::{Projection, ProjectionRunner};
 pub use record_type_projection::{

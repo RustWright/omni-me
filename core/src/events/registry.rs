@@ -18,7 +18,8 @@ use crate::journal_file::JournalFile;
 
 use super::{
     AssistantProjection, AutoImportProjection, BeliefsProjection, BudgetProjection,
-    ConfigProjection, NotesProjection, Projection, RecordTypeProjection, RoutinesProjection,
+    ConfigProjection, DocumentsProjection, NotesProjection, Projection, RecordTypeProjection,
+    RoutinesProjection,
 };
 
 /// Projections that are never feature-gated.
@@ -44,6 +45,7 @@ pub const ALL_PROJECTIONS: &[&str] = &[
     JournalFile::NAME,
     AssistantProjection::NAME,
     BeliefsProjection::NAME,
+    DocumentsProjection::NAME,
 ];
 
 /// The projections a feature owns.
@@ -61,6 +63,11 @@ pub const ALL_PROJECTIONS: &[&str] = &[
 ///   because the assistant concluded something — turning the assistant off
 ///   therefore stops beliefs being maintained, which is the intended reading of
 ///   "the feature is inert".
+/// - `Documents` owns `documents` alone, and deliberately does **not** sit under
+///   `Finances`. The archive holds tax notices, paystubs and leases as readily as
+///   statements — 16% of the first corpus is documents no statement parser can
+///   touch — so filing it under finances would mean switching finances off took
+///   the user's tax records with it.
 pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
     match feature {
         Feature::Journal | Feature::Notes => &[NotesProjection::NAME],
@@ -72,6 +79,7 @@ pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
         Feature::Routines => &[RoutinesProjection::NAME],
         Feature::Finances => &[BudgetProjection::NAME, JournalFile::NAME],
         Feature::AutoImport => &[BudgetProjection::NAME, AutoImportProjection::NAME],
+        Feature::Documents => &[DocumentsProjection::NAME],
     }
 }
 
@@ -118,6 +126,7 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         // writes, and nothing reads their tables but the client and the agent.
         Box::new(AssistantProjection),
         Box::new(BeliefsProjection),
+        Box::new(DocumentsProjection),
     ]
 }
 
@@ -238,6 +247,7 @@ mod tests {
             journal_file.name(),
             AssistantProjection.name(),
             BeliefsProjection.name(),
+            DocumentsProjection.name(),
         ];
         let listed: BTreeSet<&str> = ALL_PROJECTIONS.iter().copied().collect();
         let actual: BTreeSet<&str> = live.iter().copied().collect();
