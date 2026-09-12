@@ -6,12 +6,19 @@ license.workspace = true
 
 [features]
 default = []
-# Server-only: pulls in the IMAP + native-tls deps and exposes the
+# Server-only: pulls in the IMAP + TLS deps and exposes the
 # `auto_import` + `auto_import_scheduler` modules. Tauri clients build with
-# default features off — keeps openssl-sys out of the Android dep tree
+# default features off — keeps the whole stack out of the Android dep tree
 # (per [[feedback-llm-server-side]] and [[project-auto-import-host]] the
 # scheduler lives in `omni-me-server`, not in the client).
-auto-import = ["dep:imap", "dep:native-tls", "dep:csv"]
+auto-import = [
+    "dep:async-imap",
+    "dep:futures-util",
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:webpki-roots",
+    "dep:csv",
+]
 # Headless-host-only: local embedding + reranking models via ONNX Runtime, for the
 # assistant's semantic `search`. Same reasoning as `auto-import` — `fastembed` pulls
 # `ort` and a bundled ONNX Runtime, which must never enter the Android dep tree.
@@ -52,8 +59,32 @@ toml = "0.8"
 tracing = "0.1"
 mail-parser = "0.10"
 tempfile = "3"
-imap = { version = "2", optional = true }
-native-tls = { version = "0.2", optional = true }
+# ⚠️ `default-features = false` + `runtime-tokio` is load-bearing twice over: the
+# defaults drag in `async-std` alongside tokio, and they pin `imap-proto 0.10`,
+# which is what rust#79813 is scheduled to turn into a hard error. This spelling
+# resolves to imap-proto 0.16 and no second runtime.
+async-imap = { version = "0.11", default-features = false, features = [
+    "runtime-tokio",
+], optional = true }
+futures-util = { version = "0.3", default-features = false, optional = true }
+# async-imap is TLS-agnostic — it takes an established stream — so the TLS half is
+# ours to pick, and picking rustls is what keeps openssl-sys out of this tree.
+tokio-rustls = { version = "0.26", default-features = false, features = [
+    "ring",
+    "tls12",
+], optional = true }
+# ⛔ rustls is a DIRECT dependency on purpose, and naming `ring` here is not
+# redundant. This workspace compiles rustls with *both* providers — surrealdb's
+# jsonwebtoken pulls `aws-lc-rs`, reqwest pulls `ring` — and under two providers
+# `ClientConfig::builder()` cannot choose: it panics at connect time with "Could
+# not automatically determine the process-level CryptoProvider". `imap_real.rs`
+# therefore names the provider explicitly, and this line is what entitles it to.
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+], optional = true }
+webpki-roots = { version = "1", optional = true }
 csv = { version = "1", optional = true }
 # ⚠️ `default-features = false` is load-bearing. fastembed's defaults are
 # `ort-download-binaries-native-tls` + `hf-hub-native-tls` + `image-models`, which

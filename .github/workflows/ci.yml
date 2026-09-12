@@ -200,8 +200,9 @@ jobs:
       # not apply here: no appindicator (tauri is built with `features = []`, so
       # no tray), no librsvg (bundling only — CI never bundles), and neither
       # libxdo nor libssl, which `cargo tree -p omni-me-app -i` shows are absent
-      # from this crate's graph (reqwest is on rustls; openssl-sys enters the
-      # lockfile only through the server's auto-import native-tls path).
+      # from this crate's graph — and since the IMAP swap to async-imap +
+      # tokio-rustls, openssl-sys is absent from the whole workspace, dev-deps
+      # included (`cargo tree --workspace -i openssl-sys` matches no package).
       # Re-derive with that same `cargo tree -i` before adding to this list.
       - name: Install Tauri system dependencies
         run: |

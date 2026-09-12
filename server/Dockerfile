@@ -13,11 +13,11 @@
 # ---- builder ----
 FROM rust:1-bookworm AS builder
 
-# native-tls (server reqwest default-tls + core `auto-import` IMAP) links system
-# OpenSSL; surrealdb uses kv-surrealkv (pure embedded), so no clang/rocksdb here.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        pkg-config libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+# No apt build deps. This stage used to install `pkg-config libssl-dev` for
+# native-tls; the IMAP swap to async-imap + tokio-rustls removed the last
+# openssl-sys edge, so the whole workspace is rustls now — re-derive with
+# `cargo tree --workspace -i openssl-sys` before adding anything back. surrealdb
+# uses kv-surrealkv (pure embedded), so no clang/rocksdb here either.
 
 WORKDIR /app
 COPY . .
@@ -33,15 +33,21 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # ---- runtime ----
 FROM debian:bookworm-slim AS runtime
 
-# libssl3 = native-tls runtime; ca-certificates = outbound TLS (LLM/IMAP/sync);
-# curl = HEALTHCHECK probe.
+# ca-certificates = outbound TLS (LLM/sync); curl = HEALTHCHECK probe.
+# `libssl3` was listed here for native-tls and is no longer ours — the binary
+# links no openssl at all. Anything in this list that still needs it declares it
+# as an apt Depends and gets it regardless of `--no-install-recommends`.
+#
+# ⚠️ ca-certificates STAYS. IMAP now carries bundled Mozilla roots (webpki-roots,
+# see `auto_import/imap_real.rs`), but reqwest and surrealdb still read the system
+# trust store, so dropping it breaks LLM and sync rather than IMAP.
 #
 # poppler-utils supplies `pdftotext`, which two code paths exec: statement
 # parsing and the document extractor's PDF branch. ⚠️ It was missing here, so
 # every spawn on the box failed ENOENT and PDF extraction had never once worked
 # in production — quietly enough to read as "no statements arrived".
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates libssl3 curl poppler-utils \
+        ca-certificates curl poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root. Home = /data so the named volume mount inherits `app` ownership.

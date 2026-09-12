@@ -1,18 +1,21 @@
-//! Real `ImapFetcher` impl backed by the sync `imap` crate inside
-//! `tokio::task::spawn_blocking`. We use the sync crate (not `async-imap`)
-//! because it's more battle-tested and the IMAP protocol's per-account
-//! footprint is low — one short blocking call per tick is fine on tokio's
-//! blocking pool.
+//! Real `ImapFetcher` impl over `async-imap` + `tokio-rustls`.
 //!
-//! Connection lifecycle: connect → login → select label → fetch → logout.
-//! Connections aren't kept open between ticks; tick frequency is on the
+//! Connection lifecycle: TCP → TLS → login → select label → enumerate → fetch →
+//! logout. Connections aren't kept open between ticks; tick frequency is on the
 //! order of minutes so reconnect cost is negligible.
 //!
-//! The integration test at the bottom is `#[ignore]`-gated — it requires
-//! real Gmail credentials in env. Run with:
+//! The integration test at the bottom is `#[ignore]`-gated — it requires real
+//! Gmail credentials in env. Run with:
 //!     `cargo test -p omni-me-core --lib imap_real -- --ignored --nocapture`
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use futures_util::StreamExt;
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, RootCertStore};
+use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
 
 use crate::auto_import_scheduler::ImportError;
 use crate::credentials::ImapCredentials;
@@ -52,26 +55,49 @@ impl ImapFetcher for AsyncImapFetcher {
         &self,
         cursor: &FetchCursor,
     ) -> Result<(Vec<ImapMessage>, Option<u32>), ImportError> {
-        let creds = self.creds.clone();
-        let cursor = cursor.clone();
-        tokio::task::spawn_blocking(move || fetch_blocking(&creds, &cursor))
-            .await
-            .map_err(|e| ImportError::Io(format!("spawn_blocking: {e}")))?
+        fetch(&self.creds, cursor).await
     }
 }
 
-fn fetch_blocking(
+/// ⚠️ `ClientConfig::builder()` — the form every rustls example uses — PANICS here,
+/// and only at connect time, so nothing short of a live fetch catches it. This
+/// workspace compiles rustls with *both* providers (`ring` via reqwest, `aws-lc-rs`
+/// via surrealdb's jsonwebtoken), and under two providers rustls refuses to guess:
+/// "Could not automatically determine the process-level CryptoProvider". Naming the
+/// provider turns that into a compile-time dependency (`core/Cargo.toml` carries the
+/// matching `rustls` entry) instead of a 3am panic on a scheduler tick.
+fn tls_config() -> Result<ClientConfig, ImportError> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    // Bundled Mozilla roots, not the OS trust store: the server ships in a slim
+    // container with no guaranteed CA bundle, and an absent one surfaces as an
+    // unexplained handshake failure rather than as a missing file.
+    let roots = RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map(|b| b.with_root_certificates(roots).with_no_client_auth())
+        .map_err(|e| ImportError::Io(format!("tls config: {e}")))
+}
+
+async fn fetch(
     creds: &ImapCredentials,
     cursor: &FetchCursor,
 ) -> Result<(Vec<ImapMessage>, Option<u32>), ImportError> {
-    let tls = native_tls::TlsConnector::builder()
-        .build()
-        .map_err(|e| ImportError::Io(format!("tls builder: {e}")))?;
-    let client = imap::connect((creds.host.as_str(), creds.port), creds.host.as_str(), &tls)
+    let tcp = TcpStream::connect((creds.host.as_str(), creds.port))
+        .await
         .map_err(|e| ImportError::Io(format!("connect {}:{}: {e}", creds.host, creds.port)))?;
 
-    let mut session = client
+    let domain = ServerName::try_from(creds.host.clone())
+        .map_err(|e| ImportError::Io(format!("invalid host {}: {e}", creds.host)))?;
+    let tls = TlsConnector::from(Arc::new(tls_config()?))
+        .connect(domain, tcp)
+        .await
+        .map_err(|e| ImportError::Io(format!("tls handshake {}: {e}", creds.host)))?;
+
+    let mut session = async_imap::Client::new(tls)
         .login(&creds.account, &creds.app_password)
+        .await
         .map_err(|(e, _client)| ImportError::Upstream(format!("login: {e}")))?;
 
     // Use the watched label as the mailbox name. Gmail labels appear as
@@ -79,6 +105,7 @@ fn fetch_blocking(
     // no filter is set up.
     let _mailbox = session
         .select(&creds.watched_label)
+        .await
         .map_err(|e| ImportError::Upstream(format!("select {}: {e}", creds.watched_label)))?;
 
     // Build UID range. On first run (no cursor), only fetch latest message
@@ -86,34 +113,43 @@ fn fetch_blocking(
     // Two round trips: enumerate UIDs first, then fetch at most
     // MAX_UIDS_PER_TICK bodies.
     //
-    // The single open-ended `{last+1}:*` fetch this replaces pulled every new
-    // message's FULL body and materialized the lot into one Vec, so after a
-    // stretch of downtime — or under a flood from anyone who knows the watched
-    // address — one tick tried to hold the whole backlog in RAM.
-    //
-    // The obvious cap, narrowing the range to `{last+1}:{last+N}`, is WRONG and
-    // would have reintroduced the poison pill in a new shape: IMAP UIDs are
-    // monotonic but not contiguous, so if the next real message sits beyond
-    // `last+N` the narrowed fetch returns nothing, `max_uid` never moves, and
-    // every later tick re-requests the same empty window forever. Enumerating
-    // first keeps the range open — only the *body* fetch is bounded — so the
-    // cursor always advances and a backlog simply drains over several ticks.
+    // ⚠️ The obvious cap — narrowing the range to `{last+1}:{last+N}` — is WRONG.
+    // IMAP UIDs are monotonic but not contiguous, so if the next real message sits
+    // beyond `last+N` the narrowed fetch returns nothing, `max_uid` never moves, and
+    // every later tick re-requests the same empty window forever. Enumerating first
+    // keeps the range open — only the *body* fetch is bounded — so the cursor always
+    // advances and a backlog simply drains over several ticks.
     let range = match cursor.last_seen_uid {
         Some(uid) => format!("{}:*", uid + 1),
         None => "*".to_string(),
     };
 
-    let uid_only = session
-        .uid_fetch(&range, "(UID)")
-        .map_err(|e| ImportError::Upstream(format!("uid_fetch (enumerate): {e}")))?;
+    // ⚠️ Each `uid_fetch` stream borrows the session mutably and must be driven to
+    // completion before the next command: a stream dropped early leaves an unread
+    // response on the wire and the following command parses against it. That is what
+    // the scoping blocks below are for — never flatten them.
+    let mut pending: Vec<u32> = {
+        let mut uids = session
+            .uid_fetch(&range, "(UID)")
+            .await
+            .map_err(|e| ImportError::Upstream(format!("uid_fetch (enumerate): {e}")))?;
+        let mut seen = Vec::new();
+        while let Some(fetch) = uids.next().await {
+            let fetch =
+                fetch.map_err(|e| ImportError::Upstream(format!("uid_fetch (enumerate): {e}")))?;
+            if let Some(uid) = fetch.uid {
+                seen.push(uid);
+            }
+        }
+        seen
+    };
 
-    let mut pending: Vec<u32> = uid_only.iter().filter_map(|f| f.uid).collect();
     pending.sort_unstable();
     let total_pending = pending.len();
     pending.truncate(MAX_UIDS_PER_TICK);
 
     if pending.is_empty() {
-        let _ = session.logout();
+        let _ = session.logout().await;
         return Ok((Vec::new(), cursor.last_seen_uid));
     }
     if total_pending > pending.len() {
@@ -130,52 +166,53 @@ fn fetch_blocking(
         .collect::<Vec<_>>()
         .join(",");
 
-    let fetches = session
-        .uid_fetch(&body_range, "(UID INTERNALDATE RFC822)")
-        .map_err(|e| ImportError::Upstream(format!("uid_fetch: {e}")))?;
-
     let mut messages = Vec::new();
     let mut max_uid = cursor.last_seen_uid;
 
-    for fetch in fetches.iter() {
-        let uid = match fetch.uid {
-            Some(u) => u,
-            None => continue,
-        };
-        let body = match fetch.body() {
-            Some(b) if b.len() > MAX_MESSAGE_BYTES => {
-                // Skipped, not fatal — and the cursor still advances past it,
-                // so one oversized message can't pin the mailbox.
-                tracing::warn!(
-                    uid,
-                    bytes = b.len(),
-                    "imap: message over the size cap — skipping",
-                );
-                if uid > max_uid.unwrap_or(0) {
-                    max_uid = Some(uid);
+    {
+        let mut fetches = session
+            .uid_fetch(&body_range, "(UID INTERNALDATE RFC822)")
+            .await
+            .map_err(|e| ImportError::Upstream(format!("uid_fetch: {e}")))?;
+
+        while let Some(fetch) = fetches.next().await {
+            let fetch = fetch.map_err(|e| ImportError::Upstream(format!("uid_fetch: {e}")))?;
+            let Some(uid) = fetch.uid else { continue };
+            let body = match fetch.body() {
+                Some(b) if b.len() > MAX_MESSAGE_BYTES => {
+                    // Skipped, not fatal — and the cursor still advances past it,
+                    // so one oversized message can't pin the mailbox.
+                    tracing::warn!(
+                        uid,
+                        bytes = b.len(),
+                        "imap: message over the size cap — skipping",
+                    );
+                    if uid > max_uid.unwrap_or(0) {
+                        max_uid = Some(uid);
+                    }
+                    continue;
                 }
-                continue;
+                Some(b) => b.to_vec(),
+                None => continue,
+            };
+            // Parse the From + Subject + Date out of the raw body so callers
+            // don't have to re-MIME-parse for routing — same fields the
+            // ImapHandler::accepts() filter uses.
+            let (from, subject, date) = parse_headers(&body);
+            messages.push(ImapMessage {
+                uid,
+                from,
+                subject,
+                date,
+                body,
+            });
+            if uid > max_uid.unwrap_or(0) {
+                max_uid = Some(uid);
             }
-            Some(b) => b.to_vec(),
-            None => continue,
-        };
-        // Parse the From + Subject + Date out of the raw body so callers
-        // don't have to re-MIME-parse for routing — same fields the
-        // ImapHandler::accepts() filter uses.
-        let (from, subject, date) = parse_headers(&body);
-        messages.push(ImapMessage {
-            uid,
-            from,
-            subject,
-            date,
-            body,
-        });
-        if uid > max_uid.unwrap_or(0) {
-            max_uid = Some(uid);
         }
     }
 
-    let _ = session.logout();
+    let _ = session.logout().await;
 
     Ok((messages, max_uid))
 }
@@ -221,6 +258,20 @@ mod tests {
             app_password: pass,
             watched_label: "INBOX".into(),
         })
+    }
+
+    /// Builds the TLS config the real fetcher uses, without opening a socket.
+    ///
+    /// ⛔ Do not delete as "trivial". The dual-provider panic this guards against is
+    /// invisible to every other test in the suite: it lives in `builder_with_provider`,
+    /// fires at runtime rather than compile time, and would otherwise first appear on a
+    /// production scheduler tick. This is the cheapest place it can surface.
+    #[test]
+    fn tls_config_builds_without_a_default_crypto_provider() {
+        assert!(
+            tls_config().is_ok(),
+            "rustls could not build a client config — provider selection regressed"
+        );
     }
 
     #[tokio::test]

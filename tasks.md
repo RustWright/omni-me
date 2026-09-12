@@ -1375,9 +1375,55 @@ This was needed because **pausing does not survive a restart**, which had gone u
 
 ---
 
-## IMAP crate swap — NEXT (user's sequence, 2026-09-11)
+## IMAP crate swap — DONE 2026-09-11
 
-- [ ] **Replace `imap` v2.4.1 with `async-imap` 0.11 + `tokio-rustls`.** [S]
+- [x] **Replace `imap` v2.4.1 with `async-imap` 0.11 + `tokio-rustls`.** [S] Landed 2026-09-11.
+  Clippy `-D warnings` clean on all three crates; suite **1094 passed / 0 failed / 9 ignored**.
+  Overlay verified too: `cargo clippy --locked -p omni-me-private --all-targets -- -D warnings`
+  exit=0, which also proves the `--locked` deploy build resolves against the new lock.
+  ⚠️ **Unverified: the wire path itself.** Nothing in the public repo constructs
+  `AsyncImapFetcher` — the overlay does (`src/main.rs`), and the only test that opens a socket is
+  `#[ignore]`d behind real Gmail creds. Compilation is what passed; **a live fetch has not run
+  since the swap** and is the one thing left to confirm.
+  - **What it took beyond the plan, all of it dependency-shaped:**
+    - ⛔ **`ClientConfig::builder()` PANICS in this workspace** — rustls 0.23 compiles with *both*
+      providers (`ring` ← reqwest, `aws-lc-rs` ← surrealdb's jsonwebtoken), and under two it
+      refuses to choose: *"Could not automatically determine the process-level CryptoProvider"*.
+      ⚠️ It type-checks, and fires only at **connect time** — so `imap_real.rs` names the provider
+      explicitly, `core/Cargo.toml` carries a direct `rustls` entry to entitle it, and a unit test
+      builds the config so the next regression is caught by `cargo test`, not by production.
+    - **Roots are bundled (`webpki-roots`), not the OS store** — the image is slim and a missing
+      CA bundle would surface as an unexplained handshake failure. `ca-certificates` still stays
+      in both Dockerfiles: reqwest and surrealdb read the system store.
+    - **The overlay's `Cargo.lock` had to move in the same stretch** (same class as
+      [[project-public-stamp-and-private-lock-move-together]]): it pinned `imap` v2 + `native-tls`
+      and `Dockerfile` builds `--locked`, so the next deploy would have died naming the lockfile.
+      ⚠️ It was **already** stale before this swap — the `image` crate from the extraction work
+      was missing too, so that deploy was broken and nothing had noticed.
+    - **Two pre-existing overlay breaks, both surfaced only because nothing lints that repo:**
+      `examples/headless_import.rs` still called `map_frontmatter` with one argument (the
+      `declared` parameter landed in `b21d676`, public-side, and the cross-repo caller was never
+      updated) — ⛔ it does not compile, and `--all-targets` is the only thing that says so.
+      Fixed by resolving `journal_record_type(db).property_keys()` as `commands::import` does;
+      ⚠️ an empty slice would have compiled and silently demoted every declared property into
+      `legacy_properties`. Plus one `type_complexity` lint in `examples/probe_realdb.rs`.
+      ⚠️ **The overlay is now clippy-clean, but nothing keeps it that way** — see
+      [[project-overlay-ci-blind-spot]]; wiring a lint job there is still unbooked work.
+  - ✅ **openssl is gone from BOTH workspaces, dev-deps included** — `cargo tree --workspace -i
+    openssl-sys` matches no package in either. ⛔ The spec's guess below was wrong about the cause:
+    the third edge was **`server/Cargo.toml`'s dev-dep on `reqwest` omitting `default-features =
+    false`**, so reqwest's `default-tls` switched native-tls back on for anything resolving
+    workspace-wide. Not inherent to reqwest — ours, and a one-line fix.
+    ⚠️ **`cargo tree --workspace` unions features across members**, which is why a *dev*-dependency
+    in one crate could put openssl into a tree every other crate spells carefully to avoid.
+    Dead `pkg-config`/`libssl-dev`/`libssl3` removed from both Dockerfiles as a result.
+  - ⚠️ **Rebuild lesson, cost a full 10-minute run:** the recipe must `source
+    scripts/fetch-onnxruntime.sh` before `cargo test`. Without it `ort` links its own prebuilt,
+    which needs glibc ≥ 2.38 against this box's 2.35, and the link dies on C++ symbols that read
+    like a missing compiler package. ⛔ **Clippy never links, so it passed the same broken tree** —
+    a green clippy is not evidence the tests can build.
+
+  **Original plan, kept for the reasoning:**
   - **Why now, and why it is not optional.** `imap-proto 0.10.2` is written against nom 5's
     `named!` macros and puts a trailing semicolon in expression position — rust#79813, already a
     future-incompat lint, scheduled to become a **hard error**. CI runs
@@ -1396,9 +1442,8 @@ This was needed because **pausing does not survive a restart**, which had gone u
   - **Secondary win:** `imap_real.rs:67` builds a `native_tls::TlsConnector` only because v2's
     `connect` demands one — that single API requirement is what drags `openssl-sys` into the
     server's tree, the thing `core/Cargo.toml` works to keep out of the Android build. The swap
-    removes both auto-import edges. ⚠️ **Not verified:** whether openssl leaves the workspace
-    entirely — `cargo tree -i native-tls` shows a **third** edge through `reqwest`, annotated as
-    a dev-dependency. Trace that before claiming it is gone.
+    removes both auto-import edges. ⚠️ **Was unverified; now traced** — see the DONE block above.
+    The third edge was `server`'s own dev-dep spelling, not something inherent to `reqwest`.
   - **Also deletes** the `spawn_blocking` wrapper (`imap_real.rs:57`), since async-imap is
     async-native. The module header's "we use the sync crate because it's more battle-tested"
     rationale goes with it.

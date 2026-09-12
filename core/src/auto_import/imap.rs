@@ -7,9 +7,8 @@
 //! logic:
 //!
 //! - `ImapFetcher` — abstracts the wire protocol. Pulls new messages from a
-//!   single mailbox since the last-seen UID. Real impl wraps an IMAP crate
-//!   (deferred — `async-imap` is the leading candidate but pinning the choice
-//!   waits for a real cred + label flow).
+//!   single mailbox since the last-seen UID. `imap_real.rs` implements it over
+//!   `async-imap` + `tokio-rustls`; tests use a mock.
 //! - `ImapHandler` — per-source extractor. Declares which messages it claims
 //!   via `accepts(envelope)` and produces zero-or-more events via `handle()`.
 //!   `ReceiptHandler` (`receipts.rs`) is the only production handler today.
