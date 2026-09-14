@@ -38,6 +38,7 @@ use omni_me_core::extraction::{
     DocumentExtractor, null::NullExtractor, openai_compat::OpenAiCompatExtractor,
 };
 use omni_me_core::llm::{ClientOptions, LlmClient, build_llm_client};
+use omni_me_core::runtime::Instance;
 
 const DB_PATH: &str = "surreal_data/server.db";
 const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:3000";
@@ -61,6 +62,15 @@ fn listen_addr() -> String {
         Ok(addr) => addr,
         Err(_) => DEFAULT_LISTEN_ADDR.to_string(),
     }
+}
+
+/// The directory `DB_PATH` hangs off, which is the process working directory.
+///
+/// The deployment marker goes here rather than beside the database file: the
+/// container mounts its whole stateful volume at this path, so the marker
+/// travels with a clone of the data instead of with the config that read it.
+fn data_root() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// Where blobs live, from `BLOB_DIR` or the default.
@@ -107,6 +117,10 @@ pub struct AppState {
     /// looked up here, and the engine learns nothing about the institution —
     /// the same indirection `[llm].api_key` and the subprocess helpers use.
     pub secrets: Arc<HashMap<String, String>>,
+    /// Which deployment this server's data belongs to, reported on `/health` so
+    /// a destructive tool can ask before it acts. `None` means nothing declared
+    /// one, which every such tool must treat as a refusal.
+    pub instance: Option<Instance>,
 }
 
 /// The shared runtime handles [`run`] hands a [`SourceBuilder`] so it can
@@ -153,6 +167,21 @@ pub async fn run(cfg: RunConfig) {
             }),
         )
         .init();
+
+    // Before the database, not after: a mismatch means one of the two is
+    // pointed at the wrong data, and opening SurrealKV takes a lock and can
+    // migrate. See `docs/src/isolation.md`.
+    let instance = match omni_me_core::runtime::resolve_instance(&data_root()) {
+        Ok(instance) => instance,
+        Err(e) => {
+            tracing::error!("{e}");
+            std::process::exit(1);
+        }
+    };
+    tracing::info!(
+        instance = instance.map_or("unknown", |i| i.as_str()),
+        "deployment identity"
+    );
 
     let db = omni_me_core::db::connect(DB_PATH)
         .await
@@ -252,6 +281,7 @@ pub async fn run(cfg: RunConfig) {
         device_id: device_id.clone(),
         default_interval: interval,
         secrets: Arc::new(creds.secrets.clone()),
+        instance,
     };
 
     // Auto-import: the engine owns the store/projections/device_id but not the
@@ -413,8 +443,17 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok" }))
+/// Readiness probe, and the one channel by which a remote tool learns which
+/// deployment it is talking to.
+///
+/// Stays outside the bearer gate so the answer is available before a device is
+/// provisioned — which is also what lets a destructive script check it without
+/// holding a token.
+async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "instance": state.instance.map_or("unknown", |i| i.as_str()),
+    }))
 }
 
 /// Build the document extractor — `OpenAiCompatExtractor` when `[llm]` opts in

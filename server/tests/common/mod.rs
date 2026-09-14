@@ -45,6 +45,9 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
         device_id: "test-device".to_string(),
         default_interval: std::time::Duration::from_secs(1800),
         secrets: Default::default(),
+        // Tests are non-production by construction. `None` reports `unknown`,
+        // which every destructive tool refuses.
+        instance: None,
     };
 
     let app = Router::new()
@@ -110,6 +113,9 @@ pub async fn start_full_server_with_auth(
         device_id: "test-device".to_string(),
         default_interval: std::time::Duration::from_secs(1800),
         secrets: Default::default(),
+        // Tests are non-production by construction. `None` reports `unknown`,
+        // which every destructive tool refuses.
+        instance: None,
     };
 
     let app = omni_me_server::build_app(state, updates_dir, auth_token);

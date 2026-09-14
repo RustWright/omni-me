@@ -59,6 +59,7 @@ async fn start_server_on_port(
         device_id: "test-device".to_string(),
         default_interval: Duration::from_secs(1800),
         secrets: Default::default(),
+        instance: None,
     };
 
     let app = make_router(state);
@@ -103,6 +104,7 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
         device_id: "test-device".to_string(),
         default_interval: Duration::from_secs(1800),
         secrets: Default::default(),
+        instance: None,
     };
     let app = make_router(state);
 

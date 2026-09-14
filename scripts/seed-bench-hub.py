@@ -20,10 +20,16 @@ device, and no client has to be running. The hub itself needs no credentials —
 `server`'s DB_PATH is relative, so the working directory is the isolation
 boundary:
 
-    mkdir hub && cd hub && cargo run -p omni-me-server
+    mkdir hub && cd hub && OMNI_INSTANCE=dev cargo run -p omni-me-server
     python3 scripts/seed-bench-hub.py
 
 Teardown is `rm -rf hub`.
+
+⚠️ **`OMNI_INSTANCE=dev` is not optional.** This script refuses to push to a hub
+that does not report `instance: dev` on `/health`, because `--url`'s default port
+is also the live server's and a mistyped host would seed fictional events into
+real data. An unstamped hub reports `unknown` and is refused too — absence is
+not permission. See the public repo's `docs/src/isolation.md`.
 """
 
 import argparse
@@ -128,6 +134,30 @@ def build_events(device_id: str) -> list[dict]:
     return events
 
 
+def require_dev_hub(url: str) -> str | None:
+    """Return an error string unless `url` self-identifies as a dev instance.
+
+    The default `--url` port is also the live server's, so a mistyped host aims
+    this straight at real data — and what lands there is exactly the junk the
+    "no real data" rule is about. Absence is not permission: a hub reporting
+    `unknown` is refused, same as production.
+    """
+    probe = f"{url.rstrip('/')}/health"
+    try:
+        with urllib.request.urlopen(probe, timeout=10) as response:
+            instance = json.load(response).get("instance", "unknown")
+    except (urllib.error.URLError, json.JSONDecodeError, KeyError) as e:
+        return f"cannot read {probe}: {e}"
+
+    if instance == "dev":
+        return None
+    return (
+        f"{url} reports instance='{instance}', not 'dev'. Refusing to seed.\n"
+        "  Start the hub with OMNI_INSTANCE=dev to stamp it, or point --url at "
+        "a hub that is already stamped."
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--url", default="http://localhost:3000",
@@ -136,6 +166,11 @@ def main() -> int:
                     help="author device id; must NOT be the agent's own, or the "
                          "agent's pull will filter these out (default: %(default)s)")
     args = ap.parse_args()
+
+    refusal = require_dev_hub(args.url)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 1
 
     events = build_events(args.device_id)
     body = json.dumps({"device_id": args.device_id, "events": events}).encode()

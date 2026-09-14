@@ -86,6 +86,7 @@ async fn start_statement_server(
         device_id: "test-device".to_string(),
         default_interval: std::time::Duration::from_secs(1800),
         secrets: Arc::new(secrets),
+        instance: None,
     };
 
     let app = Router::new()

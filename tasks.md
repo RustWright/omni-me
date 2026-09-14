@@ -1343,28 +1343,85 @@ down what was stopped for and what the run would have done next. He recalibrates
 record, so a stop with no written reason wastes the stop. A flaky test or a missing dev
 dependency is trivial — note it and keep going.
 
-### Stage 0 — isolation guard. ⛔ BEFORE any destructive work, no exceptions.
-The blast-radius grant is **conditional on isolation**, and the live-DB clone makes the dev
-environment indistinguishable from production from the inside. `DB_PATH` is relative, so a
-wrong working directory is enough to point a wipe at the live server.
-- [ ] Make the dev instance **self-identify**, and make destructive tooling **assert that
-      identity before acting** rather than trusting it was pointed correctly. Configuration
-      being right is not a safety mechanism; a refusal is.
+### Stage 0 — isolation guard. ✅ BUILT 2026-09-14
+- [x] **The dev instance self-identifies and destructive tooling asserts it.** Design and the
+      boot truth table are published in `docs/src/isolation.md` — read that, not this.
+      Mechanism: `OMNI_INSTANCE=production|dev` stamps `.omni-instance` in the data root and
+      `/health` reports it; `core/src/runtime.rs` owns the decision, `server/src/lib.rs`
+      resolves it **before `db::connect`**; the overlay's `deploy/lib-guard.sh` refuses
+      anything not exactly `dev`, with `OMNI_CONFIRM_PRODUCTION`'s typed phrase as the one
+      escape. ⛔ **Disagreement between config and marker is a refusal to boot**, not a
+      warning (user's call, 2026-09-14) — one symmetric rule, so no call site has to remember
+      which direction was asymmetric.
+- [x] 🔴 **The hazard was worse than "a relative `DB_PATH`".** Every `deploy/` script defaults
+      `OMNI_CONTAINER` to the **live** container and `lib-volume.sh` resolves the volume from
+      whichever container is *running* — so the obvious way to reset the dev database would
+      have snapshotted production, emptied production, and health-gated green.
+- [x] ⚠️ **`restore-snapshot.sh` has a legitimate automated production caller** —
+      `remote-deploy.sh`'s last-resort rollback. Guarding it naively would turn a recoverable
+      failed deploy into an outage with no way back. It now passes the phrase itself, scoped
+      to that one invocation, reading it from `$OMNI_PRODUCTION_PHRASE` so the two cannot
+      drift. ⛔ **Check who else calls it before guarding a new script.**
+- [x] **Both halves have a durable smoke test** — re-runnable, not scrollback.
+      `scripts/smoke-isolation.sh` proves the boot table against the real binary (11/11),
+      including that a refused boot created **no `surreal_data/`**, which is how the
+      before-`db::connect` ordering is proven rather than asserted. The overlay's
+      `deploy/smoke-guard.sh` proves the guard (13/13, HTTP path included).
+- [ ] 🔴 **UNVERIFIED: `omni_require_dev_volume`'s docker read.** No usable docker daemon on
+      this machine, so only the decision logic and the HTTP path were exercised. ⛔ Prove the
+      volume half **before** Stage 4 relies on it — the four-line recipe is in
+      `deploy/smoke-guard.sh`'s header, and it needs a machine with docker.
+- [ ] ⚠️ **The live box has no marker until a stamping server is deployed**, so it reports
+      `unknown` and every guarded script refuses it. That is the intended order — deploy,
+      then reset — but the first legitimate reset will look like a bug if this is forgotten.
+- [ ] ⚠️ **`reset-db.sh baseline` is deliberately unguarded.** It stops the stack but destroys
+      nothing, and refusing a read-only capture would push the operator into typing the
+      override habitually — an override typed routinely stops being a speed bump.
 - [ ] The live box and his real phone are **outside the grant, always.** No exceptions, no
       "just this once to check something".
 
-### Stage 1 — de-saturate Role A's bench ⚠️ gates two seats, not one
+### Stage 1 — de-saturate Role A's bench ✅ BUILT 2026-09-14 ⚠️ NOT YET RE-RUN
 B is decided on quality **using A's instrument**, so a saturated instrument blocks both.
-- [ ] `MODEL_BENCH.md` Part 4 **lever 1** — score answer content, not just which verb was
-      reached. The fixture corpus is ours, so ground truth is already written. Biggest
-      de-saturator and nearly free.
-- [ ] **Lever 2** — absent-answer cases, whose honest answer is "that is not in here". Only two
-      cases test refusal today and both are about *writes*. ⚠️ This also builds **Role D's**
-      abstention instrument, so it pays for two seats.
-- [ ] ⚠️ **Do not reintroduce the seven harness traps** that once made the constraint-tax number
-      a measurement of the harness. A harder bench has more places to hide one.
+- [x] **Lever 1 — score the answer, not the path.** `Answer::Contains` on the five cases with
+      solid ground truth. Full detail in `MODEL_BENCH.md` Part 4; don't restate it here.
+- [x] **Lever 2 — absent answers.** Four cases, each the **twin** of a positive one (same
+      request shape, same verb, record missing) so the path is held fixed and abstention is
+      isolated from retrieval. ⛔ The verb is still required — "no" without looking must not
+      pass. This is Role D's abstention instrument too.
+- [x] **Case count 10 → 14**, so one case is ~7 points of top-1. A guard test holds the mix
+      (≥14 cases, ≥3 absent, ≥half checking content) so a one-sided addition fails loudly.
+- [x] ⚠️ The **seven harness traps** are not a missing list — they are the ⚠️ blocks in
+      `agent/src/bench.rs`'s module header. None were touched: both arms still differ in
+      exactly one thing, off-schema still withholds the tax, arms never compare across
+      endpoints.
+- [x] ✅ **RE-RUN 2026-09-14 AND IT WORKED.** Control `gpt-oss-120b-Turbo`, previously
+      **10/10 (100%)**, now **10/14 (71%)** free-form — 29 points of headroom. Numbers and
+      analysis in `MODEL_BENCH.md` Part 4; don't restate them here. ⛔ **All the spread came
+      from lever 2** — every original case still passes, so content scoring alone
+      de-saturated nothing.
+- [ ] 🔴 **The run found a product bug: § The assistant cannot conclude absence** (below).
+      ⛔ Fix that before this instrument decides a seat — three of its fourteen cases are
+      currently measuring a system defect rather than the model.
+- [ ] ⚠️ **Allow `list` on case 10** before it decides anything. Free-form reached `list`
+      rather than the required `read`, which is a legitimate way to establish a journal date
+      is absent. It failed the content check too, so the verdict stands — but the expectation
+      is stricter than the design intends.
+- [ ] ⚠️ **Case 07's comment is stale in framing, not in substance.** It says "no write path
+      exists", and the run showed the model reaching `propose`. `propose` is still correct
+      here — `propose_writes_nothing` in `verbs.rs` asserts it records an intention and
+      writes nothing — so the case passes either way. Reword the comment; don't change it.
 
 ### Stage 2 — build the C1 / C2 / D scorecards
+
+🔴 **Carry this over from Stage 1, it cost a whole bench run there:** an instrument must not
+make abstention **structurally impossible**. Role A's turn budget did exactly that — the model
+was capable of saying "not found" and the harness gave it no room to, so three cases scored
+the harness. ⛔ **The C2/D equivalent is a response schema with no way to express "this field
+is not in this document."** If every field is required, the model *must* fabricate, and the
+scorecard measures the schema rather than the model — while the abstention weighting the
+design calls for silently measures nothing. ⚠️ Check the envelope admits absence **before**
+spending a run, and make the same check for whatever single-shot budget or truncation limit
+the extractor has.
 - [ ] **C1** — `verify.rs` arithmetic oracle, plus the **parser-as-oracle** gold set: the 276
       CSVs in `.reference/` that `statement::parse` reads deterministically become machine-
       generated labels. Feed the same statement to the model as PDF/text and score against them.
@@ -1630,6 +1687,42 @@ called it (2026-09-14). **Decisions live in `NEXT.md`, inventory lives here.**
 ---
 
 ## Open — from daily use
+
+### ✅ Answering "not found" — FIXED 2026-09-14 (found by the new bench)
+
+⛔ **The first diagnosis was WRONG and is worth keeping as a lesson.** It looked like a
+progress-free retrieval loop — "the assistant cannot conclude absence". The user pushed back
+(*"were they repeating the same action or exploring different possible answers, because that's
+more of a when-to-give-up question"*) and the trace settled it: **exploration, not a loop.**
+
+**What the evidence showed.** Same question at two budgets, arguments included:
+- Budget 6 → `search "car insurance" type=note` → `search "car insurance"` → `search
+  "insurance" type=note` → `search "car insurance"` [repeat] → `list type=note` → **silence**.
+- Budget 12 → same narrowing, then `search "car"`, `list type=note`, `search … type=document`
+  → **"I could not find a note about car insurance."** in 8 turns.
+
+One repeat in six turns. The rest is narrow → drop the type filter → broaden the term →
+enumerate → try another record type, which is what a careful searcher does before declaring a
+negative.
+
+🔴 **The real finding is an ASYMMETRY.** Confirming a record exists costs **2–4** turns;
+establishing one does not exist was measured at **8**. The default of 6 sat between them, so
+every honest "not found" died on the budget. ⚠️ A budget sized on positive lookups structurally
+cannot answer a negative one — worth remembering for any future budget tuning.
+
+**Two changes, decided by the user 2026-09-14:**
+- ✅ **`LAST_TURN_NUDGE` in `assistant::session`** — on the final turn the model is told to
+  answer with what it has and that "I could not find it" is a useful answer. ⛔ **Tools are
+  withheld on that turn**, so prose is the only reply it can form. The nudge alone would be
+  advice, and the same model ignored the response schema 7 times in one run. This makes "the
+  user always gets text" a guarantee at **any** budget, which is the part that was a genuine
+  defect rather than tuning.
+- ✅ **`ConfigKey::AssistantMaxTurns` default 6 → 10.** A ceiling costs nothing on the runs
+  that never reach it, and positive lookups still finish in 2–4.
+
+⚠️ **Still true and unmeasured:** whether the constrained arm benefits. It failed differently —
+giving up after 2–3 turns having only reached `list_types` — and the schema path still cannot
+form prose, so the nudge may not reach it.
 
 ### The server writes events with no feature gate (found 2026-09-11)
 

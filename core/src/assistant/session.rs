@@ -42,7 +42,12 @@ use crate::llm::{LlmClient, LlmError};
 /// `ConfigKey::AssistantMaxTurns`, because the quality/cost balance is something
 /// to be found by trying rather than argued to once — see [`Session::new`]. The
 /// constant stays for tests and for callers with no config in hand.
-pub const MAX_TURNS: usize = 6;
+///
+/// Ten, tracking the config default it stands in for. Six left a caller without
+/// config on the pre-2026-09-14 behaviour, where establishing that a record does
+/// not exist — measured at eight turns against two to four for confirming one
+/// does — could not fit inside the budget.
+pub const MAX_TURNS: usize = 10;
 
 /// Extra turns a request may spend on `propose`, beyond its budget.
 ///
@@ -59,6 +64,22 @@ pub const MAX_TURNS: usize = 6;
 /// as a search made a three-item routine unanswerable, which is what surfaced
 /// this.
 pub const PROPOSAL_TURNS: usize = 4;
+
+/// Sent on the final turn, when the budget is about to end the loop.
+///
+/// Without it the budget's exit carries no text: the user waits through N model
+/// calls and receives nothing. Measured 2026-09-14 on "what does my note about
+/// car insurance say?" — six turns of legitimate narrowing and widening, then
+/// silence. Rationale and the presence/absence asymmetry: `docs/src/assistant.md`.
+///
+/// ⚠️ Note this is **not new advice**. [`LOOP_RULES`] already says "I could not
+/// find it" is a correct answer, and the model read that on every turn and kept
+/// searching anyway. What changes the outcome is saying it at the moment it is
+/// actionable and withholding the tools, so there is nothing else to do.
+const LAST_TURN_NUDGE: &str = "You have no tool calls left. Answer now using only what you \
+     have already found. If the records you looked for do not exist, say plainly that you \
+     could not find them and name what you searched for — that is a useful answer, not a \
+     failure. Do not claim a record exists unless you retrieved it.";
 
 /// Cap on one tool result going back into the conversation.
 ///
@@ -337,11 +358,21 @@ impl<'a> Session<'a> {
             if spent >= self.max_turns {
                 break;
             }
+            // On the last turn the budget is about to end the loop, and its only
+            // other exit returns no text at all. See `LAST_TURN_NUDGE`.
+            let last_turn = spent + 1 == self.max_turns;
+            if last_turn {
+                messages.push(ChatMessage::User(LAST_TURN_NUDGE.to_string()));
+            }
+
             // ⚠️ Exactly one channel, never both. See `Session::constrained`.
             let mut request = ChatRequest::new(messages.clone());
             if let Some(schema) = &self.response_schema {
                 request = request.with_response_schema(schema.clone());
-            } else {
+            } else if !last_turn {
+                // Tools withheld on the last turn, so prose is the only reply
+                // the model can form. The nudge alone is advice, and this model
+                // ignored the response schema seven times in one bench run.
                 request = request.with_tools(verbs::tools());
             }
             if let Some(t) = self.enable_thinking {
@@ -866,7 +897,94 @@ mod tests {
 
         assert_eq!(out.stopped, StopReason::TurnBudget);
         assert_eq!(out.trace.len(), 4);
+        // Still none here only because `ScriptedLlm` replays its script whatever
+        // the request says. A real model cannot: see the two tests below, which
+        // pin what the request actually offers on the last turn.
         assert!(out.answer.is_none());
+    }
+
+    /// **The guarantee, and the bug it closes.** The budget's exit carries no
+    /// text, so a model still calling tools when it runs out leaves the user
+    /// with nothing after N calls. Measured 2026-09-14: six turns of legitimate
+    /// narrowing and widening on a record that did not exist, then silence.
+    ///
+    /// Withholding the tools is what makes it a guarantee rather than advice —
+    /// the same model ignored the response schema seven times in one bench run,
+    /// so a politely worded instruction is not enough.
+    #[tokio::test]
+    async fn the_last_turn_offers_no_tools_so_prose_is_the_only_reply() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(
+            (0..10)
+                .map(|i| {
+                    tool_turn(
+                        &format!("c{i}"),
+                        "search",
+                        json!({ "query": format!("q{i}") }),
+                    )
+                })
+                .collect(),
+        );
+        let cfg = config();
+
+        let _ = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .with_max_turns(4)
+            .ask("q")
+            .await;
+
+        let seen = llm.seen.lock().unwrap();
+        assert_eq!(seen.len(), 4);
+        for (i, request) in seen.iter().enumerate().take(3) {
+            assert!(
+                !request.tools.is_empty(),
+                "turn {i} should still offer tools"
+            );
+        }
+        assert!(
+            seen[3].tools.is_empty(),
+            "the last turn must offer no tools, or the model can spend it on \
+             another call and the user gets silence"
+        );
+    }
+
+    /// The nudge rides with it, because withholding tools without saying why
+    /// invites a model to apologise for lacking them rather than answer.
+    #[tokio::test]
+    async fn the_last_turn_tells_the_model_that_not_found_is_a_real_answer() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(
+            (0..10)
+                .map(|i| {
+                    tool_turn(
+                        &format!("c{i}"),
+                        "search",
+                        json!({ "query": format!("q{i}") }),
+                    )
+                })
+                .collect(),
+        );
+        let cfg = config();
+
+        let _ = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .with_max_turns(3)
+            .ask("q")
+            .await;
+
+        let seen = llm.seen.lock().unwrap();
+        let earlier_nudges = seen[..2]
+            .iter()
+            .flat_map(|r| r.messages.iter())
+            .filter(|m| matches!(m, ChatMessage::User(t) if t == LAST_TURN_NUDGE))
+            .count();
+        assert_eq!(earlier_nudges, 0, "the nudge must not fire early");
+
+        let last = seen[2].messages.last().expect("a last message");
+        assert!(
+            matches!(last, ChatMessage::User(t) if t == LAST_TURN_NUDGE),
+            "the final request must end with the nudge, got {last:?}"
+        );
     }
 
     /// ⚠️ The case that forced the exemption: a three-item routine costs three

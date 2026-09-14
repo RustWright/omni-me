@@ -301,10 +301,13 @@ impl ConfigKey {
             // user wakes, late enough that a machine asleep overnight has usually
             // come back.
             ConfigKey::AssistantCheckInHour => ConfigValue::Int(7),
-            // Six: discovery legitimately costs two or three turns, then the
-            // real work, then the answer. Sized when the loop was read-only —
-            // see `assistant::session`, where `propose` no longer counts.
-            ConfigKey::AssistantMaxTurns => ConfigValue::Int(6),
+            // Ten, raised from six 2026-09-14. Confirming a record exists costs
+            // two to four turns; establishing one does NOT exist was measured at
+            // eight, because the model has to narrow, widen, enumerate and check
+            // other types before the negative is honest. Six sat between the two,
+            // so every "not found" answer died on the budget. A ceiling costs
+            // nothing on the runs that never reach it.
+            ConfigKey::AssistantMaxTurns => ConfigValue::Int(10),
         }
     }
 

@@ -73,8 +73,22 @@ The **constraint tax** is free-form score minus constrained score. It is withhel
 guessed, when the constrained arm was never really constrained (`off_schema` canary) or when
 one arm did not run.
 
-⚠️ **What the score does *not* capture: whether the answer was right.** It scores the path.
-This is the main reason the instrument saturates — see Part 4.
+✅ **The score captures whether the answer was right, since 2026-09-14** — Part 4's levers 1
+and 2 are built. A case now carries an `Answer` expectation alongside its verb: `Contains`
+(every listed token must appear in the final answer, case-insensitively, tokens drawn from
+the seeded corpus), `Absent` (the record does not exist, so the reply must say so), or
+`Unchecked` (the two type-schema cases and the two write refusals, which have no content
+ground truth).
+
+A case passes only on **reached AND answered AND content**. The three are reported apart —
+`WA` in the per-case column means the right path and the wrong answer, and `content N
+case(s) routed correctly and answered wrongly` summarises it — because a content regression
+and a routing regression are different findings and one percentage cannot carry both.
+
+⚠️ **What it still does not capture:** whether an `Unchecked` case answered well, and whether
+an `Absent` case abstained for the right *reason*. The absence check is a phrase heuristic
+(`ABSENCE_SIGNALS`), generous by design: the failure it must catch is a model inventing a
+record, and an invented record contains none of those phrases.
 
 ---
 
@@ -422,7 +436,7 @@ by arithmetic.
 
 ---
 
-## Part 4 — De-saturating the bench (proposal, not adopted)
+## Part 4 — De-saturating the bench · **levers 1 and 2 BUILT 2026-09-14**
 
 Saturation is structural, not a matter of the cases being too easy. With five verbs and a
 near-obvious request→verb mapping, a competent model picks right almost always, and the score
@@ -431,13 +445,20 @@ come from somewhere other than verb naming.
 
 Levers, ordered by how much they buy per unit of "still a reasonable request":
 
-1. **Score the answer, not just the path.** Add expected content to cases with known ground
-   truth. The biggest de-saturator, it makes nothing harder, and it closes the gap named in
-   Part 1. Recommended first.
-2. **Absent answers.** Questions whose honest answer is "that is not in here". Only two cases
-   test refusal today and both are about *writes*; a retrieval question with no answer is the
-   sharper test — and abstention is exactly what role D is judged on, so this lever builds D's
-   instrument too. Recommended second.
+1. ✅ **Score the answer, not just the path. BUILT.** `Answer::Contains` on the five cases
+   with solid ground truth (`list_types`, the rent search, the 03-14 journal read, the
+   dentist search, the routine list, the grocery note). Tokens are picked to survive
+   paraphrase — a bare number or a proper noun, never a phrase the model could reword, and
+   `evening` rather than `winddown` because "wind-down" is equally correct.
+2. ✅ **Absent answers. BUILT.** Four cases whose honest answer is "that is not in here":
+   a journal date outside the seeded range, a note that does not exist, a topic never
+   written about, and a spend figure nothing carries.
+
+   Two design choices in these worth keeping. **Each is the twin of a positive case** —
+   same request shape, same expected verb, only the record missing — so holding the path
+   fixed isolates abstention from retrieval. And **the verb is still required**, so
+   answering "no" without looking does not pass: abstention without checking is a guess
+   that happened to be right. This is also role D's abstention instrument.
 3. **Distractor density.** Seed a much larger corpus with near-miss content. "Find anything I
    wrote about rent" is trivial across a dozen notes and hard across hundreds where forty
    mention rent and one is the one meant. Realistic — the live corpus is ~14,412 events.
@@ -447,7 +468,58 @@ Levers, ordered by how much they buy per unit of "still a reasonable request":
    own and the one that most easily becomes difficulty for its own sake.
 
 The remembered POC result — needle obscurity plus token size made the difference — is levers
-3 and 5. They work, but 1 and 2 buy more here and 1 is nearly free.
+3 and 5. They work, but 1 and 2 buy more here and 1 is nearly free. **3–5 remain unbuilt.**
+
+⚠️ **The case count moved from 10 to 14**, so one case is worth ~7 points of top-1 rather
+than 10. Still coarse: any gap under ~7 points is inside the noise floor and decides nothing.
+`the_case_mix_keeps_the_noise_floor_and_the_abstention_arm_honest` guards the mix — at least
+14 cases, at least 3 absent, and at least half checking the answer — so adding cases to only
+one side fails a test instead of quietly skewing the instrument.
+
+### It worked, and it found a bug on its first run · 2026-09-14
+
+Re-run against **`openai/gpt-oss-120b-Turbo` direct**, deliberately the control: the model this
+file records as scoring **10/10 (100%)** free-form on the old instrument.
+
+| Arm | Old | New | Notes |
+|---|---|---|---|
+| free-form | 10/10 (100%) | **10/14 (71%)** | median 3.4s, worst 5.0s; 85,800 prompt / 4,229 completion tokens, 55 turns |
+| schema-constrained | — | **9/14 (64%)** | median 3.1s, worst 6.4s; 38 turns |
+
+⛔ **The constraint tax was correctly WITHHELD** — 7 constrained replies ignored the schema, so
+this endpoint treats `response_format` as a hint rather than a grammar. The `off_schema` canary
+fired exactly as designed; the seven harness traps are intact.
+
+**29 points of headroom opened on a model that previously scored perfect.** All ten original
+cases still pass, so lever 1 de-saturated nothing on its own — the old 10/10 was not masking
+wrong answers. **Every point of the spread came from lever 2.**
+
+✅ **The instrument discriminates rather than failing everything:** case 10 **passed** its
+abstention check in the constrained arm (`list_types → describe_type → read`, then said the
+date has no entry). `Absent` accepts a genuine abstention; it is not an always-fail.
+
+🔴 **The first run found a real defect — `tasks.md` § Answering "not found", now fixed.**
+Free-form cases 11–13 ended `stopped=TurnBudget` and **never answered at all**; 3 of 28
+requests died that way, all three absent-retrieval.
+
+⛔ **The first diagnosis was wrong, and the correction is the useful part.** It read as a
+progress-free retrieval loop. Pulling the actual tool arguments showed **exploration**: narrow
+the type, drop the filter, broaden the term, enumerate, try another record type — one repeated
+call in six turns. The same question at budget 12 answered correctly in **8** turns.
+
+**So the finding is an asymmetry, not an incapacity:** confirming a record exists costs **2–4**
+turns, establishing one does not exist costs **8**, and the default of 6 sat between them.
+⚠️ **A turn budget sized on positive lookups structurally cannot answer a negative one.**
+Fixed by `LAST_TURN_NUDGE` (tools withheld on the final turn, so prose is the only reply) plus
+the default moving 6 → 10.
+
+⚠️ **These numbers therefore measure the OLD budget.** A re-run at the shipped default is owed
+before the instrument decides a seat — three of fourteen cases were scoring the budget.
+
+⚠️ **One expectation to revisit before this decides a seat:** case 10 requires `read`, and
+free-form reached `list` instead — a legitimate way to establish that a journal date is
+absent. It failed the content check too, so the verdict stands either way, but `list` should
+probably be an accepted path.
 
 ⚠️ **Any difficulty increase must not reintroduce the seven harness traps** that made an
 earlier constraint-tax number a measurement of the harness rather than the model. A harder

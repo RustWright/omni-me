@@ -13,7 +13,7 @@
 # ⚠️ **A seeded hub must already be running.** The cases name things that have to
 # exist, or the run measures what a model does when the answer is absent:
 #
-#     mkdir hub && cd hub && cargo run -p omni-me-server     # one terminal
+#     mkdir hub && cd hub && OMNI_INSTANCE=dev cargo run -p omni-me-server
 #     python3 scripts/seed-bench-hub.py                      # once
 #
 # One model failing must not end the run — `glm-5.3-flash` was rate-limited

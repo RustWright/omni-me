@@ -121,6 +121,201 @@ pub fn load_or_create(
     val
 }
 
+// --- which deployment this data belongs to --------------------------------
+
+/// Filename of the deployment marker, relative to the data root.
+pub const INSTANCE_MARKER: &str = ".omni-instance";
+
+/// Env var by which a process declares which deployment it is.
+pub const INSTANCE_ENV: &str = "OMNI_INSTANCE";
+
+/// Set to `1` to let a declared instance overwrite a marker that disagrees.
+pub const INSTANCE_RESTAMP_ENV: &str = "OMNI_INSTANCE_RESTAMP";
+
+/// Which deployment a data root belongs to.
+///
+/// Boot truth table and the reasoning for a marker file over a config value:
+/// `docs/src/isolation.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Instance {
+    Production,
+    Dev,
+}
+
+impl Instance {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Instance::Production => "production",
+            Instance::Dev => "dev",
+        }
+    }
+
+    /// Blank counts as absent; anything else unrecognised is an error rather
+    /// than an absence, so a typo fails loudly instead of reading as unset.
+    fn parse(raw: &str, origin: &'static str) -> Result<Option<Self>, InstanceError> {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        match raw.to_ascii_lowercase().as_str() {
+            "production" => Ok(Some(Instance::Production)),
+            "dev" => Ok(Some(Instance::Dev)),
+            _ => Err(InstanceError::Unparseable {
+                origin,
+                value: raw.to_string(),
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for Instance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum InstanceError {
+    #[error(
+        "refusing to start: OMNI_INSTANCE says `{configured}` but the .omni-instance \
+         marker in {root} says `{marker}`. One of the two is pointed at the wrong data. \
+         If `{configured}` is correct, re-run with OMNI_INSTANCE_RESTAMP=1 to overwrite \
+         the marker."
+    )]
+    Mismatch {
+        configured: Instance,
+        marker: Instance,
+        root: String,
+    },
+
+    #[error("refusing to start: {origin} is `{value}`, which is neither `production` nor `dev`")]
+    Unparseable { origin: &'static str, value: String },
+
+    #[error(
+        "refusing to start: could not write the .omni-instance marker to {root}: {source}. \
+         Without it no destructive tool can tell this data apart from production."
+    )]
+    MarkerWrite {
+        root: String,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+/// What [`choose_instance`] decided: the identity of this run, and whether the
+/// marker on disk has to be written to match it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct InstanceDecision {
+    /// `None` when nothing declares an identity — reported as `unknown`, which
+    /// every destructive tool refuses.
+    pub instance: Option<Instance>,
+    pub write_marker: bool,
+}
+
+/// Pure half of [`resolve_instance`]: no env access and no disk, so the whole
+/// truth table is a unit test.
+pub fn choose_instance(
+    env: Option<&str>,
+    marker: Option<&str>,
+    restamp: bool,
+) -> Result<InstanceDecision, InstanceError> {
+    let configured = match env {
+        Some(raw) => Instance::parse(raw, INSTANCE_ENV)?,
+        None => None,
+    };
+    let stamped = match marker {
+        Some(raw) => Instance::parse(raw, INSTANCE_MARKER)?,
+        None => None,
+    };
+
+    match (configured, stamped) {
+        (None, stamped) => Ok(InstanceDecision {
+            // The data's own claim outranks a process that declares nothing:
+            // silence is not a counter-assertion.
+            instance: stamped,
+            write_marker: false,
+        }),
+        (Some(configured), None) => Ok(InstanceDecision {
+            instance: Some(configured),
+            write_marker: true,
+        }),
+        (Some(configured), Some(stamped)) if configured == stamped => Ok(InstanceDecision {
+            instance: Some(configured),
+            write_marker: false,
+        }),
+        (Some(configured), Some(_)) if restamp => Ok(InstanceDecision {
+            instance: Some(configured),
+            write_marker: true,
+        }),
+        (Some(configured), Some(marker)) => Err(InstanceError::Mismatch {
+            configured,
+            marker,
+            root: UNNAMED_ROOT.to_string(),
+        }),
+    }
+}
+
+/// Stands in until the disk half fills the real path in, so the message reads
+/// correctly either way.
+const UNNAMED_ROOT: &str = "the data root";
+
+/// Resolve this run's deployment identity against `data_root`, stamping the
+/// marker when the decision calls for it.
+///
+/// Call this before opening the database: a mismatch means one of the two is
+/// pointed at the wrong data, and opening it takes a lock and can migrate.
+pub fn resolve_instance(data_root: &Path) -> Result<Option<Instance>, InstanceError> {
+    resolve_instance_with(
+        data_root,
+        std::env::var(INSTANCE_ENV).ok().as_deref(),
+        std::env::var(INSTANCE_RESTAMP_ENV).is_ok_and(|v| v.trim() == "1"),
+    )
+}
+
+/// Disk half of [`resolve_instance`] with the environment passed in.
+///
+/// Separate so tests exercise the real file without mutating a process-global
+/// that every other test in the binary shares.
+pub fn resolve_instance_with(
+    data_root: &Path,
+    declared: Option<&str>,
+    restamp: bool,
+) -> Result<Option<Instance>, InstanceError> {
+    let path = data_root.join(INSTANCE_MARKER);
+    let marker = std::fs::read_to_string(&path).ok();
+
+    let decision = choose_instance(declared, marker.as_deref(), restamp)
+        .map_err(|e| e.with_root(data_root))?;
+
+    if decision.write_marker
+        && let Some(instance) = decision.instance
+    {
+        // A marker that failed to write is not a warning. The whole safety
+        // property is that destructive tooling can read this file.
+        std::fs::write(&path, instance.as_str()).map_err(|source| InstanceError::MarkerWrite {
+            root: data_root.display().to_string(),
+            source,
+        })?;
+    }
+    Ok(decision.instance)
+}
+
+impl InstanceError {
+    /// Fill in the data root, which the pure half does not know.
+    fn with_root(self, data_root: &Path) -> Self {
+        match self {
+            InstanceError::Mismatch {
+                configured, marker, ..
+            } => InstanceError::Mismatch {
+                configured,
+                marker,
+                root: data_root.display().to_string(),
+            },
+            other => other,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,5 +436,164 @@ mod tests {
             load_or_create(dir.path(), "device_id", || "fresh".to_string()),
             "fresh"
         );
+    }
+
+    // --- the instance marker: the full boot truth table --------------------
+
+    use Instance::{Dev, Production};
+
+    fn decide(env: Option<&str>, marker: Option<&str>) -> InstanceDecision {
+        choose_instance(env, marker, false).expect("expected a decision, not an error")
+    }
+
+    #[test]
+    fn nothing_declared_reports_unknown_and_stamps_nothing() {
+        assert_eq!(
+            decide(None, None),
+            InstanceDecision {
+                instance: None,
+                write_marker: false
+            }
+        );
+    }
+
+    /// Silence is not a counter-assertion: the plain public binary run in a
+    /// stamped data root reports what the data says rather than erasing it.
+    #[test]
+    fn an_undeclared_process_reports_the_marker_and_leaves_it_alone() {
+        assert_eq!(
+            decide(None, Some("production")),
+            InstanceDecision {
+                instance: Some(Production),
+                write_marker: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_declared_instance_stamps_an_unmarked_root() {
+        assert_eq!(
+            decide(Some("dev"), None),
+            InstanceDecision {
+                instance: Some(Dev),
+                write_marker: true
+            }
+        );
+    }
+
+    #[test]
+    fn agreement_is_a_no_op_write() {
+        assert_eq!(
+            decide(Some("dev"), Some("dev")),
+            InstanceDecision {
+                instance: Some(Dev),
+                write_marker: false
+            }
+        );
+    }
+
+    /// **The test this whole mechanism exists for.** The dev server is seeded
+    /// from a clone of the live database, so the clone arrives stamped
+    /// `production` while the dev config says `dev`. Booting anyway would let a
+    /// dev device sync real writes into production while the operator believes
+    /// they are on the clone.
+    #[test]
+    fn a_clone_of_live_data_under_a_dev_config_refuses() {
+        let err = choose_instance(Some("dev"), Some("production"), false)
+            .expect_err("a mismatch must not resolve");
+        assert!(
+            matches!(
+                err,
+                InstanceError::Mismatch {
+                    configured: Dev,
+                    marker: Production,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    /// The mirror direction refuses too. One symmetric rule, so no call site has
+    /// to remember which way the asymmetry pointed.
+    #[test]
+    fn a_production_config_over_dev_stamped_data_also_refuses() {
+        assert!(choose_instance(Some("production"), Some("dev"), false).is_err());
+    }
+
+    /// Restamping is the deliberate escape, and it is the *only* thing that
+    /// turns a mismatch into a write.
+    #[test]
+    fn restamp_overwrites_a_disagreeing_marker() {
+        assert_eq!(
+            choose_instance(Some("dev"), Some("production"), true).unwrap(),
+            InstanceDecision {
+                instance: Some(Dev),
+                write_marker: true
+            }
+        );
+    }
+
+    /// A typo must fail loudly rather than read as unset. Reading as unset would
+    /// leave the root unstamped and look like it had been declared.
+    #[test]
+    fn an_unrecognised_value_is_an_error_not_an_absence() {
+        for (env, marker, origin) in [
+            (Some("prod"), None, INSTANCE_ENV),
+            (None, Some("staging"), INSTANCE_MARKER),
+        ] {
+            let err = choose_instance(env, marker, false).expect_err("must not resolve");
+            assert!(
+                matches!(err, InstanceError::Unparseable { origin: o, .. } if o == origin),
+                "env={env:?} marker={marker:?} got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn blank_and_mixed_case_values_behave() {
+        assert_eq!(decide(Some("  "), Some("\n")).instance, None);
+        assert_eq!(decide(Some(" DEV \n"), None).instance, Some(Dev));
+    }
+
+    // --- the disk half -----------------------------------------------------
+
+    /// `resolve_instance` must leave a real file behind, because the guard in
+    /// the deploy scripts reads that file and nothing else.
+    #[test]
+    fn resolve_instance_writes_a_marker_a_shell_script_can_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = resolve_instance_with(dir.path(), Some("dev"), false).unwrap();
+
+        assert_eq!(resolved, Some(Dev));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(INSTANCE_MARKER)).unwrap(),
+            "dev"
+        );
+    }
+
+    /// The error names the data root, so an operator staring at a refusal knows
+    /// *which* directory disagreed rather than only that something did.
+    #[test]
+    fn the_mismatch_error_names_the_data_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(INSTANCE_MARKER), "production").unwrap();
+
+        let err = resolve_instance_with(dir.path(), Some("dev"), false).expect_err("must refuse");
+        let msg = err.to_string();
+        assert!(msg.contains(&dir.path().display().to_string()), "{msg}");
+        assert!(msg.contains("OMNI_INSTANCE_RESTAMP=1"), "{msg}");
+    }
+
+    /// A refusal must not have stamped on its way out — otherwise the second
+    /// attempt agrees with itself and the guard never fires again.
+    #[test]
+    fn a_refusal_leaves_the_marker_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(INSTANCE_MARKER);
+        std::fs::write(&marker, "production").unwrap();
+
+        assert!(resolve_instance_with(dir.path(), Some("dev"), false).is_err());
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "production");
     }
 }

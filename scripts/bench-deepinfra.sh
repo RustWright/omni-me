@@ -11,7 +11,7 @@
 #
 # ⚠️ **A seeded hub must already be running**, same as the gateway harness:
 #
-#     mkdir hub && cd hub && cargo run -p omni-me-server     # one terminal
+#     mkdir hub && cd hub && OMNI_INSTANCE=dev cargo run -p omni-me-server
 #     python3 scripts/seed-bench-hub.py                      # once
 #
 # ⚠️ Always `cargo run`, never a prebuilt binary — a bench outlives its source,

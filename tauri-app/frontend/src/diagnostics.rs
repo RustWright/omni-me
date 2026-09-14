@@ -169,7 +169,12 @@ fn record(kind: Kind, text: &str) {
 /// IPC to fail. `expect` rather than `allow` so that if the mock half ever does
 /// start recording, the now-unfulfilled expectation says so instead of leaving a
 /// stale exemption behind.
-#[cfg_attr(feature = "mock", expect(dead_code))]
+///
+/// `not(test)` because the tests below do call it, so under
+/// `--all-targets --features mock` the expectation is fulfilled in the bin and
+/// unfulfilled in the test target — which failed the lint for a reason that has
+/// nothing to do with the mock half.
+#[cfg_attr(all(feature = "mock", not(test)), expect(dead_code))]
 pub fn record_invoke_failure(cmd: &str, err: &str) {
     record(Kind::Invoke, &format!("{cmd}: {err}"));
 }
@@ -181,6 +186,8 @@ pub fn record_invoke_failure(cmd: &str, err: &str) {
 /// otherwise erase the only evidence that the race still happens — and the race
 /// getting slower (a bigger log, a slower device) is exactly the thing worth
 /// noticing before it outruns the deadline and starts failing open again.
+/// No `not(test)` here, unlike `record_invoke_failure` above: no test calls
+/// this one, so under `mock` it is dead in the test target too.
 #[cfg_attr(feature = "mock", expect(dead_code))]
 pub fn record_invoke_recovery(cmd: &str, attempts: u32, waited_ms: f64) {
     record(

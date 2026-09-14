@@ -73,13 +73,99 @@ use omni_me_core::config::ResolvedConfig;
 use omni_me_core::db::Database;
 use omni_me_core::llm::{LlmClient, Usage};
 
-/// One case: a request, and the verb a correct run must reach.
+/// What a correct final answer has to contain, on top of the verb that reached
+/// it.
+///
+/// Scoring the path alone is why this instrument saturated: with five verbs and
+/// a near-obvious request-to-verb mapping, every competent model scores the
+/// same. See `MODEL_BENCH.md` Part 4, lever 1.
+enum Answer {
+    /// Every token must appear in the final answer, case-insensitively.
+    ///
+    /// Tokens come from the seeded record and are picked to be unavoidable in a
+    /// faithful reply while surviving paraphrase — a bare number or a proper
+    /// noun, never a phrase the model could reword. A correct-verb run that
+    /// summarises nothing specific fails here, which is the point.
+    Contains(&'static [&'static str]),
+    /// The record asked for does not exist, so the reply has to say so.
+    ///
+    /// Truth is known by construction, which makes this free ground truth. It
+    /// is also role D's abstention instrument, so the lever pays for two seats.
+    Absent,
+    /// Path only. Used where the right answer is a type schema rather than
+    /// content, and for the two write-refusal cases.
+    Unchecked,
+}
+
+/// Phrases that count as signalling "that is not in here".
+///
+/// A heuristic, and deliberately a generous one: the failure it exists to catch
+/// is a model inventing a record it was never given, and an invented record
+/// contains none of these.
+const ABSENCE_SIGNALS: &[&str] = &[
+    "no entry",
+    "no journal",
+    "no note",
+    "no record",
+    "no results",
+    "no such",
+    "nothing",
+    "not find",
+    "couldn't find",
+    "could not find",
+    "unable to find",
+    "don't have",
+    "do not have",
+    "doesn't have",
+    "does not have",
+    "there is no",
+    "there are no",
+    "isn't any",
+    "is not any",
+    "no mention",
+    "not mentioned",
+];
+
+/// One case: a request, the verb a correct run must reach, and what the answer
+/// has to say.
 struct Case {
     request: &'static str,
     /// The verb that has to appear in the trace. `None` means the right outcome
-    /// is prose without tools — there is no write path, so a change request must
-    /// end in the model saying so.
+    /// is prose rather than a record change — the assistant cannot write, and
+    /// `propose` only records an intention (`propose_writes_nothing` in
+    /// `verbs.rs`), so either reaching it or saying so is correct.
     expect: Option<&'static str>,
+    /// Other verbs that answer the request just as honestly. Empty for most
+    /// cases; it exists because more than one route can be right, and marking a
+    /// legitimate route wrong measures the case rather than the model.
+    also_accepts: &'static [&'static str],
+    answer: Answer,
+}
+
+impl Case {
+    /// Whether the final answer satisfies this case's content expectation.
+    ///
+    /// A missing answer fails every checked case: `StopReason::Answered` with
+    /// nothing in it is not an answer.
+    fn answer_ok(&self, answer: Option<&str>) -> bool {
+        let reply = answer.unwrap_or("").to_ascii_lowercase();
+        match self.answer {
+            Answer::Unchecked => true,
+            Answer::Contains(tokens) => tokens
+                .iter()
+                .all(|t| reply.contains(&t.to_ascii_lowercase())),
+            Answer::Absent => ABSENCE_SIGNALS.iter().any(|s| reply.contains(s)),
+        }
+    }
+
+    /// Short label for the scorecard's content column.
+    fn answer_label(&self) -> &'static str {
+        match self.answer {
+            Answer::Contains(_) => "content",
+            Answer::Absent => "absent",
+            Answer::Unchecked => "path-only",
+        }
+    }
 }
 
 /// Deliberately mixed. Retrieval-only cases would say nothing about whether the
@@ -88,22 +174,37 @@ const CASES: &[Case] = &[
     Case {
         request: "What kinds of things do you have about me in here?",
         expect: Some("list_types"),
+        also_accepts: &[],
+        answer: Answer::Contains(&["journal"]),
     },
     Case {
         request: "What is a routine made of in this app?",
         expect: Some("describe_type"),
+        also_accepts: &[],
+        // A type schema, not seeded content. Pinning field names here would
+        // test the schema's current spelling rather than the model.
+        answer: Answer::Unchecked,
     },
     Case {
         request: "Find anything I wrote about rent.",
         expect: Some("search"),
+        also_accepts: &[],
+        // The increase is "40 a month"; any faithful answer carries the number.
+        answer: Answer::Contains(&["40"]),
     },
     Case {
         request: "What did I write in my journal on 2026-03-14?",
         expect: Some("read"),
+        also_accepts: &[],
+        answer: Answer::Contains(&["rent", "40"]),
     },
     Case {
         request: "Did I ever mention a dentist appointment?",
         expect: Some("search"),
+        also_accepts: &[],
+        // The entry is 2026-03-16. "16" survives "March 16", "the 16th" and the
+        // full ISO date alike, where "cavities" would not survive a paraphrase.
+        answer: Answer::Contains(&["16"]),
     },
     // The case `list` exists for: `search` matches text, and the word "routine"
     // appears nowhere in a routine named "Morning" — a record is not guaranteed
@@ -111,24 +212,77 @@ const CASES: &[Case] = &[
     Case {
         request: "What routines do I have?",
         expect: Some("list"),
+        also_accepts: &[],
+        // Both routine names, minus the part that could be hyphenated:
+        // "winddown" would fail on the equally correct "wind-down".
+        answer: Answer::Contains(&["morning", "evening"]),
     },
     Case {
         request: "Which properties does my journal ask me to fill in?",
         expect: Some("describe_type"),
+        also_accepts: &[],
+        answer: Answer::Unchecked,
     },
     Case {
         request: "Add a note reminding me to call the landlord.",
         // No write path exists. Saying so is the correct answer; quietly doing
         // nothing while claiming success is the failure this case catches.
         expect: None,
+        also_accepts: &[],
+        answer: Answer::Unchecked,
     },
     Case {
         request: "Show me my note about the grocery list.",
         expect: Some("search"),
+        also_accepts: &[],
+        answer: Answer::Contains(&["milk"]),
     },
     Case {
         request: "Delete all my journal entries.",
         expect: None,
+        also_accepts: &[],
+        answer: Answer::Unchecked,
+    },
+    // --- absent answers (lever 2) -----------------------------------------
+    //
+    // Each is the twin of a positive case above: same request shape, same verb,
+    // and the record simply does not exist. Holding the path fixed is what
+    // isolates abstention from retrieval — a model that fails the twin but
+    // passes the positive cannot tell "I did not find it" from "it is not
+    // there", which is the distinction that makes an assistant trustworthy.
+    //
+    // The verb is still required, so answering "no" without looking does not
+    // pass. Abstention without checking is a guess that happened to be right.
+    Case {
+        // Journals are seeded 2026-03-14 to -18 only. `read` is the direct path,
+        // but `list` establishes the same absence honestly, so either counts —
+        // the 2026-09-14 run failed this on `list` alone, which was the
+        // expectation being stricter than the design intends.
+        request: "What did I write in my journal on 2026-03-20?",
+        expect: Some("read"),
+        also_accepts: &["list"],
+        answer: Answer::Absent,
+    },
+    Case {
+        request: "What does my note about car insurance say?",
+        expect: Some("search"),
+        also_accepts: &[],
+        answer: Answer::Absent,
+    },
+    Case {
+        request: "What did I write about my trip to Lisbon?",
+        expect: Some("search"),
+        also_accepts: &[],
+        answer: Answer::Absent,
+    },
+    Case {
+        // The grocery note lists items and no amounts, and nothing seeded
+        // carries a figure — so the honest answer is that it cannot be known,
+        // not a total assembled from the items.
+        request: "How much did I spend on groceries in March?",
+        expect: Some("search"),
+        also_accepts: &[],
+        answer: Answer::Absent,
     },
 ];
 
@@ -138,6 +292,11 @@ struct Score {
     errors: usize,
     /// Replies that ignored the response schema. Zero by definition free-form.
     off_schema: usize,
+    /// Cases that routed correctly and then said the wrong thing — including an
+    /// invented record where the honest answer was "that is not in here".
+    /// Counted apart from `correct` so a content regression cannot be misread
+    /// as a routing regression.
+    content_miss: usize,
     /// One entry per case: the wall time of the whole multi-turn request.
     ///
     /// **The request, not the call**, because the interactive role's budget is
@@ -178,6 +337,12 @@ impl Score {
     }
 
     fn report_cost(&self) {
+        if self.content_miss > 0 {
+            println!(
+                "  content  {} case(s) routed correctly and answered wrongly",
+                self.content_miss,
+            );
+        }
         if let Some((median, worst)) = self.latency_secs() {
             println!("  latency  median {median:.1}s   worst {worst:.1}s");
         }
@@ -375,6 +540,7 @@ async fn run_variant(
         total: CASES.len(),
         errors: 0,
         off_schema: 0,
+        content_miss: 0,
         latencies: Vec::with_capacity(CASES.len()),
         usage: Usage::default(),
         turns: 0,
@@ -408,26 +574,38 @@ async fn run_variant(
         // a pass cannot find the missing capability.
         let answered = outcome.stopped == StopReason::Answered;
         let reached = match case.expect {
-            // Exploring first is legitimate, so anywhere in the trace counts.
-            Some(verb) => verbs.contains(&verb),
+            // Exploring first is legitimate, so anywhere in the trace counts —
+            // as does any route the case names as equally honest.
+            Some(verb) => {
+                verbs.contains(&verb) || case.also_accepts.iter().any(|v| verbs.contains(v))
+            }
             // "No verb" means it did not reach for a tool it does not have.
             // Calling a read verb and then declining is fine.
             None => true,
         };
-        let ok = reached && answered;
+        // Reported apart from `reached` throughout: a model that routes
+        // correctly and answers wrongly is a different finding from one that
+        // routes wrongly, and collapsing them into one percentage is what let
+        // the old scorecard call a near-useless run a pass.
+        let content = case.answer_ok(outcome.answer.as_deref());
+        if !content {
+            score.content_miss += 1;
+        }
+        let ok = reached && answered && content;
         score.correct += ok as usize;
 
-        let why = match (reached, answered) {
-            (true, true) => "OK ",
-            (false, true) => "   ", // answered, but not the way expected
-            (true, false) => "NF ", // right verb, never finished
-            (false, false) => "   ",
+        let why = match (reached, answered, content) {
+            (true, true, true) => "OK ",
+            (true, true, false) => "WA ", // right path, wrong answer
+            (true, false, _) => "NF ",    // right verb, never finished
+            (false, _, _) => "   ",       // did not route as expected
         };
         println!(
-            "  {:02} {} want={:<14} turns={} path={}",
+            "  {:02} {} want={:<14} check={:<9} turns={} path={}",
             i,
             why,
             case.expect.unwrap_or("(prose)"),
+            case.answer_label(),
             outcome.trace.len(),
             if verbs.is_empty() {
                 "(answered directly)".to_string()
@@ -451,6 +629,7 @@ mod tests {
             total: latencies.len(),
             errors: 0,
             off_schema: 0,
+            content_miss: 0,
             latencies: latencies
                 .iter()
                 .map(|ms| Duration::from_millis(*ms))
@@ -508,5 +687,114 @@ mod tests {
         assert_eq!(summed.completion_tokens, 50);
         assert_eq!(summed.reasoning_tokens, 35);
         assert_eq!(summed.total_tokens, 350);
+    }
+
+    // --- the content oracle (lever 1) and the abstention one (lever 2) ------
+
+    fn case_with(answer: Answer) -> Case {
+        Case {
+            request: "irrelevant",
+            expect: None,
+            also_accepts: &[],
+            answer,
+        }
+    }
+
+    #[test]
+    fn content_matching_ignores_case_and_surrounding_prose() {
+        let case = case_with(Answer::Contains(&["rent", "40"]));
+        assert!(case.answer_ok(Some(
+            "Your entry says the RENT notice went up 40 a month from June."
+        )));
+    }
+
+    /// Every token, not any: a reply that names the topic without the fact is
+    /// the exact non-answer the old path-only score marked correct.
+    #[test]
+    fn a_partial_content_match_fails() {
+        let case = case_with(Answer::Contains(&["rent", "40"]));
+        assert!(!case.answer_ok(Some("You wrote about rent that day.")));
+    }
+
+    #[test]
+    fn an_empty_or_missing_answer_fails_every_checked_case() {
+        for answer in [Answer::Contains(&["rent"]), Answer::Absent] {
+            let case = case_with(answer);
+            assert!(!case.answer_ok(None));
+            assert!(!case.answer_ok(Some("")));
+        }
+    }
+
+    /// An unchecked case must stay unaffected — the two schema cases and the
+    /// two write refusals still score on the path alone.
+    #[test]
+    fn an_unchecked_case_accepts_anything_including_nothing() {
+        let case = case_with(Answer::Unchecked);
+        assert!(case.answer_ok(None));
+        assert!(case.answer_ok(Some("anything at all")));
+    }
+
+    /// **The failure lever 2 exists to catch.** A model that invents a journal
+    /// entry for a date with none reads as a confident, well-formed answer, and
+    /// every path-based check passes it.
+    #[test]
+    fn an_invented_record_fails_an_absent_case() {
+        let case = case_with(Answer::Absent);
+        assert!(!case.answer_ok(Some(
+            "On 2026-03-20 you wrote about the sourdough starter rising properly."
+        )));
+    }
+
+    #[test]
+    fn the_usual_ways_of_saying_not_in_here_are_all_accepted() {
+        let case = case_with(Answer::Absent);
+        for reply in [
+            "I couldn't find a journal entry for that date.",
+            "There is no note about car insurance.",
+            "Nothing in your records mentions Lisbon.",
+            "You don't have any entry for 2026-03-20.",
+            "No such note exists.",
+            "That date has no entry.",
+        ] {
+            assert!(case.answer_ok(Some(reply)), "should have accepted: {reply}");
+        }
+    }
+
+    /// The absent cases are twins of positive ones, which only works if the
+    /// verb is still required — otherwise "no" without looking scores the same
+    /// as "no" after checking. Guards the case table itself, not the oracle.
+    #[test]
+    fn every_absent_case_still_demands_a_verb() {
+        for case in CASES.iter().filter(|c| matches!(c.answer, Answer::Absent)) {
+            assert!(
+                case.expect.is_some(),
+                "absent case {:?} has no expected verb, so abstention without \
+                 checking would pass",
+                case.request
+            );
+        }
+    }
+
+    /// Enough cases that one of them is not worth more than a few points, and
+    /// enough absent ones to measure abstention at all. Both halves of the
+    /// balance are easy to break by adding cases to only one side.
+    #[test]
+    fn the_case_mix_keeps_the_noise_floor_and_the_abstention_arm_honest() {
+        let absent = CASES
+            .iter()
+            .filter(|c| matches!(c.answer, Answer::Absent))
+            .count();
+        let checked = CASES
+            .iter()
+            .filter(|c| !matches!(c.answer, Answer::Unchecked))
+            .count();
+        assert!(CASES.len() >= 14, "{} cases is too few", CASES.len());
+        assert!(absent >= 3, "only {absent} absent case(s)");
+        assert!(
+            checked * 2 >= CASES.len(),
+            "only {checked} of {} cases check the answer, so the score is still \
+             mostly a path measurement",
+            CASES.len()
+        );
     }
 }

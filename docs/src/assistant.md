@@ -115,6 +115,35 @@ could do in one, and it must be able to read a type declaration and work out wha
 it. That is a real tax on every single request, paid deliberately to avoid a surface that
 rots.
 
+## Proving something is absent costs more than finding it **(today)**
+
+A request gets a budget of model calls — ten by default, configurable. It exists because
+there is no terminal verb: the assistant finishes by replying in prose, so a model that keeps
+calling tools would otherwise never stop.
+
+Sizing that budget turned out to be less obvious than it looks. Confirming a record exists
+takes two to four calls: discover the types, search, read the hit, answer. **Establishing that
+a record does not exist took eight.** Watching one run makes the reason plain — asked about a
+note that was never written, the model searched the exact phrase, dropped the type filter,
+searched a broader term, broadened again, listed every note, and finally checked whether the
+thing might be a document rather than a note. Only then did it say it could not find it.
+
+That is not a model flailing. It is what you would do, and stopping earlier would mean
+announcing a negative you had not actually established. But it means a budget sized on the
+common case is *structurally* unable to answer the harder one, and the budget used to sit
+right between the two.
+
+So two things hold now. The budget is ten rather than six, because a ceiling costs nothing on
+the runs that never reach it. And **on the last call, the tools are withheld** and the model
+is told to answer with what it has. That matters more than the number: whatever the budget,
+running out of it used to produce *no reply at all* — you waited through several calls and got
+silence. Now the final call can only produce prose, so the worst case is an answer that says
+what was searched for and did not turn up.
+
+Worth noting what did *not* work. The loop's standing instructions already said "I could not
+find it" is a correct answer, and the model read that on every single turn and kept searching
+anyway. Advice it can act on later is not the same as advice it must act on now.
+
 ## The assistant is a device, not a feature **(today)**
 
 It runs as its own process, with its own database, its own device id, syncing over HTTP
