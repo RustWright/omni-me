@@ -1,6 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
+    http::StatusCode,
     routing::post,
 };
 use serde::Deserialize;
@@ -24,7 +25,7 @@ async fn process_note_handler(
     State(state): State<AppState>,
     Path(note_id): Path<String>,
     Json(body): Json<ProcessNoteRequest>,
-) -> Result<Json<llm::NoteProcessingResult>, String> {
+) -> Result<Json<llm::NoteProcessingResult>, (StatusCode, String)> {
     let event_store = SurrealEventStore::new((*state.db).clone());
 
     let result = llm::process_note(
@@ -35,7 +36,7 @@ async fn process_note_handler(
         &event_store,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(result))
 }

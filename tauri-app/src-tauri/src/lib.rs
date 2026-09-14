@@ -806,6 +806,7 @@ pub fn run() {
             commands::config::set_device_override,
             commands::record_types::get_record_type,
             // Assistant — questions go out as events; the agent answers
+            commands::approvals::pending_approvals,
             commands::assistant::ask_assistant,
             commands::assistant::list_assistant_threads,
             commands::assistant::read_assistant_thread,

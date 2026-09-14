@@ -37,7 +37,19 @@ Four destinations, and the bucket decides:
 - **Restating the code gets deleted.**
 
 Be aggressive on chronicle and in-function narration, conservative on anything that reads as a
-warning. The full sweep is its own session; **new code is written under this convention now**.
+warning.
+
+**Routing was right; length and voice were not** (user, 2026-09-14). Code written under this
+convention came out denser than the baseline it was meant to fix — three new files at 23–51%
+comment lines. Two interim constraints on new code. They are my proposal, not his ruling, and
+the real revision is its own session (`tasks.md`, design-first):
+
+- Three lines per comment. Past that it is documentation, so it goes to `docs/` and leaves a
+  pointer. A trap at the edit site may take a fourth.
+- No warning markers and no bold inside code comments — plain sentences. The markers made
+  length read as diligence. They belong in `NEXT.md` and `tasks.md`, which are scanned.
+
+The codebase-wide sweep waits for that revision rather than applying the old convention harder.
 
 ## Current Project State
 

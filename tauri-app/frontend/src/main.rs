@@ -1,3 +1,4 @@
+mod approvals;
 mod autosave;
 mod bridge;
 mod components;
@@ -32,7 +33,7 @@ use screen_context::{ScreenContext, ScreenReport};
 use sync_refresh::SyncRefresh;
 
 /// Top-level feature tabs. Order matches the nav display order.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Journal,
     Notes,
@@ -106,6 +107,27 @@ pub fn home_tab(features: &types::Features) -> Tab {
         .copied()
         .find(|t| t.visible(features))
         .unwrap_or(Tab::Settings)
+}
+
+/// A page asking the shell to switch tabs.
+///
+/// Exists because a page owns its own views and nothing above them: the
+/// assistant's reminder row names a queue reviewed on *another* tab, and
+/// `active_tab` lives in [`App`]. Threading an `on_switch` handler down through
+/// every page to serve one caller is the alternative, and it puts a nav prop on
+/// pages that never navigate.
+///
+/// ⛔ **A request, not a command.** [`App`] refuses one for a tab this launch is
+/// not rendering, the same way the share intent already does — a page can be
+/// holding a destination that a feature toggle removed.
+#[derive(Clone, Copy)]
+pub struct NavRequest(pub Signal<Option<Tab>>);
+
+/// Ask the shell to switch tabs. No-op outside the app root.
+pub fn request_tab(tab: Tab) {
+    if let Some(NavRequest(mut req)) = try_use_context::<NavRequest>() {
+        req.set(Some(tab));
+    }
 }
 
 /// Bridges each page's in-app nav into the app-wide hardware/gesture-back
@@ -314,6 +336,30 @@ fn App() -> Element {
     let home_of = move || home_tab(&feature_set.read().clone().unwrap_or_default());
 
     let mut active_tab = use_signal(|| Tab::Journal);
+
+    // Pages asking to switch tabs (see `NavRequest`). Cleared as it is consumed,
+    // so the same destination can be requested twice in a row — a user who
+    // navigates away and taps the reminder again expects it to work the second
+    // time.
+    let mut nav_request = use_signal(|| None::<Tab>);
+    use_context_provider(|| NavRequest(nav_request));
+    use_effect(move || {
+        let Some(tab) = *nav_request.read() else {
+            return;
+        };
+        nav_request.set(None);
+        // Refused rather than obeyed when the tab is not rendered this launch —
+        // the same check the share intent makes, for the same reason: switching
+        // to a hidden tab shows an empty shell with no way back to it.
+        if !tab.visible(&feature_set.peek().clone().unwrap_or_default()) {
+            web_sys::console::warn_1(
+                &"nav request for a tab this launch does not render; ignoring".into(),
+            );
+            return;
+        }
+        active_tab.set(tab);
+    });
+
     // Mobile nav drawer open/close (1.11). Desktop uses the persistent SideNav,
     // so this only drives the small-screen slide-in.
     let mut drawer_open = use_signal(|| false);
@@ -446,6 +492,12 @@ fn App() -> Element {
     // `use_sync_epoch`, so they re-fetch automatically when a pull lands.
     let mut sync_epoch = use_signal(|| 0u64);
     use_context_provider(|| SyncRefresh(sync_epoch));
+
+    // What is waiting on the user, for the nav badges and the assistant's
+    // reminder row. ⚠️ Mounted *after* `SyncRefresh` and in the same component,
+    // because it subscribes to that epoch — provided any later and the counts
+    // would load once at boot and then never move.
+    approvals::use_pending_approvals_provider();
 
     // What the open screen is showing, for problem reports. Memory-only and
     // written by whichever page is mounted; read only when the capture modal

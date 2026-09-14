@@ -326,6 +326,29 @@ impl Feature {
             Feature::Documents => "feature.documents",
         }
     }
+
+    /// The inverse of [`Feature::key`].
+    ///
+    /// ⚠️ Derived from `key()` by walking [`ALL_FEATURES`] rather than written as
+    /// a second `match`. The two spellings drifting is exactly the silent failure
+    /// [`Features::from_entries`] warns about, and a reversed pair is the easiest
+    /// version of it to write and the hardest to see.
+    pub fn from_key(key: &str) -> Option<Feature> {
+        ALL_FEATURES.iter().copied().find(|f| f.key() == key)
+    }
+}
+
+/// One review surface with something waiting on it.
+///
+/// Mirrors `omni_me_core::approvals::PendingApprovals`. ⚠️ `reviewed_at` is a
+/// **string**, not an enum: core sends a feature as its config key
+/// (`feature.documents`) or the literal `assistant_inbox`, and an unrecognised
+/// value must mean "a surface this build does not know", which
+/// [`crate::approvals::tab_of`] turns into no badge rather than a panic.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct PendingApprovals {
+    pub reviewed_at: String,
+    pub count: usize,
 }
 
 /// The features that are on, read once at boot.

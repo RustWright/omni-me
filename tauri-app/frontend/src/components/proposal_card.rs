@@ -10,6 +10,7 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::primitives::{Button, ButtonSize, ButtonVariant};
+use crate::sync_refresh::{bump_sync_epoch, use_sync_epoch};
 use crate::types::AssistantProposal;
 
 /// One proposal, with the two buttons that settle it.
@@ -36,12 +37,18 @@ pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -
     // captured `String` moves into the first one.
     let id = use_signal(|| proposal.proposal_id.clone());
 
+    // Taken here, used inside `submit` after the await. Deciding a proposal
+    // shrinks a queue that the nav badges and the assistant's reminder row both
+    // count, and neither of them is this component — see `bump_sync_epoch`.
+    let sync_epoch = use_sync_epoch();
+
     // A free function rather than a closure: `Signal::set` needs `&mut`, so a
     // closure holding these would be `FnMut` and could not serve both buttons.
     // Signals and `EventHandler` are `Copy`, so passing them costs nothing.
     fn submit(
         mut busy: Signal<bool>,
         mut error_msg: Signal<Option<String>>,
+        sync_epoch: Signal<u64>,
         id: String,
         approve: bool,
         on_decided: EventHandler<()>,
@@ -51,6 +58,7 @@ pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -
             match bridge::invoke_decide_assistant_proposal(&id, approve, None).await {
                 Ok(_) => {
                     error_msg.set(None);
+                    bump_sync_epoch(sync_epoch);
                     on_decided.call(());
                 }
                 Err(e) => error_msg.set(Some(e)),
@@ -116,14 +124,14 @@ pub fn ProposalCard(proposal: AssistantProposal, on_decided: EventHandler<()>) -
                         variant: ButtonVariant::Primary,
                         size: ButtonSize::Sm,
                         disabled: *busy.read(),
-                        onclick: move |_| submit(busy, error_msg, id.read().clone(), true, on_decided),
+                        onclick: move |_| submit(busy, error_msg, sync_epoch, id.read().clone(), true, on_decided),
                         "Accept"
                     }
                     Button {
                         variant: ButtonVariant::Ghost,
                         size: ButtonSize::Sm,
                         disabled: *busy.read(),
-                        onclick: move |_| submit(busy, error_msg, id.read().clone(), false, on_decided),
+                        onclick: move |_| submit(busy, error_msg, sync_epoch, id.read().clone(), false, on_decided),
                         "Decline"
                     }
                 }

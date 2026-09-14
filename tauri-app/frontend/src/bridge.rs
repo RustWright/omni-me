@@ -4623,6 +4623,54 @@ pub async fn invoke_read_assistant_thread(
     }
 }
 
+/// Every review surface with something waiting on it, for the nav badges and the
+/// assistant's reminder row.
+///
+/// ⛔ Spans features, so unlike its neighbours it is not one feature's read. The
+/// gating is inside `core::approvals::summary`: a switched-off feature omits its
+/// entry, and the command returns a shorter list rather than refusing — refusing
+/// would take every other feature's badge down with it.
+pub async fn invoke_pending_approvals() -> Result<Vec<crate::types::PendingApprovals>, String> {
+    #[cfg(feature = "mock")]
+    {
+        // Three surfaces, so a sweep sees a badge on a tab the assistant owns,
+        // one it does not, and the domain-reviewed one.
+        //
+        // ⚠️ **The two proposal counts come from the mock's own stores, not from
+        // constants.** `pending_proposals` shrinks when a card is decided, which
+        // is what makes the epoch-bump path observable in the browser at all: a
+        // hardcoded number refetches to the same value and proves nothing.
+        // ⛔ The document count has no such store and stays fixed — so a *cleared*
+        // document queue cannot be demonstrated here and rides the real backend.
+        Ok(vec![
+            crate::types::PendingApprovals {
+                reviewed_at: "assistant_inbox".into(),
+                count: mock_assistant::pending_proposals().len(),
+            },
+            crate::types::PendingApprovals {
+                reviewed_at: "feature.finances".into(),
+                count: mock_assistant::finance_proposals()
+                    .iter()
+                    .filter(|p| p.is_pending())
+                    .count(),
+            },
+            crate::types::PendingApprovals {
+                reviewed_at: "feature.documents".into(),
+                count: 3,
+            },
+        ]
+        .into_iter()
+        .filter(|entry| entry.count > 0)
+        .collect())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("pending_approvals", &Args {}).await
+    }
+}
+
 /// Everything the assistant has offered to do and the user has not decided.
 pub async fn invoke_list_assistant_proposals()
 -> Result<Vec<crate::types::AssistantProposal>, String> {

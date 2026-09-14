@@ -20,6 +20,7 @@
 //! structured payload for those specific commands rather than converting all of
 //! them.
 
+pub mod approvals;
 pub mod assistant;
 pub mod attachments;
 pub mod auto_import;

@@ -2725,7 +2725,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
     // it is a signal local to `LedgerView`, unreachable from the review inbox.
     // Bumping the app-wide epoch instead fixes the whole class in one place,
     // since every read view already subscribes to it.
-    let mut sync_epoch = crate::sync_refresh::use_sync_epoch();
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
 
     use_effect(move || {
         let id = batch_id_for_resource.clone();
@@ -2882,8 +2882,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                             // Before `on_done`, which unmounts this view:
                                             // tell every subscribed read view that the
                                             // ledger changed underneath it.
-                                            let next = sync_epoch.peek().wrapping_add(1);
-                                            sync_epoch.set(next);
+                                            crate::sync_refresh::bump_sync_epoch(sync_epoch);
                                             on_done.call(())
                                         }
                                         Err(e) => feedback.set(Some(format!("Commit failed: {e}"))),

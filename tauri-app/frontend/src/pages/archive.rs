@@ -512,6 +512,10 @@ fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()
     let mut draft = use_signal(|| field.value.clone());
     let mut error: Signal<Option<String>> = use_signal(|| None);
     let mut saving = use_signal(|| false);
+    // A correction lands `verified: true`, which drops this document out of the
+    // unverified count the nav badge and the assistant's reminder row both read.
+    // Neither is this component, so neither learns without the nudge.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
 
     let field_for_save = field.clone();
     let id_for_save = document_id.clone();
@@ -528,6 +532,7 @@ fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()
                 Ok(()) => {
                     editing.set(false);
                     error.set(None);
+                    crate::sync_refresh::bump_sync_epoch(sync_epoch);
                     on_saved.call(());
                 }
                 Err(e) => error.set(Some(e)),

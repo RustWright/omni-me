@@ -11,7 +11,9 @@
 
 use dioxus::prelude::*;
 
+use crate::Tab;
 use crate::bridge;
+use crate::components::nav::{ALL_TABS, tab_label};
 use crate::components::primitives::{
     Banner, BannerKind, Button, ButtonSize, ButtonVariant, PageHeader,
 };
@@ -153,6 +155,8 @@ fn ThreadList(
                 }
             }
 
+            ApprovalsElsewhere {}
+
             div { class: "px-4 pt-2",
                 button {
                     class: "text-obsidian-text-muted text-xs underline cursor-pointer bg-transparent border-0 p-0",
@@ -195,6 +199,63 @@ fn ThreadList(
                         }
                     });
                 },
+            }
+        }
+    }
+}
+
+/// Queues waiting on the user **somewhere other than this screen**, with a tap
+/// that goes there.
+///
+/// This is the half of "notify and route" the nav badges cannot do. A badge is
+/// visible while the user is moving between tabs; someone who opens the app,
+/// asks the assistant something and closes it again never looks at the nav, and
+/// for them an approval queue on another tab is invisible indefinitely.
+///
+/// ⛔ **Excludes the assistant's own inbox**, which the suggestions banner above
+/// already shows. Two rows for one queue, each with its own count, is a
+/// disagreement waiting to happen — and the banner is the one that can open the
+/// inbox without leaving the screen.
+///
+/// ⚠️ Renders nothing when there is nothing waiting, rather than an
+/// all-clear line: a permanent row on the assistant's landing screen costs
+/// attention every visit and pays it back only occasionally.
+#[component]
+fn ApprovalsElsewhere() -> Element {
+    let approvals = crate::approvals::use_pending_approvals();
+
+    let mut rows: Vec<(Tab, usize)> = approvals
+        .iter()
+        .filter_map(|entry| {
+            let tab = crate::approvals::tab_of(&entry.reviewed_at)?;
+            (tab != Tab::Assistant).then_some((tab, entry.count))
+        })
+        .collect();
+    // Stable order regardless of the order core happened to count them in, so a
+    // refresh does not reshuffle rows under a finger already reaching for one.
+    rows.sort_by_key(|(tab, _)| ALL_TABS.iter().position(|t| t == tab).unwrap_or(usize::MAX));
+
+    if rows.is_empty() {
+        return rsx! {};
+    }
+
+    rsx! {
+        div { class: "mx-4 mt-2 flex flex-col gap-1",
+            for (tab, count) in rows {
+                div {
+                    key: "{tab_label(tab)}",
+                    class: "px-3 py-2 rounded-md bg-obsidian-border/5 border border-obsidian-border/10 \
+                            cursor-pointer hover:bg-obsidian-border/10 flex items-center justify-between gap-2",
+                    onclick: move |_| crate::request_tab(tab),
+                    div { class: "text-obsidian-text text-sm",
+                        if count == 1 {
+                            "1 item waiting in {tab_label(tab)}"
+                        } else {
+                            "{count} items waiting in {tab_label(tab)}"
+                        }
+                    }
+                    span { class: "text-obsidian-accent text-xs font-medium", "Open" }
+                }
             }
         }
     }

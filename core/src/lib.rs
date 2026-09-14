@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod approvals;
 pub mod archive;
 pub mod assistant;
 pub mod auto_close;

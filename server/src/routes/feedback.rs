@@ -17,7 +17,7 @@
 use axum::{
     Json, Router,
     extract::{Query, State},
-    http::header,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -47,14 +47,19 @@ pub fn feedback_routes() -> Router<AppState> {
     Router::new().route("/feedback", get(list_handler))
 }
 
+/// ⚠️ **The error type must carry a `StatusCode`.** `Err(String)` is an axum
+/// `IntoResponse` that answers **`200 OK` with a plain-text body**, so a failed
+/// query reached the caller as a success with no reports in it — indistinguishable
+/// from a quiet week. That is how a broken query went unnoticed for two months:
+/// nothing was silent about it except the status line.
 async fn list_handler(
     State(state): State<AppState>,
     Query(q): Query<FeedbackQuery>,
-) -> Result<Response, String> {
+) -> Result<Response, (StatusCode, String)> {
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
     let (reports, skipped) = queries::list_feedback(&state.db, q.since.as_deref(), limit)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if q.format.as_deref() == Some("json") {
         return Ok(Json(reports).into_response());

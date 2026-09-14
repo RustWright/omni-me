@@ -21,6 +21,22 @@ use crate::routines::CompletionRecord;
 /// re-sent on each subsequent turn of the loop.
 const SNIPPET_CHARS: usize = 240;
 
+/// How much of one text column `read` may return.
+///
+/// ⛔ **A bare cap would be a different bug, not a fix.** `read` is the verb that
+/// means "you now have this record", so a body cut in silence leaves the model
+/// answering about a document it believes it saw whole — and a confident wrong
+/// answer drawn from two thirds of a tax notice is worse than no answer. Every
+/// cut is therefore stated twice: inline, where the model is reading, and in
+/// [`FullRecord::truncated`], where a caller can assert on it.
+///
+/// 12,000 characters is ≈3,000 tokens, and the multi-turn loop re-sends every
+/// record it has read on each later turn. It clears every human-authored record
+/// in this app by a wide margin — journal entries and notes run hundreds to low
+/// thousands of characters — and binds only the case it was written for: a
+/// document's machine-extracted text layer, where a 40-page scan is one row.
+const READ_BODY_CHARS: usize = 12_000;
+
 /// Markers `search::highlight` wraps around matched terms.
 ///
 /// ⚠️ **Internal only — they never reach the model.** `search::highlight` marks up
@@ -79,6 +95,22 @@ pub struct FullRecord {
     /// usable. See [`DerivedView`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub derived: Option<Value>,
+    /// Text columns cut to [`READ_BODY_CHARS`]. Omitted entirely when nothing was
+    /// cut, so its presence alone answers "did I see all of this?".
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub truncated: Vec<Truncation>,
+}
+
+/// One text column `read` had to cut, and by how much.
+///
+/// Both counts are reported rather than a bare flag: "12,000 of 14,000" and
+/// "12,000 of 400,000" call for different next moves, and only the model can
+/// judge which.
+#[derive(Debug, Clone, Serialize)]
+pub struct Truncation {
+    pub field: String,
+    pub returned_chars: usize,
+    pub total_chars: usize,
 }
 
 /// `SurrealValue`, not serde's `Deserialize`: SurrealDB v3 decodes rows through
@@ -514,6 +546,10 @@ pub async fn read(
     // answer rather than here. Stripping afterwards keeps the two independent.
     hide_fields(&mut fields, entry.hidden_fields);
 
+    // ⚠️ After hiding, never before: capping a column that is about to be removed
+    // would report a cut the caller never receives.
+    let truncated = cap_text_fields(&mut fields, entry.text_fields);
+
     let mut children = serde_json::Map::new();
     for child in entry.children {
         let mut rows = fetch_children(db, child, id).await?;
@@ -532,7 +568,44 @@ pub async fn read(
         fields,
         children,
         derived,
+        truncated,
     }))
+}
+
+/// Cut declared text columns to [`READ_BODY_CHARS`], stating each cut in the text
+/// itself as well as returning it.
+///
+/// **Only `text_fields` are touched.** They are the columns a catalog entry
+/// declares to hold prose, which makes them both the ones that can be large and
+/// the ones a model can get back to with `search` — every other column is a
+/// scalar the row would be wrong without.
+fn cap_text_fields(fields: &mut Value, text_fields: &[&str]) -> Vec<Truncation> {
+    let mut cuts = Vec::new();
+    for name in text_fields {
+        let Some(body) = fields
+            .get(*name)
+            .and_then(|v| v.as_str())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let total_chars = body.chars().count();
+        if total_chars <= READ_BODY_CHARS {
+            continue;
+        }
+        let kept: String = body.chars().take(READ_BODY_CHARS).collect();
+        fields[*name] = Value::String(format!(
+            "{kept}\n\n[TRUNCATED: {READ_BODY_CHARS} of {total_chars} characters shown. \
+             The rest of this field was not returned. Search this record type for a \
+             term to get the passage around it.]"
+        ));
+        cuts.push(Truncation {
+            field: (*name).to_string(),
+            returned_chars: READ_BODY_CHARS,
+            total_chars,
+        });
+    }
+    cuts
 }
 
 /// Compute a declared [`DerivedView`] from the child rows already fetched.
@@ -1278,6 +1351,77 @@ mod tests {
             rec.fields.get("text").is_some(),
             "hiding went too far — the text is the document: {:?}",
             rec.fields
+        );
+    }
+
+    /// ⛔ **The unstated cut is the bug, not the cap itself.** `read` is the verb
+    /// that means "you have this record now", so a 40-page scan handed back two
+    /// thirds complete with nothing saying so turns a retrieval limit into a
+    /// confidently wrong answer.
+    ///
+    /// Multi-byte body on purpose: the cut counts characters, and naive byte
+    /// slicing would panic here rather than mis-count.
+    #[tokio::test]
+    async fn read_states_the_cut_when_a_body_is_longer_than_the_cap() {
+        let db = test_db().await;
+        let overshoot = 5_000;
+        let body = "é".repeat(READ_BODY_CHARS + overshoot);
+        seed_document(
+            &db,
+            "01JKDOC0000000000000000003",
+            "long.pdf",
+            Some(&body),
+            None,
+        )
+        .await;
+
+        let rec = read(&db, entry("document"), "01JKDOC0000000000000000003")
+            .await
+            .unwrap()
+            .unwrap();
+
+        let text = rec.fields["text"].as_str().unwrap();
+        assert!(
+            text.contains("[TRUNCATED:"),
+            "the cut is not stated where the model reads"
+        );
+        assert!(
+            text.chars().count() < READ_BODY_CHARS + 400,
+            "kept far more than the cap: {} chars",
+            text.chars().count()
+        );
+
+        assert_eq!(rec.truncated.len(), 1, "{:?}", rec.truncated);
+        assert_eq!(rec.truncated[0].field, "text");
+        assert_eq!(rec.truncated[0].returned_chars, READ_BODY_CHARS);
+        assert_eq!(rec.truncated[0].total_chars, READ_BODY_CHARS + overshoot);
+    }
+
+    /// The cap must stay invisible to everything it was not written for. A note
+    /// that came back carrying a truncation notice would teach the model to
+    /// doubt bodies it did receive whole, which costs more than the cap saves.
+    #[tokio::test]
+    async fn read_leaves_a_body_under_the_cap_untouched() {
+        let db = test_db().await;
+        seed_document(
+            &db,
+            "01JKDOC0000000000000000004",
+            "short.pdf",
+            Some("A short notice."),
+            None,
+        )
+        .await;
+
+        let rec = read(&db, entry("document"), "01JKDOC0000000000000000004")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(rec.fields["text"].as_str().unwrap(), "A short notice.");
+        assert!(
+            rec.truncated.is_empty(),
+            "reported a cut that did not happen: {:?}",
+            rec.truncated
         );
     }
 

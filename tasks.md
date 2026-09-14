@@ -872,6 +872,34 @@ other way round.
 - [ ] **Trailing, no deadline.** Preset picker UI, extra presets, record-type export/import;
   the small constants now that there is somewhere to put them (`FORCE_GENERIC_DIRS`, vault
   naming, routine frequency bounds); user-facing setup + customization guides in the mdbook.
+- [ ] **Tab order should be configurable without a recompile** (user, 2026-09-14). ⛔ **Not
+  urgent and deliberately kept out of `NEXT.md`** — his framing was "at some point it would be
+  ideal", raised because the tab count keeps growing (seven now, and Archive and Assistant both
+  arrived this cycle). Squarely this item's thesis: a hardcoded order is the user's own
+  preference baked into a system meant to be run by other people.
+
+  **What it touches, established 2026-09-14 while building the nav badges — do not re-survey:**
+  - `components::nav::ALL_TABS` is a `const &[Tab]` and is the **single** order for the side
+    nav, the mobile drawer, and now the badge sort in `ApprovalsElsewhere`. One list to make
+    dynamic, not three.
+  - 🔴 **Order is load-bearing beyond display.** `home_tab()` returns *the first visible tab in
+    nav order*, so reordering changes where the app opens. `ALL_TABS`' own comment already flags
+    this about `Tab::Assistant`: it sits last only because promoting it would silently move
+    everyone's landing screen, "a separate decision from whether the tab exists". ⛔ Making
+    order configurable therefore hands the user that second decision by accident unless landing
+    gets its own key. Decide the two together.
+  - The config machinery is already there and this is a natural fit: a `ConfigKey` holding an
+    ordered list of tab keys. ⚠️ `Tab::as_key`/`from_key` already exist as the **stable**
+    persistence spelling, deliberately separate from the display label — so the stored value
+    should be those keys, and an unknown one must be *skipped*, not fatal.
+  - ⚠️ **Unlike every feature key, this one can and should `applies_immediately`.** Feature
+    toggles are `false` because projections and schedulers are chosen at boot; tab order is pure
+    presentation with nothing behind it. ⛔ Do not copy the feature-key precedent here.
+  - **Open question, his to answer:** global or device-layer? Phone and desktop plausibly want
+    different orders, and the device layer exists precisely for what should not sync.
+  - ⚠️ Any tab missing from a stored order needs a defined fate (append in default order is the
+    obvious answer) or a newly-shipped tab becomes invisible to everyone who ever reordered —
+    the silent class this repo keeps meeting. [M]
 
 ---
 
@@ -987,17 +1015,80 @@ link. **Phase 1 (event types, `DocumentsProjection`, `Feature::Documents`) is bu
 
 **Phases 1–5 are built as of 2026-09-12** — ingest with parser fields, the archive page and
 its viewers, email → 1 + N documents, draft → archived-email linking, and the assistant
-catalogue entry. ⛔ **One named piece of Phase 5 is NOT built and is blocked on decisions
-rather than typing: "the assistant notifies and routes"** — the `"3 auto-imported receipts are
-waiting" + deep link` item recorded further up this file. Two things stand in the way.
-- **"Needs review" cannot be expressed as a query.** `verified` lives inside the `fields`
-  array rather than as a column, so no `FilterField` can reach it. Hoisting a count is the
-  obvious fix and has precedent — `kind`, `title` and `document_date` are already hoisted out
-  of `fields` for exactly this reason.
-- **There is no deep-link mechanism in the codebase at all.** The phrase appears in this file
-  and nowhere in the source. Whatever it becomes, ⛔ approval still lives on the archive page.
+catalogue entry. ✅ **Phase 5 is COMPLETE as of 2026-09-14** — "the assistant notifies and
+routes" is built, and the user widened it from documents to **every approval queue on every
+feature** (2026-09-14): *"this isn't limited to archive… since I'm likely to be switching
+between tabs I should see the pending actions, but if I have a long stretch where all I do is
+open and close the app with only the assistant window open, it should be able to remind and
+directly redirect me to my pending approvals."* So **two surfaces, one count**:
+- ✅ **`core/src/approvals.rs` — `summary()`**, the single source. Counts four queues today:
+  assistant proposals, finance proposals, `pending_auto_import_batches`, and documents holding
+  an unverified field. ⛔ Routing is **read from `inbox::DOMAIN_REVIEWED`**, never restated — a
+  second copy drifts into a badge pointing at a screen that does not list the item. ⚠️ Two
+  queues on one screen merge into **one** entry; two badges on a tab would be a UI bug
+  expressed in the data.
+- ⚠️ **Takes the boot feature snapshot (`EventWriter::features()`), not live `ResolvedConfig`.**
+  Tabs are decided at startup, so a badge computed off the live config disagrees with what is
+  on screen for the whole window between a toggle and the next relaunch.
+- ✅ **Nav badges** (`NavBadge`, both navs) + ✅ **`ApprovalsElsewhere`** on the assistant's
+  landing screen, which lists only queues reviewed on *other* tabs — the suggestions banner
+  above it already owns the assistant's own inbox, and two rows for one queue is a
+  disagreement waiting to happen.
+- ✅ **`NavRequest` / `request_tab`** is the routing mechanism, deliberately small: a page asks
+  the shell to switch tabs, and ⛔ **the shell refuses a tab this launch does not render** —
+  the same check the share intent already makes.
+- 🔴 **CORRECTION to the entry this replaces: "needs review cannot be expressed as a query" was
+  WRONG.** True of the catalogue's `FilterField` mechanism, false of SQL —
+  `WHERE fields[WHERE verified = false] != []` works today, verified against a real engine.
+  ⛔ **So no hoisted column and no projection version bump were needed**, which is what kept
+  this out of migration territory. ⚠️ The *model-facing* filter is still unexpressible and
+  still open; that is a different claim about a different mechanism.
+- ⛔ **No deep-link protocol was invented.** A `Feature` is the whole destination —
+  `Tab::feature()` already maps every tab to its feature, so naming the feature names the
+  screen. A feature crosses IPC as its **config key** (`feature.documents`), the spelling both
+  sides already share, because a second wire name for a feature fails *silently*: an
+  unrecognised one falls back to *on*.
+- ⛔ Approval itself still lives on the domain screen. A badge routes; it never decides.
+- 🔴 **Defect found and fixed the same day, by the user asking how refresh works.** The badge
+  refetches on a sync-epoch bump, and there was **one** bump site: the `sync:applied` listener.
+  ⚠️ `PullEvent::Applied` fires **only when `pulled > 0`** (`core/src/sync/puller.rs`) — an empty
+  poll sends `Idle`, which nothing listens to. So the epoch does not tick on a timer; it ticks
+  when *another device's* change lands. A queue cleared **locally** therefore never refreshed
+  anything: correct all three unverified documents and the Archive badge keeps saying 3,
+  indefinitely on a single idle device — precisely the usage pattern (Android, days without a
+  restart, tab switching only) that the badges are for.
+  ✅ Fixed with `sync_refresh::bump_sync_epoch`, now the one named way to do it, called from
+  **three** sites: the import-batch commit (which had open-coded it), `ProposalCard`'s decide,
+  and the archive's field correction. ⚠️ A queue that *grows* remotely still waits on the ~20s
+  poll — pre-existing sync latency, already logged under "Finances", not something badges add.
+- ✅ **Browser pass 2026-09-14** (`dx serve --features mock`, Playwright, 1280 and 390):
+  badge renders on the Archive row at both sizes (side nav and mobile drawer), the assistant's
+  reminder row reads "3 items waiting in Archive", tapping it lands on the Archive page,
+  **0 console errors and 0 warnings**. ✅ **The epoch bump is confirmed live**: with two mock
+  proposals pending, accepting one made the Assistant badge appear as "1" with no reload and no
+  navigation — the refetch fired from the decision itself.
+  ⛔ **Still not shown, and not showable in the browser:** a *cleared* document queue. The mock's
+  document count is a constant, so the Archive badge cannot be watched going down; that rides
+  the real backend. ⚠️ Also a mock artifact, not a defect: nothing bumps the epoch in mock (no
+  backend ⇒ no `sync:applied`), so a queue that *grows* looks stale there. In production growth
+  arrives by pull, which bumps. ⛔ Worth confirming on the real backend that no **local** path
+  creates an unverified document without a bump.
+- ⚠️ **`--all-targets` is missing from the frontend clippy gate**, in CI (`ci.yml:318`, `:322`)
+  and in `UI_WORKFLOW.md`. Without it clippy never builds the test target: a missing `Debug`
+  bound on `Tab` passed clippy and failed `cargo test` this session. ⛔ Adding it is **not** a
+  free win — `--all-targets --features mock` currently fails on a **pre-existing** unfulfilled
+  `expect(dead_code)` at `diagnostics.rs:172`, which is a real decision (`expect` is stricter
+  than `allow` and was chosen deliberately). Raise it; do not quietly flip the attribute. [XS]
 
-Also open, found while building Phase 5: **`store::read` truncates nothing.** `search` and
+~~Also open, found while building Phase 5: **`store::read` truncates nothing.**~~ **RESOLVED
+2026-09-14.** `READ_BODY_CHARS = 12_000` caps each declared `text_field`, and ⛔ **the cut is
+stated twice** — inline in the text where the model is reading, and as `FullRecord::truncated`
+(field, returned, total) where a caller can assert on it. Both counts, not a flag: "12,000 of
+14,000" and "12,000 of 400,000" call for different next moves. The cap is applied **after**
+`hide_fields`, or it would report a cut the caller never receives. ⚠️ 12,000 chars ≈ 3,000
+tokens and the loop re-sends every record read on each later turn; it clears every
+human-authored record in the app by a wide margin and binds only the case it was written for.
+Original entry follows. `search` and
 `list` cut bodies to `SNIPPET_CHARS`, but `read` returns the whole row. That was harmless while
 every catalogued type held human-written text; a document's text is machine-extracted from an
 arbitrary PDF, so reading a 40-page scan hands the model all of it. ⛔ Not a one-line cap: a
@@ -1241,6 +1332,67 @@ This was needed because **pausing does not survive a restart**, which had gone u
 
 ---
 
+## Handover prerequisites — before autonomous dev-server and on-device testing
+
+**Folded in from `HANDOVER.md` 2026-09-14 and that file deleted.** ⛔ It was a third handoff
+document beside `NEXT.md` and this one, which is the drift both already suffer from; the user
+called it (2026-09-14). **Decisions live in `NEXT.md`, inventory lives here.**
+
+⚠️ Verify every line against live state before acting on it. Checked 2026-09-13 unless noted.
+
+**Already possible, no help needed.**
+- Full gate suite — `cargo fmt` (both workspaces), clippy ×4, backend tests, frontend tests.
+  ⚠️ `source scripts/fetch-onnxruntime.sh` first, **after** a leading `cd` into the repo.
+- Browser UI iteration — `dx serve --platform web --features mock --port 8080` + Playwright MCP.
+  See `UI_WORKFLOW.md`.
+- APK builds — `tauri-app/scripts/android-build.sh`. ⛔ Never `cargo tauri build` directly: it
+  embeds whatever the debug dir last held, which is how a mock-data APK once shipped.
+- A second server instance — `OMNI_LISTEN_ADDR` overrides the port (added 2026-09-13); `DB_PATH`
+  and `BLOB_DIR` were already relative, so the working directory is the isolation boundary.
+  Seeding starts from `scripts/seed-bench-hub.py`.
+- ⚠️ `adb` exists at `~/android-sdk/platform-tools/adb`, **not on `PATH`** — call it by full
+  path rather than concluding the toolchain is missing.
+
+**Needs the user's hands.**
+- [ ] 🔴 **An Android device reachable over adb.** `adb devices` is empty; authorising USB
+  debugging is a prompt **on the phone** and ⛔ no host-side work substitutes. Wanted once: the
+  throwaway dev phone connected, unlocked, USB debugging on, this host authorised — then ideally
+  `adb tcpip 5555`, so the link survives unplugging and reconnects across sessions. ⚠️ Screen
+  lock interrupts an unattended run; set a long timeout or stay-awake-while-charging **on the
+  dev device only**. [USER]
+- [ ] **Where the dev sync server runs.** Locally is end-to-end doable today and is the
+  recommendation until a test genuinely needs two devices talking. On the box beside the live
+  server needs a second unit file in a second directory and a private workflow dispatch;
+  ⛔ whether the credentials are available is unverified — **do not test it by attempting a
+  deploy.** [USER]
+- [ ] **Real data, staged.** Deferred and batched with the on-device pass — ⛔ not to be raised
+  as a blocker before then. Recorded so the eventual ask is not a surprise: the finance corpus
+  needs staging somewhere readable, and ⛔ the user has said he will not point the app at his
+  live data for a first test. [USER]
+
+**Explicitly NOT wanted.**
+- ⛔ **IMAP credentials.** `OMNI_ENABLE_IMAP` stays off and is never flipped without him.
+  Enabling it today would archive all mail with drafting still on the old hardcoded sender
+  patterns and no purge path.
+
+**Decisions.**
+- [x] ✅ **Blast radius — ANSWERED 2026-09-14, and the shape of the answer is load-bearing.** A
+  **conditional** grant, not a blanket one: *"if nothing is deleting my live production data on
+  the sync server or my actual phone, then you have the freedom to delete and modify and test to
+  your hearts content."* Inside the isolated environment — throwaway device, separate dev server
+  — wiping, reseeding, reinstalling and destructive testing need no further permission.
+  ⛔ **The grant does not transfer**: the live box and his real phone are outside it, always.
+  ⚠️ **This makes isolation a design task owed before the handover**, in his words *"eliminate
+  as much of the risk from testing as we can… with minimal egress risk that affects functioning
+  of the live app"* — a config that merely *happens* to point elsewhere is not enough; pointing
+  at production must be hard to do by accident.
+- [ ] ⚠️ **Failure policy — still open.** On a test that fails in a way needing a decision, does
+  Claude stop and wait, or take the reading that keeps the run going and report it? The second
+  gets more done overnight and is the reason the autonomy is wanted; it is also how a wrong
+  assumption compounds for six hours. [USER]
+
+---
+
 ## Open — from daily use
 
 ### The server writes events with no feature gate (found 2026-09-11)
@@ -1384,8 +1536,24 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   path logged and the dropped-IPC diagnosis had to be *inferred*; that line makes it observable.
   Housekeeping: 1.1.1 introduced a duplicate `sleep_ms` in `bridge.rs` — removed, now uses the
   pre-existing `crate::timer::sleep_ms`.
-- [ ] **`GET /feedback` is broken — the read side of feedback capture has never worked against
-  real data.** Found 2026-09-07. The endpoint returns a SurrealDB parse error:
+- [x] **`GET /feedback` is broken — the read side of feedback capture has never worked against
+  real data.** **FIXED 2026-09-14, both halves, with the first real-DB tests this query has
+  ever had** (`list_feedback_*` in `core/src/db/queries.rs`).
+  - ⚠️ **The obvious fix was worse than the bug.** `ORDER BY ts` satisfies the engine and then
+    sorts the *string*: `…00Z` ranks above `…00.5Z` because `Z` (0x5A) > `.` (0x2E), so a
+    fractional second silently transposes two reports. Re-selecting the bare column as
+    `timestamp` does not help either — the engine resolves the `ORDER BY` idiom to the **cast**
+    projection. The ordering column needs a name of its own, hence `timestamp AS sort_ts`.
+    The test carries a `.5Z` row precisely because three whole seconds would have passed.
+  - ⚠️ **`Err(String)` from an axum handler is `200 OK` with a text/plain body.** Handlers now
+    return `(StatusCode, String)`. `notes.rs::process_note_handler` had the identical defect and
+    was fixed with it; `routes/mod.rs::no_route_handler_fails_with_a_bare_string` now scans the
+    routes dir so the class cannot return, and has its own test proving it fires on the
+    signature that shipped broken. `documents::store_blob` keeps `String` — it takes `&AppState`,
+    not the extractor, so it is a helper and its caller converts.
+  - ⛔ **Still unverified: against the live box.** The fix is proven against a real embedded
+    SurrealDB, not against the box's data. Original entry follows. Found 2026-09-07. The
+    endpoint returns a SurrealDB parse error:
   *"Missing order idiom `timestamp` in statement selection"* — the query is
   `SELECT meta::id(id) AS eid, device_id, … WHERE event_type = 'feedback_captured' ORDER BY
   timestamp DESC LIMIT $limit`, and SurrealDB requires an `ORDER BY` field to appear in the
@@ -1568,6 +1736,32 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   overlay's `app-release.yml`.
 
 ### Deferred, with a design call attached
+
+- [ ] 🔴 **Comments: the user still dislikes how they are being used** (user, 2026-09-14, and the
+  word was *"still"*). ⛔ **Do not open this as "run the sweep `CLAUDE.md` already describes"
+  until the fork below is settled** — the two readings call for opposite work, and picking wrong
+  wastes the session.
+
+  ✅ **FORK ANSWERED (user, 2026-09-14): both the convention as practised AND its markup** —
+  not the pre-convention backlog. So ⛔ **the sweep is the wrong first move**; the convention is
+  revised first, and new code changes style immediately (interim constraints now in `CLAUDE.md`:
+  three lines per comment, no markers or bold inside code comments).
+  ⚠️ **What he did NOT say is wrong: the routing.** The four destinations and the delete-the-line
+  test survive; length and voice are what failed.
+
+  **Measured 2026-09-14, and it points at (b).** Comment lines as a share of source:
+  `core/src` 19% · `server/src` 24% · `frontend/src` 16% · `src-tauri/src` 20% — against the
+  15–22% that `CLAUDE.md` already called *too high*. 🔴 **The three files written fresh that day,
+  under the convention, are worse than the baseline they were meant to improve:**
+  `core/src/approvals.rs` 27%, `frontend/src/approvals.rs` 23%,
+  `src-tauri/src/commands/approvals.rs` **51%**. ⚠️ The convention says what a comment must
+  *justify* and where it must *live*; it sets no ceiling on length, and the ⚠️/⛔ markers make a
+  long justification read as diligence. That is a plausible root cause and ⛔ **not a confirmed
+  one — ask him what specifically reads wrong before designing against this number.**
+
+  **Worth preserving whatever happens:** the `CLAUDE.md` test itself (delete the line — does any
+  future decision change?) and its conservatism about anything phrased as a warning. Several
+  inline traps have each prevented a real regression. [L, → own session, design-first]
 - [ ] **A new projection never sees history, and "ignored" is recorded as "applied".**
   Observed end-to-end during the v1.1.0 two-device upgrade, 2026-09-07 — **benign this time**,
   but the mechanism is general and will recur on every future projection.

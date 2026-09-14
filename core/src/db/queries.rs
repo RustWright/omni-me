@@ -877,8 +877,22 @@ pub async fn list_feedback(
     since: Option<&str>,
     limit: u32,
 ) -> Result<(Vec<FeedbackReport>, usize), DbError> {
+    // ⚠️ **`timestamp` is projected twice under two different aliases, and each
+    // of the three tempting simplifications is a distinct bug.** SurrealDB
+    // requires every `ORDER BY` idiom to appear in the selection.
+    //   1. `ORDER BY timestamp` with only `AS ts` present → refused as a parse
+    //      error. The endpoint shipped this way and reported it as HTTP 200.
+    //   2. `ORDER BY ts` → parses, and sorts the *string*: `…00Z` lands above
+    //      `…00.5Z` because `Z` (0x5A) > `.` (0x2E), so a fractional second
+    //      reverses two reports. Silently.
+    //   3. Projecting the bare column back as `timestamp` alongside `AS ts` →
+    //      still sorts as a string. The engine resolves the `ORDER BY` idiom to
+    //      the *cast* projection, not the raw one — so the ordering column has
+    //      to carry a name of its own. Hence `sort_ts`.
+    // `sort_ts` is deliberately absent from `FeedbackEventRow`; the driver
+    // ignores columns the struct does not name.
     let base = "SELECT meta::id(id) AS eid, device_id,
-                       <string> timestamp AS ts, payload
+                       <string> timestamp AS ts, timestamp AS sort_ts, payload
                 FROM events
                 WHERE event_type = 'feedback_captured'";
     let rows: Vec<FeedbackEventRow> = match since {
@@ -886,7 +900,7 @@ pub async fn list_feedback(
             let mut resp = db
                 .query(format!(
                     "{base} AND timestamp > type::datetime($since)
-                     ORDER BY timestamp DESC LIMIT $limit"
+                     ORDER BY sort_ts DESC LIMIT $limit"
                 ))
                 .bind(("since", s.to_string()))
                 .bind(("limit", limit))
@@ -895,7 +909,7 @@ pub async fn list_feedback(
         }
         None => {
             let mut resp = db
-                .query(format!("{base} ORDER BY timestamp DESC LIMIT $limit"))
+                .query(format!("{base} ORDER BY sort_ts DESC LIMIT $limit"))
                 .bind(("limit", limit))
                 .await?;
             resp.take(0)?
@@ -1452,5 +1466,107 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "unmatched");
+    }
+
+    // --- Feedback ---
+
+    /// Temp DB holding real `feedback_captured` events, appended through the
+    /// real `EventStore`.
+    ///
+    /// ⚠️ The defect these tests cover was a statement the **engine** refused,
+    /// so nothing short of a live query could have found it: the write path was
+    /// fine, the payloads were fine, and the endpoint answered `200` with an
+    /// empty body for two months.
+    async fn feedback_db(rows: &[(&str, &str, &str)]) -> (tempfile::TempDir, Database) {
+        use crate::events::{EventStore, FeedbackCapturedPayload, NewEvent, SurrealEventStore};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feedback.db");
+        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+        let store = SurrealEventStore::new(db.clone());
+
+        for (id, body, ts) in rows {
+            let payload = FeedbackCapturedPayload {
+                feedback_id: (*id).to_string(),
+                body: (*body).to_string(),
+                ..Default::default()
+            };
+            let mut event = NewEvent::feedback_captured("dev-a", &payload).unwrap();
+            event.timestamp = ts.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
+            store.append(event).await.unwrap();
+        }
+        (dir, db)
+    }
+
+    fn ids(reports: &[FeedbackReport]) -> Vec<&str> {
+        reports
+            .iter()
+            .map(|r| r.report.feedback_id.as_str())
+            .collect()
+    }
+
+    /// ⚠️ **SurrealDB requires every `ORDER BY` idiom to appear in the
+    /// selection**, and refuses the whole statement when it does not — an
+    /// `Err`, never an empty list. `timestamp` is projected under the alias
+    /// `ts`, so ordering must name `ts`.
+    ///
+    /// The sub-second row is the point of the third entry: ordering a *string*
+    /// is only equivalent to ordering a datetime if the rendering is
+    /// fixed-width, so a fractional second is where lexicographic ordering
+    /// would diverge from chronological.
+    #[tokio::test]
+    async fn list_feedback_returns_reports_newest_first() {
+        let (_dir, db) = feedback_db(&[
+            ("fb-old", "oldest", "2026-09-01T10:00:00Z"),
+            ("fb-new", "newest", "2026-09-03T10:00:00Z"),
+            ("fb-mid", "middle", "2026-09-02T10:00:00Z"),
+            (
+                "fb-mid-frac",
+                "middle, half a second later",
+                "2026-09-02T10:00:00.5Z",
+            ),
+        ])
+        .await;
+
+        let (reports, skipped) = list_feedback(&db, None, 10).await.unwrap();
+
+        assert_eq!(skipped, 0);
+        assert_eq!(ids(&reports), ["fb-new", "fb-mid-frac", "fb-mid", "fb-old"]);
+    }
+
+    /// The `since` branch is a second statement string, so it is a second chance
+    /// to get the ordering wrong — and it was broken identically.
+    #[tokio::test]
+    async fn list_feedback_since_excludes_older_and_keeps_the_order() {
+        let (_dir, db) = feedback_db(&[
+            ("fb-old", "oldest", "2026-09-01T10:00:00Z"),
+            ("fb-new", "newest", "2026-09-03T10:00:00Z"),
+            ("fb-mid", "middle", "2026-09-02T10:00:00Z"),
+        ])
+        .await;
+
+        let (reports, _) = list_feedback(&db, Some("2026-09-01T10:00:00Z"), 10)
+            .await
+            .unwrap();
+
+        // Strictly newer: the boundary row is excluded, not included.
+        assert_eq!(ids(&reports), ["fb-new", "fb-mid"]);
+    }
+
+    /// `LIMIT` must cut the *oldest*, which is only true if the sort runs first.
+    /// A statement that ordered after limiting would pass the ordering test
+    /// above and still hand a puller an arbitrary slice.
+    #[tokio::test]
+    async fn list_feedback_limit_keeps_the_newest() {
+        let (_dir, db) = feedback_db(&[
+            ("fb-old", "oldest", "2026-09-01T10:00:00Z"),
+            ("fb-new", "newest", "2026-09-03T10:00:00Z"),
+            ("fb-mid", "middle", "2026-09-02T10:00:00Z"),
+        ])
+        .await;
+
+        let (reports, _) = list_feedback(&db, None, 1).await.unwrap();
+
+        assert_eq!(ids(&reports), ["fb-new"]);
     }
 }

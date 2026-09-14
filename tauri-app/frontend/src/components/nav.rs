@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::Tab;
+use crate::approvals::{count_for, use_pending_approvals};
 use crate::features::use_features;
 
 /// The tabs to draw, in display order.
@@ -50,6 +51,15 @@ fn tab_meta(tab: Tab) -> (&'static str, &'static str) {
     }
 }
 
+/// A tab's display label, for anything naming a destination outside the nav.
+///
+/// Wraps [`tab_meta`] rather than letting callers keep their own strings: the
+/// assistant's reminder row names the tab it will send you to, and a second
+/// spelling of "Archive" is how a rename leaves one of them behind.
+pub fn tab_label(tab: Tab) -> &'static str {
+    tab_meta(tab).0
+}
+
 /// Every tab, in display order. `pub` because `home_tab` walks it to find the
 /// first visible one, so nav order and landing order cannot disagree.
 pub const ALL_TABS: &[Tab] = &[
@@ -82,6 +92,9 @@ pub fn NavDrawer(
     on_close: EventHandler<()>,
     on_feedback: EventHandler<()>,
 ) -> Element {
+    // ⚠️ Read once here, never inside the tab loop: this is a hook, and a hook
+    // in a loop changes call order between renders.
+    let approvals = use_pending_approvals();
     let row_class = move |tab: Tab| -> String {
         let is_active = active == tab;
         if is_active {
@@ -136,6 +149,7 @@ pub fn NavDrawer(
                                 path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: icon_path }
                             }
                             span { class: "flex-1 text-left", "{label}" }
+                            NavBadge { count: count_for(&approvals, tab) }
                         }
                     }
                 }
@@ -151,6 +165,35 @@ pub fn NavDrawer(
                     on_feedback.call(());
                 },
             }
+        }
+    }
+}
+
+/// How much is waiting on a tab, drawn on its nav row.
+///
+/// ⛔ **Renders nothing at zero**, rather than a `0` pill. A badge is a call to
+/// act; one that is permanently present stops being read, and that costs the
+/// badges that *do* mean something.
+///
+/// ⚠️ The number is capped in the display only. Three digits break the row's
+/// layout, and past a point the exact count stops changing what the user does —
+/// but the underlying total stays honest for anything that reads it.
+#[component]
+fn NavBadge(count: usize) -> Element {
+    if count == 0 {
+        return rsx! {};
+    }
+    let shown = if count > 99 {
+        "99+".to_string()
+    } else {
+        count.to_string()
+    };
+    rsx! {
+        span {
+            class: "shrink-0 min-w-[1.25rem] px-1.5 py-0.5 rounded-full bg-obsidian-accent/15 \
+                    text-obsidian-accent text-[11px] font-semibold leading-none text-center tabular-nums",
+            "aria-label": "{count} waiting for review",
+            "{shown}"
         }
     }
 }
@@ -194,6 +237,9 @@ pub fn SideNav(
     on_switch: EventHandler<Tab>,
     on_feedback: EventHandler<()>,
 ) -> Element {
+    // ⚠️ Read once here, never inside the tab loop: this is a hook, and a hook
+    // in a loop changes call order between renders.
+    let approvals = use_pending_approvals();
     let row_class = move |tab: Tab| -> String {
         let is_active = active == tab;
         if is_active {
@@ -222,6 +268,7 @@ pub fn SideNav(
                                 path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2", d: icon_path }
                             }
                             span { class: "flex-1 text-left", "{label}" }
+                            NavBadge { count: count_for(&approvals, tab) }
                         }
                     }
                 }
