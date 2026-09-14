@@ -187,13 +187,14 @@ pub async fn run(cfg: RunConfig) {
         );
     }
 
-    // Text LLM client: `[llm]` selects the endpoint. Shared with the agent, which
-    // runs the assistant against the same section.
+    // Role D, not `[llm]` directly. The only thing this client serves is
+    // `POST /notes/{id}/process`, which extracts tags, tasks, dates and expenses
+    // from raw note text — the structurer's job, chosen on cost and abstention.
     //
     // `ClientOptions::default()` is deliberate — routing preferences are gateway
     // vocabulary, and production goes direct to the provider. See
     // `core::llm::ClientOptions`.
-    let llm_client = build_llm_client(&creds, ClientOptions::default());
+    let llm_client = build_llm_client(&creds, ClientOptions::default(), LlmRole::Structurer);
 
     let blob_dir: PathBuf = blob_dir_from_env();
     tokio::fs::create_dir_all(&blob_dir)
@@ -615,7 +616,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            build_llm_client(&creds, ClientOptions::default()).model_name(),
+            build_llm_client(&creds, ClientOptions::default(), LlmRole::Structurer).model_name(),
             "llava"
         );
         assert_eq!(build_extractor(&creds).name(), "null");

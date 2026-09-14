@@ -192,7 +192,32 @@ accounts for each line it reads, and rendered-PDF statements parse in both layou
 and check themselves against the totals they declare, verified across 136 real files
 with zero failures. Journal and routines are unaffected and in daily use.
 
-**Last Updated:** 2026-09-06
+**The archive block is complete, and the next one is validation (2026-09-14).** Phases 1–5
+are in, the last of them being notify-and-route, which the user widened from the archive to
+**every approval queue on every feature** — one count in `core::approvals`, rendered as nav
+badges and as a reminder on the assistant screen. Two silent-failure classes were closed with
+it: an axum handler returning `Err(String)` was serving **HTTP 200**, and `store::read`
+truncated long bodies without saying so.
+
+What the block ends on is a measurement problem rather than a build one. **Model selection
+was designed and nothing was benched** — deliberately, because a fair test cannot be designed
+while the system underneath it moves, and it has now stopped. The design found that
+`build_llm_client` had never consulted the per-role config at all, so `[llm.batch]` and
+`[llm.structurer]` parsed, validated, and were silently ignored; every role had been running
+on the interactive model. It also found the role table itself was stale — two seats
+documented as having "no caller" both had one. **No seat is treated as decided**, including
+the interactive one: the user's position is that the incumbent may well win again but is
+re-tested against the app as it now stands, not inherited.
+
+The validation pass that follows is the one deferred all through this block — real data, a
+dev sync server, and the on-device work — now unblocked on both sides it was waiting for.
+Its shape is set by one clarification worth recording: *"not connected to my actual data"*
+was always a rule about **writes**, junk entries that would have to be cleaned, so a clone
+satisfies it exactly. The runbook is `tasks.md` § ▶ RUNBOOK, and it opens with an isolation
+guard rather than a test, because a clone of the live database is indistinguishable from
+production from the inside.
+
+**Last Updated:** 2026-09-14
 
 > **What's next lives in [`NEXT.md`](NEXT.md)** — the next action and the
 > decisions in force, rewritten at every completion. Open work lives in

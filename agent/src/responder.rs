@@ -51,11 +51,30 @@ pub enum Stopped {
     Interrupted,
 }
 
+/// Which model answers this question.
+///
+/// `scheduled` is set by the check-in and clear on anything a person typed, so it
+/// separates a run nobody is waiting on from one where latency is the whole
+/// experience. Roles A and B are split on exactly that.
+fn client_for<'a>(
+    interactive: &'a dyn LlmClient,
+    batch: &'a dyn LlmClient,
+    question: &AssistantQuestionAskedPayload,
+) -> &'a dyn LlmClient {
+    if question.scheduled {
+        batch
+    } else {
+        interactive
+    }
+}
+
 /// Answer questions until interrupted.
 pub struct Responder<'a> {
     pub db: &'a Database,
     pub config: &'a ResolvedConfig,
     pub llm: &'a dyn LlmClient,
+    /// Answers questions nobody is waiting on. See [`client_for`].
+    pub batch: &'a dyn LlmClient,
     pub writer: &'a EventWriter,
     pub retrievers: Retrievers<'a>,
     /// Questions older than this are closed without a model call. See
@@ -231,7 +250,8 @@ impl Responder<'_> {
             return;
         }
 
-        let session = match Session::new(self.db, self.config, self.llm) {
+        let llm = client_for(self.llm, self.batch, &question);
+        let session = match Session::new(self.db, self.config, llm) {
             Ok(s) => s,
             Err(e) => {
                 // A session that cannot even be built is a configuration fault,
@@ -277,7 +297,7 @@ impl Responder<'_> {
         let payload = answer_payload(
             &question,
             &message_id,
-            Some(self.llm.model_name().to_string()),
+            Some(llm.model_name().to_string()),
             &outcome,
         );
 
@@ -437,5 +457,39 @@ impl Responder<'_> {
             ),
             Err(e) => tracing::warn!(thread = %thread_id, error = %e, "answer refused"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use omni_me_core::llm::OpenAiCompatClient;
+
+    fn client(model: &str) -> OpenAiCompatClient {
+        OpenAiCompatClient::new("http://localhost:1/v1", model, String::new())
+    }
+
+    fn question(scheduled: bool) -> AssistantQuestionAskedPayload {
+        AssistantQuestionAskedPayload {
+            thread_id: "t".into(),
+            message_id: "m".into(),
+            text: "how did this week go".into(),
+            title: None,
+            scheduled,
+        }
+    }
+
+    #[test]
+    fn a_scheduled_question_is_answered_by_the_batch_model() {
+        let (fast, good) = (client("role-a"), client("role-b"));
+        let picked = client_for(&fast, &good, &question(true));
+        assert_eq!(picked.model_name(), "role-b");
+    }
+
+    #[test]
+    fn a_question_someone_typed_is_answered_by_the_interactive_model() {
+        let (fast, good) = (client("role-a"), client("role-b"));
+        let picked = client_for(&fast, &good, &question(false));
+        assert_eq!(picked.model_name(), "role-a");
     }
 }

@@ -517,17 +517,22 @@ its own, and the two sit one line apart in the same catalogue.
 There is no single model behind all of this. Jobs differ in what they actually demand, so
 each of these roles earns its own, benchmarked rather than argued:
 
-| Role | What it does | What decides the choice | Filled by |
+| Role | Called by | What decides the choice | Filled by |
 |---|---|---|---|
-| **Interactive reasoner** | the assistant loop and chat | latency — a slow model disqualifies itself | *leading candidate, see below* |
-| **Batch reasoner** | overnight review, habits, derived beliefs | quality; it can afford to be slow | **not yet** — the benchmark saturates |
-| **Quarantined extractor** | receipts, statements, photographed documents | reads images, and **never holds tools** | **not yet** — no caller exists |
-| **High-volume structurer** | note extraction, categorization | cost per call, and knowing when to abstain | **not yet** — no caller exists |
-| **Local** | search embeddings, reranking, speech recognition | never leaves your machine at all | **filled for search** — see `MODEL_BENCH.md` § Retrieval |
+| **Interactive reasoner** | a question someone typed | latency — a slow model disqualifies itself | *leading candidate, see below* |
+| **Batch reasoner** | the scheduled check-in | quality; it can afford to be slow | **unmeasured** |
+| **Quarantined extractor** | the document extractor and reader | reads images, and **never holds tools** | **unmeasured** |
+| **High-volume structurer** | `POST /notes/{id}/process` | cost per call, and knowing when to abstain | **unmeasured** |
+| **Local** | search | never leaves your machine at all | **reranker measured**; the embedder is inherited, not compared |
 
-An empty seat here means *unmeasured*, not *pending selection*. Three of them have no
-caller in the system yet, and benchmarking a model for work nothing performs would measure
-a configuration we cannot ship. They are filled by the work that needs them.
+Every seat now has a caller, which was not true when this table was written — the archive
+work gave the extractor one and the scheduled check-in gave the batch seat one. What
+separates an interactive run from a batch run is a flag on the question itself
+(`scheduled`), not a guess about intent.
+
+An empty seat means *unmeasured*, not *pending selection*. A model gets written into a seat
+only once something has been measured against the criterion in its own row, and a seat whose
+instrument saturates stays empty rather than being filled by preference.
 
 ### What the first measurement found (2026-09-09)
 
@@ -548,9 +553,10 @@ use.
 
 **The batch seat stays empty because the benchmark saturated.** Four candidates scored
 perfectly, so the instrument cannot separate them at the top — and a tie broken by preference
-would be exactly the argued-not-measured choice this table exists to avoid. Batch work is
-judged on derived beliefs and overnight review, which do not exist yet; the seat is filled
-when there is something real to score.
+would be exactly the argued-not-measured choice this table exists to avoid. The seat now has
+real work to score — the scheduled check-in — so what blocks it is the instrument, not the
+absence of a caller. Derived beliefs would make it a harder seat still, but they are
+triggered only when you ask for a conclusion, so today they run on the interactive path.
 
 The quarantined extractor is a trust boundary rather than a performance tier — it is the
 "never trusted" half described above, and it stays a separate model for that reason alone.

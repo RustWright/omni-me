@@ -1332,6 +1332,213 @@ This was needed because **pausing does not survive a restart**, which had gone u
 
 ---
 
+## ▶ RUNBOOK — model selection + the deferred validation pass
+
+**Written 2026-09-14 for a fresh session.** ⛔ The design decisions behind every stage are in
+§ Model selection below and in `NEXT.md`; **read both, do not re-derive them.** Stages are
+ordered by dependency — later ones assume earlier ones landed.
+
+⛔ **Failure policy, in force throughout: STOP AND WAIT on a significant failure**, and write
+down what was stopped for and what the run would have done next. He recalibrates from that
+record, so a stop with no written reason wastes the stop. A flaky test or a missing dev
+dependency is trivial — note it and keep going.
+
+### Stage 0 — isolation guard. ⛔ BEFORE any destructive work, no exceptions.
+The blast-radius grant is **conditional on isolation**, and the live-DB clone makes the dev
+environment indistinguishable from production from the inside. `DB_PATH` is relative, so a
+wrong working directory is enough to point a wipe at the live server.
+- [ ] Make the dev instance **self-identify**, and make destructive tooling **assert that
+      identity before acting** rather than trusting it was pointed correctly. Configuration
+      being right is not a safety mechanism; a refusal is.
+- [ ] The live box and his real phone are **outside the grant, always.** No exceptions, no
+      "just this once to check something".
+
+### Stage 1 — de-saturate Role A's bench ⚠️ gates two seats, not one
+B is decided on quality **using A's instrument**, so a saturated instrument blocks both.
+- [ ] `MODEL_BENCH.md` Part 4 **lever 1** — score answer content, not just which verb was
+      reached. The fixture corpus is ours, so ground truth is already written. Biggest
+      de-saturator and nearly free.
+- [ ] **Lever 2** — absent-answer cases, whose honest answer is "that is not in here". Only two
+      cases test refusal today and both are about *writes*. ⚠️ This also builds **Role D's**
+      abstention instrument, so it pays for two seats.
+- [ ] ⚠️ **Do not reintroduce the seven harness traps** that once made the constraint-tax number
+      a measurement of the harness. A harder bench has more places to hide one.
+
+### Stage 2 — build the C1 / C2 / D scorecards
+- [ ] **C1** — `verify.rs` arithmetic oracle, plus the **parser-as-oracle** gold set: the 276
+      CSVs in `.reference/` that `statement::parse` reads deterministically become machine-
+      generated labels. Feed the same statement to the model as PDF/text and score against them.
+- [ ] **C2 + D share one scorecard** — abstention probes (ask for a field provably absent; truth
+      known by construction), email-header labels, self-consistency across repeat runs, format
+      validity. ⛔ Weight **abstention above field accuracy**: `verified` is false either way, so
+      a confident wrong answer is indistinguishable from a right one and silently becomes the
+      archive.
+- [ ] **Vision arms have two image sources.** ✅ **Real photographs: `~/omni-spike-images/`** (8
+      JPEGs from the POC, outside the repo — `receipt-1`…`-4` plus three `capture-*`; `receipt-1`
+      and `capture-1` are **two-page**, so they also test one document spanning two images).
+      For volume, render `.reference/` PDF pages to images — which doubles as the free C3 oracle
+      (compare the transcription against the PDF's real text layer).
+- [ ] 🔴 **Check the 413 limit on the ENCODED payload, never the file.** Images pass as `data:`
+      URLs and base64 inflates by 4/3. Measured 2026-09-14: all eight are 4032×3024 and
+      **2.8–3.8 MB on disk**, but **3.7–5.0 MB encoded** — `receipt-4.jpg` crosses the ~5 MB
+      limit while looking 24% under it, and three more sit at 4.7–4.8 MB, inside the noise band.
+      ⛔ Downscale before sending; do not assume a file under the limit will arrive under it.
+      ⚠️ **ImageMagick is NOT installed** (`convert`/`magick` absent). Use **PIL 9.0.1**, which is;
+      `ffmpeg` is also available.
+- [ ] **C3** stays unbuilt (no producer). If it gains one, its oracle is free: render a
+      born-digital PDF to an image, transcribe, compare against the real text layer.
+
+### Stage 3 — run the slates
+- [ ] ⛔ **Write thresholds and tie-break order BEFORE the first run**, per seat, into the repo.
+- [ ] Screen on **OpenRouter pinned to DeepInfra endpoints** — ⚠️ **generously**: wide slate,
+      repeat runs, more cases. Spending those credits is the goal, not a cost.
+- [ ] ⚠️ **Re-resolve every model id** (R2): ids differ on both halves of the slug and are
+      case-sensitive; prefer dated ids. ⛔ Probe entitlement first — `-Ultra` is in the public
+      catalogue and returns **403** on this account.
+- [ ] Run the **`off_schema` canary on both sides** (R5): direct, an ignored parameter is silent.
+- [ ] ⚠️ **Probe vision parity per role.** R1's confirmation covered text and latency only.
+- [ ] **Deciding run goes direct.** ⛔ A seat whose instrument saturated is published
+      **unmeasured** — fix the instrument, re-run; never break the tie by preference.
+
+### Stage 4 — dev sync server on the box
+- [ ] ⚠️ **Size first**: box is 3820 MB total, **0 swap**, ~29 GB free. Check DB **and blob dir**
+      sizes against free disk before cloning.
+- [ ] Second unit file, second directory, distinct `OMNI_LISTEN_ADDR`. ⛔ An unparseable value is
+      passed through, **not** repaired — a typo must fail to bind loudly rather than start a
+      second server on the live port with an empty database.
+- [ ] Seed from a **clone of the live database**. 🔴 **Blob bytes do not sync** — copy the blob
+      directory separately or the archive holds documents whose bytes are gone.
+- [ ] ⛔ Credentials for the private workflow dispatch are **unverified** — do not test them by
+      attempting a deploy.
+
+### Stage 5 — on-device pass · ✅ phone is connected (`SM_G960W`, transport_id 3)
+- [ ] `adb tcpip 5555` early, so the link survives unplugging. ⚠️ `adb` is at
+      `~/android-sdk/platform-tools/adb`, **not on `PATH`**.
+- [ ] ⚠️ Long screen timeout / stay-awake-while-charging, **dev device only**.
+- [ ] ⛔ Build APKs with `tauri-app/scripts/android-build.sh`, **never** `cargo tauri build` —
+      it embeds whatever the debug dir last held, which shipped a mock-data APK once.
+- [ ] Clear § Awaiting on-device confirmation (above): the decide command end to end ·
+      `note.revise` **both** halves including the refusal path · a decision syncing to a second
+      device · a check-in firing **on its own schedule** · auto-approval against a live agent ·
+      the Settings Int stepper (native styling is not Playwright-verifiable).
+
+### Stage 6 — real-data validation of the new features
+- [ ] **Archive + finance import against the real corpus** — 276 CSVs, 765 PDFs.
+- [ ] **The badge/approval work from Phase 5**, which mock could not exercise: a **cleared**
+      document queue (its mock count is a constant), and confirming no **local** path creates an
+      unverified document without a `bump_sync_epoch`.
+- [ ] **`GET /feedback` against the box's own data** — fixed and unit-tested, never proven there.
+- [ ] **Finances perf on real data** (~10k transactions) and the on-device sync-lag / stale-open-
+      view gap — both recorded above as polish, not blockers.
+- [ ] ⛔ **Server backup before the real backfill** — not before dev-server work. Blob bytes have
+      no second copy anywhere, so the box is a single point of total loss. ⚠️ Verify a backup by
+      **size**, never by exit code.
+
+---
+
+## Model selection (③) — role wiring DONE 2026-09-14, test design agreed
+
+### The wiring defect, fixed
+
+🔴 **`build_llm_client` never called `for_role`.** Per-role config (`[llm.interactive]`,
+`[llm.batch]`, `[llm.structurer]`) parsed, validated against `deny_unknown_fields`, and was
+then **silently ignored** — config that looks applied and does nothing. Only the extractor
+(role C) was ever routed, because `build_extractor` resolved its own role separately.
+
+✅ **Fixed:** `build_llm_client(creds, options, role)` — the role is a required parameter, not
+a defaulted one, so a new call site has to say which job it is building for.
+- Role A ← the agent's interactive answering · Role B ← the agent's scheduled runs
+- Role C ← `build_extractor` (already correct) · Role D ← `POST /notes/{id}/process`
+- ⚠️ An env redirect (`OMNI_AGENT_LLM_MODEL` etc.) now **clears the role overrides**, or a
+  credentials-file role table would outrank a deliberate redirect — the same bug mirrored.
+- Verified on the real binary, not just unit tests: boot logs `role=Interactive
+  model=base-interactive-model` and `role=Batch model=slow-quality-model` from one file.
+
+🔴 **Role D had a caller all along and the docs denied it.** `POST /notes/{id}/process`
+extracts tags, tasks, dates and expenses from raw note text — the structurer's exact job.
+`docs/src/assistant.md`'s "no caller exists" was stale for **both** B and D; corrected.
+
+🔴 **Role B's caller is the scheduled check-in** (`responder::maybe_check_in`, Phase F),
+which has been running on role A's latency-optimised model. `AssistantQuestionAskedPayload`
+already carries `scheduled: true`, so the discriminator needed no new mechanism —
+`responder::client_for` routes on it.
+
+### Role C is three jobs, not one
+
+Split by **what can check the answer**, which is the column the role table already uses:
+- **C1 transaction extractor** (`DocumentExtractor`) — oracle: `verify.rs` arithmetic.
+- **C2 document reader** (`DocumentReader`) — ⛔ **no oracle by construction**; its own module
+  header says it "answers with fields nothing can check".
+- **C3 transcriber** (`DocumentTextTranscribed`) — ⛔ envelope and projection exist, **no
+  producer anywhere**. Free oracle available when it gets one: render a born-digital PDF to an
+  image, transcribe, compare against the real text layer.
+
+⚠️ **C2's deciding criterion is identical to D's** (correct fields + abstention). Different
+modality, so not the same seat — but **one scorecard, not two**.
+
+### Deciding criteria — agreed with the user 2026-09-14
+
+⛔ **No hand-labelled gold set** (user: "I don't have the time"). Pick on best available
+evidence, then correct from real use. ✅ **The correction log already works with no change
+needed:** a correction is a second `DocumentFieldsExtractedPayload` with `source: "human"`,
+outranking `model:<name>@<ver>` via `DocumentField::rank`, and the log is append-only — so the
+model's wrong value and the right one both persist, attributed to the model that produced it.
+⚠️ **Labels are asymmetric**: a corrected field is a reliable *negative*; an uncorrected one is
+not a positive, because nothing distinguishes "reviewed and accepted" from "never opened".
+
+**Free ground truth, no user time:** `verify.rs` arithmetic · the deterministic statement
+parser as a machine-generated gold set · email headers (sender/date/subject) · abstention
+probes (ask for a field provably absent — truth known by construction) · born-digital
+round-trip for C3 · self-consistency across repeat runs · the authored fixture corpus for A/E.
+
+**Anti-ad-hoc rules:**
+1. Thresholds and tie-break order written **before** the run.
+2. Declare each instrument's noise floor and refuse to decide inside it (16 cases = 6 points).
+3. ⛔ **No seat is decided on a saturated instrument** — publish it unmeasured, fix the
+   instrument, re-run. That is what happened to B and it must not be papered over.
+4. Screening on OpenRouter pinned to DeepInfra endpoints; the **deciding run goes direct**.
+5. Every arm reports cost and latency, always.
+6. The correction log supersedes all of it once it has volume.
+
+### OpenRouter parity — carries for text, unproven for vision
+
+✅ **Empirically confirmed (R1):** direct `-Turbo` reproduces gateway `deepinfra/turbo` (3.6s
+vs 3.5s median), direct base tracks `bf16` (15.0s vs 12.8s). Pin `provider.only` +
+`allow_fallbacks:false` + the quantization endpoint, and **re-resolve every id** (R2 — ids
+differ on both halves, case-sensitive; prefer dated ids).
+
+⛔ **Does not carry:** `require_parameters` (R5 — an ignored parameter is silent direct, so run
+the `off_schema` canary on both sides) · `reasoning_tokens` (R4) · the `provider` attribution
+field (R3 — the DeepInfra check passes *vacuously* direct) · rate-limit shape (R7).
+
+- [ ] **R11 — informational, NOT a gate** (user, 2026-09-14). Recorded sweep cost ~$3 vs <$0.20
+  at direct rates, a ~60× gap; he will read the billing page but *"the tests need to be done
+  regardless"*. ⚠️ **Spending the OpenRouter credits is a GOAL, not a cost to minimise** — he
+  pre-bought them for this. So screen **generously** on the gateway (wide slate, more cases,
+  repeat runs for self-consistency) and keep only the deciding run direct. ⛔ Do not trim the
+  bench to save gateway spend; that optimises the one resource he wants consumed.
+- [ ] ⚠️ **Vision parity is unproven.** R1 covered text and latency. Role C needs vision,
+  `DeepSeek-V4-Flash-Vision-Exp` is `-Exp` and untested, and images 413 above ~5 MB so
+  downscaling is mandatory. **Probe parity per role**; do not inherit R1's guarantee.
+
+### Still open
+
+- [ ] ⚠️ **Role E's embedder was never compared.** Four are supported in `embedding.rs`
+  (`bge-small-en-v1.5`, `-q`, `bge-base-en-v1.5`, `all-minilm-l6-v2`); the retrieval bench has
+  **one** embedder arm. The reranker result is unaffected (all arms share the fused baseline).
+- [ ] ⛔ **Role E's "speech recognition" does not exist** — no audio path at all. In this
+  codebase "transcribed" means a model read text off an *image*. Drop it from the role table or
+  mark it absent rather than implied-filled.
+- [ ] ⚠️ **Role A's instrument saturates** and must be de-saturated before re-deciding A or
+  deciding B — `MODEL_BENCH.md` Part 4 levers 1 (score answer content) and 2 (absent answers),
+  both free because the fixture corpus is ours.
+- [ ] **Belief triggers 2 and 3** (pattern-noticing, cross-record) stay deferred — ⛔ but they
+  are **completing a plan**, not next-version work: the deferral was "during or after Phase F",
+  and Phase F's check-in half now exists. They are what would give B a genuinely
+  quality-demanding workload.
+
+---
+
 ## Handover prerequisites — before autonomous dev-server and on-device testing
 
 **Folded in from `HANDOVER.md` 2026-09-14 and that file deleted.** ⛔ It was a third handoff
@@ -1354,21 +1561,46 @@ called it (2026-09-14). **Decisions live in `NEXT.md`, inventory lives here.**
   path rather than concluding the toolchain is missing.
 
 **Needs the user's hands.**
-- [ ] 🔴 **An Android device reachable over adb.** `adb devices` is empty; authorising USB
-  debugging is a prompt **on the phone** and ⛔ no host-side work substitutes. Wanted once: the
-  throwaway dev phone connected, unlocked, USB debugging on, this host authorised — then ideally
-  `adb tcpip 5555`, so the link survives unplugging and reconnects across sessions. ⚠️ Screen
-  lock interrupts an unattended run; set a long timeout or stay-awake-while-charging **on the
-  dev device only**. [USER]
-- [ ] **Where the dev sync server runs.** Locally is end-to-end doable today and is the
-  recommendation until a test genuinely needs two devices talking. On the box beside the live
-  server needs a second unit file in a second directory and a private workflow dispatch;
-  ⛔ whether the credentials are available is unverified — **do not test it by attempting a
-  deploy.** [USER]
-- [ ] **Real data, staged.** Deferred and batched with the on-device pass — ⛔ not to be raised
-  as a blocker before then. Recorded so the eventual ask is not a surprise: the finance corpus
-  needs staging somewhere readable, and ⛔ the user has said he will not point the app at his
-  live data for a first test. [USER]
+- [x] ✅ **Android device — CONNECTED 2026-09-14.** `~/android-sdk/platform-tools/adb devices -l`
+  reports `5431324d59563398  device  product:starqltecs model:SM_G960W transport_id:3` — state
+  `device`, so USB debugging is authorised. ⚠️ `adb` is **not on `PATH`**; call it by full path
+  rather than concluding the toolchain is missing.
+  - [ ] ⚠️ **It is on USB.** Run `adb tcpip 5555` early so the link survives unplugging.
+  - [ ] ⚠️ **Screen lock interrupts an unattended run** — set a long timeout or
+    stay-awake-while-charging, **on the dev device only**.
+- [x] ✅ **Where the dev sync server runs — DECIDED 2026-09-14: ON THE BOX**, beside the live
+  server. ⛔ This overrides the earlier "localhost until a test needs two devices" recommendation;
+  he asked for the box specifically. Needs a second unit file in a second directory, a distinct
+  `OMNI_LISTEN_ADDR`, and a private workflow dispatch. ⛔ Whether those credentials are available
+  is still unverified — **do not test it by attempting a deploy.**
+- [x] ✅ **Real data — CLARIFIED 2026-09-14. ⛔ NOT a reversal; the old entry was my misreading.**
+  *"I'm not going to be willing to test this app for the first time with it connected to my actual
+  data"* meant **the write direction**, in his words: *"there would not be junk entries made
+  during testing that would have to be cleaned."* A **clone** satisfies that exactly — the junk
+  lands on the clone, which is wiped and reseeded, and *"does not affect me in any way."*
+  ⛔ **So the constraint is intact, not relaxed.** Reading real data was never in its scope.
+  ✅ The dev server is seeded from a clone of the live database; benching runs on his real
+  documents. ⚠️ Provider-privacy caution *"was more for long term repeated use"*; these tests are
+  **a single batch** under zero-retention providers.
+  ⚠️ **The lesson worth keeping:** a constraint phrased as "not connected to my real data" was
+  really a constraint on **writes**. ⛔ Do not widen a stated constraint past its direction —
+  ask which way it points.
+- [ ] ⚠️ **Size the clone before making it.** 🔴 `.reference/` was **deleted by the user
+  2026-09-14 as stale** and a fresher corpus is coming. For the DB clone: the box is small (3820
+  MB total, **0 swap**, ~29 GB free disk, live server resident at 279 MB), and 🔴 **blob bytes do
+  not sync**, so a clone that omits the blob directory yields an archive of documents whose bytes
+  are gone. Check DB **and** blob sizes against free disk first.
+- [x] ✅ **Fresh document corpus — ARRIVED 2026-09-14** at `.reference/` (gitignored, line 16;
+  239 MB, 1859 files). **276 CSVs, 765 PDFs**, split by account across **five institutions** and
+  about a dozen account kinds — chequing, savings, credit card, brokerage, registered accounts,
+  and multi-currency (CAD/USD/EUR/NGN) — plus a tax-notice directory and an ingest directory.
+  ⛔ **Institution names stay OUT of this repo** (it is PUBLIC); read them off the directory
+  listing when you need them. 🔴 Naming them here is what blocked the 2026-09-14 session-end
+  commit — the privacy guard caught it, and the guard does **not** exist in a fresh clone.
+  ⚠️ **No images in `.reference/` itself** — ✅ but the POC's receipt photographs exist at
+  **`~/omni-spike-images/`** (8 JPEGs, outside the repo; user, 2026-09-14). Between them and
+  PDF-rendered pages the vision arms have real material, so ⛔ the earlier "vision cannot be
+  tested on photographs" note is **withdrawn**.
 
 **Explicitly NOT wanted.**
 - ⛔ **IMAP credentials.** `OMNI_ENABLE_IMAP` stays off and is never flipped without him.
@@ -1386,10 +1618,14 @@ called it (2026-09-14). **Decisions live in `NEXT.md`, inventory lives here.**
   as much of the risk from testing as we can… with minimal egress risk that affects functioning
   of the live app"* — a config that merely *happens* to point elsewhere is not enough; pointing
   at production must be hard to do by accident.
-- [ ] ⚠️ **Failure policy — still open.** On a test that fails in a way needing a decision, does
-  Claude stop and wait, or take the reading that keeps the run going and report it? The second
-  gets more done overnight and is the reason the autonomy is wanted; it is also how a wrong
-  assumption compounds for six hours. [USER]
+- [x] ✅ **Failure policy — ANSWERED 2026-09-14: stop and wait on a SIGNIFICANT failure.**
+  ⚠️ **The calibration is explicitly provisional:** *"if I come back to a failure that would have
+  been trivial I can change my mind and let you keep going."* ⛔ So the obligation is not just to
+  stop — it is to **record what was stopped for, and what the run would have done next**, because
+  that record is the evidence he recalibrates from. A stop with no written reason wastes the
+  stop. ⚠️ "Significant" is mine to judge: a wrong answer that compounds, anything touching data
+  he would have to clean, or an unexplained failure. A flaky test or a missing dev dependency is
+  trivial — note it and keep going.
 
 ---
 

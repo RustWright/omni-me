@@ -18,16 +18,16 @@
 //! | High-volume structurer | note extraction, categorization, NL→query | cost × volume |
 //! | Local | embedder, reranker, speech recognition | never leaves the machine |
 //!
-//! This module only turns an `[llm]` section into a client; role-keyed config
-//! arrives with the benchmark results that fill the roles. See
-//! `docs/src/assistant.md`.
+//! This module turns an `[llm]` section into a client for one named role. The
+//! role selects which `[llm.<role>]` override applies; which model fills a role
+//! is a benchmarked choice recorded in `MODEL_BENCH.md`.
 
 use std::sync::Arc;
 
 use serde_json::Value;
 
 use super::{LlmClient, NullLlmClient, OpenAiCompatClient};
-use crate::credentials::Credentials;
+use crate::credentials::{Credentials, LlmRole};
 
 /// Vendors whose models we are willing to send records to, each with every
 /// namespace spelling we have seen it served under.
@@ -176,8 +176,16 @@ pub struct ClientOptions {
 /// ⚠️ **Nothing here fails the build.** Boot has to succeed on a host with no LLM
 /// configured, and the server cannot ask a human for a key mid-startup, so every
 /// failure is deferred to call time where it can be reported to someone.
-pub fn build_llm_client(creds: &Credentials, options: ClientOptions) -> Arc<dyn LlmClient> {
-    let Some(cfg) = &creds.llm else {
+///
+/// `role` is required rather than defaulted so a new call site has to say which
+/// job it is building for. The roles are not interchangeable, and a default here
+/// would have silently handed every one of them the same model.
+pub fn build_llm_client(
+    creds: &Credentials,
+    options: ClientOptions,
+    role: LlmRole,
+) -> Arc<dyn LlmClient> {
+    let Some(cfg) = creds.llm.as_ref().map(|c| c.for_role(role)) else {
         tracing::warn!("no [llm] section — LLM calls will error at call time");
         return Arc::new(NullLlmClient::unconfigured());
     };
@@ -212,7 +220,7 @@ pub fn build_llm_client(creds: &Credentials, options: ClientOptions) -> Arc<dyn 
         None => {}
     }
 
-    tracing::info!(model = %model, "LLM client: OpenAI-compatible");
+    tracing::info!(?role, model = %model, "LLM client: OpenAI-compatible");
     let mut client =
         OpenAiCompatClient::new(base_url, model, cfg.api_key.clone().unwrap_or_default());
     if let Some(extra) = options.extra_body {
@@ -228,7 +236,7 @@ pub fn build_llm_client(creds: &Credentials, options: ClientOptions) -> Arc<dyn 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::LlmProviderConfig;
+    use crate::credentials::{LlmProviderConfig, LlmRoleOverride};
 
     fn creds_with(llm: Option<LlmProviderConfig>) -> Credentials {
         Credentials {
@@ -253,6 +261,7 @@ mod tests {
         build_llm_client(
             &creds_with(Some(openai(Some(base_url), Some(model)))),
             ClientOptions::default(),
+            LlmRole::Interactive,
         )
         .model_name()
         .to_string()
@@ -266,7 +275,12 @@ mod tests {
     #[test]
     fn an_absent_llm_section_yields_the_null_client() {
         assert_eq!(
-            build_llm_client(&creds_with(None), ClientOptions::default()).model_name(),
+            build_llm_client(
+                &creds_with(None),
+                ClientOptions::default(),
+                LlmRole::Interactive
+            )
+            .model_name(),
             "none"
         );
     }
@@ -278,7 +292,8 @@ mod tests {
         assert_eq!(
             build_llm_client(
                 &creds_with(Some(openai(None, Some("llava")))),
-                ClientOptions::default()
+                ClientOptions::default(),
+                LlmRole::Interactive,
             )
             .model_name(),
             "none"
@@ -289,7 +304,11 @@ mod tests {
     fn no_provider_configured_still_builds_so_boot_survives() {
         // The point is that this does not panic: a host with no LLM configured
         // must still start, and error when something actually calls the model.
-        let _ = build_llm_client(&creds_with(None), ClientOptions::default());
+        let _ = build_llm_client(
+            &creds_with(None),
+            ClientOptions::default(),
+            LlmRole::Interactive,
+        );
     }
 
     // ── the open-weights guard ────────────────────────────────────────────────
@@ -397,6 +416,7 @@ mod tests {
                 Some("anthropic/claude-opus-4-8"),
             ))),
             ClientOptions::default(),
+            LlmRole::Interactive,
         );
         assert_eq!(client.model_name(), "none");
     }
@@ -411,8 +431,34 @@ mod tests {
             Some("anthropic/claude-opus-4-8"),
         );
         cfg.allow_closed_weights = true;
-        let client = build_llm_client(&creds_with(Some(cfg)), ClientOptions::default());
+        let client = build_llm_client(
+            &creds_with(Some(cfg)),
+            ClientOptions::default(),
+            LlmRole::Interactive,
+        );
         assert_eq!(client.model_name(), "anthropic/claude-opus-4-8");
+    }
+
+    /// The defect this guards. Every call site read `[llm]` straight through, so
+    /// a role override parsed, validated against `deny_unknown_fields`, and was
+    /// then ignored — config that looks applied and does nothing.
+    #[test]
+    fn a_role_override_selects_a_different_model_than_the_base_section() {
+        let mut cfg = openai(Some("http://localhost:11434/v1"), Some("base-model"));
+        cfg.batch = Some(LlmRoleOverride {
+            model: Some("batch-model".into()),
+            ..Default::default()
+        });
+        let creds = creds_with(Some(cfg));
+        assert_eq!(
+            build_llm_client(&creds, ClientOptions::default(), LlmRole::Batch).model_name(),
+            "batch-model"
+        );
+        assert_eq!(
+            build_llm_client(&creds, ClientOptions::default(), LlmRole::Interactive).model_name(),
+            "base-model",
+            "a role with no override must still inherit the base section"
+        );
     }
 
     #[test]

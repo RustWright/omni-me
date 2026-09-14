@@ -376,12 +376,21 @@ async fn main() {
     }
 }
 
-/// Build the assistant's LLM client from `[llm]`.
+/// The agent's two text clients, one per execution mode.
+///
+/// Kept apart because a waiting user and a scheduled run are different roles: one
+/// is chosen on latency, the other on quality. See `docs/src/assistant.md`.
+struct AssistantLlms {
+    interactive: std::sync::Arc<dyn omni_me_core::llm::LlmClient>,
+    batch: std::sync::Arc<dyn omni_me_core::llm::LlmClient>,
+}
+
+/// Build both assistant clients from `[llm]` and its per-role overrides.
 ///
 /// Goes through `omni_me_core::llm::build_llm_client` rather than constructing a
 /// client here, so the agent and the server cannot disagree about which provider
 /// a config selects.
-fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClient>, String> {
+fn build_assistant_llms() -> Result<AssistantLlms, String> {
     let path = match std::env::var(CREDENTIALS_ENV) {
         Ok(p) => PathBuf::from(p),
         Err(_) => omni_me_core::credentials::default_path()
@@ -423,6 +432,13 @@ fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClie
         if let Ok(v) = std::env::var(LLM_API_KEY_ENV) {
             llm.api_key = Some(v);
         }
+        // Cleared, or a role override in the credentials file would outrank the
+        // redirect and quietly send scheduled runs somewhere other than the
+        // endpoint named here. Same silent-override bug, pointing the other way.
+        llm.interactive = None;
+        llm.batch = None;
+        llm.extractor = None;
+        llm.structurer = None;
         // The model, never the key or the URL — a base URL can carry a key.
         tracing::info!(model = ?llm.model, "LLM endpoint overridden by environment");
     }
@@ -444,7 +460,18 @@ fn build_assistant_llm() -> Result<std::sync::Arc<dyn omni_me_core::llm::LlmClie
         },
     };
 
-    Ok(omni_me_core::llm::build_llm_client(&creds, options))
+    Ok(AssistantLlms {
+        interactive: omni_me_core::llm::build_llm_client(
+            &creds,
+            options.clone(),
+            omni_me_core::credentials::LlmRole::Interactive,
+        ),
+        batch: omni_me_core::llm::build_llm_client(
+            &creds,
+            options,
+            omni_me_core::credentials::LlmRole::Batch,
+        ),
+    })
 }
 
 /// Load the embedding model and define the vector index, or explain why not.
@@ -682,7 +709,9 @@ async fn run(args: Args) -> Result<(), String> {
             Err(e) => tracing::warn!(error = %e, "pull failed; answering from local data only"),
         }
 
-        let llm = build_assistant_llm()?;
+        // Interactive only: this branch answers one question and exits, so the
+        // batch client would be built and never called.
+        let llm = build_assistant_llms()?.interactive;
         tracing::info!(model = llm.model_name(), "assistant model");
         // Built here rather than in a helper: `Retrievers` borrows both services,
         // so a function returning one would be returning references to its own
@@ -758,7 +787,7 @@ async fn run(args: Args) -> Result<(), String> {
         return Ok(());
     };
 
-    let llm = build_assistant_llm()?;
+    let llms = build_assistant_llms()?;
     // Built here rather than in a helper for the same reason the diagnostics
     // branch does it: `Retrievers` borrows both services, so a function returning
     // one would be returning references to its own locals.
@@ -785,7 +814,8 @@ async fn run(args: Args) -> Result<(), String> {
     );
 
     tracing::info!(
-        model = llm.model_name(),
+        model = llms.interactive.model_name(),
+        batch_model = llms.batch.model_name(),
         pull_interval_ms = pull_interval.as_millis(),
         horizon_mins = horizon.as_secs() / 60,
         semantic = retrievers.semantic.is_some(),
@@ -796,7 +826,8 @@ async fn run(args: Args) -> Result<(), String> {
     let responder = responder::Responder {
         db: &db,
         config: &config,
-        llm: llm.as_ref(),
+        llm: llms.interactive.as_ref(),
+        batch: llms.batch.as_ref(),
         writer,
         retrievers,
         horizon,
