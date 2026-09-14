@@ -1306,6 +1306,30 @@ impl AssistantProposal {
                 (n, None) if n > 1 => format!("Mark {n} routine items skipped"),
                 _ => "Mark a routine item skipped".to_string(),
             },
+            // ⚠️ The entry itself is the detail; the summary says what kind of
+            // change it is, because a date-and-payee line lifted out of the
+            // hledger text would read as though that were the whole proposal.
+            "transaction.record" => "Add a transaction to the ledger".to_string(),
+            // The category is the decision and the count is how much of the
+            // ledger it moves — a card that hides the count is asking for an
+            // approval the user has not given. Same rule as `routine.complete`.
+            "transaction.categorize" => match (self.batch_size(), arg("category")) {
+                (n, Some(c)) if n > 1 => format!("File {n} transactions under {c}"),
+                (_, Some(c)) => format!("File a transaction under {c}"),
+                (n, None) if n > 1 => format!("Categorise {n} transactions"),
+                _ => "Categorise a transaction".to_string(),
+            },
+            // ⚠️ "Replace" out loud, not "tag". Tagging overwrites the whole set,
+            // so a card reading "add a tag" would describe a different and safer
+            // operation than the one being approved.
+            "transaction.tag" => "Replace the tags on a transaction".to_string(),
+            "transaction.update" => "Correct a transaction's details".to_string(),
+            // Names the statement in the line the user scans: this action asserts
+            // that an authority agreed, and which authority is the whole claim.
+            "transaction.clear" => match arg("statement_source") {
+                Some(s) => format!("Mark a transaction reconciled against {s}"),
+                None => "Mark a transaction reconciled".to_string(),
+            },
             other => other.to_string(),
         }
     }
@@ -1320,10 +1344,16 @@ impl AssistantProposal {
     /// "fix" this by counting a singular key as 1 — the fallback already says
     /// the true thing, and the special case would only add a way to disagree.
     fn batch_size(&self) -> usize {
-        self.args
-            .get("item_ids")
-            .and_then(|v| v.as_array())
+        // ⚠️ Both keys, because the two batched actions name different things —
+        // `item_ids` for a routine, `txn_ids` for the ledger. Checked rather than
+        // parameterised so a caller cannot ask the wrong key and be told zero,
+        // which reads as "one item" and understates the batch.
+        ["item_ids", "txn_ids"]
+            .iter()
+            .filter_map(|k| self.args.get(*k))
+            .filter_map(|v| v.as_array())
             .map(Vec::len)
+            .max()
             .unwrap_or(0)
     }
 
@@ -1342,10 +1372,22 @@ impl AssistantProposal {
 
     /// Whether this action's whole case rests on what it read, so a card with no
     /// evidence has to say so out loud rather than simply omitting the row.
+    /// ⚠️ **Ledger membership is narrower than "takes an evidence argument".**
+    /// `transaction.record` invents money that was not there and `transaction.clear`
+    /// asserts a statement agreed — for both, "proposed without opening any
+    /// record" is the sentence that should stop the user approving. Categorising
+    /// and tagging are judgments about a row that already exists, and a category
+    /// read off a payee name is an ordinary, honest proposal rather than a
+    /// suspicious one; making those cards apologise for having no citation would
+    /// teach the user to scroll past the warning that matters.
     pub fn cites_evidence(&self) -> bool {
         matches!(
             self.action.as_str(),
-            "belief.record" | "routine.complete" | "routine.skip"
+            "belief.record"
+                | "routine.complete"
+                | "routine.skip"
+                | "transaction.record"
+                | "transaction.clear"
         )
     }
 
@@ -1405,6 +1447,36 @@ impl AssistantProposal {
             // own row, so there is nothing left to add — and a line repeating
             // either would make the card look like it says more than it does.
             "routine.create" | "routine.complete" => return None,
+            // ⛔ The postings verbatim, never a summary of them. The amounts and
+            // the accounts *are* the proposal, and a card that rendered "about
+            // €4" would be asking for approval of a number the user never saw.
+            "transaction.record" => return arg("entry").map(str::to_string),
+            "transaction.tag" => {
+                let tags = self.args.get("tags")?.as_array()?;
+                let listed: Vec<&str> = tags.iter().filter_map(|t| t.as_str()).collect();
+                // ⚠️ Says what the *end state* is, because tagging replaces. An
+                // empty list is a real proposal — it clears every tag — and it is
+                // the one case a bare list would render as blank space.
+                return Some(if listed.is_empty() {
+                    "Removing every tag it has.".to_string()
+                } else {
+                    format!("Its tags afterwards: {}", listed.join(", "))
+                });
+            }
+            "transaction.update" => {
+                let mut parts = Vec::new();
+                if let Some(description) = arg("description") {
+                    parts.push(format!("New description: {description}"));
+                }
+                if let Some(date) = arg("date") {
+                    parts.push(format!("New date: {date}"));
+                }
+                return (!parts.is_empty()).then(|| parts.join("\n"));
+            }
+            "transaction.clear" => return arg("cleared_date").map(|d| format!("Cleared on {d}")),
+            // The category is in the summary and the identities are opaque ULIDs
+            // that mean nothing to a reader; the rationale is what carries this.
+            "transaction.categorize" => return None,
             _ => {}
         }
         // An action this build does not know: show its arguments verbatim so the
@@ -1707,6 +1779,90 @@ mod proposal_tests {
         let detail = p.detail().expect("some detail");
         assert!(detail.contains("target: x"), "{detail}");
         assert!(detail.contains("count: 3"), "{detail}");
+    }
+
+    /// ⚠️ The count is how much of the ledger moves, so it goes in the line the
+    /// user scans. A card reading "File a transaction under Groceries" while
+    /// authoring twelve is asking for an approval they did not give.
+    #[test]
+    fn a_categorize_proposal_says_how_many_transactions_it_moves() {
+        let many = proposal(
+            "transaction.categorize",
+            serde_json::json!({ "txn_ids": ["t1", "t2", "t3"], "category": "Groceries" }),
+        );
+        assert_eq!(many.summary(), "File 3 transactions under Groceries");
+
+        let one = proposal(
+            "transaction.categorize",
+            serde_json::json!({ "txn_ids": ["t1"], "category": "Groceries" }),
+        );
+        assert_eq!(one.summary(), "File a transaction under Groceries");
+    }
+
+    /// ⛔ Tagging **replaces**, and the card has to say so both ways round.
+    ///
+    /// Wording it as an addition would describe a safer operation than the one
+    /// being approved, and an empty list — which clears every tag — is a real
+    /// proposal that must not render as blank space.
+    #[test]
+    fn a_tag_proposal_states_the_end_state_including_the_empty_one() {
+        let p = proposal(
+            "transaction.tag",
+            serde_json::json!({ "txn_id": "t1", "tags": ["reimbursable"] }),
+        );
+        assert_eq!(p.summary(), "Replace the tags on a transaction");
+        assert_eq!(
+            p.detail().as_deref(),
+            Some("Its tags afterwards: reimbursable")
+        );
+
+        let cleared = proposal(
+            "transaction.tag",
+            serde_json::json!({ "txn_id": "t1", "tags": [] }),
+        );
+        assert_eq!(
+            cleared.detail().as_deref(),
+            Some("Removing every tag it has."),
+            "clearing every tag must read as a change, not as an empty card"
+        );
+    }
+
+    /// 🔴 The two ledger actions that assert rather than label must say what they
+    /// rest on — and `transaction.clear` must name the statement in the summary,
+    /// because which authority agreed *is* the claim.
+    #[test]
+    fn the_asserting_ledger_actions_are_held_to_their_evidence() {
+        let clear = proposal(
+            "transaction.clear",
+            serde_json::json!({
+                "txn_id": "t1",
+                "statement_source": "chequing-2026-08",
+                "cleared_date": "2026-08-16",
+            }),
+        );
+        assert_eq!(
+            clear.summary(),
+            "Mark a transaction reconciled against chequing-2026-08"
+        );
+        assert!(clear.cites_evidence());
+        assert!(proposal("transaction.record", serde_json::json!({})).cites_evidence());
+
+        // ⚠️ And the ones that do not. Making a category proposal apologise for
+        // having no citation teaches the user to scroll past the warning on the
+        // cards where it means something.
+        assert!(!proposal("transaction.categorize", serde_json::json!({})).cites_evidence());
+        assert!(!proposal("transaction.tag", serde_json::json!({})).cites_evidence());
+    }
+
+    /// ⛔ The postings are the proposal. A summarised amount would be an approval
+    /// of a number the user never saw.
+    #[test]
+    fn a_record_proposal_shows_the_postings_verbatim() {
+        let entry =
+            "2026-08-14 Coffee\n    Expenses:Food  4.20 EUR\n    Assets:Checking  -4.20 EUR";
+        let p = proposal("transaction.record", serde_json::json!({ "entry": entry }));
+        assert_eq!(p.summary(), "Add a transaction to the ledger");
+        assert_eq!(p.detail().as_deref(), Some(entry));
     }
 
     /// ⚠️ The day is the decision, so it belongs in the line the user scans —

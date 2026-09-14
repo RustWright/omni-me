@@ -29,14 +29,15 @@ use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{
     Button, ButtonSize, ButtonVariant, Card, PageHeader, SegmentedNav,
 };
+use crate::components::proposal_card::ProposalCard;
 use crate::continuity::{CaptureDraft, ContinuityKey, ListState, PostingDraft, use_continuity};
 use crate::features::feature_on;
 use crate::types::{
-    AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AttachmentRef,
-    BalanceCheckView, BudgetProgress, BudgetRow, DashboardSummaryView, DraftTransactionView,
-    ExtractedDraft, Feature, ImportStatementResult, JournalImportPlan, JournalImportPreview,
-    JournalImportResult, MatchCandidateView, MonthlyTrendBucketView, NetWorthPointView,
-    NetWorthSeriesView, PendingBatchView, PendingShareCapture, PostingInput,
+    AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AssistantProposal,
+    AttachmentRef, BalanceCheckView, BudgetProgress, BudgetRow, DashboardSummaryView,
+    DraftTransactionView, ExtractedDraft, Feature, ImportStatementResult, JournalImportPlan,
+    JournalImportPreview, JournalImportResult, MatchCandidateView, MonthlyTrendBucketView,
+    NetWorthPointView, NetWorthSeriesView, PendingBatchView, PendingShareCapture, PostingInput,
     ReconciliationTxnPreview, RecurringObligationView, RecurringPattern, ScanRecurringResult,
     TransactionFormDraft, TransactionView, TxnFilter,
 };
@@ -151,6 +152,14 @@ enum FinancesView {
     /// R2 ad-hoc query builder (Phase 7.1 + 7.2). Compose field predicates into
     /// a filter DSL, evaluate it host-side, and browse the matching transactions.
     Query,
+    /// Assistant proposals that change the ledger, decided here rather than in
+    /// the assistant inbox.
+    ///
+    /// ⛔ **Approval lives where the data lives** (user, 2026-09-13). `core`'s
+    /// `inbox::pending` subtracts exactly what this screen lists, so the two
+    /// surfaces are disjoint by construction — a proposal shown in both would be
+    /// two chances to approve one change.
+    Suggestions,
 }
 
 /// The three persistent finances surfaces. The `SegmentedNav`
@@ -198,7 +207,7 @@ fn surface_of(view: FinancesView) -> FinancesSurface {
     use FinancesView::*;
     match view {
         Overview | AddMenu | Capture(_) | Email | TransactionForm | BatchList | BatchReview
-        | StatementImport | JournalImport => FinancesSurface::Overview,
+        | StatementImport | JournalImport | Suggestions => FinancesSurface::Overview,
         TransactionList | TransactionDetail | Query => FinancesSurface::Ledger,
         Analyze | Dashboard | AccountList | BudgetList | RecurringReview | Reconciliation
         | BalanceCheck => FinancesSurface::Analyze,
@@ -225,7 +234,7 @@ fn finances_back_target(view: FinancesView, return_to: FinancesView) -> Option<F
     match view {
         Overview | Analyze | TransactionList => None,
         AddMenu | Capture(_) | Email | TransactionForm | BatchList | StatementImport
-        | JournalImport => Some(Overview),
+        | JournalImport | Suggestions => Some(Overview),
         BatchReview => Some(BatchList),
         TransactionDetail => Some(TransactionList),
         AccountList | Reconciliation => Some(return_to),
@@ -301,6 +310,24 @@ pub fn FinancesPage() -> Element {
             }
             if let Ok(batches) = bridge::invoke_list_pending_batches().await {
                 pending_batch_count.set(batches.len() as u64);
+            }
+        }
+    });
+
+    // Assistant proposals awaiting review, counted the same way and on the same
+    // trigger. ⚠️ **Not gated on the LLM feature.** Turning the assistant off must
+    // not hide a proposal the user has already been offered — `core` leaves
+    // deciding ungated for exactly this reason, and a count that vanished would
+    // strand the card behind it with nothing to say it was there.
+    let mut pending_suggestion_count: Signal<u64> = use_signal(|| 0);
+    let _refresh_suggestion_count = use_resource(move || {
+        let on_overview = matches!(*view.read(), FinancesView::Overview);
+        async move {
+            if !on_overview {
+                return;
+            }
+            if let Ok(proposals) = bridge::invoke_list_finance_proposals().await {
+                pending_suggestion_count.set(proposals.len() as u64);
             }
         }
     });
@@ -439,10 +466,12 @@ pub fn FinancesPage() -> Element {
                 FinancesView::Overview => rsx! {
                     OverviewView {
                         pending_count: *pending_batch_count.read(),
+                        suggestion_count: *pending_suggestion_count.read(),
                         has_pending_capture: pending_capture.is_some(),
                         pending_capture_label: pending_capture_label.clone(),
                         on_resume_capture: move |_| view.set(FinancesView::TransactionForm),
                         on_open_batches: move |_| view.set(FinancesView::BatchList),
+                        on_open_suggestions: move |_| view.set(FinancesView::Suggestions),
                         on_open_transactions: move |_| view.set(FinancesView::TransactionList),
                         on_open_accounts: move |_| {
                             return_to.set(FinancesView::Overview);
@@ -636,6 +665,11 @@ pub fn FinancesPage() -> Element {
                 },
                 FinancesView::JournalImport => rsx! {
                     JournalImportView {
+                        on_back: move |_| view.set(FinancesView::Overview),
+                    }
+                },
+                FinancesView::Suggestions => rsx! {
+                    SuggestionsView {
                         on_back: move |_| view.set(FinancesView::Overview),
                     }
                 },
@@ -1021,9 +1055,11 @@ fn InstitutionsCard(
 #[component]
 fn ReviewInboxCard(
     pending_count: u64,
+    suggestion_count: u64,
     unmatched: Option<String>,
     base_currency: String,
     on_open_batches: EventHandler<()>,
+    on_open_suggestions: EventHandler<()>,
     on_open_reconciliation: EventHandler<()>,
 ) -> Element {
     let unmatched_pending = unmatched
@@ -1035,6 +1071,11 @@ fn ReviewInboxCard(
         .map(|s| format_money(s, &base_currency))
         .unwrap_or_else(|| "—".to_string());
     let batch_tone = if pending_count > 0 {
+        "text-obsidian-accent"
+    } else {
+        "text-obsidian-text-muted"
+    };
+    let suggestion_tone = if suggestion_count > 0 {
         "text-obsidian-accent"
     } else {
         "text-obsidian-text-muted"
@@ -1061,6 +1102,18 @@ fn ReviewInboxCard(
                         span { class: "text-obsidian-text", "Auto-imported batches" }
                         span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
                     }
+                }
+                // ⛔ A row here rather than a queue of its own. One entry point
+                // means one number to watch — "things waiting for you in
+                // finances" — and the sections stay separate one tap in, where
+                // an import batch and an assistant proposal genuinely differ.
+                // ⚠️ Shown even at zero, unlike a badge: the row is how the user
+                // learns the assistant can offer ledger changes at all.
+                button {
+                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
+                    onclick: move |_| on_open_suggestions.call(()),
+                    span { class: "text-obsidian-text", "Assistant suggestions" }
+                    span { class: "tabular-nums font-semibold {suggestion_tone}", "{suggestion_count}" }
                 }
                 button {
                     class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
@@ -1166,10 +1219,12 @@ fn RecentActivityCard(recent: Vec<TransactionView>, on_open: EventHandler<()>) -
 #[component]
 fn OverviewView(
     pending_count: u64,
+    suggestion_count: u64,
     has_pending_capture: bool,
     pending_capture_label: Option<String>,
     on_resume_capture: EventHandler<()>,
     on_open_batches: EventHandler<()>,
+    on_open_suggestions: EventHandler<()>,
     on_open_transactions: EventHandler<()>,
     on_open_accounts: EventHandler<()>,
     on_open_reconciliation: EventHandler<()>,
@@ -1318,9 +1373,11 @@ fn OverviewView(
                 }
                 ReviewInboxCard {
                     pending_count,
+                    suggestion_count,
                     unmatched,
                     base_currency: base_currency.clone(),
                     on_open_batches: move |_| on_open_batches.call(()),
+                    on_open_suggestions: move |_| on_open_suggestions.call(()),
                     on_open_reconciliation: move |_| on_open_reconciliation.call(()),
                 }
                 CashFlowCard {
@@ -2415,6 +2472,73 @@ fn batch_needs_manual_fx(batch: &PendingBatchView) -> Option<String> {
         }
     }
     None
+}
+
+/// Assistant proposals that change the ledger, reviewed beside the ledger.
+///
+/// ⛔ **Renders the shared [`ProposalCard`], never a finance-flavoured copy.**
+/// The card carries the two things that make an approval informed — the evidence
+/// row and the "this one cannot be undone" line — and a second renderer is a
+/// second place for either to be forgotten. `transaction.clear` is irreversible,
+/// so that warning is live on this screen and not hypothetical.
+#[component]
+fn SuggestionsView(on_back: EventHandler<()>) -> Element {
+    let mut proposals: Signal<Option<Result<Vec<AssistantProposal>, String>>> = use_signal(|| None);
+
+    // A counter rather than a bare refetch call: deciding one card must reload
+    // the list, and `use_resource` reruns on a signal it read. Same shape as the
+    // assistant inbox's reload.
+    let mut epoch: Signal<u32> = use_signal(|| 0);
+    let _load = use_resource(move || {
+        let _ = epoch.read();
+        async move {
+            proposals.set(Some(bridge::invoke_list_finance_proposals().await));
+        }
+    });
+
+    rsx! {
+        PageHeader { title: "Assistant suggestions", class: "mb-6",
+            button {
+                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+                onclick: move |_| on_back.call(()),
+                "← Back"
+            }
+        }
+
+        match proposals.read().clone() {
+            None => rsx! {
+                div { class: "text-obsidian-text-muted text-sm", "Loading suggestions…" }
+            },
+            Some(Err(msg)) => rsx! {
+                div { class: "p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+                    "Failed to load suggestions: {msg}"
+                }
+            },
+            Some(Ok(rows)) if rows.is_empty() => rsx! {
+                div { class: "p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
+                    p { "Nothing waiting." }
+                    // ⚠️ Says the rule rather than just the state. An empty list
+                    // otherwise reads as "the assistant does not touch money",
+                    // which is the opposite of what is true — it does, and this
+                    // is where it has to ask.
+                    p { class: "mt-2 text-xs",
+                        "The assistant cannot change the ledger on its own. When it wants to, it asks here first."
+                    }
+                }
+            },
+            Some(Ok(rows)) => rsx! {
+                div { class: "space-y-2",
+                    for proposal in rows {
+                        ProposalCard {
+                            key: "{proposal.proposal_id}",
+                            proposal: proposal.clone(),
+                            on_decided: move |_| epoch += 1,
+                        }
+                    }
+                }
+            },
+        }
+    }
 }
 
 #[component]

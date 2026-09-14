@@ -114,6 +114,19 @@ struct RawHit {
 ///
 /// The query is passed through [`query_text::prepare`] first. Ranking is BM25's
 /// job; that function only keeps the tally from counting the whole corpus.
+/// The [`CatalogEntry::hidden_when`] exclusion as SQL, or `None` when the entry
+/// hides nothing.
+///
+/// ⚠️ Written as `!= true` rather than `= false` on purpose. The column is
+/// `TYPE bool` on a SCHEMAFULL table today, so the two agree — but if a row ever
+/// reaches the table without it, `= false` hides it and `!= true` shows it, and
+/// of the two failures a row that should have been hidden appearing is the one a
+/// person notices. ⛔ The opposite failure is a transaction vanishing from the
+/// assistant's view with nothing to indicate it was ever there.
+fn hidden_clause(entry: &CatalogEntry) -> Option<String> {
+    entry.hidden_when.map(|col| format!("{col} != true"))
+}
+
 pub async fn search(
     db: &Database,
     entry: &CatalogEntry,
@@ -127,13 +140,22 @@ pub async fn search(
     // ⚠️ `,OR@` is not decoration. A bare `@n@` defaults to requiring **every**
     // word of the query, so a question never matched anything a person phrased as
     // a question. Do not simplify it back.
-    let where_clause = entry
+    let text_match = entry
         .text_fields
         .iter()
         .enumerate()
         .map(|(i, f)| format!("{f} @{i},OR@ $q"))
         .collect::<Vec<_>>()
         .join(" OR ");
+    // ⛔ The OR chain must be parenthesised before anything is AND-ed to it.
+    // Without the brackets `a OR b AND removed != true` binds as
+    // `a OR (b AND removed != true)`, so a deleted row still comes back through
+    // the first text field — which is the exact failure `hidden_when` exists to
+    // prevent, arriving quietly.
+    let where_clause = match hidden_clause(entry) {
+        Some(hidden) => format!("({text_match}) AND {hidden}"),
+        None => text_match,
+    };
     let score_expr = (0..entry.text_fields.len())
         .map(|i| format!("search::score({i})"))
         .collect::<Vec<_>>()
@@ -373,6 +395,12 @@ pub async fn list(
         });
         binds.push((param, n.value.clone()));
     }
+    // Pushed in with the narrowings rather than appended after: everything here is
+    // AND-ed, so an unnarrowed list gets `WHERE removed != true` and a narrowed one
+    // gets it as another conjunct, with no separate empty-clause case to get wrong.
+    if let Some(hidden) = hidden_clause(entry) {
+        wheres.push(hidden);
+    }
     let where_clause = if wheres.is_empty() {
         String::new()
     } else {
@@ -453,8 +481,17 @@ pub async fn read(
     entry: &CatalogEntry,
     id: &str,
 ) -> Result<Option<FullRecord>, DbError> {
+    // ⚠️ A hidden row reads as **absent**, not as an error. The model reached this
+    // id from somewhere — a stale search result, its own earlier turn — and "no
+    // such record" is both true from its point of view and the answer that stops
+    // it reasoning about the row. ⛔ Reporting "this one is deleted" would leak the
+    // description of a transaction the user removed.
+    let where_clause = match hidden_clause(entry) {
+        Some(hidden) => format!(" WHERE {hidden}"),
+        None => String::new(),
+    };
     let sql = format!(
-        "SELECT *, meta::id(id) AS id FROM type::record('{table}', $id)",
+        "SELECT *, meta::id(id) AS id FROM type::record('{table}', $id){where_clause}",
         table = entry.table,
     );
     let mut resp = db.query(&sql).bind(("id", id.to_string())).await?;
@@ -658,7 +695,9 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use crate::assistant::catalog::ALL_ENTRIES;
-    use crate::events::{DocumentsProjection, NotesProjection, Projection, RoutinesProjection};
+    use crate::events::{
+        BudgetProjection, DocumentsProjection, NotesProjection, Projection, RoutinesProjection,
+    };
 
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
@@ -667,8 +706,28 @@ mod tests {
         NotesProjection.init_schema(&db).await.unwrap();
         RoutinesProjection.init_schema(&db).await.unwrap();
         DocumentsProjection.init_schema(&db).await.unwrap();
+        BudgetProjection.init_schema(&db).await.unwrap();
         std::mem::forget(dir);
         db
+    }
+
+    /// A ledger row, with the reconciliation trail a real one carries.
+    ///
+    /// `superseded_by` and `merged_ids` are set on every seeded row rather than
+    /// only where a test looks at them, so `reading_a_transaction_hides_its_merge_trail`
+    /// is checking a hidden column that is genuinely present.
+    async fn seed_transaction(db: &Database, id: &str, description: &str, removed: bool) {
+        db.query(
+            "UPSERT type::record('transactions', $id) SET date = '2026-05-14',
+             description = $d, postings = [], tags_top = [], removed = $r,
+             superseded_by = 'txn-other', merged_ids = ['txn-dupe'],
+             cleared = false, created_at = time::now(), updated_at = time::now()",
+        )
+        .bind(("id", id.to_string()))
+        .bind(("d", description.to_string()))
+        .bind(("r", removed))
+        .await
+        .unwrap();
     }
 
     /// Every optional column left unset unless named, which is the archive's
@@ -1218,6 +1277,98 @@ mod tests {
         assert!(
             rec.fields.get("text").is_some(),
             "hiding went too far — the text is the document: {:?}",
+            rec.fields
+        );
+    }
+
+    /// ⛔ A deleted transaction must be gone from **every** read path, not most.
+    ///
+    /// Written as one test over all three deliberately. The failure this guards
+    /// is not "the exclusion is wrong" — it is "the exclusion was added to two
+    /// query builders and the third was missed", and three separate tests make
+    /// that look like one unrelated failure instead of a hole.
+    #[tokio::test]
+    async fn a_deleted_transaction_is_gone_from_search_list_and_read() {
+        let db = test_db().await;
+        // Enough rows that BM25's IDF is not degenerate; see [`search`].
+        for i in 0..9 {
+            seed_transaction(
+                &db,
+                &format!("01JKTXN000000000000000000{i}"),
+                &format!("Coffee at the station {i}"),
+                false,
+            )
+            .await;
+        }
+        seed_transaction(&db, "01JKTXNDELETED000000000000", "Refunded gadget", true).await;
+
+        let listed = list(&db, entry("transaction"), &[], 50).await.unwrap();
+        assert_eq!(listed.hits.len(), 9, "list returned the deleted row");
+        // ⚠️ The count is a separate query over the same clause, and it is what the
+        // model is told the total is. A list of 9 reported as "10 matches" sends it
+        // looking for the tenth.
+        assert_eq!(listed.total_matches, 9, "the tally counted the deleted row");
+
+        // ⚠️ The positive half first, and it is not a courtesy. Without a FULLTEXT
+        // index on `description` a search returns nothing at all rather than
+        // failing, so "the deleted row is absent" would pass while the ledger was
+        // entirely unsearchable — the assertion proving itself by being unreachable.
+        let live = search(&db, entry("transaction"), "coffee station", 20)
+            .await
+            .unwrap();
+        assert!(
+            !live.hits.is_empty(),
+            "the ledger is not searchable at all — is `transactions_description_fts` \
+             defined?"
+        );
+
+        let found = search(&db, entry("transaction"), "refunded gadget", 20)
+            .await
+            .unwrap();
+        assert!(
+            found.hits.is_empty(),
+            "full-text reached a deleted row: {:?}",
+            found.hits
+        );
+
+        assert!(
+            read(&db, entry("transaction"), "01JKTXNDELETED000000000000")
+                .await
+                .unwrap()
+                .is_none(),
+            "reading a deleted transaction by id must be indistinguishable from a \
+             record that never existed"
+        );
+        assert!(
+            read(&db, entry("transaction"), "01JKTXN0000000000000000000")
+                .await
+                .unwrap()
+                .is_some(),
+            "the exclusion swallowed a live row — `!= true` is not matching `false`"
+        );
+    }
+
+    /// ⛔ Merge bookkeeping names rows that are the same payment or no longer
+    /// shown; quoted back, they read as separate spending.
+    #[tokio::test]
+    async fn reading_a_transaction_hides_its_merge_trail() {
+        let db = test_db().await;
+        seed_transaction(&db, "01JKTXN0000000000000000042", "Rent", false).await;
+
+        let rec = read(&db, entry("transaction"), "01JKTXN0000000000000000042")
+            .await
+            .unwrap()
+            .unwrap();
+        for hidden in ["superseded_by", "merged_ids", "balancing_posting"] {
+            assert!(
+                rec.fields.get(hidden).is_none(),
+                "`{hidden}` reached the model: {:?}",
+                rec.fields
+            );
+        }
+        assert!(
+            rec.fields.get("postings").is_some(),
+            "hiding went too far — the postings are the transaction: {:?}",
             rec.fields
         );
     }

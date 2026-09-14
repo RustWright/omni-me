@@ -18,7 +18,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::assistant::actions::{self, ActionType};
-use crate::config::ResolvedConfig;
+use crate::config::{Feature, ResolvedConfig};
 use crate::db::Database;
 use crate::events::{
     AssistantProposalDecidedPayload, EventError, EventType, EventWriter, ProposalDecision,
@@ -89,9 +89,71 @@ pub enum DecideError {
     Event(#[from] EventError),
 }
 
-/// Everything still waiting on the user, newest first.
+/// Features whose proposals are reviewed on their own screen.
+///
+/// ⛔ **Approval lives where the data lives** — a proposal to categorise a
+/// transaction is decided in Finances, beside the ledger it changes, not in a
+/// list of assistant business. The user settled this on 2026-09-13, and it is a
+/// product rule rather than a routing convenience: deciding a change to money
+/// while looking at the money is what makes the decision informed.
+///
+/// ⚠️ **A list, so that "no domain screen" is the default and stays visible.**
+/// Notes, beliefs and routines are reviewed in the assistant inbox today; that is
+/// not a claim they should be, only that nothing else has been built. Adding a
+/// feature here moves its proposals and requires a screen to move them to —
+/// `nothing_is_routed_away_from_the_inbox_without_a_screen_to_route_it_to`
+/// refuses the half-done version, where a proposal leaves the inbox before
+/// anywhere else shows it.
+pub const DOMAIN_REVIEWED: &[Feature] = &[Feature::Finances];
+
+/// Whether this feature's proposals are decided on their own screen.
+pub fn is_domain_reviewed(feature: Feature) -> bool {
+    DOMAIN_REVIEWED.contains(&feature)
+}
+
+/// Everything still waiting on the user in the assistant's own inbox, newest
+/// first — which is everything **except** what a domain screen reviews.
+///
+/// ⚠️ Filtered in Rust rather than in the query. The domain of a proposal is a
+/// property of its *action declaration*, which lives in this build and not in the
+/// row; a SQL `NOT IN (…)` would be a second copy of [`DOMAIN_REVIEWED`] spelled
+/// as action names, free to drift the moment one is renamed.
 pub async fn pending(db: &Database) -> Result<Vec<Proposal>, EventError> {
-    query_proposals(db, "WHERE decision IS NONE").await
+    let all = query_proposals(db, "WHERE decision IS NONE").await?;
+    Ok(all
+        .into_iter()
+        .filter(|p| !feature_of(&p.action).is_some_and(is_domain_reviewed))
+        .collect())
+}
+
+/// Everything still waiting on the user that **one feature's** screen reviews.
+///
+/// ⚠️ Takes the feature rather than reading it off the config, so a screen asks
+/// for its own proposals and can never be handed another domain's by a caller
+/// that passed the wrong thing.
+pub async fn pending_for_feature(
+    db: &Database,
+    feature: Feature,
+) -> Result<Vec<Proposal>, EventError> {
+    let all = query_proposals(db, "WHERE decision IS NONE").await?;
+    Ok(all
+        .into_iter()
+        .filter(|p| feature_of(&p.action) == Some(feature))
+        .collect())
+}
+
+/// The feature an action belongs to, or `None` if this build has no such action.
+///
+/// ⚠️ An unknown action name is deliberately **not** domain-reviewed, so it falls
+/// to the assistant inbox. A proposal made by a newer build and synced here is
+/// still something the user should see; `decide` will refuse it with
+/// [`DecideError::UnknownAction`], which is a message they can act on. Routing it
+/// to a domain screen that also does not know it would hide it instead.
+fn feature_of(action: &str) -> Option<Feature> {
+    actions::ALL_ACTIONS
+        .iter()
+        .find(|a| a.name == action)
+        .map(|a| a.feature)
 }
 
 /// One proposal by id, decided or not.
@@ -320,7 +382,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::config::{ConfigMap, ConfigValue, Feature};
+    use crate::config::{ConfigMap, ConfigValue};
     use crate::events::{
         AssistantProposalMadePayload, BeliefsProjection, EventStore, NewEvent, NotesProjection,
         ProjectionRunner, RoutinesProjection, SurrealEventStore,
@@ -356,6 +418,85 @@ mod tests {
     /// Put a `note.create` proposal in the inbox the way the agent does.
     async fn propose(writer: &EventWriter, proposal_id: &str, args: serde_json::Value) {
         propose_action(writer, proposal_id, "note.create", args).await
+    }
+
+    /// ⛔ Every action must be decidable somewhere, and in one place.
+    ///
+    /// The failure this exists for is not a wrong destination — it is a proposal
+    /// with **no** destination: a feature added to [`DOMAIN_REVIEWED`] before its
+    /// screen exists takes its proposals out of the assistant inbox, and they are
+    /// then made, stored, synced, and shown by nothing. Nobody reports that; the
+    /// user simply never hears about a change the assistant offered.
+    #[test]
+    fn nothing_is_routed_away_from_the_inbox_without_a_screen_to_route_it_to() {
+        /// Features whose screen actually renders a proposal queue today.
+        ///
+        /// Spelled out rather than derived: deriving it from [`DOMAIN_REVIEWED`]
+        /// would make the two agree by construction and assert nothing. This is
+        /// the second, independent statement — "and a screen was built" — that
+        /// the routing list cannot make on its own.
+        const HAS_A_REVIEW_SCREEN: &[Feature] = &[Feature::Finances];
+
+        for feature in DOMAIN_REVIEWED {
+            assert!(
+                HAS_A_REVIEW_SCREEN.contains(feature),
+                "{feature:?} takes its proposals out of the assistant inbox but has \
+                 no screen that shows them — they would be made, stored, synced, \
+                 and rendered by nothing"
+            );
+        }
+    }
+
+    /// The split itself: a ledger proposal is not assistant-inbox business.
+    #[tokio::test]
+    async fn a_finance_proposal_leaves_the_assistant_inbox_for_the_finances_screen() {
+        let (db, _config, writer) = harness(&[]).await;
+        propose(
+            &writer,
+            "p-note",
+            serde_json::json!({ "title": "T", "body": "B" }),
+        )
+        .await;
+        propose_action(
+            &writer,
+            "p-txn",
+            "transaction.categorize",
+            serde_json::json!({ "txn_ids": ["01JKTXN0000000000000000001"], "category": "Groceries" }),
+        )
+        .await;
+
+        let inbox = pending(&db).await.unwrap();
+        let assistant: Vec<&str> = inbox.iter().map(|p| p.action.as_str()).collect();
+        assert_eq!(
+            assistant,
+            vec!["note.create"],
+            "a ledger change must be decided beside the ledger"
+        );
+
+        let finances = pending_for_feature(&db, Feature::Finances).await.unwrap();
+        assert_eq!(finances.len(), 1);
+        assert_eq!(finances[0].action, "transaction.categorize");
+    }
+
+    /// ⚠️ An action this build does not know still has to reach someone.
+    #[tokio::test]
+    async fn a_proposal_from_a_newer_build_stays_in_the_assistant_inbox() {
+        let (db, _config, writer) = harness(&[]).await;
+        propose_action(
+            &writer,
+            "p-future",
+            "transaction.split",
+            serde_json::json!({}),
+        )
+        .await;
+
+        let assistant = pending(&db).await.unwrap();
+        assert_eq!(
+            assistant.len(),
+            1,
+            "an unknown action was routed to a screen that also cannot show it, so \
+             nobody would ever see it"
+        );
     }
 
     async fn propose_action(

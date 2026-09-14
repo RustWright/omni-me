@@ -170,6 +170,50 @@ approval, would end that. Everything else is fair game to propose.
 empty list is a real answer rather than a gap: it means this kind cannot be
 changed by the assistant at all.
 
+### The ledger: it may label, plan, record, and cite **(today)**
+
+The assistant can propose changes to your money. It can put transactions into a
+category, replace the tags on one, correct a description or a date, add a
+transaction it read about, and mark one reconciled against a statement. It cannot
+delete a transaction and it cannot merge two, and it cannot set a budget — budgets
+are not yet something it can see, and an action it cannot discover is worse than
+one that does not exist.
+
+Two of those deserve saying out loud, because they are wider than the rest.
+
+**Recording a transaction exists because of the balancing leg.** A bank import
+knows one side of a payment — the amount that left an account. What the money was
+*for* comes off a receipt, and a receipt is a photo or the body of an email with
+no schema to parse. That is the gap this fills, and it is why the proposal is
+written as a ledger entry rather than as an amount and two account names: a single
+purchase split between groceries and household is an ordinary receipt, and a
+two-account form would silently refuse it. The entry goes through the same parser
+that reads your existing journal file, so a proposal that does not balance is
+refused before you ever see it.
+
+**Marking something reconciled is the one action that asserts a check happened.**
+"Cleared" means a statement agreed the payment went through — that is a claim
+about an authority, not a judgment, and elsewhere omni-me is careful never to let
+a model make one. It is allowed here because the proposal cannot be made without
+naming the statement it was read from. You are confirming a citation you can go
+and look at, not a feeling the model had. It is also the only assistant action
+that cannot be undone: nothing un-clears a transaction, and the card says so
+before you accept it.
+
+**What it cannot do is change an amount.** Correcting a transaction reaches its
+description and its date and stops there. The machinery underneath would happily
+apply a rewritten set of postings — the reconciliation review uses exactly that
+path when it matches a payment against a statement — and the assistant is kept off
+it deliberately. If the amounts can be restated by a model, "the amount is what the
+bank said" stops being true, and it would stop being true inside something
+presented as a wording fix.
+
+**Ledger proposals are decided in Finances, not in the assistant's inbox.** A
+change to money is approved beside the money, with the ledger on screen. The two
+queues are disjoint by construction rather than by convention: the assistant inbox
+subtracts exactly what the finances screen lists, so nothing appears twice and
+nothing falls between them.
+
 ### Changing a note it did not write **(today)**
 
 The assistant can add to the end of a note, retitle it, or change text inside it. The third

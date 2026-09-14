@@ -96,6 +96,19 @@ struct StoredChunk {
 struct SourceRow {
     id: Option<String>,
     text: Option<String>,
+    /// The entry's [`CatalogEntry::hidden_when`] column, evaluated in the query.
+    ///
+    /// ⚠️ Selected rather than filtered out. Skipping hidden rows in the `WHERE`
+    /// would leave a record that was embedded *before* it was hidden sitting in
+    /// the index forever, reachable by `knn_search` after `search`, `list` and
+    /// `read` have all stopped returning it — a deleted transaction that only the
+    /// semantic path can still find. Fetching it and deleting its chunks is what
+    /// makes hiding a row propagate.
+    ///
+    /// Not optional: the query emits the literal `false` for an entry that hides
+    /// nothing, so the column is always there and a missing one is a real error
+    /// rather than a row to wave through.
+    hidden: bool,
 }
 
 /// Bring the index up to date with the record tables.
@@ -144,8 +157,14 @@ async fn sweep_one(
         .collect::<Vec<_>>()
         .join(" + ");
 
+    // `false` when the entry hides nothing, so the column is always present and
+    // `SourceRow` needs no second shape.
+    let hidden_expr = entry
+        .hidden_when
+        .map_or_else(|| "false".to_string(), |col| format!("{col} = true"));
+
     let sql = format!(
-        "SELECT meta::id(id) AS id, ({text_expr}) AS text FROM {}",
+        "SELECT meta::id(id) AS id, ({text_expr}) AS text, ({hidden_expr}) AS hidden FROM {}",
         entry.table
     );
     let mut resp = db.query(&sql).await.map_err(DbError::from)?;
@@ -155,6 +174,15 @@ async fn sweep_one(
         let Some(record_id) = row.id else { continue };
         let text = row.text.unwrap_or_default();
         report.scanned += 1;
+
+        // ⛔ Before `is_current`, not after. A hidden row that was indexed while
+        // visible still has its original text, so its hash still matches and
+        // `is_current` would report it up to date and skip it — leaving the chunks
+        // in place. Hiding has to win over freshness.
+        if row.hidden {
+            report.removed += delete_chunks(db, entry.name, &record_id).await?;
+            continue;
+        }
 
         let hash = content_hash(&text);
         if is_current(db, entry.name, &record_id, &hash, embedder.name()).await? {

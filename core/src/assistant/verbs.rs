@@ -314,7 +314,7 @@ async fn list_types(db: &Database, config: &ResolvedConfig) -> Value {
         types.push(json!({
             "name": entry.name,
             "description": entry.description,
-            "count": count_rows(db, entry.table).await,
+            "count": count_rows(db, entry).await,
             "identified_by": identity_hint(entry),
         }));
     }
@@ -388,7 +388,7 @@ async fn describe_type(db: &Database, config: &ResolvedConfig, name: &str) -> Va
                 "description": p.description,
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
-        "count": count_rows(db, entry.table).await,
+        "count": count_rows(db, entry).await,
     })
 }
 
@@ -594,8 +594,20 @@ fn identity_hint(entry: &CatalogEntry) -> &'static str {
     }
 }
 
-async fn count_rows(db: &Database, table: &str) -> u64 {
-    let sql = format!("SELECT count() AS n FROM {table} GROUP ALL");
+/// How many records of this type there are, as the model is told.
+///
+/// ⚠️ Takes the entry rather than the table name so it can apply
+/// [`CatalogEntry::hidden_when`]. A count that includes deleted rows contradicts
+/// the `list` beside it, and the model believes the number — "you have 412
+/// transactions" followed by a list that can only ever reach 380 reads as a
+/// retrieval failure and invites it to keep digging.
+async fn count_rows(db: &Database, entry: &CatalogEntry) -> u64 {
+    let where_clause = match entry.hidden_when {
+        Some(col) => format!(" WHERE {col} != true"),
+        None => String::new(),
+    };
+    let table = entry.table;
+    let sql = format!("SELECT count() AS n FROM {table}{where_clause} GROUP ALL");
     match db.query(&sql).await {
         Ok(mut resp) => resp
             .take::<Vec<serde_json::Value>>(0)
@@ -613,7 +625,9 @@ async fn count_rows(db: &Database, table: &str) -> u64 {
 mod tests {
     use super::*;
     use crate::config::Feature;
-    use crate::events::{DocumentsProjection, NotesProjection, Projection, RoutinesProjection};
+    use crate::events::{
+        BudgetProjection, DocumentsProjection, NotesProjection, Projection, RoutinesProjection,
+    };
 
     async fn test_db() -> Database {
         let dir = tempfile::tempdir().unwrap();
@@ -622,6 +636,7 @@ mod tests {
         NotesProjection.init_schema(&db).await.unwrap();
         RoutinesProjection.init_schema(&db).await.unwrap();
         DocumentsProjection.init_schema(&db).await.unwrap();
+        BudgetProjection.init_schema(&db).await.unwrap();
         std::mem::forget(dir);
         db
     }
@@ -741,7 +756,14 @@ mod tests {
         // silently, which is the one change on this surface worth noticing.
         assert_eq!(
             names,
-            vec!["journal", "note", "routine", "belief", "document"]
+            vec![
+                "journal",
+                "note",
+                "routine",
+                "belief",
+                "document",
+                "transaction"
+            ]
         );
         let note = types.iter().find(|t| t["name"] == "note").unwrap();
         assert_eq!(note["count"], 1);

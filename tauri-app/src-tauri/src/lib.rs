@@ -810,6 +810,7 @@ pub fn run() {
             commands::assistant::list_assistant_threads,
             commands::assistant::read_assistant_thread,
             commands::assistant::list_assistant_proposals,
+            commands::assistant::list_finance_proposals,
             commands::assistant::read_thread_proposals,
             commands::assistant::decide_assistant_proposal,
             commands::assistant::list_beliefs,

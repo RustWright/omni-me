@@ -4638,6 +4638,25 @@ pub async fn invoke_list_assistant_proposals()
     }
 }
 
+/// The proposals the finances screen reviews.
+///
+/// ⛔ Disjoint from [`invoke_list_assistant_proposals`] by construction, not by
+/// convention — `inbox::pending` subtracts exactly what this returns. A change
+/// to money is decided beside the money.
+pub async fn invoke_list_finance_proposals() -> Result<Vec<crate::types::AssistantProposal>, String>
+{
+    #[cfg(feature = "mock")]
+    {
+        Ok(mock_assistant::finance_proposals())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_finance_proposals", &Args {}).await
+    }
+}
+
 /// The proposals made on one conversation, decided or not.
 pub async fn invoke_read_thread_proposals(
     thread_id: &str,
@@ -4976,6 +4995,48 @@ mod mock_assistant {
                 .cloned()
                 .collect()
         })
+    }
+
+    /// ⚠️ **Seeded, unlike [`pending_proposals`], which starts empty.** The
+    /// assistant inbox fills as the mock conversation runs; the finances review
+    /// section has no such path in the browser, so without a standing fixture a
+    /// sweep would render an empty state and prove nothing about the section.
+    ///
+    /// ⚠️ One reversible and one **irreversible** (`transaction.clear` — nothing
+    /// un-clears a transaction), so the sweep reaches the warning as well as the
+    /// ordinary card.
+    pub fn finance_proposals() -> Vec<AssistantProposal> {
+        vec![
+            AssistantProposal {
+                proposal_id: "mock-fin-1".into(),
+                thread_id: "mock-thread-fin".into(),
+                message_id: "mock-msg-fin".into(),
+                action: "transaction.categorize".into(),
+                args: serde_json::json!({
+                    "txn_ids": ["01JKTXN0000000000000000001", "01JKTXN0000000000000000002"],
+                    "category": "Groceries",
+                }),
+                rationale: "Both are the same supermarket you already file under Groceries.".into(),
+                reversible: true,
+                created_at: now(),
+                decision: None,
+            },
+            AssistantProposal {
+                proposal_id: "mock-fin-2".into(),
+                thread_id: "mock-thread-fin".into(),
+                message_id: "mock-msg-fin-2".into(),
+                action: "transaction.clear".into(),
+                args: serde_json::json!({
+                    "txn_id": "01JKTXN0000000000000000003",
+                    "statement_source": "chequing-2026-08",
+                    "cleared_date": "2026-08-16",
+                }),
+                rationale: "It appears on the August chequing statement in the archive.".into(),
+                reversible: false,
+                created_at: now(),
+                decision: None,
+            },
+        ]
     }
 
     pub fn thread_proposals(thread_id: &str) -> Vec<AssistantProposal> {

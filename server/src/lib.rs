@@ -40,8 +40,28 @@ use omni_me_core::extraction::{
 use omni_me_core::llm::{ClientOptions, LlmClient, build_llm_client};
 
 const DB_PATH: &str = "surreal_data/server.db";
-const LISTEN_ADDR: &str = "0.0.0.0:3000";
+const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:3000";
 const DEFAULT_BLOB_DIR: &str = "blobs";
+
+/// Where to listen, from `OMNI_LISTEN_ADDR` or the default.
+///
+/// ⚠️ **This is what lets a second instance run beside the real one.** `DB_PATH`
+/// is relative, so the working directory already isolates the database, and
+/// `BLOB_DIR` already isolates the blobs — the port was the last thing hardcoded,
+/// and it is why a dev server could not be stood up next to the live one at all.
+/// Same override precedent as `OMNI_AUTO_IMPORT_INTERVAL_SECS` below.
+///
+/// ⛔ Unparseable values are **not** silently replaced with the default. A typo in
+/// a unit file would otherwise start a second server on 3000, where it either
+/// fails to bind or — worse, if the real one is down — answers in its place with
+/// an empty database.
+fn listen_addr() -> String {
+    match std::env::var("OMNI_LISTEN_ADDR") {
+        Ok(addr) if addr.trim().is_empty() => DEFAULT_LISTEN_ADDR.to_string(),
+        Ok(addr) => addr,
+        Err(_) => DEFAULT_LISTEN_ADDR.to_string(),
+    }
+}
 
 /// Where blobs live, from `BLOB_DIR` or the default.
 ///
@@ -288,11 +308,12 @@ pub async fn run(cfg: RunConfig) {
 
     let app = build_app(state, updates_dir, auth_token);
 
-    let listener = tokio::net::TcpListener::bind(LISTEN_ADDR)
+    let addr = listen_addr();
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("failed to bind");
 
-    tracing::info!("listening on {LISTEN_ADDR}");
+    tracing::info!("listening on {addr}");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -462,6 +483,46 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     use omni_me_core::credentials::LlmProviderConfig;
+
+    /// ⛔ The port is the last thing standing between one server and two.
+    ///
+    /// ⚠️ Serialised by hand rather than run as three tests: `set_var` is process
+    /// global and Rust runs tests in threads, so a parallel neighbour reading this
+    /// variable would see whatever the other test happened to set. Splitting it up
+    /// would make the failure intermittent, which is worse than the coupling.
+    #[test]
+    fn the_listen_address_is_overridable_but_never_silently_defaulted() {
+        // SAFETY: single-threaded within this test, and the variable is read by
+        // nothing else in the test binary.
+        unsafe {
+            std::env::remove_var("OMNI_LISTEN_ADDR");
+            assert_eq!(
+                listen_addr(),
+                DEFAULT_LISTEN_ADDR,
+                "unset means the default"
+            );
+
+            std::env::set_var("OMNI_LISTEN_ADDR", "0.0.0.0:3100");
+            assert_eq!(
+                listen_addr(),
+                "0.0.0.0:3100",
+                "a second instance needs this"
+            );
+
+            // ⛔ Passed through, not repaired. A typo must fail to bind loudly
+            // rather than start a second server on the live port with an empty
+            // database.
+            std::env::set_var("OMNI_LISTEN_ADDR", "not-an-address");
+            assert_eq!(listen_addr(), "not-an-address");
+
+            // Blank is the one case that is genuinely "unset" — an unfilled
+            // template line, not an intention.
+            std::env::set_var("OMNI_LISTEN_ADDR", "   ");
+            assert_eq!(listen_addr(), DEFAULT_LISTEN_ADDR);
+
+            std::env::remove_var("OMNI_LISTEN_ADDR");
+        }
+    }
 
     fn openai_llm(vision: bool) -> LlmProviderConfig {
         LlmProviderConfig {

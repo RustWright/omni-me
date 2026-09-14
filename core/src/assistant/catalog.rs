@@ -32,7 +32,9 @@
 //! [`every_queryable_projection_is_catalogued`] is what stops that being silent.
 
 use crate::config::{Feature, ResolvedConfig};
-use crate::events::{BeliefsProjection, DocumentsProjection, NotesProjection, RoutinesProjection};
+use crate::events::{
+    BeliefsProjection, BudgetProjection, DocumentsProjection, NotesProjection, RoutinesProjection,
+};
 use crate::record_type::JOURNAL;
 
 /// How a row's identity behaves, which decides whether the model can construct
@@ -52,7 +54,7 @@ pub enum IdentityKind {
 /// Deliberately wider than the Phase B `search` implements. The set is sized to
 /// the shapes the app already has and the ones it is heading for — a ledger query
 /// is a date-and-amount range, not a text match — so that reaching them later is
-/// a new entry rather than a new vocabulary. `transaction_shape_is_expressible`
+/// a new entry rather than a new vocabulary. `a_ledger_entry_is_findable_by_its_numbers`
 /// is the test that keeps that claim honest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterKind {
@@ -194,6 +196,26 @@ pub struct CatalogEntry {
     /// failure "a real column silently stopped reaching the model", which is far
     /// harder to notice than one extra key.
     pub hidden_fields: &'static [&'static str],
+    /// A boolean column whose `true` rows this catalog never returns, from
+    /// `search`, `list` or `read` alike.
+    ///
+    /// ⚠️ **Soft-deletion is invisible to a filter-driven query.** Every entry
+    /// here predates this field because none of their tables had one: a note is
+    /// deleted outright, and a routine's `removed` lives on its *items*, which
+    /// `derive` already filters. `transactions` is the first top-level table
+    /// where a row can be gone and still be selected, and the queries build their
+    /// `WHERE` purely from model-supplied narrowings — so without a declaration
+    /// the assistant reads deleted ledger entries and cites them as evidence.
+    ///
+    /// ⛔ **Not a filter.** A filter is something the model chooses to apply, and
+    /// "the model remembered to exclude deleted rows" is not a property worth
+    /// having. This is applied to every query over the table whatever was asked.
+    ///
+    /// ⚠️ **Distinct from retirement, which is deliberately visible.** A retired
+    /// belief stays readable on purpose — `memory.rs` keeps the audit trail — so
+    /// that is a filter's job, not this one. The test is whether a person would
+    /// call the row *gone*.
+    pub hidden_when: Option<&'static str>,
 }
 
 const JOURNAL_ENTRY: CatalogEntry = CatalogEntry {
@@ -235,6 +257,7 @@ const JOURNAL_ENTRY: CatalogEntry = CatalogEntry {
     derived: None,
     record_type: Some(JOURNAL),
     hidden_fields: &[],
+    hidden_when: None,
 };
 
 const NOTE: CatalogEntry = CatalogEntry {
@@ -262,6 +285,7 @@ const NOTE: CatalogEntry = CatalogEntry {
     // `NotesProjection`'s schema, where the comment explains why the fold needs
     // them; they are how replay converges and not a word the user wrote.
     hidden_fields: &["applied_appends"],
+    hidden_when: None,
 };
 
 const ROUTINE: CatalogEntry = CatalogEntry {
@@ -328,6 +352,9 @@ const ROUTINE: CatalogEntry = CatalogEntry {
     }),
     record_type: None,
     hidden_fields: &[],
+    // The routines table itself has no `removed`; its *items* do, and `derive`
+    // already filters those — see `store::derive`'s note.
+    hidden_when: None,
 };
 
 /// What the assistant has concluded about the user, and is allowed to read back.
@@ -344,9 +371,16 @@ const BELIEF: CatalogEntry = CatalogEntry {
     table: "beliefs",
     projection: BeliefsProjection::NAME,
     feature: Feature::Llm,
+    // ⚠️ This said "filter on `retired` to exclude them" until 2026-09-13. There
+    // is no `retired` filter and no `retired` column — retirement is
+    // `superseded_at` being set — so the instruction named two things that do not
+    // exist, and a model following it either failed the call or gave up and cited
+    // a belief the user had retired. Say what is true instead: `read` shows it,
+    // `search` and `list` cannot. A real filter over `superseded_at` is the fix
+    // and is recorded as one; describing the gap is not the same as closing it.
     description: "A lasting conclusion previously drawn about the user and accepted by them, \
-                  with the records it was drawn from. Retired ones are kept — filter on \
-                  `retired` to exclude them.",
+                  with the records it was drawn from. Retired ones are kept and are included \
+                  in search and list results — `read` one to see whether it is still current.",
     identity: IdentityKind::Opaque,
     handle: "statement",
     text_fields: &["statement"],
@@ -371,6 +405,11 @@ const BELIEF: CatalogEntry = CatalogEntry {
     derived: None,
     record_type: None,
     hidden_fields: &[],
+    // ⛔ Not `superseded_at`. A retired belief stays readable on purpose — the
+    // audit trail is the point (`memory.rs`) — so hiding it here would delete a
+    // deliberate capability. What is missing is the *filter*; see this entry's
+    // description.
+    hidden_when: None,
 };
 
 /// Columns on `documents` that mean nothing to a reader.
@@ -457,10 +496,83 @@ const DOCUMENT: CatalogEntry = CatalogEntry {
     derived: None,
     record_type: None,
     hidden_fields: DOCUMENT_INTERNALS,
+    hidden_when: None,
+};
+
+/// Reconciliation bookkeeping on `transactions`, and the merge trail.
+///
+/// `superseded_by` and `merged_ids` exist so the unified reconciliation engine
+/// can collapse two sightings of one payment into a single row while keeping both
+/// originals in the log. To a reader they are ULIDs of rows that are either the
+/// same transaction under another name or no longer shown at all — quoted back,
+/// they look like distinct payments. `balancing_posting` is the engine's
+/// hidden-fee correction, not a posting the user made.
+const TRANSACTION_INTERNALS: &[&str] = &["superseded_by", "merged_ids", "balancing_posting"];
+
+/// The ledger: what was actually spent, and what it was for.
+///
+/// ⚠️ **The counter-example the catalog was designed against.** Journal, note and
+/// belief are all "a record is a text body with metadata"; a transaction's meaning
+/// is in its amounts and accounts, and full-text over `description` finds almost
+/// nothing worth having. That is why `filters` carries the weight here and
+/// `text_fields` is one entry long — ⛔ do not widen it to make search feel more
+/// productive, because a match on a payee name is not evidence about money.
+///
+/// ⚠️ **`category` is `option<string>`** — most rows have none until something
+/// categorises them, which is exactly what `transaction.categorize` is for. It is
+/// an `Exact` filter and not a text field, so the `string::concat(NONE, …)` trap
+/// that bit `documents` does not reach it; keep it that way.
+const TRANSACTION: CatalogEntry = CatalogEntry {
+    name: "transaction",
+    table: "transactions",
+    projection: BudgetProjection::NAME,
+    feature: Feature::Finances,
+    description: "A dated ledger entry with balanced postings — what was spent or received, \
+                  from which account, and what it was for. `category` is often unset.",
+    identity: IdentityKind::Opaque,
+    handle: "description",
+    text_fields: &["description"],
+    filters: &[
+        FilterField {
+            key: "date",
+            kind: FilterKind::Range,
+            description: "Transaction date, YYYY-MM-DD.",
+        },
+        FilterField {
+            key: "category",
+            kind: FilterKind::Exact,
+            description: "Category assigned to the transaction. Absent on anything not yet \
+                          categorised, so a category filter silently excludes those.",
+        },
+        FilterField {
+            key: "tags_top",
+            kind: FilterKind::Tag,
+            description: "Top-level tags on the entry as a whole.",
+        },
+        FilterField {
+            key: "cleared",
+            kind: FilterKind::Flag,
+            description: "Whether it has been reconciled against a statement.",
+        },
+    ],
+    list_order: ListOrder {
+        column: "date",
+        descending: true,
+    },
+    children: &[],
+    derived: None,
+    record_type: None,
+    hidden_fields: TRANSACTION_INTERNALS,
+    // ⛔ The reason this field exists. A deleted transaction stays on the table
+    // with `removed = true`, and every query here builds its `WHERE` from
+    // model-supplied filters alone — so without this the assistant reads money
+    // the user deleted and cites it as though it had been spent.
+    hidden_when: Some("removed"),
 };
 
 /// Every catalogued collection, before feature gating.
-pub const ALL_ENTRIES: &[CatalogEntry] = &[JOURNAL_ENTRY, NOTE, ROUTINE, BELIEF, DOCUMENT];
+pub const ALL_ENTRIES: &[CatalogEntry] =
+    &[JOURNAL_ENTRY, NOTE, ROUTINE, BELIEF, DOCUMENT, TRANSACTION];
 
 /// The entries visible under this config.
 ///
@@ -482,7 +594,6 @@ pub fn lookup(config: &ResolvedConfig, name: &str) -> Option<&'static CatalogEnt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::BudgetProjection;
     use crate::events::registry::ALL_PROJECTIONS;
 
     /// Projections whose tables are not records anyone would search.
@@ -500,9 +611,6 @@ mod tests {
         "auto_import",
         // Writes an hledger file out to disk; owns no queryable table of its own.
         "journal_file",
-        // ⛔ Finances is deferred indefinitely. `transaction_shape_is_expressible`
-        // proves the catalog could describe it; nothing registers one.
-        "budget",
         // ⚠️ The assistant's own conversations, and the exclusion is a decision
         // rather than an omission. Registering it reads as "the assistant
         // remembers"; what it actually does is put every answer it has ever given
@@ -554,73 +662,68 @@ mod tests {
         }
     }
 
-    /// The catalog must be able to describe a ledger entry without being widened.
+    /// The ledger entry must stay findable by its numbers, not by its prose.
     ///
-    /// ⛔ Finances is deferred indefinitely and this entry is **never registered**
-    /// — no query runs, no finance data is read. It exists because journal and
-    /// notes are two variations of one shape, and designing the struct against
-    /// only those would bake in "a record is a document with a text body". A
-    /// transaction is the counter-example already sitting in the database: its
-    /// meaning is in amounts and accounts, and full-text over `description` finds
-    /// almost nothing worth having.
+    /// ⚠️ This was `transaction_shape_is_expressible` and asserted the entry was
+    /// **not** registered, under a finance hold the user lifted on 2026-09-11.
+    /// The hold is gone; the property it was really protecting is not. Journal,
+    /// note and belief are three variations of "a record is a text body", and a
+    /// transaction is the counter-example that stops the catalog quietly becoming
+    /// a document search — its meaning is in amounts and accounts, and full-text
+    /// over `description` finds almost nothing worth having.
     #[test]
-    fn transaction_shape_is_expressible() {
-        const TRANSACTION: CatalogEntry = CatalogEntry {
-            name: "transaction",
-            table: "transactions",
-            projection: BudgetProjection::NAME,
-            feature: Feature::Finances,
-            description: "A dated ledger entry with balanced postings.",
-            identity: IdentityKind::Opaque,
-            handle: "description",
-            text_fields: &["description"],
-            filters: &[
-                FilterField {
-                    key: "date",
-                    kind: FilterKind::Range,
-                    description: "Transaction date, YYYY-MM-DD.",
-                },
-                FilterField {
-                    key: "category",
-                    kind: FilterKind::Exact,
-                    description: "Category assigned to the transaction.",
-                },
-                FilterField {
-                    key: "tags_top",
-                    kind: FilterKind::Tag,
-                    description: "Top-level posting tags.",
-                },
-                FilterField {
-                    key: "cleared",
-                    kind: FilterKind::Flag,
-                    description: "Whether it has been reconciled against a statement.",
-                },
-            ],
-            list_order: ListOrder {
-                column: "date",
-                descending: true,
-            },
-            children: &[],
-            derived: None,
-            record_type: None,
-            hidden_fields: &[],
-        };
+    fn a_ledger_entry_is_findable_by_its_numbers() {
+        let txn = ALL_ENTRIES
+            .iter()
+            .find(|e| e.name == "transaction")
+            .expect("the ledger entry is registered");
 
-        // The load-bearing assertions: a range filter over a non-text column, and
-        // a type whose text field is the least interesting thing about it.
         assert!(
-            TRANSACTION
-                .filters
+            txn.filters
                 .iter()
                 .any(|f| f.kind == FilterKind::Range && f.key == "date"),
             "a ledger entry must be findable by date range, not only by text"
         );
-        assert_eq!(TRANSACTION.text_fields.len(), 1);
-        assert!(
-            !ALL_ENTRIES.iter().any(|e| e.name == "transaction"),
-            "the transaction entry must stay a fixture — registering it would put \
-             a query path over finance data under an active integrity hold"
+        assert_eq!(
+            txn.text_fields.len(),
+            1,
+            "widening the ledger's text fields makes search feel productive while \
+             returning payee-name matches, which are not evidence about money"
         );
+        assert_eq!(
+            txn.hidden_when,
+            Some("removed"),
+            "a deleted transaction must be unreachable, not merely unlisted — the \
+             queries build their WHERE from model-supplied filters alone"
+        );
+    }
+
+    /// Whatever an entry hides, a child collection must not hand back.
+    ///
+    /// ⚠️ `fetch_children` queries [`ChildCollection::table`] directly and knows
+    /// nothing about the parent's [`CatalogEntry::hidden_when`]. Today no child
+    /// reads a table that hides rows, and this is what makes adding one fail here
+    /// rather than silently reopening the path the field was added to close —
+    /// `documents` is already self-referential, so the shape is one column away.
+    #[test]
+    fn no_child_collection_reads_a_table_with_hidden_rows() {
+        let hidden: Vec<&str> = ALL_ENTRIES
+            .iter()
+            .filter(|e| e.hidden_when.is_some())
+            .map(|e| e.table)
+            .collect();
+        for entry in ALL_ENTRIES {
+            for child in entry.children {
+                assert!(
+                    !hidden.contains(&child.table),
+                    "`{}`'s `{}` collection reads `{}`, whose rows can be hidden — \
+                     fetch_children does not apply `hidden_when`",
+                    entry.name,
+                    child.name,
+                    child.table
+                );
+            }
+        }
     }
 
     #[test]

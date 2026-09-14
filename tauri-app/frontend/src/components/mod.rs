@@ -26,6 +26,7 @@ pub mod month_grid;
 pub mod icon;
 pub mod nav;
 pub mod primitives;
+pub mod proposal_card;
 pub mod splash;
 pub mod sync_status;
 pub mod tag_editor;

@@ -1004,6 +1004,51 @@ arbitrary PDF, so reading a 40-page scan hands the model all of it. ⛔ Not a on
 silently truncated document is one the model answers from believing it saw the whole thing, so
 the cut has to be stated in what `read` returns.
 
+### Finance propose actions — BUILT 2026-09-13
+
+✅ The assistant can propose ledger changes, and the ledger is visible to it. Decisions were the
+user's, taken 2026-09-13; the scope answer was **"everything except delete and merge"**, and his
+reason is the part worth keeping: *"receipts especially email receipts and photo receipts don't
+always follow a specific function, yes the bank auto import is or at least can be automatic but
+the balancing transaction needs the messy receipt processing."*
+
+- ✅ **Read side.** `transaction` registered in the catalogue behind `Feature::Finances`; a
+  FULLTEXT index on `description` (without it `search` returns zero hits and reports no error);
+  `superseded_by`/`merged_ids`/`balancing_posting` hidden.
+- ✅ **`hidden_when`, a new catalogue mechanism.** `transactions` is the first catalogued table
+  where a row can be soft-deleted, and every query built its `WHERE` from model-supplied filters
+  alone — so the assistant would have read deleted money and cited it. Applied in `search`,
+  `list`, `read`, the `list_types` count, **and the embedding sweep**, which is a separate read
+  path: a row hidden after being embedded has its chunks deleted rather than being skipped.
+- ✅ **Five actions:** `transaction.record` (hledger text, parsed by the *existing*
+  `journal_import` converter — ⛔ never write a second parser for that syntax),
+  `.categorize` (batched), `.tag` (single, because tagging *replaces*), `.update`, `.clear`.
+- ⚠️ **`transaction.update` reaches description and date only.** The projection would apply a
+  `postings` rewrite — that path is the reconciliation review's — and a model restating amounts
+  makes "the amount is what the bank said" untrue inside something presented as a wording fix.
+  ⛔ Widening it needs its own action whose card shows both numbers.
+- 🔴 **`transaction.clear` is the only irreversible action in the app.** Nothing un-clears. It is
+  allowed because `statement_source` is **required**, so the user confirms a citation rather than
+  a feeling.
+- ✅ **Routing:** `inbox::DOMAIN_REVIEWED` sends finance proposals to the Finances screen and
+  `inbox::pending` subtracts exactly that set, so the two queues are disjoint by construction.
+  One `ProposalCard`, now shared in `components/`.
+
+**Deferred out of this change, with reasons:**
+
+- 🔴 **`budget.set` was written and then removed.** The model discovers actions only through
+  `describe_type`, matched on the `{type}.` prefix — and there is no catalogued `budget` type, so
+  it would have been undiscoverable except by guessing wrong and reading the error. Registering
+  one needs a `category` **column** on `budgets` (today the category is the record id) plus a
+  `BudgetProjection` version bump, i.e. a projection rebuild. That is a migration, not cleanup.
+- ⚠️ **The `belief` entry's description promised a `retired` filter that does not exist** — no
+  such filter and no such column (retirement is `superseded_at`). Corrected to describe reality;
+  the real fix is a filter over `superseded_at`, still open.
+- ⚠️ **Six of nine projections do not `.check()` their `init_schema`**, so a failed `DEFINE` is
+  invisible. Adding it to all six was tried and the full suite passed, so nothing fails on a
+  *fresh* database — but a statement failing against the user's *existing* data would become a
+  refusal to start. Only `budget_projection` (touched here) was changed.
+
 ### Auto-import design review — decisions taken 2026-09-12
 
 ⛔ **The v1 objection, restated so it is not misremembered:** *"The objection is open-ended gate

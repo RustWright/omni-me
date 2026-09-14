@@ -148,6 +148,22 @@ pub async fn read_thread_proposals(
         .map_err(|e| e.to_string())
 }
 
+/// The proposals the finances screen reviews, which the assistant inbox does not
+/// show.
+///
+/// ⛔ **Gated on `Finances`, not on `Llm`.** The guard belongs to the screen doing
+/// the reviewing: turning the assistant off must not strand a ledger proposal the
+/// user has already been offered — the same reasoning as
+/// [`decide_assistant_proposal`] — while turning *finances* off should take the
+/// whole screen with it, queue included.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_finance_proposals(state: State<'_, AppState>) -> Result<Vec<Proposal>, String> {
+    require_feature(&state, Feature::Finances)?;
+    inbox::pending_for_feature(&state.db, Feature::Finances)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Accept or decline one proposal.
 ///
 /// ⚠️ **Deliberately not behind `require_feature(Llm)`.** Switching the assistant

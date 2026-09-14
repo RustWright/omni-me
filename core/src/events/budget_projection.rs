@@ -66,6 +66,15 @@ impl Projection for BudgetProjection {
              DEFINE FIELD IF NOT EXISTS cleared_date ON transactions TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS created_at ON transactions TYPE datetime;
              DEFINE FIELD IF NOT EXISTS updated_at ON transactions TYPE datetime;
+             -- ⚠️ The assistant's `transaction` catalog entry declares
+             -- `text_fields: [\"description\"]`, and a FULLTEXT search over an
+             -- unindexed column matches nothing rather than failing. Drop this
+             -- and `search` over the ledger returns zero hits, silently.
+             -- ⛔ `superseded_by`/`merged_ids`/`balancing_posting` are hidden
+             -- from the model there; keep the two lists in step.
+             DEFINE INDEX IF NOT EXISTS transactions_description_fts ON transactions
+                 FIELDS description FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;
+             DEFINE INDEX IF NOT EXISTS transactions_removed ON transactions FIELDS removed;
 
              DEFINE TABLE IF NOT EXISTS accounts SCHEMAFULL;
              DEFINE FIELD IF NOT EXISTS commodity ON accounts TYPE string;
@@ -82,7 +91,20 @@ impl Projection for BudgetProjection {
              DEFINE FIELD IF NOT EXISTS pattern ON recurring_patterns TYPE object FLEXIBLE;
              DEFINE FIELD IF NOT EXISTS status ON recurring_patterns TYPE string;",
         )
-        .await?;
+        // ⚠️ **`.check()` is what makes a failed DEFINE visible.** Without it a
+        // statement can fail and `init_schema` still returns `Ok` — which is
+        // exactly how a missing FULLTEXT index would present: `search` over the
+        // ledger returns zero hits and reports no error, so the assistant
+        // concludes the user has no such transaction.
+        //
+        // ⚠️ Six of the nine projections still omit this (2026-09-13); the three
+        // that have it are the three newest. Adding it to the rest was tried and
+        // the whole suite passed, so nothing fails on a *fresh* database — but a
+        // statement that has been failing silently against the user's *existing*
+        // data would turn into a refusal to start, and that is not a thing to
+        // discover from an unattended change. Left as a deliberate follow-up.
+        .await?
+        .check()?;
         Ok(())
     }
 

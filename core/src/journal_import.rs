@@ -330,11 +330,47 @@ fn consume_items(ledger: ParserLedger, parent: &Path, source: &Path, state: &mut
     }
 }
 
-fn convert_transaction(
-    source_index: usize,
-    t: &ParserTxn,
-    hash_occurrence: &mut BTreeMap<String, usize>,
-) -> Result<DraftImportedTransaction, String> {
+/// One hledger transaction in omni's own shapes, before anything file-specific.
+///
+/// ⚠️ Extracted from [`convert_transaction`] so the assistant's
+/// `transaction.record` action can reuse it. ⛔ **Do not write a second parser
+/// for this syntax.** Elided amounts, `@@` total-cost prices, virtual-posting
+/// refusal and inline header tags are each subtle, each already solved here, and
+/// each silently wrong when reimplemented — `unsupported_syntax`'s doc comment is
+/// a list of exactly those mistakes, made once already.
+pub(crate) struct ParsedEntry {
+    pub date: NaiveDate,
+    pub description: String,
+    pub postings: Vec<Posting>,
+    pub top_tags: Vec<Tag>,
+}
+
+/// Read exactly one transaction out of free hledger text.
+///
+/// ⚠️ **Exactly one, and the refusals are not pedantry.** Nothing here is an
+/// import: this reads a snippet a model wrote, and one approval must correspond
+/// to one ledger entry. Two transactions in the text would author two events off
+/// a card describing one, and none means the text was prose the parser skipped
+/// rather than an entry — the case that would otherwise reach the user as an
+/// approval for nothing.
+pub(crate) fn parse_one_entry(text: &str) -> Result<ParsedEntry, String> {
+    let ledger = crate::ledger::parse(text).map_err(|e| e.to_string())?;
+    let mut txns = ledger.items.iter().filter_map(|i| match i {
+        LedgerItem::Transaction(t) => Some(t),
+        _ => None,
+    });
+    let Some(t) = txns.next() else {
+        return Err("no transaction found — expected a date line followed by postings".into());
+    };
+    if txns.next().is_some() {
+        return Err("more than one transaction; propose them one at a time".into());
+    }
+    convert_entry(t)
+}
+
+/// The half of [`convert_transaction`] that is about reading ledger syntax
+/// rather than about importing a file.
+fn convert_entry(t: &ParserTxn) -> Result<ParsedEntry, String> {
     if let Some(reason) = unsupported_syntax(t) {
         return Err(reason);
     }
@@ -411,20 +447,34 @@ fn convert_transaction(
         .trim_start_matches(['*', '!'])
         .trim_start()
         .to_string();
-    let hash = content_hash(t.date, &description, &explicit);
+    Ok(ParsedEntry {
+        date: t.date,
+        description,
+        postings: explicit,
+        top_tags,
+    })
+}
+
+fn convert_transaction(
+    source_index: usize,
+    t: &ParserTxn,
+    hash_occurrence: &mut BTreeMap<String, usize>,
+) -> Result<DraftImportedTransaction, String> {
+    let entry = convert_entry(t)?;
+    let hash = content_hash(entry.date, &entry.description, &entry.postings);
     let occurrence = {
-        let entry = hash_occurrence.entry(hash.clone()).or_insert(0);
-        *entry += 1;
-        *entry
+        let seen = hash_occurrence.entry(hash.clone()).or_insert(0);
+        *seen += 1;
+        *seen
     };
     let txn_id = derive_txn_id(&hash, occurrence);
     Ok(DraftImportedTransaction {
         source_index,
         txn_id,
-        date: t.date,
-        description,
-        postings: explicit,
-        top_tags,
+        date: entry.date,
+        description: entry.description,
+        postings: entry.postings,
+        top_tags: entry.top_tags,
         content_hash: hash,
     })
 }

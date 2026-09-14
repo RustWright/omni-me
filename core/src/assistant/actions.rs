@@ -27,7 +27,7 @@
 use serde_json::{Value, json};
 
 use crate::config::{Feature, ResolvedConfig};
-use crate::events::{EventType, NewEvent};
+use crate::events::{EventType, NewEvent, Tag, TransactionRecordedPayload};
 
 /// How much an action may do without being asked about.
 ///
@@ -60,6 +60,11 @@ pub enum ActionKind {
     RoutineModifyItem,
     RoutineComplete,
     RoutineSkip,
+    TransactionRecord,
+    TransactionCategorize,
+    TransactionTag,
+    TransactionUpdate,
+    TransactionClear,
 }
 
 /// Where an argument's value comes from.
@@ -804,6 +809,21 @@ fn valid_future_date(value: &str) -> Result<(), String> {
     canonical_date(value).map(|_| ())
 }
 
+/// One hledger transaction, checked by the parser that will build it.
+///
+/// ⛔ Validation and construction must call the same function. A cheaper check
+/// here — "does it start with a date" — would accept entries `build_events` then
+/// refuses at approval, which is the worst moment to discover it: the user has
+/// already agreed to something the app cannot carry out.
+fn valid_ledger_entry(value: &str) -> Result<(), String> {
+    crate::journal_import::parse_one_entry(value).map(|_| ())
+}
+
+/// A tag, by the domain's own `FromStr` — bare word or `key:value`.
+fn valid_tag(value: &str) -> Result<(), String> {
+    value.parse::<Tag>().map(|_| ())
+}
+
 /// How many routine items one proposal may name.
 ///
 /// ⚠️ **Sized by what a person can check, not by what a routine can hold.** The
@@ -927,6 +947,227 @@ const ROUTINE_SKIP: ActionType = ActionType {
     trigger: Trigger::OnRequest,
 };
 
+/// One ledger entry, written as the user's own journal would hold it.
+///
+/// ⚠️ **hledger text rather than structured arguments, and the reason is the
+/// balancing leg.** A bank import knows one side of a payment; what it was *for*
+/// comes off a receipt that has no schema — a photo, an email body — which is
+/// why this action exists at all. Two-account arguments would cover the common
+/// case and silently refuse a split receipt (groceries and household in one
+/// purchase), so the entry is expressed in the syntax that can hold it.
+///
+/// ⛔ **`journal_import::parse_one_entry` is the parser, and there must not be a
+/// second one.** Elided amounts, `@@` total-cost prices, virtual-posting refusal
+/// and inline tags are each subtle and each already solved there — see
+/// `unsupported_syntax`'s comment, which is a list of those mistakes made once.
+/// Validating here and rebuilding differently in `build_events` would be the same
+/// duplication one function apart, so both call it.
+const TRANSACTION_RECORD: ActionType = ActionType {
+    name: "transaction.record",
+    kind: ActionKind::TransactionRecord,
+    feature: Feature::Finances,
+    description: "Record a transaction in the ledger, written as an hledger entry: a date and \
+                  description line, then one indented posting per account. Use this for money \
+                  you have read about and cannot find in the ledger — a receipt, a confirmation \
+                  email. Postings must balance to zero; you may leave the amount off exactly \
+                  one of them and it will be worked out. Example:\n\
+                  2026-05-14 Coffee at the station\n    \
+                  Expenses:Food  4.20 EUR\n    \
+                  Assets:Checking  -4.20 EUR",
+    params: &[
+        ActionParam::text(
+            "entry",
+            "The whole entry in hledger syntax, date line first, postings indented beneath. \
+             One transaction only.",
+            4_000,
+        )
+        .verbatim()
+        .checked_by(valid_ledger_entry),
+        ActionParam::evidence(
+            "evidence",
+            "Filled in automatically from the records you opened. You cannot set it.",
+        ),
+    ],
+    produces: &[EventType::TransactionRecorded],
+    // Rule 1: the log holds the record, and a deletion event undoes it. Rule 2:
+    // nothing leaves the log. Rule 3: a transaction is not shown to anyone at the
+    // moment it lands.
+    reversible: true,
+    reversibility: "Recording is undone by deleting the transaction; both stay in the log.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+/// ⚠️ The batch that earns its keep. Categorising is the ledger's drudge work and
+/// is nearly always "these twelve are all Groceries" — one claim over many rows,
+/// which is exactly the shape [`ActionParam::list`] documents.
+const TRANSACTION_CATEGORIZE: ActionType = ActionType {
+    name: "transaction.categorize",
+    kind: ActionKind::TransactionCategorize,
+    feature: Feature::Finances,
+    description: "Put transactions into a category. Name every transaction taking the same \
+                  category in one call; use another call for another category. Most \
+                  transactions start with no category at all, so this is usually filling a \
+                  blank rather than correcting one.",
+    params: &[
+        ActionParam::list(
+            "txn_ids",
+            "Identities of the transactions, from searching or listing them. A list even when \
+             it names only one.",
+            64,
+            BATCH_LIMIT,
+        ),
+        ActionParam::text(
+            "category",
+            "The category they all belong in, as the user already spells it elsewhere.",
+            120,
+        ),
+        ActionParam::evidence(
+            "evidence",
+            "Filled in automatically from the records you opened. You cannot set it.",
+        ),
+    ],
+    produces: &[EventType::TransactionCategorized],
+    // Rule 1: the prior category is whatever the previous categorization event
+    // said, and its absence means there was none — either way the log decides it.
+    // Rule 2: nothing leaves the log. Rule 3: a category is not shown to anyone at
+    // the moment it lands.
+    reversible: true,
+    reversibility: "The previous category is the previous event, and no such event means it \
+                    had none; either way the log restores it.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+/// ⛔ **One transaction, unlike its neighbour, because tagging *replaces*.**
+/// `TransactionTaggedPayload` overwrites the whole set, so a batch would apply one
+/// list of tags to rows whose existing tags differ — approving a single card would
+/// silently erase distinctions the user made by hand. The batch shape is right for
+/// categorising and wrong here, and the difference is in the payload, not in taste.
+const TRANSACTION_TAG: ActionType = ActionType {
+    name: "transaction.tag",
+    kind: ActionKind::TransactionTag,
+    feature: Feature::Finances,
+    description: "Replace the tags on one transaction. Send the complete set you want it to \
+                  end up with, including any it already has that should stay — tags not listed \
+                  are removed. A tag is either a bare word or `key:value`.",
+    params: &[
+        ActionParam::text(
+            "txn_id",
+            "Identity of the transaction, from searching or listing.",
+            64,
+        ),
+        ActionParam::list(
+            "tags",
+            "The complete tag set it should end up with. `key:value` or a bare word.",
+            120,
+            BATCH_LIMIT,
+        )
+        .checked_by(valid_tag),
+        ActionParam::evidence(
+            "evidence",
+            "Filled in automatically from the records you opened. You cannot set it.",
+        ),
+    ],
+    produces: &[EventType::TransactionTagged],
+    reversible: true,
+    reversibility: "The previous tag set is the previous event, and no such event means it had \
+                    none; either way the log restores it.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+/// ⛔ **Description and date only — deliberately not the postings.**
+///
+/// `TransactionUpdatedPayload.changes` is a free-form object and the projection
+/// will happily apply a `postings` rewrite; that path exists for the
+/// reconciliation review, which converts an `Unmatched` leg into a real one
+/// against a statement it has in hand. Reaching it from here would let a model
+/// restate what an amount was, and "the amount is what the bank said" stops being
+/// true — with the change presented as a wording fix. ⚠️ If a proposed amount is
+/// ever wanted, it belongs in its own action whose card shows both numbers, not
+/// as another key accepted quietly by this one.
+const TRANSACTION_UPDATE: ActionType = ActionType {
+    name: "transaction.update",
+    kind: ActionKind::TransactionUpdate,
+    feature: Feature::Finances,
+    description: "Correct the description or the date of a transaction that already exists. \
+                  Send only what changes. You cannot change amounts or accounts this way — if \
+                  those are wrong, say so rather than proposing a correction.",
+    params: &[
+        ActionParam::text(
+            "txn_id",
+            "Identity of the transaction, from searching or listing.",
+            64,
+        ),
+        ActionParam::text("description", "The corrected description.", 500).optional(),
+        ActionParam::text("date", "The corrected date, as YYYY-MM-DD.", 10)
+            .optional()
+            .checked_by(valid_future_date),
+        ActionParam::evidence(
+            "evidence",
+            "Filled in automatically from the records you opened. You cannot set it.",
+        ),
+    ],
+    produces: &[EventType::TransactionUpdated],
+    reversible: true,
+    reversibility: "The prior description and date are in the events before this one.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
+/// Marking a transaction reconciled against a named statement.
+///
+/// 🔴 **This one asserts that something was checked, which no other action does.**
+/// `cleared` means an authority — a bank statement — agreed the payment happened,
+/// and that is the same kind of claim `verified` exists to keep a model from
+/// making about extracted fields. It is proposable anyway, on the user's decision
+/// (2026-09-13), and what makes that safe is the shape of the argument list rather
+/// than a promise: ⛔ `statement_source` is **required**, so the proposal cannot be
+/// "I believe this cleared" — it must name the statement, and the card shows which
+/// one. The user is then confirming a citation, not a feeling.
+///
+/// ⚠️ **The only irreversible action here.** There is no un-clear event, so
+/// `reversible: false` is the honest answer and the card says so.
+const TRANSACTION_CLEAR: ActionType = ActionType {
+    name: "transaction.clear",
+    kind: ActionKind::TransactionClear,
+    feature: Feature::Finances,
+    description: "Mark a transaction reconciled against a statement you have actually read. \
+                  Name the statement it appears on — you cannot propose this from a belief \
+                  that the payment probably went through, only from having seen it on one.",
+    params: &[
+        ActionParam::text(
+            "txn_id",
+            "Identity of the transaction, from searching or listing.",
+            64,
+        ),
+        ActionParam::text(
+            "statement_source",
+            "The statement it appears on, named as the archive names it.",
+            200,
+        ),
+        ActionParam::text(
+            "cleared_date",
+            "The date it cleared according to that statement, as YYYY-MM-DD.",
+            10,
+        )
+        .checked_by(valid_completion_date),
+        ActionParam::evidence(
+            "evidence",
+            "Filled in automatically from the records you opened. You cannot set it.",
+        ),
+    ],
+    produces: &[EventType::TransactionCleared],
+    // Rule 1 fails: no event un-clears a transaction, so the log cannot restore
+    // the prior state. Recorded rather than worked around — an action that cannot
+    // be undone is exactly what the flag is for.
+    reversible: false,
+    reversibility: "Nothing un-clears a transaction; there is no inverse event to append.",
+    autonomy: Autonomy::AlwaysAsk,
+    trigger: Trigger::OnRequest,
+};
+
 /// Every action this build knows, enabled or not.
 pub const ALL_ACTIONS: &[ActionType] = &[
     NOTE_CREATE,
@@ -940,6 +1181,11 @@ pub const ALL_ACTIONS: &[ActionType] = &[
     ROUTINE_MODIFY_ITEM,
     ROUTINE_COMPLETE,
     ROUTINE_SKIP,
+    TRANSACTION_RECORD,
+    TRANSACTION_CATEGORIZE,
+    TRANSACTION_TAG,
+    TRANSACTION_UPDATE,
+    TRANSACTION_CLEAR,
 ];
 
 /// The actions whose feature is on, which is the set the model is told about.
@@ -1421,6 +1667,103 @@ pub fn build_events(
                 )
             })
             .collect()),
+        // ⛔ Parsed again rather than carried over from `validate_args`. The
+        // validator answers "could this be built"; this builds it, and the entry's
+        // note explains why both go through the same function. A parse cached at
+        // validation time would also be a parse from *whenever the proposal was
+        // made*, which is the staleness `build_events` re-validates to avoid.
+        ActionKind::TransactionRecord => {
+            let raw = args["entry"].as_str().unwrap_or_default();
+            let entry = crate::journal_import::parse_one_entry(raw)?;
+            let txn_id = ulid::Ulid::new().to_string();
+            let payload = TransactionRecordedPayload::new(
+                txn_id.clone(),
+                entry.date,
+                entry.description,
+                entry.postings,
+            )
+            .with_tags(entry.top_tags);
+            Ok(vec![finance_event(
+                EventType::TransactionRecorded,
+                txn_id,
+                device_id,
+                serde_json::to_value(payload).map_err(|e| e.to_string())?,
+            )])
+        }
+        // One event per transaction, one category across the batch — the same
+        // shape as `routine.complete`, and for the same reason: what varies is the
+        // identity, and everything else is the single claim the card states.
+        ActionKind::TransactionCategorize => {
+            let category = args["category"].as_str().unwrap_or_default().to_string();
+            Ok(txn_ids(action, &args)?
+                .into_iter()
+                .map(|txn_id| {
+                    finance_event(
+                        EventType::TransactionCategorized,
+                        txn_id.to_string(),
+                        device_id,
+                        json!({ "txn_id": txn_id, "category": category }),
+                    )
+                })
+                .collect())
+        }
+        ActionKind::TransactionTag => {
+            let txn_id = args["txn_id"].as_str().unwrap_or_default().to_string();
+            // Kept as strings: `TransactionTaggedPayload` serializes each `Tag`
+            // through `Display`, so `key:value` round-trips as written and there is
+            // nothing to gain by parsing and re-rendering it here. `valid_tag`
+            // already refused anything that would not parse.
+            let tags: Vec<&str> = args["tags"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            Ok(vec![finance_event(
+                EventType::TransactionTagged,
+                txn_id.clone(),
+                device_id,
+                json!({ "txn_id": txn_id, "tags": tags }),
+            )])
+        }
+        // ⛔ `changes` is assembled key by key from the declared arguments, never
+        // passed through from the model. The projection applies whatever keys it
+        // recognises, `postings` among them, so forwarding an object wholesale
+        // would make the entry's "description and date only" a comment rather than
+        // a constraint.
+        ActionKind::TransactionUpdate => {
+            let txn_id = args["txn_id"].as_str().unwrap_or_default().to_string();
+            let mut changes = serde_json::Map::new();
+            if let Some(description) = args["description"].as_str() {
+                changes.insert("description".into(), json!(description));
+            }
+            if let Some(date) = args["date"].as_str() {
+                changes.insert("date".into(), json!(date));
+            }
+            if changes.is_empty() {
+                return Err(format!(
+                    "{} needs a description or a date to change",
+                    action.name
+                ));
+            }
+            Ok(vec![finance_event(
+                EventType::TransactionUpdated,
+                txn_id.clone(),
+                device_id,
+                json!({ "txn_id": txn_id, "changes": changes }),
+            )])
+        }
+        ActionKind::TransactionClear => {
+            let txn_id = args["txn_id"].as_str().unwrap_or_default().to_string();
+            Ok(vec![finance_event(
+                EventType::TransactionCleared,
+                txn_id.clone(),
+                device_id,
+                json!({
+                    "txn_id": txn_id,
+                    "statement_source": args["statement_source"].as_str().unwrap_or_default(),
+                    "cleared_date": args["cleared_date"].as_str().unwrap_or_default(),
+                }),
+            )])
+        }
     }
 }
 
@@ -1461,15 +1804,42 @@ fn routine_event(
     }
 }
 
-/// The item identities a batched routine action names, in the order proposed.
+/// Envelope for a ledger or budget event.
+///
+/// ⚠️ **The aggregate differs by action and is not always a transaction id** — a
+/// budget's aggregate is its category, because `on_budget_set` UPSERTs the row
+/// keyed by that. Passing it in rather than deriving it here is what lets the two
+/// coexist without a branch that would have to be kept in step with the
+/// projection.
+fn finance_event(
+    event_type: EventType,
+    aggregate_id: String,
+    device_id: &str,
+    payload: Value,
+) -> NewEvent {
+    NewEvent {
+        id: None,
+        event_type: event_type.to_string(),
+        aggregate_id,
+        timestamp: chrono::Utc::now(),
+        device_id: device_id.to_string(),
+        payload,
+    }
+}
+
+/// The identities a batched action names, in the order proposed.
 ///
 /// ⚠️ **Refuses an empty list rather than yielding one**, even though
 /// [`validate_args`] has already run and cannot let one through. An action that
 /// quietly builds no events would mark its proposal approved, write nothing, and
 /// leave the user believing the tick landed — the one failure this path must not
 /// have. The redundancy costs a branch; the silence would cost a lie.
-fn item_ids<'a>(action: &ActionType, args: &'a Value) -> Result<Vec<&'a str>, ArgError> {
-    let ids: Vec<&str> = args["item_ids"]
+fn batch_ids<'a>(
+    action: &ActionType,
+    args: &'a Value,
+    key: &str,
+) -> Result<Vec<&'a str>, ArgError> {
+    let ids: Vec<&str> = args[key]
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default()
@@ -1477,9 +1847,17 @@ fn item_ids<'a>(action: &ActionType, args: &'a Value) -> Result<Vec<&'a str>, Ar
         .filter_map(Value::as_str)
         .collect();
     if ids.is_empty() {
-        return Err(format!("{} names no items", action.name));
+        return Err(format!("{} names nothing to act on", action.name));
     }
     Ok(ids)
+}
+
+fn item_ids<'a>(action: &ActionType, args: &'a Value) -> Result<Vec<&'a str>, ArgError> {
+    batch_ids(action, args, "item_ids")
+}
+
+fn txn_ids<'a>(action: &ActionType, args: &'a Value) -> Result<Vec<&'a str>, ArgError> {
+    batch_ids(action, args, "txn_ids")
 }
 
 /// A validated minute count, as the number the payload wants.
@@ -1668,6 +2046,33 @@ mod tests {
                 "group_id": "01GROUP00000000000000001",
                 "date": "2026-08-14",
                 "reason": "Travelling.",
+            }),
+            // ⚠️ Two postings that balance to zero, with real account names. A
+            // fixture that did not balance would be refused by the parser, and the
+            // well-formedness tests would then be asserting over an error rather
+            // than over an event.
+            ActionKind::TransactionRecord => json!({
+                "entry": "2026-08-14 Coffee at the station\n    \
+                          Expenses:Food  4.20 EUR\n    \
+                          Assets:Checking  -4.20 EUR\n",
+                "evidence": [{ "kind": "document", "id": "01JKDOC0000000000000000001" }],
+            }),
+            ActionKind::TransactionCategorize => json!({
+                "txn_ids": ["01JKTXN0000000000000000001"],
+                "category": "Groceries",
+            }),
+            ActionKind::TransactionTag => json!({
+                "txn_id": "01JKTXN0000000000000000001",
+                "tags": ["reimbursable", "trip:lisbon"],
+            }),
+            ActionKind::TransactionUpdate => json!({
+                "txn_id": "01JKTXN0000000000000000001",
+                "description": "Coffee at Santa Apolónia",
+            }),
+            ActionKind::TransactionClear => json!({
+                "txn_id": "01JKTXN0000000000000000001",
+                "statement_source": "chequing-2026-08",
+                "cleared_date": "2026-08-16",
             }),
         }
     }
