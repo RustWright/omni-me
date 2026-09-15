@@ -770,3 +770,135 @@ column, so this fixture contains no case a keyword index could win. The claim is
 unevidenced and currently harmful here, **not** that a keyword pass is worthless. Cases built
 to defeat an embedder — an account number, an error code, an exact date, an unusual proper noun
 — are the prerequisite for reopening this.
+
+---
+
+## Part 6 — Document extraction (role C1) · `--bench-extraction`
+
+Role C is three jobs and only one of them has an oracle. **C1** reads a transaction statement,
+and a transaction statement can be checked: the corpus already contains, for the same account
+and the same month, a CSV export of exactly those transactions. `agent/src/extraction_bench.rs`
+holds the instrument; `--bench-extraction` runs it.
+
+### The corpus labels itself
+
+⛔ There is **no hand-labelled gold set** and there will not be one. Instead
+`omni_me_core::statement::parse` reads the CSV twin and its output *is* the label set. The
+labels are therefore machine-generated, free, and regenerate whenever the parser improves.
+
+What that buys, measured on the real corpus:
+
+| | |
+|---|---|
+| month directories holding both a CSV and at least one PDF | **233** |
+| transactions the parser labelled across them | **9,481** |
+| directories that failed to parse | **0** |
+| directories the parser flagged as partially read | **0** |
+| usable at the 40-row ceiling (see below) | **140**, over 157 PDFs |
+
+The corpus is not in the repo and never will be. `OMNI_BENCH_CORPUS` points at it and the
+account directories are **discovered, never listed**, so no institution name is written into
+a source file.
+
+### Two difficulty tiers over identical truth
+
+The same month is usually stated by two different PDFs, and they are not equally hard:
+
+- the **brokerage-format** PDF uses the CSV's own vocabulary and splits debit and credit into
+  separate columns, so a model that reads the table structure gets the sign for free;
+- the **cash-format** PDF uses prose merchant names where the CSV says `Withdrawal`, and
+  writes the minus sign as an en dash.
+
+Both are scored against the one label set. A model that reads the first and not the second has
+a table-parsing ability rather than a document-reading one, and the split makes that visible
+instead of averaging it away.
+
+### Amounts are the key, and that is a constraint not a preference
+
+Scoring matches **amounts as a multiset**, not descriptions and not dates.
+
+Descriptions cannot be the key because the two PDFs of one period describe the same
+transaction differently — one names the merchant, the other names the transaction type — while
+both state the same figure. Dates cannot be compared per row **at all**: `ExtractionResult`
+carries one date for the whole document, not one per posting. A multiset rather than a set,
+because two coffees at the same price on the same statement are two transactions, and a set
+would score a model that found one of them as having found both.
+
+Four columns per document, and the separation is the point:
+
+- **MATCH** — labelled amounts the model also returned. Recall.
+- **SIGN** — matches found only after ignoring the sign. A systematic sign flip is a prompt or
+  column-mapping defect; a misread figure is a vision defect. Collapsing them hides which one
+  you have, and they have different fixes.
+- **FAB** — returned amounts with no labelled twin. Fabrication.
+- **LATENCY** — per document, because a statement is a large prompt and C1 is a batch role
+  whose cost is real.
+
+### The abstention arm
+
+A period with no transactions measures one thing only: whether the model invents rows when the
+honest answer is none. Recall is undefined there, so those cases are reported on their own line
+rather than folded into the mean.
+
+The corpus has **no** empty months, so the arm is fed instead by `OMNI_BENCH_ABSENT` — a
+directory of documents that are not transaction statements. It is **named rather than
+discovered**, because the directories holding such documents are named after the institutions
+that issued them. A run without it prints that the arm was **skipped**, rather than reporting a
+number that quietly measured only the positive half.
+
+⛔ This matches the standing rule from role A and role D: **abstention is weighted above field
+accuracy.** A model that reads statements well and hallucinates on everything else is not
+deployable in a role that is handed whatever the user uploads.
+
+### Three traps this instrument had to be built around
+
+**`NullExtractor` answers `Ok` with an empty draft.** An unconfigured or refused extractor
+therefore looks exactly like a model that found nothing — a 0% recall scorecard that is
+measuring the config. The bench checks `name()` and refuses to score rather than print that
+number. A consequence worth knowing: `--bench-extraction` with no credentials is a **zero-token
+dry run** that reports the corpus statistics and the sampling plan, which is how the table
+above was produced without spending anything.
+
+**The extraction request sets no `max_tokens`**, so the ceiling is whatever the provider
+defaults to. A statement long enough to be truncated scores as recall failure by the model —
+which is the Stage 1 mistake in a new costume, an instrument measuring the harness. `MAX_ROWS =
+40` excludes the 93 long directories; the excluded count is printed so the exclusion is a
+stated limit rather than a silent one.
+
+**A scorecard gets pasted into this file, which is public.** Every printed identifier is an
+FNV-1a tag of the directory name, four hex digits, deterministic across runs so two scorecards
+compare. No institution name, account number, filename or path is ever printed.
+
+### What it cannot see
+
+- **Per-row correctness beyond the figure.** Right amount with the wrong merchant scores as a
+  match. The schema has no per-posting date to check and the descriptions genuinely differ
+  between the two PDFs of one period.
+- **The long half of the corpus.** 93 of 233 directories exceed 40 rows, and long statements
+  are plausibly where the interesting failures are.
+- **Categorisation**, which the parser does not label either.
+- **C2 and C3.** C2 has no oracle and shares role D's scorecard. C3 has no producer at all.
+
+### Two product findings this surfaced
+
+Both are design calls rather than repairs, and neither was changed:
+
+1. **`statement_extraction_to_drafts` applies one date to every draft.** `ExtractedPosting`
+   carries no date, so the statement's *closing* date lands on all N transactions, and
+   `fallback_date()` is `Utc::now()`. The prompt asks for exactly this, so it is deliberate —
+   but a PDF-only statement therefore imports as N transactions on one day. Fixing it is a
+   schema, prompt, mapper and UI change.
+2. **`ExtractionResult.total`'s doc comment claims "statement closing balance"**, a meaning no
+   statement prompt asks for. `check_total` verifies an identity against the sum of absolute
+   amounts, which would be wrong arithmetic for a closing balance. It is unreachable today
+   because the prompt tells the model to leave `total` null for statements, so this is a latent
+   trap plus a docs inconsistency, not a live bug.
+
+### Fixed in the same change
+
+`build_extractor` moved from `server/src/lib.rs` to `core::llm::provider`, next to
+`build_llm_client`, so no host can disagree with another about which provider a `[llm]` section
+selects. The move exposed a gap and closed it: the text path had refused closed-weight models
+since role wiring landed and **the document path had not** — although a statement is the most
+identifying payload this system sends, carrying a name, an address and an account number.
+`allow_closed_weights` remains the documented escape and is tested.

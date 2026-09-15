@@ -21,6 +21,7 @@
 
 mod ask;
 mod bench;
+mod extraction_bench;
 mod responder;
 mod retrieval_bench;
 
@@ -209,6 +210,17 @@ struct Args {
     /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
     bench_retrieval: bool,
 
+    /// Score the document extractor — role C1 — against labels the corpus
+    /// generates itself, by parsing the CSV export of a period whose PDF the
+    /// model is asked to read.
+    ///
+    /// Its own run rather than a mode of [`Args::bench`] because it measures a
+    /// different trait against a different endpoint: `DocumentExtractor` on
+    /// `[llm.extractor]`, where that one measures `LlmClient` on `[llm]`.
+    ///
+    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    bench_extraction: bool,
+
     /// Author a question event, then exit — a stand-in for the client.
     ///
     /// Distinct from [`Args::ask`] in the thing that matters: that one calls the
@@ -235,6 +247,7 @@ fn parse_args() -> Result<Args, String> {
         constrained: false,
         reindex: false,
         bench_retrieval: false,
+        bench_extraction: false,
         ask_event: None,
         thread: None,
     };
@@ -245,6 +258,7 @@ fn parse_args() -> Result<Args, String> {
             "--probe" => args.probe = true,
             "--bench" => args.bench = true,
             "--bench-retrieval" => args.bench_retrieval = true,
+            "--bench-extraction" => args.bench_extraction = true,
             "--constrained" => args.constrained = true,
             "--reindex" => args.reindex = true,
             "--ask" => {
@@ -287,6 +301,9 @@ fn parse_args() -> Result<Args, String> {
     if args.bench_retrieval && (args.bench || args.ask.is_some()) {
         return Err("--bench-retrieval is its own run; pick one".to_string());
     }
+    if args.bench_extraction && (args.bench || args.bench_retrieval || args.ask.is_some()) {
+        return Err("--bench-extraction is its own run; pick one".to_string());
+    }
     // With `--bench` this means **bench the constrained arm only**, and it is
     // deliberate rather than a mistake: some endpoints offer `response_format`
     // and no `tools` parameter at all, so the free-form arm cannot be run there
@@ -309,7 +326,9 @@ fn parse_args() -> Result<Args, String> {
     // `--ask` answers in this process; `--ask-event` hands the question to
     // whichever agent is resident. Running both would ask the same thing twice
     // and pay twice.
-    if args.ask_event.is_some() && (args.ask.is_some() || args.bench || args.bench_retrieval) {
+    if args.ask_event.is_some()
+        && (args.ask.is_some() || args.bench || args.bench_retrieval || args.bench_extraction)
+    {
         return Err("--ask-event is its own run; pick one".to_string());
     }
     if args.thread.is_some() && args.ask_event.is_none() {
@@ -353,7 +372,8 @@ async fn main() {
                  omni-me-agent --ask-event \"<question>\" [--thread <id>]\n       \
                  omni-me-agent --ask \"<question>\" [--constrained]   (test scaffolding)\n       \
                  omni-me-agent --bench                              (test scaffolding)\n       \
-                 omni-me-agent --bench-retrieval                    (test scaffolding)"
+                 omni-me-agent --bench-retrieval                    (test scaffolding)\n       \
+                 omni-me-agent --bench-extraction                   (test scaffolding)"
             );
             std::process::exit(2);
         }
@@ -367,6 +387,21 @@ async fn main() {
     // the data. The retrieval bench needs a model cache and nothing else.
     if args.bench_retrieval {
         retrieval_bench::run(model_cache_dir()).await;
+        return;
+    }
+
+    // Above `run` for the same reason: this one scores documents against a CSV
+    // twin and needs credentials and a corpus, never the agent's own database.
+    if args.bench_extraction {
+        match load_credentials() {
+            Ok(creds) => {
+                extraction_bench::run(omni_me_core::llm::build_extractor(&creds).as_ref()).await;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
         return;
     }
 
@@ -391,6 +426,45 @@ struct AssistantLlms {
 /// client here, so the agent and the server cannot disagree about which provider
 /// a config selects.
 fn build_assistant_llms() -> Result<AssistantLlms, String> {
+    let creds = load_credentials()?;
+
+    let options = omni_me_core::llm::ClientOptions {
+        extra_body: match std::env::var(LLM_EXTRA_BODY_ENV) {
+            Ok(raw) => Some(
+                serde_json::from_str(&raw)
+                    .map_err(|e| format!("{LLM_EXTRA_BODY_ENV} is not valid JSON: {e}"))?,
+            ),
+            Err(_) => None,
+        },
+        min_interval: match std::env::var(LLM_MIN_INTERVAL_ENV) {
+            Ok(raw) => Some(std::time::Duration::from_millis(
+                raw.parse()
+                    .map_err(|e| format!("{LLM_MIN_INTERVAL_ENV} is not a number: {e}"))?,
+            )),
+            Err(_) => None,
+        },
+    };
+
+    Ok(AssistantLlms {
+        interactive: omni_me_core::llm::build_llm_client(
+            &creds,
+            options.clone(),
+            omni_me_core::credentials::LlmRole::Interactive,
+        ),
+        batch: omni_me_core::llm::build_llm_client(
+            &creds,
+            options,
+            omni_me_core::credentials::LlmRole::Batch,
+        ),
+    })
+}
+
+/// Load credentials and apply any environment redirect.
+///
+/// Split out because `--bench-extraction` builds role C from the same file and
+/// the same redirect. Two copies would let a run reach one role through the env
+/// and another through the file, which is the defect the role split fixed.
+fn load_credentials() -> Result<omni_me_core::credentials::Credentials, String> {
     let path = match std::env::var(CREDENTIALS_ENV) {
         Ok(p) => PathBuf::from(p),
         Err(_) => omni_me_core::credentials::default_path()
@@ -443,35 +517,7 @@ fn build_assistant_llms() -> Result<AssistantLlms, String> {
         tracing::info!(model = ?llm.model, "LLM endpoint overridden by environment");
     }
 
-    let options = omni_me_core::llm::ClientOptions {
-        extra_body: match std::env::var(LLM_EXTRA_BODY_ENV) {
-            Ok(raw) => Some(
-                serde_json::from_str(&raw)
-                    .map_err(|e| format!("{LLM_EXTRA_BODY_ENV} is not valid JSON: {e}"))?,
-            ),
-            Err(_) => None,
-        },
-        min_interval: match std::env::var(LLM_MIN_INTERVAL_ENV) {
-            Ok(raw) => Some(std::time::Duration::from_millis(
-                raw.parse()
-                    .map_err(|e| format!("{LLM_MIN_INTERVAL_ENV} is not a number: {e}"))?,
-            )),
-            Err(_) => None,
-        },
-    };
-
-    Ok(AssistantLlms {
-        interactive: omni_me_core::llm::build_llm_client(
-            &creds,
-            options.clone(),
-            omni_me_core::credentials::LlmRole::Interactive,
-        ),
-        batch: omni_me_core::llm::build_llm_client(
-            &creds,
-            options,
-            omni_me_core::credentials::LlmRole::Batch,
-        ),
-    })
+    Ok(creds)
 }
 
 /// Load the embedding model and define the vector index, or explain why not.

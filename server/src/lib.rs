@@ -31,13 +31,11 @@ use tower_http::trace::TraceLayer;
 
 use omni_me_core::auto_import::setup::{DEFAULT_INTERVAL, spawn_sources};
 use omni_me_core::auto_import_scheduler::{AutoImportSource, SourceRegistry};
-use omni_me_core::credentials::{self, Credentials, LlmRole};
+use omni_me_core::credentials::{self, LlmRole};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
-use omni_me_core::extraction::{
-    DocumentExtractor, null::NullExtractor, openai_compat::OpenAiCompatExtractor,
-};
-use omni_me_core::llm::{ClientOptions, LlmClient, build_llm_client};
+use omni_me_core::extraction::DocumentExtractor;
+use omni_me_core::llm::{ClientOptions, LlmClient, build_extractor, build_llm_client};
 use omni_me_core::runtime::Instance;
 
 const DB_PATH: &str = "surreal_data/server.db";
@@ -456,46 +454,11 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     }))
 }
 
-/// Build the document extractor — `OpenAiCompatExtractor` when `[llm]` opts in
-/// to vision, else `NullExtractor`. Server-side: this is where
-/// `feedback_llm_server_side.md` is honored — extraction calls originate here.
-///
-/// `vision = true` is an explicit assertion that the configured endpoint accepts
-/// images, because support varies across OpenAI-compatible servers and a silent
-/// POST to one that cannot would surface as a confusing upstream error.
-fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
-    // ⚠️ Role C, not `[llm]` directly. The two are genuinely different models:
-    // `[llm]`'s leading candidate is chosen on latency and is **text-only**, so
-    // reading `[llm]` here meant `vision = true` pointed the extractor at a
-    // model that cannot see. `[llm.extractor]` overrides only what differs;
-    // absent, `for_role` returns `[llm]` unchanged and behaviour is as before.
-    if let Some(cfg) = creds.llm.as_ref().map(|c| c.for_role(LlmRole::Extractor))
-        && cfg.provider == "openai_compatible"
-        && cfg.vision
-    {
-        let cfg = &cfg;
-        match (cfg.base_url.as_deref(), cfg.model.as_deref()) {
-            (Some(base_url), Some(model)) if !base_url.is_empty() && !model.is_empty() => {
-                tracing::info!(model = %model, "Document extractor: OpenAI-compatible vision");
-                return Arc::new(OpenAiCompatExtractor::new(
-                    base_url,
-                    model,
-                    cfg.api_key.clone().unwrap_or_default(),
-                ));
-            }
-            _ => tracing::warn!("[llm.extractor] vision=true but base_url/model missing"),
-        }
-    }
-    tracing::warn!(
-        "no vision-capable extractor configured ([llm.extractor], or [llm] as \
-         fallback) — handlers will use NullExtractor (no events)"
-    );
-    Arc::new(NullExtractor)
-}
-
-// The *text* LLM client selector lives in `omni_me_core::llm::build_llm_client`,
-// so the server and the agent cannot disagree about which provider a `[llm]`
-// section selects. The extractor is built here because only the server has one.
+// Both selectors live in `omni_me_core::llm`, so no host can disagree with
+// another about which provider a `[llm]` section selects. The extractor joined
+// them when `--bench-extraction` became a second caller; the server remains the
+// only place extraction calls originate, which is what
+// `feedback_llm_server_side.md` asks for.
 
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -522,7 +485,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use omni_me_core::credentials::LlmProviderConfig;
+    use omni_me_core::credentials::{Credentials, LlmProviderConfig};
 
     /// ⛔ The port is the last thing standing between one server and two.
     ///
@@ -592,56 +555,12 @@ mod tests {
     }
 
     #[test]
-    fn the_extractor_role_overrides_the_shared_llm_section() {
-        // `[llm]` is text-only with vision off; `[llm.extractor]` turns vision
-        // on and names a different model. Reading `[llm]` directly — what this
-        // did before 2026-09-11 — would build a NullExtractor here.
-        let creds = Credentials {
-            llm: Some(llm_with_extractor_role("z-ai/glm-5.3-flash")),
-            ..Default::default()
-        };
-        assert_eq!(build_extractor(&creds).name(), "z-ai/glm-5.3-flash");
-    }
-
-    #[test]
-    fn an_unset_role_inherits_the_shared_section() {
-        // No `[llm.extractor]` at all: behaviour must be exactly as before the
-        // role split, or every existing credentials.toml changes meaning.
-        let creds = Credentials {
-            llm: Some(openai_llm(true)),
-            ..Default::default()
-        };
-        assert_eq!(build_extractor(&creds).name(), "llava");
-    }
-
-    #[test]
     fn a_role_inherits_base_url_and_key_it_does_not_restate() {
         let cfg = llm_with_extractor_role("z-ai/glm-5.3-flash")
             .for_role(omni_me_core::credentials::LlmRole::Extractor);
         assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"));
         assert_eq!(cfg.api_key.as_deref(), Some("k"));
         assert_eq!(cfg.provider, "openai_compatible");
-    }
-
-    #[test]
-    fn build_extractor_uses_vision_only_when_opted_in() {
-        // vision opt-in → OpenAI-compatible vision extractor (name == model).
-        let creds = Credentials {
-            llm: Some(openai_llm(true)),
-            ..Default::default()
-        };
-        assert_eq!(build_extractor(&creds).name(), "llava");
-
-        // Same provider, vision=false → no extractor rather than a silent
-        // image POST to an endpoint that may not accept one.
-        let creds = Credentials {
-            llm: Some(openai_llm(false)),
-            ..Default::default()
-        };
-        assert_eq!(build_extractor(&creds).name(), "null");
-
-        // No [llm] at all → Null.
-        assert_eq!(build_extractor(&Credentials::default()).name(), "null");
     }
 
     /// Selection itself is tested in `core::llm::provider`. What is worth

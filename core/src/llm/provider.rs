@@ -28,6 +28,9 @@ use serde_json::Value;
 
 use super::{LlmClient, NullLlmClient, OpenAiCompatClient};
 use crate::credentials::{Credentials, LlmRole};
+use crate::extraction::{
+    DocumentExtractor, null::NullExtractor, openai_compat::OpenAiCompatExtractor,
+};
 
 /// Vendors whose models we are willing to send records to, each with every
 /// namespace spelling we have seen it served under.
@@ -231,6 +234,59 @@ pub fn build_llm_client(
         client = client.with_min_interval(interval);
     }
     Arc::new(client)
+}
+
+/// Build the document extractor a config selects — role C, the quarantined one.
+///
+/// Refuses on the same terms as [`build_llm_client`], plus a gate of its own:
+/// `vision = true` asserts the endpoint accepts images, which varies across
+/// OpenAI-compatible servers and fails confusingly upstream when it does not.
+///
+/// A refused or unconfigured extractor is a `NullExtractor`, and that answers
+/// `Ok` with an empty draft rather than erroring. A caller that scores results
+/// has to check `name()`, or a misconfiguration reads as the model finding nothing.
+pub fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
+    let Some(cfg) = creds
+        .llm
+        .as_ref()
+        .map(|c| c.for_role(LlmRole::Extractor))
+        .filter(|c| c.provider == "openai_compatible" && c.vision)
+    else {
+        tracing::warn!(
+            "no [llm.extractor] openai_compatible vision endpoint — using NullExtractor"
+        );
+        return Arc::new(NullExtractor);
+    };
+    let (Some(base_url), Some(model)) = (cfg.base_url.as_deref(), cfg.model.as_deref()) else {
+        tracing::warn!("[llm.extractor] vision = true but base_url or model is missing");
+        return Arc::new(NullExtractor);
+    };
+    if base_url.is_empty() || model.is_empty() {
+        tracing::warn!("[llm.extractor] base_url or model is empty");
+        return Arc::new(NullExtractor);
+    }
+    // Documents are the most identifying payload this system sends: a statement
+    // carries a name, an address and an account number. The text path has refused
+    // closed weights since role wiring landed and this one had not.
+    match refusal_reason(model) {
+        Some(detail) if !cfg.allow_closed_weights => {
+            tracing::error!(model = %model, detail = %detail, "refusing configured extractor");
+            return Arc::new(NullExtractor);
+        }
+        Some(detail) => tracing::warn!(
+            model = %model,
+            detail = %detail,
+            "allow_closed_weights = true — this endpoint's data policy may not apply"
+        ),
+        None => {}
+    }
+
+    tracing::info!(model = %model, "Document extractor: OpenAI-compatible vision");
+    Arc::new(OpenAiCompatExtractor::new(
+        base_url,
+        model,
+        cfg.api_key.clone().unwrap_or_default(),
+    ))
 }
 
 #[cfg(test)]
@@ -466,5 +522,73 @@ mod tests {
         let reason = refusal_reason("acme-labs/some-new-model");
         assert!(reason.is_some());
         assert!(reason.unwrap().contains("OPEN_WEIGHT_VENDORS"));
+    }
+
+    fn vision(model: &str, on: bool) -> LlmProviderConfig {
+        LlmProviderConfig {
+            model: Some(model.into()),
+            vision: on,
+            ..openai(Some("http://localhost:11434/v1"), Some(model))
+        }
+    }
+
+    #[test]
+    fn the_vision_flag_gates_the_extractor() {
+        // Opted in, so the extractor is the endpoint and names its model. With
+        // vision off there is no extractor rather than a silent image POST to an
+        // endpoint that may not accept one.
+        assert_eq!(
+            build_extractor(&creds_with(Some(vision("llava", true)))).name(),
+            "llava"
+        );
+        assert_eq!(
+            build_extractor(&creds_with(Some(vision("llava", false)))).name(),
+            "null"
+        );
+        assert_eq!(build_extractor(&Credentials::default()).name(), "null");
+    }
+
+    #[test]
+    fn the_extractor_role_overrides_the_shared_llm_section() {
+        // `[llm]` is text-only with vision off; `[llm.extractor]` turns vision on
+        // and names a different model. Reading `[llm]` directly builds a null one.
+        let mut cfg = vision("openai/gpt-oss-120b", false);
+        cfg.extractor = Some(LlmRoleOverride {
+            model: Some("z-ai/glm-5.3-flash".into()),
+            vision: Some(true),
+            ..Default::default()
+        });
+        assert_eq!(
+            build_extractor(&creds_with(Some(cfg))).name(),
+            "z-ai/glm-5.3-flash"
+        );
+    }
+
+    #[test]
+    fn an_unset_extractor_role_inherits_the_shared_section() {
+        // Behaviour must be exactly as before the role split, or every existing
+        // credentials.toml changes meaning.
+        assert_eq!(
+            build_extractor(&creds_with(Some(vision("llava", true)))).name(),
+            "llava"
+        );
+    }
+
+    #[test]
+    fn the_extractor_refuses_closed_weights_like_the_text_client_does() {
+        // Documents are the most identifying payload sent anywhere, so the
+        // stricter of the two paths is the one that must carry the guard.
+        assert_eq!(
+            build_extractor(&creds_with(Some(vision("anthropic/claude-opus-4-8", true)))).name(),
+            "null"
+        );
+
+        let mut opted_in = vision("anthropic/claude-opus-4-8", true);
+        opted_in.allow_closed_weights = true;
+        assert_eq!(
+            build_extractor(&creds_with(Some(opted_in))).name(),
+            "anthropic/claude-opus-4-8",
+            "allow_closed_weights is the documented escape and must still work"
+        );
     }
 }
