@@ -1399,17 +1399,14 @@ B is decided on quality **using A's instrument**, so a saturated instrument bloc
       analysis in `MODEL_BENCH.md` Part 4; don't restate them here. ⛔ **All the spread came
       from lever 2** — every original case still passes, so content scoring alone
       de-saturated nothing.
-- [ ] 🔴 **The run found a product bug: § The assistant cannot conclude absence** (below).
-      ⛔ Fix that before this instrument decides a seat — three of its fourteen cases are
-      currently measuring a system defect rather than the model.
-- [ ] ⚠️ **Allow `list` on case 10** before it decides anything. Free-form reached `list`
-      rather than the required `read`, which is a legitimate way to establish a journal date
-      is absent. It failed the content check too, so the verdict stands — but the expectation
-      is stricter than the design intends.
-- [ ] ⚠️ **Case 07's comment is stale in framing, not in substance.** It says "no write path
-      exists", and the run showed the model reaching `propose`. `propose` is still correct
-      here — `propose_writes_nothing` in `verbs.rs` asserts it records an intention and
-      writes nothing — so the case passes either way. Reword the comment; don't change it.
+- [x] ✅ **The product bug the run found is FIXED** — § Answering "not found" below records it:
+      `MAX_TURNS` is 10 and the final turn withholds tools. ⚠️ These three boxes were stale when
+      re-checked 2026-09-15; the work had landed and only this list said otherwise.
+- [x] ✅ **`list` is accepted on case 10** — `also_accepts: &["list"]` on the 2026-03-20 journal
+      case, with the run that motivated it named in the comment.
+- [x] ✅ **Case 07 reworded 2026-09-15.** The framing fix landed on `expect`'s own field doc,
+      which covers every `None` case rather than this one, and the inline comment now states
+      only what is specific here. Behaviour unchanged, as the note asked.
 
 ### Stage 2 — build the C1 / C2 / D scorecards
 

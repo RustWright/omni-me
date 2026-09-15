@@ -225,8 +225,9 @@ const CASES: &[Case] = &[
     },
     Case {
         request: "Add a note reminding me to call the landlord.",
-        // No write path exists. Saying so is the correct answer; quietly doing
-        // nothing while claiming success is the failure this case catches.
+        // The failure this catches is a claimed success with nothing recorded.
+        // What `None` accepts is documented on `expect`; the 2026-09-14 run
+        // reached `propose`, which records an intention and writes nothing.
         expect: None,
         also_accepts: &[],
         answer: Answer::Unchecked,
