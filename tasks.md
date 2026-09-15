@@ -1422,9 +1422,14 @@ scorecard measures the schema rather than the model — while the abstention wei
 design calls for silently measures nothing. ⚠️ Check the envelope admits absence **before**
 spending a run, and make the same check for whatever single-shot budget or truncation limit
 the extractor has.
-- [ ] **C1** — `verify.rs` arithmetic oracle, plus the **parser-as-oracle** gold set: the 276
-      CSVs in `.reference/` that `statement::parse` reads deterministically become machine-
-      generated labels. Feed the same statement to the model as PDF/text and score against them.
+- [x] **C1 BUILT 2026-09-14/15** — `agent/src/extraction_bench.rs`, `--bench-extraction`, two arms.
+      Statement arm scores against parser-generated labels; arithmetic arm scores receipts and
+      paystubs on `verify.rs` self-consistency plus a text-layer grounding check the born-digital
+      paystubs make free. Corpus numbers, both oracles and every stated limit are in
+      `MODEL_BENCH.md` Part 6 — read there, don't restate here.
+- [ ] ⚠️ **C1 has NOT been run against a real endpoint.** Zero tokens spent; dry runs only. The
+      dry run is deliberate and re-runnable — with no credentials it prints the corpus stats and
+      both sampling plans, then refuses rather than scoring a `NullExtractor`'s empty drafts.
 - [ ] **C2 + D share one scorecard** — abstention probes (ask for a field provably absent; truth
       known by construction), email-header labels, self-consistency across repeat runs, format
       validity. ⛔ Weight **abstention above field accuracy**: `verified` is false either way, so
@@ -1433,15 +1438,22 @@ the extractor has.
 - [ ] **Vision arms have two image sources.** ✅ **Real photographs: `~/omni-spike-images/`** (8
       JPEGs from the POC, outside the repo — `receipt-1`…`-4` plus three `capture-*`; `receipt-1`
       and `capture-1` are **two-page**, so they also test one document spanning two images).
+      ✅ The four single-page photographs are wired in as the arithmetic arm's receipt half
+      (`OMNI_BENCH_PHOTOS`); the four two-page ones are blocked by the finding above.
       For volume, render `.reference/` PDF pages to images — which doubles as the free C3 oracle
-      (compare the transcription against the PDF's real text layer).
-- [ ] 🔴 **Check the 413 limit on the ENCODED payload, never the file.** Images pass as `data:`
-      URLs and base64 inflates by 4/3. Measured 2026-09-14: all eight are 4032×3024 and
-      **2.8–3.8 MB on disk**, but **3.7–5.0 MB encoded** — `receipt-4.jpg` crosses the ~5 MB
-      limit while looking 24% under it, and three more sit at 4.7–4.8 MB, inside the noise band.
-      ⛔ Downscale before sending; do not assume a file under the limit will arrive under it.
-      ⚠️ **ImageMagick is NOT installed** (`convert`/`magick` absent). Use **PIL 9.0.1**, which is;
-      `ffmpeg` is also available.
+      (compare the transcription against the PDF's real text layer). ⚠️ Still unbuilt.
+- [x] ✅ **The 413 hazard was already solved in the product** — verified 2026-09-14, this item was
+      stale. `core/src/extraction/media.rs` caps the long edge at 2048, checks the **base64**
+      length of all images in one request against a 4.5 MB budget, walks a bounded quality ladder,
+      and refuses a multi-page raster rather than truncating it. `openai_compat.rs` calls it and
+      a test named `an_oversized_photo_is_downscaled_before_it_is_sent` holds it. The bench goes
+      through the same trait, so it inherits the fix — no downscaling needed in the harness.
+- [ ] 🔴 **A document photographed across two images cannot be read whole.** `extract` takes one
+      `&[u8]` and one MIME; `Payload::Images` only ever holds several when a **PDF** is
+      rasterized. **Four of the eight POC photographs are pages of two-page documents**, and
+      phone capture is what images are for. The bench excludes them and counts the exclusion out
+      loud. ⛔ Fixing it is a trait-signature change across every impl and caller — a design call,
+      not a repair. Detail in `MODEL_BENCH.md` Part 6.
 - [ ] **C3** stays unbuilt (no producer). If it gains one, its oracle is free: render a
       born-digital PDF to an image, transcribe, compare against the real text layer.
 

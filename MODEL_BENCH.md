@@ -869,6 +869,62 @@ stated limit rather than a silent one.
 FNV-1a tag of the directory name, four hex digits, deterministic across runs so two scorecards
 compare. No institution name, account number, filename or path is ever printed.
 
+### The arithmetic arm — receipts and paystubs, where no CSV twin exists
+
+A receipt has no machine-readable counterpart, so the parser-as-oracle trick does not reach
+it. Two weaker oracles stand in, and the honest framing is that **neither is a gold set** —
+they are checks a wrong answer usually fails, not checks a right answer must pass.
+
+**Oracle 1 — self-consistency, via the product's own verifier.** `extraction::verify` already
+cross-checks `sum(|line items|)` against the document's stated `total`, and the confirm-draft
+screen already routes a failure into the manual-review lane. The arm calls that same function
+rather than reimplementing the rule, so the number it reports *is* the operator's future
+workload: `REVIEW` counts the documents a human would have to open.
+
+⚠️ The predicate for "did the arithmetic complain" is a **substring of another module's
+warning text**, which is a coupling rather than an interface. A test builds a genuinely
+mismatched extraction, runs the real `verify`, and asserts the substring still fires — so a
+reword fails loudly instead of the arm reporting every document as sound forever.
+
+**Oracle 2 — text-layer grounding, which does have ground truth.** All 96 paystubs in the
+corpus are born-digital, carrying roughly 750 characters and 170 digits of real text layer
+each. So every figure the model returns can be checked for *existence in the source*: an
+amount appearing nowhere in the document was invented. Poppler is already a hard dependency,
+so this costs nothing.
+
+The figure set is built by scanning for numeric tokens with separators stripped and the sign
+discarded — a deduction's sign lives in the column heading, not the digits. It **over-collects
+on purpose**: years, hour counts and employee numbers land in the set beside money. That makes
+grounding a **floor on fabrication rather than a ceiling**, and the floor is the safe
+direction, because disproving a figure wrongly called invented would mean opening the real
+document.
+
+| column | meaning |
+|---|---|
+| POST | postings returned |
+| TOTAL | did the model return the reference total its hint asks for |
+| ARITH | line items sum to that total, within `verify`'s one-cent tolerance |
+| UNGRND | figures appearing nowhere in the source text; `n/a` with no text layer |
+| REVIEW | what the confirm-draft screen would do — `FLAG` or `auto` |
+
+Photographs are the other half: `~/omni-spike-images/`, real phone captures from the POC.
+They have no text layer, so UNGRND reads `n/a` and self-consistency is all they carry. Both
+directories are **named by env var, never discovered**, for the same reason the abstention
+directory is.
+
+### A product finding from the photographs: a document captured twice cannot be read whole
+
+`DocumentExtractor::extract` takes **one** `&[u8]` and one MIME type. `Payload::Images` is a
+vector and the request builder handles N images correctly — but the only thing that ever
+produces more than one is `rasterize_pdf`. So a two-page document photographed as two JPEGs
+has no path through the extractor: each page becomes an independent request seeing half the
+figures, and its line items then fail to sum to a total printed on the other page.
+
+This is not hypothetical. **Four of the eight real POC photographs are pages of two-page
+documents**, and phone capture is the flow images exist for. The bench excludes them and says
+so in its plan line — scoring them would report a harness limitation as a model error, which
+is the Stage 1 mistake again. Fixing it is a trait-signature change touching every
+implementation and caller, so it is a design call rather than a repair.
 ### What it cannot see
 
 - **Per-row correctness beyond the figure.** Right amount with the wrong merchant scores as a
@@ -877,9 +933,14 @@ compare. No institution name, account number, filename or path is ever printed.
 - **The long half of the corpus.** 93 of 233 directories exceed 40 rows, and long statements
   are plausibly where the interesting failures are.
 - **Categorisation**, which the parser does not label either.
+- **Compensating errors on the arithmetic arm.** Two line items misread in opposite directions
+  still sum to the stated total, and both figures may exist elsewhere on the page. Passing
+  ARITH and UNGRND together is evidence, not proof.
+- **Whether a grounded figure was the *right* figure.** Containment proves an amount appears in
+  the document, never that it belongs in the field the model put it in.
 - **C2 and C3.** C2 has no oracle and shares role D's scorecard. C3 has no producer at all.
 
-### Two product findings this surfaced
+### Two more product findings, from the statement arm
 
 Both are design calls rather than repairs, and neither was changed:
 

@@ -5,11 +5,14 @@
 //! What the numbers mean and what this instrument cannot see: `MODEL_BENCH.md`
 //! Part 6.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
-use omni_me_core::extraction::{DocumentExtractor, ExtractionHint};
+use omni_me_core::extraction::{
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, ExtractionHint, verify,
+};
 use omni_me_core::statement::StatementParse;
 use omni_me_core::statement::parse::parse_brokerage_statement;
 use rust_decimal::Decimal;
@@ -183,7 +186,7 @@ fn discover(corpus: &Path) -> Result<Vec<Case>, String> {
 /// measured is whether a wrong hint produces an invented transaction.
 fn discover_absent(dir: &Path) -> Vec<Case> {
     let mut found = Vec::new();
-    collect_pdfs(dir, 0, &mut found);
+    collect_documents(dir, &["pdf"], 0, &mut found);
     found.sort();
     // Spread across the tree rather than taking the first few, which in a corpus
     // filed by year would be one year's documents and one layout.
@@ -204,13 +207,15 @@ fn discover_absent(dir: &Path) -> Vec<Case> {
 /// and month; anything deeper is a layout this was not pointed at on purpose.
 const MAX_WALK_DEPTH: usize = 3;
 
-fn collect_pdfs(dir: &Path, depth: usize, into: &mut Vec<PathBuf>) {
-    into.extend(with_ext(dir, "pdf"));
+fn collect_documents(dir: &Path, exts: &[&str], depth: usize, into: &mut Vec<PathBuf>) {
+    for ext in exts {
+        into.extend(with_ext(dir, ext));
+    }
     if depth >= MAX_WALK_DEPTH {
         return;
     }
     for child in read_dirs(dir).unwrap_or_default() {
-        collect_pdfs(&child, depth + 1, into);
+        collect_documents(&child, exts, depth + 1, into);
     }
 }
 
@@ -455,6 +460,10 @@ pub async fn run(extractor: &dyn DocumentExtractor) {
         );
     }
 
+    // Planned before the refusal below, so an unconfigured run still reports
+    // what both arms would have sent.
+    let arithmetic = plan_arithmetic();
+
     // A NullExtractor answers `Ok` with an empty draft rather than erroring, so
     // an unconfigured run would score as a model that found nothing at all.
     if extractor.name() == "null" {
@@ -472,12 +481,305 @@ pub async fn run(extractor: &dyn DocumentExtractor) {
         }
     }
     report(&rows);
+
+    let mut checked = Vec::new();
+    for (path, hint) in &arithmetic {
+        checked.push(check_one(extractor, path, *hint).await);
+    }
+    report_arithmetic(&checked);
+}
+
+// --- Arithmetic arm ---------------------------------------------------------
+//
+// Receipts and paystubs have no CSV twin, so there are no labels. Two weaker
+// oracles stand in; what each can and cannot prove is in `MODEL_BENCH.md` Part 6.
+
+/// Born-digital documents whose figures can be read back out of a PDF text
+/// layer. Named rather than discovered, for the reason [`ABSENT_ENV`] gives.
+const ARITHMETIC_ENV: &str = "OMNI_BENCH_ARITHMETIC";
+
+/// Photographed documents. No text layer, so self-consistency is all they carry.
+const PHOTOS_ENV: &str = "OMNI_BENCH_PHOTOS";
+
+const ARITHMETIC_SAMPLE_ENV: &str = "OMNI_BENCH_ARITH_SAMPLE";
+const DEFAULT_ARITHMETIC_SAMPLE: usize = 6;
+
+/// Extensions the arithmetic arm will send. Kept in step with what
+/// `media::format_for` can prepare, plus the PDF path that rasterizes.
+const DOCUMENT_EXTS: [&str; 5] = ["pdf", "jpg", "jpeg", "png", "webp"];
+
+/// Filename marker for one document photographed across several images.
+///
+/// `extract` takes one image, and `Payload::Images` holds more than one only
+/// when a PDF is rasterized — so these pages can only go as separate requests,
+/// each seeing half the figures. That is a product gap, recorded in
+/// `MODEL_BENCH.md` Part 6, and scoring them would measure it as a model error.
+const MULTI_PAGE_MARKER: &str = "-pg-";
+
+fn is_one_page_of_several(path: &Path) -> bool {
+    file_name(path)
+        .to_ascii_lowercase()
+        .contains(MULTI_PAGE_MARKER)
+}
+
+/// One document scored with no label set behind it.
+struct Checked {
+    document: String,
+    hint: &'static str,
+    postings: usize,
+    /// Whether the model returned the reference total its hint asks for.
+    total: bool,
+    /// `verify` raised no line-item-sum complaint.
+    arithmetic_ok: bool,
+    /// Returned figures appearing nowhere in the source text. `None` when the
+    /// document has no text layer to check against.
+    ungrounded: Option<usize>,
+    /// What the confirm-draft screen would do with this extraction.
+    review: bool,
+    latency: Duration,
+    error: Option<String>,
+}
+
+fn hint_name(hint: ExtractionHint) -> &'static str {
+    match hint {
+        ExtractionHint::Receipt => "receipt",
+        ExtractionHint::Paystub => "paystub",
+        ExtractionHint::BankStatement => "statement",
+        ExtractionHint::BrokerageStatement => "brokerage",
+        ExtractionHint::EmailBody => "email",
+        ExtractionHint::Generic => "generic",
+    }
+}
+
+fn mime_for(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        _ => "image/jpeg",
+    }
+}
+
+/// Absolute values of every number in `text`.
+///
+/// Over-collects on purpose: years, hour counts and employee numbers land in
+/// the set alongside money. That makes the grounding check a floor on
+/// fabrication rather than a ceiling, and a floor is the safe direction — a
+/// figure wrongly called invented would need the real document to disprove.
+fn figures_in(text: &str) -> BTreeSet<Decimal> {
+    let mut found = BTreeSet::new();
+    let mut token = String::new();
+    for ch in text.chars().chain(std::iter::once(' ')) {
+        if ch.is_ascii_digit() || ch == ',' || ch == '.' {
+            token.push(ch);
+            continue;
+        }
+        if !token.is_empty() {
+            let cleaned: String = token.chars().filter(|c| *c != ',').collect();
+            if let Ok(value) = Decimal::from_str(cleaned.trim_matches('.')) {
+                found.insert(value.abs());
+            }
+            token.clear();
+        }
+    }
+    found
+}
+
+/// The document's own text layer, via poppler. `None` for a photograph or a
+/// scan, which is the signal that the grounding oracle does not apply.
+fn source_text(path: &Path) -> Option<String> {
+    if mime_for(path) != "application/pdf" {
+        return None;
+    }
+    let out = std::process::Command::new("pdftotext")
+        .arg("-layout")
+        .arg(path)
+        .arg("-")
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    out.status
+        .success()
+        .then_some(text)
+        .filter(|t| t.chars().any(|c| c.is_ascii_digit()))
+}
+
+/// Did `verify` complain that the line items do not add up to the total?
+///
+/// A substring of another module's warning text, which is a coupling rather
+/// than an interface. `the_arithmetic_predicate_still_matches_verifys_wording`
+/// exists to make a reword fail loudly instead of reporting every document as
+/// arithmetically sound forever.
+const SUM_MISMATCH: &str = "does not match document total";
+
+async fn check_one(
+    extractor: &dyn DocumentExtractor,
+    path: &Path,
+    hint: ExtractionHint,
+) -> Checked {
+    let mut checked = Checked {
+        document: tag(&file_name(path)),
+        hint: hint_name(hint),
+        postings: 0,
+        total: false,
+        arithmetic_ok: false,
+        ungrounded: None,
+        review: true,
+        latency: Duration::ZERO,
+        error: None,
+    };
+
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            checked.error = Some(e.to_string());
+            return checked;
+        }
+    };
+    // Read before the request, so a poppler failure is not attributed to the model.
+    let grounding = source_text(path).map(|text| figures_in(&text));
+
+    let started = Instant::now();
+    let result = extractor.extract(&bytes, mime_for(path), hint).await;
+    checked.latency = started.elapsed();
+
+    match result {
+        Ok(extraction) => {
+            let report = verify(&extraction, hint, DEFAULT_CONFIDENCE_THRESHOLD);
+            checked.postings = extraction.postings.len();
+            checked.total = extraction.total.is_some();
+            checked.arithmetic_ok = !report.warnings.iter().any(|w| w.contains(SUM_MISMATCH));
+            checked.review = report.needs_manual_review;
+            checked.ungrounded = grounding.map(|figures| {
+                let postings = extraction
+                    .postings
+                    .iter()
+                    .filter(|p| !figures.contains(&p.amount.abs()))
+                    .count();
+                let total = extraction
+                    .total
+                    .is_some_and(|t| !figures.contains(&t.abs()));
+                postings + usize::from(total)
+            });
+        }
+        Err(e) => checked.error = Some(e.to_string()),
+    }
+    checked
+}
+
+/// The documents the arithmetic arm will score, and the hint each is read under.
+///
+/// Two directories rather than one because the hint is a claim about what the
+/// document *is*, which an extension cannot supply: a photographed paystub is
+/// a JPEG and a born-digital receipt is a PDF.
+fn plan_arithmetic() -> Vec<(PathBuf, ExtractionHint)> {
+    let sample: usize = std::env::var(ARITHMETIC_SAMPLE_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_ARITHMETIC_SAMPLE);
+
+    let mut planned = Vec::new();
+    for (env, hint) in [
+        (ARITHMETIC_ENV, ExtractionHint::Paystub),
+        (PHOTOS_ENV, ExtractionHint::Receipt),
+    ] {
+        let name = hint_name(hint);
+        let Ok(dir) = std::env::var(env) else {
+            println!("{name} arm SKIPPED — set {env} to a directory of such documents.");
+            continue;
+        };
+        let mut found = Vec::new();
+        collect_documents(Path::new(&dir), &DOCUMENT_EXTS, 0, &mut found);
+        found.sort();
+        let total = found.len();
+        found.retain(|p| !is_one_page_of_several(p));
+        let split = total - found.len();
+        if found.is_empty() {
+            println!("{name} arm SKIPPED — {env} names a directory with no readable documents.");
+            continue;
+        }
+        // Strided for the same reason the statement arm is: the first N of a
+        // corpus filed by date is one period and one layout.
+        let stride = (found.len() / sample.max(1)).max(1);
+        let taken: Vec<PathBuf> = found.iter().step_by(stride).take(sample).cloned().collect();
+        let grounded = taken.iter().filter(|p| source_text(p).is_some()).count();
+        println!(
+            "{name} arm: {} of {} documents · {grounded} carry a text layer to check against\
+             {}",
+            taken.len(),
+            found.len(),
+            if split == 0 {
+                String::new()
+            } else {
+                format!(" · {split} skipped as pages of a document the extractor cannot take whole")
+            }
+        );
+        planned.extend(taken.into_iter().map(|p| (p, hint)));
+    }
+    planned
+}
+
+fn report_arithmetic(rows: &[Checked]) {
+    if rows.is_empty() {
+        return;
+    }
+    println!();
+    println!(
+        "{:<6} {:<10} {:>5} {:>6} {:>6} {:>7} {:>7} {:>8}",
+        "DOC", "HINT", "POST", "TOTAL", "ARITH", "UNGRND", "REVIEW", "LATENCY"
+    );
+    for row in rows {
+        println!(
+            "{:<6} {:<10} {:>5} {:>6} {:>6} {:>7} {:>7} {:>7.1}s  {}",
+            row.document,
+            row.hint,
+            row.postings,
+            if row.total { "yes" } else { "no" },
+            if row.arithmetic_ok { "ok" } else { "MISMATCH" },
+            row.ungrounded
+                .map_or_else(|| "n/a".to_string(), |n| n.to_string()),
+            if row.review { "FLAG" } else { "auto" },
+            row.latency.as_secs_f64(),
+            row.error.as_deref().unwrap_or(""),
+        );
+    }
+
+    let scored: Vec<&Checked> = rows.iter().filter(|r| r.error.is_none()).collect();
+    if scored.is_empty() {
+        println!("every document errored — nothing was measured");
+        return;
+    }
+    let sound = scored.iter().filter(|r| r.arithmetic_ok).count();
+    let with_total = scored.iter().filter(|r| r.total).count();
+    let flagged = scored.iter().filter(|r| r.review).count();
+    println!(
+        "{} documents: {sound} arithmetically sound · {with_total} returned a total · \
+         {flagged} would be flagged for manual review",
+        scored.len()
+    );
+    // Reported apart, because it is the only column with ground truth behind it.
+    let checkable: Vec<&&Checked> = scored.iter().filter(|r| r.ungrounded.is_some()).collect();
+    if !checkable.is_empty() {
+        let clean = checkable.iter().filter(|r| r.ungrounded == Some(0)).count();
+        let invented: usize = checkable.iter().filter_map(|r| r.ungrounded).sum();
+        println!(
+            "{} with a text layer: {clean} used only figures the document states, \
+             {invented} figures appear nowhere in it",
+            checkable.len()
+        );
+    }
+    println!("{} errored", rows.len() - scored.len());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use omni_me_core::extraction::{ExtractedPosting, ExtractionResult};
 
     fn dec(v: &str) -> Decimal {
         Decimal::from_str(v).unwrap()
@@ -541,5 +843,96 @@ mod tests {
         assert_ne!(first, tag("ws_checking"));
         assert_eq!(first.len(), 4);
         assert!(!first.contains("globepay"));
+    }
+
+    fn extraction(postings: &[&str], total: Option<&str>) -> ExtractionResult {
+        ExtractionResult {
+            date: None,
+            description: None,
+            postings: postings
+                .iter()
+                .map(|amount| ExtractedPosting {
+                    account_hint: None,
+                    commodity: "CAD".into(),
+                    amount: dec(amount),
+                    line_label: None,
+                })
+                .collect(),
+            total: total.map(dec),
+            confidence: 0.9,
+            model: "test".into(),
+            raw_response: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn the_arithmetic_predicate_still_matches_verifys_wording() {
+        // SUM_MISMATCH is a substring of another module's message rather than an
+        // interface. This test is that coupling made loud: reword the warning and
+        // it fails here, instead of the arm reporting every document as sound.
+        let wrong = extraction(&["10.00", "5.00"], Some("99.00"));
+        let complained = verify(
+            &wrong,
+            ExtractionHint::Receipt,
+            DEFAULT_CONFIDENCE_THRESHOLD,
+        );
+        assert!(
+            complained.warnings.iter().any(|w| w.contains(SUM_MISMATCH)),
+            "verify no longer says {SUM_MISMATCH:?}: {:?}",
+            complained.warnings
+        );
+
+        let right = extraction(&["10.00", "5.00"], Some("15.00"));
+        let quiet = verify(
+            &right,
+            ExtractionHint::Receipt,
+            DEFAULT_CONFIDENCE_THRESHOLD,
+        );
+        assert!(!quiet.warnings.iter().any(|w| w.contains(SUM_MISMATCH)));
+    }
+
+    #[test]
+    fn figures_are_read_with_separators_stripped_and_signs_discarded() {
+        let found = figures_in("Gross    1,234.56\nTax        (98.70)\nYear 2025");
+        assert!(
+            found.contains(&dec("1234.56")),
+            "a thousands separator is not part of the figure"
+        );
+        assert!(
+            found.contains(&dec("98.70")),
+            "a parenthesised deduction states the same figure"
+        );
+        assert!(found.contains(&dec("2025")));
+        assert!(!found.contains(&dec("1.23")));
+    }
+
+    #[test]
+    fn a_figure_the_document_never_states_counts_as_ungrounded() {
+        let stated = figures_in("Net pay 2,410.88");
+        assert!(stated.contains(&dec("-2410.88").abs()));
+        assert!(
+            !stated.contains(&dec("2410.89")),
+            "a one-cent misread has no twin in the text and must not pass as grounded"
+        );
+    }
+
+    #[test]
+    fn a_page_of_a_multi_image_document_is_left_out() {
+        // Half a receipt scored against its own total is an arithmetic mismatch
+        // caused by the harness. The exclusion is counted in the plan line, never
+        // silent, because the alternative reads as a model failure.
+        assert!(is_one_page_of_several(Path::new("x/receipt-1-pg-2.jpg")));
+        assert!(is_one_page_of_several(Path::new("x/capture-1-PG-1.JPG")));
+        assert!(!is_one_page_of_several(Path::new("x/receipt-3.jpg")));
+    }
+
+    #[test]
+    fn the_mime_follows_the_extension_and_defaults_to_a_photo() {
+        assert_eq!(mime_for(Path::new("a/b.PDF")), "application/pdf");
+        assert_eq!(mime_for(Path::new("a/b.png")), "image/png");
+        assert_eq!(mime_for(Path::new("a/receipt-1.jpg")), "image/jpeg");
+        // An unknown extension reads as a photo rather than being refused: the
+        // endpoint decides what it accepts, and this arm's corpus is photographs.
+        assert_eq!(mime_for(Path::new("a/scan")), "image/jpeg");
     }
 }
