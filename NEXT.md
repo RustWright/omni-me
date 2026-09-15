@@ -6,8 +6,8 @@
 
 ## 🔴 Owed before anything decides a seat
 - **Nothing has run against a real endpoint. Zero tokens spent.** C1 is dry-run-verified only.
-- **RE-RUN Role A's bench** — 10/14 (71%) was measured at the OLD turn budget, so three of
-  fourteen cases were scoring the budget rather than the model.
+- **RE-RUN Role A's bench — now UNBLOCKED.** 10/14 (71%) was at the OLD turn budget; the three
+  boxes that gated it were stale and are cleared. Needs a seeded local hub and spends tokens.
 - **`omni_require_dev_volume`'s docker read is unproven** — no daemon here, he declined one.
   ⛔ Prove it before Stage 4 leans on it; recipe in `deploy/smoke-guard.sh`'s header.
 
