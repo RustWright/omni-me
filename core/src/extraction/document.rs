@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use super::ExtractionError;
+use super::{DocumentPart, ExtractionError};
 use crate::events::{
     DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DOCUMENT_TITLE_KEY, DocumentField,
     DocumentFieldsExtractedPayload,
@@ -70,10 +70,12 @@ pub struct DocumentSummary {
 #[async_trait]
 pub trait DocumentReader: Send + Sync {
     fn name(&self) -> &str;
+    /// Read one document that may arrive as several files, in page order. Same
+    /// shape as `DocumentExtractor::extract` and for the same reason: a document
+    /// photographed page by page is one document.
     async fn read_document(
         &self,
-        bytes: &[u8],
-        mime: &str,
+        parts: &[DocumentPart<'_>],
     ) -> Result<DocumentSummary, ExtractionError>;
 }
 

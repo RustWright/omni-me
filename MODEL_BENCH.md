@@ -906,25 +906,59 @@ document.
 | ARITH | line items sum to that total, within `verify`'s one-cent tolerance |
 | UNGRND | figures appearing nowhere in the source text; `n/a` with no text layer |
 | REVIEW | what the confirm-draft screen would do — `FLAG` or `auto` |
+| PAGES | files this document arrived as; above one exercises the multi-part path |
 
 Photographs are the other half: `~/omni-spike-images/`, real phone captures from the POC.
 They have no text layer, so UNGRND reads `n/a` and self-consistency is all they carry. Both
 directories are **named by env var, never discovered**, for the same reason the abstention
-directory is.
+directory is. The `PAGES` column reports how many files a document arrived as — anything above
+one is exercising the multi-part request path.
 
-### A product finding from the photographs: a document captured twice cannot be read whole
+### A document captured twice — found by the photographs, ✅ FIXED 2026-09-15
 
-`DocumentExtractor::extract` takes **one** `&[u8]` and one MIME type. `Payload::Images` is a
-vector and the request builder handles N images correctly — but the only thing that ever
-produces more than one is `rasterize_pdf`. So a two-page document photographed as two JPEGs
-has no path through the extractor: each page becomes an independent request seeing half the
-figures, and its line items then fail to sum to a total printed on the other page.
+**The finding.** `DocumentExtractor::extract` took **one** `&[u8]` and one MIME type.
+`Payload::Images` was a vector and the request builder handled N images correctly — but the
+only thing that ever produced more than one was `rasterize_pdf`. So a two-page document
+photographed as two JPEGs had no path through the extractor: each page became an independent
+request seeing half the figures, and its line items then failed to sum to a total printed on
+the other page. **Four of the eight real POC photographs are pages of two-page documents**,
+and phone capture is the flow images exist for.
 
-This is not hypothetical. **Four of the eight real POC photographs are pages of two-page
-documents**, and phone capture is the flow images exist for. The bench excludes them and says
-so in its plan line — scoring them would report a harness limitation as a model error, which
-is the Stage 1 mistake again. Fixing it is a trait-signature change touching every
-implementation and caller, so it is a design call rather than a repair.
+**The fix.** A document is now a *sequence* of files:
+
+```rust
+pub struct DocumentPart<'a> { pub bytes: &'a [u8], pub mime: &'a str }
+
+async fn extract(&self, parts: &[DocumentPart<'_>], hint: ExtractionHint) -> …
+```
+
+Four things worth recording about the shape:
+
+- **No single-file convenience method.** A one-file document is
+  `&[DocumentPart::new(bytes, mime)]`. Two entry points would drift, and a one-file-only
+  entry point is what caused this in the first place.
+- **`DocumentReader::read_document` moved with it.** It had the identical signature and so the
+  identical defect; fixing only `extract` would have relocated the bug and left the twin
+  looking deliberate.
+- **The quality ladder was lifted out of `rasterize_pdf`.** It already solved "N images must
+  fit one request" for PDF pages, so `fit_set` is now shared with the several-photos path
+  rather than copied. Photos are prepared individually first — preserving `prepare_image`'s
+  pass-through, so two already-small pages are never re-encoded — and only fall back to the
+  ladder when they overflow *together*.
+- **Every part's MIME is checked, not the first.** A mixed set is only as sendable as the type
+  it does not support, and validating part one would send a request the endpoint rejects for a
+  reason nothing local names.
+
+Bounds: `MAX_DOCUMENT_PARTS = 8`, matching `MAX_RASTER_PAGES`; an empty list is
+`ExtractionError::NoDocument` rather than an empty draft, which would read as a model that
+found nothing. The bench now groups `<base>-pg-<n>` files into one case and sorts them by
+**parsed page number** — `pg-10` sorts before `pg-2` as text, the same trap `run_pdftoppm`
+documents in poppler's own output.
+
+⚠️ **What this does not yet give a user.** The capability exists and the bench uses it, but no
+*product* path produces several parts: `POST /documents/extract` takes one raw body, and the
+email importer only ever concatenates attachment text. Wiring a producer is the next step and
+is an API-shape decision, not a repair.
 ### What it cannot see
 
 - **Per-row correctness beyond the figure.** Right amount with the wrong merchant scores as a

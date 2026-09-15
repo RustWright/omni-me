@@ -1445,12 +1445,15 @@ the extractor has.
       and refuses a multi-page raster rather than truncating it. `openai_compat.rs` calls it and
       a test named `an_oversized_photo_is_downscaled_before_it_is_sent` holds it. The bench goes
       through the same trait, so it inherits the fix — no downscaling needed in the harness.
-- [ ] 🔴 **A document photographed across two images cannot be read whole.** `extract` takes one
-      `&[u8]` and one MIME; `Payload::Images` only ever holds several when a **PDF** is
-      rasterized. **Four of the eight POC photographs are pages of two-page documents**, and
-      phone capture is what images are for. The bench excludes them and counts the exclusion out
-      loud. ⛔ Fixing it is a trait-signature change across every impl and caller — a design call,
-      not a repair. Detail in `MODEL_BENCH.md` Part 6.
+- [x] ✅ **A document captured across several images now reads whole** (user's call, fixed
+      2026-09-15). `extract` and `read_document` both take `&[DocumentPart]`; the quality ladder
+      moved out of `rasterize_pdf` so photos and PDF pages share one budget; every part's MIME is
+      checked. `MAX_DOCUMENT_PARTS = 8`, empty list is `NoDocument`. The bench groups
+      `<base>-pg-<n>` by parsed page number. Shape and rationale in `MODEL_BENCH.md` Part 6.
+- [ ] ⚠️ **No product path produces several parts yet.** `POST /documents/extract` takes one raw
+      body and the email importer concatenates attachment text only, so the capability is real
+      but a *user* still cannot send two photos of one receipt. ⛔ Wiring a producer is an
+      API-shape decision (multipart route? repeated field? client-side grouping?), not a repair.
 - [ ] **C3** stays unbuilt (no producer). If it gains one, its oracle is free: render a
       born-digital PDF to an image, transcribe, compare against the real text layer.
 

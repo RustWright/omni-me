@@ -11,7 +11,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use omni_me_core::extraction::{
-    DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, ExtractionHint, verify,
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, DocumentPart, ExtractionHint, verify,
 };
 use omni_me_core::statement::StatementParse;
 use omni_me_core::statement::parse::parse_brokerage_statement;
@@ -322,7 +322,10 @@ async fn score_one(
 
     let started = Instant::now();
     let result = extractor
-        .extract(&bytes, "application/pdf", ExtractionHint::BankStatement)
+        .extract(
+            &[DocumentPart::new(&bytes, "application/pdf")],
+            ExtractionHint::BankStatement,
+        )
         .await;
     scored.latency = started.elapsed();
 
@@ -483,8 +486,8 @@ pub async fn run(extractor: &dyn DocumentExtractor) {
     report(&rows);
 
     let mut checked = Vec::new();
-    for (path, hint) in &arithmetic {
-        checked.push(check_one(extractor, path, *hint).await);
+    for (pages, hint) in &arithmetic {
+        checked.push(check_one(extractor, pages, *hint).await);
     }
     report_arithmetic(&checked);
 }
@@ -508,24 +511,51 @@ const DEFAULT_ARITHMETIC_SAMPLE: usize = 6;
 /// `media::format_for` can prepare, plus the PDF path that rasterizes.
 const DOCUMENT_EXTS: [&str; 5] = ["pdf", "jpg", "jpeg", "png", "webp"];
 
-/// Filename marker for one document photographed across several images.
-///
-/// `extract` takes one image, and `Payload::Images` holds more than one only
-/// when a PDF is rasterized — so these pages can only go as separate requests,
-/// each seeing half the figures. That is a product gap, recorded in
-/// `MODEL_BENCH.md` Part 6, and scoring them would measure it as a model error.
+/// Filename marker for one document photographed across several images:
+/// `<base>-pg-<n>`. These are pages of one document and go in one request.
 const MULTI_PAGE_MARKER: &str = "-pg-";
 
-fn is_one_page_of_several(path: &Path) -> bool {
+/// The page number in a `-pg-<n>` filename, for ordering within a document.
+///
+/// Parsed rather than sorted as text for the reason `run_pdftoppm` gives about
+/// poppler's own output: `pg-10` sorts before `pg-2`, which would hand the
+/// model a document with its pages shuffled.
+fn page_number(path: &Path) -> u32 {
     file_name(path)
         .to_ascii_lowercase()
-        .contains(MULTI_PAGE_MARKER)
+        .rsplit_once(MULTI_PAGE_MARKER)
+        .and_then(|(_, tail)| tail.split('.').next().and_then(|n| n.parse().ok()))
+        .unwrap_or(0)
+}
+
+/// Group files into documents. `<base>-pg-<n>` files become one multi-page
+/// document in page order; every other file stands alone.
+fn group_pages(files: Vec<PathBuf>) -> Vec<Vec<PathBuf>> {
+    let mut groups: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    for path in files {
+        let name = file_name(&path).to_ascii_lowercase();
+        let key = match name.split_once(MULTI_PAGE_MARKER) {
+            Some((base, _)) => base.to_string(),
+            None => name,
+        };
+        groups.entry(key).or_default().push(path);
+    }
+    groups
+        .into_values()
+        .map(|mut pages| {
+            pages.sort_by_key(|p| page_number(p));
+            pages
+        })
+        .collect()
 }
 
 /// One document scored with no label set behind it.
 struct Checked {
     document: String,
     hint: &'static str,
+    /// Files this document arrived as. More than one exercises the multi-part
+    /// request path, which is the half a single-image signature could not reach.
+    pages: usize,
     postings: usize,
     /// Whether the model returned the reference total its hint asks for.
     total: bool,
@@ -619,12 +649,13 @@ const SUM_MISMATCH: &str = "does not match document total";
 
 async fn check_one(
     extractor: &dyn DocumentExtractor,
-    path: &Path,
+    pages: &[PathBuf],
     hint: ExtractionHint,
 ) -> Checked {
     let mut checked = Checked {
-        document: tag(&file_name(path)),
+        document: tag(&file_name(&pages[0])),
         hint: hint_name(hint),
+        pages: pages.len(),
         postings: 0,
         total: false,
         arithmetic_ok: false,
@@ -634,18 +665,29 @@ async fn check_one(
         error: None,
     };
 
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            checked.error = Some(e.to_string());
-            return checked;
+    let mut bytes = Vec::with_capacity(pages.len());
+    for page in pages {
+        match std::fs::read(page) {
+            Ok(body) => bytes.push(body),
+            Err(e) => {
+                checked.error = Some(e.to_string());
+                return checked;
+            }
         }
-    };
-    // Read before the request, so a poppler failure is not attributed to the model.
-    let grounding = source_text(path).map(|text| figures_in(&text));
+    }
+    // Read before the request, so a poppler failure is not attributed to the
+    // model. Every page's text, because a figure stated on page two is stated.
+    let text: String = pages.iter().filter_map(|p| source_text(p)).collect();
+    let grounding = (!text.is_empty()).then(|| figures_in(&text));
+
+    let parts: Vec<DocumentPart<'_>> = bytes
+        .iter()
+        .zip(pages)
+        .map(|(body, path)| DocumentPart::new(body, mime_for(path)))
+        .collect();
 
     let started = Instant::now();
-    let result = extractor.extract(&bytes, mime_for(path), hint).await;
+    let result = extractor.extract(&parts, hint).await;
     checked.latency = started.elapsed();
 
     match result {
@@ -677,7 +719,7 @@ async fn check_one(
 /// Two directories rather than one because the hint is a claim about what the
 /// document *is*, which an extension cannot supply: a photographed paystub is
 /// a JPEG and a born-digital receipt is a PDF.
-fn plan_arithmetic() -> Vec<(PathBuf, ExtractionHint)> {
+fn plan_arithmetic() -> Vec<(Vec<PathBuf>, ExtractionHint)> {
     let sample: usize = std::env::var(ARITHMETIC_SAMPLE_ENV)
         .ok()
         .and_then(|v| v.parse().ok())
@@ -696,30 +738,32 @@ fn plan_arithmetic() -> Vec<(PathBuf, ExtractionHint)> {
         let mut found = Vec::new();
         collect_documents(Path::new(&dir), &DOCUMENT_EXTS, 0, &mut found);
         found.sort();
-        let total = found.len();
-        found.retain(|p| !is_one_page_of_several(p));
-        let split = total - found.len();
-        if found.is_empty() {
+        let documents = group_pages(found);
+        if documents.is_empty() {
             println!("{name} arm SKIPPED — {env} names a directory with no readable documents.");
             continue;
         }
         // Strided for the same reason the statement arm is: the first N of a
         // corpus filed by date is one period and one layout.
-        let stride = (found.len() / sample.max(1)).max(1);
-        let taken: Vec<PathBuf> = found.iter().step_by(stride).take(sample).cloned().collect();
-        let grounded = taken.iter().filter(|p| source_text(p).is_some()).count();
+        let stride = (documents.len() / sample.max(1)).max(1);
+        let taken: Vec<Vec<PathBuf>> = documents
+            .iter()
+            .step_by(stride)
+            .take(sample)
+            .cloned()
+            .collect();
+        let grounded = taken
+            .iter()
+            .filter(|pages| pages.iter().any(|p| source_text(p).is_some()))
+            .count();
+        let multi = taken.iter().filter(|pages| pages.len() > 1).count();
         println!(
-            "{name} arm: {} of {} documents · {grounded} carry a text layer to check against\
-             {}",
+            "{name} arm: {} of {} documents · {grounded} carry a text layer to check against \
+             · {multi} span several files",
             taken.len(),
-            found.len(),
-            if split == 0 {
-                String::new()
-            } else {
-                format!(" · {split} skipped as pages of a document the extractor cannot take whole")
-            }
+            documents.len(),
         );
-        planned.extend(taken.into_iter().map(|p| (p, hint)));
+        planned.extend(taken.into_iter().map(|pages| (pages, hint)));
     }
     planned
 }
@@ -730,14 +774,15 @@ fn report_arithmetic(rows: &[Checked]) {
     }
     println!();
     println!(
-        "{:<6} {:<10} {:>5} {:>6} {:>6} {:>7} {:>7} {:>8}",
-        "DOC", "HINT", "POST", "TOTAL", "ARITH", "UNGRND", "REVIEW", "LATENCY"
+        "{:<6} {:<10} {:>5} {:>5} {:>6} {:>6} {:>7} {:>7} {:>8}",
+        "DOC", "HINT", "PAGES", "POST", "TOTAL", "ARITH", "UNGRND", "REVIEW", "LATENCY"
     );
     for row in rows {
         println!(
-            "{:<6} {:<10} {:>5} {:>6} {:>6} {:>7} {:>7} {:>7.1}s  {}",
+            "{:<6} {:<10} {:>5} {:>5} {:>6} {:>6} {:>7} {:>7} {:>7.1}s  {}",
             row.document,
             row.hint,
+            row.pages,
             row.postings,
             if row.total { "yes" } else { "no" },
             if row.arithmetic_ok { "ok" } else { "MISMATCH" },
@@ -917,13 +962,32 @@ mod tests {
     }
 
     #[test]
-    fn a_page_of_a_multi_image_document_is_left_out() {
-        // Half a receipt scored against its own total is an arithmetic mismatch
-        // caused by the harness. The exclusion is counted in the plan line, never
-        // silent, because the alternative reads as a model failure.
-        assert!(is_one_page_of_several(Path::new("x/receipt-1-pg-2.jpg")));
-        assert!(is_one_page_of_several(Path::new("x/capture-1-PG-1.JPG")));
-        assert!(!is_one_page_of_several(Path::new("x/receipt-3.jpg")));
+    fn pages_of_one_document_group_into_one_case() {
+        // Half a receipt scored against a total printed on the other half is an
+        // arithmetic mismatch caused by the harness, so the pages go in one
+        // request. Standalone files are untouched by the grouping.
+        let grouped = group_pages(vec![
+            PathBuf::from("x/receipt-1-pg-1.jpg"),
+            PathBuf::from("x/receipt-3.jpg"),
+            PathBuf::from("x/receipt-1-pg-2.jpg"),
+        ]);
+        assert_eq!(grouped.len(), 2);
+        let multi = grouped.iter().find(|g| g.len() == 2).expect("one group");
+        assert_eq!(file_name(&multi[0]), "receipt-1-pg-1.jpg", "page order");
+        assert_eq!(file_name(&multi[1]), "receipt-1-pg-2.jpg");
+    }
+
+    #[test]
+    fn page_ten_does_not_sort_before_page_two() {
+        // The same trap `run_pdftoppm` documents in poppler's output. Sorting
+        // these as text hands the model a shuffled document.
+        let grouped = group_pages(vec![
+            PathBuf::from("x/scan-pg-10.jpg"),
+            PathBuf::from("x/scan-pg-2.jpg"),
+        ]);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(file_name(&grouped[0][0]), "scan-pg-2.jpg");
+        assert_eq!(file_name(&grouped[0][1]), "scan-pg-10.jpg");
     }
 
     #[test]

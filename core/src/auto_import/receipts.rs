@@ -27,7 +27,9 @@ use tokio::process::Command;
 
 use crate::auto_import_scheduler::ImportError;
 use crate::events::NewEvent;
-use crate::extraction::{DocumentExtractor, ExtractionHint, receipt_extraction_to_drafts};
+use crate::extraction::{
+    DocumentExtractor, DocumentPart, ExtractionHint, receipt_extraction_to_drafts,
+};
 
 use super::imap::{ImapHandler, ImapMessage};
 use super::mime::parse_eml;
@@ -232,8 +234,7 @@ impl ImapHandler for ReceiptHandler {
         let result = self
             .extractor
             .extract(
-                combined_text.as_bytes(),
-                "text/plain",
+                &[DocumentPart::new(combined_text.as_bytes(), "text/plain")],
                 ExtractionHint::EmailBody,
             )
             .await

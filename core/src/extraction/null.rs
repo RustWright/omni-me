@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 
-use super::{DocumentExtractor, ExtractionError, ExtractionHint, ExtractionResult};
+use super::{DocumentExtractor, DocumentPart, ExtractionError, ExtractionHint, ExtractionResult};
 
 pub struct NullExtractor;
 
@@ -22,8 +22,7 @@ impl DocumentExtractor for NullExtractor {
 
     async fn extract(
         &self,
-        _bytes: &[u8],
-        _mime: &str,
+        _parts: &[DocumentPart<'_>],
         _hint: ExtractionHint,
     ) -> Result<ExtractionResult, ExtractionError> {
         Ok(ExtractionResult {
@@ -46,7 +45,10 @@ mod tests {
     async fn null_extractor_returns_empty_zero_confidence_draft() {
         let ext = NullExtractor;
         let result = ext
-            .extract(b"any bytes", "image/jpeg", ExtractionHint::Receipt)
+            .extract(
+                &[DocumentPart::new(b"any bytes", "image/jpeg")],
+                ExtractionHint::Receipt,
+            )
             .await
             .unwrap();
         assert_eq!(result.confidence, 0.0);

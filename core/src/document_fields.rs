@@ -17,6 +17,7 @@ use chrono::Utc;
 use crate::events::{
     DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DocumentField, DocumentFieldsExtractedPayload,
 };
+use crate::extraction::DocumentPart;
 use crate::extraction::document::{self, DocumentReader};
 use crate::statement::{StatementParse, Verifiability, parse};
 
@@ -240,7 +241,10 @@ pub async fn derive_fields(
     }
 
     let reader = reader?;
-    match reader.read_document(bytes, mime).await {
+    match reader
+        .read_document(&[DocumentPart::new(bytes, mime)])
+        .await
+    {
         Ok(summary) => Some(document::to_fields_payload(document_id, &summary)),
         Err(e) => {
             // Skip, never propagate. A model that was slow, refused the MIME, or
@@ -367,8 +371,7 @@ mod tests {
 
         async fn read_document(
             &self,
-            _bytes: &[u8],
-            _mime: &str,
+            _parts: &[DocumentPart<'_>],
         ) -> Result<document::DocumentSummary, crate::extraction::ExtractionError> {
             self.asked.store(true, Ordering::SeqCst);
             document::parse_summary(

@@ -25,17 +25,20 @@ use super::document::{
 };
 use super::media::{self, PreparedImage};
 use super::{
-    DocumentExtractor, ExtractionError, ExtractionHint, ExtractionResult, parse_response,
-    prompt_for, response_schema,
+    DocumentExtractor, DocumentPart, ExtractionError, ExtractionHint, ExtractionResult,
+    MAX_DOCUMENT_PARTS, parse_response, prompt_for, response_schema,
 };
 
-/// What actually goes into the request after the document has been converted
-/// into something the endpoint accepts.
-enum Payload {
-    /// A generated PDF, or a text/html attachment: inlined as prose.
+/// One piece of the request body, in document order — what a part becomes once
+/// converted into something the endpoint accepts.
+///
+/// A list rather than an either/or, because one document can be both: a
+/// generated PDF beside a photo of the page someone signed.
+enum Segment {
+    /// A generated PDF's text layer, or a text/html attachment: inlined as prose.
     Text(String),
-    /// One photo, or the pages of a scanned PDF in order.
-    Images(Vec<PreparedImage>),
+    /// A photo, or one page of a scanned PDF.
+    Image(PreparedImage),
 }
 
 /// Vision extractor for any OpenAI-compatible chat-completions endpoint.
@@ -106,47 +109,95 @@ impl OpenAiCompatExtractor {
         format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
     }
 
-    /// Build the user message `content` array. Images go in as base64 data
-    /// URIs; text documents are inlined into the prompt block (the endpoint
-    /// can't "see" a text/plain attachment otherwise).
-    fn content_for(prompt: String, payload: &Payload) -> Value {
-        match payload {
-            Payload::Text(body) => json!([
-                { "type": "text", "text": format!("{prompt}\n\n--- DOCUMENT ---\n{body}") },
-            ]),
-            Payload::Images(images) => {
-                let mut content = vec![json!({ "type": "text", "text": prompt })];
-                content.extend(images.iter().map(
-                    |img| json!({ "type": "image_url", "image_url": { "url": img.to_data_url() } }),
-                ));
-                Value::Array(content)
+    /// Build the user message `content` array: one leading text block carrying
+    /// the prompt and any prose, then every image in page order.
+    ///
+    /// Images go in as base64 data URIs; text documents are inlined into the
+    /// prompt block, because the endpoint cannot "see" a text/plain attachment
+    /// otherwise. The single-text and all-images shapes this produces are
+    /// unchanged from when a document could only be one file.
+    fn content_for(prompt: String, segments: &[Segment]) -> Value {
+        let prose: Vec<&str> = segments
+            .iter()
+            .filter_map(|s| match s {
+                Segment::Text(body) => Some(body.as_str()),
+                Segment::Image(_) => None,
+            })
+            .collect();
+
+        let lead = if prose.is_empty() {
+            prompt
+        } else {
+            format!(
+                "{prompt}\n\n--- DOCUMENT ---\n{}",
+                prose.join("\n\n--- DOCUMENT ---\n")
+            )
+        };
+
+        let mut content = vec![json!({ "type": "text", "text": lead })];
+        content.extend(segments.iter().filter_map(|s| match s {
+            Segment::Image(img) => {
+                Some(json!({ "type": "image_url", "image_url": { "url": img.to_data_url() } }))
             }
-        }
+            Segment::Text(_) => None,
+        }));
+        Value::Array(content)
     }
 
-    /// Convert the raw attachment into something the endpoint accepts.
+    /// Convert every part into something the endpoint accepts, in order.
     ///
     /// The PDF order is deliberate: text first, rasterize only on empty. A
     /// generated PDF read as pictures would cost a model's OCR guess on figures
     /// it could have had verbatim, and statement columns carry meaning that
     /// survives `-layout` and does not survive being looked at.
-    async fn payload_for(bytes: &[u8], mime: &str) -> Result<Payload, ExtractionError> {
-        if mime == "application/pdf" {
-            let text = crate::statement::pdf::extract_layout_text(bytes, "")
-                .await
-                .map_err(|e| ExtractionError::Upstream(e.to_string()))?;
-            if text.trim().is_empty() {
-                let pages = media::rasterize_pdf(bytes).await?;
-                tracing::info!(pages = pages.len(), "scanned pdf rasterized for extraction");
-                return Ok(Payload::Images(pages));
+    ///
+    /// The photo parts are prepared as one set so they share a single request
+    /// budget; every other part converts on its own. The final check spans all
+    /// of them, because a rasterized PDF beside a photo overflows in a way
+    /// neither source can see alone.
+    async fn payload_for(parts: &[DocumentPart<'_>]) -> Result<Vec<Segment>, ExtractionError> {
+        let photos: Vec<(&[u8], &str)> = parts
+            .iter()
+            .filter(|p| p.mime.starts_with("image/"))
+            .map(|p| (p.bytes, p.mime))
+            .collect();
+        let mut prepared = media::prepare_images(&photos)?.into_iter();
+
+        let mut segments = Vec::with_capacity(parts.len());
+        for part in parts {
+            if part.mime.starts_with("image/") {
+                // One per photo part, in order, by construction above.
+                segments.extend(prepared.next().map(Segment::Image));
+                continue;
             }
-            return Ok(Payload::Text(text));
+            if part.mime == "application/pdf" {
+                let text = crate::statement::pdf::extract_layout_text(part.bytes, "")
+                    .await
+                    .map_err(|e| ExtractionError::Upstream(e.to_string()))?;
+                if text.trim().is_empty() {
+                    let pages = media::rasterize_pdf(part.bytes).await?;
+                    tracing::info!(pages = pages.len(), "scanned pdf rasterized for extraction");
+                    segments.extend(pages.into_iter().map(Segment::Image));
+                } else {
+                    segments.push(Segment::Text(text));
+                }
+                continue;
+            }
+            // text/plain or text/html — inline the decoded body.
+            segments.push(Segment::Text(
+                String::from_utf8_lossy(part.bytes).into_owned(),
+            ));
         }
-        if mime.starts_with("image/") {
-            return Ok(Payload::Images(vec![media::prepare_image(bytes, mime)?]));
-        }
-        // text/plain or text/html — inline the decoded body.
-        Ok(Payload::Text(String::from_utf8_lossy(bytes).into_owned()))
+
+        let images: Vec<PreparedImage> = segments
+            .iter()
+            .filter_map(|s| match s {
+                Segment::Image(img) => Some(img.clone()),
+                Segment::Text(_) => None,
+            })
+            .collect();
+        media::fits_request(&images)?;
+        Ok(segments)
     }
 
     /// Pull `choices[0].message.content`, tolerating a code-fenced block (some
@@ -195,14 +246,12 @@ impl DocumentExtractor for OpenAiCompatExtractor {
 
     async fn extract(
         &self,
-        bytes: &[u8],
-        mime: &str,
+        parts: &[DocumentPart<'_>],
         hint: ExtractionHint,
     ) -> Result<ExtractionResult, ExtractionError> {
         let raw = self
             .ask(
-                bytes,
-                mime,
+                parts,
                 prompt_for(hint),
                 response_schema(),
                 "extraction_result",
@@ -220,13 +269,11 @@ impl DocumentReader for OpenAiCompatExtractor {
 
     async fn read_document(
         &self,
-        bytes: &[u8],
-        mime: &str,
+        parts: &[DocumentPart<'_>],
     ) -> Result<DocumentSummary, ExtractionError> {
         let raw = self
             .ask(
-                bytes,
-                mime,
+                parts,
                 document_prompt(),
                 document_schema(),
                 "document_summary",
@@ -244,22 +291,31 @@ impl OpenAiCompatExtractor {
     /// quietly loses a guard the other keeps.
     async fn ask(
         &self,
-        bytes: &[u8],
-        mime: &str,
+        parts: &[DocumentPart<'_>],
         instructions: String,
         schema: Value,
         schema_name: &str,
     ) -> Result<Value, ExtractionError> {
-        if !self.supports(mime) {
-            return Err(ExtractionError::UnsupportedMime {
-                extractor: self.model.clone(),
-                mime: mime.to_string(),
-            });
+        if parts.is_empty() {
+            return Err(ExtractionError::NoDocument);
+        }
+        if parts.len() > MAX_DOCUMENT_PARTS {
+            return Err(ExtractionError::TooManyParts { parts: parts.len() });
+        }
+        // Every part, not the first: a mixed set is only as sendable as the
+        // type it does not support.
+        for part in parts {
+            if !self.supports(part.mime) {
+                return Err(ExtractionError::UnsupportedMime {
+                    extractor: self.model.clone(),
+                    mime: part.mime.to_string(),
+                });
+            }
         }
 
         // Converted and size-fitted before anything else, so the rest of this
         // method sees only shapes the endpoint accepts.
-        let payload = Self::payload_for(bytes, mime).await?;
+        let payload = Self::payload_for(parts).await?;
 
         // ⚠️ `json_schema`, NOT `json_object`, and the difference is measured.
         //
@@ -375,7 +431,10 @@ mod tests {
             .await;
 
         let ext = OpenAiCompatExtractor::new(server.uri(), "llava", "k");
-        let summary = ext.read_document(&one_png(), "image/png").await.unwrap();
+        let summary = ext
+            .read_document(&[DocumentPart::new(&one_png(), "image/png")])
+            .await
+            .unwrap();
 
         assert_eq!(summary.kind, "notice_of_assessment");
         assert_eq!(summary.document_date.as_deref(), Some("2024-06-14"));
@@ -419,7 +478,10 @@ mod tests {
 
         let ext = OpenAiCompatExtractor::new(server.uri(), "llava", "k");
         let result = ext
-            .extract(&one_png(), "image/png", ExtractionHint::Receipt)
+            .extract(
+                &[DocumentPart::new(&one_png(), "image/png")],
+                ExtractionHint::Receipt,
+            )
             .await
             .unwrap();
         assert_eq!(result.description.as_deref(), Some("Coffee"));
@@ -444,7 +506,10 @@ mod tests {
 
         let ext = OpenAiCompatExtractor::new(server.uri(), "m", "");
         let result = ext
-            .extract(&one_png(), "image/png", ExtractionHint::Receipt)
+            .extract(
+                &[DocumentPart::new(&one_png(), "image/png")],
+                ExtractionHint::Receipt,
+            )
             .await
             .unwrap();
         assert_eq!(result.postings.len(), 1);
@@ -454,7 +519,10 @@ mod tests {
     async fn unsupported_mime_rejected_without_call() {
         let ext = OpenAiCompatExtractor::new("http://127.0.0.1:1", "m", "");
         let err = ext
-            .extract(b"\x00\x01", "image/heic", ExtractionHint::Receipt)
+            .extract(
+                &[DocumentPart::new(b"\x00\x01", "image/heic")],
+                ExtractionHint::Receipt,
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, ExtractionError::UnsupportedMime { .. }));
@@ -472,8 +540,7 @@ mod tests {
         let ext = OpenAiCompatExtractor::new("http://127.0.0.1:1", "m", "");
         let err = ext
             .extract(
-                b"not a pdf",
-                "application/pdf",
+                &[DocumentPart::new(b"not a pdf", "application/pdf")],
                 ExtractionHint::BankStatement,
             )
             .await
@@ -518,9 +585,12 @@ mod tests {
             .unwrap();
 
         let ext = OpenAiCompatExtractor::new(server.uri(), "m", "");
-        ext.extract(&photo, "image/jpeg", ExtractionHint::Receipt)
-            .await
-            .unwrap();
+        ext.extract(
+            &[DocumentPart::new(&photo, "image/jpeg")],
+            ExtractionHint::Receipt,
+        )
+        .await
+        .unwrap();
 
         let sent = &server.received_requests().await.unwrap()[0];
         assert!(
@@ -528,6 +598,90 @@ mod tests {
             "request body {} bytes — would 413 at the provider",
             sent.body.len()
         );
+    }
+
+    /// The gap this signature exists to close: a receipt photographed page by
+    /// page is one document. Both pages must reach the model in one request, in
+    /// order, or the line items and the total are read as two half-documents.
+    #[tokio::test]
+    async fn both_pages_of_a_photographed_document_go_in_one_request() {
+        let server = MockServer::start().await;
+        let content = r#"{"postings":[{"commodity":"CAD","amount":"1.00"}],"confidence":0.5}"#;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(extraction_response(content)))
+            .mount(&server)
+            .await;
+
+        let page = one_png();
+        let ext = OpenAiCompatExtractor::new(server.uri(), "m", "");
+        ext.extract(
+            &[
+                DocumentPart::new(&page, "image/png"),
+                DocumentPart::new(&page, "image/png"),
+            ],
+            ExtractionHint::Receipt,
+        )
+        .await
+        .unwrap();
+
+        let sent = &server.received_requests().await.unwrap();
+        assert_eq!(
+            sent.len(),
+            1,
+            "one document is one request, not one per page"
+        );
+
+        let body: Value = serde_json::from_slice(&sent[0].body).unwrap();
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        let images = content.iter().filter(|c| c["type"] == "image_url").count();
+        assert_eq!(images, 2, "both pages reached the model");
+        assert_eq!(content[0]["type"], "text", "the prompt still leads");
+    }
+
+    #[tokio::test]
+    async fn a_document_with_no_parts_is_refused_before_the_network() {
+        // Not a 400 from the endpoint: nothing is sent. An empty list is a
+        // caller bug, and answering it with an empty draft would look like a
+        // model that found nothing.
+        let ext = OpenAiCompatExtractor::new("http://127.0.0.1:1", "m", "");
+        let err = ext.extract(&[], ExtractionHint::Receipt).await.unwrap_err();
+        assert!(matches!(err, ExtractionError::NoDocument), "got {err:?}");
+
+        let page = one_png();
+        let many: Vec<DocumentPart<'_>> = (0..MAX_DOCUMENT_PARTS + 1)
+            .map(|_| DocumentPart::new(&page, "image/png"))
+            .collect();
+        let err = ext
+            .extract(&many, ExtractionHint::Receipt)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ExtractionError::TooManyParts { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unsupported_part_is_caught_even_when_it_is_not_the_first() {
+        // The check runs over every part. Validating only the first would send
+        // a request that the endpoint rejects for a reason nothing here names.
+        let page = one_png();
+        let ext = OpenAiCompatExtractor::new("http://127.0.0.1:1", "m", "");
+        let err = ext
+            .extract(
+                &[
+                    DocumentPart::new(&page, "image/png"),
+                    DocumentPart::new(b"\x00", "image/heic"),
+                ],
+                ExtractionHint::Receipt,
+            )
+            .await
+            .unwrap_err();
+        match err {
+            ExtractionError::UnsupportedMime { mime, .. } => assert_eq!(mime, "image/heic"),
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -544,7 +698,10 @@ mod tests {
 
         let ext = OpenAiCompatExtractor::new(server.uri(), "m", "k");
         let err = ext
-            .extract(&one_png(), "image/png", ExtractionHint::Receipt)
+            .extract(
+                &[DocumentPart::new(&one_png(), "image/png")],
+                ExtractionHint::Receipt,
+            )
             .await
             .unwrap_err();
         match err {
@@ -558,7 +715,10 @@ mod tests {
         let secret = "super-secret-vision-key-xyz";
         let ext = OpenAiCompatExtractor::new("http://127.0.0.1:1", "m", secret); // unreachable
         let err = ext
-            .extract(&one_png(), "image/png", ExtractionHint::Receipt)
+            .extract(
+                &[DocumentPart::new(&one_png(), "image/png")],
+                ExtractionHint::Receipt,
+            )
             .await
             .unwrap_err();
         assert!(

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use omni_me_core::archive;
 use omni_me_core::blob;
 use omni_me_core::events::AttachmentRef;
-use omni_me_core::extraction::{ExtractionHint, ExtractionResult};
+use omni_me_core::extraction::{DocumentPart, ExtractionHint, ExtractionResult};
 
 use crate::AppState;
 
@@ -185,7 +185,7 @@ async fn extract_handler(
 
     let extraction = state
         .extractor
-        .extract(&body, mime, q.hint)
+        .extract(&[DocumentPart::new(&body, mime)], q.hint)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 

@@ -29,7 +29,7 @@
 use std::path::PathBuf;
 
 use omni_me_core::extraction::{
-    DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, ExtractionHint,
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, DocumentPart, ExtractionHint,
     openai_compat::OpenAiCompatExtractor, verify,
 };
 
@@ -87,7 +87,7 @@ async fn extract_fixture(
     let bytes = std::fs::read(&path).expect("read fixture");
     let extractor = make_extractor();
     extractor
-        .extract(&bytes, mime, hint)
+        .extract(&[DocumentPart::new(&bytes, mime)], hint)
         .await
         .expect("extraction call should succeed")
 }
@@ -194,7 +194,10 @@ async fn rejects_unsupported_mime_without_calling_api() {
     // saves a billed request on a programmer error.
     let extractor = make_extractor();
     let err = extractor
-        .extract(b"x", "video/mp4", ExtractionHint::Generic)
+        .extract(
+            &[DocumentPart::new(b"x", "video/mp4")],
+            ExtractionHint::Generic,
+        )
         .await
         .expect_err("video/mp4 should be rejected");
     eprintln!("unsupported MIME error: {err}");
@@ -280,7 +283,10 @@ async fn a_scanned_pdf_is_read_through_rasterization() {
     let bytes = std::fs::read(&path).expect("read scanned fixture");
 
     let result = make_extractor()
-        .extract(&bytes, "application/pdf", ExtractionHint::Receipt)
+        .extract(
+            &[DocumentPart::new(&bytes, "application/pdf")],
+            ExtractionHint::Receipt,
+        )
         .await
         .expect("scanned PDF should extract");
 
@@ -303,7 +309,10 @@ async fn an_oversized_photo_survives_downscaling_legibly() {
     eprintln!("photo before downscaling: {} bytes", photo.len());
 
     let result = make_extractor()
-        .extract(&photo, "image/jpeg", ExtractionHint::Receipt)
+        .extract(
+            &[DocumentPart::new(&photo, "image/jpeg")],
+            ExtractionHint::Receipt,
+        )
         .await
         .expect("oversized photo should extract");
 
@@ -365,7 +374,7 @@ async fn extracts_an_arbitrary_local_sample() {
 
     let started = std::time::Instant::now();
     let result = make_extractor()
-        .extract(&bytes, mime, hint)
+        .extract(&[DocumentPart::new(&bytes, mime)], hint)
         .await
         .unwrap_or_else(|e| panic!("{sample}: {e}"));
     let elapsed = started.elapsed();

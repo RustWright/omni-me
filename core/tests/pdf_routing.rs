@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use omni_me_core::extraction::openai_compat::OpenAiCompatExtractor;
-use omni_me_core::extraction::{DocumentExtractor, ExtractionHint};
+use omni_me_core::extraction::{DocumentExtractor, DocumentPart, ExtractionHint};
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -37,7 +37,7 @@ async fn content_posted_for(pdf: &str, hint: ExtractionHint) -> Vec<Value> {
         .await;
 
     let ext = OpenAiCompatExtractor::new(server.uri(), "m", "");
-    ext.extract(&fixture(pdf), "application/pdf", hint)
+    ext.extract(&[DocumentPart::new(&fixture(pdf), "application/pdf")], hint)
         .await
         .expect("extraction should succeed");
 

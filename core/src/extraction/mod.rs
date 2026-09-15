@@ -92,10 +92,39 @@ pub struct ExtractionResult {
     pub raw_response: serde_json::Value,
 }
 
+/// One file of a document.
+///
+/// A document is a *sequence* of these. Usually one, but a receipt or a paystub
+/// photographed page by page is several, and they must be read together — the
+/// line items are on one page and the total is on the next, so reading them as
+/// separate documents produces two half-answers rather than one whole one.
+#[derive(Debug, Clone, Copy)]
+pub struct DocumentPart<'a> {
+    pub bytes: &'a [u8],
+    pub mime: &'a str,
+}
+
+impl<'a> DocumentPart<'a> {
+    pub fn new(bytes: &'a [u8], mime: &'a str) -> Self {
+        Self { bytes, mime }
+    }
+}
+
+/// Upper bound on the pages of one document.
+///
+/// Matches `media::MAX_RASTER_PAGES`: the request-size budget is the real
+/// constraint, but decoding an unbounded list to find that out is the expensive
+/// way to learn it.
+pub const MAX_DOCUMENT_PARTS: usize = 8;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractionError {
     #[error("unsupported MIME type for extractor '{extractor}': {mime}")]
     UnsupportedMime { extractor: String, mime: String },
+    #[error("no document parts were given")]
+    NoDocument,
+    #[error("document has {parts} parts, over the {MAX_DOCUMENT_PARTS}-part limit")]
+    TooManyParts { parts: usize },
     #[error("extractor returned malformed structured output: {0}")]
     Parse(String),
     #[error("upstream API error: {0}")]
@@ -119,14 +148,18 @@ pub trait DocumentExtractor: Send + Sync {
     /// to filter candidates before picking by hint priority.
     fn supports(&self, mime: &str) -> bool;
 
-    /// Pull a structured draft from the document bytes. `bytes` is the file
-    /// contents (PDF / JPEG / PNG / plain text); `mime` should match
-    /// `infer`-detected type from the blob store; `hint` drives prompt
-    /// selection (receipt vs paystub vs statement, etc.).
+    /// Pull a structured draft from one document, which may arrive as several
+    /// files. `parts` is in page order and is read as a single document; each
+    /// part's `mime` should match the `infer`-detected type from the blob store.
+    /// `hint` drives prompt selection (receipt vs paystub vs statement, etc.).
+    ///
+    /// A single-file document is `&[DocumentPart::new(bytes, mime)]`. There is
+    /// deliberately no one-file convenience method: two entry points would drift,
+    /// and it was the one-file-only signature that made a two-page photographed
+    /// document unreadable in the first place.
     async fn extract(
         &self,
-        bytes: &[u8],
-        mime: &str,
+        parts: &[DocumentPart<'_>],
         hint: ExtractionHint,
     ) -> Result<ExtractionResult, ExtractionError>;
 }

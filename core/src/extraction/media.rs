@@ -260,10 +260,19 @@ pub async fn rasterize_pdf(pdf_bytes: &[u8]) -> Result<Vec<PreparedImage>, Media
         })
         .collect::<Result<_, _>>()?;
 
-    // Walk the quality ladder rather than failing at the first overflow: eight
-    // dense pages can land just over budget, and a slightly softer JPEG is a
-    // far better answer than refusing the document. The ladder is finite, so a
-    // genuinely oversized document still ends in `TooLarge`.
+    fit_set(&decoded)
+}
+
+/// Encode a whole set of images so that together they fit one request.
+///
+/// Walks the quality ladder rather than failing at the first overflow: eight
+/// dense pages can land just over budget, and a slightly softer JPEG is a far
+/// better answer than refusing the document. The ladder is finite, so a
+/// genuinely oversized set still ends in `TooLarge`.
+///
+/// Shared by the rasterized-PDF path and the several-photos path, because the
+/// constraint is the same one — a request body, not a page count.
+fn fit_set(decoded: &[image::DynamicImage]) -> Result<Vec<PreparedImage>, MediaError> {
     let mut last = None;
     for quality in JPEG_QUALITY_LADDER {
         let prepared = decoded
@@ -286,6 +295,48 @@ pub async fn rasterize_pdf(pdf_bytes: &[u8]) -> Result<Vec<PreparedImage>, Media
         }
     }
     Err(last.expect("ladder is non-empty"))
+}
+
+/// Prepare several images that are pages of **one** document, sharing a single
+/// request budget between them.
+///
+/// Each is prepared on its own first, which keeps [`prepare_image`]'s
+/// pass-through: two already-small photos reach the endpoint as their original
+/// bytes, un-re-encoded. Only when the set overflows together does it fall back
+/// to re-encoding all of them down the ladder, because lowering the quality of
+/// images that were individually fine is a cost worth paying only once it buys
+/// the document a way through.
+pub fn prepare_images(parts: &[(&[u8], &str)]) -> Result<Vec<PreparedImage>, MediaError> {
+    let individually: Vec<PreparedImage> = parts
+        .iter()
+        .map(|(bytes, mime)| prepare_image(bytes, mime))
+        .collect::<Result<_, _>>()?;
+    if check_budget(&individually).is_ok() {
+        return Ok(individually);
+    }
+
+    let decoded: Vec<image::DynamicImage> = parts
+        .iter()
+        .map(|(bytes, mime)| {
+            let format = format_for(mime).ok_or_else(|| MediaError::UnpreparableMime {
+                mime: (*mime).to_string(),
+            })?;
+            image::load_from_memory_with_format(bytes, format).map_err(|e| MediaError::Decode {
+                mime: (*mime).to_string(),
+                source: e,
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    fit_set(&decoded)
+}
+
+/// Whether a set of already-prepared images fits one request.
+///
+/// Public so a caller assembling segments from mixed sources — a rasterized PDF
+/// beside a photo — can make the final check across all of them. Each source
+/// checks only its own.
+pub fn fits_request(images: &[PreparedImage]) -> Result<(), MediaError> {
+    check_budget(images)
 }
 
 /// Spawn `pdftoppm` into `out_dir` and read the page images back in page order.
