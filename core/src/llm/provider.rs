@@ -29,7 +29,8 @@ use serde_json::Value;
 use super::{LlmClient, NullLlmClient, OpenAiCompatClient};
 use crate::credentials::{Credentials, LlmRole};
 use crate::extraction::{
-    DocumentExtractor, null::NullExtractor, openai_compat::OpenAiCompatExtractor,
+    DocumentExtractor, document::DocumentReader, null::NullExtractor,
+    openai_compat::OpenAiCompatExtractor, transcribe::DocumentTranscriber,
 };
 
 /// Vendors whose models we are willing to send records to, each with every
@@ -246,6 +247,55 @@ pub fn build_llm_client(
 /// `Ok` with an empty draft rather than erroring. A caller that scores results
 /// has to check `name()`, or a misconfiguration reads as the model finding nothing.
 pub fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
+    let Some(endpoint) = vision_endpoint(creds, "extractor") else {
+        return Arc::new(NullExtractor);
+    };
+    tracing::info!(model = %endpoint.model, "Document extractor: OpenAI-compatible vision");
+    Arc::new(endpoint.into_client())
+}
+
+/// Build the document reader a config selects — role C2, the cataloguing half.
+///
+/// Returns `None` rather than a null object, and the asymmetry with
+/// [`build_extractor`] is deliberate: see the `NullExtractor` note on
+/// [`DocumentReader`].
+pub fn build_reader(creds: &Credentials) -> Option<Arc<dyn DocumentReader>> {
+    let endpoint = vision_endpoint(creds, "reader")?;
+    tracing::info!(model = %endpoint.model, "Document reader: OpenAI-compatible vision");
+    Some(Arc::new(endpoint.into_client()))
+}
+
+/// Build the document transcriber a config selects — role C3.
+///
+/// `None` rather than a null object for [`build_reader`]'s reason: an empty
+/// transcription would rank above `none` in `TextSource::rank` and stand as this
+/// document's text, which is worse than leaving it untranscribed.
+pub fn build_transcriber(creds: &Credentials) -> Option<Arc<dyn DocumentTranscriber>> {
+    let endpoint = vision_endpoint(creds, "transcriber")?;
+    tracing::info!(model = %endpoint.model, "Document transcriber: OpenAI-compatible vision");
+    Some(Arc::new(endpoint.into_client()))
+}
+
+/// A role-C endpoint that passed every gate.
+struct VisionEndpoint {
+    base_url: String,
+    model: String,
+    api_key: String,
+}
+
+impl VisionEndpoint {
+    fn into_client(self) -> OpenAiCompatExtractor {
+        OpenAiCompatExtractor::new(self.base_url, self.model, self.api_key)
+    }
+}
+
+/// Resolve role C's endpoint, logging the reason when it refuses.
+///
+/// Shared so the vision gate and the closed-weight refusal cannot reach one
+/// document path and miss another. That asymmetry was a real defect: the text
+/// client refused closed weights from the day role wiring landed, and the
+/// document path did not.
+fn vision_endpoint(creds: &Credentials, consumer: &str) -> Option<VisionEndpoint> {
     let Some(cfg) = creds
         .llm
         .as_ref()
@@ -253,25 +303,28 @@ pub fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
         .filter(|c| c.provider == "openai_compatible" && c.vision)
     else {
         tracing::warn!(
-            "no [llm.extractor] openai_compatible vision endpoint — using NullExtractor"
+            consumer,
+            "no [llm.extractor] openai_compatible vision endpoint"
         );
-        return Arc::new(NullExtractor);
+        return None;
     };
     let (Some(base_url), Some(model)) = (cfg.base_url.as_deref(), cfg.model.as_deref()) else {
-        tracing::warn!("[llm.extractor] vision = true but base_url or model is missing");
-        return Arc::new(NullExtractor);
+        tracing::warn!(
+            consumer,
+            "[llm.extractor] vision = true but base_url or model is missing"
+        );
+        return None;
     };
     if base_url.is_empty() || model.is_empty() {
-        tracing::warn!("[llm.extractor] base_url or model is empty");
-        return Arc::new(NullExtractor);
+        tracing::warn!(consumer, "[llm.extractor] base_url or model is empty");
+        return None;
     }
     // Documents are the most identifying payload this system sends: a statement
-    // carries a name, an address and an account number. The text path has refused
-    // closed weights since role wiring landed and this one had not.
+    // carries a name, an address and an account number.
     match refusal_reason(model) {
         Some(detail) if !cfg.allow_closed_weights => {
-            tracing::error!(model = %model, detail = %detail, "refusing configured extractor");
-            return Arc::new(NullExtractor);
+            tracing::error!(consumer, model = %model, detail = %detail, "refusing configured role C endpoint");
+            return None;
         }
         Some(detail) => tracing::warn!(
             model = %model,
@@ -281,12 +334,11 @@ pub fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
         None => {}
     }
 
-    tracing::info!(model = %model, "Document extractor: OpenAI-compatible vision");
-    Arc::new(OpenAiCompatExtractor::new(
-        base_url,
-        model,
-        cfg.api_key.clone().unwrap_or_default(),
-    ))
+    Some(VisionEndpoint {
+        base_url: base_url.to_string(),
+        model: model.to_string(),
+        api_key: cfg.api_key.clone().unwrap_or_default(),
+    })
 }
 
 #[cfg(test)]

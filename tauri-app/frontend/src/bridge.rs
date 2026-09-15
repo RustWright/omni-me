@@ -5310,7 +5310,8 @@ pub async fn invoke_get_document_text(document_id: &str) -> Result<Option<String
             .map(|d| {
                 if d.is_email() {
                     "From: statements@globepay.example\n\
-                     Subject: Your February statement is available\n\n\
+                     Subject: Your February statement is available\n\
+                     Date: 2026-02-14\n\n\
                      Hello,\n\n\
                      Your statement for February 2026 is attached as a PDF.\n\
                      The closing balance was 12,480.55.\n\n\

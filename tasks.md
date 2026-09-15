@@ -1435,16 +1435,32 @@ the extractor has.
       `MODEL_BENCH.md` Part 7; don't restate it here.
 - [ ] ⚠️ **NOT run against a real endpoint.** The dry run refuses rather than scoring a
       `NullLlmClient`'s errors as abstentions, and prints the probe plan first.
-- [x] 🔴 **C2 is NOT in this scorecard, and the plan was wrong to assume it could be.**
-      `derive_fields` — the function whose own doc calls it "the scheduled path" — has **no
-      caller** outside its own tests. Part 2's rule (*unbenched until something calls them*,
-      2026-09-08/09) already decided this; it went unapplied because role C was split three ways
-      **by oracle** and the caller question was never re-crossed with that split.
-      ⚠️ C2 is deferred behind one small piece of work, **not blocked like C3** — it has a
-      complete path and needs only a trigger. [[deferred is not cancelled]].
-- [ ] ⚠️ **Email-header labels dropped from this scorecard, not forgotten.** They were listed for
-      the shared C2+D card; a note has no email headers, so they only ever applied to C2's half
-      and travel with it.
+- [x] ✅ **SUPERSEDED 2026-09-15 — C2 IS in this round.** The box below was right when written:
+      `derive_fields` had no caller, so Part 2's rule excluded it. ⛔ **That blocker is gone.**
+      The trigger it was waiting on is BUILT — `core/src/document_enrichment.rs` (the pass, with
+      an `ImportTally`-style checked identity), `server/src/enrichment_scheduler.rs` (the loop,
+      off by default and capped per tick), `llm::build_reader`, two candidate queries. Design in
+      `docs/src/archive.md`; ⛔ don't restate it here. [[deferred is not cancelled]].
+- [x] ✅ **C2's scorecard BUILT 2026-09-15** — `agent/src/reading_bench.rs`, `--bench-reading`.
+      Six probes, truth by construction; grounding, date abstention, eagerness, self-consistency,
+      plus an injection probe that is disqualifying rather than scored. Ranked **lexicographically**
+      (fabrication, recall, agreement) like D. Detail in `MODEL_BENCH.md` Part 8.
+- [ ] ⚠️ **C2 has NOT been run against a real endpoint.** Zero tokens; dry run verified — it
+      prints the probe plan, then refuses rather than scoring a missing reader.
+- [x] ✅ **Email-header labels RECOVERED — all three.** `archive::derive_text` dropped the `Date:`
+      header, so an archived email had no date anywhere: `archived_at` is when it was filed, and
+      the raw header sits in a blob nothing reads. ⚠️ First recorded-not-fixed, then **FIXED the
+      same day** after the user asked whether this was a fixture issue or a capability gap — it
+      was the latter. Part 7's rule guards against tuning a *prompt*; this was an input pipeline,
+      and the abstention coverage it seemed to buy was already in `letter-undated` + `injection`.
+      ✅ `derive_text` now emits `Date: YYYY-MM-DD`, and **omits the line when the header does not
+      parse** so a dateless email stays dateless rather than gaining today's.
+- [x] ⛔ **The probe/`derive_text` coupling is GUARDED.** Probes are hand-written in the shape
+      `derive_text` emits, so the two move together or the bench scores a shape nothing sends.
+      `every_email_probe_carries_the_headers_derive_text_emits` fails loudly on drift.
+- [x] ✅ **Emails reach the reader at all now** — the pass sends the lifted text as `text/plain`,
+      since `message/rfc822` is not a MIME any reader accepts. ⛔ Load-bearing: without it the
+      bench would have scored C2 on a path production never runs.
 - [ ] 🔴 **Three role-D findings recorded, deliberately NOT fixed** (`MODEL_BENCH.md` Part 7):
       the prompt asks for relative dates "relative to the entry date" and **never passes an entry
       date** · it says "extract all relevant data" with no sentence permitting an empty category ·
@@ -1472,8 +1488,20 @@ the extractor has.
       body and the email importer concatenates attachment text only, so the capability is real
       but a *user* still cannot send two photos of one receipt. ⛔ Wiring a producer is an
       API-shape decision (multipart route? repeated field? client-side grouping?), not a repair.
-- [ ] **C3** stays unbuilt (no producer). If it gains one, its oracle is free: render a
-      born-digital PDF to an image, transcribe, compare against the real text layer.
+- [x] ✅ **C3 BUILT 2026-09-15 — producer AND scorecard.** It was *blocked*, not deferred: event,
+      envelope and projection existed, producer did not. Now `core/src/extraction/transcribe.rs`
+      (`DocumentTranscriber`, prompt, schema) + `document_enrichment::enrich_text_once`, scored by
+      `agent/src/transcription_bench.rs` / `--bench-transcription`. Detail in `MODEL_BENCH.md`
+      Part 9; thresholds in `MODEL_THRESHOLDS.md` § Seat C3.
+- [ ] ⚠️ **C3 has NOT been run against a real endpoint.** Zero tokens; dry run verified — it prints
+      the corpus plan and the oracle, then refuses.
+- [ ] 🔴 **C3's corpus is born-digital ONLY, and that is the seat's deciding limitation.** The free
+      answer key only exists where the file already carries its text. ⛔ The documents C3 exists
+      for — scans and photographs — have no oracle, so the bench measures the easier half and
+      infers. Do not publish C3 as proven on scans.
+- [ ] ⚠️ **An empty transcription is APPENDED, not skipped.** It records that a named model looked
+      and found nothing, and lifts `text_source` off `none`. ⛔ Skipping would re-read every blank
+      page every tick forever and starve the cap.
 
 ### Stage 3 — run the slates
 - [ ] ⛔ **Write thresholds and tie-break order BEFORE the first run**, per seat, into the repo.

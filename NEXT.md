@@ -1,40 +1,40 @@
 # NEXT
 
-**Next action: `tasks.md` § ▶ RUNBOOK Stage 3 — write thresholds per seat, THEN run the slates.**
-⛔ **Stages 0, 1, C1 and role D's scorecard are BUILT** — don't redesign them. Design lives in
-`docs/src/isolation.md` and `MODEL_BENCH.md` Parts 4, 6 and 7.
-
-## 🔴 Owed before anything decides a seat
-- **Nothing has run against a real endpoint. Zero tokens spent.** C1 and D are dry-run-verified.
-- **Thresholds and tie-break order, per seat, written into the repo BEFORE the first run.**
-- **RE-RUN Role A's bench — UNBLOCKED.** Needs a seeded local hub and spends tokens.
-- **`omni_require_dev_volume`'s docker read is unproven** — ⛔ prove before Stage 4; recipe in `deploy/smoke-guard.sh`'s header.
+**Next action: Stage 3 — RUN THE SLATES.** All five seats now have an instrument and written
+thresholds. ⛔ Nothing has touched a real endpoint yet; this is the step that spends tokens.
+⛔ Stages A–E of `~/.claude/plans/lets-build-c2-and-snoopy-tome.md` are BUILT — don't redesign.
 
 ## ⛔ Decisions in force — inherit, do not re-open
-- ✅ **NEW: C2 and C3 are OUT of model selection** (2026-09-15). C2's `derive_fields` has **no
-  caller**; Part 2's *unbenched until something calls them* already decided it, and the rule went
-  unapplied because role C was split **by oracle** and callers were never re-crossed with that
-  split. ⚠️ C2 is deferred behind a scheduler, **not** blocked like C3 (which has no producer at
-  all). [[feedback-deferred-is-not-cancelled]] · [[project-role-c-split-never-recrossed-callers]].
-- ✅ **NEW: role D is scored lexicographically** — fabrications, then recall, then agreement.
-  ⛔ Not a weighted sum: any weight meaning "abstention dominates" behaves the same, and a number
-  nobody can justify gets tuned until the preferred model wins.
-- ✅ **NEW: three role-D prompt findings RECORDED, not fixed** (Part 7) — no entry date is ever
-  passed for relative dates · no sentence permits an empty category · no untrusted-input warning.
-  ⛔ Fixing first would bench a prompt written to pass the bench.
-- ✅ **Both envelopes admit absence, checked 2026-09-15 before any run.** ⛔ Abstention outranks
-  field accuracy. ⚠️ `"nullable": true` (6 sites, 2 schemas) is OpenAPI dialect, inert only while
-  `strict: false` — it forces fabrication the day strict is switched on.
-- ✅ **Two C1 product findings stay RECORDED, not fixed** (Part 6). ⛔ Design calls, his to make.
-- ✅ **"No real data" was always a WRITE rule.** ⛔ Intact. The box and his phone are outside the
-  grant, always. ⛔ No deploy, no SSH, no `reset-db.sh` against anything live.
-- ✅ **STOP AND WAIT on a significant failure**, and write down what for and what came next.
-- ⛔ **NO HAND-LABELLED GOLD SET.** C1 arithmetic-checkable · D truth-by-construction probes.
-- ⛔ **No seat decided on a saturated instrument**, nor ever on preference. ⚠️ OpenRouter credits
-  are a GOAL — screen generously, deciding run goes direct. ⛔ Re-resolve every model id;
-  `-Ultra` is 403 on this account. ⚠️ Vision parity is still unproven.
+- ✅ **C2 and C3 are IN model selection** (user's call, 2026-09-15, reversing the 2026-09-14 cut).
+  Both were excluded for having no caller, not for being wrong. **Both blockers are gone.**
+- ✅ **BUILT + VERIFIED 2026-09-15** — the scheduled pass (`document_enrichment.rs`,
+  `enrichment_scheduler.rs`), `DocumentTranscriber` (`extraction/transcribe.rs`), `build_reader` +
+  `build_transcriber`, and both scorecards: `--bench-reading` (C2), `--bench-transcription` (C3).
+  1297 tests, clippy ×3, binary smoke-run ×4 gates, both benches dry-run and refuse. ⛔ **Zero
+  tokens.** Rationale: `docs/src/archive.md` + `MODEL_BENCH.md` Parts 8–9; don't restate it.
+- ✅ **C2 and C3 thresholds ALREADY WRITTEN** (`MODEL_THRESHOLDS.md`), before any run. Both
+  lexicographic: fabrication, then recall, then agreement.
+- 🔴 **C2's bench is TEXT-ONLY; C3's corpus is BORN-DIGITAL only.** ⛔ Neither measures reading a
+  scan, which is what both roles exist for. Do not publish either seat as proven on scans.
+- ✅ **The pass is OFF by default AND capped per tick** (user picked both): `OMNI_ENRICH_ENABLED`
+  (fails closed, logs typos at ERROR) · `OMNI_ENRICH_INTERVAL_SECS` · `OMNI_ENRICH_MAX_PER_TICK`.
+- ✅ **Server is the only spawn site, derived not chosen** — `archive::ingest_one` has exactly ONE
+  caller (`POST /documents/archive`), so the box holds every blob. ⚠️ "Blobs don't sync" is about
+  EVENT replication, NOT "a phone capture's bytes stay on the phone". [[project-blobs-do-not-sync]].
+- ✅ **The candidate query IS the work queue** — no table, no cursor. ⚠️ Two starvation guards:
+  unreadable MIMEs excluded *at the query*, and an empty transcription is APPENDED not skipped.
+- ✅ **FIXED 2026-09-15: `archive::derive_text` now emits an email's `Date:`.** It was dropped, and
+  nothing else on the row carried it. ⛔ The probe/`derive_text` shape coupling is now guarded by a
+  test — the two move together or the bench scores a shape production never sends.
+- ✅ **Findings stay RECORDED, not fixed** — three role-D, two C1, C2's `kind`/`title`. ⛔ "No real
+  data" was always a WRITE rule: box and phone outside the grant, no deploy, no SSH.
+- ⛔ **Never decide inside a noise floor or on preference.** ⚠️ Re-resolve model ids (`-Ultra`=403);
+  screen on OpenRouter/DeepInfra, deciding run direct; vision parity still unproven.
 - ⛔ **Do not re-survey, ALL CLOSED:** catalogue retrieval · blob store + LRU · archive page ·
-  `imap_real.rs` · Phases D–G · finance propose · notify-and-route · role wiring · isolation
-  guard · bench de-saturation · the 413 hazard · multi-part documents. ⛔ **No `HANDOVER.md`.**
-- 🔴 **`cargo test --workspace` FILLS THE DISK** — `omni-me-app`'s test binary links the whole
-  Dioxus frontend. ⛔ Scope runs to changed packages. [[project-dev-machines-and-build-limits]].
+  `imap_real.rs` · Phases D–G · finance propose · role wiring · isolation guard · 413 hazard ·
+  multi-part docs · enrichment. ⛔ No `HANDOVER.md`.
+
+## 🔴 EVERY cargo invocation goes in the detached systemd unit
+`MemoryMax=4G`, `JOBS=1`, `DEV_DEBUG=0`. A bare `cargo test -p omni-me-core` had oomd kill the
+terminal AND GNOME Shell today, reading afterwards as an unexplained laptop restart. ⛔ No "this
+one is small enough". Recipe + disk reclaim: [[project-dev-machines-and-build-limits]].

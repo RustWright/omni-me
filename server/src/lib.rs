@@ -8,6 +8,7 @@
 //! one that wires in the real bank adapters. Neither the engine nor this module
 //! references any specific bank.
 
+pub mod enrichment_scheduler;
 pub mod routes;
 
 use std::collections::HashMap;
@@ -35,7 +36,9 @@ use omni_me_core::credentials::{self, LlmRole};
 use omni_me_core::db::Database;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
 use omni_me_core::extraction::DocumentExtractor;
-use omni_me_core::llm::{ClientOptions, LlmClient, build_extractor, build_llm_client};
+use omni_me_core::llm::{
+    ClientOptions, LlmClient, build_extractor, build_llm_client, build_reader, build_transcriber,
+};
 use omni_me_core::runtime::Instance;
 
 const DB_PATH: &str = "surreal_data/server.db";
@@ -319,6 +322,25 @@ pub async fn run(cfg: RunConfig) {
         paused = paused_count,
         interval_secs = interval.as_secs(),
         "auto-import scheduler initialized"
+    );
+
+    // Document enrichment: the scheduled pass ingest defers the model half to.
+    // Every feature is passed because the server resolves no `ResolvedConfig`,
+    // which is what it already does on the archive route — the same policy made
+    // explicit rather than a new one.
+    let enrich_writer = Arc::new(omni_me_core::events::EventWriter::new(
+        state.store.clone(),
+        state.projections.clone(),
+        omni_me_core::config::ALL_FEATURES.iter().copied().collect(),
+        state.device_id.clone(),
+    ));
+    enrichment_scheduler::spawn(
+        (*state.db).clone(),
+        enrich_writer,
+        (*state.blob_dir).clone(),
+        build_reader(&creds),
+        build_transcriber(&creds),
+        enrichment_scheduler::config_from_env(),
     );
 
     // App-update hosting (optional, generic): when UPDATES_DIR is set the server

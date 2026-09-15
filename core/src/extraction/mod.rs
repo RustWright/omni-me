@@ -27,6 +27,7 @@ pub mod event_mapper;
 pub mod media;
 pub mod null;
 pub mod openai_compat;
+pub mod transcribe;
 pub mod verify;
 
 pub use event_mapper::{receipt_extraction_to_drafts, statement_extraction_to_drafts};
@@ -136,6 +137,28 @@ pub enum ExtractionError {
     /// Distinct from `Upstream` because nothing was ever sent.
     #[error("document could not be prepared for the model: {0}")]
     Media(#[from] media::MediaError),
+}
+
+/// MIME types the OpenAI-compatible vision path can read.
+///
+/// PDF is in the set because the extractor converts it to text, or rasterizes
+/// it, before the call — the endpoint never sees a format it would reject.
+pub const READABLE_MIMES: [&str; 6] = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "text/plain",
+    "text/html",
+    "application/pdf",
+];
+
+/// Whether the vision path can read this MIME at all.
+///
+/// A free function as well as a trait method because `document_enrichment`
+/// filters candidates before it has an extractor in hand, and a document it
+/// can never read must not consume a tick's budget every tick forever.
+pub fn is_readable_mime(mime: &str) -> bool {
+    READABLE_MIMES.contains(&mime)
 }
 
 /// Object-safe trait — no generic methods, can be used as `Box<dyn DocumentExtractor>`.

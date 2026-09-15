@@ -16,5 +16,7 @@ pub use pipeline::{
     derive_note_structure, process_note,
 };
 pub use prompts::{CallMetadata, PromptRegistry, PromptTemplate};
-pub use provider::{ClientOptions, build_extractor, build_llm_client};
+pub use provider::{
+    ClientOptions, build_extractor, build_llm_client, build_reader, build_transcriber,
+};
 pub use tools::{LlmResponse, ToolCall, ToolDef, default_note_tools};

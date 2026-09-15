@@ -601,7 +601,7 @@ fn mime_for(path: &Path) -> &'static str {
 /// the set alongside money. That makes the grounding check a floor on
 /// fabrication rather than a ceiling, and a floor is the safe direction — a
 /// figure wrongly called invented would need the real document to disprove.
-fn figures_in(text: &str) -> BTreeSet<Decimal> {
+pub(crate) fn figures_in(text: &str) -> BTreeSet<Decimal> {
     let mut found = BTreeSet::new();
     let mut token = String::new();
     for ch in text.chars().chain(std::iter::once(' ')) {

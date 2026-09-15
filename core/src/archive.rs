@@ -196,10 +196,26 @@ pub async fn derive_text(bytes: &[u8], mime: &str) -> (Option<String>, TextSourc
         // looking perfectly searchable. Three of the real fixtures carry their
         // receipt *in the body*, so this is the only text those documents have.
         match crate::mime::parse_eml(bytes) {
-            Ok(parsed) => Some(format!(
-                "From: {}\nSubject: {}\n\n{}",
-                parsed.from, parsed.subject, parsed.body_text
-            )),
+            Ok(parsed) => {
+                // The sent date reaches nothing else. `DocumentArchivedPayload`
+                // carries `archived_at`, which is when this filed it, and the
+                // blob holds the raw header nobody reads — so without this line
+                // an archived email has no date any reader or search can use.
+                //
+                // Date only, not the timestamp: this text is a search index and
+                // the anchor a reader copies `document_date` from, and that
+                // wants YYYY-MM-DD. An omitted line when the header is absent or
+                // unparseable is deliberate — a dateless email must stay
+                // dateless rather than gain today's.
+                let date = parsed
+                    .date
+                    .map(|d| format!("Date: {}\n", d.format("%Y-%m-%d")))
+                    .unwrap_or_default();
+                Some(format!(
+                    "From: {}\nSubject: {}\n{date}\n{}",
+                    parsed.from, parsed.subject, parsed.body_text
+                ))
+            }
             Err(e) => {
                 // Same rule as a PDF with no text layer: still a document.
                 tracing::debug!(error = %e, "could not read an email's body");
@@ -790,6 +806,37 @@ mod tests {
             email.filename, "Thanks, your order is complete.eml",
             "named by its subject, so it is recognisable in a list"
         );
+    }
+
+    #[tokio::test]
+    async fn an_emails_sent_date_reaches_the_text_that_gets_indexed() {
+        // It reaches nothing else: `archived_at` is when this filed the message,
+        // and the raw header sits in a blob nobody reads. Role C2 is asked for
+        // `document_date` off this text, so a missing line means a missing date.
+        let raw = b"From: billing@example.com\r\n\
+                    Subject: February invoice\r\n\
+                    Date: Sat, 14 Feb 2026 09:31:00 +0000\r\n\
+                    Content-Type: text/plain\r\n\r\n\
+                    Amount due 142.65.\r\n";
+        let (text, source) = derive_text(raw, "message/rfc822").await;
+
+        let text = text.expect("an email with a body has text");
+        assert!(text.contains("Date: 2026-02-14"), "got: {text}");
+        assert!(text.contains("Amount due 142.65."));
+        assert_eq!(source, TextSource::Extracted);
+    }
+
+    #[tokio::test]
+    async fn an_email_with_no_date_header_stays_dateless() {
+        // ⛔ No fallback to today. A guessed date files the message under the
+        // wrong month and nothing downstream can tell it was invented — the same
+        // rule `document_prompt` states for `document_date`.
+        let raw = b"From: a@b.test\r\nSubject: no date here\r\n\r\nBody.\r\n";
+        let (text, _) = derive_text(raw, "message/rfc822").await;
+
+        let text = text.expect("still has a body");
+        assert!(!text.contains("Date:"), "got: {text}");
+        assert!(text.contains("Body."));
     }
 
     #[test]

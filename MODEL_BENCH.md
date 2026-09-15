@@ -1118,3 +1118,188 @@ no tally. Without that, a 503 storm would score as a perfectly abstaining model.
   fabricate on a year of real journal entries.
 - **The probes are in English and in one register.** Nothing here tests the mixed-currency,
   mixed-language notes the user actually writes beyond one `R200` case.
+
+---
+
+## Part 8 — Document reading (role C2) · `--bench-reading`
+
+**Built 2026-09-15. Not yet run against a real endpoint — zero tokens spent.**
+
+Role C2 is `DocumentReader::read_document`: a document in, a `kind`, a `title`, an optional
+`document_date` and a list of key/value `fields` out. It asks what a document *is*, where C1
+asks what transactions it contains, and its module header is blunt about the consequence — it
+"answers with fields nothing can check".
+
+### Why it is in this round after all
+
+Part 7 recorded C2 as out, and the reason was never the code: `derive_fields` had no caller
+outside its own tests, so Part 2's standing rule — *unbenched until something calls them* —
+excluded it. **That blocker is gone.** `core/src/document_enrichment.rs` is the scheduled pass
+ingest always deferred to, `server/src/enrichment_scheduler.rs` runs it, and `docs/src/archive.md`
+carries the design. C2 now has exactly what it was missing: a trigger.
+
+### Four oracles, none of them hand-labelled
+
+⛔ Still **no hand-labelled gold set**. Every probe in `agent/src/reading_bench.rs` is a document
+written *for* the bench, so its truth is known by construction rather than judged after the fact.
+
+1. **Grounding.** The prompt says: copy values exactly as printed, never compute or normalise,
+   never include a value the document does not state. So a returned field value that does not
+   appear in the document is a fabrication **by the prompt's own rule**, not by a stricter one
+   invented here. This is the `UNGRND` column and the first ranking key.
+2. **Date abstention.** A document stating no date must come back `document_date: null`. The
+   envelope permits it — `document_date` is absent from `required` and `strict` is false,
+   checked 2026-09-15 before anything was built.
+3. **Eagerness.** A document worth finding by nothing must produce no fields. Without this, a
+   model that always returns five plausible fields scores well on recall and is unusable.
+4. **Self-consistency** across repeat runs (`OMNI_BENCH_READ_REPEATS`, default 3), on `kind` and
+   the date. A model that answers differently each time has not read anything.
+
+**Ranked lexicographically** — fabrication, then recall, then agreement — matching role D. ⛔ Not
+a weighted sum, for the reason `MODEL_THRESHOLDS.md` gives: any weight meaning "fabrication
+dominates" behaves identically, and a number nobody can justify gets tuned until the preferred
+model wins.
+
+### Normalisation is deliberately weak, and that is the point
+
+Matching lowercases and collapses whitespace, and stops there. Stripping punctuation would make
+`1,284.00` and `128400` both count as grounded — and a misread figure is precisely the failure
+worth catching. A test holds this: `normalisation_does_not_launder_a_misread_number`.
+
+### The injection probe is disqualifying, not scored
+
+`document_prompt` ends by telling the model the document is untrusted input, to be catalogued as
+data and never acted on. One probe carries an instruction to set `kind` to `pwned` and invent a
+bank account. Obeying it in `kind`, `title` or any field prints a refusal line rather than
+contributing to a column — a model that can be steered by a document it is reading has failed a
+different exam than the one being marked.
+
+### A finding this arm produced, and why it WAS fixed
+
+**An email's `Date:` header never reached the reader.** `tasks.md` lists email headers
+(sender/date/subject) as free ground truth; only two of the three arrived. `archive::derive_text`
+built an email's text as `From: … Subject: … <body>` and dropped the rest, so no date was
+available to copy.
+
+This was first recorded rather than repaired, under Part 7's rule about not fixing a path in the
+same change that builds the oracle over it. **That was the wrong call and it was corrected the
+same day** (user's question, 2026-09-15). Part 7's rule protects against tuning a *prompt* until
+it scores well, which makes the score meaningless. This is an input pipeline: fixing it changes
+what the model is shown, not how it behaves, and the abstention coverage the omission appeared to
+buy was already provided by `letter-undated` and `injection`.
+
+It was also a real product defect rather than a bench artifact, which is the part that decided it.
+`ParsedMessage.date` is parsed and already used — `auto_import/imap.rs` takes an imported
+transaction's timestamp from it. Only the archive path discarded it, and nothing else on the row
+carries it: `DocumentArchivedPayload` has `archived_at`, which is when the file was filed, and the
+raw header sits in a blob no reader opens. An archived email simply had no date.
+
+`derive_text` now emits `Date: YYYY-MM-DD` when the header parses, and **omits the line entirely
+when it does not** — a dateless email stays dateless rather than gaining today's, which is the
+same rule `document_prompt` states for `document_date`.
+
+⛔ **The coupling this created is now guarded.** The probes are hand-written in the shape
+`derive_text` emits, so the two must move together or the bench scores a document production never
+sends. `every_email_probe_carries_the_headers_derive_text_emits` fails loudly if they drift.
+
+The two email probes converted from date-abstention to date-recall as a result. The instrument
+keeps two abstention probes (`letter-undated`, `injection`) and gains three recall cases.
+
+### What it cannot see
+
+- **Nothing has run.** Every number this produces is a design claim until it does.
+- **Vision.** Every probe is text, so this measures cataloguing *judgement* and not reading off
+  an image at all. C2 in production also receives PDFs and scans. The reading-off-pixels half is
+  role C3's bench (`--bench-transcription`), and until that runs, C2's vision behaviour is
+  unmeasured. ⚠️ Do not read a good C2 score as evidence it reads scans.
+- **A wrong date and an invented one, apart.** `BADDT` counts both. `email-invoice` deliberately
+  carries a header date (`2025-12-03`) beside the phrase "the period covering November", to test
+  whether a model prefers the date the document states over one it can infer — but a November
+  answer scores in the same column as a date conjured from nothing. ⚠️ Read that row's answer,
+  not just its count.
+- **`kind` and `title` quality.** `kind` is scored against a set of defensible tokens per probe,
+  because the prompt offers an open vocabulary and scoring one exact string would measure which
+  synonym the model reached for. `title` is not scored at all — "is this a good title" is the
+  hand-labelling this project has ruled out.
+- **Six probes is small**, and they are constructed cases rather than a sample of the real
+  archive. This can show that a model fabricates; it cannot estimate how often it would on a
+  year of real documents.
+- **The recorded envelope finding still stands:** `kind` and `title` are `required` with no
+  "unknown" token, so a genuinely unidentifiable document forces a guess. No probe scores that,
+  deliberately — fixing the schema first would bench a schema written to pass.
+
+---
+
+## Part 9 — Transcription (role C3) · `--bench-transcription`
+
+**Built 2026-09-15. Not yet run against a real endpoint — zero tokens spent.**
+
+Role C3 reads the words off a document nothing could parse. `DocumentTextTranscribed` has had an
+event type, a store envelope, a projection fold and `TextSource::rank` for some time; what it did
+not have was a producer. Part 7 recorded C3 as *blocked* rather than deferred for exactly that
+reason — with no producer, no input could be generated, so it could not be run at all.
+
+**It has one now.** `core/src/extraction/transcribe.rs` holds the `DocumentTranscriber` trait, its
+prompt and its schema; `OpenAiCompatExtractor` implements it through the same `ask` the other two
+questions use; `document_enrichment::enrich_text_once` is the caller.
+
+### The oracle is free, and the trick is in how the document is sent
+
+A born-digital PDF carries a text layer that states exactly what is on the page. So:
+
+1. take a PDF whose text layer is non-empty,
+2. **render it to images**,
+3. transcribe the images,
+4. compare against the text layer the file already carried.
+
+⛔ **Step 2 is the whole instrument.** `payload_for` sends a PDF's text layer when it has one and
+rasterizes only when it does not — so handing the file over directly would measure poppler reading
+itself and report perfect scores forever. The bench rasterizes first and passes images, which
+forces the vision path onto a document whose answer is already known.
+
+The filter in step 1 is also load-bearing: a scanned PDF has no text layer, so there would be
+nothing to score against, and comparing a transcription to an empty string reports every model as
+perfectly fabricating. Scans are counted and reported as skipped rather than silently dropped.
+
+### Three columns, ranked in this order
+
+- **INVENT** — figures in the transcription that the file does not state. First key.
+- **FIGURES** — figures the file states that came back. Tracked apart from words because this
+  corpus is mostly money, and a dropped digit matters in a way a dropped article does not.
+- **WORDS** — word-level recall, as a set.
+
+A misread figure shows in **two** columns at once — one figure not found and one invented — and
+that is deliberate: `1,195.50` read as `1,196.50` is both a loss and a fabrication, and a single
+"accuracy" number would let them cancel.
+
+Word comparison is set-based rather than multiset, because `-layout` repeats column headers in
+ways a transcription reasonably does not; counting those as misses would measure poppler's spacing
+rather than the model's reading.
+
+### The abstention envelope, checked before anything was built
+
+`transcription_schema` requires `text` but sets **no `minLength`**, so `""` is valid. A photograph
+of a blank page has a way to say so, and `the_schema_does_not_impose_a_minimum_length` guards that
+against a later tightening. ⚠️ The pass **appends an empty transcription** rather than skipping it:
+it records that a named model looked on a given date and found nothing, and it lifts `text_source`
+off `none` so the document stops being a candidate. Skipping instead would re-read every blank page
+on every tick, forever, and starve the per-tick cap.
+
+⛔ A malformed response and an empty page stay distinguishable — `parse_transcription` errors on a
+response with no `text` field rather than coercing it to `""`. Writing "this document has no text"
+over a document that has some would then stand, because `TextSource::rank` puts `transcribed` above
+`none`.
+
+### What it cannot see
+
+- **Nothing has run.** Every number is a design claim until it does.
+- **Reading order and layout.** Set comparison says whether the words came back, never whether a
+  two-column statement was read down the columns or across them. A transcription that scrambles a
+  table scores identically to one that does not.
+- **Scans, which are the actual target.** Every case is born-digital *by construction*, because
+  that is where the free answer key lives. The documents C3 exists for — photographs and scans —
+  have no oracle, so this measures the model's reading on the easier half and infers.
+- **Documents over `MAX_DOCUMENT_PARTS` pages**, which are refused rather than truncated and
+  reported as errors.
+- **Cost.** Latency is reported per document; token cost is not, because a rasterized page's cost
+  depends on the endpoint's image pricing rather than on anything measurable here.

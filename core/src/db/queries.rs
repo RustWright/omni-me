@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
 use super::{Database, DbError};
+use crate::archive::TextSource;
 
 /// A journal entry (one per day) from the `journal_entries` projection table.
 #[derive(Debug, Clone, Serialize, SurrealValue)]
@@ -1101,6 +1102,85 @@ pub async fn document_kinds(db: &Database) -> Result<Vec<String>, DbError> {
 
     let rows: Vec<Option<String>> = resp.take(0)?;
     Ok(rows.into_iter().flatten().collect())
+}
+
+/// Documents no producer has catalogued yet, newest first.
+///
+/// Why the query is the work queue, why newest-first, and why the MIME filter
+/// belongs here rather than in the caller: `docs/src/archive.md`.
+pub async fn documents_awaiting_fields(
+    db: &Database,
+    mimes: &[&str],
+    limit: u32,
+) -> Result<Vec<DocumentRow>, DbError> {
+    let sql = format!(
+        "SELECT {DOCUMENT_COLUMNS}
+         FROM documents
+         WHERE kind = NONE AND (mime_type ?? '') IN $mimes
+         ORDER BY archived_at DESC
+         LIMIT $limit"
+    );
+    let mut resp = db
+        .query(sql)
+        .bind((
+            "mimes",
+            mimes.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+        ))
+        .bind(("limit", limit))
+        .await?;
+
+    let rows: Vec<DocumentRow> = resp.take(0)?;
+    Ok(rows)
+}
+
+/// How many uncatalogued documents no configured reader could ever accept.
+///
+/// Reported rather than silently excluded: these never enter the candidate set,
+/// so without a count they would look like documents that simply never arrived.
+pub async fn documents_unreadable_count(db: &Database, mimes: &[&str]) -> Result<usize, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT VALUE count() FROM documents
+             WHERE kind = NONE AND (mime_type ?? '') NOT IN $mimes GROUP ALL",
+        )
+        .bind((
+            "mimes",
+            mimes.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+        ))
+        .await?;
+
+    let rows: Vec<i64> = resp.take(0)?;
+    Ok(rows.into_iter().next().unwrap_or(0).max(0) as usize)
+}
+
+/// Documents nothing could read text off at ingest, newest first.
+///
+/// `text_source` is the column `TextSource::None` writes, so this selects
+/// exactly the scans a transcriber exists for.
+pub async fn documents_awaiting_text(
+    db: &Database,
+    mimes: &[&str],
+    limit: u32,
+) -> Result<Vec<DocumentRow>, DbError> {
+    let sql = format!(
+        "SELECT {DOCUMENT_COLUMNS}
+         FROM documents
+         WHERE (text_source ?? '') = $none AND (mime_type ?? '') IN $mimes
+         ORDER BY archived_at DESC
+         LIMIT $limit"
+    );
+    let mut resp = db
+        .query(sql)
+        .bind((
+            "mimes",
+            mimes.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+        ))
+        .bind(("limit", limit))
+        .bind(("none", TextSource::None.as_str().to_string()))
+        .await?;
+
+    let rows: Vec<DocumentRow> = resp.take(0)?;
+    Ok(rows)
 }
 
 #[cfg(test)]

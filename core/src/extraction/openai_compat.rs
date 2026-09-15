@@ -24,6 +24,9 @@ use super::document::{
     DocumentReader, DocumentSummary, document_prompt, document_schema, parse_summary,
 };
 use super::media::{self, PreparedImage};
+use super::transcribe::{
+    DocumentTranscriber, parse_transcription, transcription_prompt, transcription_schema,
+};
 use super::{
     DocumentExtractor, DocumentPart, ExtractionError, ExtractionHint, ExtractionResult,
     MAX_DOCUMENT_PARTS, parse_response, prompt_for, response_schema,
@@ -231,17 +234,9 @@ impl DocumentExtractor for OpenAiCompatExtractor {
     }
 
     fn supports(&self, mime: &str) -> bool {
-        // PDF is included: `extract` converts it to text before the call, so the
-        // endpoint never sees a format it would reject.
-        matches!(
-            mime,
-            "image/jpeg"
-                | "image/png"
-                | "image/webp"
-                | "text/plain"
-                | "text/html"
-                | "application/pdf"
-        )
+        // One definition, in `extraction::READABLE_MIMES`, because the
+        // enrichment pass filters on the same set without an extractor to ask.
+        super::is_readable_mime(mime)
     }
 
     async fn extract(
@@ -283,9 +278,29 @@ impl DocumentReader for OpenAiCompatExtractor {
     }
 }
 
+#[async_trait]
+impl DocumentTranscriber for OpenAiCompatExtractor {
+    fn name(&self) -> &str {
+        &self.model
+    }
+
+    async fn transcribe(&self, parts: &[DocumentPart<'_>]) -> Result<String, ExtractionError> {
+        let raw = self
+            .ask(
+                parts,
+                transcription_prompt(),
+                transcription_schema(),
+                "document_transcription",
+            )
+            .await?;
+        parse_transcription(raw)
+    }
+}
+
 impl OpenAiCompatExtractor {
-    /// One schema-constrained request, shared by both questions this endpoint is
-    /// asked. Only the instructions, the schema and its name differ; the media
+    /// One schema-constrained request, shared by all three questions this
+    /// endpoint is asked. Only the instructions, the schema and its name differ;
+    /// the media
     /// preparation, the `json_schema` enforcement, the timeout wording and the
     /// URL scrubbing are identical, and a second copy of them is how one path
     /// quietly loses a guard the other keeps.

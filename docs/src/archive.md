@@ -150,6 +150,53 @@ every caller — the HTTP route today, a device capture or a backfill later — 
 opting in, and none of them can forget. Ingest returns two events instead of one, and the caller
 appends what it is given.
 
+## Enriching a document after ingest
+
+The pass ingest defers to is `document_enrichment`, and it runs where the bytes are. Every
+document is archived through `POST /documents/archive`, so the server holds every blob and a
+server-side pass reaches the whole archive. A document whose bytes are absent is counted and
+skipped rather than failed — that is what a document archived somewhere else would look like
+from here, and nothing produces one today.
+
+**The candidate query is the work queue.** There is no table of pending work, no cursor and no
+durable marker. A tick asks for documents that still have no `kind`, reads a few, and appends
+what it learns; the fold that lands the answer is the same thing that removes the work. This is
+self-healing in the way a queue is not — enable the pass a year after a thousand documents were
+filed and the backlog is simply the query's answer, with no migration and no reconciliation for
+the case where the two disagreed.
+
+It costs one property, and the trade is deliberate: a document the reader can never answer about
+would be selected on every tick forever, and with a per-tick cap it would sit at the head of the
+queue and starve everything behind it. So the permanent half of that class is removed at the
+query — only MIME types the vision path accepts become candidates, and the rest are counted as
+`unreadable_mime` so they cannot be mistaken for documents that do not exist. What remains is the
+transient half, a supported file the model happens to fail on, and retrying that is correct.
+
+The pass has two halves and runs both per tick, each capped separately. They compete for nothing:
+one selects documents with no `kind` and asks what the document is, the other selects documents
+whose `text_source` is `none` and asks what it says. A scan is usually both.
+
+⚠️ **An empty transcription is recorded rather than skipped.** A photograph of a blank page has no
+text, and saying so is a real answer — it names the model and the date it looked, and it lifts
+`text_source` off `none` so the document stops being a candidate. Skipping instead would re-read
+every blank page on every tick forever, which is the same starvation the MIME filter above exists
+to prevent. A better model later is simply another event, because equal ranks let the newer value
+through.
+
+**Newest first**, because the alternative makes a receipt captured this morning wait behind every
+historical document. New arrivals reach the head immediately and the tail still drains, since the
+head keeps emptying.
+
+**Off unless enabled, and capped when it is.** Reading the archive costs money per document, so
+configuring a role-C model must not be the same act as spending it across everything filed to
+date. The cap is the second half: a backlog that drains over ticks shows a badly chosen model
+after a handful of documents rather than after the whole corpus.
+
+Every candidate lands in exactly one bucket — read, no bytes, or not read — and the identity is
+checked before the tally is returned. Auto-import earned that rule the hard way: a source that
+fetched 295 rows and mapped none of them reported `0`, which is bit-identical to being up to
+date. A pass that can under-report makes its quiet ticks indistinguishable from its broken ones.
+
 ## Reading a document back
 
 Everything renders on the device, from bytes the attachment cache already holds. The archive

@@ -22,9 +22,11 @@
 mod ask;
 mod bench;
 mod extraction_bench;
+mod reading_bench;
 mod responder;
 mod retrieval_bench;
 mod structuring_bench;
+mod transcription_bench;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -233,6 +235,27 @@ struct Args {
     /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
     bench_structuring: bool,
 
+    /// Score the document reader — role C2 — on what it invents before what it
+    /// finds, against probe documents written so their truth is known by
+    /// construction.
+    ///
+    /// Its own run for the same reason [`Args::bench_extraction`] is. It shares
+    /// that one's endpoint (`[llm.extractor]`) but asks the other question: what
+    /// *is* this document, rather than what transactions does it contain.
+    ///
+    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    bench_reading: bool,
+
+    /// Score the transcriber — role C3 — against the text layer a born-digital
+    /// PDF already carries.
+    ///
+    /// Its own run for [`Args::bench_extraction`]'s reason. The oracle is free
+    /// and exact: render the file to images, transcribe those, and compare with
+    /// what the file itself states.
+    ///
+    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    bench_transcription: bool,
+
     /// Author a question event, then exit — a stand-in for the client.
     ///
     /// Distinct from [`Args::ask`] in the thing that matters: that one calls the
@@ -261,6 +284,8 @@ fn parse_args() -> Result<Args, String> {
         bench_retrieval: false,
         bench_extraction: false,
         bench_structuring: false,
+        bench_reading: false,
+        bench_transcription: false,
         ask_event: None,
         thread: None,
     };
@@ -273,6 +298,8 @@ fn parse_args() -> Result<Args, String> {
             "--bench-retrieval" => args.bench_retrieval = true,
             "--bench-extraction" => args.bench_extraction = true,
             "--bench-structuring" => args.bench_structuring = true,
+            "--bench-reading" => args.bench_reading = true,
+            "--bench-transcription" => args.bench_transcription = true,
             "--constrained" => args.constrained = true,
             "--reindex" => args.reindex = true,
             "--ask" => {
@@ -323,6 +350,25 @@ fn parse_args() -> Result<Args, String> {
     {
         return Err("--bench-structuring is its own run; pick one".to_string());
     }
+    if args.bench_reading
+        && (args.bench
+            || args.bench_retrieval
+            || args.bench_extraction
+            || args.bench_structuring
+            || args.ask.is_some())
+    {
+        return Err("--bench-reading is its own run; pick one".to_string());
+    }
+    if args.bench_transcription
+        && (args.bench
+            || args.bench_retrieval
+            || args.bench_extraction
+            || args.bench_structuring
+            || args.bench_reading
+            || args.ask.is_some())
+    {
+        return Err("--bench-transcription is its own run; pick one".to_string());
+    }
     // With `--bench` this means **bench the constrained arm only**, and it is
     // deliberate rather than a mistake: some endpoints offer `response_format`
     // and no `tools` parameter at all, so the free-form arm cannot be run there
@@ -350,7 +396,9 @@ fn parse_args() -> Result<Args, String> {
             || args.bench
             || args.bench_retrieval
             || args.bench_extraction
-            || args.bench_structuring)
+            || args.bench_structuring
+            || args.bench_reading
+            || args.bench_transcription)
     {
         return Err("--ask-event is its own run; pick one".to_string());
     }
@@ -397,7 +445,9 @@ async fn main() {
                  omni-me-agent --bench                              (test scaffolding)\n       \
                  omni-me-agent --bench-retrieval                    (test scaffolding)\n       \
                  omni-me-agent --bench-extraction                   (test scaffolding)\n       \
-                 omni-me-agent --bench-structuring                  (test scaffolding)"
+                 omni-me-agent --bench-structuring                  (test scaffolding)\n       \
+                 omni-me-agent --bench-reading                      (test scaffolding)\n       \
+                 omni-me-agent --bench-transcription                (test scaffolding)"
             );
             std::process::exit(2);
         }
@@ -441,6 +491,39 @@ async fn main() {
                     omni_me_core::credentials::LlmRole::Structurer,
                 );
                 structuring_bench::run(llm.as_ref()).await;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
+    // Role C2, on role C's endpoint. `build_reader` answers `None` rather than a
+    // null object, so an unconfigured run has nothing to mistake for a model
+    // that answered badly — the bench still prints its plan, then refuses.
+    if args.bench_reading {
+        match load_credentials() {
+            Ok(creds) => {
+                let reader = omni_me_core::llm::build_reader(&creds);
+                reading_bench::run(reader.as_deref()).await;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
+    // Role C3, on role C's endpoint again. Needs the corpus on disk but never
+    // the agent's database — the answer key is inside each file.
+    if args.bench_transcription {
+        match load_credentials() {
+            Ok(creds) => {
+                let t = omni_me_core::llm::build_transcriber(&creds);
+                transcription_bench::run(t.as_deref()).await;
             }
             Err(e) => {
                 eprintln!("{e}");
