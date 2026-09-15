@@ -19,6 +19,12 @@ pub struct NoteProcessingResult {
     pub summary: Option<String>,
     pub urls: Vec<String>,
     pub metadata: CallMetadata,
+    /// Tool names the model invented, which carry no data and are dropped.
+    ///
+    /// Recorded rather than ignored: an invented name is the model failing to
+    /// use the interface, which reads identically to it finding nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unknown_tools: Vec<String>,
 }
 
 /// A task extracted from a journal entry.
@@ -54,20 +60,20 @@ pub enum PipelineError {
     Processing(String),
 }
 
-/// Process a journal note through the full LLM pipeline.
+/// Ask the model what a note contains, without storing the answer.
 ///
-/// Flow: raw_text → preprocess → build prompt → LLM with tools → parse tool calls → emit event
-pub async fn process_note(
-    note_id: &str,
+/// Split out of [`process_note`] so the role D bench measures the prompt and
+/// tools the product actually sends. A bench that rebuilt the call itself could
+/// drift from this one and score a prompt nothing ships.
+///
+/// No event store and no note id, because neither affects what is asked.
+pub async fn derive_note_structure(
     raw_text: &str,
-    device_id: &str,
     llm: &dyn LlmClient,
-    event_store: &dyn EventStore,
 ) -> Result<NoteProcessingResult, PipelineError> {
-    // Step 1: Deterministic pre-processing (URLs only — fuzzy data handled by LLM)
+    // Deterministic pre-processing (URLs only — fuzzy data handled by LLM)
     let preprocessed = preprocess::preprocess(raw_text);
 
-    // Step 2: Build prompt from template
     let registry = PromptRegistry::new();
     let template = registry.get("note_process_v1").ok_or_else(|| {
         PipelineError::Processing("note_process_v1 template not found".to_string())
@@ -80,39 +86,52 @@ pub async fn process_note(
 
     let prompt = registry.render("note_process_v1", &context)?;
 
-    // Step 3: Call LLM with tools
     let tools = default_note_tools();
     let model_name = llm.model_name();
     let response = llm.complete_with_tools(&prompt, tools).await?;
 
-    // Step 4: Parse tool calls into structured result
     let result_data = interpret_tool_calls(response)?;
 
-    let metadata = CallMetadata {
-        prompt_name: template.name.to_string(),
-        prompt_version: template.version.to_string(),
-        model: model_name.to_string(),
-        timestamp: Utc::now(),
-    };
-
-    let result = NoteProcessingResult {
+    Ok(NoteProcessingResult {
         tags: result_data.tags,
         tasks: result_data.tasks,
         dates: result_data.dates,
         expenses: result_data.expenses,
         summary: result_data.summary,
         urls: preprocessed.urls,
-        metadata: metadata.clone(),
-    };
+        metadata: CallMetadata {
+            prompt_name: template.name.to_string(),
+            prompt_version: template.version.to_string(),
+            model: model_name.to_string(),
+            timestamp: Utc::now(),
+        },
+        unknown_tools: result_data.unknown_tools,
+    })
+}
 
-    // Step 5: Emit note_llm_processed event
+/// Process a journal note through the full LLM pipeline.
+///
+/// Flow: raw_text → preprocess → build prompt → LLM with tools → parse tool calls → emit event
+pub async fn process_note(
+    note_id: &str,
+    raw_text: &str,
+    device_id: &str,
+    llm: &dyn LlmClient,
+    event_store: &dyn EventStore,
+) -> Result<NoteProcessingResult, PipelineError> {
+    let result = derive_note_structure(raw_text, llm).await?;
+
+    // Emit note_llm_processed event
     let derived = serde_json::to_value(&result)
         .map_err(|e| PipelineError::Processing(format!("Failed to serialize result: {e}")))?;
 
     let payload = NoteLlmProcessedPayload {
         aggregate_id: note_id.to_string(),
-        prompt_version: format!("{}@{}", template.name, template.version),
-        model: model_name.to_string(),
+        prompt_version: format!(
+            "{}@{}",
+            result.metadata.prompt_name, result.metadata.prompt_version
+        ),
+        model: result.metadata.model.clone(),
         derived,
     };
 
@@ -139,6 +158,7 @@ struct ParsedToolCalls {
     dates: Vec<ExtractedDate>,
     expenses: Vec<ExtractedExpense>,
     summary: Option<String>,
+    unknown_tools: Vec<String>,
 }
 
 /// Helper to extract a required string field from tool call arguments.
@@ -165,12 +185,14 @@ fn interpret_tool_calls(response: LlmResponse) -> Result<ParsedToolCalls, Pipeli
             dates: vec![],
             expenses: vec![],
             summary: Some(text_response),
+            unknown_tools: vec![],
         }),
         LlmResponse::ToolCalls(tool_call_vec) => {
             let mut tags = Vec::new();
             let mut tasks = Vec::new();
             let mut dates = Vec::new();
             let mut expenses = Vec::new();
+            let mut unknown_tools = Vec::new();
 
             for tc in tool_call_vec {
                 match tc.name.as_str() {
@@ -200,7 +222,7 @@ fn interpret_tool_calls(response: LlmResponse) -> Result<ParsedToolCalls, Pipeli
                             )?,
                         });
                     }
-                    _ => {}
+                    other => unknown_tools.push(other.to_string()),
                 }
             }
 
@@ -210,6 +232,7 @@ fn interpret_tool_calls(response: LlmResponse) -> Result<ParsedToolCalls, Pipeli
                 dates,
                 expenses,
                 summary: None,
+                unknown_tools,
             })
         }
         LlmResponse::Structured(structured_response) => Err(PipelineError::Processing(format!(

@@ -4231,6 +4231,7 @@ dependencies = [
 name = "omni-me-agent"
 version = "1.1.2"
 dependencies = [
+ "chrono",
  "omni-me-core",
  "rust_decimal",
  "serde_json",

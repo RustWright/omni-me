@@ -13,7 +13,7 @@ pub use null::NullLlmClient;
 pub use openai_compat::OpenAiCompatClient;
 pub use pipeline::{
     ExtractedDate, ExtractedExpense, ExtractedTask, NoteProcessingResult, PipelineError,
-    process_note,
+    derive_note_structure, process_note,
 };
 pub use prompts::{CallMetadata, PromptRegistry, PromptTemplate};
 pub use provider::{ClientOptions, build_extractor, build_llm_client};

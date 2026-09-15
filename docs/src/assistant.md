@@ -550,14 +550,20 @@ each of these roles earns its own, benchmarked rather than argued:
 |---|---|---|---|
 | **Interactive reasoner** | a question someone typed | latency — a slow model disqualifies itself | *leading candidate, see below* |
 | **Batch reasoner** | the scheduled check-in | quality; it can afford to be slow | **unmeasured** |
-| **Quarantined extractor** | the document extractor and reader | reads images, and **never holds tools** | **unmeasured** |
+| **Quarantined extractor** | the document extractor; the reader has no caller yet | reads images, and **never holds tools** | **unmeasured** |
 | **High-volume structurer** | `POST /notes/{id}/process` | cost per call, and knowing when to abstain | **unmeasured** |
 | **Local** | search | never leaves your machine at all | **reranker measured**; the embedder is inherited, not compared |
 
-Every seat now has a caller, which was not true when this table was written — the archive
+Most seats now have a caller, which was not true when this table was written — the archive
 work gave the extractor one and the scheduled check-in gave the batch seat one. What
 separates an interactive run from a batch run is a flag on the question itself
 (`scheduled`), not a guess about intent.
+
+The exception is the **document reader**, and it is worth stating plainly because an earlier
+version of this page rounded it up to "every seat". The reader answers *what is this document*
+rather than *what transactions does it contain*, and the scheduled pass that would call it does
+not exist: `derive_fields` is reached only from its own tests. Its model is therefore
+unmeasurable rather than merely unmeasured, and it will stay that way until something calls it.
 
 An empty seat means *unmeasured*, not *pending selection*. A model gets written into a seat
 only once something has been measured against the criterion in its own row, and a seat whose

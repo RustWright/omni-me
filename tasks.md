@@ -1427,11 +1427,29 @@ the extractor has.
 - [ ] ⚠️ **C1 has NOT been run against a real endpoint.** Zero tokens spent; dry runs only. The
       dry run is deliberate and re-runnable — with no credentials it prints the corpus stats and
       both sampling plans, then refuses rather than scoring a `NullExtractor`'s empty drafts.
-- [ ] **C2 + D share one scorecard** — abstention probes (ask for a field provably absent; truth
-      known by construction), email-header labels, self-consistency across repeat runs, format
-      validity. ⛔ Weight **abstention above field accuracy**: `verified` is false either way, so
-      a confident wrong answer is indistinguishable from a right one and silently becomes the
-      archive.
+- [x] ✅ **D's scorecard BUILT 2026-09-15** — `agent/src/structuring_bench.rs`,
+      `--bench-structuring`. Eleven probe notes, truth by construction; abstention probes,
+      self-consistency across repeat runs, format validity. Ranked **lexicographically**
+      (fabrications, then recall, then agreement) rather than by a weighted sum — any weight big
+      enough to mean "abstention dominates" behaves the same and invites tuning. Detail in
+      `MODEL_BENCH.md` Part 7; don't restate it here.
+- [ ] ⚠️ **NOT run against a real endpoint.** The dry run refuses rather than scoring a
+      `NullLlmClient`'s errors as abstentions, and prints the probe plan first.
+- [x] 🔴 **C2 is NOT in this scorecard, and the plan was wrong to assume it could be.**
+      `derive_fields` — the function whose own doc calls it "the scheduled path" — has **no
+      caller** outside its own tests. Part 2's rule (*unbenched until something calls them*,
+      2026-09-08/09) already decided this; it went unapplied because role C was split three ways
+      **by oracle** and the caller question was never re-crossed with that split.
+      ⚠️ C2 is deferred behind one small piece of work, **not blocked like C3** — it has a
+      complete path and needs only a trigger. [[deferred is not cancelled]].
+- [ ] ⚠️ **Email-header labels dropped from this scorecard, not forgotten.** They were listed for
+      the shared C2+D card; a note has no email headers, so they only ever applied to C2's half
+      and travel with it.
+- [ ] 🔴 **Three role-D findings recorded, deliberately NOT fixed** (`MODEL_BENCH.md` Part 7):
+      the prompt asks for relative dates "relative to the entry date" and **never passes an entry
+      date** · it says "extract all relevant data" with no sentence permitting an empty category ·
+      it has **no untrusted-input warning** where `document_prompt` does. ⛔ Fixing these before
+      the run would mean benching a prompt written to pass the bench.
 - [ ] **Vision arms have two image sources.** ✅ **Real photographs: `~/omni-spike-images/`** (8
       JPEGs from the POC, outside the repo — `receipt-1`…`-4` plus three `capture-*`; `receipt-1`
       and `capture-1` are **two-page**, so they also test one document spanning two images).

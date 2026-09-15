@@ -21,3 +21,8 @@ tokio = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ulid = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+# Only to stamp a `CallMetadata` in the role D bench's tests. Already built for
+# core, so it costs nothing, and a dev dependency keeps it out of the binary.
+chrono = { workspace = true }

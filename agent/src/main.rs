@@ -24,6 +24,7 @@ mod bench;
 mod extraction_bench;
 mod responder;
 mod retrieval_bench;
+mod structuring_bench;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -221,6 +222,17 @@ struct Args {
     /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
     bench_extraction: bool,
 
+    /// Score the note structurer — role D — on what it invents before what it
+    /// finds, against probe notes written so their truth is known by
+    /// construction.
+    ///
+    /// Its own run for the same reason [`Args::bench_extraction`] is: a
+    /// different endpoint (`[llm.structurer]`) and a different question. It
+    /// needs no database and no corpus on disk.
+    ///
+    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    bench_structuring: bool,
+
     /// Author a question event, then exit — a stand-in for the client.
     ///
     /// Distinct from [`Args::ask`] in the thing that matters: that one calls the
@@ -248,6 +260,7 @@ fn parse_args() -> Result<Args, String> {
         reindex: false,
         bench_retrieval: false,
         bench_extraction: false,
+        bench_structuring: false,
         ask_event: None,
         thread: None,
     };
@@ -259,6 +272,7 @@ fn parse_args() -> Result<Args, String> {
             "--bench" => args.bench = true,
             "--bench-retrieval" => args.bench_retrieval = true,
             "--bench-extraction" => args.bench_extraction = true,
+            "--bench-structuring" => args.bench_structuring = true,
             "--constrained" => args.constrained = true,
             "--reindex" => args.reindex = true,
             "--ask" => {
@@ -304,6 +318,11 @@ fn parse_args() -> Result<Args, String> {
     if args.bench_extraction && (args.bench || args.bench_retrieval || args.ask.is_some()) {
         return Err("--bench-extraction is its own run; pick one".to_string());
     }
+    if args.bench_structuring
+        && (args.bench || args.bench_retrieval || args.bench_extraction || args.ask.is_some())
+    {
+        return Err("--bench-structuring is its own run; pick one".to_string());
+    }
     // With `--bench` this means **bench the constrained arm only**, and it is
     // deliberate rather than a mistake: some endpoints offer `response_format`
     // and no `tools` parameter at all, so the free-form arm cannot be run there
@@ -327,7 +346,11 @@ fn parse_args() -> Result<Args, String> {
     // whichever agent is resident. Running both would ask the same thing twice
     // and pay twice.
     if args.ask_event.is_some()
-        && (args.ask.is_some() || args.bench || args.bench_retrieval || args.bench_extraction)
+        && (args.ask.is_some()
+            || args.bench
+            || args.bench_retrieval
+            || args.bench_extraction
+            || args.bench_structuring)
     {
         return Err("--ask-event is its own run; pick one".to_string());
     }
@@ -373,7 +396,8 @@ async fn main() {
                  omni-me-agent --ask \"<question>\" [--constrained]   (test scaffolding)\n       \
                  omni-me-agent --bench                              (test scaffolding)\n       \
                  omni-me-agent --bench-retrieval                    (test scaffolding)\n       \
-                 omni-me-agent --bench-extraction                   (test scaffolding)"
+                 omni-me-agent --bench-extraction                   (test scaffolding)\n       \
+                 omni-me-agent --bench-structuring                  (test scaffolding)"
             );
             std::process::exit(2);
         }
@@ -396,6 +420,27 @@ async fn main() {
         match load_credentials() {
             Ok(creds) => {
                 extraction_bench::run(omni_me_core::llm::build_extractor(&creds).as_ref()).await;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
+    // Role D, so it resolves `[llm.structurer]` rather than `[llm]`. Passing the
+    // role explicitly is what `build_llm_client` requires, and it is why a
+    // structurer override cannot be silently ignored here.
+    if args.bench_structuring {
+        match load_credentials() {
+            Ok(creds) => {
+                let llm = omni_me_core::llm::build_llm_client(
+                    &creds,
+                    omni_me_core::llm::ClientOptions::default(),
+                    omni_me_core::credentials::LlmRole::Structurer,
+                );
+                structuring_bench::run(llm.as_ref()).await;
             }
             Err(e) => {
                 eprintln!("{e}");
