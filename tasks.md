@@ -257,9 +257,35 @@ defer-major-phases rule; do not run ahead to the next one.
          pattern is noticed, and propose only on repeated independent evidence.
        - ⚠️ **Re-anchored 2026-09-11: Phase F has shipped and neither policy was taken**, so
          the old wording ("deferred to during/after Phase F") now reads as overdue when it is
-         simply undated. ⛔ Both remain **unbuilt and live** — no schedule, and the user has
-         not been asked for one. Do not read the check-in's existence as having settled it:
-         a scheduled question is still a question he asked for, not an opinion volunteered.
+         simply undated. ⛔ Both remain **unbuilt and live** — no schedule. Do not read the
+         check-in's existence as having settled it: a scheduled question is still a question
+         he asked for, not an opinion volunteered.
+       - ✅ **PREFERENCE SET 2026-09-16: option 2 wins, and it is role B's long-term shape**
+         (user: *"that would be preferred and is how I envisioned the model for role B acting
+         long term anyway"*). Propose a belief only when the same thing appears across several
+         **independent** records. ⛔ Option 1 (propose on noticing a durable pattern) is not
+         scheduled and is now the lesser option, not a parallel one.
+       - **Why option 2 lands on B and not A.** Evidence is `records_read(outcome)` — every
+         record opened *in that run* (`answer.rs:118`), never model-authored. Corroboration
+         therefore requires actually opening the corroborating records, which an interactive
+         turn answering a typed question has no budget for and a scheduled run does.
+         ⚠️ Option 1 by contrast is not a seat question at all: noticing rides on whatever run
+         is already happening, so it would fire under **both** A and B and neither seat's bench
+         would catch an over-eager proposal on its own.
+       - 🔴 **Two prerequisites, both real work, neither obvious from the policy statement:**
+         1. **A per-role turn budget.** `assistant.max_turns` is a single global key
+            (`config.rs:310`, range 3–50, default 10) — the A/B split was made on *latency*
+            only. Corroboration needs well above 10, and raising the global figure makes seat A
+            pay in exactly the dimension it is gated on. ⚠️ Cost grows **superlinearly** per
+            turn because the prompt carries every prior result. ⛔ The lower bound is a halting
+            guarantee, not a preference — the loop has no terminal verb — so a per-role budget
+            must keep a floor, not just add a ceiling.
+         2. **A second scheduled question.** `check_in.rs` raises exactly one, from the single
+            config value `assistant.check_in_prompt`, and that prompt ends *"Do not draw new
+            conclusions."* ⛔ Finding new beliefs is a different job and must not be bolted onto
+            the review prompt — the two instructions contradict.
+       - ⚠️ Sequence: the per-role turn budget is a **prerequisite**, not a detail. It is also
+         where seat B's other needs will go, so it is worth doing first and on its own.
      - **Phase F — the scheduled check-in.** ⚠️ **A check-in is a question, not a subsystem.**
        The agent authors an ordinary `AssistantQuestionAsked` with `scheduled: true`; the
        normal loop answers it and anything it wants goes through the normal gate. It
@@ -1516,8 +1542,11 @@ the extractor has.
       **unmeasured** — fix the instrument, re-run; never break the tie by preference.
 
 ### Stage 4 — dev sync server on the box
-- [ ] ⚠️ **Size first**: box is 3820 MB total, **0 swap**, ~29 GB free. Check DB **and blob dir**
-      sizes against free disk before cloning.
+- [x] ✅ **Memory sizing settled** (user, 2026-09-16) — the box has been sized for the clone.
+      ⚠️ **Open, and deliberately not a blocker: long-term growth.** A clone that fits today does
+      not stay fitting as the log and blob dir accumulate; 3820 MB total with **0 swap** means
+      pressure is an OOM kill rather than a slowdown, and nothing currently watches the trend.
+      ⛔ Decide a retention or re-clone policy before the dev instance becomes permanent.
 - [ ] Second unit file, second directory, distinct `OMNI_LISTEN_ADDR`. ⛔ An unparseable value is
       passed through, **not** repaired — a typo must fail to bind loudly rather than start a
       second server on the live port with an empty database.
@@ -1542,6 +1571,69 @@ the extractor has.
       of those PDFs (18.3%) to yield nothing**, measured 2026-09-15 — they are **encrypted**, and
       `archive.rs:183` passes an empty password. Two issuers encrypt 100% of their statements, a
       third 13%, the other 21 none. ⛔ Do not read the resulting empty rows as a parser bug.
+- [ ] **Make the injection gate print its evidence, then re-run that probe alone**
+      (`MODEL_BENCH.md` R23). 🔴 **Five of fourteen models tripped it**, including both C3
+      finalists. `reading_bench.rs` prints only the model id, so for the three whose `kind` was
+      *correct* the payload is pinned to `title` by elimination — and a title of exactly `pwned`
+      (obedience) is indistinguishable from *"memo containing a pwned instruction"* (correct
+      cataloguing of a memo that really does state account `9999-9999`). ⛔ A disqualifying gate
+      must show what it saw. Carry `Option<String>` instead of `bool` and check `kind`, `title`
+      and each field separately rather than over one joined blob, so the row names where it
+      landed. ✅ Verified for whoever picks this up: the members are `ReadField { key, value }`
+      (`extraction/document.rs:29`), and `reading_bench.rs` has **no probe filter** — so the
+      re-run is the whole 6-probe arm against the five flagged models, 90 calls.
+- [ ] 🔴 **Control sampling, then re-rank everything** (`MODEL_BENCH.md` R26). `temperature`,
+      `top_p` and `seed` appear **nowhere** in `core/src/`, so every request runs at a provider
+      default we neither set nor record — and the same model on the same 39-row statement scored
+      33% with 13 sign-flips in one run and 100% with none in the next. ⛔ Seat C1's top ranking
+      key is not stable, so no single run can rank it. ⚠️ Two separate decisions: **deterministic
+      for extraction/transcription** (C1/C2/C3 — there is one right answer) is straightforward;
+      **the chat seats (A/B) are a product call**, since temperature 0 changes assistant voice.
+      ⚠️ Also add repeats to `--bench-extraction`, `--bench-transcription` and `--bench`:
+      `--bench-reading` already does this (`OMNI_BENCH_READ_REPEATS`, default 3, with an `AGREE`
+      column) and is the pattern to copy. ⛔ Fix before the next slate.
+- [ ] 🔴 **Give seat B a case family of its own — it has never been benched on its work**
+      (`MODEL_BENCH.md` Part 2; user, 2026-09-16). `client_for` routes to the batch client only
+      when `question.scheduled`, and the sole producer is `check_in.rs`: **one question a day**,
+      *"review anything you concluded about me that is now due for re-examination… do not draw
+      new conclusions."* ⛔ All 15 slate cases are targeted retrieval — seat A's job. ⚠️ What B
+      needs: seeded `belief` records with `review_after` in the past, evidence supporting some and
+      contradicting others, and **no-new-conclusions scored as an abstention key**. The
+      abstention machinery already exists in `--bench-structuring`; do not write it twice.
+      🔴 **Fixture trap:** `review_after` is **optional** on `belief.record`, and
+      `is_due_for_review` returns false when it is absent — a belief with no date never comes
+      due, so a fixture that omits it measures nothing and looks like a passing run. Seed past
+      dates explicitly. ⚠️ Same reason a fresh install's check-in has nothing to review: beliefs
+      only exist after the user has explicitly asked for a conclusion at least once.
+      ⛔ Do NOT build Part 4's levers 3–5 for B — they sharpen a retrieval instrument B never uses.
+- [ ] **Decide production's sampling parameters** (`MODEL_BENCH.md` R26). The bench now sends
+      `temperature: 0` via `bench-openrouter.sh`; **production still sends none**, so the two no
+      longer match and that gap is deliberate-but-unclosed. ⚠️ Extraction/transcription (C1/C2/C3)
+      wants 0 — there is one right answer. The chat seats are a product call: 0 makes the
+      assistant reproducible and flatter. ⛔ Role C cannot take it through `extra_body` at all —
+      `build_extractor` takes no `ClientOptions` (R6's sibling), so that path needs code.
+- [ ] **Extend the retrieval bench past one verb and two record types** (`MODEL_BENCH.md`
+      Part 5; user, 2026-09-16 — seat E was wrongly recorded as decided). ⛔ `--bench-retrieval`
+      covers `search` over notes and journal only; the catalogue has six types and the read
+      surface five verbs. ⚠️ `document` matters most — it is the output of the whole role-C
+      programme and has never been retrieval-tested. ⚠️ Keep the lexical/semantic split and the
+      test that enforces the labels; the gap is coverage, not method. Local and free to run.
+- [ ] **State the read-errors-first rule in seat C1's threshold section.** ⛔ Seats C2 and D both
+      say *a model that mostly errors has numbers describing nothing*; C1 does not, and that
+      omission put `gemma-4-26B` at the top of a correctly-sorted table twice — on 4 of 13 cases,
+      then on 12 of 31. ⚠️ Fix the class: check every seat section carries it.
+- [ ] **Research what would move seat A's numbers, before the next comparison** (user,
+      2026-09-16). ⛔ Not a re-measure of the same catalogue — hypotheses to test: speculative
+      decoding, prompt caching, a warm/provisioned tier, and whether `glm-5.3`'s 117.3s tail and
+      `gpt-oss-120b-Turbo`'s 39.4s tail are serving-stack artifacts that a different tier removes.
+      Both are on file as re-test-first candidates in `MODEL_THRESHOLDS.md` § Seat A.
+- [ ] **Widen the C2 probe set — the seat is unmeasured** (`MODEL_BENCH.md` Part 8). The
+      pre-registered noise floor refused the tie at a two-fabrication gap, and its own stated
+      remedy is more probes, not a tie-break. ⚠️ Two specifics the run exposed: **one abstention
+      probe is carrying the whole first ranking key**, and recall/eagerness are scored on the same
+      four documents. ⛔ Also print **fabrication per successful run** — as a bare count it rewards
+      a model that errors out of a fabrication-prone probe, which is exactly what `gemma-4-31B`
+      did on all three runs of `letter-undated`.
 - [ ] **Make `fields` non-optional for the document reader** (`MODEL_BENCH.md` R21). 🔴 Six of
       seven models return an empty array: `document_schema` does not require it and the prompt
       frames it as discretionary, then spends four clauses on what not to put there. ⛔ Without

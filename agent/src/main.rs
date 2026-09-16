@@ -640,6 +640,8 @@ fn load_credentials() -> Result<omni_me_core::credentials::Credentials, String> 
         llm.interactive = None;
         llm.batch = None;
         llm.extractor = None;
+        llm.reader = None;
+        llm.transcriber = None;
         llm.structurer = None;
         // The model, never the key or the URL — a base URL can carry a key.
         tracing::info!(model = ?llm.model, "LLM endpoint overridden by environment");

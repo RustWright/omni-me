@@ -97,7 +97,7 @@ pub struct ServerConfig {
 /// `credentials.toml` because `api_key` is a secret; the non-secret fields ride
 /// along so one section fully describes the provider.
 /// `Default` exists so a struct literal can spread the per-role fields rather
-/// than restate four `None`s. An empty `provider` is the "absent or incomplete"
+/// than restate six `None`s. An empty `provider` is the "absent or incomplete"
 /// case `llm::provider::build_llm_client` already handles with a `NullLlmClient`.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct LlmProviderConfig {
@@ -156,10 +156,18 @@ pub struct LlmProviderConfig {
     /// it can afford to be slow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<LlmRoleOverride>,
-    /// Role C — the quarantined extractor: receipts, statements, photographed
+    /// Role C1 — the quarantined extractor: receipts, statements, photographed
     /// documents. ⚠️ Reads images, and **never holds tools**.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extractor: Option<LlmRoleOverride>,
+    /// Role C2 — the document reader: what a document *is*, for cataloguing.
+    /// A separate table because the three role-C seats measured out to different
+    /// models; before this existed they all resolved `[llm.extractor]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reader: Option<LlmRoleOverride>,
+    /// Role C3 — the transcriber: a scanned page to its text, verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcriber: Option<LlmRoleOverride>,
     /// Role D — high-volume structurer: note extraction, categorization.
     /// Chosen on cost per call and on knowing when to abstain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -174,8 +182,12 @@ pub enum LlmRole {
     Interactive,
     /// B — batch reasoner.
     Batch,
-    /// C — quarantined extractor.
+    /// C1 — quarantined extractor: documents to transactions.
     Extractor,
+    /// C2 — document reader: what a document is.
+    Reader,
+    /// C3 — transcriber: a scanned page to its text.
+    Transcriber,
     /// D — high-volume structurer.
     Structurer,
 }
@@ -228,6 +240,8 @@ impl LlmProviderConfig {
             LlmRole::Interactive => &self.interactive,
             LlmRole::Batch => &self.batch,
             LlmRole::Extractor => &self.extractor,
+            LlmRole::Reader => &self.reader,
+            LlmRole::Transcriber => &self.transcriber,
             LlmRole::Structurer => &self.structurer,
         };
         let mut out = LlmProviderConfig {
@@ -240,6 +254,8 @@ impl LlmProviderConfig {
             interactive: None,
             batch: None,
             extractor: None,
+            reader: None,
+            transcriber: None,
             structurer: None,
         };
         let Some(o) = over else { return out };
@@ -266,7 +282,14 @@ impl LlmProviderConfig {
 }
 
 /// Role names understood inside `[llm]`. Anything else under it is a typo.
-const ROLE_KEYS: [&str; 4] = ["interactive", "batch", "extractor", "structurer"];
+const ROLE_KEYS: [&str; 6] = [
+    "interactive",
+    "batch",
+    "extractor",
+    "reader",
+    "transcriber",
+    "structurer",
+];
 
 /// Reject an unknown sub-table under `[llm]`.
 ///
@@ -379,6 +402,8 @@ impl std::fmt::Debug for LlmProviderConfig {
             .field("interactive", &self.interactive)
             .field("batch", &self.batch)
             .field("extractor", &self.extractor)
+            .field("reader", &self.reader)
+            .field("transcriber", &self.transcriber)
             .field("structurer", &self.structurer)
             .finish()
     }
@@ -542,6 +567,72 @@ mod tests {
         // Inherited, not restated.
         assert_eq!(role.base_url.as_deref(), Some("https://example.test/v1"));
         assert_eq!(role.api_key.as_deref(), Some("k"));
+    }
+
+    /// The three role-C seats resolve to three different models.
+    ///
+    /// ⚠️ This is the defect that made the tables necessary, not a hypothetical:
+    /// `build_extractor`, `build_reader` and `build_transcriber` all resolved
+    /// `LlmRole::Extractor` and passed their name only to a log line, so one
+    /// table served three seats. The 2026-09-16 slate then picked a different
+    /// model for the reader than for the other two, which was unrepresentable.
+    #[test]
+    fn each_role_c_seat_resolves_its_own_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        std::fs::write(
+            &path,
+            "[llm]\nprovider = \"openai_compatible\"\n\
+             base_url = \"https://example.test/v1\"\nmodel = \"text-only\"\n\
+             api_key = \"k\"\n\n\
+             [llm.extractor]\nmodel = \"extracts\"\nvision = true\n\n\
+             [llm.reader]\nmodel = \"reads\"\nvision = true\n\n\
+             [llm.transcriber]\nmodel = \"transcribes\"\nvision = true\n",
+        )
+        .unwrap();
+        let llm = load(&path).expect("valid roles must load").llm.unwrap();
+        assert_eq!(
+            llm.for_role(LlmRole::Extractor).model.as_deref(),
+            Some("extracts")
+        );
+        assert_eq!(
+            llm.for_role(LlmRole::Reader).model.as_deref(),
+            Some("reads")
+        );
+        assert_eq!(
+            llm.for_role(LlmRole::Transcriber).model.as_deref(),
+            Some("transcribes")
+        );
+        // Each still inherits the endpoint it did not restate.
+        for role in [LlmRole::Extractor, LlmRole::Reader, LlmRole::Transcriber] {
+            let c = llm.for_role(role);
+            assert_eq!(c.base_url.as_deref(), Some("https://example.test/v1"));
+            assert!(c.vision, "vision must survive the merge for every C seat");
+        }
+    }
+
+    /// An unset C seat falls back to `[llm]`, NOT to `[llm.extractor]`.
+    ///
+    /// ⛔ One level of fallback, matching the four roles that came before. A
+    /// reader that quietly inherited the extractor's model would reintroduce
+    /// exactly the coupling these tables removed, and it would be invisible.
+    #[test]
+    fn an_unset_c_seat_falls_back_to_the_base_section_not_to_the_extractor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        std::fs::write(
+            &path,
+            "[llm]\nprovider = \"openai_compatible\"\n\
+             base_url = \"https://example.test/v1\"\nmodel = \"base\"\n\
+             api_key = \"k\"\n\n[llm.extractor]\nmodel = \"extracts\"\nvision = true\n",
+        )
+        .unwrap();
+        let llm = load(&path).unwrap().llm.unwrap();
+        assert_eq!(llm.for_role(LlmRole::Reader).model.as_deref(), Some("base"));
+        assert_eq!(
+            llm.for_role(LlmRole::Transcriber).model.as_deref(),
+            Some("base")
+        );
     }
 
     #[test]

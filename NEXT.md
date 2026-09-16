@@ -1,49 +1,41 @@
 # NEXT
+✅ **Model selection is CLOSED.** All six model seats are chosen, wired into
+`secrets/credentials.toml` as six independent role tables, and verified resolving at runtime.
+Nothing is running. ⛔ Do not re-open a seat without a reason from production.
+Seats, all verified resolving at runtime on **this machine** (`secrets/credentials.toml`):
+**A** + **B** `DeepSeek-V4-Pro` · **C1** + **C3** `DeepSeek-V4.1-Flash` · **C2** `gemma-4-31B-it`
+· **D** `DeepSeek-V4-Flash` · **E** is local, not a model choice.
+🔴 **NOTHING since `sha-9a0b1dd` has run on ANY real device** — not the box, not mobile, not
+desktop. That is the whole reason Stage 4 exists. ⛔ **Do not deploy to the live container and do
+not edit `/etc/omni-me/credentials.toml`.** The live server keeps running `sha-9a0b1dd` with no
+`[llm]` section, untouched. (I proposed exactly that deploy on 2026-09-16 and was corrected.)
 
-**Immediate: launch two overnight runs** (agreed, user asleep). Binary is current — ⛔ no rebuild.
-1. **A/B slate re-run** — `scripts/bench-slate.sh`, 9 models, ~2.5h. Hub `omni-hub` is up + seeded.
-2. **C1 extraction** — `scripts/bench-c-slate.sh extraction <dir> <C3 finalists>`.
-⚠️ C1's abstention arm will print **skipped**: `OMNI_BENCH_ABSENT` has no source, the corpus is all
-statements. ⛔ Seat D deferred by agreement — it needs a runner that does not exist (D uses the
-*text* client via `OMNI_AGENT_LLM_MODEL`, so `bench-c-slate.sh` cannot drive it).
-
-## ✅ Decided
-- **Seat C3 = `deepseek-ai/DeepSeek-V4.1-Flash`** (user, 2026-09-16). Runner-up
-  `Llama-4-Maverick` — equal coverage, **2× faster**, kept on file for the next comparison.
-  ⚠️ Overrode the strict lexicographic order on the record: `Ling` won key 1 by **one figure in
-  780** (noise) but structurally cannot read **11 of 30** documents. ⛔ Primary/fallback routing
-  was evaluated and **rejected** — no measurable quality gain, ~$1 total saving, slower.
-  Full reasoning: `MODEL_THRESHOLDS.md` § Seat C3 + `MODEL_BENCH.md` Part 9.
-- **Seat A's latency gate reads successful requests only**, and is **median ≤ 15s / worst ≤ 30s**
-  — renamed from "p95" because at 14 cases nearest-rank p95 *is* the maximum (R16). `bench.rs` now
-  splits successful from failed latency and reports both.
-
-## ⏳ C2 ran, NOT analysed — do this first
-14 models, `runs/20260915-210805-c2/`. ⛔ **Only 3 populate `fields` at all**: `gemma-4-26B`
-(fab 3, 18/21), `gemma-4-31B` (fab 5, **23/23**), `GLM-5.3-Flash` (fab 5, 13/21). Lexicographic
-order gives `gemma-4-26B`; ⚠️ denominators differ (21 vs 23) from errors, so it needs the same
-intersection treatment `c3-compare.py` does for C3 — **no c2 equivalent exists yet**.
-- 🔴 **R21: the zeros are two different causes.** Three models answer in 5–16s with **zero errors**
-  and simply omit the array — `fields` is not in `document_schema`'s `required` and the prompt
-  frames it as discretionary. Three others are **timing out** (R20). ⛔ Never report these as one.
-- ⚠️ **`DeepSeek-V4.1-Flash` wins C3 and scores 0/21 on C2.** The seats are different jobs.
-
+**Next: Stage 4 — a dev-only instance beside the live one.** ✅ Box access works over the
+tailnet (keyless SSH, passwordless sudo, docker group) — route is in memory, not here, because
+this repo is public. Isolation is the point:
+own directory · own `OMNI_LISTEN_ADDR` · own database seeded from a **clone** · own blob dir
+copied separately (🔴 blob bytes do not sync) · **own credentials file** — the six role tables go
+*there*, never in `/etc/omni-me/`. Then a dev phone repointed from Settings.
+✅ Memory sizing settled (user); ⚠️ long-term growth is filed, not a blocker.
 ## ⛔ Inherit — do not re-derive
-- 🔴 **The 2026-09-15 A/B slate is VOID** (R13) — the connection died mid-run. R15 retracted for
-  the same reason. ⛔ Never quote the 9.4%. The re-run above is the replacement.
-- 🔴 **Role C has no `max_tokens` (R20), no 429 retry (R22), no request spacing (R12).** All three
-  on `extraction/openai_compat.rs`; the chat client has them and they were never shared across.
-  ⛔ A 429 count on this path is not an endpoint property.
-- ⛔ **Rank C3 with `scripts/c3-compare.py`**, never the per-model cards (R17) — denominators
-  differ and the bias has **no consistent sign**. `+dir` merges a retry pass; bare args filter.
-- ⚠️ **Repeated failure this session, 4×: quoting a rate before the denominator exists**, and 3×:
-  a string transform that was *nearly* right. ⛔ Write the mechanism, withhold the ratio.
+- ⚠️ **`DeepSeek-V4-Flash` and `DeepSeek-V4.1-Flash` are DIFFERENT models** — D takes the first,
+  C1/C3 the second. All four ids validated against the endpoint (HTTP 200).
+- ⚠️ **Two seats passed over a pre-registered rule, deliberately.** **B** and **C2** each had a
+  *publish unmeasured* condition fire and were filled anyway (user); both sections record it.
+- 🔴 **R26: sampling is uncontrolled.** `temperature`/`top_p`/`seed` are set nowhere in
+  `core/src/`; C1 needed three runs before its numbers stopped moving (0 flips → 13 → 0). The
+  bench sends `temperature: 0` via `bench-openrouter.sh` only. ⛔ D was measured WITH it and
+  A/B/C without — never compare their cards.
+- 🔴 **`runs/20260916-110711-ab-t0/` is NOT rankable** — rate-limited (81 backoffs on one row).
+  A and B came from the 03:53 run, which had zero free-form errors.
+- ⛔ **Seat B is benched on seat A's work** — `check_in.rs` raises one question a day about
+  beliefs and no slate case resembles it. Its pick is the best answer available, not a measurement.
+- ⛔ **Seat E is NOT decided** — one read verb of five, two record types of six.
+- ✅ **Belief option 2 is role B's long-term shape** (user) — repeated independent evidence.
+  ⛔ Needs a per-role turn budget and a second scheduled question first.
+- ⛔ **Rank C1 with `c1-compare.py`, never the summary line** (R25); `OMNI_BENCH_SAMPLE`
+  **redraws**. C2 needs no comparator (R24); C3 needs `c3-compare.py` (R17).
 - ⛔ **Closed:** catalogue retrieval · blob store · archive page · `imap_real.rs` · Phases D–G ·
-  finance propose · role wiring · 413 hazard · enrichment · C2/C3 build. New product work
-  (R17–R22) is in `tasks.md`; reasoning in `MODEL_BENCH.md`.
-
-## 🔴 Traps
-⛔ **Every cargo invocation in a systemd unit**: `MemoryMax=4G`, `JOBS=1`, `DEV_DEBUG=0`. Disk 5.9G
-(4G aborts). ⚠️ **`source scripts/fetch-onnxruntime.sh`** or the agent will not link. ⚠️ Verify a
-bench picked up its corpus by reading its **`plan:`** line — that would have caught a retry that
-silently used the default corpus. ⚠️ `pkill -f` matches paths in your own command line.
+  finance propose · 413 hazard · enrichment · **model selection**.
+- 🔴 ⛔ **Every cargo invocation in a systemd unit**: `MemoryMax=4G`, `JOBS=1`, `DEV_DEBUG=0`.
+  Disk 5.8G. ⚠️ `source scripts/fetch-onnxruntime.sh` or it will not link.

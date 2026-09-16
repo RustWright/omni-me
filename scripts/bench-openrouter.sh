@@ -151,7 +151,25 @@ export OMNI_AGENT_LLM_API_KEY="$OPENROUTER_KEY"
 # refuses to route to an endpoint that lacks a parameter we sent, so a provider
 # that would treat `response_format` as a hint becomes a routing ERROR instead of
 # a clean-looking scorecard measuring nothing.
-default_extra_body="{\"provider\":{\"only\":[\"$pin\"],\"allow_fallbacks\":false,\"zdr\":true,\"data_collection\":\"deny\",\"require_parameters\":true}}"
+#
+# ⚠️ **`temperature` is set here because nothing else in the codebase sets it**
+# (R26). Left unsent, every request samples at whatever the provider defaults to,
+# and the same model scored 33% with 13 sign-flips on one run of a statement and
+# 100% with none on the next. A bench that cannot reproduce itself cannot rank
+# anything. ⛔ This does not change production, which still sends no temperature
+# — that is a separate, deliberate decision, filed in `tasks.md`.
+#
+# ⚠️ Folded into the DEFAULT rather than exported separately, because
+# `OMNI_AGENT_LLM_EXTRA_BODY` replaces this whole object rather than merging into
+# it. Setting temperature through that variable would silently drop the pin,
+# `zdr`, `data_collection` and `require_parameters` along with it.
+#
+# ⛔ No `seed`. `require_parameters` refuses to route to an endpoint lacking a
+# parameter we send, so an unsupported `seed` would turn into a routing failure
+# on some rows and quietly shrink the slate. Temperature is universally served;
+# seed is not, and is not worth that risk for the determinism it adds on top.
+bench_temperature="${OMNI_BENCH_TEMPERATURE:-0}"
+default_extra_body="{\"provider\":{\"only\":[\"$pin\"],\"allow_fallbacks\":false,\"zdr\":true,\"data_collection\":\"deny\",\"require_parameters\":true},\"temperature\":$bench_temperature}"
 export OMNI_AGENT_LLM_EXTRA_BODY="${OMNI_AGENT_LLM_EXTRA_BODY:-$default_extra_body}"
 # Spacing only stops us *causing* a 429. The one seen live came from the pinned
 # upstream's shared pool being overloaded by other traffic, which no interval can
