@@ -300,11 +300,7 @@ impl VisionEndpoint {
 /// builders used to resolve `LlmRole::Extractor` and pass `consumer` only to the
 /// log line, so one `[llm.extractor]` table silently served three seats that
 /// measured out to different models.
-fn vision_endpoint(
-    creds: &Credentials,
-    role: LlmRole,
-    consumer: &str,
-) -> Option<VisionEndpoint> {
+fn vision_endpoint(creds: &Credentials, role: LlmRole, consumer: &str) -> Option<VisionEndpoint> {
     // Named for the log so a missing table points at the one to write, rather
     // than at whichever role-C seat happened to ask first.
     let table = match role {
@@ -322,7 +318,10 @@ fn vision_endpoint(
         return None;
     };
     let (Some(base_url), Some(model)) = (cfg.base_url.as_deref(), cfg.model.as_deref()) else {
-        tracing::warn!(consumer, "{table} vision = true but base_url or model is missing");
+        tracing::warn!(
+            consumer,
+            "{table} vision = true but base_url or model is missing"
+        );
         return None;
     };
     if base_url.is_empty() || model.is_empty() {
