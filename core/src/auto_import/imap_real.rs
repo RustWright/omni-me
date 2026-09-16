@@ -27,6 +27,17 @@ use super::imap::{FetchCursor, ImapFetcher, ImapMessage};
 /// successive ticks rather than being skipped.
 const MAX_UIDS_PER_TICK: usize = 200;
 
+/// What one message body fetch asks for.
+///
+/// ⚠️ **`BODY.PEEK[]`, never `RFC822` or a bare `BODY[]`.** Those two implicitly
+/// set `\Seen` on the server, so a background poll would mark the user's own mail
+/// read in their email client. PEEK returns the same bytes without touching flags.
+///
+/// `Fetch::body()` accepts either shape — it matches `BodySection { section: None }`
+/// as well as `Rfc822` — so the response side does not care, which is exactly why
+/// a regression here would import mail correctly and be invisible.
+const BODY_QUERY: &str = "(UID INTERNALDATE BODY.PEEK[])";
+
 /// Largest single message body accepted. Anything above this is skipped
 /// (and stepped over) rather than buffered.
 const MAX_MESSAGE_BYTES: usize = 25 * 1024 * 1024;
@@ -171,7 +182,7 @@ async fn fetch(
 
     {
         let mut fetches = session
-            .uid_fetch(&body_range, "(UID INTERNALDATE RFC822)")
+            .uid_fetch(&body_range, BODY_QUERY)
             .await
             .map_err(|e| ImportError::Upstream(format!("uid_fetch: {e}")))?;
 
@@ -271,6 +282,24 @@ mod tests {
         assert!(
             tls_config().is_ok(),
             "rustls could not build a client config — provider selection regressed"
+        );
+    }
+
+    /// The poll must not mark the user's mail read.
+    ///
+    /// ⛔ Do not delete as "trivial". `RFC822` and `BODY[]` implicitly set `\Seen`;
+    /// `BODY.PEEK[]` does not. A regression imports mail perfectly and shows up
+    /// only as the user's inbox quietly going read behind them, which no other
+    /// test in this suite would catch.
+    #[test]
+    fn the_body_fetch_peeks_and_never_sets_seen() {
+        assert!(
+            BODY_QUERY.contains("BODY.PEEK["),
+            "body fetch must PEEK, got: {BODY_QUERY}"
+        );
+        assert!(
+            !BODY_QUERY.contains("RFC822"),
+            "RFC822 implicitly sets \\Seen, got: {BODY_QUERY}"
         );
     }
 

@@ -1002,6 +1002,55 @@ catalogue, and nothing connects them but the comment at each end. Keep both.
 
 ---
 
+## ▶ DEFINITION OF READY — what "finances tab back on" actually requires
+
+**Written 2026-09-16 at the user's insistence**, before testing starts: *"make sure we have a
+holistic view of what the app being ready actually means, so we don't get to the end of testing
+and realize there are still a lot of missing pieces."* ⛔ This is the finish line. Test against
+it, not against a feature list.
+
+🔴 **The ordering consequence, and it reverses an earlier plan.** I had documents scheduled LAST
+on the grounds that the dev archive is empty. That is wrong: **receipt capture and email receipt
+ingestion are both document paths, and finance readiness depends on them.** Documents are on the
+critical path, not the tail.
+
+### The chain, in dependency order
+
+1. **Ledger catch-up.** Real transactions are behind. Either incremental import or — the user
+   floated it as possibly cleaner — a **full finances wipe and re-import**. ⚠️ Decide which
+   BEFORE importing anything, because a half-caught-up ledger is worse than an empty one.
+   ⛔ Both bank sources are currently OFF and categorization is deferred to `Unmatched`.
+2. **Email receipt ingestion via IMAP.** 🔴 **This conflicts with the dev isolation as built.**
+   Dev credentials deliberately carry no `[imap.*]` sections, because a poller there would read
+   the real mailboxes and **mark real messages processed** — production pollution by side
+   effect, even though the rows land in a clone. ⛔ Resolve before testing this leg. Options,
+   none chosen: a dedicated test mailbox · a separate label the real flow ignores · replaying
+   saved `.eml` files instead of live polling · accepting the side effect knowingly.
+3. **Image capture of receipts** — the photograph path into the archive, then C1 extraction.
+   ⚠️ Never exercised on the box: the blob store is **empty, zero entries**.
+4. **The archive itself** — scan, store, retrieve. Built this cycle, never run on real data.
+5. **Finance propose actions** — BUILT 2026-09-13, never exercised on hardware.
+6. **The tab goes on.** ⛔ Nothing turns on without the user saying so.
+
+### Open questions this surfaces, none of them answered
+
+- ⚠️ **Storage capacity.** The user named this himself on 2026-09-11 — unsure the box is large
+  enough long term, and asked that the archive be planned with it in mind *rather than
+  discovered later*. Measured 2026-09-16: DB 71 MB, **blobs 0 bytes**, 29 G free. ⛔ That number
+  means nothing yet: blobs are empty precisely because no document has ever been archived. The
+  real figure appears the moment ingestion starts, which is the moment it is too late to plan.
+- ⚠️ **Inbox management after extraction** — how processed emails are handled and stored. Named
+  as open 2026-09-11 and not obviously closed since.
+- ⚠️ **Reviewing the archive of emails** — same origin, same status.
+
+### What is already built and merely unproven on hardware
+
+Document archive + blob store + catalogue retrieval · `imap_real.rs` (crate swap done) ·
+finance propose actions · role-C model seats (chosen 2026-09-16) · the enrichment pass.
+⛔ "Built and unit-tested" is the state of **everything** here; none of it has run on a device.
+
+---
+
 ## Awaiting on-device confirmation
 
 **Open, from Phases D–G and 2026-09-11** — all unit-tested, none exercised on hardware. Moved
@@ -1540,6 +1589,26 @@ the extractor has.
 - [ ] ⚠️ **Probe vision parity per role.** R1's confirmation covered text and latency only.
 - [ ] **Deciding run goes direct.** ⛔ A seat whose instrument saturated is published
       **unmeasured** — fix the instrument, re-run; never break the tie by preference.
+
+### Stage 4 — dev sync server · ✅ BUILT 2026-09-16
+
+**Live, untouched:** port 3000 · project `omni-deploy` · volume `omni-deploy_omni_data` ·
+`/etc/omni-me/credentials.toml` · image `sha-9a0b1dd`, up 9+ days. Its `/health` carries **no**
+`instance` field, because the stamping server was never deployed there.
+
+**Dev:** port 3001 · project `omni-dev` · volume `omni-dev_omni_data` (clone of live, 71 MB) ·
+`/etc/omni-me/credentials-dev.toml` · image `dev-<priv>-<pub>` built by `build-dev-image.yml`.
+`/health` → `{"instance":"dev","status":"ok"}`. Compose lives at `~/omni-dev/` on the box.
+
+- Cloned via the project's own `snapshot.sh` (read-only against live), restored into a volume
+  **named explicitly**. 🔴 Never use the box's `restore-snapshot.sh` — the old unguarded copy
+  resolves its target from the running container, i.e. LIVE.
+- `ws-session.json` (real bank session) deleted from the clone. Dev credentials carry **no**
+  IMAP/bank sections so auto-import cannot poll real mailboxes. Fresh `auth_token`, not live's.
+- **Dev phone** `SM-G960W`: wireless adb over the **tailnet**, screen timeout 30 min.
+  ⚠️ `adb` is at `~/android-sdk/platform-tools/adb`, NOT on `PATH`.
+- APK: `build-dev-apk.yml` → `~/omni-dev/apk/` on the box, installed by `adb install`.
+  ⛔ Never `/var/omni-updates` — that is the LIVE OTA store.
 
 ### Stage 4 — dev sync server on the box
 - [x] ✅ **Memory sizing settled** (user, 2026-09-16) — the box has been sized for the clone.
