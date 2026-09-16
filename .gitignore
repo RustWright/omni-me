@@ -52,3 +52,5 @@ secrets/*
 # source artifact, and the seeded corpus is throwaway. (`runs/`, the scorecards,
 # is already covered above.)
 hub/
+.c3-sample/
+.c3-retry/

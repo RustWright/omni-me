@@ -298,13 +298,22 @@ struct Score {
     /// Counted apart from `correct` so a content regression cannot be misread
     /// as a routing regression.
     content_miss: usize,
-    /// One entry per case: the wall time of the whole multi-turn request.
+    /// Wall time of each **successful** multi-turn request.
     ///
     /// **The request, not the call**, because the interactive role's budget is
     /// how long a person waits for an answer, and that is every turn plus the
     /// verb executions between them. A per-call median would flatter a model
     /// that answers fast but needs six turns to get there.
+    ///
+    /// Successful only, because seat A's gate reads this and an errored case is
+    /// already counted against the model in the score.
     latencies: Vec<Duration>,
+    /// Wall time of each failed request, kept apart and reported apart.
+    ///
+    /// Not merged into the gate and not discarded either: these are where a
+    /// transport problem shows itself, and a run whose failures all sit at one
+    /// suspicious duration is saying something the error count alone does not.
+    failed_latencies: Vec<Duration>,
     /// Summed across every case. Reasoning tokens are inside this and reported
     /// apart, because they are billed and rate-limited as output and were ~95%
     /// of it on the Phase 0 baseline.
@@ -320,21 +329,33 @@ impl Score {
         100.0 * self.correct as f64 / self.total as f64
     }
 
-    /// Median and worst case, in seconds.
+    /// Median and worst case of the successful requests, in seconds.
     ///
-    /// **Not a p90.** Ten cases cannot resolve one — nearest-rank would land on
-    /// the second-slowest run and dress it as a percentile. The worst case is
-    /// the same information without the false precision, and it is the number
-    /// that decides whether a model is tolerable on a bad day.
+    /// **Still not a p95, and the threshold file now says so too.** At this case
+    /// count nearest-rank p95 *is* the maximum — `ceil(0.95 × 14) = 14` — so a
+    /// "p95" column would be the worst case wearing a percentile's name, and
+    /// computing it as the second-slowest (which is what reading the logs by
+    /// hand produced) is the false precision this comment has always warned
+    /// about. Distinguishing the two needs n ≥ 20 and means little below ~40.
     fn latency_secs(&self) -> Option<(f64, f64)> {
-        if self.latencies.is_empty() {
+        Self::median_worst(&self.latencies)
+    }
+
+    /// Same statistics over the failed requests, or `None` if none failed.
+    fn failed_latency_secs(&self) -> Option<(f64, f64)> {
+        Self::median_worst(&self.failed_latencies)
+    }
+
+    fn median_worst(v: &[Duration]) -> Option<(f64, f64)> {
+        if v.is_empty() {
             return None;
         }
-        let mut sorted = self.latencies.clone();
+        let mut sorted = v.to_vec();
         sorted.sort();
-        let median = sorted[sorted.len() / 2].as_secs_f64();
-        let worst = sorted[sorted.len() - 1].as_secs_f64();
-        Some((median, worst))
+        Some((
+            sorted[sorted.len() / 2].as_secs_f64(),
+            sorted[sorted.len() - 1].as_secs_f64(),
+        ))
     }
 
     fn report_cost(&self) {
@@ -345,7 +366,22 @@ impl Score {
             );
         }
         if let Some((median, worst)) = self.latency_secs() {
-            println!("  latency  median {median:.1}s   worst {worst:.1}s");
+            println!(
+                "  latency  median {median:.1}s   worst {worst:.1}s   \
+                 (successful requests, {} of {})",
+                self.latencies.len(),
+                self.total,
+            );
+        }
+        // Printed next to it rather than folded in, so a transport problem is
+        // legible as one: failures clustered at a single duration are a timeout
+        // somewhere, and that reads very differently from failures spread out.
+        if let Some((median, worst)) = self.failed_latency_secs() {
+            println!(
+                "  failed   median {median:.1}s   worst {worst:.1}s   \
+                 ({} case(s) — NOT in the gate above)",
+                self.failed_latencies.len(),
+            );
         }
         // Tokens, never dollars. Prices move, and a rate table compiled into
         // this binary would go stale silently — a wrong number that still looks
@@ -543,6 +579,7 @@ async fn run_variant(
         off_schema: 0,
         content_miss: 0,
         latencies: Vec::with_capacity(CASES.len()),
+        failed_latencies: Vec::new(),
         usage: Usage::default(),
         turns: 0,
     };
@@ -560,10 +597,15 @@ async fn run_variant(
             score.errors += 1;
         }
         score.off_schema += outcome.off_schema;
-        // A failed case still spent time and tokens getting there, so it is
-        // counted: the cost of a model is what it actually bills, not what it
-        // bills on the runs that worked.
-        score.latencies.push(outcome.elapsed);
+        // Tokens count either way: a failed case still billed for what it spent
+        // getting there. Latency splits, because the two answer different
+        // questions and the failures are the slow tail — mixing them made the
+        // reported worst case a measurement of the transport (`docs` R14).
+        if failed {
+            score.failed_latencies.push(outcome.elapsed);
+        } else {
+            score.latencies.push(outcome.elapsed);
+        }
         score.usage += outcome.usage;
         score.turns += outcome.trace.len();
 
@@ -635,9 +677,36 @@ mod tests {
                 .iter()
                 .map(|ms| Duration::from_millis(*ms))
                 .collect(),
+            failed_latencies: Vec::new(),
             usage: Usage::default(),
             turns: 0,
         }
+    }
+
+    #[test]
+    fn a_failed_case_never_reaches_the_latency_gate() {
+        // R14: failures are the slow tail, so mixing them in made the reported
+        // worst case a measurement of the transport rather than the model.
+        let mut s = score_with(&[1_000, 2_000, 3_000]);
+        s.failed_latencies = vec![Duration::from_millis(60_000)];
+        assert_eq!(
+            s.latency_secs(),
+            Some((2.0, 3.0)),
+            "the 60s failure must not become the worst case"
+        );
+        assert_eq!(s.failed_latency_secs(), Some((60.0, 60.0)));
+    }
+
+    #[test]
+    fn failed_latencies_are_reported_rather_than_dropped() {
+        // Kept apart, not discarded: failures clustered at one duration are a
+        // timeout somewhere, which the error count alone cannot show.
+        let s = score_with(&[1_000]);
+        assert_eq!(
+            s.failed_latency_secs(),
+            None,
+            "none failed, so nothing to say"
+        );
     }
 
     #[test]

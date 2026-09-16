@@ -147,22 +147,25 @@ fn score(case: &Case, transcribed: &str, pages: usize, latency: Duration) -> Sco
 
 /// A stable, non-identifying label for a document.
 ///
-/// ⛔ Never the path: the directories are named after institutions, and this
-/// output is pasted into a public file.
+/// FNV-1a over the file stem, four hex digits — the same construction
+/// `extraction_bench::tag` uses, so the two scorecards are read the same way.
+/// Deterministic, so two runs of one corpus stay comparable.
+///
+/// Dropping the directory is not enough on its own. An earlier version of this
+/// kept the digits of the file name, which are the statement's own date: it
+/// printed `doc-20190630`, a real date out of the user's financial records,
+/// into output whose whole purpose is to be pasted somewhere public.
 fn tag_for(path: &Path) -> String {
-    let n = path
+    let name = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let digits: String = n.chars().filter(char::is_ascii_digit).collect();
-    format!(
-        "doc-{}",
-        if digits.is_empty() {
-            "x".into()
-        } else {
-            digits
-        }
-    )
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    format!("doc-{:04x}", hash & 0xffff)
 }
 
 async fn run_one(transcriber: &dyn DocumentTranscriber, case: &Case) -> Scored {
@@ -321,6 +324,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_tag_hides_the_statement_date_it_is_built_from() {
+        let first = tag_for(Path::new(
+            "/corpus/globepay_chequing/2019-06/2019-06-30.pdf",
+        ));
+        assert_eq!(
+            first,
+            tag_for(Path::new(
+                "/corpus/globepay_chequing/2019-06/2019-06-30.pdf"
+            )),
+            "must be stable across runs or two scorecards cannot be compared"
+        );
+        assert_ne!(
+            first,
+            tag_for(Path::new(
+                "/corpus/globepay_chequing/2026-04/2026-04-30.pdf"
+            ))
+        );
+        // The regression this guards: a tag built from the file name's digits
+        // printed the statement's own date into public output.
+        assert!(!first.contains("2019"));
+        assert!(!first.contains("0630"));
+        assert!(!first.contains("globepay"));
+        assert_eq!(first.len(), "doc-".len() + 4);
+
+        // The directory half of the same claim. The test this replaces checked
+        // only this, and asserted the digits survived — so the institution name
+        // was guarded while the statement date sat next to it, unexamined.
+        let t = tag_for(Path::new(
+            "/home/x/BigBank Personal/2024/03/statement-8821.pdf",
+        ));
+        assert!(!t.contains("BigBank"));
+        assert!(!t.contains("8821"));
+    }
+
+    #[test]
     fn words_ignores_punctuation_and_case_but_not_digits() {
         let got = words("Invoice, NW-88213: total 142.65");
         assert!(got.contains("invoice"));
@@ -366,16 +404,5 @@ mod tests {
         assert_eq!(s.figures_found, 0);
         assert_eq!(s.figures_invented, 0);
         assert!(s.error.is_none());
-    }
-
-    #[test]
-    fn the_tag_never_carries_a_directory_name() {
-        // ⛔ The corpus directories are named after institutions and this output
-        // gets pasted into a public file.
-        let t = tag_for(Path::new(
-            "/home/x/BigBank Personal/2024/03/statement-8821.pdf",
-        ));
-        assert_eq!(t, "doc-8821");
-        assert!(!t.contains("BigBank"));
     }
 }

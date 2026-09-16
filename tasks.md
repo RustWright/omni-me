@@ -1538,7 +1538,45 @@ the extractor has.
       the Settings Int stepper (native styling is not Playwright-verifiable).
 
 ### Stage 6 — real-data validation of the new features
-- [ ] **Archive + finance import against the real corpus** — 276 CSVs, 765 PDFs.
+- [ ] **Archive + finance import against the real corpus** — 276 CSVs, 765 PDFs. 🔴 **Expect 140
+      of those PDFs (18.3%) to yield nothing**, measured 2026-09-15 — they are **encrypted**, and
+      `archive.rs:183` passes an empty password. Two issuers encrypt 100% of their statements, a
+      third 13%, the other 21 none. ⛔ Do not read the resulting empty rows as a parser bug.
+- [ ] **Make `fields` non-optional for the document reader** (`MODEL_BENCH.md` R21). 🔴 Six of
+      seven models return an empty array: `document_schema` does not require it and the prompt
+      frames it as discretionary, then spends four clauses on what not to put there. ⛔ Without
+      `fields` a document is catalogued but not findable by account or policy number, which is
+      the point of the reader. ⚠️ Fix as its own change and re-run the whole C2 slate after —
+      patching mid-selection makes the next run a measurement of the patch.
+- [ ] **Give role C the resilience the chat client already has** (`MODEL_BENCH.md` R22).
+      🔴 `extraction/openai_compat.rs` has **no 429 retry, no backoff, no request spacing** — a
+      single "Model busy" loses the document. The logic exists in `llm/openai_compat.rs`
+      (`MAX_RATE_LIMIT_RETRIES = 3`, honours `Retry-After`) and was never shared across. ⚠️ Fix
+      with R20's `max_tokens` — same file, same path, three gaps that compound.
+- [ ] **Set a per-question `max_tokens` on role-C requests** (`MODEL_BENCH.md` R20). 🔴 There is
+      none today, so a model that does not terminate runs to the **300s vision timeout**, returns
+      nothing, and still bills for every token — two models did this on *short text* probes.
+      ⛔ Not one constant: C2's envelope wants ~2k, C3 transcribes a whole document and a tight
+      ceiling would truncate a real answer and score it as recall failure. ⚠️ Change it between
+      slates, never during one.
+- [ ] **Decide what re-queues a document a model already called blank** (`MODEL_BENCH.md` R19).
+      🔴 Proven, not hypothetical: `Qwen3-VL-235B` returned an **empty transcription for a
+      441-word document** in 31s without erroring. `enrich_text_once` appends it by design (the
+      starvation guard), which lifts `text_source` off `none` and retires the document forever.
+      ⚠️ Recovery already works via `TextSource::rank`'s `>=`; **nothing notices**. ⛔ Design
+      question first — a blank photo and a failed read produce the same empty string, and the
+      text-layer check cannot help because transcription only runs when that layer is empty.
+- [ ] **Give the archive path a per-source PDF password** (`MODEL_BENCH.md` R18). `statements.rs`
+      already supplies one and `pdf::extract_layout_text` already takes one; `archive.rs` and
+      `openai_compat.rs` pass `""`, and `rasterize_pdf` accepts none at all — so the vision
+      fallback cannot open these either. ⚠️ Design question first: where a bulk-ingest path is
+      supposed to *get* a password, since `pdf.rs`'s header deliberately leaves that to the caller.
+- [ ] **Split a document across requests when it exceeds the endpoint's image cap**
+      (`MODEL_BENCH.md` R17). ⚠️ **Downgraded from urgent on the full slate**: only **3 of 14**
+      models cap at 4 images, so preferring an uncapped one avoids it by selection. Still worth
+      doing eventually — **36.5% of readable corpus PDFs are over 4 pages** (counts cluster at
+      3–6, mid-distribution), a future endpoint may cap, and our own `MAX_DOCUMENT_PARTS = 8`
+      refuses the 2.6% over eight pages regardless. ⛔ Not a config bump either way.
 - [ ] **The badge/approval work from Phase 5**, which mock could not exercise: a **cleared**
       document queue (its mock count is a constant), and confirming no **local** path creates an
       unverified document without a `bump_sync_epoch`.

@@ -94,6 +94,211 @@ record, and an invented record contains none of those phrases.
 
 ## Part 2 — Results by role
 
+### Roles A and B — screening slate re-run 2026-09-15 · ⛔ **NOTHING DECIDED**
+
+Nine rows, de-saturated instrument (levers 1 and 2), `runs/20260915-123549-ab/`.
+
+🔴 **VOID AS EVIDENCE ABOUT MODELS — the connection failed during this run** (R13: a 94-minute
+blackout mid-slate, and 19 of 21 network failures in the 38 minutes before it). Errored cases score
+as incorrect, so **every row below is depressed by an unknown amount that belongs to the house**,
+and the amount differs per row because the outage caught each model at a different point. ⛔ Nothing
+here may seat anyone or be quoted as a model property. The table stays because it proved the
+harness end to end and because R15's latency comparison survives it.
+
+| Model @ pin | Free-form | Constrained | median ok | 2nd-worst ok | printed worst | err |
+|---|---|---|---|---|---|---|
+| `deepseek-v4-flash` @ fp8 | **12/14 (86%)** | 10/14 | **5.1s** | **9.3s** | 65.4s | 14% |
+| `glm-5.3` @ fp4 | **12/14 (86%)** | 8/14 | 17.9s ✗ | 40.6s ✗ | 77.0s | 17% |
+| `gpt-oss-120b` @ turbo *(incumbent)* | 11/14 (79%) | 11/14 | 6.3s | 18.8s | 41.9s | 10% |
+| `qwen3.6-35b-a3b` @ fp8 | 11/14 (79%) | 10/14 | 10.5s | 15.5s | 47.9s | 17% |
+| `gpt-oss-120b` @ bf16 | 10/14 (71%) | 11/14 | 9.2s | 16.9s | 32.8s | 7% |
+| `qwen3.5-397b-a17b` @ fp8 | 5/14 (36%) † | 9/14 | 18.5s ✗ | 33.7s ✗ | 59.4s | 50% |
+| `llama-4-scout` @ fp8 | — ‡ | 5/14 | 6.3s | 19.8s | 33.7s | 14% |
+| `deepseek-v4-pro` @ fp8 | 3/14 (21%) † | 5/14 | 5.6s | 14.5s | 43.4s | **67%** |
+| `llama-4-maverick` @ base | — ‡ | 1/14 (7%) † | 1.5s | 1.5s | 2.4s | **78%** |
+
+† score describes the **tier**, not the weights — R13: 18 rate-limits on `v4-pro`, 12 on
+`qwen3.5-397b`, 11 HTTP 405s on Maverick. ‡ endpoint offers no `tools`, so no free-form arm.
+✗ fails seat A's pre-registered gate (p50 ≤ 15s, p95 ≤ 30s) on the successful-request reading.
+
+⚠️ **Two latency readings on purpose**, per R14: the `ok` columns are successful requests only,
+`printed worst` is what the scorecard printed and includes the failures that make up the slow
+tail. They disagree by up to 4×. ⛔ **The second column was labelled "p95" and was not one** — at
+14 cases nearest-rank p95 *is* the maximum, so what was actually computed is the second-slowest
+successful run. Renamed rather than recomputed; `bench.rs` now prints median and worst over
+successful requests and reports failed-request latency separately.
+
+**What is worth carrying into the direct run, as leads and not conclusions:**
+
+- **`deepseek-v4-flash` leads on every readable key** — joint-best free-form, best p50 and p95 of
+  any row, and it is the cheap candidate the seat-A ceiling was widened to protect. ⛔ It has not
+  won anything; its 14% error rate still depresses it and the tie is with `glm-5.3`.
+- **`glm-5.3` matches it on score and fails the latency gate** on both keys. A model can be
+  accurate and still be wrong for a seat, which is what a hard gate is for.
+- **`qwen3.6-35b-a3b` measured 11.1s against 37.3s a week ago**, which brings it inside the gate.
+  ⛔ Do **not** read that as the endpoint improving — see R15: latency moved in *both* directions
+  across this slate and is not a stable property. ⚠️ `reference-llm-quality-spike-location`
+  excludes Qwen as "what Hetzner serves free"; that was about the Hetzner control, not this
+  endpoint.
+- **The incumbent did not lead anything.** It is mid-table on score and second on latency, and
+  it is **2.1× slower than the 3.5s it was seated on** (R15).
+
+### R17 · Per-endpoint image caps are below ours, and they bias the C3 ranking — **2026-09-15**
+
+`inclusionAI/Ling-3.0-flash-VL` refused the 6-page document outright:
+
+> `HTTP 400 Bad Request: Too many images in request: 6 > 4`
+
+⛔ **`MAX_DOCUMENT_PARTS = 8`, and this endpoint allows 4.** Our cap was derived from
+`media::MAX_RASTER_PAGES` and the request-size budget — not from any endpoint's stated limit,
+because none is published. So the ceiling is **per endpoint**, unknown until a 400 says so, and a
+statement over that endpoint's page count cannot be read *at all*. ⚠️ This is a product finding,
+not a bench one: whichever model wins C3, its page cap becomes a hard limit on which documents the
+archive can transcribe, and the failure arrives as a 400 rather than a partial answer.
+
+⚠️ **CORRECTED on the full slate.** An earlier version of this entry said *"three of the first five
+models hit a 4-image cap — treat 4 as the norm"*. ⛔ Over the full 14 it is **3 of 14** — `Ling`,
+`Mistral`, `Qwen3.5-9B` (two spellings, *"Too many images in request: 6 > 4"* and *"At most 4
+image(s)"*). **Eleven of fourteen sent six images without complaint.** 🔴 Third instance this session
+of generalising a rate from the first few rows of a sweep; the rule is to wait for the denominator.
+
+✅ **So the cap is a per-model property, not a platform one — which makes it selectable.** The
+corpus numbers below still stand, but they describe the cost of choosing a *capped* model, not an
+unavoidable ceiling.
+
+**Measured against the real corpus** (765 PDFs, `pdfinfo`, 2026-09-15):
+
+| | count | share of readable |
+|---|---|---|
+| readable | 625 | — |
+| **over 4 pages** — blocked by the endpoint cap | **228** | **36.5%** |
+| over 8 pages — blocked by our own `MAX_DOCUMENT_PARTS` | 16 | 2.6% |
+
+⛔ **For a capped model the constraint is theirs, not ours, and it blocks over a third of the
+archive.** Page counts cluster hard at 3–6 (128 · 137 · 98 · 74), so a 4-image cap lands in the
+middle of the distribution rather than out in a tail — which is why it cost the top-ranked model a
+document here rather than an edge case.
+
+✅ **The cheap fix is selection, not engineering:** prefer an uncapped model and 36.5% of the
+archive stops being a problem. ⚠️ Splitting a document across requests remains the general answer —
+nothing stops a *future* endpoint capping at 4, and our own `MAX_DOCUMENT_PARTS = 8` still refuses
+the 2.6% over eight pages — but it is no longer urgent, and no C3 path does it today.
+
+### R18 · 18% of the corpus is encrypted, and only the statements route can open it — **2026-09-15**
+
+140 of 765 PDFs (**18.3%**) return `Incorrect password` — encrypted, not corrupt. ⚠️ **It is
+institutional practice, not a general property:** two issuers encrypt **100%** of their statements
+(84 and 52 files), a third encrypts 13%, and the remaining 21 never do.
+
+`pdf::extract_layout_text` takes a password and `statements.rs` supplies a real one. ⛔ **Every
+other caller passes `""`** — `archive.rs:183` and `openai_compat.rs:177` — and `rasterize_pdf`
+takes no password **at all**, so the vision fallback cannot open one either. An encrypted statement
+that arrives through archive ingest therefore yields no text, no fields, and no transcription.
+
+⚠️ **This bounds what C3 can ever be measured on**, which is why it is recorded here — but the gap
+itself is an **ingest** capability, not a model-selection one. It is exactly the shape `pdf.rs`'s
+own header anticipates (*"this takes a password"*, the caller supplies it); the archive path simply
+never had one to give. Filed as work, not fixed here.
+
+**The ranking consequence is worse, and it is the C3 twin of R13's withheld tax.** `rank_and_print`
+filters errored documents out of `scored` before summing, so the denominator is *only the documents
+that completed*. ⛔ **Nothing in a per-model scorecard can see this**, because each model runs in
+its own process and knows nothing of the others.
+
+⚠️ **The first two rows proved it, and the bias runs BOTH ways.** Each completed 5 of 6 — but not
+the same 5. Ling refused the 6-page document (`400`, image cap); `gemma-4-26B` timed out at 300s on
+a **2-page** one Ling read in 48s. Neither error set contains the other, so the common subset is 4.
+
+| | raw scorecard | on the common 4 |
+|---|---|---|
+| `Ling-3.0-flash-VL` | 0 invented · 186/187 · 1138/1150 | 0 invented · 159/160 · 955/966 |
+| `gemma-4-26B-A4B-it` | **10 invented** · 211/236 · 1458/1726 | **4 invented** · 148/160 · 900/966 |
+
+**Gemma's raw 10 over-penalised it**: six of those fabrications were on the document Ling never
+attempted. So refusing hard documents flatters a model *and* attempting them punishes it — the
+distortion has no consistent sign, which rules out reading the raw numbers with a mental correction.
+
+✅ **Fixed at the slate level, not in the bench:** `scripts/c3-compare.py` ranks on the intersection
+of documents every model completed, and prints a **coverage** table beside it, because a model that
+wins the subset by refusing everything hard has not won. ⚠️ The bench's own warning — *"1 document(s)
+errored and are scored by nothing"* — is necessary but not sufficient: it says a row is thin, never
+that two rows are thin *differently*.
+
+🔴 **The same defect is in C2's bench, found 2026-09-15 by checking the class rather than the
+instance.** `--bench-reading` computes recall over the probe runs that *completed*, so three
+timeouts on `gemma-4-26B` gave it a denominator of **21** against `Ling`'s **24** on the identical
+six probes. ⛔ A model that errors more gets an easier divisor, in a second instrument, for the same
+reason. ⚠️ C1's `--bench-extraction` is the third of the family and has not been checked yet —
+**check it before reading its numbers**, not after.
+
+### R16 · Seat A's gate names a statistic the instrument does not report — **2026-09-15**
+
+`MODEL_THRESHOLDS.md` gates seat A on **p50 ≤ 15s / p95 ≤ 30s**. `bench.rs` prints **median and
+worst**. Median is p50, so that half is fine; **p95 is never computed.** With 14 cases `worst` is
+the maximum, not the 95th percentile, and on a distribution this heavy-tailed (R15) those are very
+different numbers. The p95 column in Part 2 was computed by hand from the logs — reproducible only
+by doing that again, which is not an instrument.
+
+⛔ **Do not fix this while a slate is running.** `bench-c-slate.sh` and `bench-openrouter.sh` both
+go through `cargo run`, so an edit to `agent/` mid-sweep is picked up by the *next* model and the
+slate silently becomes two different instruments. `bench-openrouter.sh`'s header already records
+why it always rebuilds; this is the same hazard pointed the other way.
+
+**The fix, when the slate is idle:** report p95 beside median and worst, and report latency for
+**successful requests separately** (R14). The recommendation for which one the gate reads is
+*successful only*, and the reason is double-counting: an errored case **already** costs the model
+a point in the score, so letting it also inflate latency penalises one failure twice — and here it
+would attribute a gateway fault to the weights. ⚠️ Not yet confirmed by the user.
+
+### R15 · Latency week-over-week — ⛔ **RETRACTED 2026-09-15, same day. Confounded.**
+
+⚠️ **This entry claimed "endpoint latency is not stable week to week." It is not supported.** Every
+one of the nine models ran inside the window where the local connection was degrading (all nine
+finished by 17:22; the blackout began 17:26 — R13), so **every 09-15 latency figure below was taken
+over a failing link** and none of them measures an endpoint. A degraded link inflates successful
+requests too, through retransmits and slow starts, not only the ones that fail outright.
+
+⛔ **Two conclusions drawn from it are withdrawn**, and neither may be repeated until a clean run:
+the incumbent "now reads 7.4s against the 3.5s it was seated on", and "R1's 3.7× tier gap has
+collapsed to 1.4×". ⚠️ The 09-09 column is fine; it is today's that is worthless.
+
+**What made it look convincing was the wrong control.** The two `gpt-oss` tiers moving in opposite
+directions seemed to rule out any shared cause — but they ran in adjacent six-minute windows, and
+link degradation is **bursty**, so adjacent windows are not comparable either. A control has to be
+simultaneous to control for something bursty. ⛔ Noting that a signal "cannot be the instrument"
+does not establish what it *is*; that is the same error as R13's, made twice in one hour.
+
+✅ **The open question remains worth answering** — re-run on a link known to be up and compare
+against 09-09 then. The table is kept only so the re-run has something to diff against:
+
+| | 09-09 | 09-15 | |
+|---|---|---|---|
+| `qwen3.6-35b-a3b` @ fp8 | 37.3s | 11.1s | 3.4× **faster** |
+| `gpt-oss-120b` @ bf16 | 12.8s | 10.2s | 1.3× faster |
+| `deepseek-v4-flash` @ fp8 | 8.9s | 6.6s | 1.3× faster |
+| `gpt-oss-120b` @ turbo | 3.5s | 7.4s | 2.1× **slower** |
+| `llama-4-scout` @ fp8 | 4.1s | 8.8s | 2.1× slower |
+| `glm-5.3` @ fp4 | 10.4s | 19.8s | 1.9× slower |
+| `qwen3.5-397b-a17b` @ fp8 | 8.0s | 29.0s | 3.6× slower † |
+
+† 12 rate-limits; congestion, not speed. ‡ `v4-pro` and `maverick` unchanged.
+
+⛔ **Nothing is concluded from the 09-15 column.** Read it as "what a degraded link produced",
+which is why the per-model run windows are worth keeping beside it: `bf16` 16:35–16:41, `turbo`
+16:41–16:47, then the rest through 17:22, blackout 17:26–19:00.
+
+✅ **What survives, and it is a method point rather than a result.** `bench-slate.sh` keeps two
+slots for the same weights on different tiers precisely so "is this model slow, or is this endpoint
+slow" can be asked. ⚠️ Today showed the pair is **not** a sufficient control when the disturbance is
+bursty: the two tiers ran in adjacent windows, not simultaneously, so a burst that hit one and
+missed the other is indistinguishable from a real tier difference. ⛔ To control for a bursty
+disturbance the arms must be **interleaved**, not run back to back.
+
+⛔ **Consequence for seat A, which stands regardless.** A latency gate cannot be evaluated against
+another week's figures, and it cannot be evaluated against a degraded link's either. The deciding
+run must produce its **own** latency numbers, on a verified connection, **repeated** — a single
+median is one draw, and this run is a demonstration of how badly one draw can mislead.
+
 ### Role A — interactive reasoner · benched 2026-09-09 · **DECIDED 2026-09-10: `openai/gpt-oss-120b-Turbo`**
 
 ⛔ **Settled — `[llm] model` is pinned to the `-Turbo` id.** The assistant had been running the
@@ -433,6 +638,108 @@ Either the ~$3 was an estimate rather than a billed figure, or gateway pricing i
 the direct rate — and if it is the latter, that is itself a migration finding in DeepInfra's
 favour. **Check the OpenRouter billing page for the actual charge** rather than resolving it
 by arithmetic.
+
+⚠️ **Partial answer, 2026-09-15.** `GET /api/v1/key` reports lifetime `usage` — a **billed**
+figure, not an estimate — at **$4.81** immediately before this date's slate, covering every run
+since the Phase 0 spike. So the ~$3 was real money and the arithmetic is what is wrong. Not yet
+resolved, because lifetime usage cannot be attributed to one sweep; the same endpoint read
+before and after a single slate would settle it, and that read is now cheap to take.
+
+### R13 · Screening failures are THREE mechanisms, not one — **full slate, 2026-09-15**
+
+**65 of 224 cases failed.** ⚠️ **This entry was first written from the first three rows and said
+"the gateway drops ~8% of calls"** — a single-mechanism claim generalised from a sample where
+one mechanism happened to dominate. The full slate separates cleanly into three, and they have
+nothing to do with each other. ⛔ Never read a slate's error column as one number.
+
+| Mechanism | Count | Where | Signature | Cause |
+|---|---|---|---|---|
+| HTTP 405 | 11 | `llama-4-maverick` **only** | 11 refusals in **23 seconds**, 1–2s each | the endpoint answered — R9 |
+| Rate limit | 33 | `deepseek-v4-pro` (18), `qwen3.5-397b` (12) | tight cluster at **15–17s** | the endpoint answered — R7 |
+| Truncation / network | 21 | 7 of 9 models | **30–65s**, no reply | 🔴 **the local link** — see below |
+
+⚠️ **The first two are the endpoint speaking; only the third is silence.** A 405 and a 429 are
+*replies* — the far end was reachable and said no — which is what rules the link out for those two
+and rules it *in* for the third.
+
+**The third is the one that taxes every score, and 🔴 ITS CAUSE WAS THE LOCAL LINK, not the
+gateway.** ⚠️ **Corrected 2026-09-15, same day, on information from the user:** they had told me
+they *expected their internet to drop*, and the log confirms it — **a 94-minute silence across
+every model's activity, 17:26:16 → 18:59:59 UTC**, with no request of any kind in between. **19 of
+the 21** failures fall in the 38 minutes immediately before that blackout, spread across five
+models, which is what a link degrades like before it fails outright.
+
+⛔ **My first version of this entry named the gateway as the cause. That was a conclusion dressed
+over a gap.** What the evidence supported was only *"not our timeout"* — `http::LLM_TIMEOUT` is
+180s and `CONNECT_TIMEOUT` 10s, so a 32s abort cannot come from this client's clock. It does not
+follow that the far end dropped it: a client whose **network** disappears produces exactly these
+two spellings, `Network error: error sending request` and `Parse error: parse response JSON: error
+decoding response body` (a truncated body). ⚠️ **"Not our timeout" is not "their fault"** — the
+failure is symmetric from inside the process, and nothing in a client-side log can tell the two
+ends apart.
+
+✅ **Supporting evidence, though confounded.** The C3 slate ran after the connection recovered and
+logged **zero** network-shaped errors in 84 document requests — only 3 endpoint timeouts and 3
+image-cap refusals. ⚠️ Confounded because C3 also goes **direct** rather than through the gateway,
+so it varies two things at once; it is consistent with the link explanation without isolating it.
+
+⛔ **Consequence: the 9.4% is not a property of anything and must not be quoted as one.** Re-run
+the A/B slate on a connection known to be up, and only then ask whether a residual rate exists.
+
+**The other two are known entries reproducing, a week later.** R9's 405 is back on the same
+endpoint (11 now, 8 then) and still only ever Maverick. R7's congestion is back on
+`deepseek-v4-pro` — which is why its 3/14 free-form describes the tier and not the weights, the
+same trap that produced the phantom "−40 point constraint tax" in 2026-09-09.
+
+⚠️ **An errored case scores as incorrect**, so a model's score is depressed in proportion to its
+own error rate — which ranges from **7% to 78%** across this slate. The constraint tax is
+correctly withheld as NOT MEASURABLE on every affected row.
+
+⛔ **Consequence: this slate is void as a measurement of the third mechanism, and its scores are
+depressed by an amount attributable to the house.** ⚠️ Going direct changes the gateway *and* would
+be run on a different connection, so it cannot isolate anything either — the discriminating test is
+**re-running the same gateway slate on a link known to be up**, and comparing the error column
+**by mechanism** rather than by total.
+
+🔴 **The rest of the slate is not rescued by that.** Even setting the link aside, R15 says the
+latency figures describe one day, and 33 rate-limits sit on two rows. ⛔ Treat the whole
+2026-09-15 A/B run as a **rehearsal that proved the harness**, not as evidence about models.
+
+### R14 · The reported `worst` latency is made of failures — **instrument, 2026-09-15**
+
+`bench.rs` pushes every case's elapsed time into the latency set including the failed ones, and
+says why: *"a failed case still spent time and tokens getting there"*. That is right for **cost**
+and wrong for a **latency gate**, because the failures are precisely the slow tail — so the
+printed `worst` measures the gateway's timeout rather than the model's speed.
+
+The gap is large enough to change a gate's answer. `deepseek-v4-flash` printed `worst 65.4s`; its
+slowest *successful* request was **16.5s**. Seat A's gate is p50 ≤ 15s / p95 ≤ 30s, and on the
+printed figures almost every candidate fails p95 — on successful requests, most pass comfortably.
+
+⚠️ **The pre-registration does not say whether a failed case counts toward the latency gate**,
+and that ambiguity is mine. It is moot for the decision — the deciding run goes direct, where
+these failures should not exist — but ⛔ if they do appear direct, decide the question **before**
+looking at which model it favours.
+
+### R12 · Role C cannot be pinned, spaced, or gatewayed — **verified 2026-09-15**
+
+`build_extractor`, `build_reader` and `build_transcriber` take only `&Credentials`. They never
+receive `ClientOptions`, so **both** of that struct's fields are unreachable from role C:
+
+- **`extra_body`** — so a role-C run through OpenRouter carries no `provider.only` pin, and an
+  unpinned gateway request routes to any upstream at any quantization. The C slate therefore
+  runs **direct**, which is forced rather than preferred. This is R6's sibling: the pre-flight
+  guard does not port to direct, and the pin does not port to role C.
+- **`min_interval`** — so no request spacing reaches role C at all. On a rate-capped endpoint
+  the 429s land in the scorecard as the model failing, which is R7's inversion arriving through
+  a path that has no workaround available. ⚠️ Read a 429-heavy C scorecard as a fact about the
+  tier, not the weights.
+
+⛔ **`OMNI_AGENT_LLM_MODEL` cannot drive a role-C bench**, and the failure is silent. Setting any
+of `OMNI_AGENT_LLM_{BASE_URL,MODEL,API_KEY}` trips the override branch in `agent/src/main.rs`,
+which hardcodes `vision: false` and clears `[llm.extractor]`; every role-C builder then refuses
+and the run scores nothing while looking configured. `scripts/bench-c-slate.sh` writes a
+per-model credentials file and uses `OMNI_AGENT_CREDENTIALS` instead.
 
 ---
 
@@ -1123,7 +1430,47 @@ no tally. Without that, a 503 storm would score as a perfectly abstaining model.
 
 ## Part 8 — Document reading (role C2) · `--bench-reading`
 
-**Built 2026-09-15. Not yet run against a real endpoint — zero tokens spent.**
+**Built 2026-09-15 and RUN 2026-09-16** (`runs/20260915-210805-c2/`). ⛔ **Not decided, and the
+first result is about the prompt rather than the models.**
+
+### R21 · Most models return NO fields at all — **the prompt makes them optional**
+
+⚠️ **PROVISIONAL — written at 7 of 14 and already moved.** At 7 models it read "only
+`gemma-4-26B-A4B` populated `fields`"; by 10 it was **three** — `gemma-4-31B` at a perfect
+**23/23**, `gemma-4-26B` at 18/21, `GLM-5.3-Flash` at 13/21. ⛔ Do not quote a ratio from this
+entry until the slate closes; the table below is the 7-model snapshot, kept because the *mechanism*
+it identified holds regardless of how many models end up skipping the array.
+
+The zeros split two ways, which is why "most models failed" is the wrong summary:
+
+| model | recall | errors | median | what actually happened |
+|---|---|---|---|---|
+| `gemma-4-26B-A4B` | **18/21** | 3 | 2.4s | answered and filled `fields` |
+| `Ling-3.0-flash-VL` | 0/24 | **0** | 5.0s | answers cleanly, returns **no fields** |
+| `Qwen3.6-35B-A3B` | 0/24 | **0** | 16.3s | answers cleanly, returns **no fields** |
+| `Llama-4-Scout` | 0/19 | 5 | 7.0s | answers cleanly, returns **no fields** |
+| `Qwen3.5-9B` | 0/16 | 7 | 181.1s | **timing out** — R20 |
+| `gemma-3-27b-it` | 0/12 | 12 | 217.4s | **timing out** — R20 |
+| `Mistral-Small-3.2` | 0/13 | 7 | 6.2s | mixed: errors plus empty fields |
+
+⚠️ **Three of them answer in 5–16 seconds with zero errors and simply omit the array.** That is not
+failure to read; it is a correct reading of what was asked. `document_schema` marks
+`"required": ["kind", "title"]` — **`fields` is optional** — and the prompt describes it as *"for
+anything else worth finding the document by"*, then spends most of its words on prohibitions: do
+not compute, do not convert, do not normalise, do not include what the document does not state. A
+model offered an optional array, a vague inclusion rule and four ways to get it wrong will return
+`[]`, and six of seven did.
+
+🔴 **The consequence is a product one, not a scoring one.** `fields` is how a document becomes
+findable by account number, policy number or period; without it the archive catalogues a document
+and cannot retrieve it by anything on its face. ⛔ So C2's current numbers measure **"will this
+model volunteer fields"**, not "can it extract them" — and those are different questions.
+
+⛔ **RECORDED, NOT FIXED**, per Part 7's standing rule: a prompt rewritten to score better makes
+the next run a measurement of the rewrite. ⚠️ But this is the case that rule is weakest against —
+the defect is that the prompt does not ask for what the product needs, which is exactly the kind of
+thing a bench exists to surface. **Fix it deliberately, as its own change, and re-run the whole
+slate afterwards** rather than patching it mid-selection.
 
 Role C2 is `DocumentReader::read_document`: a document in, a `kind`, a `title`, an optional
 `document_date` and a list of key/value `fields` out. It asks what a document *is*, where C1
@@ -1232,7 +1579,177 @@ keeps two abstention probes (`letter-undated`, `injection`) and gains three reca
 
 ## Part 9 — Transcription (role C3) · `--bench-transcription`
 
-**Built 2026-09-15. Not yet run against a real endpoint — zero tokens spent.**
+**✅ DECIDED 2026-09-16: `deepseek-ai/DeepSeek-V4.1-Flash`.** Runner-up `Llama-4-Maverick`, kept
+on file as the speed alternative for the next comparison. Full reasoning and the overridden
+lexicographic order: `MODEL_THRESHOLDS.md` § Seat C3.
+
+**Three runs got there:** a 14-model screening slate (`runs/20260915-185233-c3/`, 6 documents), a
+5-model run-off on a **page-stratified 30-document sample** (`runs/20260915-210747-c3-runoff/`),
+and a retry pass for transient failures (`…-retry/`). ✅ **All 7 transient failures recovered on
+retry, 7 of 7** — which validates the structural-vs-transient split rather than merely assuming it.
+
+### Slate results · ranked on the common subset
+
+⚠️ **Ranked by `scripts/c3-compare.py`, not by the per-model scorecards** (R17): each model's own
+card sums only the documents *it* completed, so the denominators differ. Below is the intersection
+— **4 documents, 160 figures, 966 words, identical for every row**.
+
+| Model | invented | figures | words | med s | all 6? | $/1M in |
+|---|---|---|---|---|---|---|
+| `Ling-3.0-flash-VL` | **0** | **99.4%** | **98.9%** | 74.4 | ✗ cap | **0.06** |
+| `DeepSeek-V4.1-Flash` | **0** | 98.8% | 98.4% | 46.2 | ✅ | 0.20 |
+| `Llama-4-Maverick` | **0** | 98.1% | 94.6% | **8.6** | ✗ 300s | 0.20 |
+| `Qwen3-VL-30B-A3B` | **0** | 96.9% | 98.2% | 90.7 | ✅ | 0.15 |
+| `Mistral-Small-3.2-24B` | **0** | 96.2% | 93.7% | 55.9 | ✗ cap | 0.075 |
+| `GLM-5.3-Flash` | 2 | 98.8% | **98.9%** | 62.5 | ✅ | 0.15 |
+| `Qwen3.6-35B-A3B` | 2 | 96.9% | 97.7% | 26.9 | ✅ | 0.10 |
+| `gemma-4-31B-it` | 3 | 97.5% | 96.5% | 136.3 | ✅ | 0.13 |
+| `Qwen3.5-9B` | 3 | 97.5% | 89.8% | 70.5 | ✗ cap+300s | 0.10 |
+| `gemma-4-26B-A4B` | 4 | 92.5% | 93.2% | 36.0 | ✗ 300s | 0.07 |
+| `DeepSeek-V4-Flash-Vision-Exp` | 7 | 93.8% | 91.7% | 38.8 | ✅ | 0.44 |
+| `Llama-4-Scout` | 0 | 66.2% | 68.5% | 13.4 | ✅ | 0.10 |
+| `Qwen3-VL-235B-A22B` | 0 | 41.2% | 54.0% | 78.0 | ✗ 300s | 0.20 |
+| `gemma-3-27b-it` | 15 | 81.2% | 74.1% | 29.1 | ✅ | 0.08 |
+
+**The instrument separates, and hard** — 0 to 15 fabrications, 41% to 99% recall. ⛔ It has **not**
+saturated, so the "publish unmeasured" rule is not triggered. What *is* triggered is the noise
+floor: **five models tie at zero fabrications** and the second key separates the top four by
+**3.2 percentage points over 160 figures** — five figures. ⛔ Do not decide there; the seat's own
+threshold says raise the sample first.
+
+**Three results worth reading before the ranking:**
+
+- 🔴 **`Qwen3-VL-235B`'s 41.2% is not a quality score at all — it is a page-count cliff.** ⚠️ I
+  first read it as summarising instead of transcribing; **opening the per-document rows disproved
+  that.** On every 2-page document it is among the best on the slate — 183/184, 179/180, 172/173,
+  171/172 words and **every figure**. Then: **`0/441` on the 4-page document** (an empty answer,
+  returned in 31s) and a **300s timeout** on the 6-page one. ⛔ An aggregate hid a cliff, and the
+  aggregate is what the ranking reads.
+- 🔴 **An empty transcription scores as zero fabrications** — the top of the first ranking key.
+  This is the exact failure the lexicographic order exists to catch, and here it caught it: recall
+  as key 2 dropped the model to 13th. ⛔ A weighted sum would have paid it for the silence.
+- ⚠️ **`Llama-4-Scout` has the same shape** — 0 invented, 66.2% recall — and it is the row that
+  shows why the lexicographic order is right. It ties the leaders on the first key while returning
+  a third less of the document; recall as the second key is what stops silence from winning.
+- ✅ **The cheapest model on the slate leads it.** `Ling-3.0-flash-VL` at **$0.06/1M** tops both
+  recall keys. ⚠️ It is also one of the three that cannot send six images (R17), so it is leading a
+  table computed on documents it was willing to attempt.
+
+### R22 · Role C has NO rate-limit retry — **a single 429 loses the document, 2026-09-16**
+
+`core/src/extraction/openai_compat.rs` contains **no** `429`, `TOO_MANY_REQUESTS`, `retry` or
+`backoff`. ⚠️ The chat client has all of it — `MAX_RATE_LIMIT_RETRIES = 3` with `Retry-After`
+honoured and doubling backoff — but that is `core/src/llm/openai_compat.rs`, **a different file on
+a different path**. Role C never inherited any of it.
+
+🔴 **Three resilience features are missing from the same path**, and they compound: no request
+spacing (R12 — `min_interval` is a `ClientOptions` field role C never receives), no rate-limit
+retry (here), no output ceiling (R20). A busy endpoint therefore loses a document outright on the
+first "Model busy", with nothing between the refusal and the failure.
+
+⚠️ **This confounded a model judgement and nearly cost one unfairly.**
+`Qwen3-VL-30B-A3B-Instruct` posted six `HTTP 429 Model busy` failures out of 30 documents, which
+reads as an unreliable endpoint. What it actually records is six moments when the endpoint was
+busy and **we did not ask twice**. ⛔ Do not read a 429 count on this path as an endpoint property
+until the retry exists; the bench also sends documents back-to-back with no pause, where the
+production enrichment pass is capped at 5 documents per 30-minute tick.
+
+✅ The model was eliminated on **quality** regardless — 91.8% figure recall against 99.7%+, 44
+figures missed out of 535 — so nothing turned on the confounded evidence. ⛔ That it did not matter
+this time is luck, not method.
+
+### R20 · No `max_tokens` on any role-C request — **the 300s timeouts, explained 2026-09-15**
+
+`OpenAiCompatExtractor::ask` builds `{model, messages, response_format}` and **nothing else**. There
+is no `max_tokens`, so the ceiling is whatever the provider defaults to — which for a model that
+does not stop is effectively *our* `VISION_TIMEOUT` of **300 seconds**.
+
+⚠️ **This is the mechanism behind a failure mode that looked like document complexity.** The C2
+bench sends **short authored text probes** with a small schema, and two models still hit 300s:
+`gemma-4-26B` on 3 of 18 calls, `Qwen3.5-9B` apparently on all 18 (25 minutes in with no output).
+⛔ The error text — *"the document may be too complex for this model, or the endpoint is slow"* —
+is wrong on a 200-word probe. The likelier reading is a small model failing to satisfy
+`json_schema` and generating until something cuts it off.
+
+🔴 **It is also a silent cost leak.** A run that times out returns nothing and still bills for every
+token generated on the way — up to 300 seconds of output, scored as a failure. The slower and more
+broken the model, the more it costs, which is exactly backwards.
+
+⛔ **Not fixed now: the request shape must not change mid-slate**, or earlier and later rows are
+not comparable. ⚠️ And it is not a one-line constant either — the right ceiling is **per question**.
+C2 returns a small JSON envelope and wants ~2k; C3 transcribes a whole document verbatim and a
+6-page statement is several thousand tokens, so a ceiling tight enough to stop a loop would
+truncate a legitimate answer and score it as recall failure — *the Stage 1 mistake in a new
+costume*, which `MODEL_BENCH.md` already warns about for exactly this field.
+
+### R19 · A wrongly-empty transcription is recorded as fact — **found by the C3 run, 2026-09-15**
+
+`Qwen3-VL-235B` returned an **empty transcription for a document carrying 441 words**, in 31
+seconds, without erroring. ⚠️ That is not hypothetical any more, and it lands on a deliberate
+design decision in `document_enrichment::enrich_text_once`:
+
+> *"An empty transcription IS appended, and that is deliberate… It also lifts `text_source` off
+> `none`, so the document stops being a candidate — without that, every blank page in the archive
+> would be re-read on every tick forever and starve the cap."*
+
+⛔ **The guard is right and the consequence is still bad.** In production this document would be
+recorded as *"a named model looked on this date and found no text"*, stop being a candidate, and
+never be retried — the archive would hold a text-rich statement flagged as blank.
+
+⚠️ **The two cases are genuinely indistinguishable at the point of the write.** A photograph of a
+blank page and a failed read of a full one produce the same empty string. And the obvious check
+does not apply here: transcription is only reached when the text layer is *already* empty
+(`rasterize_pdf`'s own contract), so there is nothing to contradict the answer with — and for a
+photographed receipt there never was.
+
+✅ **`TextSource::rank`'s `>=` already makes the recovery path work** — a better model later is
+just another event that lands. ⛔ What is missing is anything that *notices*. Recovery exists;
+detection does not. **Filed as work, not fixed here**, and it is a design question rather than a
+patch: what evidence would justify re-queueing a document that a model has already called blank.
+
+### The run-off, and what only the bigger sample could show
+
+⚠️ **The 6-document screening slate was wrong about the thing that mattered.** It reported the top
+five at **zero fabrications**. On 30 stratified documents the same models fabricate — `DeepSeek`
+24, `Maverick` 27, `Mistral` 29 — and the reason is a pattern six documents cannot contain:
+
+| fabrication rate | ≤4 pages | >4 pages |
+|---|---|---|
+| `DeepSeek-V4.1-Flash` | 0.38% | **1.89%** (5×) |
+| `Llama-4-Maverick` | 0.38% | **0.95%** (2.5×) |
+
+🔴 **Fabrication scales with document length.** Long documents are where figures get invented, and
+the screening sample held only one document over four pages (17%) against a corpus that is
+**36.5%**. ⛔ A sample that under-represents the hard case reports a model as clean when it is not.
+
+**The stratified sample fixed both defects at once** (`scripts/c3-select-sample.py`): 63% ≤4 pages
+against the corpus's 63.5%, and **15 issuers instead of 3**. Seeded and staged as symlinks so the
+bench walks it unchanged — ⛔ editing `transcription_bench.rs`'s sampling mid-selection would have
+been instrument tuning.
+
+⚠️ **Eliminating a weak model grows everyone else's comparison.** The intersection was **10**
+documents across all five, **13** without `Mistral`, **16** without `Qwen3-VL-30B`, and **19** once
+the retries landed. Every model that fails often steals evidence from every other model's ranking,
+which is why elimination-then-recompare is a real step and not a convenience.
+
+### ⚠️ What the decided seat still does not rest on
+
+✅ The three preconditions written here before the run-off were all met: the sample was raised
+6 → 30, stratified to the corpus's real page distribution, and the transient failures were retried.
+What remains unproven is not a gap in the process but a limit of the corpus:
+
+- ⛔ **Scans, which are what C3 exists for.** Every case is born-digital, because that is where the
+  free answer key lives — and **all 625 readable corpus PDFs are born-digital**, measured, so the
+  material to test otherwise does not exist here. The only scan-like material anywhere is 8 receipt
+  photographs outside the repo. **Do not publish this seat as proven on scans.**
+- ⚠️ **Latency is still one draw**, and R15 is the standing warning. The gap between `Maverick`
+  (22.1s) and `DeepSeek` (44.7s) is large enough to act on; the rest are not.
+- ⚠️ **`max_tokens` is unset** on this path (R20), so the winner's own ceiling is our 300s timeout
+  rather than anything chosen.
+
+---
+
+**Built 2026-09-15. Zero tokens spent at build time** — the design notes below predate the run.
 
 Role C3 reads the words off a document nothing could parse. `DocumentTextTranscribed` has had an
 event type, a store envelope, a projection fold and `TextSource::rank` for some time; what it did
@@ -1301,5 +1818,29 @@ over a document that has some would then stand, because `TextSource::rank` puts 
   have no oracle, so this measures the model's reading on the easier half and infers.
 - **Documents over `MAX_DOCUMENT_PARTS` pages**, which are refused rather than truncated and
   reported as errors.
+- **21 of the corpus's 24 statement formats.** `born_digital` breaks as soon as it has `want`
+  cases, so the default sample is the **first 6 PDFs in sorted order** — measured 2026-09-15, they
+  span **3 accounts, two documents each**, out of 765 PDFs across 24. Deterministic, so every model
+  sees the same 6 and the runs compare; ⚠️ but a model that reads those three issuers' layouts and
+  fails a fourth scores identically here. ⛔ Read the plan line with this in mind: *"0 skipped as
+  scans"* describes only the 6 it looked at, **not** the corpus. Raise
+  `OMNI_BENCH_TRANSCRIBE_SAMPLE` for the deciding round.
 - **Cost.** Latency is reported per document; token cost is not, because a rasterized page's cost
   depends on the endpoint's image pricing rather than on anything measurable here.
+
+### The document tag, corrected before the first run
+
+⚠️ **Dropping the directory name was not enough, and the first version of this got it wrong.**
+`tag_for` correctly refused to print the path — the account directories are named after the
+institutions that issued the statements — but it kept the *digits of the file name*, which are
+the statement's own date. The scorecard printed `doc-20190630`: a real date out of the user's
+financial records, in output whose entire purpose is to be pasted into this public file.
+
+✅ Fixed 2026-09-15 by adopting `extraction_bench::tag`'s construction — FNV-1a, four hex digits —
+so both scorecards tag documents the same way and are read the same way. A test asserts the
+statement date does not survive into the tag.
+
+**The general shape is worth more than the instance.** Anonymisation that removes the obviously
+identifying field can leave a quieter one behind, and the quiet one looks like a harmless
+document id right up until someone reads it as a date. The sibling instrument had solved this
+already; the defect was writing a second one without crossing back to check.
