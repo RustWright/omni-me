@@ -71,6 +71,11 @@ pub struct ExtractedPosting {
 pub struct ExtractionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<NaiveDate>,
+    /// The date exactly as the document prints it, unnormalised. Exists so the
+    /// verification pass can tell whether `date` came from an ambiguous numeric
+    /// form such as `09/03/26`, which `date` alone has already thrown away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_as_printed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub postings: Vec<ExtractedPosting>,
@@ -252,7 +257,15 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
         All amounts MUST be strings (e.g. \"12.34\") not JSON numbers — \
         precision matters. ⚠️ Digits and an optional leading minus only: no \
         currency symbols, no thousands separators, no codes. Use ISO-8601 \
-        dates (YYYY-MM-DD). Set `total` ONLY when the instructions below name a \
+        dates (YYYY-MM-DD). ⚠️ A numeric date such as 09/03/26 is ambiguous — it \
+        is 3 September in one convention and 9 March in the other. Resolve it \
+        from other evidence on the document: a receipt or invoice number often \
+        encodes YYMMDD, and a spelled-out month elsewhere settles it. If nothing \
+        does, still give your best reading but lower your confidence. \
+        Also set `date_as_printed` to the date exactly as the document prints it, \
+        copied character for character with no reformatting — a later pass uses it \
+        to re-check the reading, so never normalise it and never invent one. \
+        Set `total` ONLY when the instructions below name a \
         figure for this document type, and then COPY it as printed — never \
         computed, and never a different figure the document also states. \
         Leave it null otherwise. \
@@ -318,6 +331,7 @@ pub(crate) fn response_schema() -> serde_json::Value {
         "type": "object",
         "properties": {
             "date": { "type": "string", "nullable": true },
+            "date_as_printed": { "type": "string", "nullable": true },
             "description": { "type": "string", "nullable": true },
             "postings": {
                 "type": "array",
@@ -413,6 +427,7 @@ mod tests {
         };
         let mut receipt = ExtractionResult {
             date: None,
+            date_as_printed: None,
             description: Some("Quick Trip Variety".into()),
             postings: vec![posting("14.06"), posting("1.83")],
             total: Some("15.89".parse().unwrap()),
@@ -442,6 +457,7 @@ mod tests {
         };
         let mut receipt = ExtractionResult {
             date: None,
+            date_as_printed: None,
             description: Some("Harvey's".into()),
             postings: vec![line("25.18"), line("2.96")],
             total: Some("25.74".parse().unwrap()),

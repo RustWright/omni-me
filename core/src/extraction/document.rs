@@ -267,6 +267,7 @@ mod tests {
     fn a_captured_receipt_is_catalogued_from_its_extraction() {
         let result = super::super::ExtractionResult {
             date: chrono::NaiveDate::from_ymd_opt(2026, 9, 3),
+            date_as_printed: Some("09/03/26".into()),
             description: Some("Quick Trip Variety".into()),
             postings: vec![super::super::ExtractedPosting {
                 account_hint: None,

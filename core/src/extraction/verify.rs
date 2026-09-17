@@ -69,6 +69,10 @@ pub fn verify(
         }
     }
 
+    if let Some(printed) = result.date_as_printed.as_deref() {
+        check_date_ambiguity(printed, result.date, &mut warnings, &mut adjustment);
+    }
+
     if result.postings.is_empty() {
         warnings.push("no postings extracted".to_string());
         adjustment *= 0.5;
@@ -100,6 +104,61 @@ fn check_total(
     }
 }
 
+/// Warn when the printed date could be read either day-first or month-first.
+///
+/// Canada prints both conventions, so there is no locale rule that settles `09/03/26` —
+/// the reading is a judgement the model made from context and may have made wrong. This
+/// reports the alternative instead of overriding, and the confirm screen decides.
+fn check_date_ambiguity(
+    printed: &str,
+    parsed: Option<chrono::NaiveDate>,
+    warnings: &mut Vec<String>,
+    adjustment: &mut f64,
+) {
+    let (Some(parsed), Some((first, second, year))) = (parsed, numeric_date_parts(printed)) else {
+        return;
+    };
+    // Above 12 one ordering is impossible; equal components read the same either way.
+    if first > 12 || second > 12 || first == second {
+        return;
+    }
+    let day_first = chrono::NaiveDate::from_ymd_opt(year, second, first);
+    let month_first = chrono::NaiveDate::from_ymd_opt(year, first, second);
+    let alternative = match (day_first, month_first) {
+        (Some(d), Some(m)) if parsed == d => m,
+        (Some(d), Some(m)) if parsed == m => d,
+        _ => return,
+    };
+    warnings.push(format!(
+        "printed date {printed} is ambiguous: read as {parsed}, but {alternative} is equally valid",
+    ));
+    *adjustment *= 0.8;
+}
+
+/// Split a numeric date into `(first, second, year)`, or `None` when it cannot be
+/// ambiguous: an ISO date leads with a four-digit year, and a spelled-out month has
+/// no second numeric component to swap with.
+fn numeric_date_parts(printed: &str) -> Option<(u32, u32, i32)> {
+    let parts: Vec<&str> = printed.trim().split(['/', '-', '.']).collect();
+    if parts.len() != 3
+        || !parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    {
+        return None;
+    }
+    if parts[0].len() == 4 {
+        return None;
+    }
+    let year: i32 = parts[2].parse().ok()?;
+    let year = match parts[2].len() {
+        2 => 2000 + year,
+        4 => year,
+        _ => return None,
+    };
+    Some((parts[0].parse().ok()?, parts[1].parse().ok()?, year))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,6 +181,7 @@ mod tests {
     ) -> ExtractionResult {
         ExtractionResult {
             date: NaiveDate::from_ymd_opt(2026, 5, 16),
+            date_as_printed: None,
             description: Some("Loblaws".into()),
             postings,
             total,
@@ -129,6 +189,14 @@ mod tests {
             model: "test".into(),
             raw_response: serde_json::Value::Null,
         }
+    }
+
+    /// `printed` as the document showed it, `parsed` as the model read it.
+    fn dated(printed: &str, parsed: Option<NaiveDate>) -> ExtractionResult {
+        let mut r = receipt(vec![posting("15.89")], None, 0.95);
+        r.date = parsed;
+        r.date_as_printed = Some(printed.into());
+        r
     }
 
     #[test]
@@ -231,5 +299,59 @@ mod tests {
         // Note: a more sophisticated check for paystubs (gross − sum(deductions) = net)
         // would require labeling postings — deferred to a future iteration when the
         // prompt yields posting categories reliably.
+    }
+
+    /// The real failure: a 2026-09-03 receipt read day-first and filed in March.
+    #[test]
+    fn an_ambiguous_numeric_date_warns_and_names_the_other_reading() {
+        let r = dated("09/03/26", NaiveDate::from_ymd_opt(2026, 3, 9));
+        let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
+        let w = report
+            .warnings
+            .iter()
+            .find(|w| w.contains("ambiguous"))
+            .expect("ambiguity warning");
+        assert!(w.contains("2026-03-09"), "names the reading: {w}");
+        assert!(w.contains("2026-09-03"), "names the alternative: {w}");
+    }
+
+    #[test]
+    fn a_date_only_one_ordering_can_explain_is_not_ambiguous() {
+        // 15 cannot be a month, so day-first is the only reading.
+        let r = dated("15/03/26", NaiveDate::from_ymd_opt(2026, 3, 15));
+        let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert!(!report.warnings.iter().any(|w| w.contains("ambiguous")));
+    }
+
+    #[test]
+    fn an_iso_printed_date_is_not_ambiguous() {
+        // ⚠️ Without the four-digit-year guard this reads as first=2026, second=9.
+        let r = dated("2026-09-03", NaiveDate::from_ymd_opt(2026, 9, 3));
+        let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert!(!report.warnings.iter().any(|w| w.contains("ambiguous")));
+    }
+
+    #[test]
+    fn a_spelled_out_month_is_not_ambiguous() {
+        let r = dated("Sep 3, 2026", NaiveDate::from_ymd_opt(2026, 9, 3));
+        let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert!(!report.warnings.iter().any(|w| w.contains("ambiguous")));
+    }
+
+    #[test]
+    fn equal_components_read_the_same_either_way() {
+        let r = dated("09/09/26", NaiveDate::from_ymd_opt(2026, 9, 9));
+        let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert!(!report.warnings.iter().any(|w| w.contains("ambiguous")));
+    }
+
+    /// An ambiguous date the model read one way should not also be reported when the
+    /// printed form is absent — older extractions carry no `date_as_printed`.
+    #[test]
+    fn no_printed_date_means_no_check() {
+        let mut r = receipt(vec![posting("15.89")], None, 0.95);
+        r.date = NaiveDate::from_ymd_opt(2026, 3, 9);
+        let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert!(!report.warnings.iter().any(|w| w.contains("ambiguous")));
     }
 }

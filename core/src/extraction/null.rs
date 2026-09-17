@@ -27,6 +27,7 @@ impl DocumentExtractor for NullExtractor {
     ) -> Result<ExtractionResult, ExtractionError> {
         Ok(ExtractionResult {
             date: None,
+            date_as_printed: None,
             description: None,
             postings: vec![],
             total: None,

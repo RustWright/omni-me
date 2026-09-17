@@ -250,7 +250,7 @@ impl DocumentExtractor for OpenAiCompatExtractor {
                 prompt_for(hint),
                 response_schema(),
                 "extraction_result",
-                None,
+                Some(EXTRACTOR_MAX_TOKENS),
             )
             .await?;
         parse_response(raw, &self.model)
@@ -293,7 +293,7 @@ impl DocumentTranscriber for OpenAiCompatExtractor {
                 transcription_prompt(),
                 transcription_schema(),
                 "document_transcription",
-                None,
+                Some(TRANSCRIBER_MAX_TOKENS),
             )
             .await?;
         parse_transcription(raw)
@@ -302,8 +302,18 @@ impl DocumentTranscriber for OpenAiCompatExtractor {
 
 /// Output ceiling for the cataloguing question (`MODEL_BENCH.md` R20). Real answers on dev
 /// measured 65–150 tokens, and without a ceiling the reader seat ran to the 300s timeout.
-/// Extraction and transcription stay uncapped until their answers are measured the same way.
 const READER_MAX_TOKENS: u32 = 2048;
+
+/// Output ceiling for transcription. Real answers on dev measured 38–356 tokens per page,
+/// so a ten-page document lands near 3,600; this leaves roughly double that.
+const TRANSCRIBER_MAX_TOKENS: u32 = 8192;
+
+/// Output ceiling for extraction. Unlike the other two questions this one emits a posting per
+/// line item, so its length tracks the document rather than being fixed. Measured on dev:
+/// 156–257 tokens for receipts and 361 for a six-page brokerage statement with ten positions.
+/// A hundred-transaction statement would be nearer 3,000, which this still clears twice over.
+/// The headroom is deliberate — hitting the ceiling returns an error, not a short answer.
+const EXTRACTOR_MAX_TOKENS: u32 = 8192;
 
 impl OpenAiCompatExtractor {
     /// One schema-constrained request, shared by all three questions this
@@ -567,6 +577,13 @@ mod tests {
         );
         assert_eq!(result.confidence, 0.9);
         assert_eq!(result.model, "llava");
+
+        let sent = &server.received_requests().await.unwrap()[0];
+        let body: Value = serde_json::from_slice(&sent.body).unwrap();
+        assert_eq!(
+            body["max_tokens"], EXTRACTOR_MAX_TOKENS,
+            "an uncapped question is what let a role-C seat run to the 300s timeout"
+        );
     }
 
     #[tokio::test]

@@ -893,6 +893,7 @@ mod tests {
     fn extraction(postings: &[&str], total: Option<&str>) -> ExtractionResult {
         ExtractionResult {
             date: None,
+            date_as_printed: None,
             description: None,
             postings: postings
                 .iter()

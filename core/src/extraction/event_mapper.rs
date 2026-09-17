@@ -180,6 +180,7 @@ mod tests {
     ) -> ExtractionResult {
         ExtractionResult {
             date,
+            date_as_printed: None,
             description: description.map(String::from),
             postings,
             total: None,
