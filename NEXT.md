@@ -1,41 +1,39 @@
 # NEXT
-✅ **Stage 4 DONE — the dev instance is live and isolated.** Model selection is closed (six seats,
-`MODEL_THRESHOLDS.md`). ⏳ A dev APK is building; it lands on the box at `~/omni-dev/apk/`.
 
-**The full dev-vs-live layout is in `tasks.md` § Stage 4** — ports, volumes, credentials, the
-phone's wireless adb, and where the APK lands. ⛔ Read it there; do not re-derive it by poking
-at the box.
+✅ **The dev phone runs the app against the dev server and holds the full cloned history**
+(15,957 events projected, 0 failed). Model selection and Stage 4 are closed.
+
+▶ **NEXT ACTION: deploy the paginated-pull server image to the dev instance, then rebuild the
+APK with the matching client loop.** The fix is written and clippy-clean; tests were still
+compiling. Procedure and both workflow IDs are in the private overlay's `DEV_TESTING.md`.
+
 ## ▶ SCOPE — agreed with the user 2026-09-16
 **Goal: a fully functional app, ending with his FINANCES TAB re-enabled** — the finish line, not
-a checklist. ⛔ Test **every** feature, **one step at a time**; expect many issues.
+a checklist. ⛔ Test **every** feature, one step at a time.
 
 🔴 **I drive the first pass; HE drives the final pass.** His reasoning governs the run: early
 obvious bugs would sour his judgement before the feedback that matters. ⛔ Don't hand him a build
-to evaluate until the crashes are out. My pass finds and fixes; his judges.
+to evaluate until the crashes are out.
 
-⛔ **Read `tasks.md` § DEFINITION OF READY first** — the finish line is a *chain*, not a toggle:
-ledger catch-up (or a full wipe + re-import) → IMAP receipt ingestion → receipt image capture →
-archive → finance propose → tab on. 🔴 **Documents are on the critical path, NOT the tail** — an
-earlier plan had them last and that was wrong. 🔴 **IMAP testing conflicts with the dev isolation
-as built** (dev has no `[imap.*]` on purpose; a poller marks REAL messages processed) — resolve
-before that leg. ⚠️ Storage capacity is an open worry the user raised himself; blobs read 0 today
-only because nothing has been archived.
+⛔ **Read `tasks.md` § DEFINITION OF READY** — the finish line is a *chain*: ledger catch-up (or
+wipe + re-import) → IMAP receipt ingestion → receipt capture → archive → finance propose → tab
+on. 🔴 Documents are on the critical path, NOT the tail. 🔴 **IMAP testing conflicts with the dev
+isolation as built** — resolve before that leg.
 
-✅ **Dev data is disposable** — reseed from the snapshot whenever it is too polluted. That is the
-rollback point, agreed.
+✅ **Dev data is disposable** — reseed from the snapshot when it gets too polluted.
+
 ## ⛔ Inherit — do not re-derive
-- 🔴 **NOTHING since the stamped release has run on a real device.** ⛔ Never deploy current work
-  to live, never edit `/etc/omni-me/credentials.toml`.
-- 🔴 **The box's `restore-snapshot.sh` targets the RUNNING container — i.e. LIVE.** ⛔ Name the
-  dev volume explicitly; `lib-guard.sh` is the fix and is not deployed.
-- ⛔ **`/var/omni-updates` is the LIVE OTA store** — never publish the dev APK there.
-- ⚠️ **`app-release.yml` bakes `:3000` into the APK** and its `publish` job cannot be skipped —
-  hence `build-dev-apk.yml`: one job, dev port, no publish, no artifact upload (**Actions storage
-  is exhausted**; passing files between jobs needs it). ⚠️ Both had `ubuntu-latest` break the
-  Android SDK step when it moved 22.04→24.04; fixed with `packages: ''`, release path unverified.
+- 🔴 **NOTHING since the stamped release has run on live.** ⛔ Never deploy current work there,
+  never edit the live `credentials.toml`. ⛔ `/var/omni-updates` is the LIVE OTA store.
+- 🔴 **The box's `restore-snapshot.sh` targets the RUNNING container — i.e. LIVE.** Name the dev
+  volume explicitly; `lib-guard.sh` is the fix and is not deployed.
+- ✅ **`feature.finances = false` is the real synced value** — the tab is off by config, and that
+  flag is what the chain ends by flipping. Its absence from the nav is correct, not a bug.
+- ✅ **Dev APKs now carry `OMNI_WEBVIEW_DEBUG=1`** — drive the live page over CDP rather than
+  tapping screenshots. ⛔ Never set it in `app-release.yml`; `src-tauri/build.rs` says why.
+- ⚠️ **A token change needs an app restart** — background sync builds its client at startup.
+  Documented, not a bug; the Settings toast says so.
 - ⚠️ **Dev credentials carry no IMAP/bank sections** — a source there would poll real mailboxes.
-- ⚠️ **Dev talks DIRECTLY to DeepInfra**, not OpenRouter — C1/C2/C3 were benched that way; A/B/D
-  rely on the recorded gateway/direct text-parity finding (R1).
-- ⛔ **Branches, not `main`:** public `dev/role-split-model-seats`, private `dev/untested-overlay`.
-- 🔴 ⛔ **Every cargo invocation in a systemd unit**: `MemoryMax=4G`, `JOBS=1`. Laptop disk
-  **4.4G** — an Android build will not fit locally, hence CI.
+- ⚠️ **Dev talks DIRECTLY to DeepInfra**, not OpenRouter.
+- ⛔ **Branches:** public `dev/role-split-model-seats`, private `dev/untested-overlay`.
+- 🔴 ⛔ **Every cargo invocation in a systemd unit**: `MemoryMax=4G`, `JOBS=1`. Laptop disk 3.5G.

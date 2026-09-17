@@ -381,6 +381,19 @@ pub trait EventStore: Send + Sync {
         exclude_device: Option<&str>,
     ) -> Result<Vec<Event>, EventError>;
 
+    /// As [`EventStore::get_since`], but returning at most `limit` events.
+    ///
+    /// Only sync's pull handler wants this. A projection rebuild and the
+    /// orphan audit want the whole window and would be wrong with a page of
+    /// it, which is why the limit is a separate method rather than a parameter
+    /// added to `get_since`.
+    async fn get_since_limited(
+        &self,
+        since: DateTime<Utc>,
+        exclude_device: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError>;
+
     /// Get events from a specific device since a given timestamp.
     async fn get_since_by_device(
         &self,
@@ -418,6 +431,55 @@ pub struct SurrealEventStore {
 impl SurrealEventStore {
     pub fn new(db: Database) -> Self {
         Self { db }
+    }
+
+    /// Shared body for `get_since` and `get_since_limited`.
+    ///
+    /// Only the two clauses that are structure — the device filter and the
+    /// limit — are assembled; every value stays bound.
+    async fn get_since_inner(
+        &self,
+        since: DateTime<Utc>,
+        exclude_device: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Event>, EventError> {
+        let since_str = since.to_rfc3339();
+        let exclude = exclude_device.unwrap_or("").to_string();
+
+        let device_clause = match exclude_device {
+            Some(_) => " AND device_id != $exclude_device",
+            None => "",
+        };
+        let limit_clause = match limit {
+            Some(_) => " LIMIT $limit",
+            None => "",
+        };
+
+        // `received_at ASC, eid ASC` is a total order, which is what makes a
+        // page resumable: the caller's next `since` is the last returned
+        // `received_at` and the filter is strictly greater.
+        let query = format!(
+            "SELECT meta::id(id) AS eid, event_type, aggregate_id,
+                    <string> timestamp AS ts, timestamp,
+                    <string> received_at AS rcv, received_at,
+                    device_id, payload
+             FROM events
+             WHERE received_at > type::datetime($since){device_clause}
+             ORDER BY received_at ASC, eid ASC{limit_clause}"
+        );
+
+        let mut pending = self
+            .db
+            .query(query)
+            .bind(("since", since_str))
+            .bind(("exclude_device", exclude));
+        if let Some(limit) = limit {
+            pending = pending.bind(("limit", limit));
+        }
+
+        let rows: Vec<EventRow> = pending.await?.take(0)?;
+
+        rows.into_iter().map(Event::try_from).collect()
     }
 }
 
@@ -528,40 +590,17 @@ impl EventStore for SurrealEventStore {
         since: DateTime<Utc>,
         exclude_device: Option<&str>,
     ) -> Result<Vec<Event>, EventError> {
-        let since_str = since.to_rfc3339();
-        let exclude = exclude_device.unwrap_or("").to_string();
+        self.get_since_inner(since, exclude_device, None).await
+    }
 
-        let query = match exclude_device {
-            Some(_) => {
-                "SELECT meta::id(id) AS eid, event_type, aggregate_id,
-                        <string> timestamp AS ts, timestamp,
-                        <string> received_at AS rcv, received_at,
-                        device_id, payload
-                 FROM events
-                 WHERE received_at > type::datetime($since) AND device_id != $exclude_device
-                 ORDER BY received_at ASC, eid ASC"
-            }
-            None => {
-                "SELECT meta::id(id) AS eid, event_type, aggregate_id,
-                        <string> timestamp AS ts, timestamp,
-                        <string> received_at AS rcv, received_at,
-                        device_id, payload
-                 FROM events
-                 WHERE received_at > type::datetime($since)
-                 ORDER BY received_at ASC, eid ASC"
-            }
-        };
-
-        let mut response = self
-            .db
-            .query(query)
-            .bind(("since", since_str))
-            .bind(("exclude_device", exclude))
-            .await?;
-
-        let rows: Vec<EventRow> = response.take(0)?;
-
-        rows.into_iter().map(Event::try_from).collect()
+    async fn get_since_limited(
+        &self,
+        since: DateTime<Utc>,
+        exclude_device: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError> {
+        self.get_since_inner(since, exclude_device, Some(limit))
+            .await
     }
 
     async fn get_since_by_device(
@@ -783,6 +822,57 @@ mod tests {
         // Newest first: notes 4, 3, 2 — not 0, 1, 2.
         assert_eq!(recent[0].aggregate_id, "note-4");
         assert_eq!(recent[2].aggregate_id, "note-2");
+    }
+
+    /// Paging must be lossless: draining page by page with the cursor the
+    /// server hands back has to yield every event exactly once, in order.
+    /// A page boundary that skipped or repeated a row would be invisible in
+    /// normal use — the client just quietly never sees some history.
+    #[tokio::test]
+    async fn draining_in_pages_yields_every_event_exactly_once() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+
+        let base = Utc::now();
+        for i in 0..25 {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("note-{i:02}"),
+                    timestamp: base + chrono::Duration::seconds(i),
+                    device_id: "device-a".into(),
+                    payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                })
+                .await
+                .unwrap();
+        }
+
+        let epoch = chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let mut cursor = epoch;
+        let mut drained: Vec<String> = Vec::new();
+        for _ in 0..20 {
+            let page = store.get_since_limited(cursor, None, 4).await.unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.len() <= 4, "the limit is respected");
+            cursor = page.iter().filter_map(|e| e.received_at).max().unwrap();
+            drained.extend(page.into_iter().map(|e| e.aggregate_id));
+        }
+
+        let expected: Vec<String> = (0..25).map(|i| format!("note-{i:02}")).collect();
+        assert_eq!(drained, expected, "no gaps, no repeats, original order");
+
+        let unpaged = store.get_since(epoch, None).await.unwrap();
+        assert_eq!(
+            unpaged.len(),
+            drained.len(),
+            "paging returns as much as one unbounded read"
+        );
     }
 
     #[tokio::test]

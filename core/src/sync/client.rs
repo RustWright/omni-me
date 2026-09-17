@@ -15,6 +15,12 @@ use crate::events::{Event, EventStore, NewEvent, SurrealEventStore};
 const MAX_EVENTS_PER_PUSH: usize = 100;
 const MAX_PUSH_BYTES: usize = 200 * 1024;
 
+/// Pages one `pull_only` will drain before returning. At the server's 500 per
+/// page this is 100k events, far past any real backlog; it exists so a server
+/// handing back a cursor that never settles cannot loop forever. Hitting it
+/// leaves the cursor persisted, so the next poll resumes rather than restarts.
+const MAX_PULL_PAGES: usize = 200;
+
 /// Error type for sync operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
@@ -198,32 +204,53 @@ impl SyncClient {
     /// Pull remote events since our last sync, append them locally (preserving
     /// server-assigned IDs), and advance `sync_state.last_sync_timestamp`.
     ///
+    /// Pulls in a loop, because the server returns a bounded page and hands
+    /// back the cursor to continue from. A device joining an established
+    /// history needs many pages; one call drains as many as it can.
+    ///
     /// Does NOT push. Callers wanting a full sync should follow with
     /// `push_only`, or use `sync()`.
     pub async fn pull_only(&self, db: &Database) -> Result<PullOutcome, SyncError> {
         let _in_flight = self.pull_lock.lock().await;
         let store = SurrealEventStore::new(db.clone());
-        let last_sync = self.last_sync_timestamp(db).await?;
+        let mut cursor = self.last_sync_timestamp(db).await?;
+        let mut pulled_events: Vec<Event> = Vec::new();
 
-        let pull_resp = self.pull_events(&last_sync).await?;
-        let pulled = pull_resp.events.len();
+        for _ in 0..MAX_PULL_PAGES {
+            let page = self.pull_events(&cursor).await?;
+            if page.events.is_empty() {
+                break;
+            }
 
-        for event in &pull_resp.events {
-            store
-                .append(NewEvent::from(event))
-                .await
-                .map_err(|e| SyncError::Local(e.to_string()))?;
+            for event in &page.events {
+                store
+                    .append(NewEvent::from(event))
+                    .await
+                    .map_err(|e| SyncError::Local(e.to_string()))?;
+            }
+
+            // Advance after appending, per page rather than per call: a
+            // catch-up interrupted on page 20 keeps the 19 pages it already
+            // took instead of starting over. Projections are not lost by this —
+            // they carry their own watermark and replay on catch-up.
+            self.update_last_sync_timestamp(db, &page.sync_timestamp)
+                .await?;
+
+            let advanced = page.sync_timestamp > cursor;
+            cursor = page.sync_timestamp;
+            pulled_events.extend(page.events);
+
+            // A cursor that did not move means the next request would be the
+            // request just made. Stop rather than spin on it.
+            if !advanced {
+                break;
+            }
         }
 
-        // Advance sync_state timestamp AFTER successful pull so a push-only
-        // failure later doesn't cause us to re-pull the same events.
-        let new_timestamp = pull_resp.sync_timestamp;
-        self.update_last_sync_timestamp(db, &new_timestamp).await?;
-
         Ok(PullOutcome {
-            pulled,
-            pulled_events: pull_resp.events,
-            new_timestamp,
+            pulled: pulled_events.len(),
+            pulled_events,
+            new_timestamp: cursor,
         })
     }
 
