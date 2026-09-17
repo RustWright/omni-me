@@ -180,7 +180,8 @@ transient half, a supported file the model happens to fail on, and retrying that
 
 Retrying it on the very next tick is not. The first run on real documents showed why: a
 handwritten note the reader timed out on was the newest uncatalogued document, so with one read
-per tick it was selected first every time, and every receipt behind it waited forever. So a
+per tick it was selected first every time, and every receipt behind it waited until a retry
+happened to succeed. A document that never succeeds would hold them back forever. So a
 document a tick skips is **held** out of the query for an hour, doubling on each further skip to
 a day. The hold lives in the scheduler's memory, not in the log. A restart retries everything,
 which is the self-healing property above surviving intact, and the tick log reports how many are

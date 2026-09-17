@@ -140,15 +140,15 @@ pub fn parse_summary(
         .map_err(|e| ExtractionError::Parse(format!("document response: {e}")))?;
     summary.model = model.to_string();
 
-    // A blank date is not a date. Endpoints that dislike null answer "" instead,
-    // and an empty string would reach the projection as a real `document_date`
-    // and sort the document to the front of every range query.
-    if summary
-        .document_date
-        .as_deref()
-        .is_some_and(|d| d.trim().is_empty())
-    {
-        summary.document_date = None;
+    // Only an ISO date is a date: the column is range-queried as a string, so "", "null"
+    // (seen from a real reader) or "Mar 18, 2024" would misfile the document.
+    if let Some(raw) = summary.document_date.take() {
+        let trimmed = raw.trim();
+        if chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").is_ok() {
+            summary.document_date = Some(trimmed.to_string());
+        } else if !trimmed.is_empty() {
+            tracing::warn!(model, value = %raw, "reader gave a document_date that is not YYYY-MM-DD; dropped");
+        }
     }
     Ok(summary)
 }
@@ -247,6 +247,10 @@ mod tests {
         let keys: Vec<&str> = payload.fields.iter().map(|f| f.key.as_str()).collect();
         assert!(keys.contains(&DOCUMENT_KIND_KEY));
         assert!(keys.contains(&DOCUMENT_TITLE_KEY));
+        assert!(
+            keys.contains(&DOCUMENT_DATE_KEY),
+            "a valid ISO date is kept"
+        );
         assert!(keys.contains(&"tax_year"));
     }
 
@@ -255,7 +259,14 @@ mod tests {
         // ⚠️ Both spellings of "no date", because an endpoint that dislikes null
         // answers with an empty string and that would reach the projection as a
         // real `document_date`.
-        for raw in [serde_json::json!(null), serde_json::json!("   ")] {
+        for raw in [
+            serde_json::json!(null),
+            serde_json::json!("   "),
+            // Sent by `gemma-4-31B-it` for an undated page on real data.
+            serde_json::json!("null"),
+            serde_json::json!("Mar 18, 2024"),
+            serde_json::json!("2024-13-40"),
+        ] {
             let s = parse_summary(
                 serde_json::json!({ "kind": "letter", "title": "A letter", "document_date": raw }),
                 "m",

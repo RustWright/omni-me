@@ -677,8 +677,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_document_that_keeps_failing_does_not_block_the_one_behind_it() {
-        // Found on real data: with one read per tick, a note the reader timed out on
-        // was selected first on every tick, and nothing behind it was ever read.
+        // Found on real data: with one read per tick, a note the reader timed out on was
+        // selected first on every tick, and nothing behind it was read until a retry succeeded.
         let db = test_db().await;
         let store = SurrealEventStore::new(db.clone());
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)]);
