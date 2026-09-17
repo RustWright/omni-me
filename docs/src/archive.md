@@ -178,6 +178,14 @@ query — only MIME types the vision path accepts become candidates, and the res
 `unreadable_mime` so they cannot be mistaken for documents that do not exist. What remains is the
 transient half, a supported file the model happens to fail on, and retrying that is correct.
 
+Retrying it on the very next tick is not. The first run on real documents showed why: a
+handwritten note the reader timed out on was the newest uncatalogued document, so with one read
+per tick it was selected first every time, and every receipt behind it waited forever. So a
+document a tick skips is **held** out of the query for an hour, doubling on each further skip to
+a day. The hold lives in the scheduler's memory, not in the log. A restart retries everything,
+which is the self-healing property above surviving intact, and the tick log reports how many are
+held so a quiet tick cannot be mistaken for an empty archive.
+
 The pass has two halves and runs both per tick, each capped separately. They compete for nothing:
 one selects documents with no `kind` and asks what the document is, the other selects documents
 whose `text_source` is `none` and asks what it says. A scan is usually both.

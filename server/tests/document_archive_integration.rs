@@ -215,7 +215,7 @@ async fn archive_a_scan(client: &reqwest::Client, url: &str) -> String {
 }
 
 async fn awaiting_ids(db: &omni_me_core::db::Database) -> Vec<String> {
-    queries::documents_awaiting_fields(db, &["image/jpeg"], 10)
+    queries::documents_awaiting_fields(db, &["image/jpeg"], 10, &[])
         .await
         .expect("the enrichment work queue must be queryable on the server")
         .into_iter()

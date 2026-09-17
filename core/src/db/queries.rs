@@ -1112,11 +1112,12 @@ pub async fn documents_awaiting_fields(
     db: &Database,
     mimes: &[&str],
     limit: u32,
+    held: &[String],
 ) -> Result<Vec<DocumentRow>, DbError> {
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
-         WHERE kind = NONE AND (mime_type ?? '') IN $mimes
+         WHERE kind = NONE AND (mime_type ?? '') IN $mimes AND document_id NOT IN $held
          ORDER BY archived_at DESC
          LIMIT $limit"
     );
@@ -1127,6 +1128,7 @@ pub async fn documents_awaiting_fields(
             mimes.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
         ))
         .bind(("limit", limit))
+        .bind(("held", held.to_vec()))
         .await?;
 
     let rows: Vec<DocumentRow> = resp.take(0)?;
@@ -1161,11 +1163,13 @@ pub async fn documents_awaiting_text(
     db: &Database,
     mimes: &[&str],
     limit: u32,
+    held: &[String],
 ) -> Result<Vec<DocumentRow>, DbError> {
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
          WHERE (text_source ?? '') = $none AND (mime_type ?? '') IN $mimes
+           AND document_id NOT IN $held
          ORDER BY archived_at DESC
          LIMIT $limit"
     );
@@ -1176,6 +1180,7 @@ pub async fn documents_awaiting_text(
             mimes.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
         ))
         .bind(("limit", limit))
+        .bind(("held", held.to_vec()))
         .bind(("none", TextSource::None.as_str().to_string()))
         .await?;
 
