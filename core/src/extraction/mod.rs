@@ -360,9 +360,55 @@ pub(crate) fn parse_response(
     Ok(result)
 }
 
+/// Give an extracted draft the other side of each commodity that does not net to zero.
+///
+/// A receipt states what was bought, never where the money came from. The missing side goes to
+/// `Unmatched`, so the draft balances and reconciliation can pair it with the bank's record.
+pub fn add_counter_legs(result: &mut ExtractionResult) {
+    let mut sums: std::collections::BTreeMap<String, Decimal> = Default::default();
+    for p in &result.postings {
+        *sums.entry(p.commodity.clone()).or_default() += p.amount;
+    }
+    for (commodity, sum) in sums.into_iter().filter(|(_, s)| !s.is_zero()) {
+        result.postings.push(ExtractedPosting {
+            account_hint: Some(crate::accounts::UNMATCHED_ACCOUNT.to_string()),
+            commodity,
+            amount: -sum,
+            line_label: None,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_receipt_gains_the_unmatched_side_and_a_balanced_draft_is_left_alone() {
+        let posting = |amount: &str| ExtractedPosting {
+            account_hint: Some("Expenses:Groceries".into()),
+            commodity: "CAD".into(),
+            amount: amount.parse().unwrap(),
+            line_label: None,
+        };
+        let mut receipt = ExtractionResult {
+            date: None,
+            description: Some("Quick Trip Variety".into()),
+            postings: vec![posting("14.06"), posting("1.83")],
+            total: Some("15.89".parse().unwrap()),
+            confidence: 0.9,
+            model: "m".into(),
+            raw_response: serde_json::Value::Null,
+        };
+        add_counter_legs(&mut receipt);
+        let last = receipt.postings.last().unwrap();
+        assert_eq!(last.account_hint.as_deref(), Some("Unmatched"));
+        assert_eq!(last.amount, "-15.89".parse::<Decimal>().unwrap());
+
+        let before = receipt.postings.len();
+        add_counter_legs(&mut receipt);
+        assert_eq!(receipt.postings.len(), before, "idempotent once balanced");
+    }
 
     #[test]
     fn route_image_defaults_to_receipt() {

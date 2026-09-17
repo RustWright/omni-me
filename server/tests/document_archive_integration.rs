@@ -236,6 +236,38 @@ async fn an_archived_scan_is_waiting_in_the_servers_enrichment_queue() {
 }
 
 #[tokio::test]
+async fn a_capture_is_archived_and_its_attachment_names_the_document() {
+    // Capture used to store the photo as a bare attachment, so no receipt ever reached the
+    // archive. The null extractor reads nothing, so the reader is left to catalogue it.
+    let (url, db, _h) = common::start_full_server_with_db().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{url}/documents/extract?hint=receipt&attach=true"))
+        .header("content-type", "image/jpeg")
+        .header("x-filename", "receipt.jpg")
+        .body(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
+        .send()
+        .await
+        .expect("extract failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    let document_id = body["attachment"]["document_id"]
+        .as_str()
+        .expect("the attachment links to the archived document")
+        .to_string();
+    assert_eq!(awaiting_ids(&db).await, vec![document_id]);
+    assert!(
+        body["extraction"]["postings"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "nothing read, so no counter leg is invented"
+    );
+}
+
+#[tokio::test]
 async fn a_field_corrected_on_a_phone_reaches_the_servers_documents_table() {
     // A correction reaches the server only through push. Unprojected there, the
     // enrichment pass would keep reading a document the user already classified.

@@ -226,6 +226,34 @@ pub fn unknown_accounts<'a>(
         .collect()
 }
 
+/// Commodities whose postings do not net to zero, with the amount each is off by.
+///
+/// A posting with an FX rate counts in its quote commodity, as hledger's `@` does. Converted sums
+/// carry sub-cent rounding, so those tolerate half a cent; unconverted sums must be exactly zero.
+pub fn imbalances(postings: &[Posting]) -> Vec<(String, Decimal)> {
+    let mut sums: std::collections::BTreeMap<String, (Decimal, bool)> = Default::default();
+    for p in postings {
+        let (commodity, amount, converted) = match &p.fx_rate {
+            Some(fx) => (fx.quote_commodity.clone(), p.amount * fx.rate, true),
+            None => (p.commodity.clone(), p.amount, false),
+        };
+        let entry = sums.entry(commodity).or_insert((Decimal::ZERO, false));
+        entry.0 += amount;
+        entry.1 |= converted;
+    }
+    let half_cent = Decimal::new(5, 3);
+    sums.into_iter()
+        .filter(|(_, (sum, converted))| {
+            if *converted {
+                sum.abs() >= half_cent
+            } else {
+                !sum.is_zero()
+            }
+        })
+        .map(|(commodity, (sum, _))| (commodity, sum))
+        .collect()
+}
+
 /// Stable predicate so query / projection code reads `is_unmatched(p)` instead
 /// of repeating the string comparison. Centralizes "what counts as Unmatched"
 /// — important if we ever sub-namespace (`Unmatched:Northwind`, `Unmatched:Globepay`, etc).
@@ -252,6 +280,51 @@ mod tests {
 
     fn tag_strings(tags: &[Tag]) -> Vec<String> {
         tags.iter().map(ToString::to_string).collect()
+    }
+
+    fn leg(account: &str, amount: &str, commodity: &str) -> Posting {
+        Posting {
+            account: account.into(),
+            commodity: commodity.into(),
+            amount: Decimal::from_str(amount).unwrap(),
+            fx_rate: None,
+            tags: vec![],
+        }
+    }
+
+    #[test]
+    fn a_captured_receipt_without_its_counter_leg_is_reported_off_by_its_total() {
+        // The shape capture produced on real data: line items and tax, nothing paying for them.
+        let receipt = [
+            leg("Expenses:Groceries", "4.49", "CAD"),
+            leg("Expenses:Groceries", "6.58", "CAD"),
+            leg("Expenses:Groceries", "2.99", "CAD"),
+            leg("Expenses:Tax:GST", "1.83", "CAD"),
+        ];
+        assert_eq!(
+            imbalances(&receipt),
+            vec![("CAD".to_string(), Decimal::from_str("15.89").unwrap())]
+        );
+
+        let mut balanced = receipt.to_vec();
+        balanced.push(leg(UNMATCHED_ACCOUNT, "-15.89", "CAD"));
+        assert!(imbalances(&balanced).is_empty());
+    }
+
+    #[test]
+    fn a_converted_posting_balances_in_its_quote_commodity_to_the_half_cent() {
+        let mut usd = leg("Expenses:Hosting", "14.18", "USD");
+        usd.fx_rate = Some(fx_rate_into_base(
+            Decimal::from_str("1.3638").unwrap(),
+            "CAD",
+        ));
+        // 14.18 × 1.3638 = 19.338684, paid as 19.34 CAD.
+        assert!(imbalances(&[usd.clone(), leg("Assets:Chequing", "-19.34", "CAD")]).is_empty());
+        assert_eq!(
+            imbalances(&[usd, leg("Assets:Chequing", "-19.00", "CAD")]).len(),
+            1,
+            "a real shortfall is still caught"
+        );
     }
 
     #[test]

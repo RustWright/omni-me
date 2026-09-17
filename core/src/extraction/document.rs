@@ -207,9 +207,90 @@ pub fn to_fields_payload(
     }
 }
 
+/// What a capture's extraction already says about the document, as a cataloguing answer.
+///
+/// Recorded when a capture is archived, so the reader never spends a second call on it. `None`
+/// when the hint names no document type or the extractor read nothing: the reader catalogues those.
+pub fn reading_from_extraction(
+    result: &super::ExtractionResult,
+    hint: super::ExtractionHint,
+) -> Option<DocumentSummary> {
+    use super::ExtractionHint as H;
+    let kind = match hint {
+        H::Receipt => "receipt",
+        H::BankStatement => "bank_statement",
+        H::BrokerageStatement => "brokerage_statement",
+        H::Paystub => "payslip",
+        H::EmailBody | H::Generic => return None,
+    };
+    if result.postings.is_empty() && result.description.is_none() && result.total.is_none() {
+        return None;
+    }
+
+    let mut commodities: Vec<&str> = result
+        .postings
+        .iter()
+        .map(|p| p.commodity.as_str())
+        .collect();
+    commodities.sort_unstable();
+    commodities.dedup();
+    let fields = result
+        .total
+        .map(|total| ReadField {
+            key: "total".into(),
+            value: match commodities.as_slice() {
+                [one] => format!("{total} {one}"),
+                _ => total.to_string(),
+            },
+        })
+        .into_iter()
+        .collect();
+
+    Some(DocumentSummary {
+        kind: kind.to_string(),
+        title: result
+            .description
+            .clone()
+            .filter(|d| !d.trim().is_empty())
+            .unwrap_or_else(|| kind.replace('_', " ")),
+        document_date: result.date.map(|d| d.to_string()),
+        fields,
+        model: result.model.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_captured_receipt_is_catalogued_from_its_extraction() {
+        let result = super::super::ExtractionResult {
+            date: chrono::NaiveDate::from_ymd_opt(2026, 9, 3),
+            description: Some("Quick Trip Variety".into()),
+            postings: vec![super::super::ExtractedPosting {
+                account_hint: None,
+                commodity: "CAD".into(),
+                amount: "15.89".parse().unwrap(),
+                line_label: None,
+            }],
+            total: Some("15.89".parse().unwrap()),
+            confidence: 0.9,
+            model: "deepseek-ai/DeepSeek-V4.1-Flash".into(),
+            raw_response: serde_json::Value::Null,
+        };
+        let reading =
+            reading_from_extraction(&result, super::super::ExtractionHint::Receipt).unwrap();
+        assert_eq!(reading.kind, "receipt");
+        assert_eq!(reading.title, "Quick Trip Variety");
+        assert_eq!(reading.document_date.as_deref(), Some("2026-09-03"));
+        assert_eq!(reading.fields[0].value, "15.89 CAD");
+
+        assert!(
+            reading_from_extraction(&result, super::super::ExtractionHint::Generic).is_none(),
+            "no document type named, so the reader catalogues it"
+        );
+    }
 
     fn summary() -> DocumentSummary {
         parse_summary(

@@ -2045,6 +2045,14 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
 
 ### Finances
 
+- [ ] **Privacy eye: hide every financial number with one tap** (user, 2026-09-17, "nice to
+  have", modelled on his brokerage app's eye icon, against someone looking over your shoulder).
+  Backlogged, not built: `format_money` (`pages/finances.rs`) covers ~30 render sites, but at
+  least 14 more amounts are interpolated ad hoc in `finances.rs` alone, plus chart axes,
+  `approvals.rs`, archive fields (totals) and assistant replies that quote amounts. ⛔ A mask
+  that misses some numbers is worse than none, because it reads as safe. Shape: one global
+  signal persisted in config, one masking formatter every money render goes through, an eye
+  toggle in the Finances header, and a sweep that routes the ad-hoc sites through it. [M, frontend]
 - [ ] **Swipe between Overview / Ledger / Analyze** (user, 2026-09-03) — today the sub-nav
   needs a scroll back to the top and a tap. Swipe handling already exists twice in the app:
   the app-shell nav drawer (`components/nav.rs`) and the journal calendar drawer

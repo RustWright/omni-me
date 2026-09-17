@@ -365,7 +365,14 @@ pub(crate) fn parse_one_entry(text: &str) -> Result<ParsedEntry, String> {
     if txns.next().is_some() {
         return Err("more than one transaction; propose them one at a time".into());
     }
-    convert_entry(t)
+    let entry = convert_entry(t)?;
+    // Refused here, where the model that wrote it can still correct it.
+    if let Some((commodity, sum)) = crate::accounts::imbalances(&entry.postings).first() {
+        return Err(format!(
+            "the postings don't balance ({sum} {commodity} left over); add the other side or `Unmatched`"
+        ));
+    }
+    Ok(entry)
 }
 
 /// The half of [`convert_transaction`] that is about reading ledger syntax
