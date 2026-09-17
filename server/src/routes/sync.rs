@@ -184,7 +184,13 @@ mod tests {
     fn a_group_split_by_the_page_edge_is_held_back_whole() {
         // c, d and the probe share second 3. Returning c and d would advance
         // the cursor to 3 and the probe would never be sent again.
-        let mut events = vec![ev("a", 1), ev("b", 2), ev("c", 3), ev("d", 3), ev("probe", 3)];
+        let mut events = vec![
+            ev("a", 1),
+            ev("b", 2),
+            ev("c", 3),
+            ev("d", 3),
+            ev("probe", 3),
+        ];
         trim_to_page(&mut events, 4);
         assert_eq!(ids(&events), ["a", "b"]);
     }
