@@ -426,6 +426,13 @@ const BOOT_RETRY_DEADLINE_MS: f64 = 10_000.0;
 /// That "never ran" is what makes retrying safe even for a mutating command,
 /// and it is why this is matched separately from a timeout — see
 /// [`invoke_timed`], where the distinction actually bites.
+/// A rejected invoke as the text the backend sent. Tauri rejects with the command's error
+/// string; debug-formatting it wrapped every message the user saw in `JsValue("…")`.
+#[cfg(not(feature = "mock"))]
+fn invoke_error(e: wasm_bindgen::JsValue) -> String {
+    e.as_string().unwrap_or_else(|| format!("{e:?}"))
+}
+
 #[cfg(not(feature = "mock"))]
 fn backend_not_ready(err: &str) -> bool {
     err.contains("state not managed")
@@ -456,7 +463,7 @@ async fn invoke<T: serde::de::DeserializeOwned>(
             let promise = tauri_invoke(cmd, args_js);
             let result = wasm_bindgen_futures::JsFuture::from(promise)
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(invoke_error)?;
             serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
         }
         .await;
@@ -498,7 +505,7 @@ async fn invoke_unit(cmd: &str, args: &impl serde::Serialize) -> Result<(), Stri
             let promise = tauri_invoke(cmd, args_js);
             wasm_bindgen_futures::JsFuture::from(promise)
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(invoke_error)?;
             Ok(())
         }
         .await;
@@ -576,7 +583,7 @@ async fn invoke_timed<T: serde::de::DeserializeOwned>(
                 js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
             let result = wasm_bindgen_futures::JsFuture::from(race)
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(invoke_error)?;
             serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
         }
         .await;
@@ -2062,6 +2069,7 @@ pub async fn invoke_extract_document(
                 filename: "mock-receipt".into(),
                 mime_type: mime.to_string(),
                 size,
+                document_id: None,
             }),
         })
     }

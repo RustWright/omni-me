@@ -106,6 +106,20 @@ pub async fn record_transaction(
     state: State<'_, AppState>,
     draft: TransactionDraft,
 ) -> Result<TransactionRow, String> {
+    // The form checks only that rows are filled in, and an unbalanced entry saved silently.
+    let off = omni_me_core::accounts::imbalances(&draft.postings);
+    if !off.is_empty() {
+        let by = off
+            .iter()
+            .map(|(commodity, sum)| format!("{sum} {commodity}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "These postings don't balance (off by {by}). Add the other side; if you don't know it \
+             yet, `Unmatched` holds it until the bank's record arrives."
+        ));
+    }
+
     let txn_id = ulid::Ulid::new().to_string();
     tracing::info!(txn_id = %txn_id, "record_transaction");
 

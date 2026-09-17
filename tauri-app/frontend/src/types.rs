@@ -648,6 +648,10 @@ pub struct AttachmentRef {
     pub filename: String,
     pub mime_type: String,
     pub size: u64,
+    /// Must stay in step with core's: serde drops an unknown field, so leaving it out here
+    /// silently unlinks every captured transaction from its archive document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
 }
 
 /// Frontend view of `core::extraction::ExtractionResult` — fields normalised

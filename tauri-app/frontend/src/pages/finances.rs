@@ -2437,7 +2437,8 @@ fn render_working() -> Element {
 fn render_error(message: &str) -> Element {
     rsx! {
         div { class: "p-4 bg-red-950/30 border border-red-500/30 rounded-lg space-y-2",
-            p { class: "text-sm text-red-300", "Couldn't extract: {message}" }
+            // Callers already prefix "Couldn't extract:"; repeating it here doubled the message.
+            p { class: "text-sm text-red-300", "{message}" }
             p { class: "text-xs text-obsidian-text-muted", "Pick another file above to retry." }
         }
     }
