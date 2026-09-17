@@ -111,13 +111,14 @@ async fn fetch(
         .await
         .map_err(|(e, _client)| ImportError::Upstream(format!("login: {e}")))?;
 
-    // Use the watched label as the mailbox name. Gmail labels appear as
-    // folders ("omni-me", "[Gmail]/All Mail", etc.) — INBOX works too if
-    // no filter is set up.
+    // EXAMINE, never SELECT: it opens the mailbox read-only, so the server itself
+    // refuses any state change. That makes polling a real mailbox safe rather than
+    // merely careful, and it backstops the BODY.PEEK[] discipline below.
+    // Gmail labels appear as folders here; INBOX works when no filter is set up.
     let _mailbox = session
-        .select(&creds.watched_label)
+        .examine(&creds.watched_label)
         .await
-        .map_err(|e| ImportError::Upstream(format!("select {}: {e}", creds.watched_label)))?;
+        .map_err(|e| ImportError::Upstream(format!("examine {}: {e}", creds.watched_label)))?;
 
     // Build UID range. On first run (no cursor), only fetch latest message
     // so we don't backfill the entire mailbox accidentally.
