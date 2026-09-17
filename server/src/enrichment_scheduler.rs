@@ -99,8 +99,12 @@ pub fn spawn(
         return;
     }
     if reader.is_none() && transcriber.is_none() {
+        // Name the seats this actually reads. It used to say [llm.extractor],
+        // which is the one table neither half consults, so acting on the
+        // message reproduced it exactly.
         tracing::warn!(
-            "document enrichment enabled but no [llm.extractor] vision endpoint — not spawning"
+            "document enrichment enabled but neither [llm.reader] nor [llm.transcriber] \
+             resolves a vision endpoint — not spawning"
         );
         return;
     }
