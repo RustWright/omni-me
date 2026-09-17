@@ -335,15 +335,19 @@ impl SyncClient {
     ) -> Result<(), SyncError> {
         let device_id = self.device_id.clone();
         let ts = timestamp.to_rfc3339();
+        // The pull cursor is a required field, and an empty first pull never writes it. Without
+        // the epoch fallback a push-created row fails the schema, and the watermark is lost.
         db.query(
             "UPSERT sync_state SET
                 device_id = $device_id,
+                last_sync_timestamp = last_sync_timestamp ?? type::datetime('1970-01-01T00:00:00Z'),
                 last_push_received_at = type::datetime($ts)
              WHERE device_id = $device_id",
         )
         .bind(("device_id", device_id))
         .bind(("ts", ts))
         .await
+        .and_then(|resp| resp.check())
         .map_err(|e| SyncError::Local(e.to_string()))?;
 
         Ok(())
@@ -399,6 +403,7 @@ impl SyncClient {
         .bind(("device_id", device_id))
         .bind(("ts", ts))
         .await
+        .and_then(|resp| resp.check())
         .map_err(|e| SyncError::Local(e.to_string()))?;
 
         Ok(())
