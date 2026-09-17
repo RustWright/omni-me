@@ -1718,7 +1718,12 @@ the extractor has.
       single "Model busy" loses the document. The logic exists in `llm/openai_compat.rs`
       (`MAX_RATE_LIMIT_RETRIES = 3`, honours `Retry-After`) and was never shared across. ⚠️ Fix
       with R20's `max_tokens` — same file, same path, three gaps that compound.
-- [ ] **Set a per-question `max_tokens` on role-C requests** (`MODEL_BENCH.md` R20). 🔴 There is
+- [ ] **Set a per-question `max_tokens` on role-C requests** (`MODEL_BENCH.md` R20).
+      ✅ **C2 done 2026-09-17: `READER_MAX_TOKENS = 2048`**, sized from real answers on dev
+      (65–150 tokens, 0 reasoning) after the reader seat ran to 300s twice on a handwritten note.
+      Every role-C answer now logs `completion_tokens`/`reasoning_tokens`/`finish_reason`
+      ("role-C answer"). ⏳ **C1 and C3 still uncapped** until measured the same way: C3 so far
+      38 and 356 tokens per receipt page; C1 has no measurements yet. 🔴 There is
       none today, so a model that does not terminate runs to the **300s vision timeout**, returns
       nothing, and still bills for every token — two models did this on *short text* probes.
       ⛔ Not one constant: C2's envelope wants ~2k, C3 transcribes a whole document and a tight
