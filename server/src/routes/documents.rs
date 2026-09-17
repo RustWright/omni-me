@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use omni_me_core::archive;
 use omni_me_core::events::{AttachmentRef, NewEvent};
 use omni_me_core::extraction::document::{reading_from_extraction, to_fields_payload};
-use omni_me_core::extraction::{DocumentPart, ExtractionHint, ExtractionResult, add_counter_legs};
+use omni_me_core::extraction::{
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentPart, ExtractionHint, ExtractionResult, add_counter_legs,
+    verify,
+};
 
 use crate::AppState;
 
@@ -33,6 +36,9 @@ pub struct ExtractQuery {
 pub struct ExtractResponse {
     pub extraction: ExtractionResult,
     pub attachment: Option<AttachmentRef>,
+    /// What the receipt cross-check found, such as line items not adding up to the total.
+    pub warnings: Vec<String>,
+    pub needs_review: bool,
 }
 
 pub fn documents_routes() -> Router<AppState> {
@@ -200,11 +206,18 @@ async fn extract_handler(
     } else {
         None
     };
-    add_counter_legs(&mut extraction);
+
+    // Before the counter leg, which would cancel the line-item sum this compares to the total.
+    // It used to run only in the extraction bench, never on a capture.
+    let report = verify(&extraction, q.hint, DEFAULT_CONFIDENCE_THRESHOLD);
+    extraction.confidence = report.effective_confidence;
+    add_counter_legs(&mut extraction, q.hint);
 
     Ok(Json(ExtractResponse {
         extraction,
         attachment,
+        warnings: report.warnings,
+        needs_review: report.needs_manual_review,
     }))
 }
 

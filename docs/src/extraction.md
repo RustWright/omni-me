@@ -81,8 +81,15 @@ rather than admit the document is too big.
 ## The arithmetic check, and the one thing it cannot see
 
 Every extraction is cross-checked before you see it: the line items are added up and compared
-against the document's own stated total. A mismatch halves the draft's confidence and routes it
-into a "look at this carefully" lane rather than letting it auto-commit.
+against the document's own stated total. A mismatch halves the draft's confidence, and the
+response carries the warning and a `needs_review` flag. (Until 2026-09-17 this ran only in the
+extraction bench, so a capture showed the model's own confidence however wrong its lines were.)
+
+A receipt draft also gains its other side, an `Unmatched` posting, so reconciliation can pair it
+with the bank's record of the same purchase. That posting is the **printed total**, never the sum
+of the line items: it has to equal what the bank charged. When the lines disagree with the total,
+the draft stays unbalanced by the difference and saving it is refused, so the misread lines reach
+a person instead of vanishing into a counter-leg sized to match them.
 
 This is the strongest signal available, because it does not depend on the model being honest
 about its own uncertainty. A model that misreads 5.50 as 5.00 will still tell you it is 95%

@@ -265,6 +265,14 @@ async fn a_capture_is_archived_and_its_attachment_names_the_document() {
             .is_empty(),
         "nothing read, so no counter leg is invented"
     );
+    assert!(
+        body["warnings"]
+            .to_string()
+            .contains("no postings extracted"),
+        "the cross-check runs on captures, not only in the bench: {}",
+        body["warnings"]
+    );
+    assert_eq!(body["needs_review"], true);
 }
 
 #[tokio::test]

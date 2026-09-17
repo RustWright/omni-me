@@ -363,11 +363,31 @@ pub(crate) fn parse_response(
 /// Give an extracted draft the other side of each commodity that does not net to zero.
 ///
 /// A receipt states what was bought, never where the money came from. The missing side goes to
-/// `Unmatched`, so the draft balances and reconciliation can pair it with the bank's record.
-pub fn add_counter_legs(result: &mut ExtractionResult) {
+/// `Unmatched`, so reconciliation can pair it with the bank's record. See `docs/src/extraction.md`.
+pub fn add_counter_legs(result: &mut ExtractionResult, hint: ExtractionHint) {
+    let unmatched = crate::accounts::UNMATCHED_ACCOUNT;
+    if result
+        .postings
+        .iter()
+        .any(|p| p.account_hint.as_deref() == Some(unmatched))
+    {
+        return;
+    }
     let mut sums: std::collections::BTreeMap<String, Decimal> = Default::default();
     for p in &result.postings {
         *sums.entry(p.commodity.clone()).or_default() += p.amount;
+    }
+    // A receipt's leg is its printed total, since that is what the bank charges. Line items that
+    // disagree with it then leave the draft unbalanced, where saving refuses it for review.
+    if let (ExtractionHint::Receipt, Some(total), 1) = (hint, result.total, sums.len()) {
+        let commodity = sums.into_keys().next().unwrap_or_default();
+        result.postings.push(ExtractedPosting {
+            account_hint: Some(unmatched.to_string()),
+            commodity,
+            amount: -total,
+            line_label: None,
+        });
+        return;
     }
     for (commodity, sum) in sums.into_iter().filter(|(_, s)| !s.is_zero()) {
         result.postings.push(ExtractedPosting {
@@ -400,14 +420,46 @@ mod tests {
             model: "m".into(),
             raw_response: serde_json::Value::Null,
         };
-        add_counter_legs(&mut receipt);
+        add_counter_legs(&mut receipt, ExtractionHint::Receipt);
         let last = receipt.postings.last().unwrap();
         assert_eq!(last.account_hint.as_deref(), Some("Unmatched"));
         assert_eq!(last.amount, "-15.89".parse::<Decimal>().unwrap());
 
         let before = receipt.postings.len();
-        add_counter_legs(&mut receipt);
-        assert_eq!(receipt.postings.len(), before, "idempotent once balanced");
+        add_counter_legs(&mut receipt, ExtractionHint::Receipt);
+        assert_eq!(receipt.postings.len(), before, "never a second leg");
+    }
+
+    #[test]
+    fn a_receipts_leg_is_its_printed_total_even_when_the_lines_disagree() {
+        // Real data: a model priced three sub-items at 1.20 where one was printed, so the lines
+        // summed to 28.14 against a printed 25.74. A leg of -28.14 would never pair with the bank.
+        let line = |amount: &str| ExtractedPosting {
+            account_hint: Some("Expenses:Fast Food".into()),
+            commodity: "CAD".into(),
+            amount: amount.parse().unwrap(),
+            line_label: None,
+        };
+        let mut receipt = ExtractionResult {
+            date: None,
+            description: Some("Harvey's".into()),
+            postings: vec![line("25.18"), line("2.96")],
+            total: Some("25.74".parse().unwrap()),
+            confidence: 0.72,
+            model: "m".into(),
+            raw_response: serde_json::Value::Null,
+        };
+        add_counter_legs(&mut receipt, ExtractionHint::Receipt);
+        assert_eq!(
+            receipt.postings.last().unwrap().amount,
+            "-25.74".parse::<Decimal>().unwrap()
+        );
+        let sum: Decimal = receipt.postings.iter().map(|p| p.amount).sum();
+        assert_eq!(
+            sum,
+            "2.40".parse::<Decimal>().unwrap(),
+            "the disagreement stays visible"
+        );
     }
 
     #[test]
