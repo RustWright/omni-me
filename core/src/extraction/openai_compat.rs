@@ -370,6 +370,7 @@ impl OpenAiCompatExtractor {
             },
         });
 
+        let started = std::time::Instant::now();
         let mut req = self
             .http
             .post(self.endpoint())
@@ -406,6 +407,20 @@ impl OpenAiCompatExtractor {
                 .unwrap_or("Unknown API error");
             return Err(ExtractionError::Upstream(format!("HTTP {status}: {msg}")));
         }
+
+        // The measurement per-question `max_tokens` ceilings get sized from (`MODEL_BENCH.md` R20).
+        // A call that times out never reaches here, so this records only real answers.
+        let usage = crate::llm::Usage::from_response(&response_body);
+        tracing::info!(
+            model = %self.model,
+            question = schema_name,
+            segments = payload.len(),
+            completion_tokens = usage.completion_tokens,
+            reasoning_tokens = usage.reasoning_tokens,
+            finish_reason = response_body["choices"][0]["finish_reason"].as_str().unwrap_or("none"),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "role-C answer"
+        );
 
         Self::content_json(&response_body)
     }
