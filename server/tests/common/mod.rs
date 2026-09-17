@@ -12,10 +12,18 @@ use std::sync::Arc;
 
 use axum::{Json, Router, routing::get};
 use omni_me_core::db;
-use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
+use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::NullLlmClient;
 use omni_me_server::{AppState, routes};
+
+/// The production server's projection set, schema initialised. Built by hand as an
+/// empty list, the harness once hid that the server could not run document enrichment.
+pub async fn server_projections(db: &db::Database) -> ProjectionRunner {
+    let runner = ProjectionRunner::new(db.clone(), registry::build_projections_server());
+    runner.init_all().await.expect("init server projections");
+    runner
+}
 
 /// Spin up a real Axum server on a random port with its own temp SurrealDB.
 /// Returns (server_url, join_handle). The tempdir is leaked intentionally —
@@ -32,7 +40,7 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
 
     let db_arc = Arc::new(server_db);
     let event_store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new((*db_arc).clone()));
-    let projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+    let projections = server_projections(&db_arc).await;
 
     let state = AppState {
         db: db_arc.clone(),
@@ -89,6 +97,20 @@ pub async fn start_full_server_with_auth(
     updates_dir: Option<std::path::PathBuf>,
     auth_token: Option<String>,
 ) -> (String, tokio::task::JoinHandle<()>) {
+    let (url, _db, handle) = boot_full_server(updates_dir, auth_token).await;
+    (url, handle)
+}
+
+/// As [`start_full_server`], also returning the server's database so a test can
+/// check what the server itself projected.
+pub async fn start_full_server_with_db() -> (String, db::Database, tokio::task::JoinHandle<()>) {
+    boot_full_server(None, None).await
+}
+
+async fn boot_full_server(
+    updates_dir: Option<std::path::PathBuf>,
+    auth_token: Option<String>,
+) -> (String, db::Database, tokio::task::JoinHandle<()>) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.db");
     let server_db = db::connect(path.to_str().unwrap()).await.unwrap();
@@ -100,7 +122,7 @@ pub async fn start_full_server_with_auth(
 
     let db_arc = Arc::new(server_db);
     let event_store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new((*db_arc).clone()));
-    let projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+    let projections = server_projections(&db_arc).await;
 
     let state = AppState {
         db: db_arc.clone(),
@@ -130,7 +152,7 @@ pub async fn start_full_server_with_auth(
         axum::serve(listener, app).await.unwrap();
     });
 
-    (url, handle)
+    (url, (*db_arc).clone(), handle)
 }
 
 /// Create a temp SurrealDB instance — simulates a device's local DB.

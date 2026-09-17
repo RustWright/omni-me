@@ -12,7 +12,10 @@
 mod common;
 
 use chrono::{DateTime, Utc};
-use omni_me_core::sync::{PullRequest, PullResponse};
+use omni_me_core::db::queries;
+use omni_me_core::document_fields;
+use omni_me_core::events::NewEvent;
+use omni_me_core::sync::{PullRequest, PullResponse, PushRequest};
 
 #[tokio::test]
 async fn a_csv_is_archived_and_its_bytes_are_retrievable_under_the_returned_hash() {
@@ -193,5 +196,73 @@ async fn a_statement_is_filed_with_its_parsed_fields_in_the_same_request() {
             .unwrap()
             .starts_with("parser:"),
         "⛔ parser-sourced, so a later model pass cannot overwrite it"
+    );
+}
+
+/// Archive one unreadable JPEG through the route and return its document id.
+async fn archive_a_scan(client: &reqwest::Client, url: &str) -> String {
+    let resp = client
+        .post(format!("{url}/documents/archive?source=scan"))
+        .header("content-type", "image/jpeg")
+        .header("x-filename", "receipt.jpg")
+        .body(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
+        .send()
+        .await
+        .expect("archive failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+    let body: serde_json::Value = resp.json().await.unwrap();
+    body["document_id"].as_str().unwrap().to_string()
+}
+
+async fn awaiting_ids(db: &omni_me_core::db::Database) -> Vec<String> {
+    queries::documents_awaiting_fields(db, &["image/jpeg"], 10)
+        .await
+        .expect("the enrichment work queue must be queryable on the server")
+        .into_iter()
+        .map(|row| row.document_id)
+        .collect()
+}
+
+#[tokio::test]
+async fn an_archived_scan_is_waiting_in_the_servers_enrichment_queue() {
+    // On the first dev deploy this query failed every tick: the server registered no
+    // projections, so the `documents` table it reads did not exist.
+    let (url, db, _h) = common::start_full_server_with_db().await;
+    let client = reqwest::Client::new();
+
+    let document_id = archive_a_scan(&client, &url).await;
+
+    assert_eq!(awaiting_ids(&db).await, vec![document_id]);
+}
+
+#[tokio::test]
+async fn a_field_corrected_on_a_phone_reaches_the_servers_documents_table() {
+    // A correction reaches the server only through push. Unprojected there, the
+    // enrichment pass would keep reading a document the user already classified.
+    let (url, db, _h) = common::start_full_server_with_db().await;
+    let client = reqwest::Client::new();
+    let document_id = archive_a_scan(&client, &url).await;
+
+    let correction = document_fields::human_correction(&document_id, "kind", "receipt");
+    let event = NewEvent::document_fields_extracted("phone-1", &correction).unwrap();
+    let resp = client
+        .post(format!("{url}/sync/push"))
+        .json(&PushRequest {
+            device_id: "phone-1".into(),
+            events: vec![event],
+        })
+        .send()
+        .await
+        .expect("push failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+
+    let row = queries::get_document(&db, &document_id)
+        .await
+        .unwrap()
+        .expect("the archived document has a server-side row");
+    assert_eq!(row.kind.as_deref(), Some("receipt"));
+    assert!(
+        awaiting_ids(&db).await.is_empty(),
+        "a classified document is no longer enrichment work"
     );
 }

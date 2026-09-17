@@ -46,13 +46,20 @@ async fn push_handler(
     let store = SurrealEventStore::new((*state.db).clone());
     let count = body.events.len();
 
-    store.append_batch(body.events).await.map_err(|e| {
+    let appended = store.append_batch(body.events).await.map_err(|e| {
         tracing::warn!("failed to append events during push: {e}");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to store events: {e}"),
         )
     })?;
+
+    // Best-effort, after the events are durable: failing the push here would make the
+    // device resend events already stored. A skipped event is logged, and a rebuild recovers it.
+    let failed = state.projections.apply_events_resilient(&appended).await;
+    if failed > 0 {
+        tracing::warn!(failed, count, "pushed events stored but not all projected");
+    }
 
     Ok(Json(PushResponse { count }))
 }

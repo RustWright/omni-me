@@ -158,6 +158,12 @@ server-side pass reaches the whole archive. A document whose bytes are absent is
 skipped rather than failed — that is what a document archived somewhere else would look like
 from here, and nothing produces one today.
 
+The pass reads the `documents` table, so the server keeps that one projection even though devices
+run all the others. Every path that stores a document event on the server folds it there: the
+archive route, the enrichment pass's own writes, and `/sync/push`. The last one matters because a
+correction made on a phone arrives only by push, and a server blind to it would keep re-reading a
+document the user already classified.
+
 **The candidate query is the work queue.** There is no table of pending work, no cursor and no
 durable marker. A tick asks for documents that still have no `kind`, reads a few, and appends
 what it learns; the fold that lands the answer is the same thing that removes the work. This is

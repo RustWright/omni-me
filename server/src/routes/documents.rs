@@ -110,10 +110,9 @@ async fn archive_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Append then project, matching `auto_import::rest`. ⚠️ Note this path is
-    // NOT feature-gated: the server resolves no `ResolvedConfig`, so
-    // `EventWriter`'s guard has nothing to read here. Pre-existing and shared
-    // with every auto-import source — see `tasks.md`.
+    // Append then project. Note this path is NOT feature-gated: the server resolves
+    // no `ResolvedConfig`, so `EventWriter`'s guard has nothing to read here.
+    // Pre-existing and shared with every auto-import source — see `tasks.md`.
     //
     // ⚠️ **One batch, not one call per event.** The fields event is about the
     // document the archive event creates; appending them separately would let a
@@ -123,11 +122,16 @@ async fn archive_handler(
         .append_batch(ingested.events)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("append: {e}")))?;
-    state
-        .projections
-        .apply_events(&appended)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("project: {e}")))?;
+    // Best-effort once stored: an error response here makes the device retry, and the
+    // retry files the same bytes as a second document.
+    let failed = state.projections.apply_events_resilient(&appended).await;
+    if failed > 0 {
+        tracing::warn!(
+            document_id = %ingested.document_id,
+            failed,
+            "archived but not all projected"
+        );
+    }
 
     tracing::info!(
         document_id = %ingested.document_id,

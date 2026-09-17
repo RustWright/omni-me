@@ -34,7 +34,7 @@ use omni_me_core::auto_import::setup::{DEFAULT_INTERVAL, spawn_sources};
 use omni_me_core::auto_import_scheduler::{AutoImportSource, SourceRegistry};
 use omni_me_core::credentials::{self, LlmRole};
 use omni_me_core::db::Database;
-use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
+use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
 use omni_me_core::extraction::DocumentExtractor;
 use omni_me_core::llm::{
     ClientOptions, LlmClient, build_extractor, build_llm_client, build_reader, build_transcriber,
@@ -250,11 +250,12 @@ pub async fn run(cfg: RunConfig) {
     // Auto-import build handles. Built before AppState so the state can carry
     // *clones* (the in-app add-source endpoint constructs + spawns a source live
     // from them) while the boot-time `SourceCtx` builder consumes the originals.
-    // Projections vec is empty: the server stores events + syncs them to clients,
-    // which run their own projections locally.
+    // Devices run their own projections; the server keeps only the tables its own
+    // background work queries. First boot on an existing log replays it.
     let device_id =
         std::env::var("OMNI_SERVER_DEVICE_ID").unwrap_or_else(|_| "server-auto-import".to_string());
-    let server_projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+    let server_projections =
+        ProjectionRunner::new((*db_arc).clone(), registry::build_projections_server());
     if let Err(e) = server_projections.init_all().await {
         tracing::warn!(error = %e, "server projection_versions init failed");
     }

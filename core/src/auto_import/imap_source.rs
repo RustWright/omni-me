@@ -183,10 +183,16 @@ impl AutoImportSource for ImapSource {
                 .append_batch(outcome.events)
                 .await
                 .map_err(|e| ImportError::Upstream(format!("append batch: {e}")))?;
-            self.projections
-                .apply_events(&appended)
-                .await
-                .map_err(|e| ImportError::Upstream(format!("project: {e}")))?;
+            // Best-effort once stored: failing here skips the cursor save below, so the
+            // next tick would re-archive the same messages as new documents.
+            let failed = self.projections.apply_events_resilient(&appended).await;
+            if failed > 0 {
+                tracing::warn!(
+                    source = %self.name,
+                    failed,
+                    "archived mail stored but not all projected"
+                );
+            }
         }
 
         // Advance the cursor in memory + persistent storage.

@@ -1039,6 +1039,10 @@ critical path, not the tail.
   discovered later*. Measured 2026-09-16: DB 71 MB, **blobs 0 bytes**, 29 G free. ⛔ That number
   means nothing yet: blobs are empty precisely because no document has ever been archived. The
   real figure appears the moment ingestion starts, which is the moment it is too late to plan.
+  ✅ **His next move if it does run short** (2026-09-17): on-demand object storage (S3, R2 or
+  similar), so blob storage is independent of the sync server and documents stay viewable when
+  that server is down. The same argument eventually puts the agent on its own machine. ⛔ Both
+  are future goals. Neither may complicate today's co-located design.
 - ⚠️ **Inbox management after extraction** — how processed emails are handled and stored. Named
   as open 2026-09-11 and not obviously closed since.
 - ⚠️ **Reviewing the archive of emails** — same origin, same status.
