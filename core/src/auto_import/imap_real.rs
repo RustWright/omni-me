@@ -157,6 +157,12 @@ async fn fetch(
     };
 
     pending.sort_unstable();
+    // `{last+1}:*` still matches the highest existing UID when nothing is newer, because `*`
+    // resolves to it and IMAP ranges are order-independent. Dropping those here costs an idle
+    // mailbox one enumerate round trip instead of re-fetching a body it already has.
+    if let Some(last) = cursor.last_seen_uid {
+        pending.retain(|uid| *uid > last);
+    }
     let total_pending = pending.len();
     pending.truncate(MAX_UIDS_PER_TICK);
 

@@ -170,6 +170,13 @@ pub async fn poll_once(
     archive: Option<&ArchiveTarget<'_>>,
 ) -> Result<PollOutcome, ImportError> {
     let (messages, max_uid) = fetcher.fetch_new(cursor).await?;
+    // `fetch_new` promises UID > last_seen_uid and the IMAP one cannot quite keep it, since a
+    // `{last+1}:*` range matches the highest existing UID when nothing is newer. Enforced here
+    // rather than only in that fetcher: a re-seen message is archived again under a fresh id.
+    let messages: Vec<ImapMessage> = match cursor.last_seen_uid {
+        Some(last) => messages.into_iter().filter(|m| m.uid > last).collect(),
+        None => messages,
+    };
     let mut events = Vec::new();
     // Identities, not just counts: a mailbox that silently discards a
     // statement needs to name the message, since the uid is the only handle
@@ -772,5 +779,98 @@ mod tests {
             archived, 2,
             "⛔ both messages archived — routing decides transactions, not keeping"
         );
+    }
+
+    #[tokio::test]
+    async fn a_uid_the_cursor_has_already_seen_is_not_archived_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let eml = b"From: news@example.com\r\n\
+                    Subject: Weekly\r\n\
+                    Content-Type: text/plain\r\n\r\n\
+                    nothing new\r\n";
+
+        // What a real server answers for `{last+1}:*` with no newer mail: the highest
+        // existing UID, which the cursor already holds. Observed on a live mailbox, where
+        // every tick minted a second document for one unchanged message.
+        let fetcher = MockFetcher::new("gmail");
+        let mut stale = make_message(14835, "news@example.com");
+        stale.body = eml.to_vec();
+        fetcher.push_response(vec![stale], Some(14835));
+
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![];
+        let target = ArchiveTarget {
+            blob_dir: dir.path(),
+            device_id: "dev",
+        };
+        let outcome = poll_once(
+            &fetcher,
+            &handlers,
+            &FetchCursor {
+                last_seen_uid: Some(14835),
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            outcome.messages_seen, 0,
+            "a uid at the cursor is not a new message"
+        );
+        assert!(outcome.unrouted.is_empty(), "nothing to route");
+        let archived = outcome
+            .events
+            .iter()
+            .filter(|e| e.event_type == "document_archived")
+            .count();
+        assert_eq!(
+            archived, 0,
+            "re-archiving mints a fresh document id for a blob that already exists"
+        );
+        assert_eq!(
+            outcome.next_cursor.last_seen_uid,
+            Some(14835),
+            "the cursor holds rather than moving backwards"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_uid_above_the_cursor_is_still_archived() {
+        let dir = tempfile::tempdir().unwrap();
+        let eml = b"From: news@example.com\r\n\
+                    Subject: Weekly\r\n\
+                    Content-Type: text/plain\r\n\r\n\
+                    genuinely new\r\n";
+
+        // The other half of the filter: it must drop only what is at or below the cursor.
+        let fetcher = MockFetcher::new("gmail");
+        let mut fresh = make_message(14836, "news@example.com");
+        fresh.body = eml.to_vec();
+        fetcher.push_response(vec![fresh], Some(14836));
+
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![];
+        let target = ArchiveTarget {
+            blob_dir: dir.path(),
+            device_id: "dev",
+        };
+        let outcome = poll_once(
+            &fetcher,
+            &handlers,
+            &FetchCursor {
+                last_seen_uid: Some(14835),
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.messages_seen, 1, "one genuinely new message");
+        let archived = outcome
+            .events
+            .iter()
+            .filter(|e| e.event_type == "document_archived")
+            .count();
+        assert_eq!(archived, 1, "a newer uid is archived as before");
+        assert_eq!(outcome.next_cursor.last_seen_uid, Some(14836));
     }
 }
