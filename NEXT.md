@@ -1,20 +1,21 @@
 # NEXT
 
-✅ **Dev runs the new image with IMAP ON for `gmail_personal` alone**, enrichment OFF. Turning it on
-surfaced a duplication bug within two ticks; fixed in `e810ff3e`, 1329 tests / 0 failed.
+✅ **IMAP is ON for `gmail_personal` on dev, enrichment OFF, and the duplicate-archiving bug it
+exposed is fixed and verified in production** — an idle tick logs `fetched=0`; before the fix every
+tick re-archived the newest message. Image `dev-ff53bb7-1fbcb00`, 1329 tests / 0 failed.
 
-▶ **NEXT ACTION: deploy run 35306171163, then confirm an idle tick fetches nothing.**
-1. Snapshot, set `OMNI_IMAGE` to the new `dev-<priv>-e810ff3e` tag, `docker compose pull && up -d`.
-2. Confirm an idle tick logs `fetched=0`. Before the fix EVERY tick re-archived the newest message.
-3. Leave it a day, enrichment still OFF, and read archive volume off the tick counts.
-4. Then widen to `gmail_work` + `yahoo` (append their `[imap.*]` blocks); then the APK for `verify`
-   warnings on the draft form and `x-filename` (thread the picker's real name, don't synthesize).
+▶ **NEXT ACTION: let it measure a day, then widen.**
+1. Read volume off `auto-import tick ... fetched=N` in `docker logs omni-me-dev` (strip ANSI).
+   ⚠️ The 3 document records against 1 blob predate the fix and are NOT volume.
+2. Then widen: append the `[imap.gmail_work]` and `[imap.yahoo]` blocks from live's
+   `credentials.toml` into `credentials-dev.toml`, server-side, never printing a value; restart.
+   ⛔ That append IS the scope control — there is no per-account flag.
+3. Then the APK: show `verify` warnings on the draft form, and send `x-filename` threading the
+   picker's real filename rather than synthesizing one in Rust.
 
 ## ✅ Decided
 - **`EXAMINE`, never `SELECT`** (his call) — server-enforced read-only, so polling the real INBOX
-  has no side effect. His three app passwords already live in live's `credentials.toml`.
-- **Scope is the config file, not a flag** — `build_imap_sources` loops every `[imap.*]` block and
-  there is no per-account toggle. ⛔ Never widen without him.
+  has no side effect. It replaced the whole test-mailbox plan; `tasks.md` item 2 is now resolved.
 - **`.edu` (`uwaterloo.ca`) PARKED** — Microsoft 365, so IMAP needs XOAUTH2 + an Azure app
   registration. ⚠️ He wants it for inbox management and scheduling, NOT receipts.
 
@@ -25,16 +26,15 @@ costs ~2 model calls per email, the archive fills with newsletters, and there is
 Designing that purge path is the open question. ⚠️ `ingest_one` mints a fresh ULID per ingest by
 design: blobs dedupe by sha256, document records never do.
 
-## ⚠️ Found today, keep
-- **The overlay's own logs are invisible by default** — the public fallback filter names
-  `omni_me_server`/`omni_me_core` only, while the overlay binary logs under `omni_me_private`. Dev's
-  compose now sets `RUST_LOG`; ⚠️ the public fallback is still unfixed. A dead source reads as `sources=0`.
+## ⚠️ Open work this surfaced
 - ⛔ **`UIDVALIDITY` is handled nowhere, and the dedupe fix changed its failure mode.** A renumbered
-  mailbox used to self-heal through the same `n:*` quirk; now it stalls with the cursor stuck, and a
-  warning is all that names it. Real fix: carry `uid_validity` in the cursor — trait + schema change.
+  mailbox used to self-heal through the `n:*` quirk; now it stalls with the cursor stuck, and only a
+  warning names it. Real fix: carry `uid_validity` in the cursor — trait + schema change, own session.
+- **The overlay's logs are invisible by default** — the public fallback filter omits
+  `omni_me_private`, so a dead source reads as `sources=0`. Dev sets `RUST_LOG`; the public fix is open.
 
 ## ⛔ Inherit — do not re-derive
 - 🔴 **NOTHING since the stamped release has run on live** (`sha-9a0b1dd`). ⛔ Never deploy there;
-  snapshot before every dev mutation. Restore point: `dev-pre-imap-20260918-035321.tgz`.
+  snapshot before every dev mutation. Restore points: `dev-pre-imap-20260918-035321.tgz`, `-dedupe-044658`.
 - ⚠️ Strip ANSI before grepping docker logs. ⛔ Cargo goes in a capped systemd unit, all three crates
   in ONE invocation. ⛔ Branches: public `dev/role-split-model-seats`, private `dev/untested-overlay`.
