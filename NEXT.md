@@ -26,12 +26,12 @@ Designing that purge path is the open question. ⚠️ `ingest_one` mints a fres
 design: blobs dedupe by sha256, document records never do.
 
 ## ⚠️ Found today, keep
-- **The overlay's own logs are invisible by default.** The filter is
-  `omni_me_server=debug,omni_me_core=info,tower_http=debug` and the overlay binary logs under
-  `omni_me_private`, matching nothing. Dev's compose now sets `RUST_LOG`. A failed `ImapSource::new`
-  would otherwise appear only as `sources=0`, with no reason given.
-- ⚠️ His AnyConnect VPN registers `~.` with resolved, killing ALL DNS when its resolvers are
-  unreachable; quitting the GUI does not disconnect it. Tailnet-by-IP works throughout.
+- **The overlay's own logs are invisible by default** — the public fallback filter names
+  `omni_me_server`/`omni_me_core` only, while the overlay binary logs under `omni_me_private`. Dev's
+  compose now sets `RUST_LOG`; ⚠️ the public fallback is still unfixed. A dead source reads as `sources=0`.
+- ⛔ **`UIDVALIDITY` is handled nowhere, and the dedupe fix changed its failure mode.** A renumbered
+  mailbox used to self-heal through the same `n:*` quirk; now it stalls with the cursor stuck, and a
+  warning is all that names it. Real fix: carry `uid_validity` in the cursor — trait + schema change.
 
 ## ⛔ Inherit — do not re-derive
 - 🔴 **NOTHING since the stamped release has run on live** (`sha-9a0b1dd`). ⛔ Never deploy there;
