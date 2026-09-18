@@ -1020,15 +1020,20 @@ critical path, not the tail.
    floated it as possibly cleaner — a **full finances wipe and re-import**. ⚠️ Decide which
    BEFORE importing anything, because a half-caught-up ledger is worse than an empty one.
    ⛔ Both bank sources are currently OFF and categorization is deferred to `Unmatched`.
-2. **Email receipt ingestion via IMAP.** 🔴 **This conflicts with the dev isolation as built.**
-   Dev credentials deliberately carry no `[imap.*]` sections, because a poller there would read
-   the real mailboxes and **mark real messages processed** — production pollution by side
-   effect, even though the rows land in a clone. ⛔ Resolve before testing this leg. Options,
-   none chosen: a dedicated test mailbox · a separate label the real flow ignores · replaying
-   saved `.eml` files instead of live polling · accepting the side effect knowingly.
+2. **Email receipt ingestion via IMAP.** ✅ **RESOLVED, and RUNNING on dev for `gmail_personal`**
+   (2026-09-18). The isolation conflict was dissolved by opening the mailbox with `EXAMINE`
+   instead of `SELECT` — the user's suggestion. The server itself then refuses any state change,
+   so polling the real mailbox cannot mark a message processed, and `BODY.PEEK[]` backstops it.
+   None of the four options was needed; no test mailbox exists. ⛔ Scope is the credentials file,
+   not a flag: `build_imap_sources` polls every `[imap.*]` block and dev carries only
+   `gmail_personal`. Enrichment stays OFF until archive volume is measured and a purge path
+   exists. ⚠️ Open from the first ticks: `UIDVALIDITY` is unhandled, so a renumbered mailbox
+   stalls (see `NEXT.md`).
 3. **Image capture of receipts** — the photograph path into the archive, then C1 extraction.
-   ⚠️ Never exercised on the box: the blob store is **empty, zero entries**.
-4. **The archive itself** — scan, store, retrieve. Built this cycle, never run on real data.
+   ✅ Verified on the phone 2026-09-17. ⚠️ Remaining: the draft form does not show `verify`
+   warnings, and `x-filename` still needs the picker's real name threaded through.
+4. **The archive itself** — scan, store, retrieve. ✅ Now running on real data: 14 blobs / 22 MB
+   on dev, from captures plus the first archived emails.
 5. **Finance propose actions** — BUILT 2026-09-13, never exercised on hardware.
 6. **The tab goes on.** ⛔ Nothing turns on without the user saying so.
 
@@ -1036,9 +1041,9 @@ critical path, not the tail.
 
 - ⚠️ **Storage capacity.** The user named this himself on 2026-09-11 — unsure the box is large
   enough long term, and asked that the archive be planned with it in mind *rather than
-  discovered later*. Measured 2026-09-16: DB 71 MB, **blobs 0 bytes**, 29 G free. ⛔ That number
-  means nothing yet: blobs are empty precisely because no document has ever been archived. The
-  real figure appears the moment ingestion starts, which is the moment it is too late to plan.
+  discovered later*. Measured 2026-09-18, ingestion now running: dev blobs **22 MB across 14
+  entries**, volume 99 MB, 27 G free. ⚠️ Still not a rate — the mailbox has produced one message
+  so far, and the duplicate-archiving bug fixed the same day means earlier counts overstate it.
   ✅ **His next move if it does run short** (2026-09-17): on-demand object storage (S3, R2 or
   similar), so blob storage is independent of the sync server and documents stay viewable when
   that server is down. The same argument eventually puts the agent on its own machine. ⛔ Both
