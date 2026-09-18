@@ -160,6 +160,7 @@ async fn fetch(
     // `{last+1}:*` still matches the highest existing UID when nothing is newer, because `*`
     // resolves to it and IMAP ranges are order-independent. Dropping those here costs an idle
     // mailbox one enumerate round trip instead of re-fetching a body it already has.
+    let highest_enumerated = pending.last().copied();
     if let Some(last) = cursor.last_seen_uid {
         pending.retain(|uid| *uid > last);
     }
@@ -167,6 +168,18 @@ async fn fetch(
     pending.truncate(MAX_UIDS_PER_TICK);
 
     if pending.is_empty() {
+        // UIDs only climb while UIDVALIDITY holds, so a mailbox whose highest one sits below the
+        // cursor was renumbered or lost its newest mail. Neither is distinguishable here and the
+        // cursor can never pass it, so say so rather than reading forever as an idle mailbox.
+        if let (Some(highest), Some(last)) = (highest_enumerated, cursor.last_seen_uid)
+            && highest < last
+        {
+            tracing::warn!(
+                highest_uid = highest,
+                cursor_uid = last,
+                "imap: every uid sits below the cursor — polling cannot advance from here",
+            );
+        }
         let _ = session.logout().await;
         return Ok((Vec::new(), cursor.last_seen_uid));
     }
