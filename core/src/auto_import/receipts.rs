@@ -28,7 +28,8 @@ use tokio::process::Command;
 use crate::auto_import_scheduler::ImportError;
 use crate::events::NewEvent;
 use crate::extraction::{
-    DocumentExtractor, DocumentPart, ExtractionHint, receipt_extraction_to_drafts,
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, DocumentPart, ExtractionHint,
+    receipt_extraction_to_drafts, verify,
 };
 
 use super::imap::{ImapHandler, ImapMessage};
@@ -240,11 +241,23 @@ impl ImapHandler for ReceiptHandler {
             .await
             .map_err(|e| ImportError::Upstream(format!("receipt extract: {e}")))?;
 
+        // Nothing cross-checked email-sourced drafts before this: `verify` ran only on
+        // the manual upload route, so the unattended path had the weaker guarantee.
+        let report = verify(
+            &result,
+            ExtractionHint::EmailBody,
+            DEFAULT_CONFIDENCE_THRESHOLD,
+        );
+
         tracing::info!(
             handler = self.name(),
             from = %message.from,
             subject = %parsed.subject,
             confidence = result.confidence,
+            effective_confidence = report.effective_confidence,
+            needs_manual_review = report.needs_manual_review,
+            dropped_postings = result.dropped_postings,
+            warnings = ?report.warnings,
             postings = result.postings.len(),
             "receipt: producing proposed batch"
         );
@@ -259,6 +272,12 @@ impl ImapHandler for ReceiptHandler {
             "from": message.from,
             "subject": parsed.subject,
             "uid": message.uid,
+            // Carried so review can tell a salvaged draft from a clean one. Without
+            // it the only record of a discarded line item is a log line.
+            "effective_confidence": report.effective_confidence,
+            "needs_manual_review": report.needs_manual_review,
+            "warnings": report.warnings,
+            "dropped_postings": result.dropped_postings,
         });
         let event = to_proposed_event(
             self.name(),

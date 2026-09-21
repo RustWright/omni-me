@@ -117,3 +117,40 @@ each tax line as its own posting, and a receipt with one tax line came back with
 times. Telling a model to be thorough about a category invites it to find more of that category
 than exists. The wording that worked names what a line item **is** — an individual charge, never
 a subtotal or a running balance, never the same amount twice unless the receipt says so.
+
+## Salvaging a partial extraction
+
+`ExtractedPosting::amount` is a required `Decimal` parsed from a JSON string. That is the right
+shape for a field no draft can do without, and it was brittle in a way that only showed up under
+a real mailbox: on 2026-09-20 a royalty notification came back with `"amount": ""` on one line,
+serde refused the value, and the **whole document** failed. Every posting the model had read
+correctly went with it.
+
+The lesson generalises past this one field. When the producer is a language model, every required
+field is a liveness risk, because the schema is a request rather than a guarantee. The neighbouring
+`total` is already `Option<Decimal>` for the same reason.
+
+`parse_response` therefore sanitises the postings array before deserializing it. A line whose
+amount is unusable is dropped on its own; a line whose amount arrived as a bare JSON number is
+recovered, since that loses no information and is the likeliest remaining way to miss the schema.
+Dropping one line rather than the document is safe here specifically because
+`receipt_extraction_to_drafts` emits one self-balancing draft per posting — the survivors are
+still individually balanced, so a salvage cannot leave a half-written entry behind.
+
+Salvage is never silent. The count lands in `ExtractionResult::dropped_postings`, `verify` turns a
+non-zero count into a warning and halves the effective confidence, and the original response is
+kept in `raw_response` so what was discarded stays inspectable. A draft that is knowingly
+incomplete must not arrive looking like a clean one.
+
+### What this exposed about the email path
+
+Chasing that failure turned up something larger than the failure. `verify` had exactly one caller
+— the manual `/documents/extract` upload route. Drafts arriving from IMAP went extract → drafts →
+review inbox with no arithmetic cross-check at all. The path running unattended every thirty
+minutes had the weaker guarantee, and the path a human had just driven by hand had the stronger
+one, which is backwards.
+
+The receipt handler now verifies too. It passes `EmailBody` rather than `Receipt`, and `EmailBody`
+cross-checks a total when one is present without treating a missing total as suspicious: a receipt
+email frequently never prints a grand total, where a receipt or paystub document always does.
+Penalising every such email would have produced a warning nobody reads.

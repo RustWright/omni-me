@@ -907,6 +907,7 @@ mod tests {
             total: total.map(dec),
             confidence: 0.9,
             model: "test".into(),
+            dropped_postings: 0,
             raw_response: serde_json::Value::Null,
         }
     }

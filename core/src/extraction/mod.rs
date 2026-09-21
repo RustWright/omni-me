@@ -90,6 +90,11 @@ pub struct ExtractionResult {
     )]
     pub total: Option<Decimal>,
     pub confidence: f64,
+    /// Line items `parse_response` discarded because their amount was unusable.
+    /// Non-zero means this result is knowingly incomplete, so `verify` downgrades
+    /// it — see `docs/src/extraction.md` on salvaging a partial extraction.
+    #[serde(default)]
+    pub dropped_postings: usize,
     /// Populated by the extractor impl after the LLM responds — the model
     /// doesn't echo this back. `serde(default)` so wire deserialization works.
     #[serde(default)]
@@ -366,12 +371,64 @@ pub(crate) fn parse_response(
     raw: serde_json::Value,
     model: &str,
 ) -> Result<ExtractionResult, ExtractionError> {
-    let mut result: ExtractionResult = serde_json::from_value(raw.clone())
+    let mut salvaged = raw.clone();
+    let dropped = salvage_postings(&mut salvaged);
+    let mut result: ExtractionResult = serde_json::from_value(salvaged)
         .map_err(|e| ExtractionError::Parse(format!("response: {e}")))?;
     result.model = model.to_string();
+    // The original, not the salvaged copy: what was dropped stays inspectable.
     result.raw_response = raw;
     result.confidence = result.confidence.clamp(0.0, 1.0);
+    result.dropped_postings = dropped;
     Ok(result)
+}
+
+/// Make the `postings` array deserializable, returning how many were discarded.
+///
+/// `ExtractedPosting::amount` is a required `Decimal`, so one unusable amount used
+/// to fail the whole document and lose every good posting with it. A model that
+/// returns `""` for an amount it could not find did exactly that in production.
+///
+/// A numeric amount is recovered rather than dropped: the schema asks for a string,
+/// but a bare JSON number is the likeliest way to miss it and loses no information.
+fn salvage_postings(value: &mut serde_json::Value) -> usize {
+    let Some(postings) = value.get_mut("postings").and_then(|p| p.as_array_mut()) else {
+        return 0;
+    };
+    let before = postings.len();
+    postings.retain_mut(|p| {
+        let Some(amount) = p.get_mut("amount") else {
+            return false;
+        };
+        // The number's own representation, not `as_f64`: a large integer amount
+        // survives this, where a trip through f64 would silently round it.
+        if amount.is_number() {
+            let text = amount.to_string();
+            *amount = serde_json::Value::String(text);
+            return true;
+        }
+        let Some(text) = amount.as_str().map(|s| s.trim().to_string()) else {
+            return false;
+        };
+        if !parses_as_decimal(&text) {
+            return false;
+        }
+        // Write the trimmed form back, so what passed this check is exactly what
+        // deserialization sees. Checking a trimmed copy and leaving the padded
+        // original in place would fail the document on a line this accepted.
+        *amount = serde_json::Value::String(text);
+        true
+    });
+    before - postings.len()
+}
+
+/// Whether `rust_decimal`'s serde adapter would accept this string.
+///
+/// It must mirror `rust_decimal::serde::str` exactly — `from_str`, falling back to
+/// scientific notation. Stricter and a line the deserializer could read is dropped;
+/// looser and the whole document fails on a line this let through.
+fn parses_as_decimal(s: &str) -> bool {
+    s.parse::<Decimal>().is_ok() || Decimal::from_scientific(s).is_ok()
 }
 
 /// Give an extracted draft the other side of each commodity that does not net to zero.
@@ -433,6 +490,7 @@ mod tests {
             total: Some("15.89".parse().unwrap()),
             confidence: 0.9,
             model: "m".into(),
+            dropped_postings: 0,
             raw_response: serde_json::Value::Null,
         };
         add_counter_legs(&mut receipt, ExtractionHint::Receipt);
@@ -463,6 +521,7 @@ mod tests {
             total: Some("25.74".parse().unwrap()),
             confidence: 0.72,
             model: "m".into(),
+            dropped_postings: 0,
             raw_response: serde_json::Value::Null,
         };
         add_counter_legs(&mut receipt, ExtractionHint::Receipt);
@@ -556,5 +615,70 @@ mod tests {
     fn route_returns_none_when_both_signals_inconclusive() {
         assert_eq!(route("application/pdf", None), None);
         assert_eq!(route("application/pdf", Some("random@example.com")), None);
+    }
+
+    /// Real 2026-09-20 failure: a royalty email whose amount came back `""` took the
+    /// whole document down, and with it every posting the model had read correctly.
+    #[test]
+    fn an_unusable_amount_drops_only_its_own_posting() {
+        let raw = serde_json::json!({
+            "postings": [
+                { "commodity": "CAD", "amount": "14.06" },
+                { "commodity": "CAD", "amount": "" },
+                { "commodity": "CAD", "amount": "1.83" },
+            ],
+            "confidence": 0.9,
+        });
+        let result = parse_response(raw.clone(), "m").expect("salvaged, not failed");
+        assert_eq!(result.postings.len(), 2);
+        assert_eq!(result.dropped_postings, 1);
+        assert_eq!(
+            result.raw_response, raw,
+            "the original survives, so what was dropped stays inspectable"
+        );
+    }
+
+    #[test]
+    fn a_numeric_amount_is_recovered_rather_than_dropped() {
+        let raw = serde_json::json!({
+            "postings": [{ "commodity": "CAD", "amount": 12.5 }],
+            "confidence": 0.5,
+        });
+        let result = parse_response(raw, "m").expect("number coerced to the string form");
+        assert_eq!(result.dropped_postings, 0);
+        assert_eq!(
+            result.postings[0].amount,
+            "12.5".parse::<Decimal>().unwrap()
+        );
+    }
+
+    /// The gate must accept everything `rust_decimal::serde::str` accepts. Scientific
+    /// notation and a padded string both parse there, so dropping them would be this
+    /// fix causing the very loss it exists to prevent.
+    #[test]
+    fn forms_the_deserializer_accepts_are_not_dropped() {
+        let raw = serde_json::json!({
+            "postings": [
+                { "commodity": "CAD", "amount": "1.5e2" },
+                { "commodity": "CAD", "amount": "  14.06  " },
+            ],
+            "confidence": 0.9,
+        });
+        let result = parse_response(raw, "m").expect("both forms are readable");
+        assert_eq!(result.dropped_postings, 0);
+        assert_eq!(result.postings[0].amount, "150".parse::<Decimal>().unwrap());
+        assert_eq!(
+            result.postings[1].amount,
+            "14.06".parse::<Decimal>().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_clean_response_drops_nothing() {
+        let raw = serde_json::json!({
+            "postings": [{ "commodity": "CAD", "amount": "3.00" }],
+            "confidence": 1.0,
+        });
+        assert_eq!(parse_response(raw, "m").unwrap().dropped_postings, 0);
     }
 }

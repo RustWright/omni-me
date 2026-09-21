@@ -51,12 +51,16 @@ pub fn verify(
     let mut warnings = Vec::new();
     let mut adjustment: f64 = 1.0;
 
+    // EmailBody cross-checks its total when one is present, but is absent from the
+    // arm below that treats a missing total as suspicious: a receipt email often
+    // never prints a grand total, where a receipt or paystub document always does.
     if matches!(
         hint,
         ExtractionHint::Receipt
             | ExtractionHint::Paystub
             | ExtractionHint::BankStatement
             | ExtractionHint::BrokerageStatement
+            | ExtractionHint::EmailBody
     ) {
         if let Some(total) = result.total {
             check_total(&result.postings, total, &mut warnings, &mut adjustment);
@@ -75,6 +79,16 @@ pub fn verify(
 
     if result.postings.is_empty() {
         warnings.push("no postings extracted".to_string());
+        adjustment *= 0.5;
+    }
+
+    // Independent of the total check, which cannot fire when no total was extracted.
+    // A salvaged result is missing line items by definition, so it is never clean.
+    if result.dropped_postings > 0 {
+        warnings.push(format!(
+            "{} line item(s) discarded — the model gave an unusable amount",
+            result.dropped_postings
+        ));
         adjustment *= 0.5;
     }
 
@@ -187,6 +201,7 @@ mod tests {
             total,
             confidence: conf,
             model: "test".into(),
+            dropped_postings: 0,
             raw_response: serde_json::Value::Null,
         }
     }
@@ -353,5 +368,39 @@ mod tests {
         r.date = NaiveDate::from_ymd_opt(2026, 3, 9);
         let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
         assert!(!report.warnings.iter().any(|w| w.contains("ambiguous")));
+    }
+
+    /// The signal that does not depend on a total being present — the case that
+    /// matters for email, where a grand total often is not printed at all.
+    #[test]
+    fn a_salvaged_extraction_is_flagged_even_with_no_total() {
+        let mut r = receipt(vec![posting("14.06")], None, 0.95);
+        r.dropped_postings = 1;
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert!(report.warnings.iter().any(|w| w.contains("discarded")));
+        assert!(report.needs_manual_review, "a partial draft is never clean");
+    }
+
+    /// Email-sourced drafts had no cross-check at all before the IMAP path called
+    /// `verify`; a dropped line item shows up here as a sum that misses the total.
+    #[test]
+    fn email_body_cross_checks_its_total_when_one_is_present() {
+        let r = receipt(
+            vec![posting("14.06")],
+            Some(Decimal::from_str("15.89").unwrap()),
+            0.95,
+        );
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert!(report.warnings.iter().any(|w| w.contains("does not match")));
+    }
+
+    /// The other half of that change: an email that simply never printed a total is
+    /// not penalised for it, unlike a receipt document where the total is expected.
+    #[test]
+    fn email_body_is_not_penalised_for_a_missing_total() {
+        let r = receipt(vec![posting("14.06")], None, 0.95);
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert!(!report.warnings.iter().any(|w| w.contains("no `total`")));
+        assert!(!report.needs_manual_review);
     }
 }

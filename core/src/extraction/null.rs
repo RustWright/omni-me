@@ -32,6 +32,7 @@ impl DocumentExtractor for NullExtractor {
             postings: vec![],
             total: None,
             confidence: 0.0,
+            dropped_postings: 0,
             model: "null".to_string(),
             raw_response: serde_json::Value::Null,
         })
