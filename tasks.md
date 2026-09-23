@@ -1396,9 +1396,35 @@ This was needed because **pausing does not survive a restart**, which had gone u
   resume mutate the registry *before* the write, so a failure left live and disk disagreeing
   while `/auto_import/status` (registry, not disk) showed the change — that 500 now says so in
   those words. Source add/remove always wrote first, so they failed cleanly and changed nothing.
-- [ ] **Warn at boot when the state dir is not writable.** The remaining half of the entry above:
+- [x] **Warn at boot when the state dir is not writable.** The remaining half of the entry above:
   the failure is still only visible at the moment someone tries to pause. A startup preflight
-  turns it into a loud boot line. [XS]
+  turns it into a loud boot line. [XS] — done 2026-09-23, `paths::state_dir_write_error`.
+- [ ] **The test fixture leaks a SurrealKV instance per test, and the suite deadlocks on it.**
+  🔴 **Reproduced locally 2026-09-23** (run 5 of 6 consecutive full-suite runs), which closes the
+  "nobody has reproduced it locally" note on the intermittent
+  `assistant_projection::tests::arrival_order_does_not_change_a_threads_clocks` hang.
+
+  **The hung process, measured while frozen:** 655 threads, of which **312 are named
+  `surrealkv-commit`**, plus 1742 open fds. Every thread sits in `futex_do_wait`, and neither
+  thread count nor fd count moved over 10s — a deadlock, not slow progress. ⛔ It is **not** a
+  resource-limit hit: `Max processes` 23659 and `Max open files` 1048576 were nowhere near.
+
+  **Mechanism.** `test_db()` stands up an embedded SurrealKV instance and then
+  `std::mem::forget(dir)`s its `TempDir` so the path outlives the call. The handle is never
+  closed either, so each instance's commit thread lives to the end of the process. There are
+  **217 `test_db()` call sites across 32 files**, so a full run accumulates hundreds of live
+  commit threads; the run eventually wedges. ⚠️ The named test is not special beyond being one
+  of the few that calls `test_db()` **twice**, so it is disproportionately likely to be the one
+  that tips it over.
+
+  ⚠️ This is very likely the same defect as the watched "SurrealKV commit queue overflow after
+  ~24h uptime" — same subsystem, same unbounded-commit-thread shape.
+
+  **The fix is mechanical but wide:** the fixture has to hand back a guard that owns the
+  `TempDir` and drops the database with it, which changes the signature at all 217 sites.
+  ⛔ Deliberately not attempted inside another workstream's branch. Limiting test concurrency
+  would hide it, not fix it. ⚠️ No stack trace was captured — `gdb` is not installed on this
+  machine (`rust-gdb` alone is just a wrapper), so which lock deadlocks is still unknown. [M]
 - [ ] **Reach import parity with paisa's seven importers.** Parity map is written (overlay
   `IMPORT_PARITY.md`; institution names are private). **Four of the seven are now covered**
   as of 2026-09-05: the old comma-splitting `statement_csv.rs` is deleted, imports run
