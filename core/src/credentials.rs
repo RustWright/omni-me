@@ -439,18 +439,10 @@ pub fn generate_auth_token() -> String {
 
 /// Default location for the credentials file. Follows XDG Base Directory.
 pub fn default_path() -> Result<PathBuf, CredentialError> {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".config"))
-        })
-        .ok_or_else(|| {
-            CredentialError::ConfigDir("neither XDG_CONFIG_HOME nor HOME set".to_string())
-        })?;
-    Ok(base.join("omni-me").join("credentials.toml"))
+    let dir = crate::paths::config_dir().ok_or_else(|| {
+        CredentialError::ConfigDir("neither XDG_CONFIG_HOME nor HOME set".to_string())
+    })?;
+    Ok(dir.join("credentials.toml"))
 }
 
 /// Load credentials from a TOML file. Missing file returns a default-empty

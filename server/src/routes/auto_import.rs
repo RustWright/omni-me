@@ -163,6 +163,25 @@ async fn reauth_handler(
 
 /// Same reasoning as [`upstream_err`]: config-layer failures are `io::Error`
 /// strings naming absolute paths on the box. Logged in full, returned generic.
+/// The live change succeeded and the durable one did not, so the two stores
+/// disagree until the next restart. Said explicitly because `/auto_import/status`
+/// reads the registry rather than disk and will show the change as applied.
+fn diverged_err<E: std::fmt::Display>(name: &str, action: &str, e: E) -> (StatusCode, String) {
+    tracing::error!(
+        source = %name,
+        action = %action,
+        error = %e,
+        "auto-import state changed live but could not be persisted"
+    );
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!(
+            "'{name}' was {action} live but the change could not be saved, \
+             so a restart will undo it — see server logs"
+        ),
+    )
+}
+
 fn internal_err<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
     tracing::warn!(error = %e, "auto-import config operation failed");
     (
@@ -267,7 +286,9 @@ fn clear_persisted_pause(name: &str) {
 /// name is running/registered. The persist is a hard requirement, not
 /// best-effort: a pause that silently didn't survive a restart is exactly the
 /// runaway-source failure mode #367 exists to prevent, so a persistence failure
-/// is surfaced as a 500 (the in-memory abort is harmless on its own).
+/// is surfaced as a 500 (the in-memory abort is harmless on its own). That 500
+/// says the two stores diverged, because `/auto_import/status` reads the live
+/// registry and will show the pause regardless.
 async fn pause_source_handler(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -278,8 +299,8 @@ async fn pause_source_handler(
             format!("no running source named '{name}'"),
         ));
     }
-    let path = paused::default_path().map_err(internal_err)?;
-    paused::set_paused(&path, &name, true).map_err(internal_err)?;
+    let path = paused::default_path().map_err(|e| diverged_err(&name, "paused", e))?;
+    paused::set_paused(&path, &name, true).map_err(|e| diverged_err(&name, "paused", e))?;
     Ok(Json(
         serde_json::json!({ "status": "paused", "applies": "live" }),
     ))
@@ -298,8 +319,8 @@ async fn resume_source_handler(
             format!("no running source named '{name}'"),
         ));
     }
-    let path = paused::default_path().map_err(internal_err)?;
-    paused::set_paused(&path, &name, false).map_err(internal_err)?;
+    let path = paused::default_path().map_err(|e| diverged_err(&name, "resumed", e))?;
+    paused::set_paused(&path, &name, false).map_err(|e| diverged_err(&name, "resumed", e))?;
     Ok(Json(
         serde_json::json!({ "status": "resumed", "applies": "live" }),
     ))
