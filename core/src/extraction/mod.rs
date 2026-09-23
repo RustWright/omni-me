@@ -99,8 +99,89 @@ pub struct ExtractionResult {
     /// doesn't echo this back. `serde(default)` so wire deserialization works.
     #[serde(default)]
     pub model: String,
+    /// What the document *is*, as the model labelled it, distinct from what it
+    /// reports. A vendor sends many messages per order and only some record a
+    /// charge. Kept as the raw label so an unrecognised one is inspectable
+    /// rather than lost; read it through [`ExtractionResult::kind`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_kind: Option<String>,
+    /// The vendor's own identifier for the order, copied as printed. This is
+    /// the handle that ties a vendor's several messages to one purchase.
+    /// Recorded now; grouping on it is a separate decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_ref: Option<String>,
     #[serde(default)]
     pub raw_response: serde_json::Value,
+}
+
+impl ExtractionResult {
+    /// The labelled kind, or `None` when the model did not answer.
+    ///
+    /// Callers must treat `None` as "allow". A model omitting the field is not
+    /// evidence the message is uninteresting, and silently dropping a real
+    /// purchase is a worse failure than proposing one the user dismisses.
+    pub fn kind(&self) -> Option<DocumentKind> {
+        self.document_kind.as_deref().map(DocumentKind::from_label)
+    }
+
+    /// Whether anything in this result represents money.
+    pub fn has_nonzero_amount(&self) -> bool {
+        self.postings.iter().any(|p| !p.amount.is_zero())
+    }
+}
+
+/// What an extracted document is. Only some kinds record money leaving an
+/// account, which is what decides whether a message should propose a draft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentKind {
+    /// States a charge that was actually made.
+    Receipt,
+    /// An order was placed; carries the amount, may or may not be charged yet.
+    OrderConfirmation,
+    /// Revises an order already announced: substitution, refund, price change.
+    OrderUpdate,
+    /// Fulfilment progress only — shipped, out for delivery, delivered.
+    ShippingNotice,
+    /// Asks for a review, a rating or a survey response.
+    FeedbackRequest,
+    /// Promotion, upsell, or a reminder with no charge in it.
+    Marketing,
+    /// Anything else, including a label this build does not recognise.
+    Other,
+}
+
+impl DocumentKind {
+    /// Map a model-supplied label. Unknown labels become `Other` rather than
+    /// failing the parse: a new vendor phrasing must never cost an extraction.
+    pub fn from_label(label: &str) -> Self {
+        match label
+            .trim()
+            .to_ascii_lowercase()
+            .replace([' ', '-'], "_")
+            .as_str()
+        {
+            "receipt" | "invoice" => Self::Receipt,
+            "order_confirmation" => Self::OrderConfirmation,
+            "order_update" => Self::OrderUpdate,
+            "shipping_notice" => Self::ShippingNotice,
+            "feedback_request" => Self::FeedbackRequest,
+            "marketing" => Self::Marketing,
+            _ => Self::Other,
+        }
+    }
+
+    /// Whether a message of this kind can record money actually spent.
+    ///
+    /// `ShippingNotice` and `OrderUpdate` are included because vendors restate
+    /// the order total in them, and for some orders they are the only message
+    /// that arrives. They are a duplicate-proposal problem, not a false one.
+    pub fn records_a_charge(self) -> bool {
+        matches!(
+            self,
+            Self::Receipt | Self::OrderConfirmation | Self::OrderUpdate | Self::ShippingNotice
+        )
+    }
 }
 
 /// One file of a document.
@@ -334,7 +415,23 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
              posting is a cross-check that cannot fail, which is worse than no check.\n\n\
              ⚠️ In BOTH cases emit the charge side only. Never add the paying \
              account, the card, or a balancing negative posting — the app adds that \
-             side itself, and a second side here is counted as another line item."
+             side itself, and a second side here is counted as another line item.\n\n\
+             Also set two fields describing the EMAIL itself, not the purchase.\n\n\
+             `document_kind`, exactly one of: \"receipt\" (states a charge that was \
+             made), \"order_confirmation\" (an order was placed), \"order_update\" (an \
+             order already placed has changed — item substituted, refunded, \
+             repriced), \"shipping_notice\" (fulfilment progress only: shipped, out \
+             for delivery, delivered), \"feedback_request\" (asks for a review, \
+             rating or survey), \"marketing\" (promotion, upsell, or a reminder with \
+             no charge), \"other\". ⚠️ Judge what the email IS, not what it mentions: \
+             a survey that repeats the order total is still \"feedback_request\", and \
+             a delivery notice that restates the total is still \"shipping_notice\".\n\n\
+             `order_ref` — the vendor's own identifier for this order, copied \
+             character for character as printed (order number, confirmation number, \
+             invoice number). One vendor sends several emails about one order and \
+             this is what ties them together. ⚠️ Leave it null if the email does not \
+             print one. Never invent it, never use a tracking number, and never use \
+             an identifier for something other than this order."
         }
         ExtractionHint::Generic => {
             "Extract any transaction-like information you can find. Set fields \
@@ -374,6 +471,8 @@ pub(crate) fn response_schema() -> serde_json::Value {
             // Its absence here is what kept `verify`'s arithmetic cross-check
             // dark: the field existed, nothing ever asked a model to fill it.
             "total": { "type": "string", "nullable": true },
+            "document_kind": { "type": "string", "nullable": true },
+            "order_ref": { "type": "string", "nullable": true },
             "confidence": { "type": "number" }
         },
         "required": ["postings", "confidence"]
@@ -511,6 +610,73 @@ mod tests {
             "lost the account-path rule — the model returns bare category names without it"
         );
         assert!(p.contains("charge side only"), "lost the charge-side rule");
+        assert!(
+            p.contains("`document_kind`"),
+            "lost the kind question — without it every vendor mail books a transaction"
+        );
+        assert!(
+            p.contains("`order_ref`"),
+            "lost the order-reference question"
+        );
+        // Every label the parser recognises has to be one the prompt offers, or
+        // the model can only ever answer with something that maps to `Other`.
+        for label in [
+            "receipt",
+            "order_confirmation",
+            "order_update",
+            "shipping_notice",
+            "feedback_request",
+            "marketing",
+        ] {
+            assert!(p.contains(label), "prompt never offers the label {label:?}");
+        }
+    }
+
+    #[test]
+    fn unknown_kind_labels_degrade_to_other_rather_than_failing() {
+        assert_eq!(
+            DocumentKind::from_label("price_drop_alert"),
+            DocumentKind::Other
+        );
+        assert_eq!(DocumentKind::from_label(""), DocumentKind::Other);
+    }
+
+    /// The model does not always echo the exact casing or separator asked for.
+    #[test]
+    fn kind_labels_tolerate_casing_and_separators() {
+        for label in [
+            "shipping_notice",
+            "Shipping Notice",
+            "SHIPPING-NOTICE",
+            "  shipping notice  ",
+        ] {
+            assert_eq!(
+                DocumentKind::from_label(label),
+                DocumentKind::ShippingNotice,
+                "failed on {label:?}"
+            );
+        }
+    }
+
+    /// The gate's whole purpose: a survey and an upsell are not purchases,
+    /// while everything that can carry a real charge still is.
+    #[test]
+    fn only_charge_bearing_kinds_may_propose_a_draft() {
+        for k in [
+            DocumentKind::Receipt,
+            DocumentKind::OrderConfirmation,
+            DocumentKind::OrderUpdate,
+            DocumentKind::ShippingNotice,
+        ] {
+            assert!(k.records_a_charge(), "{k:?} should be able to book");
+        }
+        for k in [
+            DocumentKind::FeedbackRequest,
+            DocumentKind::Marketing,
+            DocumentKind::Other,
+        ] {
+            assert!(!k.records_a_charge(), "{k:?} must never book");
+        }
     }
 
     #[test]
@@ -530,6 +696,8 @@ mod tests {
             confidence: 0.9,
             model: "m".into(),
             dropped_postings: 0,
+            document_kind: None,
+            order_ref: None,
             raw_response: serde_json::Value::Null,
         };
         add_counter_legs(&mut receipt, ExtractionHint::Receipt);
@@ -561,6 +729,8 @@ mod tests {
             confidence: 0.72,
             model: "m".into(),
             dropped_postings: 0,
+            document_kind: None,
+            order_ref: None,
             raw_response: serde_json::Value::Null,
         };
         add_counter_legs(&mut receipt, ExtractionHint::Receipt);

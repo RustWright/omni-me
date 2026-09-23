@@ -337,6 +337,33 @@ impl ImapHandler for ReceiptHandler {
             "receipt: producing proposed batch"
         );
 
+        // A vendor sends many messages per order and only some of them record a
+        // charge. An absent kind means allow — see `ExtractionResult::kind`.
+        if let Some(kind) = result.kind()
+            && !kind.records_a_charge()
+        {
+            tracing::info!(
+                handler = self.name(),
+                uid = message.uid,
+                subject = %parsed.subject,
+                kind = ?kind,
+                "receipt: not a charge, proposing nothing"
+            );
+            return Ok(vec![]);
+        }
+        // Backstop for a mislabelled kind: a draft with no money in it is never
+        // something to review. Catches surveys and upsells the model called a
+        // charge, without needing the label to be right.
+        if !result.has_nonzero_amount() {
+            tracing::info!(
+                handler = self.name(),
+                uid = message.uid,
+                subject = %parsed.subject,
+                "receipt: no non-zero amount, proposing nothing"
+            );
+            return Ok(vec![]);
+        }
+
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
         let drafts = receipt_extraction_to_drafts(&result, &source_prefix);
         if drafts.is_empty() {
@@ -356,6 +383,10 @@ impl ImapHandler for ReceiptHandler {
             // Without this an empty `warnings` reads as "the arithmetic was
             // checked", which on a single-amount email is false.
             "total_check": report.total_check,
+            // Recorded, not yet grouped on. The handle that will tie a vendor's
+            // several messages about one order into a single proposal.
+            "document_kind": result.document_kind,
+            "order_ref": result.order_ref,
         });
         let event = to_proposed_event(
             self.name(),
@@ -609,6 +640,107 @@ mod tests {
             .await
             .expect("oxio handler should succeed");
         assert!(events.is_empty());
+    }
+
+    /// Returns a canned extraction, so the handler's own gate can be exercised
+    /// without a model in the loop.
+    struct StubExtractor(crate::extraction::ExtractionResult);
+
+    #[async_trait]
+    impl crate::extraction::DocumentExtractor for StubExtractor {
+        fn name(&self) -> &str {
+            "stub"
+        }
+        fn supports(&self, _mime: &str) -> bool {
+            true
+        }
+        async fn extract(
+            &self,
+            _parts: &[crate::extraction::DocumentPart<'_>],
+            _hint: crate::extraction::ExtractionHint,
+        ) -> Result<crate::extraction::ExtractionResult, crate::extraction::ExtractionError>
+        {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn stub_result(kind: Option<&str>, amount: &str) -> crate::extraction::ExtractionResult {
+        use rust_decimal::Decimal;
+        use std::str::FromStr;
+        crate::extraction::ExtractionResult {
+            date: None,
+            date_as_printed: None,
+            description: Some("Northwind".into()),
+            postings: vec![crate::extraction::ExtractedPosting {
+                account_hint: Some("Expenses:Groceries".into()),
+                commodity: "CAD".into(),
+                amount: Decimal::from_str(amount).unwrap(),
+                line_label: None,
+            }],
+            total: None,
+            confidence: 0.9,
+            dropped_postings: 0,
+            model: "stub".into(),
+            document_kind: kind.map(String::from),
+            order_ref: Some("ORD-1".into()),
+            raw_response: serde_json::Value::Null,
+        }
+    }
+
+    fn plain_eml() -> Vec<u8> {
+        b"From: shop@northwind.example\r\nSubject: about your order\r\nDate: Sat, 16 May 2026 12:00:00 +0000\r\nContent-Type: text/plain\r\n\r\nSomething about your order.\r\n".to_vec()
+    }
+
+    async fn events_for(kind: Option<&str>, amount: &str) -> usize {
+        let extractor = Arc::new(StubExtractor(stub_result(kind, amount)));
+        let handler = ReceiptHandler::new(
+            "shop",
+            vec!["northwind.example".into()],
+            "device-test",
+            extractor,
+        );
+        let msg = imap_msg_from("shop@northwind.example", plain_eml());
+        handler.handle(&msg).await.expect("handler ok").len()
+    }
+
+    /// One Walmart order produced six batches because every message from a
+    /// listed sender became a transaction, a satisfaction survey included.
+    #[tokio::test]
+    async fn a_feedback_request_proposes_nothing() {
+        assert_eq!(events_for(Some("feedback_request"), "0.00").await, 0);
+        // Even when the model attaches a real-looking amount to it.
+        assert_eq!(events_for(Some("feedback_request"), "105.43").await, 0);
+    }
+
+    #[tokio::test]
+    async fn marketing_proposes_nothing() {
+        assert_eq!(events_for(Some("marketing"), "0.00").await, 0);
+    }
+
+    /// The backstop, for when the label is wrong rather than the message.
+    #[tokio::test]
+    async fn a_zero_amount_draft_proposes_nothing_whatever_its_label() {
+        assert_eq!(events_for(Some("receipt"), "0.00").await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_real_charge_still_proposes_a_batch() {
+        assert_eq!(events_for(Some("receipt"), "105.43").await, 1);
+        assert_eq!(events_for(Some("shipping_notice"), "99.93").await, 1);
+    }
+
+    /// Fail open. A model that omits the field is not evidence the message is
+    /// uninteresting, and dropping a real purchase silently is the worse bug.
+    #[tokio::test]
+    async fn an_unlabelled_message_is_still_proposed() {
+        assert_eq!(events_for(None, "105.43").await, 1);
+    }
+
+    /// An unrecognised label maps to `Other`, which does not book. The label is
+    /// still carried so a new vendor phrasing is visible rather than lost.
+    #[tokio::test]
+    async fn an_unrecognised_label_does_not_book() {
+        assert_eq!(events_for(Some("price_drop_alert"), "105.43").await, 0);
     }
 
     #[tokio::test]

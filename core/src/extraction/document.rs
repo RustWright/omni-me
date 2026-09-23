@@ -279,6 +279,8 @@ mod tests {
             confidence: 0.9,
             model: "deepseek-ai/DeepSeek-V4.1-Flash".into(),
             dropped_postings: 0,
+            document_kind: None,
+            order_ref: None,
             raw_response: serde_json::Value::Null,
         };
         let reading =
