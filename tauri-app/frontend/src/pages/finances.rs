@@ -1658,13 +1658,22 @@ fn DocumentCapture(
     on_done: EventHandler<()>,
     on_extracted: EventHandler<ExtractedDraft>,
 ) -> Element {
+    /// Everything a failed extraction needs to go again. The name travels with
+    /// the bytes so a retry cannot ship the name of a different pick.
+    #[derive(Debug, Clone)]
+    struct RetryCapture {
+        bytes: Vec<u8>,
+        mime: String,
+        filename: Option<String>,
+    }
+
     #[derive(Debug, Clone)]
     enum CaptureState {
         Idle,
         Working,
         Error {
             msg: String,
-            retry_bytes: Option<(Vec<u8>, String)>,
+            retry: Option<RetryCapture>,
         },
     }
 
@@ -1692,6 +1701,9 @@ fn DocumentCapture(
             DocumentKind::Pdf => "application/pdf".to_string(),
         });
         let hint_value = hint.read().clone();
+        // The name the user picked, so the archive files it under that rather
+        // than the server's "attachment" placeholder.
+        let filename = file.name();
 
         state.set(CaptureState::Working);
 
@@ -1701,16 +1713,20 @@ fn DocumentCapture(
                 Err(e) => {
                     state.set(CaptureState::Error {
                         msg: format!("Couldn't read file: {e}"),
-                        retry_bytes: None,
+                        retry: None,
                     });
                     return;
                 }
             };
 
-            let retry_bytes = bytes.clone();
-            let retry_mime = mime.clone();
+            let again = RetryCapture {
+                bytes: bytes.clone(),
+                mime: mime.clone(),
+                filename: Some(filename.clone()),
+            };
 
-            match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
+            match bridge::invoke_extract_document(bytes, &mime, &hint_value, Some(&filename)).await
+            {
                 Ok(draft) => {
                     // Reset local state so a quick re-open shows the Idle
                     // prompt instead of a stale Working spinner.
@@ -1719,7 +1735,7 @@ fn DocumentCapture(
                 }
                 Err(e) => state.set(CaptureState::Error {
                     msg: format!("Couldn't extract: {e}"),
-                    retry_bytes: Some((retry_bytes, retry_mime)),
+                    retry: Some(again),
                 }),
             }
         });
@@ -1785,18 +1801,23 @@ fn DocumentCapture(
                             let bytes = capture.bytes.clone();
                             let mime = capture.mime.clone();
                             let hint_value = hint.read().clone();
-                            let retry_bytes = bytes.clone();
-                            let retry_mime = mime.clone();
+                            // The sending app named this file; the intent carried the name over.
+                            let filename = capture.filename.clone();
+                            let again = RetryCapture {
+                                bytes: bytes.clone(),
+                                mime: mime.clone(),
+                                filename: Some(filename.clone()),
+                            };
                             state.set(CaptureState::Working);
                             spawn(async move {
-                                match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
+                                match bridge::invoke_extract_document(bytes, &mime, &hint_value, Some(&filename)).await {
                                     Ok(draft) => {
                                         state.set(CaptureState::Idle);
                                         on_extracted.call(draft);
                                     }
                                     Err(e) => state.set(CaptureState::Error {
                                         msg: format!("Couldn't extract: {e}"),
-                                        retry_bytes: Some((retry_bytes, retry_mime)),
+                                        retry: Some(again),
                                     }),
                                 }
                             });
@@ -1840,30 +1861,28 @@ fn DocumentCapture(
                     match &*state.read() {
                         CaptureState::Idle => render_idle(kind),
                         CaptureState::Working => render_working(),
-                        CaptureState::Error { msg, retry_bytes } => {
-                            let retry = retry_bytes.clone();
+                        CaptureState::Error { msg, retry } => {
+                            let retry = retry.clone();
                             let hint_value = hint.read().clone();
                             rsx! {
                                 {render_error(msg)}
-                                if let Some((bytes, mime)) = retry {
+                                if let Some(again) = retry {
                                     div { class: "mt-3",
                                         Button {
                                             onclick: move |_| {
-                                                let bytes = bytes.clone();
-                                                let mime = mime.clone();
+                                                let again = again.clone();
                                                 let hint_value = hint_value.clone();
                                                 state.set(CaptureState::Working);
                                                 spawn(async move {
-                                                    let retry_bytes = bytes.clone();
-                                                    let retry_mime = mime.clone();
-                                                    match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
+                                                    let RetryCapture { bytes, mime, filename } = again.clone();
+                                                    match bridge::invoke_extract_document(bytes, &mime, &hint_value, filename.as_deref()).await {
                                                         Ok(draft) => {
                                                             state.set(CaptureState::Idle);
                                                             on_extracted.call(draft);
                                                         }
                                                         Err(e) => state.set(CaptureState::Error {
                                                             msg: format!("Couldn't extract: {e}"),
-                                                            retry_bytes: Some((retry_bytes, retry_mime)),
+                                                            retry: Some(again),
                                                         }),
                                                     }
                                                 });
@@ -1942,7 +1961,8 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
         spawn(async move {
             let bytes = body_text.clone().into_bytes();
             let retry_body = body_text;
-            match bridge::invoke_extract_document(bytes, "text/plain", "email_body").await {
+            // No filename: this body was pasted, so nothing on the device named it.
+            match bridge::invoke_extract_document(bytes, "text/plain", "email_body", None).await {
                 Ok(draft) => {
                     state.set(CaptureState::Idle);
                     on_extracted.call(draft);
@@ -2069,6 +2089,63 @@ fn active_capture_key() -> ContinuityKey {
     ContinuityKey::Capture("active".to_string())
 }
 
+/// What `verify` concluded about a fresh extraction, in the shape the panel
+/// below needs. Split out from `ExtractedDraft` so the form can hold onto the
+/// verdict after the draft itself has been decomposed into editable fields.
+#[derive(Debug, Clone, PartialEq)]
+struct ExtractionVerdict {
+    confidence: f64,
+    needs_review: bool,
+    warnings: Vec<String>,
+}
+
+/// Surfaces the verification result above the draft fields.
+///
+/// Warnings render verbatim rather than being reworded for the UI. They name
+/// amounts and fields ("line items sum to 42.18, but the total is 51.02"),
+/// which is what sends the user to the right row; a friendlier paraphrase
+/// layer here would be one more thing to drift out of step with `verify.rs`.
+#[component]
+fn ExtractionVerdictPanel(verdict: ExtractionVerdict) -> Element {
+    // A clean extraction says nothing: the confidence number on its own gives
+    // the user no action, and a banner on every capture stops being read.
+    if !verdict.needs_review && verdict.warnings.is_empty() {
+        return rsx! {};
+    }
+
+    let pct = (verdict.confidence * 100.0).round() as i64;
+    let (tone, title_tone, headline) = if verdict.needs_review {
+        (
+            "bg-amber-500/10 border-amber-500/30",
+            "text-amber-200",
+            "Check this draft before saving",
+        )
+    } else {
+        (
+            "bg-obsidian-sidebar/60 border-obsidian-border/10",
+            "text-obsidian-text",
+            "Extracted, with something to confirm",
+        )
+    };
+
+    rsx! {
+        div { class: "p-4 border rounded-lg space-y-2 {tone}",
+            div { class: "flex items-baseline justify-between gap-3",
+                span { class: "text-sm font-semibold {title_tone}", "{headline}" }
+                span { class: "text-xs text-obsidian-text-muted", "confidence {pct}%" }
+            }
+            ul { class: "list-disc pl-5 space-y-1",
+                for w in verdict.warnings.iter() {
+                    li { class: "text-xs text-obsidian-text-muted", "{w}" }
+                }
+            }
+            p { class: "text-xs text-obsidian-text-muted/80",
+                "Nothing is saved until you press Save — edit any field that looks wrong."
+            }
+        }
+    }
+}
+
 #[component]
 fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -> Element {
     let store = use_continuity();
@@ -2083,6 +2160,15 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
     //      path clears the slot before navigating here, so reaching this arm
     //      with a draft is always a deliberate resume);
     //   3. otherwise a blank manual form.
+    //
+    // Only arm 1 carries a verification verdict. A resumed draft is the user's
+    // own edits by then, so replaying the model's doubts about the original
+    // extraction would be stale advice about fields they have already fixed.
+    let verdict = initial.as_ref().map(|d| ExtractionVerdict {
+        confidence: d.confidence,
+        needs_review: d.needs_review,
+        warnings: d.warnings.clone(),
+    });
     let (init_date, init_desc, init_rows, init_attachment) = if let Some(d) = initial {
         let rows: Vec<PostingRow> = if d.postings.is_empty() {
             vec![
@@ -2269,6 +2355,12 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                     span { "Cancel" }
                 }
                 h1 { class: "text-xl font-bold text-obsidian-accent", "Transaction" }
+            }
+
+            // Above the fields, not beside them: the point is to be read before
+            // the draft is skimmed and saved.
+            if let Some(v) = verdict.clone() {
+                ExtractionVerdictPanel { verdict: v }
             }
 
             // Date

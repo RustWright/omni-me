@@ -2031,19 +2031,28 @@ pub async fn invoke_export_obsidian(target: &str) -> Result<ExportSummary, Strin
 /// server-side extractor. `hint` mirrors `core::extraction::ExtractionHint`
 /// serialised snake_case (`"receipt"`, `"bank_statement"`, ...).
 ///
+/// `filename` is what the picker or the share intent reported; `None` for the
+/// pasted email body, which never had one.
+///
 /// The mock branch fakes a ~1.2s round trip + returns a canned receipt so
-/// `dx serve --features mock` flows end-to-end without a backend.
+/// `dx serve --features mock` flows end-to-end without a backend. It answers
+/// `paystub` with a draft that fails verification, because a clean-only mock
+/// leaves the confirm form's warning panel unreachable in the browser — and
+/// paystub is the hint that actually warns most often against a real model.
 pub async fn invoke_extract_document(
     bytes: Vec<u8>,
     mime: &str,
     hint: &str,
+    filename: Option<&str>,
 ) -> Result<ExtractedDraft, String> {
     #[cfg(feature = "mock")]
     {
         let size = bytes.len() as u64;
-        let _ = (bytes, hint);
+        let _ = bytes;
+        let name = filename.unwrap_or("mock-receipt").to_string();
         // Simulate network + LLM latency so the UI's wait state is visible.
         crate::timer::sleep_ms(1200).await;
+        let unverified = hint == "paystub";
         Ok(ExtractedDraft {
             date: Some("2026-05-17".into()),
             description: Some("Loblaws — Groceries".into()),
@@ -2062,15 +2071,24 @@ pub async fn invoke_extract_document(
                 },
             ],
             total: Some("42.18".into()),
-            confidence: 0.91,
+            confidence: if unverified { 0.41 } else { 0.91 },
             model: "mock-extractor".into(),
             attachment: Some(AttachmentRef {
                 sha256: "0".repeat(64),
-                filename: "mock-receipt".into(),
+                filename: name,
                 mime_type: mime.to_string(),
                 size,
                 document_id: None,
             }),
+            warnings: if unverified {
+                vec![
+                    "line items sum to 42.18, but the document's total is 51.02".into(),
+                    "1 line item(s) discarded — the model gave an unusable amount".into(),
+                ]
+            } else {
+                Vec::new()
+            },
+            needs_review: unverified,
         })
     }
     #[cfg(not(feature = "mock"))]
@@ -2080,8 +2098,18 @@ pub async fn invoke_extract_document(
             bytes: Vec<u8>,
             mime: &'a str,
             hint: &'a str,
+            filename: Option<&'a str>,
         }
-        invoke("extract_document", &Args { bytes, mime, hint }).await
+        invoke(
+            "extract_document",
+            &Args {
+                bytes,
+                mime,
+                hint,
+                filename,
+            },
+        )
+        .await
     }
 }
 

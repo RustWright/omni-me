@@ -53,6 +53,15 @@ pub struct ExtractedDraft {
     /// this onto the `TransactionRecorded` event.
     #[serde(default)]
     pub attachment: Option<AttachmentRef>,
+    /// What `core::extraction::verify` found — line items not summing to the
+    /// total, an ambiguous date, salvaged postings. The server already folded
+    /// the penalty into `confidence`; these say what caused it.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// `confidence` fell under the server's threshold. The draft form leads
+    /// with this rather than leaving the user to read the number.
+    #[serde(default)]
+    pub needs_review: bool,
 }
 
 /// Wire shape returned by `/documents/extract` when `attach=true`. Mirrors
@@ -61,6 +70,10 @@ pub struct ExtractedDraft {
 struct ExtractResponseWire {
     extraction: ExtractionWire,
     attachment: Option<AttachmentRef>,
+    #[serde(default)]
+    warnings: Vec<String>,
+    #[serde(default)]
+    needs_review: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,6 +96,10 @@ pub async fn extract_document(
     bytes: Vec<u8>,
     mime: String,
     hint: String,
+    // The name the picker or the share intent reported. `None` for a pasted
+    // email body, which never had one — the server then files it as
+    // "attachment" rather than under a name nothing on the device chose.
+    filename: Option<String>,
 ) -> Result<ExtractedDraft, String> {
     // Guarded here rather than at the append tail: this reaches an LLM before any
     // event exists, so it has to refuse before the request goes out.
@@ -96,10 +113,15 @@ pub async fn extract_document(
 
     let body_for_cache = bytes.clone();
 
-    let resp = state
+    let mut req = state
         .box_request(reqwest::Method::POST, &path)
         .await
-        .header(reqwest::header::CONTENT_TYPE, &mime)
+        .header(reqwest::header::CONTENT_TYPE, &mime);
+    if let Some(name) = filename.as_deref().and_then(header_safe_filename) {
+        req = req.header("x-filename", name);
+    }
+
+    let resp = req
         .body(bytes)
         .send()
         .await
@@ -136,5 +158,45 @@ pub async fn extract_document(
         confidence: wire.extraction.confidence,
         model: wire.extraction.model,
         attachment: wire.attachment,
+        warnings: wire.warnings,
+        needs_review: wire.needs_review,
     })
+}
+
+/// Take the basename if it can ride in a header as-is: printable ASCII, no
+/// path separators, under the length bound. Anything else returns `None` and
+/// the server falls back to "attachment" — its behaviour before this header
+/// existed, so rejecting is never a regression, where a half-transliterated
+/// name would file a document under something nobody chose.
+fn header_safe_filename(raw: &str) -> Option<String> {
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    let safe = !base.is_empty()
+        && base.len() <= 120
+        && base.chars().all(|c| c.is_ascii_graphic() || c == ' ');
+    safe.then(|| base.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::header_safe_filename;
+
+    #[test]
+    fn takes_the_basename() {
+        let d = |s| header_safe_filename(s).unwrap();
+        assert_eq!(d("/sdcard/Download/rent.pdf"), "rent.pdf");
+        assert_eq!(d(r"C:\scans\a b.png"), "a b.png");
+        assert_eq!(d("receipt.jpg"), "receipt.jpg");
+    }
+
+    #[test]
+    fn rejects_rather_than_repairs() {
+        // A newline would split the request; non-ASCII cannot ride in the header.
+        assert_eq!(header_safe_filename("re\r\nceipt.jpg"), None);
+        assert_eq!(header_safe_filename("収據.jpg"), None);
+        assert_eq!(header_safe_filename("  "), None);
+        assert_eq!(
+            header_safe_filename(&format!("{}.pdf", "a".repeat(300))),
+            None
+        );
+    }
 }

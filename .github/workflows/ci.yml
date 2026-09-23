@@ -96,6 +96,10 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
+    # A hung test otherwise runs to GitHub's 6-hour default, which looks identical
+    # to a slow queue. `cargo test` has taken 1m50s and the whole job 7-9min across
+    # 20 runs, with cold-cache outliers to 21min, so 45 cannot fail a healthy run.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -180,6 +184,7 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.app == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -259,6 +264,7 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4

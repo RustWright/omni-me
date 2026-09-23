@@ -672,6 +672,14 @@ pub struct ExtractedDraft {
     pub model: String,
     #[serde(default)]
     pub attachment: Option<AttachmentRef>,
+    /// What `core::extraction::verify` found wrong with this draft. Shown on
+    /// the confirm form: `confidence` already carries the penalty, but a bare
+    /// number does not tell the user which field to look at.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// `confidence` came in under the server's threshold.
+    #[serde(default)]
+    pub needs_review: bool,
 }
 
 /// Single posting line in a TransactionDraft submission. Mirrors the wire

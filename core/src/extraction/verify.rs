@@ -108,7 +108,19 @@ fn check_total(
     warnings: &mut Vec<String>,
     adjustment: &mut f64,
 ) {
-    let sum: Decimal = postings.iter().map(|p| p.amount.abs()).sum();
+    // Charge side only when the model volunteered the payment leg, or its own
+    // counter leg is counted as a second line item and every clean document
+    // reads as double its total. `Receipt` is unaffected: its counter leg is
+    // added after `verify` runs, so its postings are still bare components.
+    let sum: Decimal = if already_balanced(postings) {
+        postings
+            .iter()
+            .map(|p| p.amount)
+            .filter(|a| a.is_sign_positive())
+            .sum()
+    } else {
+        postings.iter().map(|p| p.amount.abs()).sum()
+    };
     let diff = (sum - total.abs()).abs();
     if diff > tolerance() {
         warnings.push(format!(
@@ -116,6 +128,20 @@ fn check_total(
         ));
         *adjustment *= 0.5;
     }
+}
+
+/// Whether the postings already settle to nothing in every commodity, the shape
+/// a model produces when it emits both sides of the transaction. Per-commodity
+/// to match `add_counter_legs`, so two currencies cannot cancel each other out.
+fn already_balanced(postings: &[super::ExtractedPosting]) -> bool {
+    if postings.is_empty() {
+        return false;
+    }
+    let mut sums: std::collections::BTreeMap<&str, Decimal> = Default::default();
+    for p in postings {
+        *sums.entry(p.commodity.as_str()).or_default() += p.amount;
+    }
+    sums.values().all(|s| s.is_zero())
 }
 
 /// Warn when the printed date could be read either day-first or month-first.
@@ -204,6 +230,51 @@ mod tests {
             dropped_postings: 0,
             raw_response: serde_json::Value::Null,
         }
+    }
+
+    /// The shape an email-body extraction comes back in when the model emits
+    /// the payment leg itself: one charge, one settling credit, and a total.
+    #[test]
+    fn a_model_supplied_counter_leg_is_not_a_second_line_item() {
+        let r = receipt(
+            vec![posting("29.14"), posting("-29.14")],
+            Some(Decimal::from_str("29.14").unwrap()),
+            0.95,
+        );
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert_eq!(report.warnings, Vec::<String>::new());
+        assert_eq!(report.effective_confidence, 0.95);
+        assert!(!report.needs_manual_review);
+    }
+
+    #[test]
+    fn a_balanced_pair_that_disagrees_with_the_total_still_warns() {
+        let r = receipt(
+            vec![posting("30.00"), posting("-30.00")],
+            Some(Decimal::from_str("29.14").unwrap()),
+            0.95,
+        );
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert!(report.warnings[0].contains("30.00"));
+    }
+
+    /// Guards the arm above from widening: a receipt's line items are all
+    /// positive, so they must keep taking the plain absolute-sum path.
+    #[test]
+    fn line_items_that_never_balance_are_summed_as_before() {
+        let items = vec![posting("4.49"), posting("6.79"), posting("2.11")];
+        assert!(!already_balanced(&items));
+        let r = receipt(items, Some(Decimal::from_str("13.39").unwrap()), 0.97);
+        let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert_eq!(report.warnings, Vec::<String>::new());
+    }
+
+    #[test]
+    fn two_commodities_cannot_cancel_each_other_into_balance() {
+        let mut usd = posting("-29.14");
+        usd.commodity = "USD".into();
+        assert!(!already_balanced(&[posting("29.14"), usd]));
     }
 
     /// `printed` as the document showed it, `parsed` as the model read it.
