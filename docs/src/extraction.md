@@ -118,6 +118,34 @@ times. Telling a model to be thorough about a category invites it to find more o
 than exists. The wording that worked names what a line item **is** — an individual charge, never
 a subtotal or a running balance, never the same amount twice unless the receipt says so.
 
+### When the check runs but compares nothing
+
+There is a second blind spot, and it is worse than the consistent misreading because the report
+looks clean rather than merely unremarkable. On an email carrying a single amount — a Netflix
+charge, a phone bill, most subscription notices — the model returns that amount as a line item
+*and* copies it into `total`. The check then adds up one number and compares it against itself.
+It agrees, no warning is emitted, and the draft reads as arithmetically verified.
+
+Two attempts to prompt this away both failed. The second said, verbatim, that `total` must be
+null and that copying the amount in builds a check that cannot fail; the Netflix body still came
+back with the total filled. Account paths and signs obeyed the same prompt, so this is not a
+model ignoring instructions wholesale. It will not leave that field empty.
+
+The fix is therefore not a third attempt at the wording. `VerificationReport` carries a
+`TotalCheck` saying whether the comparison was independent at all: `Performed` when two or more
+amounts were summed against a stated total, or when any comparison actually disagreed;
+`Vacuous` when one amount was compared with itself; `NotRun` when no total was extracted. A
+model-supplied counter leg collapses to one contributing amount too, so the balanced pair that
+`already_balanced` recognises is vacuous by the same rule.
+
+This changes no behaviour today. Nothing consumes the distinction, and an unchecked total
+deliberately does not move confidence — a single-amount email has almost no arithmetic to get
+wrong, and charging it for that would route the highest-volume email shape into manual review
+for a risk that is largely theoretical. The point is what it prevents later. The next feature
+that gates on verification — an auto-commit threshold, a confidence rule — would otherwise read
+an empty warnings list as evidence the arithmetic was checked, and on this shape that inference
+is false. Recording the distinction costs a field. Discovering it later costs a wrong booking.
+
 ## Salvaging a partial extraction
 
 `ExtractedPosting::amount` is a required `Decimal` parsed from a JSON string. That is the right

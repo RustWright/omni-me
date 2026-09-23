@@ -11,6 +11,10 @@
 //! - **Confidence gate**: any extraction below `DEFAULT_CONFIDENCE_THRESHOLD`
 //!   (after any verification-driven adjustment) is flagged for manual review.
 //!
+//! The report also records whether the total cross-check was an independent
+//! comparison at all (`TotalCheck`), so an empty warnings list is never
+//! mistaken for evidence the arithmetic was verified.
+//!
 //! Designed as a pure function — easy to test, easy for the UI to render the
 //! warnings inline next to the extracted fields.
 
@@ -30,6 +34,22 @@ fn tolerance() -> Decimal {
     Decimal::from_str("0.01").unwrap()
 }
 
+/// Whether the line-item/total cross-check was an independent comparison.
+///
+/// Recorded so a caller cannot read an empty `warnings` list as proof the
+/// arithmetic was checked. See `docs/src/extraction.md` for why the model
+/// cannot be prompted out of echoing a single amount into `total`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TotalCheck {
+    /// No `total` was extracted, or this hint does not cross-check totals.
+    NotRun,
+    /// A `total` was present but only one posting fed the comparison, so it is
+    /// one number read twice and agreement proves nothing.
+    Vacuous,
+    /// Two or more postings were summed against an independently stated total.
+    Performed,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct VerificationReport {
     pub warnings: Vec<String>,
@@ -37,6 +57,9 @@ pub struct VerificationReport {
     /// `[0.0, 1.0]`. UI shows this rather than the raw model confidence.
     pub effective_confidence: f64,
     pub needs_manual_review: bool,
+    /// Does not affect confidence — it exists so "no warnings" can never be
+    /// mistaken for "the arithmetic was verified".
+    pub total_check: TotalCheck,
 }
 
 /// Run all applicable verification checks for the given extraction + hint.
@@ -50,6 +73,7 @@ pub fn verify(
 ) -> VerificationReport {
     let mut warnings = Vec::new();
     let mut adjustment: f64 = 1.0;
+    let mut total_check = TotalCheck::NotRun;
 
     // EmailBody cross-checks its total when one is present, but is absent from the
     // arm below that treats a missing total as suspicious: a receipt email often
@@ -63,7 +87,7 @@ pub fn verify(
             | ExtractionHint::EmailBody
     ) {
         if let Some(total) = result.total {
-            check_total(&result.postings, total, &mut warnings, &mut adjustment);
+            total_check = check_total(&result.postings, total, &mut warnings, &mut adjustment);
         } else if matches!(hint, ExtractionHint::Receipt | ExtractionHint::Paystub) {
             // For these hints we *expect* a reference total. Missing is suspicious.
             warnings.push(format!(
@@ -99,6 +123,7 @@ pub fn verify(
         warnings,
         effective_confidence,
         needs_manual_review,
+        total_check,
     }
 }
 
@@ -107,27 +132,34 @@ fn check_total(
     total: Decimal,
     warnings: &mut Vec<String>,
     adjustment: &mut f64,
-) {
+) -> TotalCheck {
     // Charge side only when the model volunteered the payment leg, or its own
     // counter leg is counted as a second line item and every clean document
     // reads as double its total. `Receipt` is unaffected: its counter leg is
     // added after `verify` runs, so its postings are still bare components.
-    let sum: Decimal = if already_balanced(postings) {
+    let contributors: Vec<Decimal> = if already_balanced(postings) {
         postings
             .iter()
             .map(|p| p.amount)
             .filter(|a| a.is_sign_positive())
-            .sum()
+            .collect()
     } else {
-        postings.iter().map(|p| p.amount.abs()).sum()
+        postings.iter().map(|p| p.amount.abs()).collect()
     };
+    let sum: Decimal = contributors.iter().sum();
     let diff = (sum - total.abs()).abs();
     if diff > tolerance() {
         warnings.push(format!(
             "line-item sum {sum} does not match document total {total} (diff {diff})",
         ));
         *adjustment *= 0.5;
+        // A disagreement discriminated, whatever the contributor count.
+        return TotalCheck::Performed;
     }
+    if contributors.len() < 2 {
+        return TotalCheck::Vacuous;
+    }
+    TotalCheck::Performed
 }
 
 /// Whether the postings already settle to nothing in every commodity, the shape
@@ -473,5 +505,81 @@ mod tests {
         let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
         assert!(!report.warnings.iter().any(|w| w.contains("no `total`")));
         assert!(!report.needs_manual_review);
+    }
+
+    /// The model will not leave `total` null on a single-amount email, so the
+    /// total it returns is the posting amount copied. Agreement is then not
+    /// evidence, and the report has to say so rather than look clean.
+    #[test]
+    fn a_single_posting_echoed_into_the_total_is_not_a_check() {
+        let r = receipt(
+            vec![posting("12.99")],
+            Some(Decimal::from_str("12.99").unwrap()),
+            0.95,
+        );
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert_eq!(report.warnings, Vec::<String>::new());
+        assert_eq!(report.total_check, TotalCheck::Vacuous);
+        // Recorded only: an unchecked total must not move confidence.
+        assert_eq!(report.effective_confidence, 0.95);
+        assert!(!report.needs_manual_review);
+    }
+
+    /// The counter-leg shape collapses to one contributing amount too, so it
+    /// is the same number read twice however many postings arrived.
+    #[test]
+    fn a_model_supplied_counter_leg_is_also_not_a_check() {
+        let r = receipt(
+            vec![posting("29.14"), posting("-29.14")],
+            Some(Decimal::from_str("29.14").unwrap()),
+            0.95,
+        );
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert_eq!(report.total_check, TotalCheck::Vacuous);
+    }
+
+    #[test]
+    fn summing_several_line_items_against_a_total_is_a_real_check() {
+        let r = receipt(
+            vec![posting("4.49"), posting("6.79"), posting("2.11")],
+            Some(Decimal::from_str("13.39").unwrap()),
+            0.97,
+        );
+        let report = verify(&r, ExtractionHint::Receipt, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert_eq!(report.warnings, Vec::<String>::new());
+        assert_eq!(report.total_check, TotalCheck::Performed);
+    }
+
+    /// A disagreement carries information even from one posting, so it counts
+    /// as having run — only silent agreement is vacuous.
+    #[test]
+    fn a_single_posting_disagreeing_with_the_total_did_discriminate() {
+        let r = receipt(
+            vec![posting("14.06")],
+            Some(Decimal::from_str("15.89").unwrap()),
+            0.95,
+        );
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert_eq!(report.total_check, TotalCheck::Performed);
+    }
+
+    #[test]
+    fn no_total_means_the_check_never_ran() {
+        let r = receipt(vec![posting("14.06")], None, 0.95);
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert_eq!(report.total_check, TotalCheck::NotRun);
+    }
+
+    /// A zero-amount draft agrees with a zero total trivially. Recording that
+    /// as unchecked is what stops it reading as a clean verification.
+    #[test]
+    fn a_zero_amount_draft_is_not_verified_by_its_zero_total() {
+        let r = receipt(
+            vec![posting("0.00")],
+            Some(Decimal::from_str("0.00").unwrap()),
+            0.9,
+        );
+        let report = verify(&r, ExtractionHint::EmailBody, DEFAULT_CONFIDENCE_THRESHOLD);
+        assert_eq!(report.total_check, TotalCheck::Vacuous);
     }
 }
