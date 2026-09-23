@@ -1,8 +1,8 @@
 # NEXT
 
-✅ **All three parked decisions answered 2026-09-23** and the answerable half of each is built,
-clippy-clean and pushed. ⛔ Full evidence lives in overlay `DEV_TESTING.md` § 8 — not repeated here.
-Rollback `/var/omni-snapshots/dev-pre-kindgate-20260923-1412.tgz`.
+✅ **All three parked decisions answered 2026-09-23**, answerable half of each built and pushed.
+⛔ Evidence in overlay `DEV_TESTING.md` § 8, not repeated here. Rollback
+`/var/omni-snapshots/dev-pre-kindgate-20260923-1412.tgz`.
 
 ## ▶ NEXT ACTION — validate the new prompt against a real model
 
