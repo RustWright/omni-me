@@ -353,6 +353,9 @@ impl ImapHandler for ReceiptHandler {
             "needs_manual_review": report.needs_manual_review,
             "warnings": report.warnings,
             "dropped_postings": result.dropped_postings,
+            // Without this an empty `warnings` reads as "the arithmetic was
+            // checked", which on a single-amount email is false.
+            "total_check": report.total_check,
         });
         let event = to_proposed_event(
             self.name(),

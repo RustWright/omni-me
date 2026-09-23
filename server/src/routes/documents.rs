@@ -11,8 +11,8 @@ use omni_me_core::archive;
 use omni_me_core::events::{AttachmentRef, NewEvent};
 use omni_me_core::extraction::document::{reading_from_extraction, to_fields_payload};
 use omni_me_core::extraction::{
-    DEFAULT_CONFIDENCE_THRESHOLD, DocumentPart, ExtractionHint, ExtractionResult, add_counter_legs,
-    verify,
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentPart, ExtractionHint, ExtractionResult, TotalCheck,
+    add_counter_legs, verify,
 };
 
 use crate::AppState;
@@ -39,6 +39,9 @@ pub struct ExtractResponse {
     /// What the receipt cross-check found, such as line items not adding up to the total.
     pub warnings: Vec<String>,
     pub needs_review: bool,
+    /// Whether the total cross-check compared anything independent. An empty
+    /// `warnings` alone does not mean the arithmetic was verified.
+    pub total_check: TotalCheck,
 }
 
 pub fn documents_routes() -> Router<AppState> {
@@ -218,6 +221,7 @@ async fn extract_handler(
         attachment,
         warnings: report.warnings,
         needs_review: report.needs_manual_review,
+        total_check: report.total_check,
     }))
 }
 

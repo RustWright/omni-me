@@ -15,6 +15,8 @@
 //!   be one of several). Each posting becomes a draft with the extracted
 //!   expense-side (using `account_hint` as a guess) + an `Unmatched`
 //!   mirror; user assigns the real payment account during batch review.
+//!   The exception is a result whose postings already settle to zero: the
+//!   model gave both legs, so it becomes one draft with no mirror.
 //!
 //! Both flavors emit deterministic external ids derived from a caller-provided
 //! prefix (e.g. `"meridian-aed-uid-14272"`) so re-processing the same source event
@@ -24,7 +26,9 @@
 
 use chrono::{NaiveDate, Utc};
 
-use crate::accounts::{CounterLeg, CounterLegContext, make_counter_leg, make_unmatched_mirror};
+use crate::accounts::{
+    CounterLeg, CounterLegContext, UNMATCHED_ACCOUNT, make_counter_leg, make_unmatched_mirror,
+};
 use crate::events::{DraftTransaction, Posting, Tag};
 
 use super::{ExtractedPosting, ExtractionResult};
@@ -100,6 +104,18 @@ pub fn receipt_extraction_to_drafts(
         .clone()
         .unwrap_or_else(|| "imported receipt".to_string());
 
+    // A model that volunteered the payment leg has already given both sides of
+    // one transaction, so mirroring each side against `Unmatched` books the
+    // purchase twice. Same rule `check_total` applies; see docs/src/extraction.md.
+    if super::verify::already_balanced(&result.postings) {
+        return vec![DraftTransaction {
+            external_id: format!("{source_prefix}-0"),
+            date,
+            description: default_description,
+            postings: result.postings.iter().map(build_signed_posting).collect(),
+        }];
+    }
+
     let mut drafts = Vec::with_capacity(result.postings.len());
     for (i, p) in result.postings.iter().enumerate() {
         let external_id = format!("{source_prefix}-{i}");
@@ -121,6 +137,32 @@ pub fn receipt_extraction_to_drafts(
 
 fn fallback_date() -> NaiveDate {
     Utc::now().date_naive()
+}
+
+/// Posting builder for the already-balanced shape, where the model supplied
+/// both legs. Unlike `build_receipt_posting` it must not normalize the sign:
+/// `.abs()` would make both legs positive and destroy the balance.
+fn build_signed_posting(p: &ExtractedPosting) -> Posting {
+    Posting {
+        // An unnamed credit leg is precisely what `Unmatched` means: the
+        // purchase is known, the account that paid it is not. Keeping it there
+        // leaves the draft pairable by `reconciliation::find_match_candidates`.
+        account: p.account_hint.clone().unwrap_or_else(|| {
+            if p.amount.is_sign_negative() {
+                UNMATCHED_ACCOUNT.to_string()
+            } else {
+                "Expenses:Unknown".to_string()
+            }
+        }),
+        commodity: if p.commodity.is_empty() {
+            "CAD".to_string()
+        } else {
+            p.commodity.clone()
+        },
+        amount: p.amount,
+        fx_rate: None,
+        tags: vec![],
+    }
 }
 
 fn build_receipt_posting(p: &ExtractedPosting) -> Posting {
@@ -289,5 +331,104 @@ mod tests {
         assert!(drafts.is_empty());
         let drafts2 = receipt_extraction_to_drafts(&result, "src");
         assert!(drafts2.is_empty());
+    }
+
+    /// uid-14842 in real mail: the model returned `Total 99.93` and
+    /// `Payment method MASTERCARD… 99.93`, and each was mirrored against
+    /// `Unmatched` — booking one purchase twice from one email.
+    #[test]
+    fn a_model_supplied_payment_leg_becomes_one_draft_not_two() {
+        let result = result_with(
+            NaiveDate::from_ymd_opt(2026, 9, 18),
+            Some("Walmart order delivered"),
+            vec![
+                posting(Some("Expenses:Groceries"), "CAD", "99.93"),
+                posting(Some("Liabilities:Mastercard"), "CAD", "-99.93"),
+            ],
+        );
+        let drafts = receipt_extraction_to_drafts(&result, "receipts-uid-14842");
+
+        assert_eq!(drafts.len(), 1, "one email, one purchase, one draft");
+        assert_eq!(drafts[0].postings.len(), 2);
+        assert!(
+            !drafts[0]
+                .postings
+                .iter()
+                .any(|p| p.account == UNMATCHED_ACCOUNT),
+            "both legs are known, so nothing should mirror to Unmatched"
+        );
+        let sum: Decimal = drafts[0].postings.iter().map(|p| p.amount).sum();
+        assert_eq!(sum, Decimal::ZERO, "the draft must still balance");
+    }
+
+    /// The guard that keeps the change narrow: a normal itemized receipt does
+    /// not balance, so it must keep the one-draft-per-line shape.
+    #[test]
+    fn ordinary_line_items_are_unaffected_by_the_balanced_path() {
+        let result = result_with(
+            NaiveDate::from_ymd_opt(2026, 9, 18),
+            Some("Walmart"),
+            vec![
+                posting(None, "CAD", "4.49"),
+                posting(None, "CAD", "6.79"),
+                posting(None, "CAD", "2.11"),
+            ],
+        );
+        let drafts = receipt_extraction_to_drafts(&result, "receipts-uid-3458");
+        assert_eq!(drafts.len(), 3);
+        for d in &drafts {
+            assert_eq!(d.postings.len(), 2);
+            assert_eq!(d.postings[1].account, UNMATCHED_ACCOUNT);
+        }
+    }
+
+    #[test]
+    fn an_unnamed_credit_leg_stays_reconcilable_as_unmatched() {
+        let result = result_with(
+            NaiveDate::from_ymd_opt(2026, 9, 18),
+            Some("Netflix"),
+            vec![
+                posting(Some("Expenses:Subscriptions"), "CAD", "12.99"),
+                posting(None, "CAD", "-12.99"),
+            ],
+        );
+        let drafts = receipt_extraction_to_drafts(&result, "receipts-uid-99");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].postings[0].account, "Expenses:Subscriptions");
+        assert_eq!(drafts[0].postings[1].account, UNMATCHED_ACCOUNT);
+    }
+
+    /// The balanced path still has to produce the prefix-index id the
+    /// projection's UPSERT collapses on, or replay stops deduping.
+    #[test]
+    fn a_balanced_draft_keeps_the_deterministic_id_shape() {
+        let result = result_with(
+            NaiveDate::from_ymd_opt(2026, 9, 18),
+            Some("Walmart"),
+            vec![
+                posting(Some("Expenses:Groceries"), "CAD", "99.93"),
+                posting(Some("Liabilities:Mastercard"), "CAD", "-99.93"),
+            ],
+        );
+        let first = receipt_extraction_to_drafts(&result, "receipts-uid-14842");
+        let second = receipt_extraction_to_drafts(&result, "receipts-uid-14842");
+        assert_eq!(first[0].external_id, "receipts-uid-14842-0");
+        assert_eq!(first[0].external_id, second[0].external_id);
+    }
+
+    /// Two currencies that happen to cancel numerically are not one balanced
+    /// transaction. `already_balanced` is per-commodity, and this pins it.
+    #[test]
+    fn two_commodities_do_not_collapse_into_one_draft() {
+        let result = result_with(
+            NaiveDate::from_ymd_opt(2026, 9, 18),
+            Some("mixed"),
+            vec![
+                posting(None, "CAD", "50.00"),
+                posting(None, "USD", "-50.00"),
+            ],
+        );
+        let drafts = receipt_extraction_to_drafts(&result, "src");
+        assert_eq!(drafts.len(), 2, "different commodities never balance");
     }
 }

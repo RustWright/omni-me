@@ -39,7 +39,8 @@ fn tolerance() -> Decimal {
 /// Recorded so a caller cannot read an empty `warnings` list as proof the
 /// arithmetic was checked. See `docs/src/extraction.md` for why the model
 /// cannot be prompted out of echoing a single amount into `total`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TotalCheck {
     /// No `total` was extracted, or this hint does not cross-check totals.
     NotRun,
@@ -165,7 +166,7 @@ fn check_total(
 /// Whether the postings already settle to nothing in every commodity, the shape
 /// a model produces when it emits both sides of the transaction. Per-commodity
 /// to match `add_counter_legs`, so two currencies cannot cancel each other out.
-fn already_balanced(postings: &[super::ExtractedPosting]) -> bool {
+pub(crate) fn already_balanced(postings: &[super::ExtractedPosting]) -> bool {
     if postings.is_empty() {
         return false;
     }
