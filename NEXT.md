@@ -1,40 +1,44 @@
 # NEXT
 
-✅ **All three parked decisions answered 2026-09-23**, answerable half of each built and pushed.
-⛔ Evidence in overlay `DEV_TESTING.md` § 8, not repeated here. Rollback
+✅ **Three decisions answered 2026-09-23**, the answerable half of each built, and the new prompt
+run against real mail on dev. ⛔ Evidence in overlay `DEV_TESTING.md` § 8. Dev is on
+`dev-1b3ef42-25b55ed`, healthy, 3 sources unpaused. Rollback
 `/var/omni-snapshots/dev-pre-kindgate-20260923-1412.tgz`.
 
-## ▶ NEXT ACTION — validate the new prompt against a real model
+## ▶ NEXT ACTION — settle the two grouping questions, then build grouping
+⛔ **Both need the user. Do not guess either.**
+- 🔴 **What groups a vendor's mail with no order number?** Rec: nothing — a duplicate is visible
+  and costs a dismissal, a wrong merge is invisible and loses a transaction.
+- 🔴 **What does a revision do to an already-committed batch?** Rec: a new review item that never
+  touches committed books. ⛔ Amending them directly crosses the autonomy line.
 
-🔴 **The `EmailBody` prompt changed and NOTHING has run against a model yet.** Dev image build
-`35872622803` was in flight at handoff. Deploy it (overlay `DEV_TESTING.md` § 4), tick the
-mailbox, check `document_kind` + `order_ref` on the real Walmart mails. ⚠️ A previous prompt
-rewrite silently degraded account hints — check the OLD fields too, not only the new ones.
+## ✅ Proven on dev against real mail
+- **Config persistence FIXED.** Paused a source → 200 (was 500), survived a restart (`paused=0`
+  before, `paused=1` after), resumed cleanly. The off-switch persists for the first time.
+- **`document_kind` right on all 8** real emails; **both Walmart order numbers exact**; account
+  hints did NOT regress.
+- **Unreadable `total` no longer kills a document**: 8/8 extract, was 2/8.
 
-## ✅ Decided 2026-09-23
-- **Receipts: the model decides, keyed on the vendor's order number** (user). Over-communication
-  is universal — Amazon, Oxio, Instacart and Walmart all send confirm/update/ship/feedback mail.
-  ⛔ NOT `References:`: a forward starts a new thread, which breaks exactly the case in dev.
-- **`/config` bug: ships with the branch, live is NOT patched** (user). Live has no sources
-  running, so a non-persisting off-switch there is not worth a deploy.
-- **`verify` records when it verified nothing** (`TotalCheck`), no confidence change.
-
-## ⚠️ Open — needs the user, do not guess
-- 🔴 **What groups a vendor's mail with no order number?** My rec: nothing — a duplicate is
-  visible and costs a dismissal, a wrong merge is invisible and loses a transaction.
-- 🔴 **What does a revision do to an already-committed batch?** My rec: a new review item that
-  never touches committed books. ⛔ Amending them directly crosses the autonomy line.
-- ⛔ **Grouping stays unwritten until both are answered** — dedup key, revision semantics and the
-  mapper's draft shape all move together.
-- ⛔ **`UIDVALIDITY` handled nowhere.** Real fix carries `uid_validity` in the cursor; own session.
-- 🔴 **`assistant_projection::tests::arrival_order_…_clocks` hangs ~1 in 5**, undiagnosed;
-  `timeout-minutes: 45` caps it in both repos.
+## ⚠️ Open
+- 🔴 **"One Walmart order produced SIX batches" is now UNCONFIRMED.** The two archived mails carry
+  **different** order numbers (`…118762884` vs `…124202519`), so some of those six may be separate
+  purchases. ⛔ Re-check against the mailbox before designing grouping on that premise.
+- 🔴 **`order_ref` is junk on non-order mail** (subject lines, `.`, a UUID). ⛔ Never group on it
+  without first checking the kind is charge-bearing.
+- ⚠️ **The survey/upsell mails were never tested** — not in the archive. They are the actual
+  six-batch culprits.
+- ⛔ **`29695a4` is not in the deployed image**; dev runs one commit behind.
+- 🔴 **Suite deadlock REPRODUCED** (1 in 6 runs): 312 leaked `surrealkv-commit` threads from the
+  `test_db()` fixture. Mechanism + fix plan in `tasks.md`; the fix touches 217 call sites.
+- ⛔ **`UIDVALIDITY` handled nowhere.** Own session.
 
 ## ⛔ Inherit
 - 🔴 **CI's ONE invocation naming core+server+agent** is what compiles core with `auto-import` —
   a narrower `cargo test -p omni-me-core` runs ZERO of those tests and looks like a pass.
-- 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⛔ Never deploy there. ⚠️ `omni-me-private`
-  is NOT committed by the session hooks — by hand, current repo only.
-- ⚠️ **Search the trackers before writing a bug up as new** — the `/config` bug was in `tasks.md` from 2026-09-07 and got re-derived.
-- ⚠️ Strip ANSI before grepping docker logs. **`EXAMINE`, never `SELECT`.** Salvage over
-  strictness. ⛔ Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
+- 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⛔ Never deploy there. Live has no sources
+  running, which is why the config fix was NOT patched there. ⚠️ `omni-me-private` is NOT
+  committed by the session hooks — by hand, current repo only.
+- ⚠️ **Search the trackers before writing a bug up as new** — the `/config` bug was in `tasks.md`
+  from 2026-09-07 and got re-derived as a discovery.
+- ⚠️ Strip ANSI before grepping docker logs. **`EXAMINE`, never `SELECT`.** ⛔ Branches:
+  `dev/role-split-model-seats` / `dev/untested-overlay`.
