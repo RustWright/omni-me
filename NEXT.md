@@ -10,11 +10,10 @@ Rollback `/var/omni-snapshots/dev-pre-verify-20260923-0257.tgz`.
 batch — `effective_confidence=0.31`, `needs_manual_review=true`, warning correct against the
 document's own figures.
 
-⛔ **Decide first:** Walmart sends BOTH an order confirmation and a delivery notice for one
-purchase; both match `walmart`, dedup is per-uid, so each makes its own draft — double-counting,
-caught only by review. Options in `DEV_TESTING.md` § 7 — order-scoped dedup off the shared
-`References:` id is the promising one; ⚠️ do NOT subject-match in `accepts()`. Then: the review
-queue UI for these drafts, on the phone. Nothing has exercised it.
+⛔ **Decide first:** Walmart sends an order confirmation AND a delivery notice per purchase; both
+match `walmart` and dedup is per-uid, so each makes its own draft — double-counting, caught only
+by review. Options in `DEV_TESTING.md` § 7 (order-scoped dedup off the shared `References:` id is
+promising; ⚠️ never subject-match in `accepts()`). Then the review-queue UI, unexercised on phone.
 
 ## ✅ Decided
 - **`EmailBody` uses a conditional prompt, not sender routing** (user, 2026-09-23). Why: most
@@ -29,13 +28,13 @@ queue UI for these drafts, on the phone. Nothing has exercised it.
 ## ⚠️ Open
 - 🔴 **The model will not leave `total` null on a single-amount email**, two prompt attempts in.
   ⛔ Do NOT harden it a third time; the fix is structural (`DEV_TESTING.md` § 7).
-- 🔴 **`assistant_projection::tests::arrival_order_does_not_change_a_threads_clocks` hangs ~1 in 5.**
-  Named by diffing `... ok` lines against a green run. `timeout-minutes: 45` now caps both repos.
+- 🔴 **`assistant_projection::tests::arrival_order_does_not_change_a_threads_clocks` hangs ~1 in 5** —
+  named by diffing `... ok` lines vs a green run. `timeout-minutes: 45` now caps both repos.
 - ⛔ **`UIDVALIDITY` is handled nowhere.** Real fix carries `uid_validity` in the cursor; own session.
 
 ## ⛔ Inherit
-- 🔴 **Locally `fmt`, `clippy`, `check` ONLY.** CI runs the suite — and its ONE invocation naming
-  core+server+agent is load-bearing, it is what compiles core with `auto-import`.
+- 🔴 **Locally `fmt`, `clippy`, `check` ONLY.** CI's ONE invocation naming core+server+agent is
+  load-bearing: it is what compiles core with `auto-import`.
 - 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⛔ Never deploy there. ⚠️ `omni-me-private`
   is NOT committed by the session hooks — by hand, current repo only.
 - ⚠️ Strip ANSI before grepping docker logs. ⛔ Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
