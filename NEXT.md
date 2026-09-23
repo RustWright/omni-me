@@ -1,38 +1,41 @@
 # NEXT
 
-✅ **Box done + widen done (2026-09-22).** Dev now runs **3 IMAP sources** (`gmail_personal`,
-`gmail_work`, `yahoo`) — `sources=3 paused=0`, healthy; first ticks fetched real mail and ignored
-non-receipts. Frontend dev dist built (bundles + tailwind), Playwright chromium cached.
+✅ **Dev runs the new code (2026-09-23)** — image `dev-091bdb4-fc665d7`, healthy, 3 IMAP sources
+active. All four LLM seats wired. Rollback: `/var/omni-snapshots/dev-pre-verify-20260923-0257.tgz`.
+Full evidence in overlay `DEV_TESTING.md` § 7 — ⛔ read it there, it is not repeated here.
 
-## ▶ NEXT ACTION — dev image is building, then read a tick
+## ▶ NEXT ACTION — test the new email prompt on the box
 
-⏳ **`build-dev-image.yml` run `35810758014`**, dispatched 2026-09-23 02:32Z, ~18min — overlay
-`dev/untested-overlay` + public `dev/role-split-model-seats`.
-⚠️ **Dispatch it with `--ref dev/untested-overlay`**; the default `main` builds the *wrong overlay*
-and the run looks identical until it is too late.
-⛔ It does NOT deploy, by design. When green: on the box pull the `dev-<priv>-<pub>` tag and run it
-beside live (second dir, second port), then read a tick for `effective_confidence`,
-`needs_manual_review`, `dropped_postings`, `warnings`. Then the APK — surface those warnings on
-the draft form, send `x-filename` from the picker not synthesized in Rust.
+⏳ **Dev image build `35816027924`** (dispatched 03:52Z, ~21min) carries the conditional
+`EmailBody` prompt + the `already_balanced` fix. When green: repoint `~/omni-dev/.env`, then run
+`extract3.sh` (in this session's scratchpad; rewrite if gone — three bodies, `hint=email_body`).
+**Predictions to check:** clean → 6 line items, total 29.14, no warning · mismatch → items 38.68
+vs total 61.84, **warning fires** · Netflix → ONE posting, **positive** 12.99, `total` null.
+Then the APK: `build-dev-apk.yml`, surface `warnings`/`needs_review` on the draft form (code is
+written and pushed, never run on hardware).
 
 ## ✅ Decided
-- **Salvage over strictness** (2026-09-21): drop the bad line item, never the document — each
-  posting becomes its own self-balancing draft. Why: `docs/src/extraction.md`.
-- **`verify` uses the `EmailBody` hint on IMAP**, deliberately not penalising a missing one.
-  **`EXAMINE`, never `SELECT`.** **`.edu` PARKED** (needs XOAUTH2).
-- **The dev box is adb-only**, credentials do not move. Its facts and its three traps (Windows
-  `npm`, glibc/`dx`, adb re-auth) live in overlay `SETUP.md` § Machines — ⛔ not re-derived here.
-- 📊 **Measured, do not re-measure:** `gmail_personal` ~**5 msg/day** (12 in 60h) — a real rate,
-  not a ceiling. Cap 200/tick, label plain `INBOX`. Cold `cargo check` = 7m36s at JOBS=2.
+- **`EmailBody` gets a conditional prompt, not sender routing** (user, 2026-09-23). Itemised →
+  line items + printed grand total; single amount → one posting, `total` null. Why: most of his
+  senders are single-amount, so a uniform `total` rule makes a check that can never fail — and
+  the sender list is meant to grow by approval, so per-sender config compounds. See memory
+  `project-receipt-sender-list-should-learn`.
+- **Salvage over strictness** (2026-09-21): drop the bad line item, never the document.
+- **`EXAMINE`, never `SELECT`.** **`.edu` PARKED** (needs XOAUTH2).
+- 📊 **Measured, do not re-measure:** `gmail_personal` ~**5 msg/day**; cap 200/tick, label `INBOX`.
+  At JOBS=2: cold `cargo check` 7m36s · core clippy (`auto-import`) 6m42s · app clippy 7m08s.
 
 ## ⚠️ Open
-- ⛔ **`UIDVALIDITY` is handled nowhere.** A renumbered mailbox stalls, cursor stuck. Real fix
-  carries `uid_validity` in the cursor — trait + schema, own session.
-- **The archive purge path** gates enrichment going back on. Enrichment stays OFF on dev.
+- 🔴 **CI run `35811685375` hung >1h in `cargo test`** where the same code passed 3× at ~1m50s.
+  `timeout-minutes: 45` now caps both repos, so the next one fails loud. ⛔ Cause NOT established —
+  top suspect is `server/tests/common/mod.rs` now running the **full** projection set where it ran
+  `Vec::new()`. Read that job's log before theorising further.
+- ⛔ **The unattended IMAP path has still never run end-to-end.** All ticks `fetched:0`. Needs a
+  real receipt email in a watched mailbox — **ask the user to forward one**.
+- ⛔ **`UIDVALIDITY` is handled nowhere.** Real fix carries `uid_validity` in the cursor; own session.
 
 ## ⛔ Inherit
 - 🔴 **Locally `fmt`, `clippy`, `check` ONLY — never the full suite.** CI runs it.
-- 🔴 **NOTHING since the stamped release (`sha-9a0b1dd`) has run on live.** ⛔ Never deploy there.
-- ⚠️ **`omni-me-private` is NOT committed by the session hooks** — current repo only, by hand.
-- ⚠️ `auto:` commits carry real code, not just checkpoints — diff them, never filter them out.
+- 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⛔ Never deploy there.
+- ⚠️ **`omni-me-private` is NOT committed by the session hooks** — by hand, current repo only.
 - ⚠️ Strip ANSI before grepping docker logs. ⛔ Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
