@@ -1,33 +1,29 @@
 # NEXT
 
-✅ **WSL2 box: toolchain in** — rust 1.98.1+wasm32, dx 0.7.2, cargo-tauri, mdbook, node 20 (nvm),
-`.ort/`, `node_modules/`, **privacy guard installed (self-test PASSED)**; it and the denylist were
-absent while SessionEnd auto-pushes this repo. Branches fixed. Rest: overlay `HANDOFF.md` § 3c.
+✅ **Box done + widen done (2026-09-22).** Dev now runs **3 IMAP sources** (`gmail_personal`,
+`gmail_work`, `yahoo`) — `sources=3 paused=0`, healthy; first ticks fetched real mail and ignored
+non-receipts. Frontend dev dist built (bundles + tailwind), Playwright chromium cached.
 
-## ▶ NEXT ACTION — two independent threads, either order
+## ▶ NEXT ACTION — dev image is building, then read a tick
 
-**A. The box is up** — apt, tailnet (`desktop-9m2omog`), box health ok, `galaxy-s9` authorized
-(API 29, right phone). ⛔ Two things left: `wsl --shutdown` to apply 6GB/8GB (⚠️ **the first
-`cargo check` should wait for it** — 8 CPUs on 3.8 GiB OOMs), then that check as the end-to-end
-proof. ⚠️ adb re-auth traps are in § 3c; neither is a device fault.
-
-**B. The widen — your hands, unchanged.** ⛔ Blocked for me: the classifier refuses the append.
-`sudo tail -n +31 /etc/omni-me/credentials.toml | sudo tee -a /etc/omni-me/credentials-dev.toml > /dev/null`
-then `sudo docker restart omni-me-dev`. ⛔ The append IS the scope control — no per-account flag.
-Backups: `/var/omni-snapshots/dev-pre-widen-20260921-0400.tgz` + credentials copy. Then dev deploy,
-read a tick (`effective_confidence`, `needs_manual_review`, `dropped_postings`, `warnings`), then
-the APK — warnings on the draft form, `x-filename` from the picker not synthesized in Rust.
+⏳ **`build-dev-image.yml` run `35810758014`**, dispatched 2026-09-23 02:32Z, ~18min — overlay
+`dev/untested-overlay` + public `dev/role-split-model-seats`.
+⚠️ **Dispatch it with `--ref dev/untested-overlay`**; the default `main` builds the *wrong overlay*
+and the run looks identical until it is too late.
+⛔ It does NOT deploy, by design. When green: on the box pull the `dev-<priv>-<pub>` tag and run it
+beside live (second dir, second port), then read a tick for `effective_confidence`,
+`needs_manual_review`, `dropped_postings`, `warnings`. Then the APK — surface those warnings on
+the draft form, send `x-filename` from the picker not synthesized in Rust.
 
 ## ✅ Decided
 - **Salvage over strictness** (2026-09-21): drop the bad line item, never the document — each
   posting becomes its own self-balancing draft. Why: `docs/src/extraction.md`.
 - **`verify` uses the `EmailBody` hint on IMAP**, deliberately not penalising a missing one.
   **`EXAMINE`, never `SELECT`.** **`.edu` PARKED** (needs XOAUTH2).
-- **Box is adb-only**, credentials do not move, ⛔ `setup.sh` deliberately never written.
-  **Prebuilt `dx` is right there** (24.04/glibc 2.39) — the source build in `app-release.yml` is a
-  22.04-*runner* constraint. ⚠️ Node from nvm; a bare `npm` there is the **Windows** one.
+- **The dev box is adb-only**, credentials do not move. Its facts and its three traps (Windows
+  `npm`, glibc/`dx`, adb re-auth) live in overlay `SETUP.md` § Machines — ⛔ not re-derived here.
 - 📊 **Measured, do not re-measure:** `gmail_personal` ~**5 msg/day** (12 in 60h) — a real rate,
-  not a ceiling. Cap 200/tick, label plain `INBOX`.
+  not a ceiling. Cap 200/tick, label plain `INBOX`. Cold `cargo check` = 7m36s at JOBS=2.
 
 ## ⚠️ Open
 - ⛔ **`UIDVALIDITY` is handled nowhere.** A renumbered mailbox stalls, cursor stuck. Real fix
@@ -38,4 +34,5 @@ the APK — warnings on the draft form, `x-filename` from the picker not synthes
 - 🔴 **Locally `fmt`, `clippy`, `check` ONLY — never the full suite.** CI runs it.
 - 🔴 **NOTHING since the stamped release (`sha-9a0b1dd`) has run on live.** ⛔ Never deploy there.
 - ⚠️ **`omni-me-private` is NOT committed by the session hooks** — current repo only, by hand.
+- ⚠️ `auto:` commits carry real code, not just checkpoints — diff them, never filter them out.
 - ⚠️ Strip ANSI before grepping docker logs. ⛔ Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
