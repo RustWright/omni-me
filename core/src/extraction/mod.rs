@@ -314,10 +314,25 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
              pay period end date."
         }
         ExtractionHint::EmailBody => {
-            "This is the body of an email containing one or more transactions \
-             (online purchase confirmation, bank notification, etc.). Extract the \
-             core transaction details — vendor, amount, date — and emit one \
-             posting with your best `account_hint` guess."
+            "This is the body of an email reporting one or more transactions — an \
+             online order confirmation, a subscription charge, a bank notification. \
+             Set `description` to the vendor.\n\n\
+             Decide first which of these two it is, because they need different \
+             output.\n\n\
+             ITEMISED — the email lists what was bought line by line, each with its \
+             own amount. Emit one posting per line item, with the category as \
+             `account_hint` and the line amount as `amount` (positive), including \
+             each DISTINCT tax and shipping line. ⚠️ Set `total` to the GRAND TOTAL \
+             ACTUALLY CHARGED, copied as printed and never computed, so the postings \
+             sum to it. ⚠️ Never emit the subtotal or the grand total itself as a \
+             posting — they are sums of the other postings, not items.\n\n\
+             SINGLE AMOUNT — the email states one charge and does not break it down. \
+             Emit exactly ONE posting for that amount, positive, and leave `total` \
+             null. Nothing can be cross-checked against a single figure, and a \
+             `total` here would assert a check that cannot fail.\n\n\
+             ⚠️ In BOTH cases emit the charge side only. Never add the paying \
+             account, the card, or a balancing negative posting — the app adds that \
+             side itself, and a second side here is counted as another line item."
         }
         ExtractionHint::Generic => {
             "Extract any transaction-like information you can find. Set fields \
@@ -473,6 +488,21 @@ pub fn add_counter_legs(result: &mut ExtractionResult, hint: ExtractionHint) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The email prompt carries three instructions `verify` depends on, and each
+    /// was absent once. Without the total, its arithmetic check never runs; without
+    /// the single-amount branch, that check passes trivially on every subscription
+    /// email; without the charge-side rule, a volunteered payment leg reads as a
+    /// second line item and flags a clean receipt.
+    #[test]
+    fn the_email_prompt_keeps_what_verification_depends_on() {
+        let p = prompt_for(ExtractionHint::EmailBody);
+        assert!(p.contains("ITEMISED"), "lost the itemised branch");
+        assert!(p.contains("SINGLE AMOUNT"), "lost the single-amount branch");
+        assert!(p.contains("GRAND TOTAL"), "lost the total instruction");
+        assert!(p.contains("leave `total` null"), "lost the null-total rule");
+        assert!(p.contains("charge side only"), "lost the charge-side rule");
+    }
 
     #[test]
     fn a_receipt_gains_the_unmatched_side_and_a_balanced_draft_is_left_alone() {
