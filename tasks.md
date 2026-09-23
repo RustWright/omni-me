@@ -1375,18 +1375,30 @@ two lines back. Institution names, exact paths and the backup file are in the **
 
 This was needed because **pausing does not survive a restart**, which had gone unnoticed:
 
-- [ ] **The pause off-switch cannot persist if the XDG config dir is not writable.** Found
-  2026-09-07; ⚠️ **the defect is in the deploy image, not in finance code**, so it will bite any
-  future auto-import source. `paused::set_paused` writes `paused_sources.toml` into
-  `$XDG_CONFIG_HOME/omni-me/` via temp+rename. When a container mounts only
-  `credentials.toml` into that directory, the directory itself is created by Docker as a mount
-  parent and is **root-owned**, while the app runs unprivileged — so the write fails
-  `Permission denied (os error 13)`. `pause_source_handler` correctly surfaces that as a 500
-  rather than faking success (#367's whole point), but the net effect is that pause works
-  *live* and never survives a restart, and every boot logs `paused=0` with the sources running
-  again. Worth a startup preflight that warns when the config dir is not writable, since the
-  failure is otherwise only visible at the moment someone tries to pause. Image-side fix and
-  the operational record are in the **overlay's** `tasks.md`. [XS]
+- [x] **The pause off-switch cannot persist if the XDG config dir is not writable.** Found
+  2026-09-07, fixed 2026-09-23. ⚠️ **The defect was in the deploy image, not in finance code**,
+  so it would have bitten any future auto-import source. `paused::set_paused` wrote
+  `paused_sources.toml` into `$XDG_CONFIG_HOME/omni-me/` via temp+rename. When a container mounts
+  only `credentials.toml` into that directory, the directory itself is created by Docker as a
+  mount parent and is **root-owned**, while the app runs unprivileged — so the write failed
+  `Permission denied (os error 13)`. `pause_source_handler` correctly surfaced that as a 500
+  rather than faking success (#367's whole point), but the net effect was that pause worked
+  *live* and never survived a restart, and every boot logged `paused=0` with the sources running
+  again.
+
+  **The fix is the split, not a chmod:** what the app writes now resolves through
+  `XDG_STATE_HOME` (`core/src/paths.rs`), which the image pins to `/data/state` — the app-owned
+  volume. Credentials keep `XDG_CONFIG_HOME`. ⚠️ The invariant worth keeping is that **the
+  directory the app writes to must contain no bind mount**, since Docker creates a mount's
+  missing parents as root. Rationale in `docs/src/deployment.md`.
+
+  ⚠️ Also corrected while fixing: the divergence is narrower than "nothing persisted". Pause and
+  resume mutate the registry *before* the write, so a failure left live and disk disagreeing
+  while `/auto_import/status` (registry, not disk) showed the change — that 500 now says so in
+  those words. Source add/remove always wrote first, so they failed cleanly and changed nothing.
+- [ ] **Warn at boot when the state dir is not writable.** The remaining half of the entry above:
+  the failure is still only visible at the moment someone tries to pause. A startup preflight
+  turns it into a loud boot line. [XS]
 - [ ] **Reach import parity with paisa's seven importers.** Parity map is written (overlay
   `IMPORT_PARITY.md`; institution names are private). **Four of the seven are now covered**
   as of 2026-09-05: the old comma-splitting `statement_csv.rs` is deleted, imports run

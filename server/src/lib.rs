@@ -302,6 +302,16 @@ pub async fn run(cfg: RunConfig) {
     // spawned (not even one boot tick). Applies uniformly to compiled overlay
     // sources too: everything the builder returns flows through here. A load
     // failure degrades to "nothing paused" rather than failing startup.
+    // Said at boot because the alternative is learning it from a pause that
+    // reports an error, long after the deployment that broke it.
+    if let Some(why) = omni_me_core::paths::state_dir_write_error() {
+        tracing::error!(
+            reason = %why,
+            "auto-import config cannot be saved — pause/resume and source changes will not \
+             survive a restart. The app's state dir must not contain a bind mount."
+        );
+    }
+
     let paused_names = match omni_me_core::auto_import::paused::default_path() {
         Ok(p) => omni_me_core::auto_import::paused::load(&p).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "failed to load persisted paused sources — treating none as paused");

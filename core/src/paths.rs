@@ -57,6 +57,28 @@ pub fn state_file_for_read(name: &str) -> Option<PathBuf> {
     }
 }
 
+/// Why the state directory cannot be written to, or `None` if it can.
+///
+/// Called at boot. Without it the failure only appears at the moment someone
+/// tries to pause a source, which is the least convenient moment to learn that
+/// nothing you configure will survive a restart.
+pub fn state_dir_write_error() -> Option<String> {
+    let Some(dir) = state_dir() else {
+        return Some("neither XDG_STATE_HOME nor HOME is set".to_string());
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return Some(format!("{} could not be created: {e}", dir.display()));
+    }
+    let probe = dir.join(".write-probe");
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            None
+        }
+        Err(e) => Some(format!("{} is not writable: {e}", dir.display())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
