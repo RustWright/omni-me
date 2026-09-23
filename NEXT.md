@@ -4,16 +4,17 @@
 Rollback `/var/omni-snapshots/dev-pre-verify-20260923-0257.tgz`.
 ⛔ Full evidence lives in overlay `DEV_TESTING.md` §§ 7-8 and is NOT repeated here.
 
-## ▶ NEXT ACTION — decide the Walmart double-count, then the review UI
+## ▶ NEXT ACTION — decide what counts as a receipt
 
-✅ **The unattended path is PROVEN (2026-09-23):** a real forwarded Walmart receipt made a proposed
-batch — `effective_confidence=0.31`, `needs_manual_review=true`, warning correct against the doc.
+✅ **Unattended path PROVEN (2026-09-23):** a real forwarded Walmart receipt made a proposed batch
+— `effective_confidence=0.31`, `needs_manual_review=true`, warning correct against the document.
 
-⛔ **Decide first:** Walmart sends an order confirmation AND a delivery notice per purchase; both
-match `walmart` and dedup is per-uid, so each makes its own draft — double-counting, caught only
-by review. Options in `DEV_TESTING.md` § 7 (order-scoped dedup off the shared `References:` id is
-promising; ⚠️ never subject-match in `accepts()`). ✅ The review queue now leads with the verdict
-panel instead of a collapsed JSON blob — verified in mock, ⛔ not yet on the phone.
+🔴 **Decide first — ONE Walmart order produced SIX proposed batches** (read live off the phone;
+table in `DEV_TESTING.md` § 7). Committing them books ~4× the purchase plus two zero-amount
+entries — one of them a satisfaction survey. ⛔ **Not a dedup-key problem**: `accepts()` claims
+every mail from a listed sender and the extractor makes a transaction from each. ⚠️ `verify` does
+not catch this shape. Needs something separating "reports a purchase" from "is about a purchase".
+✅ The review queue now leads with the verdict panel, not a collapsed JSON blob (mock-verified).
 
 ## ✅ Decided
 - **`EmailBody` uses a conditional prompt, not sender routing** (user, 2026-09-23). Why: most
