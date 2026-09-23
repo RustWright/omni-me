@@ -94,33 +94,43 @@ impl ReceiptHandler {
 /// avoided, and a `From:` deeper than this is quoted history, not the subject.
 const FORWARD_SCAN_BYTES: usize = 16 * 1024;
 
-/// Markers a mail client leaves when it wraps a message rather than composing
-/// one. Required before an embedded `From:` is trusted, so an ordinary note to
-/// self that merely quotes an address is not treated as a receipt.
-const FORWARD_MARKERS: &[&str] = &[
-    "forwarded message",
-    "begin forwarded message",
-    "original message",
-];
+/// How many lines after an embedded `From:` may carry its sibling headers.
+const HEADER_BLOCK_WINDOW: usize = 3;
 
 /// The original sender of a forwarded message, if this looks like one.
 ///
-/// Gmail rewrites the top-level `From:` to the forwarder and preserves the
-/// original inside the wrapped body — verified against a real forward on
-/// 2026-09-23, which carried no `X-Forwarded-For` or `Resent-From` to key off.
-/// So the wrapped `From:` is the only reliable handle.
+/// ⚠️ Do not gate this on a "Forwarded message" separator. A real Gmail forward
+/// captured 2026-09-23 had none — its body part opened directly on the quoted
+/// `From:`/`Date:`/`Subject:`/`To:` block — and it carried no `X-Forwarded-For`
+/// or `Resent-From` either. The quoted header block is the only thing actually
+/// present across forward styles, so it is what this keys on.
+///
+/// The block is also what keeps a plain note to self out: prose mentioning a
+/// vendor has one `From:` (the wrapper's own) and no second header block.
 fn forwarded_original_sender(body: &[u8]) -> Option<String> {
     let head = &body[..body.len().min(FORWARD_SCAN_BYTES)];
     let text = String::from_utf8_lossy(head).to_lowercase();
-    if !FORWARD_MARKERS.iter().any(|m| text.contains(m)) {
-        return None;
+    let lines: Vec<&str> = text.lines().map(|l| l.trim_start()).collect();
+
+    let mut seen_wrapper_from = false;
+    for (i, line) in lines.iter().enumerate() {
+        let Some(value) = line.strip_prefix("from:") else {
+            continue;
+        };
+        // The first is the forwarder's own, rewritten by their mail client.
+        if !seen_wrapper_from {
+            seen_wrapper_from = true;
+            continue;
+        }
+        let has_sibling = lines[i + 1..]
+            .iter()
+            .take(HEADER_BLOCK_WINDOW)
+            .any(|l| l.starts_with("subject:") || l.starts_with("date:"));
+        if has_sibling {
+            return Some(value.trim().to_string());
+        }
     }
-    // Skip the wrapper's own `From:` — the first one is the forwarder, and the
-    // next is the message they forwarded.
-    text.lines()
-        .filter_map(|l| l.trim_start().strip_prefix("from:"))
-        .nth(1)
-        .map(|v| v.trim().to_string())
+    None
 }
 
 /// Largest PDF attachment handed to poppler. Receipts and statements are well
@@ -399,12 +409,38 @@ mod tests {
     /// Shaped after a real Gmail forward captured 2026-09-23: the top-level
     /// `From:` is the forwarder, the original survives inside the wrapper, and
     /// there is no `X-Forwarded-For` or `Resent-From` to key off instead.
-    /// `original_from` is the whole header value, display name included — the
-    /// vendor match runs over the entire line, as it does for a direct `from`.
+    /// Byte-for-byte the shape of a real Gmail forward captured 2026-09-23:
+    /// wrapper headers, a MIME boundary, then the quoted original header block
+    /// with **no** "Forwarded message" separator anywhere. `original_from` is
+    /// the whole header value, display name included, because the vendor match
+    /// runs over the entire line exactly as it does for a direct `from`.
     fn gmail_forward(original_from: &str) -> Vec<u8> {
         format!(
+            "Delivered-To: me@gmail.com\r\n\
+             References: <abc@walmart.ca>\r\n\
+             From: Name Me <me@gmail.com>\r\n\
+             Date: Wed, 23 Sep 2026 00:03:15 -0400\r\n\
+             Subject: Thank you for shopping with us!\r\n\
+             To: other@gmail.com\r\n\
+             Content-Type: multipart/alternative; boundary=\"000000000000c52\"\r\n\r\n\
+             --000000000000c52\r\n\
+             Content-Type: text/plain; charset=\"UTF-8\"\r\n\
+             Content-Transfer-Encoding: quoted-printable\r\n\r\n\
+             From: {original_from}\r\n\
+             Date: Fri, Sep 18, 2026, 10:45=E2=80=AFp.m.\r\n\
+             Subject: Thank you for shopping with us!\r\n\
+             To: <me@gmail.com>\r\n\r\n\
+             Order total $42.18\r\n"
+        )
+        .into_bytes()
+    }
+
+    /// The older desktop-Gmail shape, which DOES carry the separator. Kept so
+    /// the separator style cannot regress while the newer one is the fixture.
+    fn gmail_forward_with_separator(original_from: &str) -> Vec<u8> {
+        format!(
             "From: Name Me <me@gmail.com>\r\n\
-             Subject: Fwd: Thank you for shopping with us!\r\n\r\n\
+             Subject: Fwd: receipt\r\n\r\n\
              ---------- Forwarded message ---------\r\n\
              From: {original_from}\r\n\
              Date: Mon, 22 Sep 2026 19:02:11 -0400\r\n\
@@ -427,10 +463,32 @@ mod tests {
     #[test]
     fn a_self_forward_is_claimed_by_the_original_sender() {
         let h = forward_handler();
+        assert!(
+            h.accepts(&imap_msg_from(
+                "me@gmail.com",
+                gmail_forward("Walmart Canada <noreply@walmart.ca>")
+            )),
+            "the real Gmail forward carries no separator — the quoted header block is the signal"
+        );
+    }
+
+    #[test]
+    fn the_older_separator_style_still_works() {
+        let h = forward_handler();
         assert!(h.accepts(&imap_msg_from(
             "me@gmail.com",
-            gmail_forward("Walmart Canada <noreply@walmart.ca>")
+            gmail_forward_with_separator("Walmart Canada <noreply@walmart.ca>")
         )));
+    }
+
+    /// A bare `From:` with no sibling headers is a mention, not a forward.
+    #[test]
+    fn a_quoted_address_without_a_header_block_is_not_a_forward() {
+        let h = forward_handler();
+        let body = b"From: Name Me <me@gmail.com>\r\n\r\n\
+                     i got this from: noreply@walmart.ca\r\n\
+                     should i keep it?\r\n";
+        assert!(!h.accepts(&imap_msg_from("me@gmail.com", body.to_vec())));
     }
 
     #[test]
@@ -476,12 +534,22 @@ mod tests {
     #[test]
     fn a_from_beyond_the_scan_window_is_not_read() {
         let h = forward_handler();
-        let mut body =
-            b"From: Name Me <me@gmail.com>\r\n\r\n---------- Forwarded message ---------\r\n"
-                .to_vec();
+        // A header block that WOULD be claimed in range, pushed out of it — so
+        // this fails if the window stops being applied, not merely if the block
+        // is malformed.
+        let mut body = b"From: Name Me <me@gmail.com>\r\n\r\n".to_vec();
         body.extend(std::iter::repeat_n(b'x', FORWARD_SCAN_BYTES));
-        body.extend_from_slice(b"\r\nFrom: noreply@walmart.ca\r\n");
-        assert!(!h.accepts(&imap_msg_from("me@gmail.com", body)));
+        body.extend_from_slice(
+            b"\r\nFrom: Walmart Canada <noreply@walmart.ca>\r\nSubject: receipt\r\n",
+        );
+        assert!(!h.accepts(&imap_msg_from("me@gmail.com", body.clone())));
+
+        // Control: the same block inside the window IS claimed.
+        let mut near = b"From: Name Me <me@gmail.com>\r\n\r\n".to_vec();
+        near.extend_from_slice(
+            b"From: Walmart Canada <noreply@walmart.ca>\r\nSubject: receipt\r\n",
+        );
+        assert!(h.accepts(&imap_msg_from("me@gmail.com", near)));
     }
 
     #[test]
