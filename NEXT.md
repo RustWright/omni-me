@@ -21,8 +21,6 @@ a purchase" from "is about a purchase". ✅ Review queue now leads with the verd
 - **Forward-to-capture is real, gated three ways** (user, 2026-09-23): self-addressed sender, a
   quoted header block, original sender on the vendor list. ⚠️ Gate on the header BLOCK, not a
   "Forwarded message" separator — real forwards come both ways. Also how `.edu` gets in.
-- 📊 **Do not re-measure** (JOBS=2): cold `cargo check` 7m36s · core clippy 6m42s · app 7m08s ·
-  overlay 6m26s · dev image ~21min · `gmail_personal` ~5 msg/day.
 
 ## ⚠️ Open
 - 🔴 **Server config writes NEVER persist, dev AND LIVE** — `/config/omni-me` is root-owned, app is
