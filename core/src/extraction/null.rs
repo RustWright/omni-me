@@ -34,6 +34,7 @@ impl DocumentExtractor for NullExtractor {
             confidence: 0.0,
             dropped_postings: 0,
             model: "null".to_string(),
+            total_discarded: false,
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,

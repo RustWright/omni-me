@@ -229,6 +229,7 @@ mod tests {
             confidence: 0.9,
             model: "test".into(),
             dropped_postings: 0,
+            total_discarded: false,
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,

@@ -681,6 +681,7 @@ mod tests {
             confidence: 0.9,
             dropped_postings: 0,
             model: "stub".into(),
+            total_discarded: false,
             document_kind: kind.map(String::from),
             order_ref: Some("ORD-1".into()),
             raw_response: serde_json::Value::Null,

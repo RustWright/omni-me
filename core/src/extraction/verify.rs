@@ -117,6 +117,17 @@ pub fn verify(
         adjustment *= 0.5;
     }
 
+    // A discarded total must not read as a document that printed none: the
+    // reference figure the line items would have been checked against is the
+    // thing that went missing.
+    if result.total_discarded {
+        warnings.push(
+            "the stated total was unreadable and discarded — line items were not cross-checked"
+                .to_string(),
+        );
+        adjustment *= 0.5;
+    }
+
     let effective_confidence = (result.confidence * adjustment).clamp(0.0, 1.0);
     let needs_manual_review = effective_confidence < threshold;
 
@@ -261,6 +272,7 @@ mod tests {
             confidence: conf,
             model: "test".into(),
             dropped_postings: 0,
+            total_discarded: false,
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,

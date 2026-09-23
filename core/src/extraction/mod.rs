@@ -99,6 +99,11 @@ pub struct ExtractionResult {
     /// doesn't echo this back. `serde(default)` so wire deserialization works.
     #[serde(default)]
     pub model: String,
+    /// The model stated a `total` the decimal parser could not read, so it was
+    /// discarded. Distinct from a document that printed no total at all, and
+    /// `verify` refuses to treat the two the same.
+    #[serde(default)]
+    pub total_discarded: bool,
     /// What the document *is*, as the model labelled it, distinct from what it
     /// reports. A vendor sends many messages per order and only some record a
     /// charge. Kept as the raw label so an unrecognised one is inspectable
@@ -489,6 +494,7 @@ pub(crate) fn parse_response(
 ) -> Result<ExtractionResult, ExtractionError> {
     let mut salvaged = raw.clone();
     let dropped = salvage_postings(&mut salvaged);
+    let total_discarded = salvage_total(&mut salvaged);
     let mut result: ExtractionResult = serde_json::from_value(salvaged)
         .map_err(|e| ExtractionError::Parse(format!("response: {e}")))?;
     result.model = model.to_string();
@@ -496,6 +502,7 @@ pub(crate) fn parse_response(
     result.raw_response = raw;
     result.confidence = result.confidence.clamp(0.0, 1.0);
     result.dropped_postings = dropped;
+    result.total_discarded = total_discarded;
     Ok(result)
 }
 
@@ -507,6 +514,37 @@ pub(crate) fn parse_response(
 ///
 /// A numeric amount is recovered rather than dropped: the schema asks for a string,
 /// but a bare JSON number is the likeliest way to miss it and loses no information.
+/// Drop a `total` the deserializer would choke on, reporting whether it did.
+///
+/// `salvage_postings` has always done this for line items, and leaving its twin
+/// unguarded meant one unusable total failed the whole document — a real email
+/// returned `input contains invalid characters` and extracted nothing at all.
+/// A discarded total is not the same as a total that was never printed, so the
+/// caller records the difference rather than letting it read as absent.
+fn salvage_total(value: &mut serde_json::Value) -> bool {
+    let Some(total) = value.get_mut("total") else {
+        return false;
+    };
+    if total.is_null() {
+        return false;
+    }
+    if total.is_number() {
+        let text = total.to_string();
+        *total = serde_json::Value::String(text);
+        return false;
+    }
+    match total.as_str().map(|s| s.trim().to_string()) {
+        Some(text) if parses_as_decimal(&text) => {
+            *total = serde_json::Value::String(text);
+            false
+        }
+        _ => {
+            *total = serde_json::Value::Null;
+            true
+        }
+    }
+}
+
 fn salvage_postings(value: &mut serde_json::Value) -> usize {
     let Some(postings) = value.get_mut("postings").and_then(|p| p.as_array_mut()) else {
         return 0;
@@ -696,6 +734,7 @@ mod tests {
             confidence: 0.9,
             model: "m".into(),
             dropped_postings: 0,
+            total_discarded: false,
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,
@@ -729,6 +768,7 @@ mod tests {
             confidence: 0.72,
             model: "m".into(),
             dropped_postings: 0,
+            total_discarded: false,
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,
@@ -845,6 +885,62 @@ mod tests {
             result.raw_response, raw,
             "the original survives, so what was dropped stays inspectable"
         );
+    }
+
+    /// Real 2026-09-23 failure, found running the new prompt against archived
+    /// mail on dev: one unreadable `total` returned
+    /// `input contains invalid characters` and the document extracted nothing.
+    /// Postings had been guarded against exactly this since 2026-09-20; the
+    /// twin field had not.
+    #[test]
+    fn an_unusable_total_drops_only_the_total() {
+        let raw = serde_json::json!({
+            "postings": [
+                { "commodity": "CAD", "amount": "14.06" },
+                { "commodity": "CAD", "amount": "1.83" },
+            ],
+            "total": "$1,234.00 CAD",
+            "confidence": 0.9,
+        });
+        let result = parse_response(raw.clone(), "m").expect("salvaged, not failed");
+        assert_eq!(result.postings.len(), 2, "the readable lines survive");
+        assert!(result.total.is_none());
+        assert!(
+            result.total_discarded,
+            "a discarded total must not read as a document that printed none"
+        );
+        assert_eq!(result.raw_response, raw, "the original stays inspectable");
+    }
+
+    #[test]
+    fn a_readable_total_is_not_flagged_as_discarded() {
+        for value in [
+            serde_json::json!("105.43"),
+            serde_json::json!("  105.43  "),
+            serde_json::json!(105.43),
+        ] {
+            let raw = serde_json::json!({
+                "postings": [{ "commodity": "CAD", "amount": "105.43" }],
+                "total": value,
+                "confidence": 0.9,
+            });
+            let result = parse_response(raw, "m").expect("readable");
+            assert!(!result.total_discarded, "flagged a readable total");
+            assert_eq!(result.total, Some("105.43".parse::<Decimal>().unwrap()));
+        }
+    }
+
+    /// A document that simply never printed a total is the ordinary case and
+    /// must stay distinguishable from one whose total was thrown away.
+    #[test]
+    fn an_absent_total_is_not_a_discarded_one() {
+        let raw = serde_json::json!({
+            "postings": [{ "commodity": "CAD", "amount": "14.06" }],
+            "confidence": 0.9,
+        });
+        let result = parse_response(raw, "m").unwrap();
+        assert!(result.total.is_none());
+        assert!(!result.total_discarded);
     }
 
     #[test]
