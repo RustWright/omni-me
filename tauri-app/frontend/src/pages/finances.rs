@@ -2132,7 +2132,11 @@ fn ExtractionVerdictPanel(verdict: ExtractionVerdict) -> Element {
         div { class: "p-4 border rounded-lg space-y-2 {tone}",
             div { class: "flex items-baseline justify-between gap-3",
                 span { class: "text-sm font-semibold {title_tone}", "{headline}" }
-                span { class: "text-xs text-obsidian-text-muted", "confidence {pct}%" }
+                // Never wrap: at 390px the headline takes two lines, and letting
+                // the number break with it leaves a ragged two-column header.
+                span { class: "text-xs text-obsidian-text-muted shrink-0 whitespace-nowrap",
+                    "confidence {pct}%"
+                }
             }
             ul { class: "list-disc pl-5 space-y-1",
                 for w in verdict.warnings.iter() {
