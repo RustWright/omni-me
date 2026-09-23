@@ -20,8 +20,7 @@ That log line has never once executed — it is the last unrun step on the unatt
 - **Forward-to-capture is real, gated three ways** (user, 2026-09-23): sender is one of the
   user's own mailbox addresses AND the body wraps a forward AND the original sender is a known
   vendor. It is also how the `.edu` mailbox gets in — its SSO blocks IMAP, so auto-forward it.
-  ⚠️ Archiving never needed this: `imap.rs` archives before routing, so forwarded mail was
-  already being kept. This only affects becoming a transaction draft.
+  ⚠️ Archiving never needed this (`imap.rs` archives before routing); this only affects drafts.
 - **Salvage over strictness** (2026-09-21). **`EXAMINE`, never `SELECT`.**
 - 📊 **Do not re-measure** (JOBS=2): cold `cargo check` 7m36s · core clippy 6m42s · app 7m08s ·
   overlay 6m26s · dev image ~21min · `gmail_personal` ~5 msg/day.
