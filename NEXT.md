@@ -27,15 +27,14 @@ rewrite silently degraded account hints — check the OLD fields too, not only t
 - ⛔ **Grouping stays unwritten until both are answered** — dedup key, revision semantics and the
   mapper's draft shape all move together.
 - ⛔ **`UIDVALIDITY` handled nowhere.** Real fix carries `uid_validity` in the cursor; own session.
-- 🔴 **`assistant_projection::tests::arrival_order_…_clocks` hangs ~1 in 5.** `timeout-minutes: 45`
-  caps it in both repos; the hang itself is undiagnosed.
+- 🔴 **`assistant_projection::tests::arrival_order_…_clocks` hangs ~1 in 5**, undiagnosed;
+  `timeout-minutes: 45` caps it in both repos.
 
 ## ⛔ Inherit
 - 🔴 **CI's ONE invocation naming core+server+agent** is what compiles core with `auto-import` —
   a narrower `cargo test -p omni-me-core` runs ZERO of those tests and looks like a pass.
 - 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⛔ Never deploy there. ⚠️ `omni-me-private`
   is NOT committed by the session hooks — by hand, current repo only.
-- ⚠️ **Search the trackers before writing a bug up as new** — the `/config` bug was already in
-  `tasks.md` from 2026-09-07 and got re-derived as a discovery.
+- ⚠️ **Search the trackers before writing a bug up as new** — the `/config` bug was in `tasks.md` from 2026-09-07 and got re-derived.
 - ⚠️ Strip ANSI before grepping docker logs. **`EXAMINE`, never `SELECT`.** Salvage over
   strictness. ⛔ Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
