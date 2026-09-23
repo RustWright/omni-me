@@ -320,16 +320,18 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
              Decide first which of these two it is, because they need different \
              output.\n\n\
              ITEMISED — the email lists what was bought line by line, each with its \
-             own amount. Emit one posting per line item, with the category as \
-             `account_hint` and the line amount as `amount` (positive), including \
+             own amount. Emit one posting per line item, with the category as a FULL \
+             account path in `account_hint` (e.g. \"Expenses:Groceries\", never a bare \
+             \"Groceries\") and the line amount as `amount` (positive), including \
              each DISTINCT tax and shipping line. ⚠️ Set `total` to the GRAND TOTAL \
              ACTUALLY CHARGED, copied as printed and never computed, so the postings \
              sum to it. ⚠️ Never emit the subtotal or the grand total itself as a \
              posting — they are sums of the other postings, not items.\n\n\
              SINGLE AMOUNT — the email states one charge and does not break it down. \
-             Emit exactly ONE posting for that amount, positive, and leave `total` \
-             null. Nothing can be cross-checked against a single figure, and a \
-             `total` here would assert a check that cannot fail.\n\n\
+             Emit exactly ONE posting for that amount, positive, with a FULL account \
+             path in `account_hint` (e.g. \"Expenses:Subscriptions\"). ⚠️ `total` MUST \
+             be null here. Do NOT copy the amount into it: a `total` equal to the only \
+             posting is a cross-check that cannot fail, which is worse than no check.\n\n\
              ⚠️ In BOTH cases emit the charge side only. Never add the paying \
              account, the card, or a balancing negative posting — the app adds that \
              side itself, and a second side here is counted as another line item."
@@ -500,7 +502,14 @@ mod tests {
         assert!(p.contains("ITEMISED"), "lost the itemised branch");
         assert!(p.contains("SINGLE AMOUNT"), "lost the single-amount branch");
         assert!(p.contains("GRAND TOTAL"), "lost the total instruction");
-        assert!(p.contains("leave `total` null"), "lost the null-total rule");
+        assert!(
+            p.contains("`total` MUST be null"),
+            "lost the null-total rule"
+        );
+        assert!(
+            p.contains("FULL account path"),
+            "lost the account-path rule — the model returns bare category names without it"
+        );
         assert!(p.contains("charge side only"), "lost the charge-side rule");
     }
 
