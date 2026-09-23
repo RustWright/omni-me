@@ -26,10 +26,9 @@ written and pushed, never run on hardware).
   At JOBS=2: cold `cargo check` 7m36s · core clippy (`auto-import`) 6m42s · app clippy 7m08s.
 
 ## ⚠️ Open
-- 🔴 **CI run `35811685375` hung >1h in `cargo test`** where the same code passed 3× at ~1m50s.
-  `timeout-minutes: 45` now caps both repos, so the next one fails loud. ⛔ Cause NOT established —
-  top suspect is `server/tests/common/mod.rs` now running the **full** projection set where it ran
-  `Vec::new()`. Read that job's log before theorising further.
+- 🔴 **CI run `35811685375` hung >1h in `cargo test`; 4 other runs pass at ~1m50s — nondeterministic.**
+  `timeout-minutes: 45` now caps both repos so the next one fails loud. ⛔ Cause NOT established;
+  top suspect is `server/tests/common/mod.rs` running the **full** projection set. Read its log first.
 - ⛔ **The unattended IMAP path has still never run end-to-end.** All ticks `fetched:0`. Needs a
   real receipt email in a watched mailbox — **ask the user to forward one**.
 - ⛔ **`UIDVALIDITY` is handled nowhere.** Real fix carries `uid_validity` in the cursor; own session.
