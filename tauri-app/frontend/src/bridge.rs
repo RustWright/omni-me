@@ -4275,6 +4275,47 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                     "uid": 42,
                 })),
             },
+            // A `receipts` batch that failed verification. The two bank batches
+            // above carry no verdict — only this path runs `verify` — so without
+            // it the review screen's warning panel is unreachable in mock. The
+            // figures are a real 2026-09-23 capture: a delivery notice itemising
+            // part of a larger order.
+            PendingBatchView {
+                batch_id: "01HXMOCKRCPT000000000001".into(),
+                source: "receipts".into(),
+                dedup_key: "receipts-uid-3458".into(),
+                fetched_at: (now - chrono::Duration::minutes(2)).to_rfc3339(),
+                draft_postings: vec![DraftTransactionView {
+                    external_id: "receipts-uid-3458-row-1".into(),
+                    date: "2026-09-12".into(),
+                    description: "Northwind — order delivered".into(),
+                    postings: vec![
+                        PostingInput {
+                            account: "Expenses:Groceries".into(),
+                            commodity: "CAD".into(),
+                            amount: "27.86".into(),
+                            tags: vec![],
+                        },
+                        PostingInput {
+                            account: "Unmatched".into(),
+                            commodity: "CAD".into(),
+                            amount: "-27.86".into(),
+                            tags: vec![],
+                        },
+                    ],
+                }],
+                source_metadata: Some(serde_json::json!({
+                    "from": "me@example.com",
+                    "subject": "Fwd: Your Northwind order was delivered",
+                    "uid": 3458,
+                    "effective_confidence": 0.31,
+                    "needs_manual_review": true,
+                    "dropped_postings": 0,
+                    "warnings": [
+                        "line-item sum 27.86 does not match document total 99.83 (diff 71.97)"
+                    ],
+                })),
+            },
         ])
     }
     #[cfg(not(feature = "mock"))]

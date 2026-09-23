@@ -2106,7 +2106,16 @@ struct ExtractionVerdict {
 /// which is what sends the user to the right row; a friendlier paraphrase
 /// layer here would be one more thing to drift out of step with `verify.rs`.
 #[component]
-fn ExtractionVerdictPanel(verdict: ExtractionVerdict) -> Element {
+fn ExtractionVerdictPanel(
+    verdict: ExtractionVerdict,
+    /// What the reader can actually do about it *here*. The confirm form has
+    /// editable fields and a Save; the batch review has Commit all / Dismiss and
+    /// no fields, so the default sentence would name a control that is not on
+    /// screen.
+    #[props(default = "Nothing is saved until you press Save — edit any field that looks wrong."
+        .to_string())]
+    hint: String,
+) -> Element {
     // A clean extraction says nothing: the confidence number on its own gives
     // the user no action, and a banner on every capture stops being read.
     if !verdict.needs_review && verdict.warnings.is_empty() {
@@ -2118,7 +2127,10 @@ fn ExtractionVerdictPanel(verdict: ExtractionVerdict) -> Element {
         (
             "bg-amber-500/10 border-amber-500/30",
             "text-amber-200",
-            "Check this draft before saving",
+            // Action-neutral on purpose: this panel renders on the confirm form
+            // (Save) and on the batch review (Commit all). `hint` names the
+            // control; the headline only states the verdict.
+            "Check this draft first",
         )
     } else {
         (
@@ -2143,9 +2155,7 @@ fn ExtractionVerdictPanel(verdict: ExtractionVerdict) -> Element {
                     li { class: "text-xs text-obsidian-text-muted", "{w}" }
                 }
             }
-            p { class: "text-xs text-obsidian-text-muted/80",
-                "Nothing is saved until you press Save — edit any field that looks wrong."
-            }
+            p { class: "text-xs text-obsidian-text-muted/80", "{hint}" }
         }
     }
 }
@@ -2744,6 +2754,36 @@ fn email_document_id(batch: &PendingBatchView) -> Option<String> {
         .map(str::to_string)
 }
 
+/// What `verify` concluded about the extraction behind a batch.
+///
+/// ⚠️ These keys are written by `core::auto_import::receipts`, which spells them
+/// `effective_confidence` and `needs_manual_review` — not the `confidence` /
+/// `needs_review` of the capture route's JSON. `source_metadata` is opaque by
+/// design, so only agreement on these spellings connects the two.
+///
+/// Returning `None` when the keys are absent is deliberate: a batch from a
+/// source that runs no verification must show no verdict rather than a
+/// confident-looking zero.
+fn batch_verdict(batch: &PendingBatchView) -> Option<ExtractionVerdict> {
+    let meta = batch.source_metadata.as_ref()?;
+    Some(ExtractionVerdict {
+        confidence: meta.get("effective_confidence")?.as_f64()?,
+        needs_review: meta
+            .get("needs_manual_review")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        warnings: meta
+            .get("warnings")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|w| w.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
 /// The message a batch was derived from, shown beside its drafts.
 ///
 /// ⚠️ Renders the archive's **extracted** text (headers + body), not the raw
@@ -2894,6 +2934,20 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                 // from. The raw metadata stays available underneath.
                 if let Some(doc_id) = email_document_id(&b) {
                     SourceEmailPanel { document_id: doc_id }
+                }
+
+                // Same panel the manual confirm-draft form uses. It matters more
+                // here: on this path no human has looked at the model's work at
+                // all, and `needs_manual_review` was previously readable only by
+                // expanding the JSON below it.
+                if let Some(v) = batch_verdict(&b) {
+                    div { class: "mb-4",
+                        ExtractionVerdictPanel {
+                            verdict: v,
+                            hint: "Check these figures against the source before committing — dismissing costs nothing."
+                                .to_string(),
+                        }
+                    }
                 }
 
                 if let Some(meta_str) = metadata_pretty {
