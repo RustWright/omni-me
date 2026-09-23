@@ -26,13 +26,11 @@ written and pushed, never run on hardware).
   At JOBS=2: cold `cargo check` 7m36s · core clippy (`auto-import`) 6m42s · app clippy 7m08s.
 
 ## ⚠️ Open
-- 🔴 **`events::assistant_projection::tests::arrival_order_does_not_change_a_threads_clocks` hangs
-  intermittently** (~1 in 5; run `35811685375` sat >1h, 4 others pass at ~1m50s). Named by diffing
-  completed tests against a green run — it is the only one that started and never reported. It is
-  the rare test calling `test_db()` **twice**, the `tempdir + mem::forget` fixture already blamed
-  for the 2026-05-16 flake. `timeout-minutes: 45` now caps both repos so a repeat fails loud.
-- ⛔ **The unattended IMAP path has still never run end-to-end.** All ticks `fetched:0`. Needs a
-  real receipt email in a watched mailbox — **ask the user to forward one**.
+- 🔴 **`assistant_projection::tests::arrival_order_does_not_change_a_threads_clocks` hangs ~1 in 5**
+  (run `35811685375` sat >1h; 4 others pass at ~1m50s). Named by diffing `... ok` lines against a
+  green run. It is a rare test calling `test_db()` **twice** — the `tempdir + mem::forget` fixture
+  already blamed for the 2026-05-16 flake. `timeout-minutes: 45` now caps both repos. Detail in memory.
+- ⛔ **The unattended IMAP path has still never run end-to-end** — every tick `fetched:0`.
 - ⛔ **`UIDVALIDITY` is handled nowhere.** Real fix carries `uid_validity` in the cursor; own session.
 
 ## ⛔ Inherit
