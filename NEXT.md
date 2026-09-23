@@ -1,6 +1,6 @@
 # NEXT
 
-✅ Dev healthy on `dev-68b3734-530edd6`, 3 IMAP sources, 4 LLM seats. Phone on APK **1.1.5-dev**.
+✅ Dev healthy on `dev-68b3734-530edd6`, 3 IMAP sources, 4 LLM seats. Phone on APK **1.1.6-dev**.
 Rollback `/var/omni-snapshots/dev-pre-verify-20260923-0257.tgz`. ⛔ Full evidence is in overlay
 `DEV_TESTING.md` §§ 7-8 and is NOT repeated here.
 
@@ -12,8 +12,8 @@ Rollback `/var/omni-snapshots/dev-pre-verify-20260923-0257.tgz`. ⛔ Full eviden
 🔴 **Decide first — ONE Walmart order produced SIX proposed batches** (table in `DEV_TESTING.md`
 § 7): ~4× the purchase plus two zero-amount entries, one a satisfaction survey. ⛔ **Not a
 dedup-key problem** — `accepts()` claims every mail from a listed sender and the extractor makes a
-transaction from each; ⚠️ `verify` does not catch this shape. Needs something separating "reports
-a purchase" from "is about a purchase". ✅ Review queue now leads with the verdict panel (mock).
+transaction from each; ⚠️ `verify` does not catch this shape, and the mapper splits a counter leg
+into a second booking. ✅ Review queue leads with the verdict panel, confirmed on the phone.
 
 ## ✅ Decided
 - **`EmailBody` uses a conditional prompt, not sender routing** (user, 2026-09-23). Why: most
