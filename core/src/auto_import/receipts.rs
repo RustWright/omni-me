@@ -351,10 +351,14 @@ impl ImapHandler for ReceiptHandler {
             );
             return Ok(vec![]);
         }
-        // Backstop for a mislabelled kind: a draft with no money in it is never
-        // something to review. Catches surveys and upsells the model called a
-        // charge, without needing the label to be right.
-        if !result.has_nonzero_amount() {
+        // Backstop for mail the model did not label at all: with nothing saying
+        // this is a charge and no money in it, there is nothing to review.
+        //
+        // Deliberately does NOT apply when the model called it a charge. A
+        // receipt whose amount failed to extract looks identical to a survey
+        // here, and dropping it would lose a real purchase silently, where
+        // letting it through costs one dismissal in a queue that exists anyway.
+        if result.kind().is_none() && !result.has_nonzero_amount() {
             tracing::info!(
                 handler = self.name(),
                 uid = message.uid,
@@ -718,10 +722,19 @@ mod tests {
         assert_eq!(events_for(Some("marketing"), "0.00").await, 0);
     }
 
-    /// The backstop, for when the label is wrong rather than the message.
+    /// The backstop is for UNLABELLED mail only.
     #[tokio::test]
-    async fn a_zero_amount_draft_proposes_nothing_whatever_its_label() {
-        assert_eq!(events_for(Some("receipt"), "0.00").await, 0);
+    async fn an_unlabelled_zero_amount_message_proposes_nothing() {
+        assert_eq!(events_for(None, "0.00").await, 0);
+    }
+
+    /// ⚠️ The asymmetry that decides this: a receipt whose amount failed to
+    /// extract is indistinguishable from a survey at this point, so suppressing
+    /// it would lose a real purchase with nothing on screen to say so. One junk
+    /// draft in a review queue is the cheaper mistake.
+    #[tokio::test]
+    async fn a_charge_the_model_could_not_price_still_reaches_review() {
+        assert_eq!(events_for(Some("receipt"), "0.00").await, 1);
     }
 
     #[tokio::test]

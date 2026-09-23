@@ -179,9 +179,12 @@ a dismissal in a review queue that exists anyway. The gate fails open, deliberat
 not book, but the raw label is recorded rather than discarded so a new vendor phrasing is visible
 instead of silently swallowed.
 
-**A zero-amount draft is refused whatever its label.** This is the backstop for the label being
-wrong rather than the message, and it needs no taxonomy to be right: a draft with no money in it
-is never something to review.
+**A zero-amount draft is refused only when the model said nothing about what the email is.** With
+no label and no money, there is nothing to review. But when the model *did* call it a charge and
+no amount came out, the draft still goes through, because at that point a receipt whose amount
+failed to extract is indistinguishable from a survey — and suppressing it would lose a real
+purchase with nothing on screen to say so. One junk draft in a queue that exists anyway is the
+cheaper of the two mistakes.
 
 Shipping notices and order updates deliberately still propose, even though they duplicate an
 earlier confirmation. They restate the order total, and for some orders they are the only message
