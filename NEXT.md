@@ -8,9 +8,8 @@ Rollback `/var/omni-snapshots/dev-pre-kindgate-20260923-1412.tgz`.
 
 🔴 **The `EmailBody` prompt changed and NOTHING has run against a model yet.** Dev image build
 `35872622803` was in flight at handoff. Deploy it (overlay `DEV_TESTING.md` § 4), tick the
-mailbox, and check on the real Walmart mails that `document_kind` and `order_ref` come back
-sensibly. ⚠️ A previous prompt rewrite silently degraded account hints, so check the OLD fields
-too, not just the new ones. Unit tests cover the gate, never the model's answers.
+mailbox, check `document_kind` + `order_ref` on the real Walmart mails. ⚠️ A previous prompt
+rewrite silently degraded account hints — check the OLD fields too, not only the new ones.
 
 ## ✅ Decided 2026-09-23
 - **Receipts: the model decides, keyed on the vendor's order number** (user). Over-communication
@@ -32,9 +31,8 @@ too, not just the new ones. Unit tests cover the gate, never the model's answers
   caps it in both repos; the hang itself is undiagnosed.
 
 ## ⛔ Inherit
-- 🔴 **Locally `fmt`/`clippy`/`check` ONLY.** CI's ONE invocation naming core+server+agent is what
-  compiles core with `auto-import` — a narrower `cargo test -p omni-me-core` runs ZERO of those
-  tests and looks like a pass.
+- 🔴 **CI's ONE invocation naming core+server+agent** is what compiles core with `auto-import` —
+  a narrower `cargo test -p omni-me-core` runs ZERO of those tests and looks like a pass.
 - 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⛔ Never deploy there. ⚠️ `omni-me-private`
   is NOT committed by the session hooks — by hand, current repo only.
 - ⚠️ **Search the trackers before writing a bug up as new** — the `/config` bug was already in
