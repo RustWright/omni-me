@@ -6,11 +6,11 @@ Rollback `/var/omni-snapshots/dev-pre-verify-20260923-0257.tgz`.
 
 ## ▶ NEXT ACTION — decide the Walmart double-count, then the review UI
 
-✅ **The unattended path is PROVEN (2026-09-23):** a real forwarded Walmart receipt made a
-proposed batch, `effective_confidence=0.31`, `needs_manual_review=true`, warning correct against
-the document's own figures.
+✅ **The unattended path is PROVEN (2026-09-23):** a real forwarded Walmart receipt made a proposed
+batch — `effective_confidence=0.31`, `needs_manual_review=true`, warning correct against the
+document's own figures.
 
-⛔ **Open decision first:** Walmart sends BOTH an order confirmation and a delivery notice for one
+⛔ **Decide first:** Walmart sends BOTH an order confirmation and a delivery notice for one
 purchase; both match `walmart`, dedup is per-uid, so each makes its own draft — double-counting,
 caught only by review. Options in `DEV_TESTING.md` § 7 — order-scoped dedup off the shared
 `References:` id is the promising one; ⚠️ do NOT subject-match in `accepts()`. Then: the review
@@ -19,10 +19,9 @@ queue UI for these drafts, on the phone. Nothing has exercised it.
 ## ✅ Decided
 - **`EmailBody` uses a conditional prompt, not sender routing** (user, 2026-09-23). Why: most
   senders are single-amount, so a uniform `total` rule builds a check that cannot fail.
-- **Forward-to-capture is real, gated three ways** (user, 2026-09-23): a self-addressed sender,
-  a quoted header block, and an original sender on the vendor list. ⚠️ Gate on the header BLOCK,
-  never a "Forwarded message" separator — real forwards come both ways. It is also how the
-  `.edu` mailbox gets in (SSO blocks IMAP, so auto-forward it).
+- **Forward-to-capture is real, gated three ways** (user, 2026-09-23): a self-addressed sender, a
+  quoted header block, and an original sender on the vendor list. ⚠️ Gate on the header BLOCK, not
+  a "Forwarded message" separator — real forwards come both ways. Also how `.edu` gets in.
 - **Salvage over strictness** (2026-09-21). **`EXAMINE`, never `SELECT`.**
 - 📊 **Do not re-measure** (JOBS=2): cold `cargo check` 7m36s · core clippy 6m42s · app 7m08s ·
   overlay 6m26s · dev image ~21min · `gmail_personal` ~5 msg/day.
