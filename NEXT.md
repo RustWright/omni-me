@@ -23,8 +23,8 @@ That log line has never once executed — it is the last unrun step on the unatt
   ⚠️ Archiving never needed this: `imap.rs` archives before routing, so forwarded mail was
   already being kept. This only affects becoming a transaction draft.
 - **Salvage over strictness** (2026-09-21). **`EXAMINE`, never `SELECT`.**
-- 📊 **Do not re-measure:** `gmail_personal` ~5 msg/day. At JOBS=2: cold `cargo check` 7m36s ·
-  core clippy (`auto-import`) 6m42s · app clippy 7m08s · overlay clippy 6m26s · dev image ~21min.
+- 📊 **Do not re-measure** (JOBS=2): cold `cargo check` 7m36s · core clippy 6m42s · app 7m08s ·
+  overlay 6m26s · dev image ~21min · `gmail_personal` ~5 msg/day.
 
 ## ⚠️ Open
 - 🔴 **The model will not leave `total` null on a single-amount email** — two prompt attempts
