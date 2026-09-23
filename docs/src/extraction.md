@@ -146,6 +146,50 @@ that gates on verification — an auto-commit threshold, a confidence rule — w
 an empty warnings list as evidence the arithmetic was checked, and on this shape that inference
 is false. Recording the distinction costs a field. Discovering it later costs a wrong booking.
 
+## What counts as a receipt
+
+A vendor does not send one email per purchase. It sends an order confirmation, then a notice that
+an item was substituted or refunded, then one saying the order shipped, then one saying it was
+delivered, then a request to rate the experience. Every one of those comes from the same address.
+Claiming mail by sender and turning whatever arrives into a transaction therefore books a single
+purchase several times over, and books a satisfaction survey as a purchase of nothing.
+
+This is not a deduplication problem, which is the tempting reading. Two messages about one order
+are not copies: an order that is updated between confirmation and delivery states two different
+amounts, both correct when written. No key over message identity decides which is real.
+
+So the extractor is asked two questions about the email *itself*, separately from what it reports:
+
+- **`document_kind`** — receipt, order confirmation, order update, shipping notice, feedback
+  request, marketing, or other. The instruction is to judge what the email *is*, not what it
+  mentions, because a survey that repeats the order total is still a survey.
+- **`order_ref`** — the vendor's own order number, copied as printed. This is the handle that
+  ties a vendor's several messages to one purchase, and unlike a mail header it survives being
+  forwarded.
+
+Only a kind that can carry a charge proposes a draft. A feedback request proposes nothing.
+
+Three decisions inside that are easy to get backwards:
+
+**An absent kind still proposes.** A model that omits the field has not told you the message is
+uninteresting. Dropping a real purchase is invisible and permanent; proposing one too many costs
+a dismissal in a review queue that exists anyway. The gate fails open, deliberately.
+
+**An unrecognised kind does not.** A label this build does not know maps to `other`, which does
+not book, but the raw label is recorded rather than discarded so a new vendor phrasing is visible
+instead of silently swallowed.
+
+**A zero-amount draft is refused whatever its label.** This is the backstop for the label being
+wrong rather than the message, and it needs no taxonomy to be right: a draft with no money in it
+is never something to review.
+
+Shipping notices and order updates deliberately still propose, even though they duplicate an
+earlier confirmation. They restate the order total, and for some orders they are the only message
+that arrives. Collapsing a vendor's several messages into one revisable proposal is the remaining
+half of this, and it is unbuilt: it needs a rule for vendors that print no order number, and a
+decision about what a revision may do to a batch that was already committed. Guessing either one
+forces the other.
+
 ## Salvaging a partial extraction
 
 `ExtractedPosting::amount` is a required `Decimal` parsed from a JSON string. That is the right
