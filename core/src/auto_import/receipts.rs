@@ -45,6 +45,10 @@ pub struct ReceiptHandler {
     /// claim these (e.g. a bank statement handler claims its own sender); this list lets
     /// a downstream "catch-all" receipt handler skip them defensively.
     excluded_patterns: Vec<String>,
+    /// The user's own mailbox addresses, lowercased. A message from one of
+    /// these is claimed only when it wraps a forwarded message whose original
+    /// sender matches `sender_patterns` — see `accepts`.
+    self_addresses: Vec<String>,
     device_id: String,
     extractor: Arc<dyn DocumentExtractor>,
 }
@@ -63,6 +67,7 @@ impl ReceiptHandler {
                 .map(|s| s.to_lowercase())
                 .collect(),
             excluded_patterns: Vec::new(),
+            self_addresses: Vec::new(),
             device_id: device_id.into(),
             extractor,
         }
@@ -72,6 +77,50 @@ impl ReceiptHandler {
         self.excluded_patterns = excluded.into_iter().map(|s| s.to_lowercase()).collect();
         self
     }
+
+    /// Enable forward-to-capture for these addresses — normally the `account`
+    /// of every configured mailbox. Without them a forwarded receipt is dropped,
+    /// because the forwarding client rewrites `From:` to the forwarder.
+    pub fn with_self_addresses(mut self, addresses: Vec<String>) -> Self {
+        self.self_addresses = addresses.into_iter().map(|s| s.to_lowercase()).collect();
+        self
+    }
+}
+
+/// How far into a message to look for the forwarded original's `From:`.
+///
+/// The wrapper's own headers plus the forward preamble sit well inside this;
+/// scanning a whole multi-megabyte message to reject it is the cost being
+/// avoided, and a `From:` deeper than this is quoted history, not the subject.
+const FORWARD_SCAN_BYTES: usize = 16 * 1024;
+
+/// Markers a mail client leaves when it wraps a message rather than composing
+/// one. Required before an embedded `From:` is trusted, so an ordinary note to
+/// self that merely quotes an address is not treated as a receipt.
+const FORWARD_MARKERS: &[&str] = &[
+    "forwarded message",
+    "begin forwarded message",
+    "original message",
+];
+
+/// The original sender of a forwarded message, if this looks like one.
+///
+/// Gmail rewrites the top-level `From:` to the forwarder and preserves the
+/// original inside the wrapped body — verified against a real forward on
+/// 2026-09-23, which carried no `X-Forwarded-For` or `Resent-From` to key off.
+/// So the wrapped `From:` is the only reliable handle.
+fn forwarded_original_sender(body: &[u8]) -> Option<String> {
+    let head = &body[..body.len().min(FORWARD_SCAN_BYTES)];
+    let text = String::from_utf8_lossy(head).to_lowercase();
+    if !FORWARD_MARKERS.iter().any(|m| text.contains(m)) {
+        return None;
+    }
+    // Skip the wrapper's own `From:` — the first one is the forwarder, and the
+    // next is the message they forwarded.
+    text.lines()
+        .filter_map(|l| l.trim_start().strip_prefix("from:"))
+        .nth(1)
+        .map(|v| v.trim().to_string())
 }
 
 /// Largest PDF attachment handed to poppler. Receipts and statements are well
@@ -173,7 +222,23 @@ impl ImapHandler for ReceiptHandler {
         {
             return false;
         }
-        self.sender_patterns.iter().any(|p| from_lower.contains(p))
+        if self.sender_patterns.iter().any(|p| from_lower.contains(p)) {
+            return true;
+        }
+        // Forward-to-capture. Gated on the sender being the user's own address
+        // AND the message wrapping another one AND that original matching a
+        // vendor, so a plain note to self is still ignored. The .edu mailbox
+        // reaches omni-me this way, since its SSO blocks IMAP.
+        if !self.self_addresses.iter().any(|a| from_lower.contains(a)) {
+            return false;
+        }
+        match forwarded_original_sender(&message.body) {
+            Some(original) => {
+                !self.excluded_patterns.iter().any(|p| original.contains(p))
+                    && self.sender_patterns.iter().any(|p| original.contains(p))
+            }
+            None => false,
+        }
     }
 
     async fn handle(&self, message: &ImapMessage) -> Result<Vec<NewEvent>, ImportError> {
@@ -329,6 +394,94 @@ mod tests {
         assert!(handler.accepts(&imap_msg_from("donotreply@audible.ca", Vec::new())));
         assert!(handler.accepts(&imap_msg_from("hello@oxio.com", Vec::new())));
         assert!(!handler.accepts(&imap_msg_from("random@example.com", Vec::new())));
+    }
+
+    /// Shaped after a real Gmail forward captured 2026-09-23: the top-level
+    /// `From:` is the forwarder, the original survives inside the wrapper, and
+    /// there is no `X-Forwarded-For` or `Resent-From` to key off instead.
+    /// `original_from` is the whole header value, display name included — the
+    /// vendor match runs over the entire line, as it does for a direct `from`.
+    fn gmail_forward(original_from: &str) -> Vec<u8> {
+        format!(
+            "From: Name Me <me@gmail.com>\r\n\
+             Subject: Fwd: Thank you for shopping with us!\r\n\r\n\
+             ---------- Forwarded message ---------\r\n\
+             From: {original_from}\r\n\
+             Date: Mon, 22 Sep 2026 19:02:11 -0400\r\n\
+             Subject: Thank you for shopping with us!\r\n\r\n\
+             Order total $42.18\r\n"
+        )
+        .into_bytes()
+    }
+
+    fn forward_handler() -> ReceiptHandler {
+        ReceiptHandler::new(
+            "receipts",
+            vec!["walmart".into()],
+            "device-test",
+            Arc::new(crate::extraction::null::NullExtractor),
+        )
+        .with_self_addresses(vec!["me@gmail.com".into()])
+    }
+
+    #[test]
+    fn a_self_forward_is_claimed_by_the_original_sender() {
+        let h = forward_handler();
+        assert!(h.accepts(&imap_msg_from(
+            "me@gmail.com",
+            gmail_forward("Walmart Canada <noreply@walmart.ca>")
+        )));
+    }
+
+    #[test]
+    fn a_plain_note_to_self_is_still_ignored() {
+        let h = forward_handler();
+        let body = b"From: Name Me <me@gmail.com>\r\n\r\nremember to buy milk at walmart\r\n";
+        assert!(
+            !h.accepts(&imap_msg_from("me@gmail.com", body.to_vec())),
+            "a note merely mentioning a vendor must not be claimed"
+        );
+    }
+
+    #[test]
+    fn a_forward_of_unrelated_mail_is_ignored() {
+        let h = forward_handler();
+        assert!(!h.accepts(&imap_msg_from(
+            "me@gmail.com",
+            gmail_forward("A Friend <friend@example.com>")
+        )));
+    }
+
+    #[test]
+    fn forwarding_is_off_until_self_addresses_are_configured() {
+        let h = ReceiptHandler::new(
+            "receipts",
+            vec!["walmart".into()],
+            "device-test",
+            Arc::new(crate::extraction::null::NullExtractor),
+        );
+        assert!(!h.accepts(&imap_msg_from(
+            "me@gmail.com",
+            gmail_forward("Walmart Canada <noreply@walmart.ca>")
+        )));
+    }
+
+    #[test]
+    fn an_exclusion_still_wins_inside_a_forward() {
+        let h = forward_handler().with_excluded(vec!["@sc.com".into()]);
+        let body = gmail_forward("SC Bank <statements@sc.com>");
+        assert!(!h.accepts(&imap_msg_from("me@gmail.com", body)));
+    }
+
+    #[test]
+    fn a_from_beyond_the_scan_window_is_not_read() {
+        let h = forward_handler();
+        let mut body =
+            b"From: Name Me <me@gmail.com>\r\n\r\n---------- Forwarded message ---------\r\n"
+                .to_vec();
+        body.extend(std::iter::repeat_n(b'x', FORWARD_SCAN_BYTES));
+        body.extend_from_slice(b"\r\nFrom: noreply@walmart.ca\r\n");
+        assert!(!h.accepts(&imap_msg_from("me@gmail.com", body)));
     }
 
     #[test]
