@@ -7,13 +7,13 @@ Rollback `/var/omni-snapshots/dev-pre-verify-20260923-0257.tgz`.
 ## ▶ NEXT ACTION — decide the Walmart double-count, then the review UI
 
 ✅ **The unattended path is PROVEN (2026-09-23):** a real forwarded Walmart receipt made a proposed
-batch — `effective_confidence=0.31`, `needs_manual_review=true`, warning correct against the
-document's own figures.
+batch — `effective_confidence=0.31`, `needs_manual_review=true`, warning correct against the doc.
 
 ⛔ **Decide first:** Walmart sends an order confirmation AND a delivery notice per purchase; both
 match `walmart` and dedup is per-uid, so each makes its own draft — double-counting, caught only
 by review. Options in `DEV_TESTING.md` § 7 (order-scoped dedup off the shared `References:` id is
-promising; ⚠️ never subject-match in `accepts()`). Then the review-queue UI, unexercised on phone.
+promising; ⚠️ never subject-match in `accepts()`). ✅ The review queue now leads with the verdict
+panel instead of a collapsed JSON blob — verified in mock, ⛔ not yet on the phone.
 
 ## ✅ Decided
 - **`EmailBody` uses a conditional prompt, not sender routing** (user, 2026-09-23). Why: most
