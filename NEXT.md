@@ -36,6 +36,6 @@ mid-rebuild. Evidence in overlay `DEV_TESTING.md` § 8. Dev on `dev-cdf8059-228f
   ⚠️ **Playwright MCP wants a `chrome` channel** needing sudo; bundled chromium works instead.
 
 ## ⛔ Standing
-- 🔴 **CI's ONE invocation** naming core+server+agent compiles core with `auto-import`.
-- 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⚠️ `omni-me-private` is NOT hook-committed.
-  ⚠️ Strip ANSI in docker logs. Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
+- 🔴 **CI's ONE invocation** naming core+server+agent compiles core with `auto-import`. 🔴 **NOTHING
+  since `sha-9a0b1dd` has run on live.** ⚠️ `omni-me-private` is NOT hook-committed. ⚠️ Strip ANSI
+  in docker logs. Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
