@@ -18,8 +18,8 @@ phone** — installed in place, token kept, boot 1.1s. ✅ **Grouping verified O
 - ⛔ **Grouping runs PER DEVICE** — `build_projections_server` registers only `documents`.
 - ✅ **On the phone's own projection:** 10 batches — 3 order-scoped, rest `receipts-uid-N`, with
   `order_group` + `group_member` set and `superseded: []`. Only the **collapse** is unproven.
-- ⛔ **"One Walmart order → six batches" is NOT duplication** — two separate orders.
-- ⛔ **Never bump a projection version** until the rebuild defects are fixed (`tasks.md`).
+- ⛔ **"One Walmart order → six batches" is NOT duplication** — two separate orders. ⛔ **Never
+  bump a projection version** until the rebuild defects are fixed (`tasks.md`).
 - ✅ **Dev deploys are NOT blocked from here** (box SSH + `docker compose`); the old note was wrong.
 
 ## 🔴 Open — the phone wedge
@@ -29,10 +29,9 @@ phone** — installed in place, token kept, boot 1.1s. ✅ **Grouping verified O
 - ⛔ **Volume is disproven, twice.** `core/tests/backfill_wedge.rs` (ignored; run by name) does
   16,052 events through 10 projections in ~130s flat — and **the S9 itself replayed 17,148 in
   104s**. Neither hardware nor event count is the cause; it was a hang.
-- ⛔ **Stall location UNKNOWN.** `advance_bookmark` runs once after the whole batch, so a wedge
-  leaves the bookmark at the start. ⚠️ An earlier "it's the tail" note was wrong; don't re-adopt.
-  The new chunked apply bookmarks per chunk and logs each — that is what will name it.
-  ⚠️ Reproducing needs `pm clear` **plus** re-entering the token.
+- ⛔ **Stall location UNKNOWN** — `advance_bookmark` runs once after the whole batch, so a wedge
+  leaves the bookmark at the start. ⚠️ An earlier "it's the tail" note was wrong. The new chunked
+  apply bookmarks per chunk and logs each; reproducing needs `pm clear` **plus** the token.
 - 🔴 Three rebuild defects · projection writes swallow statement errors (four have ZERO
   `.check()`) · suite deadlock (recorded fix disproven) — all in `tasks.md`.
 
