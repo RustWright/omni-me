@@ -2095,8 +2095,14 @@ change here and a forced rebuild.
 - [ ] 🔴 **The rebuild loads the entire event log into memory.** `get_since(epoch, None)`, and
       its doc says that is deliberate — "a projection rebuild wants the whole window and would
       be wrong with a page of it". App RSS was **710 MB** mid-rebuild. ⚠️ That reasoning holds
-      for *correctness* and not for *memory*: replaying in ordered pages is the same fold. On a
-      log that only grows, this is an OOM with a date on it. [M]
+      for *correctness* and not for *memory*: replaying in ordered pages is the same fold.
+      ✅ **Verified 2026-09-24:** `apply_events_resilient` (`projection.rs:271`) folds per event in
+      order and keeps no cross-event state but `last_applied`, so an ordered page walk is exactly
+      equivalent — the whole-window load buys only the RAM. ⚠️ It is **not just the rebuild path**:
+      a fresh install's first sync does the same, and that is the one every real user hits.
+      Measured on the S9 — 16,052 events, **1.3 GB peak RSS**, 19+ minutes of CPU, every Tauri
+      query blocked behind it and the UI empty throughout. On a log that only grows, this is an
+      OOM with a date on it. [M]
 - [ ] 🔴 **Core's tracing never reaches Android.** `tauri-app/src-tauri/src/lib.rs:443` defaults
       the filter to `omni_me_app=debug`, so **every** `omni_me_core` span is dropped. The one
       line that explains the blank screen — "projection version changed — rebuilding from the
