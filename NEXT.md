@@ -38,5 +38,4 @@ phone is stuck mid-rebuild. Evidence in overlay `DEV_TESTING.md` § 8. Dev serve
 ## ⛔ Standing
 - 🔴 **CI's ONE invocation** naming core+server+agent compiles core with `auto-import`.
 - 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⚠️ `omni-me-private` is NOT hook-committed.
-- ⚠️ Strip ANSI before grepping docker logs. Branches: `dev/role-split-model-seats` /
-  `dev/untested-overlay`.
+- ⚠️ Strip ANSI in docker logs. Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
