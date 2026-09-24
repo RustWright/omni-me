@@ -2068,8 +2068,17 @@ form prose, so the nudge may not reach it.
 ### 🔴 A projection version bump costs minutes of blank UI on the phone (measured 2026-09-24)
 
 Found by shipping one. `AutoImportProjection` went 1 → 2 for grouping; the Galaxy S9 then sat at
-**~68% CPU for over six minutes with an empty Finances screen** and no way to tell why. Three
-separate defects behind it, each verified in the source rather than inferred.
+**~68% CPU with an empty Finances screen, and after 18 minutes of CPU time it had still not
+finished** — no progress shown, no way to tell why. ⛔ It is not known that it terminates at all;
+it was abandoned, not observed to complete. Three defects behind it, each verified in source.
+
+✅ **The bump itself was reverted** (`version()` is back to 1) once a test showed it buys nothing:
+a row written before grouping keeps its old behaviour by construction, and the new columns default
+to empty. ⚠️ The test that proves it (`a_row_written_before_grouping_still_resolves`) **also caught
+a real regression** — an already-committed pre-grouping batch, re-proposed, opened a spurious
+revision item, because an empty member list read as "this message is new". Fixed by treating an
+empty list as pre-grouping. ⛔ Keep that test: it is the only thing standing between a schema
+change here and a forced rebuild.
 
 - [ ] 🔴 **One stale projection rebuilds ALL of them.** `ProjectionRunner::rebuild`
       (`projection.rs:337`) loops `clear_tables` + `init_schema` over **every registered
