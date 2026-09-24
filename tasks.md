@@ -2089,6 +2089,9 @@ change here and a forced rebuild.
       admits this for the error case and it is just as true for a process kill.
       **Fix:** a `rebuild_only(&[names])` for the version path; `wipe_all_data` keeps the
       full one, which is what it actually wants. [S]
+- [ ] 🔴 **The scale, measured 2026-09-24: the dev log is 16,052 events.** A rebuild replays every
+      one of them through **all ten** projections on the device. That is the number behind the
+      40 minutes, and it only grows.
 - [ ] 🔴 **The rebuild loads the entire event log into memory.** `get_since(epoch, None)`, and
       its doc says that is deliberate — "a projection rebuild wants the whole window and would
       be wrong with a page of it". App RSS was **710 MB** mid-rebuild. ⚠️ That reasoning holds
