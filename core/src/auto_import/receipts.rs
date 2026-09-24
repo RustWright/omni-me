@@ -10,11 +10,11 @@
 //! that lists every sender. The dispatch loop (`imap::poll_once`) routes
 //! each message to the first handler that claims it.
 //!
-//! Emits one `AutoImportBatchProposed` per message that yields drafts, built by
-//! `to_proposed_event` at the tail of `handle`. The dedup key is
+//! Emits one `AutoImportBatchProposed` per message that carries a charge, built
+//! by `to_proposed_event` at the tail of `handle`. The dedup key is
 //! `<handler-name>-uid-<message-uid>`, so re-polling a mailbox cannot
-//! re-propose mail already seen. An empty `Vec` means only that extraction
-//! produced no drafts — this path is fully wired, not a stub.
+//! re-propose mail already seen. A charge-bearing message proposes even when it
+//! yielded no drafts; an empty `Vec` means the message carried no charge.
 //!
 //! A charge-bearing message carrying the vendor's own order number keys on the
 //! order instead, so the several mails about one purchase become one review
@@ -407,7 +407,12 @@ impl ImapHandler for ReceiptHandler {
 
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
         let drafts = receipt_extraction_to_drafts(&result, &source_prefix);
-        if drafts.is_empty() {
+        // A message the model called a charge still reaches review when it
+        // produced no drafts at all. Silence here is indistinguishable from "no
+        // purchase happened", and the batch still carries the source email and
+        // the warnings, which is what a person needs to price it by hand.
+        let charge_bearing = result.kind().is_some_and(|kind| kind.records_a_charge());
+        if drafts.is_empty() && !charge_bearing {
             return Ok(vec![]);
         }
         // Only a charge-bearing kind may group. `order_ref` on other mail is
@@ -785,6 +790,52 @@ mod tests {
     #[tokio::test]
     async fn a_charge_the_model_could_not_price_still_reaches_review() {
         assert_eq!(events_for(Some("receipt"), "0.00").await, 1);
+    }
+
+    /// ⚠️ Built from the artifact, not the stub. A real Instacart order
+    /// confirmation (2026-09-24) extracted **zero postings**, not a zero
+    /// *amount* — and the zero-amount fixture above made that look covered
+    /// while the message was silently dropped.
+    #[tokio::test]
+    async fn a_charge_with_no_postings_at_all_still_reaches_review() {
+        let mut result = stub_result(Some("order_confirmation"), "0.00");
+        result.postings.clear();
+        let extractor = Arc::new(StubExtractor(result));
+        let handler = ReceiptHandler::new(
+            "shop",
+            vec!["northwind.example".into()],
+            "device-test",
+            extractor,
+        );
+        let msg = imap_msg_from("shop@northwind.example", plain_eml());
+        let events = handler.handle(&msg).await.expect("handler ok");
+        assert_eq!(
+            events.len(),
+            1,
+            "an unpriced confirmation must be reviewable"
+        );
+        assert_eq!(
+            events[0].payload["draft_postings"].as_array().map(Vec::len),
+            Some(0),
+            "it carries no drafts — the source email and warnings are the point"
+        );
+    }
+
+    /// The other half: with no charge-bearing label, no drafts still means no
+    /// batch. Otherwise every unparseable marketing mail becomes a review item.
+    #[tokio::test]
+    async fn an_unlabelled_message_with_no_postings_proposes_nothing() {
+        let mut result = stub_result(None, "105.43");
+        result.postings.clear();
+        let extractor = Arc::new(StubExtractor(result));
+        let handler = ReceiptHandler::new(
+            "shop",
+            vec!["northwind.example".into()],
+            "device-test",
+            extractor,
+        );
+        let msg = imap_msg_from("shop@northwind.example", plain_eml());
+        assert!(handler.handle(&msg).await.expect("handler ok").is_empty());
     }
 
     #[tokio::test]
