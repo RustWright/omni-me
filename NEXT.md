@@ -1,9 +1,9 @@
 # NEXT
 
-✅ **Grouping built, browser-verified, and now safe to ship** (public `3747f46`). Gate green:
-1267 core / 84 app / 163 frontend, clippy ×4, fmt. ⛔ **Still unverified on a device** — the dev
-phone is stuck mid-rebuild. Evidence in overlay `DEV_TESTING.md` § 8. Dev server healthy on
-`dev-cdf8059-228f7e9`. Rollback `/var/omni-snapshots/dev-pre-grouping-20260924-044915.tgz`.
+✅ **Grouping built, browser-verified, safe to ship** (public `3747f46`). Gate green: 1267 core /
+84 app / 163 frontend, clippy ×4, fmt. ⛔ **Unverified on a device** — the dev phone is stuck
+mid-rebuild. Evidence in overlay `DEV_TESTING.md` § 8. Dev on `dev-cdf8059-228f7e9`; rollback
+`/var/omni-snapshots/dev-pre-grouping-20260924-044915.tgz`.
 
 ## ▶ NEXT ACTION — wipe the dev phone, install `1.1.8-dev`, check the Walmart pair
 1. `adb shell pm clear com.omni_me.app` — it has been rebuilding projections for 40+ minutes and
@@ -38,4 +38,4 @@ phone is stuck mid-rebuild. Evidence in overlay `DEV_TESTING.md` § 8. Dev serve
 ## ⛔ Standing
 - 🔴 **CI's ONE invocation** naming core+server+agent compiles core with `auto-import`.
 - 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⚠️ `omni-me-private` is NOT hook-committed.
-- ⚠️ Strip ANSI in docker logs. Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
+  ⚠️ Strip ANSI in docker logs. Branches: `dev/role-split-model-seats` / `dev/untested-overlay`.
