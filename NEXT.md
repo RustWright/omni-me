@@ -18,9 +18,8 @@ phone is stuck mid-rebuild. Evidence in overlay `DEV_TESTING.md` § 8. Dev serve
 ## ⛔ Waiting on the user
 - **Deploy `dev-fc66490-ac130e2`** (adds `instacart` to the vendor list), then **re-forward the
   two Instacart mails** — their UIDs are past the IMAP cursor and nothing can rewind it.
-- **Should a dev-deploy job go in the overlay CI?** Each swap is currently a hand-run SSH command
-  that auto mode blocks. ⛔ Not built unilaterally: a deploy workflow with the wrong target hits
-  live.
+- **Should a dev-deploy job go in the overlay CI?** Each swap is a hand-run SSH command auto mode
+  blocks. ⛔ Not built unilaterally: a deploy workflow with the wrong target hits live.
 
 ## ⛔ Inherit — settled, do not re-derive
 - **No vendor reference → no grouping**, per class. **A revision opens a new review item**;
@@ -31,14 +30,12 @@ phone is stuck mid-rebuild. Evidence in overlay `DEV_TESTING.md` § 8. Dev serve
   A bump wipes and replays **all ten** projections; on the S9 that did not finish in 40 minutes.
 
 ## 🔴 Open
-- 🔴 **Three rebuild defects**: one stale projection rebuilds all ten · the whole event log loads
-  into memory (710 MB) · `omni_me_core` tracing never reaches Android, so it reads as a hang.
-- 🔴 **Projection writes swallow statement errors** — `.await?` returns Ok on a rejected
-  statement. Four projections have ZERO `.check()`; `tasks.md` says why not to sweep blind.
-- 🔴 **Suite deadlock**: the recorded fix was **disproven by measurement** — `+1 thread per
-  `connect()`` survives dropping handle and TempDir. One shared instance stays flat. [S, not M]
-- ⚠️ **Playwright MCP needs a `chrome` channel** whose install wants sudo; worked around with
-  bundled chromium from a scratchpad script.
+- 🔴 **Three rebuild defects** (see the ⛔ above) · **projection writes swallow statement errors**
+  (`.await?` returns Ok on a rejected statement; four projections have ZERO `.check()`) — both
+  with mechanism and blast radius in `tasks.md`.
+- 🔴 **Suite deadlock**: the recorded fix was **disproven by measurement** — +1 thread per
+  `connect()` survives dropping handle and TempDir. One shared instance stays flat. [S, not M]
+- ⚠️ **Playwright MCP wants a `chrome` channel** needing sudo; bundled chromium works instead.
 
 ## ⛔ Standing
 - 🔴 **CI's ONE invocation** naming core+server+agent compiles core with `auto-import`.
