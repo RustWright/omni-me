@@ -19,7 +19,7 @@ use tokio::sync::{Notify, broadcast};
 use tokio::task::JoinHandle;
 
 use crate::db::Database;
-use crate::events::ProjectionRunner;
+use crate::events::{Event, ProjectionRunner};
 
 use super::client::SyncClient;
 
@@ -33,6 +33,16 @@ pub const DEFAULT_PULL_WARMUP: Duration = Duration::from_secs(4);
 /// Channel capacity for pull-outcome broadcasts.
 const OUTCOME_CHANNEL_CAPACITY: usize = 16;
 
+/// Events per apply chunk on a backfill.
+///
+/// The apply used to run the whole batch in one call that logged nothing until
+/// it returned. A dev phone sat on `Restoring 16052 events…` for eight hours
+/// with every runtime thread asleep and produced not one line saying how far it
+/// had got — the operation was unbounded *and* silent, so a stall and slow
+/// progress looked identical. Chunking costs nothing (the apply is a sequential
+/// per-event loop either way) and makes both the log and the UI count down.
+const APPLY_CHUNK: usize = 500;
+
 /// Outcome of a pull attempt, broadcast to consumers.
 #[derive(Debug, Clone)]
 pub enum PullEvent {
@@ -44,6 +54,12 @@ pub enum PullEvent {
     /// This matters on a fresh or just-wiped device, where the first backfill
     /// *is* the app appearing: tens of thousands of events project behind a UI
     /// that would otherwise show an empty screen and a "Synced" chip.
+    ///
+    /// Re-emitted after every [`APPLY_CHUNK`] with the count still **remaining**,
+    /// so `pulled` counts down to 0. A consumer that only wants the announcement
+    /// can take the first one; a consumer showing progress gets it for free, and
+    /// a restore that has stopped dead shows a number that stops moving instead
+    /// of an animation that means nothing.
     Applying { pulled: usize },
     /// A pull applied `pulled` new events (only emitted when `pulled > 0`), with
     /// `failed` of them failing to project. Consumers refetch on this.
@@ -147,18 +163,42 @@ async fn run_loop(inner: Arc<Inner>) {
     }
 }
 
+/// Project `events` in [`APPLY_CHUNK`]-sized pieces, announcing how many are
+/// still outstanding after each one. Returns the total that failed to project.
+///
+/// Split out of [`pull_once`] because this is the part worth testing on its own:
+/// driving it through a real pull needs a reachable server, and the property
+/// that matters — that a long apply keeps saying where it is — has nothing to do
+/// with the network.
+async fn apply_in_chunks(
+    projections: &ProjectionRunner,
+    events: &[Event],
+    outcomes: &broadcast::Sender<PullEvent>,
+) -> usize {
+    let total = events.len();
+    // Announce the batch BEFORE projecting it. The apply is the slow part on a
+    // backfill, and `Applied` only fires once it is done.
+    let _ = outcomes.send(PullEvent::Applying { pulled: total });
+    let mut failed = 0usize;
+    let mut done = 0usize;
+    for chunk in events.chunks(APPLY_CHUNK) {
+        failed += projections.apply_events_resilient(chunk).await;
+        done += chunk.len();
+        // Re-announce what is LEFT, so the indicator counts down and a stall
+        // shows up as a number that stops moving.
+        let _ = outcomes.send(PullEvent::Applying {
+            pulled: total.saturating_sub(done),
+        });
+        tracing::info!(done, total, failed, "auto-pull projecting");
+    }
+    failed
+}
+
 async fn pull_once(inner: &Arc<Inner>) {
     match inner.client.pull_only(&inner.db).await {
         Ok(outcome) if outcome.pulled > 0 => {
-            // Announce the batch BEFORE projecting it. The apply below is the
-            // slow part on a backfill, and `Applied` only fires once it's done.
-            let _ = inner.outcomes.send(PullEvent::Applying {
-                pulled: outcome.pulled,
-            });
-            let failed = inner
-                .projections
-                .apply_events_resilient(&outcome.pulled_events)
-                .await;
+            let failed =
+                apply_in_chunks(&inner.projections, &outcome.pulled_events, &inner.outcomes).await;
             if failed > 0 {
                 tracing::warn!(
                     failed,
@@ -276,6 +316,75 @@ mod tests {
             "loop keeps retrying after failures (saw {failures})"
         );
         sched.shutdown();
+    }
+
+    fn note_events(count: usize) -> Vec<Event> {
+        let now = Utc::now();
+        (0..count)
+            .map(|i| Event {
+                id: format!("ev-{i:05}"),
+                event_type: "generic_note_created".into(),
+                aggregate_id: format!("note-{i:05}"),
+                timestamp: now,
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "note_id": format!("note-{i:05}"),
+                    "title": "t",
+                    "raw_text": "x",
+                }),
+                received_at: Some(now),
+            })
+            .collect()
+    }
+
+    /// A long apply reports how far it has got, rather than going silent until
+    /// it finishes.
+    ///
+    /// The regression this pins: the apply ran the whole batch in one call and
+    /// emitted nothing until it returned, so a device stuck partway through was
+    /// indistinguishable from one making progress — for eight hours, on real
+    /// hardware, with an animated banner as the only output.
+    #[tokio::test]
+    async fn a_long_apply_counts_down_as_it_goes() {
+        let db = test_db().await;
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let (tx, mut rx) = broadcast::channel(64);
+        let events = note_events(APPLY_CHUNK * 2 + 10);
+        let total = events.len();
+
+        let failed = apply_in_chunks(&runner, &events, &tx).await;
+        assert_eq!(failed, 0, "plain note events all project");
+
+        let mut announced = Vec::new();
+        while let Ok(PullEvent::Applying { pulled }) = rx.try_recv() {
+            announced.push(pulled);
+        }
+        assert_eq!(
+            announced,
+            vec![total, total - APPLY_CHUNK, total - APPLY_CHUNK * 2, 0],
+            "the opening announcement, then one countdown per chunk, ending at 0",
+        );
+    }
+
+    /// A batch smaller than one chunk still announces, then clears. Without the
+    /// trailing 0 the indicator would stay up forever on a small pull.
+    #[tokio::test]
+    async fn a_short_apply_still_clears_the_indicator() {
+        let db = test_db().await;
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(NotesProjection)]);
+        runner.init_all().await.unwrap();
+
+        let (tx, mut rx) = broadcast::channel(16);
+        let events = note_events(3);
+        assert_eq!(apply_in_chunks(&runner, &events, &tx).await, 0);
+
+        let mut announced = Vec::new();
+        while let Ok(PullEvent::Applying { pulled }) = rx.try_recv() {
+            announced.push(pulled);
+        }
+        assert_eq!(announced, vec![3, 0]);
     }
 
     /// `trigger()` forces an immediate pull rather than waiting a full interval.

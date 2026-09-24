@@ -31,15 +31,19 @@ pub fn SyncStatusIndicator() -> Element {
     // report different pipelines, and during a backfill the push side is
     // genuinely `Idle` — so without this the chip cheerfully says "Synced" while
     // 12k events project behind an empty UI. See `main.rs::RestoreProgress`.
+    //
+    // The count is what is LEFT and it ticks down per apply chunk, so a restore
+    // that has stopped dead reads as a frozen number rather than as an animation
+    // that means nothing. A phone spent eight hours on the latter.
     let restoring = *use_context::<crate::RestoreProgress>().0.read();
     if restoring > 0 {
         return rsx! {
             div {
                 class: "flex items-center gap-2 text-xs font-medium",
                 title: "Restoring data from the server",
-                aria_label: "Restoring {restoring} events",
+                aria_label: "Restoring, {restoring} events left",
                 span { class: "w-2 h-2 rounded-full bg-obsidian-accent animate-pulse" }
-                span { class: "text-obsidian-accent", "Restoring {restoring} events…" }
+                span { class: "text-obsidian-accent", "Restoring… {restoring} events left" }
             }
         };
     }
