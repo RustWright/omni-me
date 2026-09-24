@@ -1420,11 +1420,27 @@ This was needed because **pausing does not survive a restart**, which had gone u
   ⚠️ This is very likely the same defect as the watched "SurrealKV commit queue overflow after
   ~24h uptime" — same subsystem, same unbounded-commit-thread shape.
 
-  **The fix is mechanical but wide:** the fixture has to hand back a guard that owns the
-  `TempDir` and drops the database with it, which changes the signature at all 217 sites.
-  ⛔ Deliberately not attempted inside another workstream's branch. Limiting test concurrency
-  would hide it, not fix it. ⚠️ No stack trace was captured — `gdb` is not installed on this
-  machine (`rust-gdb` alone is just a wrapper), so which lock deadlocks is still unknown. [M]
+  ~~**The fix is mechanical but wide:** the fixture has to hand back a guard that owns the
+  `TempDir` and drops the database with it, which changes the signature at all 217 sites.~~
+  🔴 **DISPROVEN BY MEASUREMENT 2026-09-24 — that fix would not have worked.** A probe
+  (`connect` → 160 writes → `drop(db)` → `drop(dir)`, ×8) showed the process **never returns to
+  baseline**: threads go 11 → 18, exactly **+1 per `connect()`**, monotonic, with the handle and
+  the `TempDir` both properly dropped. ⛔ So `std::mem::forget(dir)` is **not** what leaks the
+  threads, and a guard that owns the `TempDir` changes 217 call sites without changing the count.
+  ⚠️ The leaked thread is named `surrealdb-threa`(d-worker), **not** `surrealkv-commit` — so this
+  is a *second* leak alongside the one measured in the hung process, not a correction of it.
+
+  ✅ **What does stay flat: one shared instance, a namespace per test.** Same probe, one
+  `connect()` and 8 namespaces × 160 writes → **20 threads, no growth at all.** That is the shape
+  the fixture should take: a process-wide `OnceCell<Database>` plus `use_ns(unique)` per test,
+  which also suits the 194 call sites, all of which bind `let db = test_db().await` and none of
+  which consume it by value. ⚠️ **24 separate copies of `test_db()` exist across the crate** —
+  consolidating them into one shared fixture is the prerequisite, and it shrinks the later change
+  from 24 edits to 1.
+  ⛔ Still not to be attempted inside another workstream's branch. Limiting test concurrency would
+  hide it, not fix it. ⚠️ Open before building: whether per-test isolation survives a shared
+  instance (schema is per-namespace, but `init_schema` and the projection version table are not
+  yet checked for cross-namespace bleed). [S once measured, was [M]]
 - [ ] **Reach import parity with paisa's seven importers.** Parity map is written (overlay
   `IMPORT_PARITY.md`; institution names are private). **Four of the seven are now covered**
   as of 2026-09-05: the old comma-splitting `statement_csv.rs` is deleted, imports run
