@@ -1,9 +1,9 @@
 # NEXT
 
-✅ **Grouping BUILT + browser-verified** (public `228f7e9`). Both 2026-09-23 questions answered by
-the user. Gate green: 1266 core / 84 app / 163 frontend, clippy ×4, fmt, zero console errors in
-mock. ⛔ **Not model-validated.** Dev image building at handoff (run `35955831370`).
-Rollback `/var/omni-snapshots/dev-pre-kindgate-20260923-1412.tgz`.
+✅ **Grouping BUILT + browser-verified** (public `228f7e9`), both 2026-09-23 questions answered.
+Gate green: 1266 core / 84 app / 163 frontend, clippy ×4, fmt, zero console errors in mock.
+⛔ **Not model-validated.** Dev image building at handoff (run `35955831370`). Rollback
+`/var/omni-snapshots/dev-pre-kindgate-20260923-1412.tgz`.
 
 ## ▶ NEXT ACTION — land the dev image, then prove a merge on real mail
 1. When run `35955831370` finishes: on the box, `cd ~/omni-dev`, point `.env` at the new tag,
@@ -24,11 +24,10 @@ Rollback `/var/omni-snapshots/dev-pre-kindgate-20260923-1412.tgz`.
 
 ## 🔴 Open
 - 🔴 **Projection writes swallow statement errors.** `.await?` returns Ok on a *rejected*
-  statement, so a schema mismatch leaves the row stale and reports success — it cost an hour
-  today. Four projections have ZERO `.check()`. ⛔ Do not sweep blind; `tasks.md` says why.
+  statement: the row stays stale and reports success. Four have ZERO `.check()`; `tasks.md`
+  says why not to sweep it blind.
 - 🔴 **Suite deadlock** (1 in 6): 312 leaked `surrealkv-commit` threads from `test_db()`. Did
-  **not** fire today. Plan in `tasks.md`; 217 call sites.
-- ⛔ **`UIDVALIDITY` handled nowhere.** Own session.
+  **not** fire today. Plan in `tasks.md`; 217 call sites. ⛔ **`UIDVALIDITY`: nowhere.**
 - ⚠️ **Playwright MCP is unusable here** — it wants a `chrome` channel whose install needs sudo.
   Worked around with bundled chromium driven from a scratchpad script.
 
