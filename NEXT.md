@@ -4,16 +4,16 @@
 ✅ Dev server on `dev-1929863-2cc6d6a` (unpriced-charge fix, healthy). ⛔ Live untouched:
 `sha-9a0b1dd`, 2w uptime. ✅ **Grouping verified ON THE DEVICE.** 🔴 Only the **collapse** is left.
 
-## ▶ NEXT ACTION — install `1.1.10-dev` IN PLACE, then get the one mail
-1. `adb install -r ~/…/omni-me-1.1.10-dev.apk` (scp from the box's `~/omni-dev/apk/`).
-   ⛔ **In place — do NOT `pm clear`.** A clear wipes the server token, the app then fails
-   silently, and re-entering it needs the credentials file. The collapse test does not need a
-   wipe: a forwarded mail is a small incremental pull.
-2. **Ask the user to re-forward the Food Basics confirmation.** It is the only mail that shares an
+## ▶ NEXT ACTION — the one mail. Everything else is in place.
+✅ `1.1.10-dev` is **installed and running** on the phone (in place, token kept, 10 batches read,
+boot 1.1s). ✅ Dev server carries the unpriced-charge fix.
+1. **Ask the user to re-forward the Food Basics confirmation** — the only mail that shares an
    `order_group` with a batch already in the queue.
-3. 🔴 **The question:** does its `order_ref` come back as the bare `21088946880437216` (→ merges
+2. 🔴 **The question:** does its `order_ref` come back as the bare `21088946880437216` (→ merges
    into one review item carrying a supersession) or `090621088946880437216` (→ stays separate)?
    ⛔ Judge against that prediction; do not re-derive it after the fact.
+3. Read it off the phone over CDP: `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`
+   then `list_pending_batches`. ⛔ Do NOT `pm clear` — that wipes the server token.
 
 ## ⛔ Inherit — settled, do not re-derive
 - **No vendor reference → no grouping**, per class. **A revision opens a new review item.**
@@ -32,9 +32,12 @@
   `DEV_TESTING.md` § "THE DEV PHONE IS WEDGED".
 - ⛔ **Volume is disproven**: `core/tests/backfill_wedge.rs` (ignored; run by name) does 16,052
   events through all 10 projections in **~130s flat**, with and without 38 KB payloads.
-- 🔴 **Suspect the TAIL** — the restart had almost nothing to replay, so it stalls near the end.
-  `advance_bookmark` runs once there. The new chunked apply calls it per chunk, so it will either
-  move the wedge earlier (naming it) or stop it. ⚠️ Needs a `pm clear` + token to reproduce.
+- ⛔ **The stall location is UNKNOWN.** `advance_bookmark` runs once after the whole batch, so any
+  wedge leaves the bookmark at the start — the restart's 2min init was a FULL replay, not a
+  remainder. ⚠️ An earlier note narrowing this to "the tail" was wrong; don't re-adopt it.
+- 📊 **The S9 replays 17,148 events through all 10 projections in 104s** — so neither the hardware
+  nor the event count is the cause. The new chunked apply bookmarks per chunk and logs each one,
+  which is what will name it. ⚠️ Reproducing needs a `pm clear` **plus re-entering the token**.
 - 🔴 Three rebuild defects · projection writes swallow statement errors (four have ZERO
   `.check()`) · suite deadlock (recorded fix disproven) — all in `tasks.md`.
 
