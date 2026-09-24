@@ -2065,6 +2065,37 @@ form prose, so the nudge may not reach it.
   Fixing it properly means giving the server a resolved config at boot and an `EventWriter`;
   ⚠️ do not do it piecemeal, or two write paths will disagree about what "off" means. [M]
 
+### 🔴 A projection version bump costs minutes of blank UI on the phone (measured 2026-09-24)
+
+Found by shipping one. `AutoImportProjection` went 1 → 2 for grouping; the Galaxy S9 then sat at
+**~68% CPU for over six minutes with an empty Finances screen** and no way to tell why. Three
+separate defects behind it, each verified in the source rather than inferred.
+
+- [ ] 🔴 **One stale projection rebuilds ALL of them.** `ProjectionRunner::rebuild`
+      (`projection.rs:337`) loops `clear_tables` + `init_schema` over **every registered
+      projection**, then replays the whole log through all ten. The version check
+      (`projection.rs:139`) calls it whenever *any* projection is stale. ⛔ Worse than slow:
+      Android kills backgrounded apps routinely, and a kill mid-rebuild leaves **every**
+      projection wiped with no recovery but another full rebuild — the code's own comment
+      admits this for the error case and it is just as true for a process kill.
+      **Fix:** a `rebuild_only(&[names])` for the version path; `wipe_all_data` keeps the
+      full one, which is what it actually wants. [S]
+- [ ] 🔴 **The rebuild loads the entire event log into memory.** `get_since(epoch, None)`, and
+      its doc says that is deliberate — "a projection rebuild wants the whole window and would
+      be wrong with a page of it". App RSS was **710 MB** mid-rebuild. ⚠️ That reasoning holds
+      for *correctness* and not for *memory*: replaying in ordered pages is the same fold. On a
+      log that only grows, this is an OOM with a date on it. [M]
+- [ ] 🔴 **Core's tracing never reaches Android.** `tauri-app/src-tauri/src/lib.rs:443` defaults
+      the filter to `omni_me_app=debug`, so **every** `omni_me_core` span is dropped. The one
+      line that explains the blank screen — "projection version changed — rebuilding from the
+      event log" — is invisible on the device. ⚠️ This is why the rebuild looked like a hang;
+      diagnosing it took CPU sampling instead of reading a log line that was already written.
+      **Fix:** default to `omni_me_app=debug,omni_me_core=info`. [XS]
+
+⛔ **Shipping consequence, for whoever cuts the next release:** any projection version bump is a
+multi-minute blank-UI startup for every device that takes the update, with no progress shown.
+Fix at least the first and third before a release carries one.
+
 ### 🔴 Projection writes swallow statement errors (found 2026-09-24, by being bitten)
 
 - [ ] 🔴 **A failed SurrealQL statement rides back inside an `Ok` response.** `db.query(..).await?`

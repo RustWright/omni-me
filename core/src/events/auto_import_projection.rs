@@ -143,8 +143,13 @@ impl Projection for AutoImportProjection {
         Self::NAME
     }
 
+    /// Still 1. The grouping columns default to empty and only a new proposal
+    /// writes them, and a row from before grouping keeps its old behaviour by
+    /// construction — so a bump would buy nothing and cost every device a full
+    /// rebuild of all ten projections, measured at over six minutes of blank UI
+    /// on a Galaxy S9. See `tasks.md` on what to fix before any bump ships.
     fn version(&self) -> u32 {
-        2
+        1
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -255,7 +260,15 @@ impl AutoImportProjection {
                     // fetched again, or a source that does not group at all. This
                     // is the original dedup, and it stays a no-op: the dismissed
                     // batch stays dismissed, the committed one stays committed.
-                    if member.is_none() || base.holds_member(member.as_ref()) {
+                    //
+                    // A row with no members at all was written before grouping
+                    // existed, so it cannot say whether this message is new. It
+                    // keeps the old behaviour, which is also what lets this ship
+                    // without forcing a projection rebuild on every device.
+                    if member.is_none()
+                        || base.group_members.is_empty()
+                        || base.holds_member(member.as_ref())
+                    {
                         return Ok(());
                     }
                     // A genuinely different message about an order the user has
@@ -981,6 +994,57 @@ mod tests {
         let rows = pending_rows(&db).await;
         assert_eq!(rows.len(), 1, "the later receipt is not lost with it");
         assert_eq!(rows[0]["revises_batch_id"].as_str(), Some("B1"));
+    }
+
+    /// A row an older build wrote has no `group_members` or `superseded` column.
+    /// It must still commit, still read back, and still block a re-proposal —
+    /// otherwise the grouping columns force a full projection rebuild on every
+    /// device that takes the update, which costs minutes of blank UI on a phone.
+    #[tokio::test]
+    async fn a_row_written_before_grouping_still_resolves() {
+        let (db, store, runner) = test_db_and_runner().await;
+
+        // Exactly what version 1 wrote: no grouping columns at all.
+        db.query(
+            "UPSERT type::record('pending_auto_import_batches', $rid) CONTENT {
+                batch_id: 'OLD1', source: 'receipts', dedup_key: 'receipts-uid-99',
+                fetched_at: '2026-09-01T00:00:00Z',
+                draft_postings: [{ external_id: 'e1', date: '2026-09-01',
+                                   description: 'old', postings: [] }],
+                source_metadata: NONE, status: 'pending',
+                resolved_at: NONE, resolve_reason: NONE
+            }",
+        )
+        .bind(("rid", "receipts-receipts-uid-99"))
+        .await
+        .unwrap()
+        .check()
+        .expect("a pre-grouping row is still writable under the new schema");
+
+        let listed = crate::db::queries::list_pending_batches(&db).await.unwrap();
+        assert!(
+            listed.iter().any(|b| b.batch_id == "OLD1"),
+            "an old row still reads back through the new SELECT"
+        );
+
+        apply_resolution(&store, &runner, "OLD1", "auto_import_batch_committed").await;
+        let after = list_pending(&db).await;
+        assert!(
+            after.contains(&("OLD1".to_string(), "committed".to_string())),
+            "an old row still commits: {after:?}"
+        );
+
+        // And the dedup guarantee still holds for it.
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("NEW1", "receipts-uid-99", "uid-99", "1.00"),
+        )
+        .await;
+        assert!(
+            pending_rows(&db).await.is_empty(),
+            "a committed pre-grouping row still absorbs a re-proposal"
+        );
     }
 
     /// The guarantee grouping must not cost: a source that names no member keeps
