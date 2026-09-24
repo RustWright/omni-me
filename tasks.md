@@ -2049,6 +2049,25 @@ form prose, so the nudge may not reach it.
   Fixing it properly means giving the server a resolved config at boot and an `EventWriter`;
   ⚠️ do not do it piecemeal, or two write paths will disagree about what "off" means. [M]
 
+### 🔴 Projection writes swallow statement errors (found 2026-09-24, by being bitten)
+
+- [ ] 🔴 **A failed SurrealQL statement rides back inside an `Ok` response.** `db.query(..).await?`
+      returns success; the error only surfaces on `.check()` or a typed `.take()`. So a projection
+      write rejected by the schema leaves the row **stale** while `apply_events` reports Ok, and
+      nothing anywhere says a thing. ⚠️ This is not hypothetical — it is how the first version of
+      the grouping UPSERT passed its own assertions: the row simply kept the older batch, and the
+      test failure read as wrong *logic*, which is a much longer debug.
+      **Counted 2026-09-24** (`.check()` calls vs query calls per file): `notes_projection` 0/22 ·
+      `routines_projection` 0/26 · `config_projection` 0/5 · `record_type_projection` 0/8 ·
+      `budget_projection` 2/34 · `beliefs_projection` 5/8 · `assistant_projection` 12/19 ·
+      `documents_projection` 7/8 · `auto_import_projection` 1/8 (the write, added with grouping).
+      ⛔ **Do not sweep it blind.** Adding `.check()` converts a currently-silent rejection into a
+      projection failure, which `apply_events_resilient` then *skips* — so a latent schema
+      mismatch would turn into a dropped event. The sweep is: add it one file at a time, run the
+      full suite each time, and read any new failure as a real pre-existing bug rather than
+      noise. ⚠️ Prefer it on **writes** first; a read that fails already shows up as missing data.
+      [M, own stretch]
+
 ### Document viewing — all three RESOLVED 2026-09-12 by Phase 4
 
 All three surfaced while planning the archive and all three predated it, affecting the

@@ -147,6 +147,14 @@ pub struct PendingBatchRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_metadata: Option<DbValue>,
     pub status: String,
+    /// Proposals a later message about the same order displaced, newest last.
+    /// Present so a merge is visible to whoever reviews the survivor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded: Option<DbValue>,
+    /// Set when this batch arrived after an earlier one for the same order was
+    /// committed or dismissed. Its books are never touched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revises_batch_id: Option<String>,
 }
 
 // --- Journal entries ---
@@ -716,8 +724,8 @@ pub async fn list_recurring_patterns(
 
 // --- Auto-import pending batches (Phase 3.10.5) ---
 
-const PENDING_BATCH_FIELDS: &str =
-    "batch_id, source, dedup_key, fetched_at, draft_postings, source_metadata, status";
+const PENDING_BATCH_FIELDS: &str = "batch_id, source, dedup_key, fetched_at, draft_postings, \
+     source_metadata, status, superseded, revises_batch_id";
 
 pub async fn list_pending_batches(db: &Database) -> Result<Vec<PendingBatchRow>, DbError> {
     let q = format!(

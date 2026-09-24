@@ -16,6 +16,10 @@
 //! `Committed` and `Dismissed` events update by `batch_id` field (not record
 //! id, since the record id is source+dedup_key). An index on `batch_id`
 //! keeps that lookup fast.
+//!
+//! Grouping: a vendor's several emails about one order share a dedup key and so
+//! land on one row, the newest winning. Rationale, and what a revision does to a
+//! resolved batch, in `docs/src/auto-import.md`.
 
 use async_trait::async_trait;
 
@@ -30,6 +34,109 @@ impl AutoImportProjection {
     pub const NAME: &'static str = "auto_import";
 }
 
+/// `source_metadata` key naming which message inside a group a batch came from.
+///
+/// Written by `auto_import::receipts`, read here. Both sides name this constant
+/// rather than the literal: `source_metadata` is opaque JSON, so a disagreement
+/// on the spelling would fail silently.
+pub const GROUP_MEMBER_KEY: &str = "group_member";
+
+/// `source_metadata` key holding the vendor reference a group is keyed on.
+/// Carried for review and debugging; the projection groups on the dedup key.
+pub const ORDER_GROUP_KEY: &str = "order_group";
+
+/// What the projection needs to know about a row a new proposal has landed on.
+struct ExistingRow {
+    batch_id: String,
+    status: String,
+    group_members: Vec<String>,
+    superseded: Vec<serde_json::Value>,
+    revises_batch_id: Option<String>,
+    /// The whole row, for building a supersession entry out of.
+    row: serde_json::Value,
+}
+
+impl ExistingRow {
+    fn is_resolved(&self) -> bool {
+        self.status == "committed" || self.status == "dismissed"
+    }
+
+    fn holds_member(&self, member: Option<&String>) -> bool {
+        member.is_some_and(|m| self.group_members.iter().any(|held| held == m))
+    }
+
+    /// What review shows about a proposal this row's successor replaced.
+    ///
+    /// Carries the drafts verbatim: a merge keyed on an imperfect vendor
+    /// reference is only safe while the reviewer can see what it displaced.
+    /// An absent key is left out rather than written as null, because the schema
+    /// declares these `option<string>` and a null is not a string.
+    fn supersession_entry(&self) -> serde_json::Value {
+        let meta = self.row.get("source_metadata");
+        let mut entry = serde_json::Map::new();
+        entry.insert("batch_id".into(), self.batch_id.clone().into());
+        entry.insert("status".into(), self.status.clone().into());
+        let mut carry = |key: &str, value: Option<&serde_json::Value>| {
+            if let Some(v) = value.filter(|v| !v.is_null()) {
+                entry.insert(key.to_string(), v.clone());
+            }
+        };
+        carry("fetched_at", self.row.get("fetched_at"));
+        carry("draft_postings", self.row.get("draft_postings"));
+        for key in ["subject", "document_kind", "order_ref", GROUP_MEMBER_KEY] {
+            carry(key, meta.and_then(|m| m.get(key)));
+        }
+        serde_json::Value::Object(entry)
+    }
+}
+
+/// Read the fields `on_proposed` merges against, or `None` if the row is absent.
+async fn read_row(db: &Database, rid: &str) -> Result<Option<ExistingRow>, EventError> {
+    let row: Option<serde_json::Value> = db
+        .query("SELECT * FROM type::record('pending_auto_import_batches', $rid) LIMIT 1")
+        .bind(("rid", rid.to_string()))
+        .await?
+        .take::<Vec<serde_json::Value>>(0)
+        .ok()
+        .and_then(|rows| rows.into_iter().next());
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let str_list = |key: &str| -> Vec<String> {
+        row.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    Ok(Some(ExistingRow {
+        batch_id: row
+            .get("batch_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        status: row
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        group_members: str_list("group_members"),
+        superseded: row
+            .get("superseded")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        revises_batch_id: row
+            .get("revises_batch_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        row,
+    }))
+}
+
 #[async_trait]
 impl Projection for AutoImportProjection {
     fn name(&self) -> &str {
@@ -37,7 +144,7 @@ impl Projection for AutoImportProjection {
     }
 
     fn version(&self) -> u32 {
-        1
+        2
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -53,6 +160,15 @@ impl Projection for AutoImportProjection {
              DEFINE FIELD IF NOT EXISTS status ON pending_auto_import_batches TYPE string;
              DEFINE FIELD IF NOT EXISTS resolved_at ON pending_auto_import_batches TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS resolve_reason ON pending_auto_import_batches TYPE option<string>;
+             -- Both arrays mirror `draft_postings` rather than `beliefs.evidence`:
+             -- FLEXIBLE is honoured on the elements of an `array`, and is
+             -- silently ignored under an `option<array>`, where every nested key
+             -- then has to be declared. An empty array stands for nothing held.
+             DEFINE FIELD IF NOT EXISTS group_members ON pending_auto_import_batches TYPE array DEFAULT [];
+             DEFINE FIELD IF NOT EXISTS group_members.* ON pending_auto_import_batches TYPE string;
+             DEFINE FIELD IF NOT EXISTS superseded ON pending_auto_import_batches TYPE array DEFAULT [];
+             DEFINE FIELD IF NOT EXISTS superseded.* ON pending_auto_import_batches TYPE object FLEXIBLE;
+             DEFINE FIELD IF NOT EXISTS revises_batch_id ON pending_auto_import_batches TYPE option<string>;
              DEFINE INDEX IF NOT EXISTS pending_auto_import_batch_id_idx ON pending_auto_import_batches FIELDS batch_id;
 
              DEFINE TABLE IF NOT EXISTS auto_import_resolutions SCHEMAFULL;
@@ -104,25 +220,6 @@ impl AutoImportProjection {
         let draft_postings = event.payload["draft_postings"].clone();
         let source_metadata = event.payload.get("source_metadata").cloned();
 
-        // Record id is derived from (source, dedup_key) so duplicate
-        // proposals collapse to the same row. We do NOT clobber a resolved
-        // row (status = committed | dismissed) — if the row exists and is
-        // already resolved, the Proposed re-emit is a no-op (the dismissed
-        // batch stays dismissed; the committed batch stays committed).
-        let record_id = format!("{source}-{dedup_key}");
-
-        let mut existing = db
-            .query("SELECT status FROM type::record('pending_auto_import_batches', $rid) LIMIT 1")
-            .bind(("rid", record_id.clone()))
-            .await?;
-        let existing_status: Option<String> = existing.take("status").unwrap_or(None);
-        if let Some(s) = existing_status
-            && (s == "committed" || s == "dismissed")
-        {
-            // Resolved batch — Proposed re-emit is a no-op. Dedup at work.
-            return Ok(());
-        }
-
         // The pending row may never have existed here while the *resolution*
         // still arrived (out-of-order pull, or a create skipped by
         // `apply_events_resilient`). The stub written by `on_resolved` is keyed
@@ -137,6 +234,75 @@ impl AutoImportProjection {
             return Ok(());
         }
 
+        // Record id is derived from (source, dedup_key), so a source that keys
+        // its batch on an order rather than a message lands every message about
+        // that order on one row.
+        let base_rid = format!("{source}-{dedup_key}");
+        let member = source_metadata
+            .as_ref()
+            .and_then(|m| m.get(GROUP_MEMBER_KEY))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        // Read-modify-write rather than one statement, because which row this
+        // lands on depends on the row already there. Safe without a transaction:
+        // `ProjectionRunner` applies one event at a time per database.
+        let (record_id, revises_batch_id, superseded, mut group_members) =
+            match read_row(db, &base_rid).await? {
+                None => (base_rid.clone(), None, Vec::new(), Vec::new()),
+                Some(base) if base.is_resolved() => {
+                    // A re-emit of data the row already covers — the same message
+                    // fetched again, or a source that does not group at all. This
+                    // is the original dedup, and it stays a no-op: the dismissed
+                    // batch stays dismissed, the committed one stays committed.
+                    if member.is_none() || base.holds_member(member.as_ref()) {
+                        return Ok(());
+                    }
+                    // A genuinely different message about an order the user has
+                    // already resolved. It opens its own review item rather than
+                    // amending resolved books, which is not the importer's to do.
+                    let rev_rid =
+                        format!("{base_rid}-rev-{}", member.as_deref().unwrap_or_default());
+                    match read_row(db, &rev_rid).await? {
+                        Some(rev) if rev.is_resolved() => return Ok(()),
+                        Some(rev) => (
+                            rev_rid,
+                            Some(base.batch_id.clone()),
+                            rev.superseded,
+                            rev.group_members,
+                        ),
+                        None => (
+                            rev_rid,
+                            Some(base.batch_id.clone()),
+                            vec![base.supersession_entry()],
+                            Vec::new(),
+                        ),
+                    }
+                }
+                Some(base) => {
+                    // Still pending: the newest message wins the drafts, and what
+                    // it displaced is recorded so the merge is visible in review.
+                    // Only a grouped source can displace anything — for the rest
+                    // a re-proposal is the same data, and saying so is noise.
+                    let mut superseded = base.superseded.clone();
+                    if member.is_some() && !base.holds_member(member.as_ref()) {
+                        superseded.push(base.supersession_entry());
+                    }
+                    (
+                        base_rid.clone(),
+                        base.revises_batch_id.clone(),
+                        superseded,
+                        base.group_members.clone(),
+                    )
+                }
+            };
+
+        if let Some(m) = member
+            && !group_members.contains(&m)
+        {
+            group_members.push(m);
+        }
+
         db.query(
             "UPSERT type::record('pending_auto_import_batches', $rid) CONTENT {
                 batch_id: $batch_id,
@@ -147,7 +313,10 @@ impl AutoImportProjection {
                 source_metadata: $source_metadata,
                 status: 'pending',
                 resolved_at: NONE,
-                resolve_reason: NONE
+                resolve_reason: NONE,
+                group_members: $group_members,
+                superseded: $superseded,
+                revises_batch_id: $revises_batch_id
             }",
         )
         .bind(("rid", record_id))
@@ -157,7 +326,14 @@ impl AutoImportProjection {
         .bind(("fetched_at", fetched_at))
         .bind(("draft_postings", draft_postings))
         .bind(("source_metadata", source_metadata))
-        .await?;
+        .bind(("group_members", group_members))
+        .bind(("superseded", superseded))
+        .bind(("revises_batch_id", revises_batch_id))
+        .await?
+        // A failed statement rides back inside an Ok response, so without
+        // `check` a schema rejection leaves the row stale and reports success.
+        // That is how the first version of this write passed its own tests.
+        .check()?;
         Ok(())
     }
 
@@ -518,5 +694,318 @@ mod tests {
             "committed row still queryable by batch_id"
         );
         assert_eq!(fetched.unwrap().status, "committed");
+    }
+
+    // ----- Grouping several vendor mails about one order -----
+
+    /// A proposal keyed on an order rather than a message. `member` is which
+    /// message it came from, which is what tells a re-fetch from a new mail.
+    fn grouped_payload(
+        batch_id: &str,
+        dedup_key: &str,
+        member: &str,
+        amount: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "batch_id": batch_id,
+            "source": "receipts",
+            "dedup_key": dedup_key,
+            "fetched_at": Utc::now().to_rfc3339(),
+            "draft_postings": [{
+                "external_id": format!("{member}-row-1"),
+                "date": "2026-09-12",
+                "description": "Northwind order",
+                "postings": [{
+                    "account": "Expenses:Groceries",
+                    "commodity": "CAD",
+                    "amount": amount,
+                    "tags": []
+                }]
+            }],
+            "source_metadata": {
+                "subject": format!("mail {member}"),
+                "document_kind": "receipt",
+                "order_ref": "NW-1",
+                super::GROUP_MEMBER_KEY: member,
+                super::ORDER_GROUP_KEY: "nw1",
+            },
+        })
+    }
+
+    async fn apply_proposal(
+        store: &SurrealEventStore,
+        runner: &ProjectionRunner,
+        payload: serde_json::Value,
+    ) {
+        let batch_id = payload["batch_id"].as_str().unwrap().to_string();
+        let event = store
+            .append(NewEvent {
+                id: None,
+                event_type: "auto_import_batch_proposed".into(),
+                aggregate_id: batch_id,
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload,
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[event]).await.unwrap();
+    }
+
+    async fn apply_resolution(
+        store: &SurrealEventStore,
+        runner: &ProjectionRunner,
+        batch_id: &str,
+        event_type: &str,
+    ) {
+        let event = store
+            .append(NewEvent {
+                id: None,
+                event_type: event_type.into(),
+                aggregate_id: batch_id.into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({ "batch_id": batch_id }),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[event]).await.unwrap();
+    }
+
+    async fn pending_rows(db: &Database) -> Vec<serde_json::Value> {
+        let mut resp = db
+            .query(
+                "SELECT * FROM pending_auto_import_batches
+                 WHERE status = 'pending' ORDER BY fetched_at",
+            )
+            .await
+            .unwrap();
+        resp.take::<Vec<serde_json::Value>>(0).unwrap()
+    }
+
+    fn superseded_of(row: &serde_json::Value) -> Vec<serde_json::Value> {
+        row.get("superseded")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The bug this exists for: one order produced six review items because a
+    /// vendor sends a confirmation, an update and a delivery notice, and each
+    /// restates the amount.
+    #[tokio::test]
+    async fn two_messages_about_one_order_become_one_review_item() {
+        let (db, store, runner) = test_db_and_runner().await;
+        let key = "receipts-order-nw1";
+
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B1", key, "uid-1", "105.43"),
+        )
+        .await;
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B2", key, "uid-2", "99.93"),
+        )
+        .await;
+
+        let rows = pending_rows(&db).await;
+        assert_eq!(rows.len(), 1, "one order, one review item");
+        assert_eq!(rows[0]["batch_id"].as_str(), Some("B2"), "newest wins");
+
+        let replaced = superseded_of(&rows[0]);
+        assert_eq!(replaced.len(), 1, "what it displaced stays visible");
+        assert_eq!(replaced[0]["batch_id"].as_str(), Some("B1"));
+        assert_eq!(replaced[0]["status"].as_str(), Some("pending"));
+        assert!(
+            replaced[0]["draft_postings"].is_array(),
+            "the displaced drafts are kept, not just named"
+        );
+    }
+
+    /// Re-polling mints a fresh batch id for the same message, so batch id alone
+    /// cannot tell a re-fetch from a new mail. Only the member can.
+    #[tokio::test]
+    async fn the_same_message_fetched_again_records_no_supersession() {
+        let (db, store, runner) = test_db_and_runner().await;
+        let key = "receipts-order-nw1";
+
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B1", key, "uid-1", "105.43"),
+        )
+        .await;
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B9", key, "uid-1", "105.43"),
+        )
+        .await;
+
+        let rows = pending_rows(&db).await;
+        assert_eq!(rows.len(), 1);
+        assert!(
+            superseded_of(&rows[0]).is_empty(),
+            "the same message again displaced nothing"
+        );
+    }
+
+    /// The user's call, 2026-09-23: a revision opens a new review item and never
+    /// touches committed books.
+    #[tokio::test]
+    async fn a_message_about_a_committed_order_opens_its_own_review_item() {
+        let (db, store, runner) = test_db_and_runner().await;
+        let key = "receipts-order-nw1";
+
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B1", key, "uid-1", "105.43"),
+        )
+        .await;
+        apply_resolution(&store, &runner, "B1", "auto_import_batch_committed").await;
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B2", key, "uid-2", "99.93"),
+        )
+        .await;
+
+        let rows = pending_rows(&db).await;
+        assert_eq!(rows.len(), 1, "the revision is reviewable");
+        assert_eq!(rows[0]["batch_id"].as_str(), Some("B2"));
+        assert_eq!(
+            rows[0]["revises_batch_id"].as_str(),
+            Some("B1"),
+            "and says what it revises"
+        );
+
+        let all = list_pending(&db).await;
+        assert!(
+            all.contains(&("B1".to_string(), "committed".to_string())),
+            "the committed batch is untouched"
+        );
+    }
+
+    /// The revision must not stack: a mailbox re-poll after the revision landed
+    /// would otherwise add a review row per tick.
+    #[tokio::test]
+    async fn a_revising_message_fetched_again_does_not_stack_review_items() {
+        let (db, store, runner) = test_db_and_runner().await;
+        let key = "receipts-order-nw1";
+
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B1", key, "uid-1", "105.43"),
+        )
+        .await;
+        apply_resolution(&store, &runner, "B1", "auto_import_batch_committed").await;
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B2", key, "uid-2", "99.93"),
+        )
+        .await;
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B3", key, "uid-2", "99.93"),
+        )
+        .await;
+
+        let rows = pending_rows(&db).await;
+        assert_eq!(rows.len(), 1, "still one revision");
+        assert_eq!(rows[0]["batch_id"].as_str(), Some("B3"));
+        assert_eq!(rows[0]["revises_batch_id"].as_str(), Some("B1"));
+    }
+
+    /// Committing the revision must not reopen it either.
+    #[tokio::test]
+    async fn a_committed_revision_is_not_reproposed() {
+        let (db, store, runner) = test_db_and_runner().await;
+        let key = "receipts-order-nw1";
+
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B1", key, "uid-1", "105.43"),
+        )
+        .await;
+        apply_resolution(&store, &runner, "B1", "auto_import_batch_committed").await;
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B2", key, "uid-2", "99.93"),
+        )
+        .await;
+        apply_resolution(&store, &runner, "B2", "auto_import_batch_committed").await;
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B3", key, "uid-2", "99.93"),
+        )
+        .await;
+
+        assert!(
+            pending_rows(&db).await.is_empty(),
+            "both batches resolved, nothing left to review"
+        );
+    }
+
+    /// A dismissal is one tap and repeatable; a purchase that never reaches
+    /// review is invisible. So a genuinely new mail about a dismissed order is
+    /// reviewable, while the dismissed message itself stays dismissed.
+    #[tokio::test]
+    async fn a_message_about_a_dismissed_order_opens_a_review_item() {
+        let (db, store, runner) = test_db_and_runner().await;
+        let key = "receipts-order-nw1";
+
+        apply_proposal(&store, &runner, grouped_payload("B1", key, "uid-1", "0.00")).await;
+        apply_resolution(&store, &runner, "B1", "auto_import_batch_dismissed").await;
+        apply_proposal(&store, &runner, grouped_payload("B9", key, "uid-1", "0.00")).await;
+        assert!(
+            pending_rows(&db).await.is_empty(),
+            "the dismissed message stays dismissed on a re-fetch"
+        );
+
+        apply_proposal(
+            &store,
+            &runner,
+            grouped_payload("B2", key, "uid-2", "105.43"),
+        )
+        .await;
+        let rows = pending_rows(&db).await;
+        assert_eq!(rows.len(), 1, "the later receipt is not lost with it");
+        assert_eq!(rows[0]["revises_batch_id"].as_str(), Some("B1"));
+    }
+
+    /// The guarantee grouping must not cost: a source that names no member keeps
+    /// the original dedup, where a resolved row swallows any re-proposal.
+    #[tokio::test]
+    async fn an_ungrouped_proposal_after_commit_is_still_a_no_op() {
+        let (db, store, runner) = test_db_and_runner().await;
+
+        apply_proposal(
+            &store,
+            &runner,
+            proposed_payload("P1", "globepay", "globepay-watermark-9"),
+        )
+        .await;
+        apply_resolution(&store, &runner, "P1", "auto_import_batch_committed").await;
+        apply_proposal(
+            &store,
+            &runner,
+            proposed_payload("P2", "globepay", "globepay-watermark-9"),
+        )
+        .await;
+
+        assert!(
+            pending_rows(&db).await.is_empty(),
+            "no member, no revision — the committed row absorbs it as before"
+        );
     }
 }

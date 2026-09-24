@@ -16,6 +16,10 @@
 //! re-propose mail already seen. An empty `Vec` means only that extraction
 //! produced no drafts — this path is fully wired, not a stub.
 //!
+//! A charge-bearing message carrying the vendor's own order number keys on the
+//! order instead, so the several mails about one purchase become one review
+//! item. Why the reference and not a header: `docs/src/auto-import.md`.
+//!
 //! Drafts land in the `pending` review inbox and are never auto-committed. See
 //! the HARD CONSTRAINT note in `handle` before changing that: the review step
 //! is the sole control between a crafted email and a fabricated ledger entry.
@@ -26,7 +30,7 @@ use std::sync::Arc;
 use tokio::process::Command;
 
 use crate::auto_import_scheduler::ImportError;
-use crate::events::NewEvent;
+use crate::events::{GROUP_MEMBER_KEY, NewEvent, ORDER_GROUP_KEY};
 use crate::extraction::{
     DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, DocumentPart, ExtractionHint,
     receipt_extraction_to_drafts, verify,
@@ -35,6 +39,39 @@ use crate::extraction::{
 use super::imap::{ImapHandler, ImapMessage};
 use super::mime::parse_eml;
 use super::to_proposed_event;
+
+/// Bounds on a vendor reference worth grouping on. The floor rejects the `.`
+/// and `-` the model returns when a message has no reference; the ceiling
+/// rejects a subject line pasted into the field.
+const MIN_ORDER_REF_LEN: usize = 4;
+const MAX_ORDER_REF_LEN: usize = 64;
+
+/// A vendor reference reduced to a group key, or `None` if it cannot carry one.
+///
+/// Junk here is the expensive direction: two distinct purchases sharing a bad
+/// key merge into one review item and a transaction goes missing, where no key
+/// at all only costs a dismissal.
+fn group_key(order_ref: Option<&str>) -> Option<String> {
+    let raw = order_ref?.trim();
+    if raw.len() < MIN_ORDER_REF_LEN || raw.len() > MAX_ORDER_REF_LEN {
+        return None;
+    }
+    // An order number has no spaces in it; a subject line does.
+    if raw.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let key: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    // Punctuation is dropped before this, so `#118-762-884` and `118762884`
+    // group together. Prose with no digit in it is not a reference.
+    if key.len() < MIN_ORDER_REF_LEN || !key.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(key)
+}
 
 pub struct ReceiptHandler {
     name: String,
@@ -373,7 +410,17 @@ impl ImapHandler for ReceiptHandler {
         if drafts.is_empty() {
             return Ok(vec![]);
         }
-        let dedup_key = format!("{}-uid-{}", self.name, message.uid);
+        // Only a charge-bearing kind may group. `order_ref` on other mail is
+        // junk the model filled in from a subject line, and grouping two
+        // purchases on a shared junk key loses one of them silently.
+        let order_group = result
+            .kind()
+            .filter(|kind| kind.records_a_charge())
+            .and_then(|_| group_key(result.order_ref.as_deref()));
+        let dedup_key = match &order_group {
+            Some(key) => format!("{}-order-{key}", self.name),
+            None => format!("{}-uid-{}", self.name, message.uid),
+        };
         let source_metadata = serde_json::json!({
             "from": message.from,
             "subject": parsed.subject,
@@ -387,10 +434,13 @@ impl ImapHandler for ReceiptHandler {
             // Without this an empty `warnings` reads as "the arithmetic was
             // checked", which on a single-amount email is false.
             "total_check": report.total_check,
-            // Recorded, not yet grouped on. The handle that will tie a vendor's
-            // several messages about one order into a single proposal.
             "document_kind": result.document_kind,
             "order_ref": result.order_ref,
+            // What the batch grouped on, and this message's identity within it.
+            // The projection needs the member to tell a re-fetched message from
+            // a new one about the same order.
+            ORDER_GROUP_KEY: order_group,
+            GROUP_MEMBER_KEY: format!("uid-{}", message.uid),
         });
         let event = to_proposed_event(
             self.name(),
@@ -748,6 +798,103 @@ mod tests {
     #[tokio::test]
     async fn an_unlabelled_message_is_still_proposed() {
         assert_eq!(events_for(None, "105.43").await, 1);
+    }
+
+    // ----- What a batch is keyed on -----
+
+    /// The proposal a message produced, or `None` if it produced nothing.
+    async fn proposal_for(
+        kind: Option<&str>,
+        order_ref: Option<&str>,
+        uid: u32,
+    ) -> Option<NewEvent> {
+        let mut result = stub_result(kind, "105.43");
+        result.order_ref = order_ref.map(String::from);
+        let extractor = Arc::new(StubExtractor(result));
+        let handler = ReceiptHandler::new(
+            "shop",
+            vec!["northwind.example".into()],
+            "device-test",
+            extractor,
+        );
+        let mut msg = imap_msg_from("shop@northwind.example", plain_eml());
+        msg.uid = uid;
+        handler
+            .handle(&msg)
+            .await
+            .expect("handler ok")
+            .into_iter()
+            .next()
+    }
+
+    async fn dedup_key_for(kind: Option<&str>, order_ref: Option<&str>) -> String {
+        let event = proposal_for(kind, order_ref, 7).await.expect("a proposal");
+        event.payload["dedup_key"]
+            .as_str()
+            .expect("dedup_key is a string")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_charge_with_an_order_number_keys_on_the_order() {
+        assert_eq!(
+            dedup_key_for(Some("receipt"), Some("118762884")).await,
+            "shop-order-118762884"
+        );
+    }
+
+    /// Punctuation and case are dropped, so the same reference printed two ways
+    /// in two mails still groups them.
+    #[tokio::test]
+    async fn an_order_number_groups_however_the_vendor_punctuates_it() {
+        let a = dedup_key_for(Some("receipt"), Some("#118-762-884")).await;
+        let b = dedup_key_for(Some("order_confirmation"), Some("118762884")).await;
+        assert_eq!(a, b);
+    }
+
+    /// Two distinct purchases merging on a junk key loses one of them with
+    /// nothing on screen to say so, which is why each of these falls back to the
+    /// message.
+    #[tokio::test]
+    async fn junk_in_the_order_field_groups_nothing() {
+        for junk in [
+            ".",
+            "-",
+            "ord",
+            "Your order was delivered",
+            "no digits here",
+            "thankyouforshopping",
+        ] {
+            assert_eq!(
+                dedup_key_for(Some("receipt"), Some(junk)).await,
+                "shop-uid-7",
+                "{junk:?} must not become a group key"
+            );
+        }
+        assert_eq!(dedup_key_for(Some("receipt"), None).await, "shop-uid-7");
+    }
+
+    /// `order_ref` on mail that carries no charge is whatever the model found in
+    /// the subject line, so the kind gate comes first.
+    #[tokio::test]
+    async fn an_unlabelled_message_never_groups() {
+        assert_eq!(
+            dedup_key_for(None, Some("118762884")).await,
+            "shop-uid-7",
+            "fail-open mail proposes, but it does not group"
+        );
+    }
+
+    /// The projection needs the member to tell a re-fetched message from a new
+    /// one about the same order; without it grouping cannot be safe.
+    #[tokio::test]
+    async fn every_proposal_names_the_message_it_came_from() {
+        let event = proposal_for(Some("receipt"), Some("118762884"), 4242)
+            .await
+            .expect("a proposal");
+        let meta = &event.payload["source_metadata"];
+        assert_eq!(meta[GROUP_MEMBER_KEY].as_str(), Some("uid-4242"));
+        assert_eq!(meta[ORDER_GROUP_KEY].as_str(), Some("118762884"));
     }
 
     /// An unrecognised label maps to `Other`, which does not book. The label is

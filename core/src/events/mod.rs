@@ -14,7 +14,7 @@ mod types;
 mod writer;
 
 pub use assistant_projection::AssistantProjection;
-pub use auto_import_projection::AutoImportProjection;
+pub use auto_import_projection::{AutoImportProjection, GROUP_MEMBER_KEY, ORDER_GROUP_KEY};
 pub use beliefs_projection::BeliefsProjection;
 pub use budget_projection::BudgetProjection;
 pub use config_projection::{ConfigProjection, load_persisted};

@@ -4244,6 +4244,8 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                     },
                 ],
                 source_metadata: None,
+                superseded: None,
+                revises_batch_id: None,
             },
             PendingBatchView {
                 batch_id: "01HXMOCKMRDN000000000001".into(),
@@ -4274,6 +4276,8 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                     "subject": "April statement",
                     "uid": 42,
                 })),
+                superseded: None,
+                revises_batch_id: None,
             },
             // A `receipts` batch that failed verification. The two bank batches
             // above carry no verdict — only this path runs `verify` — so without
@@ -4314,7 +4318,94 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                     "warnings": [
                         "line-item sum 27.86 does not match document total 99.83 (diff 71.97)"
                     ],
+                    "order_group": "nw118762884",
+                    "group_member": "uid-3458",
                 })),
+                // Grouped: the delivery notice displaced the order confirmation
+                // that arrived first. Without a fixture the merge panel is
+                // unreachable in mock, and a merge nobody can see is the whole
+                // risk the panel exists to cover.
+                superseded: Some(serde_json::json!([{
+                    "batch_id": "01HXMOCKRCPT000000000000",
+                    "status": "pending",
+                    "fetched_at": (now - chrono::Duration::minutes(40)).to_rfc3339(),
+                    "subject": "Thank you for shopping with Northwind!",
+                    "document_kind": "order_confirmation",
+                    "order_ref": "NW-118-762-884",
+                    "group_member": "uid-3455",
+                    "draft_postings": [{
+                        "external_id": "receipts-uid-3455-row-1",
+                        "date": "2026-09-12",
+                        "description": "Northwind — order confirmed",
+                        "postings": [
+                            { "account": "Expenses:Groceries", "commodity": "CAD",
+                              "amount": "105.43", "tags": [] },
+                            { "account": "Unmatched", "commodity": "CAD",
+                              "amount": "-105.43", "tags": [] },
+                        ],
+                    }],
+                }])),
+                revises_batch_id: None,
+            },
+            // A message about an order whose earlier batch is already committed.
+            // Nothing amends committed books, so it arrives as its own review
+            // item — the fixture that makes that banner reachable in mock.
+            PendingBatchView {
+                batch_id: "01HXMOCKRCPT000000000002".into(),
+                source: "receipts".into(),
+                dedup_key: "receipts-order-nw124202519".into(),
+                fetched_at: (now - chrono::Duration::minutes(1)).to_rfc3339(),
+                draft_postings: vec![DraftTransactionView {
+                    external_id: "receipts-uid-3461-row-1".into(),
+                    date: "2026-09-14".into(),
+                    description: "Northwind — refund for substituted item".into(),
+                    postings: vec![
+                        PostingInput {
+                            account: "Expenses:Groceries".into(),
+                            commodity: "CAD".into(),
+                            amount: "-4.20".into(),
+                            tags: vec![],
+                        },
+                        PostingInput {
+                            account: "Unmatched".into(),
+                            commodity: "CAD".into(),
+                            amount: "4.20".into(),
+                            tags: vec![],
+                        },
+                    ],
+                }],
+                source_metadata: Some(serde_json::json!({
+                    "from": "orders@northwind.example",
+                    "subject": "We've updated your Northwind order",
+                    "uid": 3461,
+                    "effective_confidence": 0.88,
+                    "needs_manual_review": false,
+                    "dropped_postings": 0,
+                    "warnings": [],
+                    "order_group": "nw124202519",
+                    "group_member": "uid-3461",
+                })),
+                superseded: Some(serde_json::json!([{
+                    "batch_id": "01HXMOCKRCPT000000000003",
+                    "status": "committed",
+                    "fetched_at": (now - chrono::Duration::days(2)).to_rfc3339(),
+                    "subject": "Your Northwind order is on its way",
+                    "document_kind": "shipping_notice",
+                    "order_ref": "NW-124-202-519",
+                    "group_member": "uid-3457",
+                    "draft_postings": [{
+                        "external_id": "receipts-uid-3457-row-1",
+                        "date": "2026-09-13",
+                        "description": "Northwind — order shipped",
+                        "postings": [
+                            { "account": "Expenses:Groceries", "commodity": "CAD",
+                              "amount": "61.90", "tags": [] },
+                            { "account": "Unmatched", "commodity": "CAD",
+                              "amount": "-61.90", "tags": [] },
+                        ],
+                    }],
+                }])),
+                revises_batch_id: Some("01HXMOCKRCPT000000000003".into()),
             },
         ])
     }

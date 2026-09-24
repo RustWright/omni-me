@@ -781,6 +781,14 @@ pub struct PendingBatchView {
     pub draft_postings: Vec<DraftTransactionView>,
     #[serde(default)]
     pub source_metadata: Option<serde_json::Value>,
+    /// Earlier proposals about the same order that this one displaced.
+    #[serde(default)]
+    pub superseded: Option<serde_json::Value>,
+    /// Set when the order this describes already has a committed or dismissed
+    /// batch. Committing this one adds transactions; it changes nothing already
+    /// in the books.
+    #[serde(default)]
+    pub revises_batch_id: Option<String>,
 }
 
 /// Frontend mirror of `core::db::queries::TxnFilter`. All fields optional;

@@ -2726,8 +2726,15 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
                         }
                     }
                 }
-                div { class: "text-xs text-obsidian-text-muted truncate",
-                    if row_count == 1 { "1 transaction" } else { "{row_count} transactions" }
+                div { class: "flex items-baseline gap-2",
+                    div { class: "text-xs text-obsidian-text-muted truncate",
+                        if row_count == 1 { "1 transaction" } else { "{row_count} transactions" }
+                    }
+                    if batch.revises_batch_id.is_some() {
+                        span { class: "text-xs px-2 py-0.5 bg-amber-500/15 text-amber-300 rounded-full shrink-0",
+                            "revises a resolved batch"
+                        }
+                    }
                 }
             }
             svg { class: "w-5 h-5 text-obsidian-text-muted shrink-0",
@@ -2752,6 +2759,121 @@ fn email_document_id(batch: &PendingBatchView) -> Option<String> {
         .get("email_document_id")?
         .as_str()
         .map(str::to_string)
+}
+
+/// An earlier proposal about this order that a later message displaced.
+#[derive(Debug, Clone, PartialEq)]
+struct SupersededProposal {
+    status: String,
+    subject: String,
+    document_kind: String,
+    drafts: Vec<DraftTransactionView>,
+}
+
+/// Earlier proposals about this batch's order, oldest first.
+///
+/// The keys come from `AutoImportProjection::supersession_entry`; nothing but
+/// agreement on the spelling connects the two ends.
+fn superseded_proposals(batch: &PendingBatchView) -> Vec<SupersededProposal> {
+    let Some(entries) = batch.superseded.as_ref().and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .map(|e| {
+            let text = |key: &str| {
+                e.get(key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("—")
+                    .to_string()
+            };
+            SupersededProposal {
+                status: text("status"),
+                subject: text("subject"),
+                document_kind: text("document_kind"),
+                drafts: e
+                    .get("draft_postings")
+                    .cloned()
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+/// What else the vendor sent about this order, and what committing this batch
+/// will and will not do.
+///
+/// A merge keyed on a vendor reference the model read off an email is only safe
+/// while the reviewer can see what it merged; this panel is that visibility.
+#[component]
+fn BatchLineagePanel(
+    revises_batch_id: Option<String>,
+    superseded: Vec<SupersededProposal>,
+) -> Element {
+    if revises_batch_id.is_none() && superseded.is_empty() {
+        return rsx! {};
+    }
+    let replaced = superseded.len();
+    // Amber is reserved for the case that can double-book. A merge of pending
+    // mail is information, and two warning-coloured panels in a row teach the
+    // reader to skip both.
+    let (border, heading) = if revises_batch_id.is_some() {
+        ("border-amber-500/30", "text-amber-200")
+    } else {
+        ("border-obsidian-border/10", "text-obsidian-text")
+    };
+    rsx! {
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border {border} rounded-lg",
+            if revises_batch_id.is_some() {
+                p { class: "text-sm font-semibold {heading} mb-1",
+                    "This order already has a batch you committed or dismissed"
+                }
+                p { class: "text-xs text-obsidian-text-muted mb-2",
+                    "Committing this one adds new transactions. Nothing already in your books is changed or removed, so check it against what is there before accepting rows."
+                }
+            } else {
+                p { class: "text-sm font-semibold {heading} mb-1",
+                    if replaced == 1 {
+                        "One earlier message about this order was replaced"
+                    } else {
+                        "{replaced} earlier messages about this order were replaced"
+                    }
+                }
+                p { class: "text-xs text-obsidian-text-muted mb-2",
+                    "The vendor sends several mails per order and the newest won. If the wrong one won, dismiss this and enter it by hand."
+                }
+            }
+            if replaced > 0 {
+                details { class: "text-xs text-obsidian-text-muted",
+                    summary { class: "cursor-pointer hover:text-obsidian-text",
+                        "What it replaced"
+                    }
+                    div { class: "mt-2 space-y-2",
+                        for prior in superseded.iter() {
+                            div { class: "p-2 bg-obsidian-bg/40 rounded border border-obsidian-border/5",
+                                div { class: "flex items-baseline gap-2 mb-1",
+                                    span { class: "font-mono text-obsidian-text", "{prior.document_kind}" }
+                                    span { "· {prior.status}" }
+                                }
+                                div { class: "truncate mb-1", "{prior.subject}" }
+                                for draft in prior.drafts.iter() {
+                                    for posting in draft.postings.iter() {
+                                        div { class: "flex justify-between gap-3",
+                                            span { class: "font-mono truncate", "{posting.account}" }
+                                            span { class: "font-mono shrink-0",
+                                                "{posting.amount} {posting.commodity}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// What `verify` concluded about the extraction behind a batch.
@@ -2924,6 +3046,14 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                         onclick: move |_| on_done.call(()),
                         "← List"
                     }
+                }
+
+                // Above the source, because it changes what the decision is:
+                // the other panels describe this message, this one describes
+                // what committing it does to transactions already booked.
+                BatchLineagePanel {
+                    revises_batch_id: b.revises_batch_id.clone(),
+                    superseded: superseded_proposals(&b),
                 }
 
                 // ⛔ The source, shown — not a JSON dump of its metadata. This
