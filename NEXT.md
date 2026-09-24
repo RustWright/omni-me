@@ -32,8 +32,8 @@ phone is stuck mid-rebuild. Evidence in overlay `DEV_TESTING.md` § 8. Dev serve
 - 🔴 **Three rebuild defects** (⛔ above) · **projection writes swallow statement errors**
   (`.await?` returns Ok on a rejected one; four have ZERO `.check()`). Mechanism in `tasks.md`.
 - 🔴 **Suite deadlock**: the recorded fix was **disproven by measurement** — +1 thread per
-  `connect()` survives dropping handle and TempDir. One shared instance stays flat. [S, not M]
-- ⚠️ **Playwright MCP wants a `chrome` channel** needing sudo; bundled chromium works instead.
+  `connect()` survives dropping handle and TempDir; one shared instance stays flat. [S, not M]
+  ⚠️ **Playwright MCP wants a `chrome` channel** needing sudo; bundled chromium works instead.
 
 ## ⛔ Standing
 - 🔴 **CI's ONE invocation** naming core+server+agent compiles core with `auto-import`.
