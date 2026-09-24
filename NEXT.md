@@ -1,40 +1,41 @@
 # NEXT
 
-✅ **Three decisions answered 2026-09-23**, answerable half of each built, new prompt run against
-real mail on dev. ⛔ Evidence in overlay `DEV_TESTING.md` § 8. Dev on `dev-1b3ef42-25b55ed`,
-healthy. Rollback `/var/omni-snapshots/dev-pre-kindgate-20260923-1412.tgz`.
+✅ **Grouping BUILT + browser-verified** (public `228f7e9`). Both 2026-09-23 questions answered by
+the user. Gate green: 1266 core / 84 app / 163 frontend, clippy ×4, fmt, zero console errors in
+mock. ⛔ **Not model-validated.** Dev image building at handoff (run `35955831370`).
+Rollback `/var/omni-snapshots/dev-pre-kindgate-20260923-1412.tgz`.
 
-## ▶ NEXT ACTION — settle the two grouping questions, then build grouping
-⛔ **Both need the user. Do not guess either.**
-- 🔴 **What groups a vendor's mail with no order number?** Rec: nothing — a duplicate is visible
-  and costs a dismissal, a wrong merge is invisible and loses a transaction.
-- 🔴 **What does a revision do to an already-committed batch?** Rec: a new review item that never
-  touches committed books. ⛔ Amending them directly crosses the autonomy line.
+## ▶ NEXT ACTION — land the dev image, then prove a merge on real mail
+1. When run `35955831370` finishes: on the box, `cd ~/omni-dev`, point `.env` at the new tag,
+   `docker compose pull && up -d`. ⚠️ `AutoImportProjection` is **version 2**, so first boot
+   rebuilds it from the log against real rows — watch that boot, it is the migration test.
+2. 🔴 **The merge proof needs NEW UIDs and the user's hands.** Archived mail sits past the IMAP
+   cursor. Ask him to forward two mails about **one** order. Until then grouping is unit-proven.
 
-## ✅ Proven on dev against real mail
-- **Config persistence FIXED.** Paused a source → 200 (was 500), survived a restart (`paused=0`
-  before, `paused=1` after), resumed cleanly. The off-switch persists for the first time.
-- **`document_kind` right on all 8** real emails; **order numbers exact**; hints did NOT regress.
-- **Unreadable `total` no longer kills a document**: 8/8 extract, was 2/8.
+## ⛔ Inherit — settled, do not re-derive
+- **No vendor reference → no grouping**, per class, added only where a reliable one is found.
+- **A revision opens a new review item**; committed books are never amended. ⚠️ His revisit
+  trigger is his own friction, so review volume on this path is the thing to watch.
+- ⚠️ **Dismissed is treated like committed** — a genuinely new mail about a dismissed order is
+  reviewable. That call is MINE, not his. Flag it if it annoys him.
+- ⛔ **"One Walmart order → six batches" is NOT a duplication factor.** He forwarded **two
+  separate orders** while testing. The mechanism is real; the number is not.
+- ⚠️ The **kind gate makes grouping safe** — `order_ref` is junk on non-order mail.
 
-## ⚠️ Open
-- 🔴 **"One Walmart order produced SIX batches" is now UNCONFIRMED.** The two archived mails carry
-  **different** order numbers (`…118762884` vs `…124202519`), so some of those six may be separate
-  purchases. ⛔ Re-check against the mailbox before designing grouping on that premise.
-- 🔴 **`order_ref` is junk on non-order mail** (subject lines, `.`, a UUID). ⛔ Never group on it
-  without first checking the kind is charge-bearing.
-- ⚠️ **The survey/upsell mails were never tested** — not archived. They are the real culprits.
-- ⛔ **`29695a4` is not in the deployed image**; dev runs one commit behind.
-- 🔴 **Suite deadlock REPRODUCED** (1 in 6 runs): 312 leaked `surrealkv-commit` threads from the
-  `test_db()` fixture. Mechanism + fix plan in `tasks.md`; the fix touches 217 call sites.
+## 🔴 Open
+- 🔴 **Projection writes swallow statement errors.** `.await?` returns Ok on a *rejected*
+  statement, so a schema mismatch leaves the row stale and reports success — it cost an hour
+  today. Four projections have ZERO `.check()`. ⛔ Do not sweep blind; `tasks.md` says why.
+- 🔴 **Suite deadlock** (1 in 6): 312 leaked `surrealkv-commit` threads from `test_db()`. Did
+  **not** fire today. Plan in `tasks.md`; 217 call sites.
 - ⛔ **`UIDVALIDITY` handled nowhere.** Own session.
+- ⚠️ **Playwright MCP is unusable here** — it wants a `chrome` channel whose install needs sudo.
+  Worked around with bundled chromium driven from a scratchpad script.
 
-## ⛔ Inherit
-- 🔴 **CI's ONE invocation naming core+server+agent** is what compiles core with `auto-import` —
-  a narrower `cargo test -p omni-me-core` runs ZERO of those tests and looks like a pass.
-- 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⛔ Never deploy there; live has no sources
-  running. ⚠️ `omni-me-private` is NOT committed by the hooks — by hand, current repo only.
-- ⚠️ **Search the trackers before writing a bug up as new** — the `/config` bug was in `tasks.md`
-  from 2026-09-07 and got re-derived as a discovery.
-- ⚠️ Strip ANSI before grepping docker logs. **`EXAMINE`, never `SELECT`.** ⛔ Branches:
+## ⛔ Standing
+- 🔴 **CI's ONE invocation** naming core+server+agent is what compiles core with `auto-import`; a
+  narrower `-p omni-me-core` runs ZERO of those tests and looks like a pass.
+- 🔴 **NOTHING since `sha-9a0b1dd` has run on live.** ⛔ Never deploy there. ⚠️ `omni-me-private`
+  is NOT committed by the hooks — by hand, current repo only.
+- ⚠️ Strip ANSI before grepping docker logs. **`EXAMINE`, never `SELECT`.** Branches:
   `dev/role-split-model-seats` / `dev/untested-overlay`.
