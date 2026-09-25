@@ -1538,8 +1538,12 @@ sign-off. ✅ 1 and 7 are done and 2 is blocked on a design call, so **3–8 is 
        degrades to "always apply" — a stale event can then overwrite a newer one. Narrow, and fixing
        it changes what a projection does on a read failure. [S, its own decision]
 4. [ ] **`UIDVALIDITY` unhandled** — a renumbered mailbox stalls the poller forever. [S]
-5. [ ] **Two capture gaps**: the draft form does not show `verify` warnings; `x-filename` needs the
-       picker's real name threaded through. [S]
+5. [x] ✅ **ALREADY DONE — this entry was stale.** Verified in the code 2026-09-25, not assumed.
+       `ExtractedDraft` carries `warnings` + `needs_review`, and `finances.rs` renders both through
+       the verdict panel, which returns early only when there is genuinely nothing to say.
+       `x-filename` is threaded from the picker's own `file.name()` on the first attempt *and* on the
+       retry path (`RetryCapture` keeps it), with `None` reserved for a pasted email body that never
+       had a name. ⚠️ Nothing to build; the lesson is `project-tasks-md-drifts-stale` again.
 6. [ ] **The five on-device confirmations** (§ Awaiting on-device confirmation, minus the Int
        stepper, which is the user's). ✅ `pm clear` is free now — no token to re-enter. [M]
 7. [x] ✅ **MEASURED 2026-09-25** on the dev instance's own archive, over the 8 days its poller had
