@@ -33,11 +33,11 @@ use crate::auto_import_scheduler::ImportError;
 use crate::events::{GROUP_MEMBER_KEY, NewEvent, ORDER_GROUP_KEY};
 use crate::extraction::{
     DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, DocumentPart, ExtractionHint,
-    receipt_extraction_to_drafts, verify,
+    RECONCILE_ATTEMPTS, extract_reconciled, receipt_extraction_to_drafts,
 };
 
 use super::imap::{ImapHandler, ImapMessage};
-use super::mime::parse_eml;
+use super::mime::{MimeAttachment, parse_eml};
 use super::to_proposed_event;
 
 /// Bounds on a vendor reference worth grouping on. The floor rejects the `.`
@@ -181,6 +181,28 @@ const MAX_PDF_TEXT_BYTES: usize = 4 * 1024 * 1024;
 /// Wall-clock bound on one `pdftotext` run.
 const PDFTOTEXT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Whether an attachment is worth handing to pdftotext.
+///
+/// Deliberately permissive, matching `archive::is_pdf` and the "no MIME gate"
+/// note on `document_fields::parser_fields`: senders mislabel PDFs often enough
+/// that trusting the declared type loses real documents. A rental invoice
+/// arrived as `application/octet-stream` with a `.pdf` name, and its 487 KB of
+/// line items — the only place the amount appeared — was never opened.
+///
+/// The extension arm adds no exposure: `content_type` is attacker-controlled
+/// too, so a crafted file could always reach poppler. What bounds that is
+/// [`MAX_PDF_BYTES`] and [`PDFTOTEXT_TIMEOUT`], not this test.
+fn looks_like_pdf(att: &MimeAttachment) -> bool {
+    let declared = att.content_type.to_ascii_lowercase();
+    if declared.starts_with("application/pdf") || declared.starts_with("application/x-pdf") {
+        return true;
+    }
+    if infer::get(&att.bytes).is_some_and(|k| k.mime_type() == "application/pdf") {
+        return true;
+    }
+    att.filename.to_ascii_lowercase().ends_with(".pdf")
+}
+
 /// Pdftotext over bytes, no encryption — used to pull text out of plain
 /// (non-password-protected) PDF attachments. Returns empty string when
 /// pdftotext can't extract (typically image-only PDFs); the caller decides
@@ -298,11 +320,7 @@ impl ImapHandler for ReceiptHandler {
         // this text-only path deliberately does not attempt.
         let mut combined_text = parsed.body_text.clone();
         for att in &parsed.attachments {
-            if att
-                .content_type
-                .to_ascii_lowercase()
-                .starts_with("application/pdf")
-            {
+            if looks_like_pdf(att) {
                 match pdftotext_bytes(&att.bytes).await {
                     Ok(t) if !t.is_empty() => {
                         combined_text.push_str("\n\n--- PDF: ");
@@ -344,22 +362,22 @@ impl ImapHandler for ReceiptHandler {
         // drafts; doing so on this path, without sender authentication (there
         // is no SPF/DKIM check — see `accepts`), hands write access to anyone
         // who knows the watched address.
-        let result = self
-            .extractor
-            .extract(
-                &[DocumentPart::new(combined_text.as_bytes(), "text/plain")],
-                ExtractionHint::EmailBody,
-            )
-            .await
-            .map_err(|e| ImportError::Upstream(format!("receipt extract: {e}")))?;
-
         // Nothing cross-checked email-sourced drafts before this: `verify` ran only on
         // the manual upload route, so the unattended path had the weaker guarantee.
-        let report = verify(
-            &result,
+        //
+        // Through `extract_reconciled` rather than `extract` + `verify` because this is
+        // the unattended path: nobody is watching to re-run a mail that came back
+        // unpriced, and one measured document returned no line items on half its runs
+        // against a total it stated correctly every time.
+        let (result, report) = extract_reconciled(
+            self.extractor.as_ref(),
+            &[DocumentPart::new(combined_text.as_bytes(), "text/plain")],
             ExtractionHint::EmailBody,
             DEFAULT_CONFIDENCE_THRESHOLD,
-        );
+            RECONCILE_ATTEMPTS,
+        )
+        .await
+        .map_err(|e| ImportError::Upstream(format!("receipt extract: {e}")))?;
 
         tracing::info!(
             handler = self.name(),
@@ -483,6 +501,86 @@ mod tests {
             date: chrono::Utc.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap(),
             body,
         }
+    }
+
+    fn attachment(filename: &str, content_type: &str, bytes: &[u8]) -> MimeAttachment {
+        MimeAttachment {
+            filename: filename.into(),
+            content_type: content_type.into(),
+            bytes: bytes.to_vec(),
+            is_inline: false,
+        }
+    }
+
+    /// The minimum poppler will look at — `infer` keys on this signature.
+    const PDF_MAGIC: &[u8] = b"%PDF-1.7\n";
+
+    #[test]
+    fn a_pdf_declared_as_a_pdf_is_read() {
+        assert!(looks_like_pdf(&attachment(
+            "invoice.pdf",
+            "application/pdf",
+            PDF_MAGIC
+        )));
+        assert!(looks_like_pdf(&attachment(
+            "invoice.pdf",
+            "APPLICATION/PDF; name=invoice.pdf",
+            PDF_MAGIC
+        )));
+        assert!(looks_like_pdf(&attachment(
+            "invoice.pdf",
+            "application/x-pdf",
+            PDF_MAGIC
+        )));
+    }
+
+    /// The case that cost a real rental invoice: the sender declared
+    /// `application/octet-stream`, so the old content-type test skipped an
+    /// attachment carrying the only copy of the amount.
+    #[test]
+    fn a_pdf_misdeclared_as_octet_stream_is_still_read() {
+        assert!(looks_like_pdf(&attachment(
+            "invoice.pdf",
+            "application/octet-stream",
+            PDF_MAGIC
+        )));
+    }
+
+    /// Either signal alone is enough — the bytes when the name is unhelpful,
+    /// the name when the bytes are not recognisable.
+    #[test]
+    fn either_the_bytes_or_the_name_is_enough() {
+        assert!(looks_like_pdf(&attachment(
+            "attachment",
+            "application/octet-stream",
+            PDF_MAGIC
+        )));
+        assert!(looks_like_pdf(&attachment(
+            "statement.PDF",
+            "application/octet-stream",
+            b"not a recognisable header"
+        )));
+    }
+
+    /// Everything else still stays away from poppler: the branding images a
+    /// real statement email carries are the common case here.
+    #[test]
+    fn a_non_pdf_attachment_is_left_alone() {
+        assert!(!looks_like_pdf(&attachment(
+            "logo.png",
+            "image/png",
+            b"\x89PNG\r\n\x1a\n"
+        )));
+        assert!(!looks_like_pdf(&attachment(
+            "rows.csv",
+            "text/csv",
+            b"date,amount\n"
+        )));
+        assert!(!looks_like_pdf(&attachment(
+            "notes",
+            "application/octet-stream",
+            b"plain bytes"
+        )));
     }
 
     #[test]
