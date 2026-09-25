@@ -22,6 +22,7 @@ use crate::auto_import_scheduler::{
 };
 use crate::db::Database;
 use crate::events::{EventStore, ProjectionRunner};
+use surrealdb::types::SurrealValue;
 
 use super::imap::{ArchiveTarget, FetchCursor, ImapFetcher, ImapHandler, poll_once};
 
@@ -41,6 +42,14 @@ pub trait CursorStore: Send + Sync {
 pub struct StoredCursor {
     pub uid: u32,
     pub uid_validity: Option<u32>,
+}
+
+/// One `imap_cursors` row. Decoded as a row so a stored `NONE` lands in the
+/// `Option` rather than failing the whole read — see the note in `load`.
+#[derive(Debug, SurrealValue)]
+struct CursorRow {
+    uid: i64,
+    uid_validity: Option<i64>,
 }
 
 /// SurrealDB-backed cursor store. Uses a dedicated `imap_cursors` table
@@ -84,15 +93,17 @@ impl CursorStore for SurrealCursorStore {
             .bind(("name", account_name.to_string()))
             .await
             .map_err(|e| ImportError::Upstream(format!("load cursor: {e}")))?;
-        let uid: Option<i64> = resp
-            .take("uid")
+        // ⚠️ Through a serde row, not two `take("<field>")` calls. Taking a single
+        // nullable field into `Option<i64>` fails outright on a stored `NONE` —
+        // "Expected int, got none" — so the row written before `uid_validity`
+        // existed would make `load` error, `ImapSource::new` fail, and the account
+        // vanish from the registry rather than poll with an unknown validity.
+        let rows: Vec<CursorRow> = resp
+            .take(0)
             .map_err(|e| ImportError::Upstream(format!("decode cursor: {e}")))?;
-        let uid_validity: Option<i64> = resp
-            .take("uid_validity")
-            .map_err(|e| ImportError::Upstream(format!("decode cursor validity: {e}")))?;
-        Ok(uid.map(|n| StoredCursor {
-            uid: n as u32,
-            uid_validity: uid_validity.map(|v| v as u32),
+        Ok(rows.into_iter().next().map(|r| StoredCursor {
+            uid: r.uid as u32,
+            uid_validity: r.uid_validity.map(|v| v as u32),
         }))
     }
 
