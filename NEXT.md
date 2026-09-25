@@ -10,11 +10,7 @@ fix a miss.** ⛔ Manual forwarding is a testing workaround, not a design.
 ⛔ Read it first: the 2026-09-12 ruling already required this and was only half-implemented, so this
 is an unfinished decision, not a new idea.
 
-**Then, all unblocked:** the delivery receipt that produced 0 postings against its own $104.63 total ·
-deterministic order-id parsing from vendor URLs · the `.check()` sweep (four projections have none) ·
-`UIDVALIDITY` handling · the two capture gaps (verify warnings in the draft form, real filename
-threading) · the five on-device confirmations · archive growth rate · three rebuild defects ·
-suite deadlock.
+**Then work `tasks.md` § "AUTONOMOUS QUEUE" top-down** — eight items, none of them blocked on him.
 
 ## ⛔ Waiting on the user — only these
 - 🔴 **The Int stepper in Settings** — native control, so Playwright is not faithful. He will look
@@ -37,8 +33,8 @@ suite deadlock.
   **3.4s per mail test, not 30 minutes.** `pm clear` is safe now. Recipe: overlay `DEV_TESTING.md`.
 
 ## 🔴 Open
-- 🔴 **Phone wedge on cold backfill** — recovers on force-stop; volume disproven; location unknown.
-  Repro is now unblocked (`pm clear` costs nothing). Measurements: overlay `DEV_TESTING.md`.
+- 🔴 **Phone wedge on cold backfill** — force-stop recovers it, volume disproven, location unknown;
+  repro now costs nothing. Measurements: overlay `DEV_TESTING.md`.
 
 ## ⛔ Standing
 Branches: `dev/role-split-model-seats` (public; draft PR #1 open, so a push runs full CI — ⛔ never

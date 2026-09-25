@@ -1500,6 +1500,23 @@ gate and can never rescue an unlisted sender.
   extracts URLs. Model becomes the fallback. Why: memory
   `project-model-derived-keys-are-nondeterministic`.
 
+#### ▶ AUTONOMOUS QUEUE — nothing here needs the user (set 2026-09-25)
+
+Work top-down; each is independently shippable. ⛔ The design item above comes first and needs
+sign-off before any of its code lands.
+
+1. [ ] **The delivery receipt produced 0 postings against its own $104.63 total.** Extraction failure
+       on the authoritative document class. ✅ Model exploration is open for this — within ZDR. [S–M]
+2. [ ] **Deterministic order-id parsing** from the URLs vendors already print. [S]
+3. [ ] **`.check()` sweep** — four projections have ZERO, so a rejected statement returns Ok. [S]
+4. [ ] **`UIDVALIDITY` unhandled** — a renumbered mailbox stalls the poller forever. [S]
+5. [ ] **Two capture gaps**: the draft form does not show `verify` warnings; `x-filename` needs the
+       picker's real name threaded through. [S]
+6. [ ] **The five on-device confirmations** (§ Awaiting on-device confirmation, minus the Int
+       stepper, which is the user's). ✅ `pm clear` is free now — no token to re-enter. [M]
+7. [ ] **Archive growth rate** — capacity was measured but never as a rate. [S]
+8. [ ] **Three rebuild defects**, then the **suite deadlock**. [M each]
+
 #### ✅ NEWEST-WINS IS CORRECT — settled by the user 2026-09-25 on domain grounds
 
 ✅ **The collapse is PROVEN on real mail**: a Walmart confirmation and its delivery mail both
