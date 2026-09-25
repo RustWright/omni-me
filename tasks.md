@@ -1552,7 +1552,14 @@ sign-off. ✅ 1 and 7 are done and 2 is blocked on a design call, so **3–8 is 
        message count** — one invoice PDF was 694 KB, nine times the mean, so a capacity plan keyed to
        message count will be wrong in the direction that matters. ⛔ Numbers only; the per-sender
        detail is overlay-tracked.
-8. [ ] **Three rebuild defects**, then the **suite deadlock**. [M each]
+8. [~] **Two of the four rebuild defects are done** (scoped rebuild; core tracing was already
+       fixed and the entry was stale). 🔴 **Left: the whole-log-into-memory load** — 1.3 GB peak on
+       the S9, and a fresh install's first sync hits it too, so it is an OOM with a date on it. The
+       fold is already per-event and order-only, so an ordered page walk is equivalent. [M]
+       ⛔ **The suite deadlock stays out of this branch** — the item says so itself, its prescribed
+       fix (one shared instance + a namespace per test) has an unanswered question about
+       cross-namespace bleed, and its prerequisite is consolidating 24 copies of `test_db()`. Own
+       stretch, design-first.
 
 #### ✅ NEWEST-WINS IS CORRECT — settled by the user 2026-09-25 on domain grounds
 
@@ -2191,15 +2198,15 @@ revision item, because an empty member list read as "this message is new". Fixed
 empty list as pre-grouping. ⛔ Keep that test: it is the only thing standing between a schema
 change here and a forced rebuild.
 
-- [ ] 🔴 **One stale projection rebuilds ALL of them.** `ProjectionRunner::rebuild`
-      (`projection.rs:337`) loops `clear_tables` + `init_schema` over **every registered
-      projection**, then replays the whole log through all ten. The version check
-      (`projection.rs:139`) calls it whenever *any* projection is stale. ⛔ Worse than slow:
-      Android kills backgrounded apps routinely, and a kill mid-rebuild leaves **every**
-      projection wiped with no recovery but another full rebuild — the code's own comment
-      admits this for the error case and it is just as true for a process kill.
-      **Fix:** a `rebuild_only(&[names])` for the version path; `wipe_all_data` keeps the
-      full one, which is what it actually wants. [S]
+- [x] ✅ **DONE 2026-09-25 — one stale projection no longer rebuilds all of them.**
+      `rebuild_only(&[names])` clears, re-inits and replays through the named projections only;
+      the version check passes it exactly the stale set, and `rebuild()` (what `wipe_all_data`
+      wants) still covers everything. ⚠️ **The bookmark had to be scoped with the apply**, which
+      was not in the original sketch: `advance_bookmark` looped every projection unconditionally,
+      so a scoped replay would have pushed the untouched projections' `last_received_at` past
+      events they never folded — and `catch_up` reads that field, so those events would have been
+      skipped permanently. Two tests: a bump on one of two projections wipes and replays only
+      that one, and a full `rebuild()` still covers both.
 - [ ] 🔴 **The scale, measured 2026-09-24: the dev log is 16,052 events.** A rebuild replays every
       one of them through **all ten** projections on the device. That is the number behind the
       40 minutes, and it only grows.
@@ -2214,16 +2221,17 @@ change here and a forced rebuild.
       Measured on the S9 — 16,052 events, **1.3 GB peak RSS**, 19+ minutes of CPU, every Tauri
       query blocked behind it and the UI empty throughout. On a log that only grows, this is an
       OOM with a date on it. [M]
-- [ ] 🔴 **Core's tracing never reaches Android.** `tauri-app/src-tauri/src/lib.rs:443` defaults
-      the filter to `omni_me_app=debug`, so **every** `omni_me_core` span is dropped. The one
-      line that explains the blank screen — "projection version changed — rebuilding from the
-      event log" — is invisible on the device. ⚠️ This is why the rebuild looked like a hang;
-      diagnosing it took CPU sampling instead of reading a log line that was already written.
-      **Fix:** default to `omni_me_app=debug,omni_me_core=info`. [XS]
+- [x] ✅ **ALREADY FIXED — this entry was stale.** Verified 2026-09-25: the default filter in
+      `tauri-app/src-tauri/src/lib.rs` is `omni_me_app=debug,omni_me_core=info`, with a comment
+      giving this exact reason. ⚠️ It reads as open because the dev APK that produced the empty
+      logcat was built ~25 minutes *before* the fix landed — the code was right and the artifact
+      was old. Rebuild the APK before concluding anything from a silent log again.
 
-⛔ **Shipping consequence, for whoever cuts the next release:** any projection version bump is a
-multi-minute blank-UI startup for every device that takes the update, with no progress shown.
-Fix at least the first and third before a release carries one.
+⛔ **Shipping consequence, for whoever cuts the next release:** ✅ the first and third are now
+done (scoped rebuild, core tracing). 🔴 **The second and fourth remain**, and together they are
+still the release risk: a version bump replays 16k events through the stale projection with no
+progress shown, and `get_since(epoch, None)` loads the whole log into memory (1.3 GB peak on the
+S9) — which a fresh install's first sync hits too, not just a rebuild.
 
 ### 🔴 Projection writes swallow statement errors (found 2026-09-24, by being bitten)
 
@@ -2242,7 +2250,27 @@ Fix at least the first and third before a release carries one.
       mismatch would turn into a dropped event. The sweep is: add it one file at a time, run the
       full suite each time, and read any new failure as a real pre-existing bug rather than
       noise. ⚠️ Prefer it on **writes** first; a read that fails already shows up as missing data.
-      [M, own stretch]
+
+      ✅ **DONE 2026-09-25.** The premise is a test now
+      (`db::tests::a_rejected_statement_still_returns_ok_until_it_is_checked`), landed and proven
+      green *before* the sweep so a later failure could not be blamed on it. 50 discarded writes
+      fixed: 46 across seven projections, `init_all`'s `DEFINE` block, both `db::init_schema`
+      statements, `SurrealEventStore::append`'s INSERT, the two `imap_cursors` writes and two in
+      `vector_store`. ⚠️ The per-file `.check()` counts above **overstate the defect** — a response
+      consumed by `.take()` already raises its error, so the ~40 flagged "reads" were never the
+      problem; the discarded *writes* were.
+      🔴 **The caution was right and it paid off immediately.** The sweep turned 9
+      `document_enrichment` tests red, and the cause was real: that file's `test_db()` called
+      `DocumentsProjection.init_schema` instead of `ProjectionRunner::init_all`, so
+      `projection_versions` never existed and **every `apply_events` in those tests had been
+      failing at its bookmark write**, invisibly, for as long as they have existed. Fixed in the
+      fixture, not by relaxing the check. ⛔ Nothing surfaced on the dev box: deployed
+      `dev-90c9465-a0ad51a` and the boot + three ticks + a restart produced no new error, so there
+      was no latent schema mismatch in a real database.
+      ⚠️ **Residual, deliberately left:** `config_projection::on_set` and `record_type_projection`
+      read their last-write-wins guard through `.take(..).unwrap_or(None)`, so a failed SELECT
+      still reads as "nothing stored" and the guard degrades to "always apply". Changing that
+      changes projection behaviour on a read failure, which is a semantics decision. [S, its own]
 
 ### Document viewing — all three RESOLVED 2026-09-12 by Phase 4
 
