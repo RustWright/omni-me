@@ -1468,6 +1468,38 @@ This was needed because **pausing does not survive a restart**, which had gone u
   differ. Still the only open finding; the audit now covers 24 CSV + 136 rendered statements
   and everything else is clean. [XS, question]
 
+#### 🔴 THE TRANSACTION HALF WAS NEVER ANSWERED — invert the sender gate. [M, design-first]
+
+⛔ **This is the "only the second still needs an answer" above, two weeks unaddressed.** The
+2026-09-12 ruling — *"which mail is relevant has to be self-maintaining"* — was satisfied for
+**keeping** (All Mail is archived unconditionally) and never for **becoming a transaction**.
+`RECEIPT_SENDER_PATTERNS` is still an open-ended hand-maintained gate, i.e. the exact v1 objection.
+
+🔴 **Re-ruled harder 2026-09-25** after three failures in two days: the user will not edit a list,
+rebuild the app, or forward mail to himself. ⛔ **Never add a vendor to fix a miss.** ⛔ Manual
+forwarding is a testing workaround, not a design. Verbatim + evidence: memory
+`project-receipt-sender-list-should-learn`; measurements in overlay `DEV_TESTING.md`.
+
+**Where the gate is:** `imap.rs` archives unconditionally, then `dispatch_to` asks each handler
+`accepts()`; `receipts.rs:263` matches the **sender**; no match → `DropReason::Ignored`, never
+classified. ⛔ `DocumentKind` is decided *inside* `handle()`, so the classifier sits **behind** the
+gate and can never rescue an unlisted sender.
+
+**The shape to design, not yet agreed:**
+- ⚠️ **The classifier he assumed was deciding already exists and is switched off** — the archive's
+  document `kind` comes from the enrichment pass / C2 reader seat, and dev runs
+  `OMNI_ENRICH_ENABLED: "0"`, so every archived email reads `kind: null`. ⛔ Move the decision
+  there; do not build a third classifier.
+- `accepts()` degrades to one signal among several, plus a skip-list for known noise. ⚠️ **Cost is
+  the only legitimate argument for a pre-filter** (an LLM call per email across three mailboxes), so
+  a cheap structural pass — is there a currency amount, an order/total keyword — can gate the
+  expensive extractor without a name list. A miss then becomes "low-confidence, here it is for
+  review", not silence.
+- ⛔ **Stop keying on a model field.** Parse the order id from the URL the vendor already prints
+  (`instacart.ca/store/orders/0906<id>`, `walmart.ca/en/orders/<id>`); `preprocess` already
+  extracts URLs. Model becomes the fallback. Why: memory
+  `project-model-derived-keys-are-nondeterministic`.
+
 ---
 
 ## ▶ RUNBOOK — model selection + the deferred validation pass
