@@ -437,9 +437,7 @@ mod tests {
     // --- the pass end to end, against a real store and projection ---
 
     use crate::config::ALL_FEATURES;
-    use crate::events::{
-        DocumentsProjection, EventStore, Projection, ProjectionRunner, SurrealEventStore,
-    };
+    use crate::events::{DocumentsProjection, EventStore, ProjectionRunner, SurrealEventStore};
     use std::sync::Arc;
 
     async fn test_db() -> Database {
@@ -447,7 +445,14 @@ mod tests {
         let path = dir.path().join("enrich.db");
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         std::mem::forget(dir);
-        DocumentsProjection.init_schema(&db).await.unwrap();
+        // Through the runner rather than `DocumentsProjection.init_schema` alone,
+        // which is what this used to do: that leaves `projection_versions`
+        // undefined, so every `apply_events` here failed at its bookmark write.
+        // The failure was invisible until the writes started being checked.
+        ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)])
+            .init_all()
+            .await
+            .unwrap();
         db
     }
 
