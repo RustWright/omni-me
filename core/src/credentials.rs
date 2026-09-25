@@ -90,6 +90,10 @@ pub struct Credentials {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// Random hex, generated on first boot when the section is missing.
+    ///
+    /// Required, so `[server]` present-but-empty is a whole-file parse error that
+    /// takes `[llm]` and every `[imap.*]` account down with it. To turn the token
+    /// off, delete the section header too — not just this line.
     pub auth_token: String,
 }
 

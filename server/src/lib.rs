@@ -191,10 +191,33 @@ pub async fn run(cfg: RunConfig) {
     // Load server credentials once (graceful: missing/unreadable → default-empty,
     // so a zero-config public engine still boots — 3.4). Reused for the text-LLM
     // client and the document extractor.
-    let creds = credentials::default_path()
-        .ok()
-        .and_then(|p| credentials::load(&p).ok())
-        .unwrap_or_default();
+    //
+    // A file that is PRESENT but unparseable is shouted about rather than
+    // silently degraded. `load` already maps a missing file to default-empty, so
+    // anything reaching the error arm is a real file this node could not read.
+    // Why it earns an ERROR: the failure is whole-file, and every section goes
+    // with it. Removing one required key from `[server]` — leaving the table
+    // present but empty — took out `[llm]` and all three `[imap.*]` accounts too;
+    // the box booted `{"status":"ok"}`, auto-import stopped dead, and the only
+    // clues were warnings about the sections that had not been touched.
+    let creds = match credentials::default_path() {
+        Ok(path) => match credentials::load(&path) {
+            Ok(creds) => creds,
+            Err(e) => {
+                tracing::error!(
+                    path = %path.display(),
+                    error = %e,
+                    "credentials file could not be parsed — CONTINUING WITH NONE OF IT: no LLM \
+                     provider, no auto-import sources, no server token. Fix the file and restart.",
+                );
+                credentials::Credentials::default()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "no credentials path — continuing with defaults");
+            credentials::Credentials::default()
+        }
+    };
 
     // HTTP bearer token. Deliberately FAILS OPEN when `[server]` is absent:
     // upgrading the box must not start rejecting devices that haven't been
