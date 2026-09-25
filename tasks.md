@@ -1500,27 +1500,30 @@ gate and can never rescue an unlisted sender.
   extracts URLs. Model becomes the fallback. Why: memory
   `project-model-derived-keys-are-nondeterministic`.
 
-#### 🔴 OPEN QUESTION for the user — when two messages about one order disagree, which wins?
+#### ✅ NEWEST-WINS IS CORRECT — settled by the user 2026-09-25 on domain grounds
 
-✅ **The collapse is PROVEN on real mail** (2026-09-25): a Walmart confirmation and its delivery mail
-both extracted order `600000113495028` and became **one** review item, with the superseded proposal
+✅ **The collapse is PROVEN on real mail**: a Walmart confirmation and its delivery mail both
+extracted order `600000113495028` and became **one** review item, with the superseded proposal
 recorded in full. ⛔ Do not re-verify this.
 
-🔴 **But the rule is last-write-wins, and it kept the worse extraction.** The delivery mail arrived
-second with **0 postings** at effective confidence **0.205** and a warning that the whole £/$104.63
-total is unaccounted; it superseded the confirmation's **4 clean postings** at 0.82. The 4 postings
-are preserved and visible in the lineage panel, so nothing is lost — but the review item a person
-opens is the empty one.
+⛔ **And do NOT "fix" the selection rule — I had this backwards.** I read the confirmation's 4
+postings at conf 0.82 as the better data and the delivery's 0 postings at 0.205 as a regression, and
+proposed flagging or reordering. The user's correction: *"the second with delivery is always the one
+with the correct cost because the order confirmation always only gives an estimate since things
+might be unavailable or somethings are sold by weight which isn't known at the time of ordering."*
 
-⚠️ **This is a product decision, not a bug fix — do not change it unilaterally.** Candidates:
-- **(a) Newest wins** (today). Simple, and usually right: a receipt legitimately supersedes a
-  confirmation. Wrong exactly when the newer extraction is worse.
-- **(b) Best-scoring wins** — order by `effective_confidence`, or by "has postings at all". Fixes
-  this case; ⚠️ risks a stale confirmation outranking a corrected later receipt.
-- **(c) Newest wins, but a strictly-worse supersession is flagged** — keep arrival order, and mark
-  the row when the incoming proposal has fewer postings or materially lower confidence. Preserves
-  (a)'s semantics and makes the one case that hurts visible. ✅ **My recommendation**, because the
-  review queue already exists to carry exactly this kind of doubt.
+🔴 **So the confirmation's postings are an ESTIMATE and must never outrank the delivery receipt.**
+Ordering by confidence or posting count would have promoted the estimate over the truth — a worse
+bug than the one it fixed, and silent. **Newest-wins is right because later documents are more
+authoritative, not because it is simpler.** ⚠️ Any future scoring rule must respect document
+*authority* first; `DocumentKind` already ranks it (confirmation < shipping/delivery < receipt).
+
+🔴 **The REAL defect this exposed: the authoritative document failed to extract.** The delivery mail
+produced **0 postings against its own stated total of 104.63** (`line-item sum 0 does not match
+document total`). That is an extraction failure on the document class that carries the true cost —
+the most important one to get right — and it is why the review item looks empty. [S–M, mine]
+⚠️ Narrow residual, low priority: when the authoritative document fails to price, should the
+estimate's postings be offered in review as a fallback rather than only as lineage? Ask before building.
 
 ---
 

@@ -11,9 +11,10 @@ fix a miss.** ⛔ Manual forwarding is a testing workaround, not a design.
 half-implemented, so this is an unfinished decision, not a new idea.
 
 ## ⛔ Waiting on the user
-- 🔴 **Which proposal wins when two messages about one order disagree?** `tasks.md` § "OPEN QUESTION
-  for the user" has three options and a recommendation. Today's rule kept a 0-posting extraction
-  over a 4-posting one. ⛔ Do not change it unilaterally.
+- 🔴 **Ledger catch-up: incremental, or full finances wipe + re-import?** Chain item 1, nothing can
+  be imported until it is answered, and a half-caught-up ledger is worse than an empty one.
+- 🔴 **Inbox management after extraction** and **reviewing the email archive** — both open since
+  2026-09-11, both product calls.
 - **At the next box reset: remove `[server].auth_token` from the DEV credentials file.** ⛔ Never
   touch the live one. ✅ Safe — both instances bind the tailnet address, never `0.0.0.0`, so the
   tailnet is the auth boundary. Doing it sooner unblocks `pm clear` on the phone.
