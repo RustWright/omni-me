@@ -48,12 +48,34 @@ pub struct ImapMessage {
     pub body: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FetchCursor {
     /// The highest UID we've already processed for this account/label.
     /// `None` on first run for an account → fetch only future messages
     /// (skip backfill of historical mail).
     pub last_seen_uid: Option<u32>,
+    /// The mailbox's `UIDVALIDITY` when `last_seen_uid` was recorded.
+    ///
+    /// A UID only means anything paired with the validity it was issued under.
+    /// When the server changes it — a mailbox recreated, migrated, or restored —
+    /// the numbering restarts and the old cursor points into a space that no
+    /// longer exists, so the poller sits forever on a range that matches nothing.
+    /// `None` for a cursor stored before this was recorded, which is treated as
+    /// "unknown, do not act on it" rather than as a mismatch.
+    pub uid_validity: Option<u32>,
+}
+
+/// What one fetch saw. A struct rather than a tuple because the third element
+/// is only meaningful beside the other two, and a bare `(Vec<_>, Option<u32>,
+/// Option<u32>)` is two indistinguishable `Option<u32>`s at every call site.
+#[derive(Debug, Default)]
+pub struct FetchOutcome {
+    pub messages: Vec<ImapMessage>,
+    /// Highest UID the mailbox holds, whether or not it was fetched — the value
+    /// the next cursor advances to.
+    pub highest_uid: Option<u32>,
+    /// `UIDVALIDITY` as observed on this connection, to be stored beside the UID.
+    pub uid_validity: Option<u32>,
 }
 
 #[async_trait]
@@ -66,10 +88,11 @@ pub trait ImapFetcher: Send + Sync {
     /// `cursor.last_seen_uid == None`, real impls should return an empty
     /// list AND the current max UID so the next tick has a starting point —
     /// avoids accidentally back-importing the entire historical inbox.
-    async fn fetch_new(
-        &self,
-        cursor: &FetchCursor,
-    ) -> Result<(Vec<ImapMessage>, Option<u32>), ImportError>;
+    ///
+    /// An impl that can observe `UIDVALIDITY` reports it, and treats a change
+    /// from `cursor.uid_validity` as a reset rather than as a gap: the stored UID
+    /// belongs to a numbering that no longer exists.
+    async fn fetch_new(&self, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError>;
 }
 
 /// Per-source handler — receipts, AED statements, etc. Each handler claims
@@ -169,7 +192,11 @@ pub async fn poll_once(
     cursor: &FetchCursor,
     archive: Option<&ArchiveTarget<'_>>,
 ) -> Result<PollOutcome, ImportError> {
-    let (messages, max_uid) = fetcher.fetch_new(cursor).await?;
+    let FetchOutcome {
+        messages,
+        highest_uid: max_uid,
+        uid_validity,
+    } = fetcher.fetch_new(cursor).await?;
     // `fetch_new` promises UID > last_seen_uid and the IMAP one cannot quite keep it, since a
     // `{last+1}:*` range matches the highest existing UID when nothing is newer. Enforced here
     // rather than only in that fetcher: a re-seen message is archived again under a fresh id.
@@ -288,8 +315,14 @@ pub async fn poll_once(
 
     // Advance the cursor regardless of unrouted OR failed count — neither is
     // re-processable, and pinning the cursor on them wedges the mailbox.
+    //
+    // ⚠️ The validity carried forward is the one just *observed*, never the
+    // stored one. After a reset the fetcher has already decided the old UID is
+    // meaningless, so persisting the old validity beside the new UID would make
+    // the next tick detect the same reset again, forever.
     let next_cursor = FetchCursor {
         last_seen_uid: max_uid.or(cursor.last_seen_uid),
+        uid_validity: uid_validity.or(cursor.uid_validity),
     };
     Ok(PollOutcome {
         messages_seen: messages.len(),
@@ -333,8 +366,8 @@ pub mod mock {
 
     pub struct MockFetcher {
         name: String,
-        // (messages, max_uid) returned on next fetch_new call.
-        scripted: Mutex<std::collections::VecDeque<(Vec<ImapMessage>, Option<u32>)>>,
+        // Returned one per `fetch_new` call, in order.
+        scripted: Mutex<std::collections::VecDeque<FetchOutcome>>,
     }
 
     impl MockFetcher {
@@ -345,7 +378,24 @@ pub mod mock {
             }
         }
         pub fn push_response(&self, messages: Vec<ImapMessage>, max_uid: Option<u32>) {
-            self.scripted.lock().unwrap().push_back((messages, max_uid));
+            self.scripted.lock().unwrap().push_back(FetchOutcome {
+                messages,
+                highest_uid: max_uid,
+                uid_validity: None,
+            });
+        }
+        /// For the cases that are about the validity rather than the UID.
+        pub fn push_response_with_validity(
+            &self,
+            messages: Vec<ImapMessage>,
+            max_uid: Option<u32>,
+            uid_validity: Option<u32>,
+        ) {
+            self.scripted.lock().unwrap().push_back(FetchOutcome {
+                messages,
+                highest_uid: max_uid,
+                uid_validity,
+            });
         }
     }
 
@@ -354,16 +404,13 @@ pub mod mock {
         fn name(&self) -> &str {
             &self.name
         }
-        async fn fetch_new(
-            &self,
-            _cursor: &FetchCursor,
-        ) -> Result<(Vec<ImapMessage>, Option<u32>), ImportError> {
+        async fn fetch_new(&self, _cursor: &FetchCursor) -> Result<FetchOutcome, ImportError> {
             Ok(self
                 .scripted
                 .lock()
                 .unwrap()
                 .pop_front()
-                .unwrap_or((Vec::new(), None)))
+                .unwrap_or_default())
         }
     }
 
@@ -483,6 +530,7 @@ mod tests {
         ];
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
+            ..Default::default()
         };
         let outcome = poll_once(&fetcher, &handlers, &cursor, None).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
@@ -499,6 +547,7 @@ mod tests {
         fetcher.push_response(vec![make_message(101, "random@example.com")], Some(101));
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
+            ..Default::default()
         };
         let outcome = poll_once(&fetcher, &[], &cursor, None).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
@@ -512,6 +561,7 @@ mod tests {
         fetcher.push_response(vec![], None); // server reports no new UIDs
         let cursor = FetchCursor {
             last_seen_uid: Some(500),
+            ..Default::default()
         };
         let outcome = poll_once(&fetcher, &[], &cursor, None).await.unwrap();
         let (events, next) = (outcome.events, outcome.next_cursor);
@@ -542,6 +592,7 @@ mod tests {
         })];
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
+            ..Default::default()
         };
 
         let outcome = poll_once(&fetcher, &handlers, &cursor, None)
@@ -582,6 +633,7 @@ mod tests {
         ];
         let cursor = FetchCursor {
             last_seen_uid: Some(100),
+            ..Default::default()
         };
 
         let outcome = poll_once(&fetcher, &handlers, &cursor, None).await.unwrap();
@@ -646,6 +698,7 @@ mod tests {
             &handlers,
             &FetchCursor {
                 last_seen_uid: None,
+                ..Default::default()
             },
             Some(&target),
         )
@@ -763,6 +816,7 @@ mod tests {
             &handlers,
             &FetchCursor {
                 last_seen_uid: None,
+                ..Default::default()
             },
             Some(&target),
         )
@@ -807,6 +861,7 @@ mod tests {
             &handlers,
             &FetchCursor {
                 last_seen_uid: Some(14835),
+                ..Default::default()
             },
             Some(&target),
         )
@@ -858,6 +913,7 @@ mod tests {
             &handlers,
             &FetchCursor {
                 last_seen_uid: Some(14835),
+                ..Default::default()
             },
             Some(&target),
         )
