@@ -39,12 +39,13 @@ impl Projection for RecordTypeProjection {
              DEFINE FIELD IF NOT EXISTS declaration ON record_types TYPE object FLEXIBLE;
              DEFINE FIELD IF NOT EXISTS updated_at ON record_types TYPE datetime;",
         )
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
     async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
-        db.query("DELETE FROM record_types").await?;
+        db.query("DELETE FROM record_types").await?.check()?;
         Ok(())
     }
 
@@ -107,7 +108,8 @@ impl RecordTypeProjection {
         .bind(("name", name))
         .bind(("declaration", declaration))
         .bind(("ts", event.timestamp.to_rfc3339()))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }

@@ -39,12 +39,13 @@ impl Projection for ConfigProjection {
              DEFINE FIELD IF NOT EXISTS value ON app_config TYPE option<object> FLEXIBLE;
              DEFINE FIELD IF NOT EXISTS updated_at ON app_config TYPE datetime;",
         )
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
     async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
-        db.query("DELETE FROM app_config").await?;
+        db.query("DELETE FROM app_config").await?.check()?;
         Ok(())
     }
 
@@ -124,7 +125,8 @@ impl ConfigProjection {
         .bind(("key", key))
         .bind(("value", value_json))
         .bind(("ts", event.timestamp.to_rfc3339()))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }

@@ -59,7 +59,8 @@ impl Projection for RoutinesProjection {
              DEFINE FIELD IF NOT EXISTS skipped ON routine_completions TYPE bool;
              DEFINE FIELD IF NOT EXISTS reason ON routine_completions TYPE option<string>;",
         )
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -70,7 +71,8 @@ impl Projection for RoutinesProjection {
              DELETE FROM routine_items;
              DELETE FROM routine_completions;",
         )
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -126,7 +128,8 @@ impl RoutinesProjection {
         .bind(("frequency", frequency))
         .bind(("order_num", order))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -175,7 +178,7 @@ impl RoutinesProjection {
                 .bind((format!("group_id_{i}"), group_id.clone()))
                 .bind((format!("order_num_{i}"), *order));
         }
-        q.await?;
+        q.await?.check()?;
 
         Ok(())
     }
@@ -201,7 +204,8 @@ impl RoutinesProjection {
         )
         .bind(("group_id", group_id))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -235,7 +239,8 @@ impl RoutinesProjection {
         .bind(("name", name))
         .bind(("duration", duration))
         .bind(("order_num", order))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -315,7 +320,7 @@ impl RoutinesProjection {
         if let Some(o) = order {
             q = q.bind(("order_num", o));
         }
-        q.await?;
+        q.await?.check()?;
 
         Ok(())
     }
@@ -336,7 +341,8 @@ impl RoutinesProjection {
                 order_num = order_num ?? 0",
         )
         .bind(("item_id", item_id))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -379,7 +385,8 @@ impl RoutinesProjection {
         .bind(("group_id", group_id))
         .bind(("date", date))
         .bind(("completed_at", completed_at))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -417,7 +424,8 @@ impl RoutinesProjection {
         .bind(("date", date))
         .bind(("ts", ts))
         .bind(("reason", reason))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -440,7 +448,8 @@ impl RoutinesProjection {
 
         db.query("DELETE type::record('routine_completions', $completion_id)")
             .bind(("completion_id", completion_id))
-            .await?;
+            .await?
+            .check()?;
 
         Ok(())
     }

@@ -77,6 +77,8 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
         ",
     )
     .await
+    .map_err(DbError::Schema)?
+    .check()
     .map_err(DbError::Schema)?;
 
     // One-time backfill for events stored before `received_at` existed. The
@@ -87,6 +89,8 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
     // local events could never push again).
     db.query("UPDATE events SET received_at = timestamp WHERE received_at IS NONE")
         .await
+        .map_err(DbError::Schema)?
+        .check()
         .map_err(DbError::Schema)?;
 
     Ok(())

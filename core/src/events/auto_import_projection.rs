@@ -181,7 +181,7 @@ impl Projection for AutoImportProjection {
              DEFINE FIELD IF NOT EXISTS resolved_at ON auto_import_resolutions TYPE string;
              DEFINE FIELD IF NOT EXISTS resolve_reason ON auto_import_resolutions TYPE option<string>;",
         )
-        .await?;
+        .await?.check()?;
         Ok(())
     }
 
@@ -190,7 +190,8 @@ impl Projection for AutoImportProjection {
             "DELETE FROM pending_auto_import_batches;
              DELETE FROM auto_import_resolutions;",
         )
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -399,7 +400,8 @@ impl AutoImportProjection {
         .bind(("status", new_status.to_string()))
         .bind(("resolved_at", resolved_at))
         .bind(("resolve_reason", resolve_reason))
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 }

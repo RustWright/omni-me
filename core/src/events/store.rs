@@ -511,7 +511,8 @@ impl EventStore for SurrealEventStore {
             .bind(("timestamp", ts_str))
             .bind(("device_id", event.device_id.clone()))
             .bind(("payload", event.payload.clone()))
-            .await?;
+            .await?
+            .check()?;
 
         Ok(Event {
             id,
@@ -685,7 +686,7 @@ impl EventStore for SurrealEventStore {
     }
 
     async fn purge_all(&self) -> Result<(), EventError> {
-        self.db.query("DELETE events").await?;
+        self.db.query("DELETE events").await?.check()?;
         Ok(())
     }
 }

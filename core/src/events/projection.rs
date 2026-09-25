@@ -66,8 +66,8 @@ impl ProjectionRunner {
                  DEFINE FIELD IF NOT EXISTS last_received_at ON projection_versions TYPE option<datetime>;
                  DEFINE INDEX IF NOT EXISTS idx_pv_name ON projection_versions FIELDS name UNIQUE;",
             )
-            .await
-?;
+            .await?
+            .check()?;
 
         let mut stale: Vec<String> = Vec::new();
 
@@ -133,7 +133,8 @@ impl ProjectionRunner {
                 .bind(("name", name))
                 .bind(("version", version))
                 .bind(("seed", seed.to_rfc3339()))
-                .await?;
+                .await?
+                .check()?;
         }
 
         if !stale.is_empty() {
@@ -328,7 +329,8 @@ impl ProjectionRunner {
                 .bind(("event_id", event.id.clone()))
                 .bind(("received", received.clone()))
                 .bind(("name", name))
-                .await?;
+                .await?
+                .check()?;
         }
         Ok(())
     }
