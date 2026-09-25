@@ -11,15 +11,17 @@ fix a miss.** ⛔ Manual forwarding is a testing workaround, not a design.
 half-implemented, so this is an unfinished decision, not a new idea.
 
 ## ⛔ Waiting on the user
-- **Fresh Walmart/Instacart forwards sent ~14:05Z 09-25** — poll runs ~:19/:20/:22 past the half
-  hour. Read the tick, then the phone over CDP. This is the outstanding **collapse** test.
+- 🔴 **Which proposal wins when two messages about one order disagree?** `tasks.md` § "OPEN QUESTION
+  for the user" has three options and a recommendation. Today's rule kept a 0-posting extraction
+  over a 4-posting one. ⛔ Do not change it unilaterally.
 - **At the next box reset: remove `[server].auth_token` from the DEV credentials file.** ⛔ Never
   touch the live one. ✅ Safe — both instances bind the tailnet address, never `0.0.0.0`, so the
   tailnet is the auth boundary. Doing it sooner unblocks `pm clear` on the phone.
 
 ## ⛔ Inherit — settled, do not re-derive
 - ⛔ **Grouping runs PER DEVICE** (`build_projections_server` registers only `documents`).
-  ✅ Verified on the phone; the authoring half is proven. Only the **collapse** is unproven.
+  ✅ **Fully verified on the phone, collapse included** — a Walmart confirmation + delivery sharing
+  order `600000113495028` became one review item with the superseded proposal recorded. ⛔ Done.
 - 🔴 **Grouping merges only sometimes** — the key is model-derived. ✅ It fails safe and the
   4-char floor catches junk; ⛔ do not loosen those bounds. Why: memory
   `project-model-derived-keys-are-nondeterministic`.
