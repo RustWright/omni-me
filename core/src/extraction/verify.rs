@@ -61,6 +61,17 @@ pub struct VerificationReport {
     /// Does not affect confidence — it exists so "no warnings" can never be
     /// mistaken for "the arithmetic was verified".
     pub total_check: TotalCheck,
+    /// How far the line items missed a stated total, when one was compared and
+    /// disagreed. `None` when they reconciled or nothing was compared.
+    ///
+    /// Distinct from `total_check`, which records whether the comparison was
+    /// independent rather than what it found. This is the one signal in the
+    /// report that is objective rather than a suspicion: the document states the
+    /// figure itself, so a gap means the extraction is wrong, where a low
+    /// confidence only means the model was unsure. `extract_reconciled` retries
+    /// on it, and the size is carried so a caller can prefer the closest attempt
+    /// rather than the first.
+    pub total_mismatch: Option<Decimal>,
 }
 
 /// Run all applicable verification checks for the given extraction + hint.
@@ -75,6 +86,7 @@ pub fn verify(
     let mut warnings = Vec::new();
     let mut adjustment: f64 = 1.0;
     let mut total_check = TotalCheck::NotRun;
+    let mut total_mismatch = None;
 
     // EmailBody cross-checks its total when one is present, but is absent from the
     // arm below that treats a missing total as suspicious: a receipt email often
@@ -88,7 +100,13 @@ pub fn verify(
             | ExtractionHint::EmailBody
     ) {
         if let Some(total) = result.total {
-            total_check = check_total(&result.postings, total, &mut warnings, &mut adjustment);
+            total_check = check_total(
+                &result.postings,
+                total,
+                &mut warnings,
+                &mut adjustment,
+                &mut total_mismatch,
+            );
         } else if matches!(hint, ExtractionHint::Receipt | ExtractionHint::Paystub) {
             // For these hints we *expect* a reference total. Missing is suspicious.
             warnings.push(format!(
@@ -136,6 +154,7 @@ pub fn verify(
         effective_confidence,
         needs_manual_review,
         total_check,
+        total_mismatch,
     }
 }
 
@@ -144,6 +163,7 @@ fn check_total(
     total: Decimal,
     warnings: &mut Vec<String>,
     adjustment: &mut f64,
+    mismatch: &mut Option<Decimal>,
 ) -> TotalCheck {
     // Charge side only when the model volunteered the payment leg, or its own
     // counter leg is counted as a second line item and every clean document
@@ -165,6 +185,7 @@ fn check_total(
             "line-item sum {sum} does not match document total {total} (diff {diff})",
         ));
         *adjustment *= 0.5;
+        *mismatch = Some(diff);
         // A disagreement discriminated, whatever the contributor count.
         return TotalCheck::Performed;
     }

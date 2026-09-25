@@ -257,6 +257,79 @@ pub fn is_readable_mime(mime: &str) -> bool {
     READABLE_MIMES.contains(&mime)
 }
 
+/// Attempts [`extract_reconciled`] will make before settling for the closest.
+///
+/// Three, because the failure it exists for is a coin flip rather than a bias:
+/// one document measured 2026-09-25 returned 0, 0, 0, 4, 6 and 7 postings across
+/// six runs of identical bytes, so each further attempt roughly halves the odds
+/// of shipping an unpriced draft and the third is where that stops paying.
+pub const RECONCILE_ATTEMPTS: usize = 3;
+
+/// Extract, and re-extract while the document's own total says the result is wrong.
+///
+/// The retry fires on one signal only: `VerificationReport::total_mismatch`, a
+/// line-item sum that disagrees with a total the document states about itself.
+/// That is objective — the document supplies both figures — so a gap is evidence
+/// the extraction failed rather than a hunch about it.
+///
+/// Deliberately does **not** retry on low confidence or on zero postings alone.
+/// A marketing email legitimately has no line items, and nothing in it will ever
+/// reconcile, so retrying on absence would spend three calls on every newsletter
+/// to learn what the first one already said.
+///
+/// Returns the attempt that reconciled, or the closest one if none did. Keeping
+/// the closest matters: the alternative is the *first*, and the measured failure
+/// returns nothing at all half the time, so first-wins ships an empty draft while
+/// a correct reading sits in a discarded attempt.
+pub async fn extract_reconciled(
+    extractor: &dyn DocumentExtractor,
+    parts: &[DocumentPart<'_>],
+    hint: ExtractionHint,
+    threshold: f64,
+    attempts: usize,
+) -> Result<(ExtractionResult, VerificationReport), ExtractionError> {
+    let mut best: Option<(ExtractionResult, VerificationReport)> = None;
+
+    for attempt in 1..=attempts.max(1) {
+        let result = extractor.extract(parts, hint).await?;
+        let report = verify(&result, hint, threshold);
+        let Some(gap) = report.total_mismatch else {
+            // Nothing to compare, or it reconciled. Either way another call
+            // cannot improve on this and would only cost money.
+            return Ok((result, report));
+        };
+
+        let better = best
+            .as_ref()
+            .and_then(|(_, r)| r.total_mismatch)
+            .is_none_or(|best_gap| gap < best_gap);
+        tracing::info!(
+            extractor = extractor.name(),
+            attempt,
+            attempts,
+            postings = result.postings.len(),
+            %gap,
+            better,
+            "extraction did not reconcile with the document's own total — retrying"
+        );
+        if better {
+            best = Some((result, report));
+        }
+    }
+
+    // Unreachable in practice: the loop runs at least once and either returns
+    // early or fills `best`. Expressed as a fall-through rather than an unwrap so
+    // a future edit to the loop bounds cannot turn this into a panic.
+    match best {
+        Some(pair) => Ok(pair),
+        None => {
+            let result = extractor.extract(parts, hint).await?;
+            let report = verify(&result, hint, threshold);
+            Ok((result, report))
+        }
+    }
+}
+
 /// Object-safe trait — no generic methods, can be used as `Box<dyn DocumentExtractor>`.
 #[async_trait]
 pub trait DocumentExtractor: Send + Sync {
@@ -621,6 +694,161 @@ pub fn add_counter_legs(result: &mut ExtractionResult, hint: ExtractionHint) {
             amount: -sum,
             line_label: None,
         });
+    }
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::*;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+    use std::sync::Mutex;
+
+    /// Hands back a scripted sequence of results, one per call, so the flapping
+    /// measured on a real delivery mail can be replayed deterministically.
+    struct ScriptedExtractor {
+        script: Mutex<std::vec::IntoIter<ExtractionResult>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl ScriptedExtractor {
+        fn new(script: Vec<ExtractionResult>) -> Self {
+            Self {
+                script: Mutex::new(script.into_iter()),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl DocumentExtractor for ScriptedExtractor {
+        fn name(&self) -> &str {
+            "scripted"
+        }
+        fn supports(&self, _mime: &str) -> bool {
+            true
+        }
+        async fn extract(
+            &self,
+            _parts: &[DocumentPart<'_>],
+            _hint: ExtractionHint,
+        ) -> Result<ExtractionResult, ExtractionError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.script
+                .lock()
+                .unwrap()
+                .next()
+                .ok_or_else(|| ExtractionError::Upstream("script exhausted".into()))
+        }
+    }
+
+    /// `amounts` become line items; `total` is what the document states about itself.
+    fn result_with(amounts: &[&str], total: Option<&str>, confidence: f64) -> ExtractionResult {
+        ExtractionResult {
+            date: None,
+            date_as_printed: None,
+            description: Some("Northwind".into()),
+            postings: amounts
+                .iter()
+                .map(|a| ExtractedPosting {
+                    account_hint: Some("Expenses:Groceries".into()),
+                    commodity: "CAD".into(),
+                    amount: Decimal::from_str(a).unwrap(),
+                    line_label: None,
+                })
+                .collect(),
+            total: total.map(|t| Decimal::from_str(t).unwrap()),
+            confidence,
+            dropped_postings: 0,
+            model: "scripted".into(),
+            total_discarded: false,
+            document_kind: Some("receipt".into()),
+            order_ref: Some("ORD-1".into()),
+            raw_response: serde_json::Value::Null,
+        }
+    }
+
+    async fn run(script: Vec<ExtractionResult>) -> (ExtractionResult, VerificationReport, usize) {
+        let ex = ScriptedExtractor::new(script);
+        let (result, report) = extract_reconciled(
+            &ex,
+            &[DocumentPart::new(b"body", "text/plain")],
+            ExtractionHint::EmailBody,
+            DEFAULT_CONFIDENCE_THRESHOLD,
+            RECONCILE_ATTEMPTS,
+        )
+        .await
+        .expect("scripted extraction should succeed");
+        (result, report, ex.calls())
+    }
+
+    /// The whole point: a first attempt that reconciles costs exactly one call.
+    #[tokio::test]
+    async fn a_result_that_reconciles_is_not_retried() {
+        let (result, report, calls) = run(vec![result_with(
+            &["60.52", "19.99", "4.03"],
+            Some("84.54"),
+            0.9,
+        )])
+        .await;
+        assert_eq!(calls, 1, "a clean extraction must not spend a second call");
+        assert_eq!(result.postings.len(), 3);
+        assert_eq!(report.total_mismatch, None);
+    }
+
+    /// Replays the measured failure: no line items against a total the document
+    /// stated correctly, then a reading that adds up.
+    #[tokio::test]
+    async fn a_result_that_misses_the_stated_total_is_retried_until_it_reconciles() {
+        let (result, report, calls) = run(vec![
+            result_with(&[], Some("104.63"), 0.42),
+            result_with(&["100.00", "4.63"], Some("104.63"), 0.82),
+            result_with(&[], Some("104.63"), 0.21),
+        ])
+        .await;
+        assert_eq!(calls, 2, "should stop as soon as one reconciles");
+        assert_eq!(result.postings.len(), 2);
+        assert_eq!(report.total_mismatch, None);
+    }
+
+    /// When nothing reconciles, the closest attempt wins — not the first. The
+    /// first returns nothing at all, which is the draft the user would have to
+    /// price by hand.
+    #[tokio::test]
+    async fn the_closest_attempt_wins_when_none_reconcile() {
+        let (result, report, calls) = run(vec![
+            result_with(&[], Some("104.63"), 0.21),
+            result_with(&["100.00"], Some("104.63"), 0.5),
+            result_with(&["20.00"], Some("104.63"), 0.5),
+        ])
+        .await;
+        assert_eq!(calls, RECONCILE_ATTEMPTS);
+        assert_eq!(
+            result.postings.first().map(|p| p.amount),
+            Some(Decimal::from_str("100.00").unwrap()),
+            "kept the attempt 4.63 short rather than the one that read nothing"
+        );
+        assert_eq!(
+            report.total_mismatch,
+            Some(Decimal::from_str("4.63").unwrap())
+        );
+    }
+
+    /// A document stating no total gives no objective signal, so retrying on it
+    /// would spend three calls on every marketing email to learn nothing.
+    #[tokio::test]
+    async fn no_stated_total_means_no_retry_even_with_no_postings() {
+        let (result, report, calls) = run(vec![result_with(&[], None, 0.3)]).await;
+        assert_eq!(calls, 1);
+        assert!(result.postings.is_empty());
+        assert_eq!(report.total_mismatch, None);
+        assert!(
+            report.warnings.iter().any(|w| w.contains("no postings")),
+            "the result is still flagged, it is just not re-asked"
+        );
     }
 }
 
