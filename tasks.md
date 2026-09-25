@@ -1481,40 +1481,58 @@ forwarding is a testing workaround, not a design. Verbatim + evidence: memory
 `project-receipt-sender-list-should-learn`; measurements in overlay `DEV_TESTING.md`.
 
 **Where the gate is:** `imap.rs` archives unconditionally, then `dispatch_to` asks each handler
-`accepts()`; `receipts.rs:263` matches the **sender**; no match → `DropReason::Ignored`, never
+`accepts()`; `receipts.rs` matches the **sender**; no match → `DropReason::Ignored`, never
 classified. ⛔ `DocumentKind` is decided *inside* `handle()`, so the classifier sits **behind** the
 gate and can never rescue an unlisted sender.
 
-**The shape to design, not yet agreed:**
-- ⚠️ **The classifier he assumed was deciding already exists and is switched off** — the archive's
-  document `kind` comes from the enrichment pass / C2 reader seat, and dev runs
-  `OMNI_ENRICH_ENABLED: "0"`, so every archived email reads `kind: null`. ⛔ Move the decision
-  there; do not build a third classifier.
-- `accepts()` degrades to one signal among several, plus a skip-list for known noise. ⚠️ **Cost is
-  the only legitimate argument for a pre-filter** (an LLM call per email across three mailboxes), so
-  a cheap structural pass — is there a currency amount, an order/total keyword — can gate the
-  expensive extractor without a name list. A miss then becomes "low-confidence, here it is for
-  review", not silence.
-- ⛔ **Stop keying on a model field.** Parse the order id from the URL the vendor already prints
-  (`instacart.ca/store/orders/0906<id>`, `walmart.ca/en/orders/<id>`); `preprocess` already
-  extracts URLs. Model becomes the fallback. Why: memory
-  `project-model-derived-keys-are-nondeterministic`.
+✅ **DESIGNED 2026-09-25 — overlay `GATE_INVERSION_DESIGN.md`, awaiting sign-off on two calls.**
+⛔ The design, its evidence and every per-sender measurement live in the **overlay**: IMAP work is
+private-repo-tracked (user, 2026-08-10) and the corpus is the user's own mail. ⛔ Do not restate any
+of it here and do not re-derive it.
+
+**What it concluded, in shape only.** Delete the gate; add no filter in its place; let the
+`DocumentKind` classifier that already runs inside `handle()` decide. Measured against 54 real
+messages, that is better on **both** recall and precision than the sender list, and the cost of
+filtering nothing at all is ~$0.10/month — so ⛔ **cost was never the argument for a pre-filter**,
+and a structural pre-filter was measured and **rejected** for losing real purchases.
+⚠️ Two of the design's four code items shipped separately as defects in their own right (a PDF
+attachment gated on its declared MIME, and a retry when line items miss a stated total); the two
+that change the gate itself wait for sign-off.
 
 #### ▶ AUTONOMOUS QUEUE — nothing here needs the user (set 2026-09-25)
 
-Work top-down; each is independently shippable. ⛔ The design item above comes first and needs
-sign-off before any of its code lands.
+Work top-down; each is independently shippable. ⛔ The gate-inversion code above still needs
+sign-off. ✅ 1 and 7 are done and 2 is blocked on a design call, so **3–8 is the live stretch**.
 
-1. [ ] **The delivery receipt produced 0 postings against its own $104.63 total.** Extraction failure
-       on the authoritative document class. ✅ Model exploration is open for this — within ZDR. [S–M]
-2. [ ] **Deterministic order-id parsing** from the URLs vendors already print. [S]
+1. [x] ✅ **DONE — and the diagnosis in this line was wrong.** It read as an extraction failure on the
+       authoritative document class. It is not a class: six runs of *identical bytes* returned
+       `0, 0, 0, 4, 6, 7` postings while reading the document's own total correctly every time, and
+       its pair partner was stable at 5 across all six. ⛔ **Not a model problem** — the same seat
+       gets it right half the time, so the seat is not the variable. `extraction::extract_reconciled`
+       re-asks while the line items miss a total the document states about itself, keeping the closest
+       attempt; it spends nothing on a document that reconciles first time, and nothing at all on one
+       that states no total (a newsletter would otherwise cost three calls to say nothing).
+2. [~] 🔴 **BLOCKED ON A DESIGN CALL — the premise is wrong, do not build it as written.** Checked
+       against every order-bearing message in the corpus: the receipt half of a pair prints **no order
+       URL at all** (only opaque click-tracker redirects), so URL-keying would *un-group* a pair that
+       groups correctly today, and one delivery platform prints **two different ids for one order**
+       (the confirmation's is the receipt's with the delivery date stamped on the front). The labelled
+       order number in the body already reads reliably — identical on 12/12 runs. ✅ Deterministic
+       parsing still buys *stability* (one message keying two ways across polls is what made duplicate
+       review items), but ⛔ **grouping the pair needs candidate keys**, which loosens exactly what the
+       user ruled on. Overlay `GATE_INVERSION_DESIGN.md` § 5.6.
 3. [ ] **`.check()` sweep** — four projections have ZERO, so a rejected statement returns Ok. [S]
 4. [ ] **`UIDVALIDITY` unhandled** — a renumbered mailbox stalls the poller forever. [S]
 5. [ ] **Two capture gaps**: the draft form does not show `verify` warnings; `x-filename` needs the
        picker's real name threaded through. [S]
 6. [ ] **The five on-device confirmations** (§ Awaiting on-device confirmation, minus the Int
        stepper, which is the user's). ✅ `pm clear` is free now — no token to re-enter. [M]
-7. [ ] **Archive growth rate** — capacity was measured but never as a rate. [S]
+7. [x] ✅ **MEASURED 2026-09-25** on the dev instance's own archive, over the 8 days its poller had
+       been running: **~9.4 documents/day, ~6.75 of them email**, mean 74 KB per archived message.
+       The whole archive to date is 37 MB. ⚠️ **The rate is dominated by attachment-bearing mail, not
+       message count** — one invoice PDF was 694 KB, nine times the mean, so a capacity plan keyed to
+       message count will be wrong in the direction that matters. ⛔ Numbers only; the per-sender
+       detail is overlay-tracked.
 8. [ ] **Three rebuild defects**, then the **suite deadlock**. [M each]
 
 #### ✅ NEWEST-WINS IS CORRECT — settled by the user 2026-09-25 on domain grounds

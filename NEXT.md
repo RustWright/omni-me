@@ -1,41 +1,40 @@
 # NEXT
 
-🔴 **RULING 2026-09-25 — the sender list must stop being a GATE.** No editing a list, no rebuilding
-the app, no forwarding mail to himself for a new vendor to be processed. ⛔ **Never add a vendor to
-fix a miss.** ⛔ Manual forwarding is a testing workaround, not a design.
-
-## ▶ NEXT ACTION — design the gate inversion, then work down the stretch
-`tasks.md` § "THE TRANSACTION HALF WAS NEVER ANSWERED" holds the shape and the evidence.
-⚠️ **Design-first**, he signs off before I build. ⛔ The 2026-09-12 ruling already required this and
-was only half-implemented — an unfinished decision, not a new idea.
-
-**Then work `tasks.md` § "AUTONOMOUS QUEUE" top-down** — eight items, none of them blocked on him.
+## ▶ NEXT ACTION — he signs off on two calls, then I build § 5.1 + § 5.2
+✅ **The gate-inversion design is WRITTEN and MEASURED**: overlay `GATE_INVERSION_DESIGN.md`. It is
+the answer to the 2026-09-25 ruling (the sender list must stop being a gate; ⛔ never add a vendor to
+fix a miss). ⛔ Do not re-derive it and do not re-run the corpus.
+**Recommendation: delete the gate outright and add no filter.** On 54 real emails the gate scores 82%
+recall / 67% precision; no gate at all scores **94/94**, and 100% recall with § 5.3. A filter-free
+path costs **$0.10/month**, so cost was never the argument for one.
+Meanwhile: `tasks.md` § AUTONOMOUS QUEUE items **3–8** (1 and 2 are answered below).
 
 ## ⛔ Waiting on the user — only these
-- 🔴 **The Int stepper in Settings** — native control, so Playwright is not faithful. He will look
-  after this stretch; ⚠️ **tell him exactly what to check** (see `tasks.md` § Awaiting on-device).
-- 🔴 **Sign-off on the gate-inversion design** once written.
-- 🔴 **Inbox management after extraction** and **reviewing the email archive** — open since
-  2026-09-11, both product calls, neither blocking now.
-- ✅ **Ledger catch-up and turning the tab on move to the END of testing** (user, 2026-09-25):
-  live-environment calls, taken once we are confident in the app. ⛔ Not blockers.
+- 🔴 **§ 5.5 the injection posture** — accept it (my pick), add SPF/DKIM as a draft *signal*, or keep
+  a gate. A risk posture rather than an engineering trade, so it is his.
+- 🔴 **§ 5.6 candidate grouping keys** — yes or no. ⛔ No is defensible; I did not build it.
+- 🔴 **The Int stepper, Settings → Assistant** (check-in hour 0–23, max turns 3–50). What to check:
+  `−`/`+` are tappable, the number is centred and does not reflow the row as it widens, both buttons
+  grey out at the bounds, and the `0–23` / `3–50` hint is legible.
+- 🔴 **Inbox management after extraction** and **reviewing the email archive** — product calls.
+- ✅ **Ledger catch-up and the finances tab move to the END of testing.** ⛔ Not blockers.
 
 ## ⛔ Inherit — settled, do not re-derive
-- ✅ **Model exploration is OPEN** (user, 2026-09-25): if inference quality is the problem, try better
-  models — ⛔ but only **within the established ZDR / privacy framework**, extra hops included.
-- ✅ **Newest-wins on a collapse is CORRECT** — a confirmation is only an estimate (weight-priced and
-  unavailable items); the delivery receipt is authoritative. ⛔ Never rank by confidence instead.
-- ⛔ **Grouping runs PER DEVICE.** ✅ Fully verified on the phone, collapse included. ⛔ Done.
-- 🔴 **Grouping merges only sometimes** — the key is model-derived. ✅ Fails safe; ⛔ do not loosen
-  `group_key()`'s bounds. Why: memory `project-model-derived-keys-are-nondeterministic`.
-- ✅ **Dev runs with NO auth token** and `POST /auto_import/tick?source=<name>` needs no auth —
-  **3.4s per mail test, not 30 minutes.** `pm clear` is safe now. Recipe: overlay `DEV_TESTING.md`.
+- ✅ **Queue item 1 is ANSWERED + shipped.** Not a failing document class — one document flapping
+  `0,0,0,4,6,7` postings on identical bytes, while reading its own total right every time.
+  `extract_reconciled` re-asks when the line items miss a stated total. ⛔ Not a model problem.
+- ✅ **Queue item 2's premise is WRONG** — the receipt prints no order URL, and the delivery platform
+  prints two ids for one order. Labelled text already works; grouping needs § 5.6. ⛔ Don't build it.
+- ✅ **Newest-wins on a collapse is CORRECT** — a confirmation is only an estimate; the delivery
+  receipt is authoritative. ⛔ Never rank by confidence instead.
+- ✅ **Dev runs with NO auth token** and `POST /auto_import/tick?source=<name>` needs none — 3.4s per
+  mail test, and `pm clear` is safe. Recipe: overlay `DEV_TESTING.md`.
 
 ## 🔴 Open
-- 🔴 **Phone wedge on cold backfill** — force-stop recovers it, volume disproven, location unknown;
-  repro now costs nothing. Measurements: overlay `DEV_TESTING.md`.
+- 🔴 **Phone wedge on cold backfill** — force-stop recovers it, volume disproven, location unknown.
 
 ## ⛔ Standing
 Branches: `dev/role-split-model-seats` (public; draft PR #1 open, so a push runs full CI — ⛔ never
 run the suite on this box, it OOMs) / `dev/untested-overlay`. ⚠️ `omni-me-private` is NOT
-hook-committed: commit it by hand.
+hook-committed: commit it by hand. ⛔ **IMAP work is private-repo-tracked** — no sender or vendor
+detail in the public repo.
