@@ -4,35 +4,43 @@
 the app, no forwarding mail to himself for a new vendor to be processed. ⛔ **Never add a vendor to
 fix a miss.** ⛔ Manual forwarding is a testing workaround, not a design.
 
-## ▶ NEXT ACTION — design the gate inversion
+## ▶ NEXT ACTION — design the gate inversion, then work down the stretch
 `tasks.md` § "THE TRANSACTION HALF WAS NEVER ANSWERED" holds the shape and the evidence.
-⚠️ **Design-first, its own session** — it changes the ingestion path.
-⛔ Read it before proposing anything: the 2026-09-12 ruling already required this and was only ever
-half-implemented, so this is an unfinished decision, not a new idea.
+⚠️ **Design-first** — it changes the ingestion path, and he signs off before I build.
+⛔ Read it first: the 2026-09-12 ruling already required this and was only half-implemented, so this
+is an unfinished decision, not a new idea.
 
-## ⛔ Waiting on the user
-- 🔴 **Ledger catch-up: incremental, or full finances wipe + re-import?** Chain item 1, nothing can
-  be imported until it is answered, and a half-caught-up ledger is worse than an empty one.
-- 🔴 **Inbox management after extraction** and **reviewing the email archive** — both open since
-  2026-09-11, both product calls.
-- **At the next box reset: remove `[server].auth_token` from the DEV credentials file.** ⛔ Never
-  touch the live one. ✅ Safe — both instances bind the tailnet address, never `0.0.0.0`, so the
-  tailnet is the auth boundary. Doing it sooner unblocks `pm clear` on the phone.
+**Then, all unblocked:** the delivery receipt that produced 0 postings against its own $104.63 total ·
+deterministic order-id parsing from vendor URLs · the `.check()` sweep (four projections have none) ·
+`UIDVALIDITY` handling · the two capture gaps (verify warnings in the draft form, real filename
+threading) · the five on-device confirmations · archive growth rate · three rebuild defects ·
+suite deadlock.
+
+## ⛔ Waiting on the user — only these
+- 🔴 **The Int stepper in Settings** — native control, so Playwright is not faithful. He will look
+  after this stretch; ⚠️ **tell him exactly what to check** (see `tasks.md` § Awaiting on-device).
+- 🔴 **Sign-off on the gate-inversion design** once written.
+- 🔴 **Inbox management after extraction** and **reviewing the email archive** — open since
+  2026-09-11, both product calls, neither blocking now.
+- ✅ **Ledger catch-up and turning the tab on move to the END of testing** (user, 2026-09-25) — they
+  are live-environment decisions to take once we are confident in the app. ⛔ Not blockers.
 
 ## ⛔ Inherit — settled, do not re-derive
-- ⛔ **Grouping runs PER DEVICE** (`build_projections_server` registers only `documents`).
-  ✅ **Fully verified on the phone, collapse included** — a Walmart confirmation + delivery sharing
-  order `600000113495028` became one review item with the superseded proposal recorded. ⛔ Done.
-- 🔴 **Grouping merges only sometimes** — the key is model-derived. ✅ It fails safe and the
-  4-char floor catches junk; ⛔ do not loosen those bounds. Why: memory
-  `project-model-derived-keys-are-nondeterministic`.
-- ⚠️ He forwards `gmail_personal` → `gmail_work`; vendor mail *arrives* at `gmail_personal`.
+- ✅ **Model exploration is OPEN** (user, 2026-09-25): if inference quality is the problem, try better
+  models — ⛔ but only **within the established ZDR / privacy framework**, extra hops included.
+- ✅ **Newest-wins on a collapse is CORRECT** — a confirmation is only an estimate (weight-priced and
+  unavailable items); the delivery receipt is authoritative. ⛔ Never rank by confidence instead.
+- ⛔ **Grouping runs PER DEVICE.** ✅ Fully verified on the phone, collapse included. ⛔ Done.
+- 🔴 **Grouping merges only sometimes** — the key is model-derived. ✅ Fails safe; ⛔ do not loosen
+  `group_key()`'s bounds. Why: memory `project-model-derived-keys-are-nondeterministic`.
+- ✅ **Dev runs with NO auth token** and `POST /auto_import/tick?source=<name>` needs no auth —
+  **3.4s per mail test, not 30 minutes.** `pm clear` is safe now. Recipe: overlay `DEV_TESTING.md`.
 
 ## 🔴 Open
-- 🔴 **Phone wedge on cold backfill** — recovers on force-stop; volume disproven; stall location
-  unknown. Measurements: overlay `DEV_TESTING.md`. Repro needs `pm clear` plus the token.
-- 🔴 Rebuild defects · projections swallow statement errors · suite deadlock — all in `tasks.md`.
+- 🔴 **Phone wedge on cold backfill** — recovers on force-stop; volume disproven; location unknown.
+  Repro is now unblocked (`pm clear` costs nothing). Measurements: overlay `DEV_TESTING.md`.
 
 ## ⛔ Standing
-Branches: `dev/role-split-model-seats` (public, draft PR #1 open so a push runs full CI) /
-`dev/untested-overlay`. ⚠️ `omni-me-private` is NOT hook-committed — commit it by hand.
+Branches: `dev/role-split-model-seats` (public; draft PR #1 open, so a push runs full CI — ⛔ never
+run the suite on this box, it OOMs) / `dev/untested-overlay`. ⚠️ `omni-me-private` is NOT
+hook-committed: commit it by hand.
