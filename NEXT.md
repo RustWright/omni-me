@@ -6,9 +6,8 @@ fix a miss.** ⛔ Manual forwarding is a testing workaround, not a design.
 
 ## ▶ NEXT ACTION — design the gate inversion, then work down the stretch
 `tasks.md` § "THE TRANSACTION HALF WAS NEVER ANSWERED" holds the shape and the evidence.
-⚠️ **Design-first** — it changes the ingestion path, and he signs off before I build.
-⛔ Read it first: the 2026-09-12 ruling already required this and was only half-implemented, so this
-is an unfinished decision, not a new idea.
+⚠️ **Design-first**, he signs off before I build. ⛔ The 2026-09-12 ruling already required this and
+was only half-implemented — an unfinished decision, not a new idea.
 
 **Then work `tasks.md` § "AUTONOMOUS QUEUE" top-down** — eight items, none of them blocked on him.
 
@@ -18,8 +17,8 @@ is an unfinished decision, not a new idea.
 - 🔴 **Sign-off on the gate-inversion design** once written.
 - 🔴 **Inbox management after extraction** and **reviewing the email archive** — open since
   2026-09-11, both product calls, neither blocking now.
-- ✅ **Ledger catch-up and turning the tab on move to the END of testing** (user, 2026-09-25) — they
-  are live-environment decisions to take once we are confident in the app. ⛔ Not blockers.
+- ✅ **Ledger catch-up and turning the tab on move to the END of testing** (user, 2026-09-25):
+  live-environment calls, taken once we are confident in the app. ⛔ Not blockers.
 
 ## ⛔ Inherit — settled, do not re-derive
 - ✅ **Model exploration is OPEN** (user, 2026-09-25): if inference quality is the problem, try better
