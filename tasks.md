@@ -1521,7 +1521,22 @@ sign-off. ✅ 1 and 7 are done and 2 is blocked on a design call, so **3–8 is 
        parsing still buys *stability* (one message keying two ways across polls is what made duplicate
        review items), but ⛔ **grouping the pair needs candidate keys**, which loosens exactly what the
        user ruled on. Overlay `GATE_INVERSION_DESIGN.md` § 5.6.
-3. [ ] **`.check()` sweep** — four projections have ZERO, so a rejected statement returns Ok. [S]
+3. [x] ✅ **DONE — and it was 50 sites, not four projections.** ✅ The premise is now a test
+       (`db::tests::a_rejected_statement_still_returns_ok_until_it_is_checked`): `await?` forwards
+       only transport and parse failures, so a statement the database *refuses* arrives as
+       `Ok(Response)` and reaches nobody unless `.check()` or `.take()` asks. Audited every
+       `db.query(...)` in `events/` and `db/`; ⚠️ a raw `.check()` count badly overstates it, because a
+       response consumed by `.take()` already surfaces its error — the defect is a response that is
+       *discarded*. 50 such sites: 46 across seven projections, plus `projection.rs::init_all`'s
+       `DEFINE` block, both `db::init_schema` statements, and 🔴 **`SurrealEventStore::append`'s
+       INSERT** — the worst of them, since a refused append returned `Ok(Event{..})` and the caller
+       took the event for durable. `documents_projection` already did this everywhere and was the
+       model followed.
+       ⚠️ **Residual, deliberately NOT changed — it is a semantics call, not a mechanical one.**
+       `config_projection::on_set` and `record_type_projection` read their last-write-wins guard with
+       `.take(..).unwrap_or(None)`, so a *failed* SELECT reads as "nothing stored" and the guard
+       degrades to "always apply" — a stale event can then overwrite a newer one. Narrow, and fixing
+       it changes what a projection does on a read failure. [S, its own decision]
 4. [ ] **`UIDVALIDITY` unhandled** — a renumbered mailbox stalls the poller forever. [S]
 5. [ ] **Two capture gaps**: the draft form does not show `verify` warnings; `x-filename` needs the
        picker's real name threaded through. [S]
