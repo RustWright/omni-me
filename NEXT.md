@@ -28,18 +28,17 @@ forwarding is a testing workaround, not a design.** Verbatim + evidence: memory
   unblocks `pm clear` on the phone (a clear wipes the app's token).
 
 ## ⛔ Inherit — settled
-- ⛔ **Grouping runs PER DEVICE.** ✅ Verified on the phone: order-scoped keys where a reference
-  parsed, `receipts-uid-N` otherwise. ⛔ "One Walmart order → six batches" is NOT duplication.
-- 🔴 **Grouping merges only SOMETIMES** — same email gave `order_ref: "."` at conf 0.93 on a
-  re-run. ✅ It failed safe (two review items, not a wrong merge) and `group_key()`'s 4-char floor
-  caught it. ⛔ Do not loosen those bounds. ⚠️ One green run is not evidence a key is stable.
-- ⛔ **Never bump a projection version** until the rebuild defects are fixed (`tasks.md`).
+- ⛔ **Grouping runs PER DEVICE.** ✅ Verified on the phone. ⛔ "One Walmart order → six batches" is
+  NOT duplication. ⛔ **Never bump a projection version** until `tasks.md`'s rebuild defects are fixed.
+- 🔴 **Grouping merges only SOMETIMES** — the same email gave `order_ref: "."` at conf 0.93 on a
+  re-run. ✅ Failed safe (two review items, not a wrong merge); `group_key()`'s 4-char floor caught
+  it. ⛔ Do not loosen those bounds. ⚠️ One green run is not evidence a key is stable.
 - ⚠️ He forwards `gmail_personal` → `gmail_work`; vendor mail *arrives* at `gmail_personal`.
 
 ## 🔴 Open
 - 🔴 **Phone wedge** — 8h on `Restoring 16052 events…`, all runtime threads `state=S`, every Tauri
   command hung; a force-stop recovers it. ⛔ Volume disproven (the S9 replays 17,148 events in
-  104s). Stall location unknown. The new chunked apply logs per chunk; repro needs `pm clear`.
+  104s). Stall location unknown; the new chunked apply logs per chunk. Repro needs `pm clear`.
 - 🔴 Three rebuild defects · projection writes swallow statement errors (four have ZERO `.check()`)
   · suite deadlock (recorded fix disproven) — all in `tasks.md`.
 
