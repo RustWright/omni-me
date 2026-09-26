@@ -1641,6 +1641,26 @@ record, so a stop with no written reason wastes the stop. A flaky test or a miss
 dependency is trivial — note it and keep going.
 
 ### Stage 0 — isolation guard. ✅ BUILT 2026-09-14
+- [ ] 🔴 **The non-production posture CANNOT FIRE ON ANDROID, so the dev APK looks exactly like the
+      live app.** Measured on the dev phone 2026-09-26, `1.1.11-dev`: the boot line reports
+      `non_production=false` while pointed at `:3001`, so the permanent safety strip — *"Non-production
+      data — not your live app"*, placed outside the auto-hiding header on purpose because *"a safety
+      indicator that disappears when you scroll is not a safety indicator"* — **never renders**.
+      🔴 **Cause:** the posture is switched on by the `OMNI_DATA_DIR` **environment variable**
+      (`tauri-app/src-tauri/src/lib.rs`), and Android gives no way to set an env var for an installed
+      app. ⛔ So the coupling whose own doc comment says *"without that coupling a dev build would
+      happily backfill and then push to the live box"* is inert on the only platform the dev testing
+      actually runs on. ⚠️ The dev APK also keeps the **production package name and data dir**, which
+      is why `install -r` preserves the token and queue.
+      ⚠️ **The hazard is not data loss** — the dev phone is inside the granted blast radius. It is
+      that **one Settings edit to `:3000` would sync that build to live with no banner and no guard**,
+      and that a dev APK reaching the real phone would be visually indistinguishable. 🔴 This is the
+      user's own stated requirement: *"pointing at production must be hard to do by accident"* — a
+      config that merely happens to point elsewhere was explicitly named as not enough.
+      ⚠️ Fix needs a non-env trigger on Android — a build-time flag baked beside
+      `OMNI_DEFAULT_SERVER_URL`, or deriving the posture from the server's own `/health` instance
+      field, which dev already reports. ⛔ Design call: the second is self-correcting but makes the
+      banner depend on reaching the server. [S–M, design first]
 - [x] **The dev instance self-identifies and destructive tooling asserts it.** Design and the
       boot truth table are published in `docs/src/isolation.md` — read that, not this.
       Mechanism: `OMNI_INSTANCE=production|dev` stamps `.omni-instance` in the data root and
