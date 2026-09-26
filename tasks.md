@@ -2868,3 +2868,14 @@ they are backlog rather than threads from the current stretch):**
   2026-09-04. The design risk is noise, not mechanism: a canary that fires most sessions
   trains you to skim past all of them, so thresholds need to differ per artifact.
   Meanwhile the `Reconciled against git` line at the top of this file is the manual stand-in.
+- **Scrub the private identity still in this PUBLIC repo** — authorised by the user
+  2026-09-26, and he placed it deliberately: *"more of a thing to tack on to the end of one
+  of your autonomous sessions after you've done the actual work."* ⛔ So it never pre-empts
+  testing work. Known sites: `docs/src/auto-import.md:6`, this file's § collapse entry, and
+  doc comments plus test fixtures in `core/src/auto_import/receipts.rs`. ⚠️ He suspects more
+  in `docs/` and `.archive/` — sweep both rather than fixing only the named lines.
+  ⚠️ Two traps: the pre-commit privacy guard does **not** exist in a fresh clone, so a clean
+  commit is not evidence the tree is clean; and a fixture's *assertion* can carry the same
+  string as the fixture, so a blanket rewrite leaves a green test that no longer tests
+  anything. Rewrite to the role the name plays ("the delivery platform"), never to a
+  placeholder that reads as redaction in published prose.
