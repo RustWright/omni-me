@@ -1079,10 +1079,16 @@ finance propose actions · role-C model seats (chosen 2026-09-16) · the enrichm
 **Open, from Phases D–G and 2026-09-11** — all unit-tested, none exercised on hardware. Moved
 here from `NEXT.md`, which must carry decisions rather than a state snapshot:
 - [ ] The Tauri **decide** command approving a proposal end to end.
-- [ ] **`note.revise` on a real note** — both halves: an accepted revision leaving the
-      frontmatter and the untouched paragraphs byte-identical, *and* the refusal path (edit the
-      anchored sentence in the editor between proposing and accepting, then confirm the card
-      refuses with a readable sentence and the note is unchanged).
+- [x] ✅ **`note.revise` on a real note — CONFIRMED ON THE PHONE 2026-09-26, both halves.**
+      Accepted: the `generic_note_updated` diff was exactly one line, frontmatter and the other
+      two paragraphs byte-identical (211 → 212 bytes). Refusal: the anchor edited away in the
+      editor first, then Accept showed "The text this would have replaced is no longer in the
+      note." and wrote **no event at all** — the note untouched and the proposal still pending,
+      so the card stays decidable. ⚠️ The fixture is deliberately built so the anchor also
+      appears in the **frontmatter**: counting matches across `raw_text` would have refused
+      `Ambiguous(2)`, so the accepted path proves the frontmatter is out of bounds on hardware.
+      ⛔ Do not re-test. Fixture kept in the dev instance: note "Revise probe 2026-09-26",
+      `01M3FZG18DY7YT2FZ18GXQ9X20`, tag `#revise-probe`.
 - [ ] A decision **syncing to a second device** (the arrival-order hazard is handled per-handler,
       but only in tests).
 - [ ] A **check-in firing** on its own schedule, rather than being invoked directly.
@@ -1595,7 +1601,15 @@ that means in code. ✅ 1, 2, 3, 4, 5 and 7 are done. **Left: 6 (needs the phone
          synced. ✅ Also re-confirmed on-device: the collapse lineage renders ("3 earlier messages
          about this order were replaced… the newest won"), and the verdict panel shows both
          `confidence 36%` and the unreadable-total warning. ⛔ Do not re-test any of this.
-       - ✅ **Ready now — `note.revise`, both the accepted and the refusal path.**
+       - [x] ✅✅ **DONE — `note.revise` CONFIRMED 2026-09-26, both paths** (detail above).
+         ⚠️ **"Ready now" was wrong about the reason, and the correction matters.** The *chat*
+         route is blocked by the same missing agent as auto-approval: asking on the phone
+         returned "No answer yet. The assistant may not be running", and there is no
+         `omni-me-agent` process on the box or anywhere else. What made it testable is that
+         `POST /sync/push` applies **no feature guard**, so a proposal can be seeded directly
+         and the phone pulls it within its 20s interval. ⛔ So this did **not** test the model
+         choosing `note.revise` — only the card, the approval-time resolve and the splice, which
+         is what the two checklist lines asked for. Model action-selection is still unexercised.
        - ⚠️ **Needs a second client — a decision syncing to another device.** The phone is the only
          one running. A `dx serve --platform web` client pointed at `:3001` would qualify; the
          desktop build will not run on the WSL2 box. ⛔ Unverified either way.
@@ -1604,8 +1618,15 @@ that means in code. ✅ 1, 2, 3, 4, 5 and 7 are done. **Left: 6 (needs the phone
        - ⛔ **BLOCKED — auto-approval against a live agent.** No `omni-me-agent` process is running
          on the box; there is nothing to approve against. Needs an agent instance first
          (`reference-throwaway-hub-agent-testing` has the no-docker recipe).
-       ⚠️ So two are immediately doable, one needs a second client, one needs a day, one needs an
-       agent. [S each for the first two; the rest are their own setup]
+       ✅ **Both immediately-doable ones are now DONE** (decide, then `note.revise`). The three
+       left each need setup that is not test work: a second client, a day of wall-clock, or an
+       agent instance. ⚠️ **The agent unblocks two of the three at once** — auto-approval, and
+       the untested half of `note.revise` (the model actually choosing the action). It needs the
+       LLM credential, which is why it is not something to start unasked:
+       `/etc/omni-me/credentials-dev.toml` on the box holds the dev instance's, and
+       `OMNI_AGENT_SERVER_URL` overrides the localhost pin even under `OMNI_AGENT_DATA`
+       (`ServerUrlPolicy::choose`, non_production branch), so a local agent can point at dev.
+       ⛔ Ask before copying that credential anywhere. [the rest are their own setup]
 7. [x] ✅ **MEASURED 2026-09-25** on the dev instance's own archive, over the 8 days its poller had
        been running: **~9.4 documents/day, ~6.75 of them email**, mean 74 KB per archived message.
        The whole archive to date is 37 MB. ⚠️ **The rate is dominated by attachment-bearing mail, not
@@ -2775,6 +2796,25 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
       the Android and publish jobs float, as do the overlay's workflows — so the fix is a sweep of
       every `runs-on` across both repos, not one line. [S] Deciding which version to pin to is the
       only judgement in it: 24.04 is what CI runs on today and is the conservative choice.
+- [ ] **Every dev image build recompiles the whole dependency tree: the Dockerfile caches via
+      BuildKit cache mounts, which `cache-to: type=gha` does not export.** MEASURED 2026-09-26 on
+      run `36263562108`: of 20.5 min, **19.2 min is layer #21 alone** — the `cargo build --release`
+      that mounts `type=cache` on `/usr/local/cargo/registry` and `target/` — and only 2 layers hit
+      cache at all. Its first log lines are `Updating crates.io index` / `Downloading crates ...`,
+      i.e. cold every run. ⚠️ **Not eviction**: repo cache usage is 3.4 GB of the 10 GB limit, so
+      those mounts were never written, not evicted. Layer cache and cache-mount cache are separate
+      mechanisms in BuildKit and no exporter (`gha`, `registry`, `local`) carries the latter
+      (`docker/build-push-action` issue 1011, `moby/buildkit` issue 3011). Fix is
+      `reproducible-containers/buildkit-cache-dance`, which round-trips the mount dirs through
+      `actions/cache`. ⚠️ Applies to `deploy.yml` too — same `type=gha` + cache-mount shape.
+      💭 Do it **in the deadlock session**: both are CI-workflow work and this is the cheaper half.
+      ⛔ The saving is unmeasured — most of the 19 min is deps, but the deps/own-crates split is a
+      guess until a warm run exists. Cost today: ~18 min of latency on every server change, which
+      is the single biggest tax on hardware iteration. [S]
+- [ ] **The Assistant suggestions banner is a bare clickable `<div>`** — no `role="button"`, no
+      `tabindex`, so it is unreachable by keyboard and invisible to a screen reader, while the
+      Finances/Archive rows next to it are real buttons. Found 2026-09-26 while driving it over
+      CDP (a `button, [role="button"]` query could not find it). [XS]
 - [ ] **Desktop DOES flash white for ~320ms — but `backgroundColor` is NOT the culprit and the
   fix is a different layer.** Filmed at last (user installed `Xvfb` 2026-08-31; `grim` fails
   because Mutter lacks `wlr-screencopy`, and GNOME's `org.gnome.Shell.Screenshot` DBus method

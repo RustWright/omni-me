@@ -1,40 +1,48 @@
 # NEXT
 
-## ▶ NEXT ACTION — deploy build `36263562108`, then `note.revise` on the phone
-⏳ Build `36263562108` (18:43Z, **no watcher**) carries the one-draft-per-purchase mapper. Read its
-tag from the run annotations — ⚠️ do not construct it, my guess at the private SHA was wrong once —
-swap `OMNI_IMAGE` in `~/omni-dev/.env`, `pull && up -d`, smoke `/health` + `sources=3`.
-✅ **CDP live**: `adb forward tcp:9222 localabstract:webview_devtools_remote_2208`, driver
-`<scratchpad>/cdp.js`; ⛔ expression from a FILE, never argv, and ⚠️ the pid changes each relaunch.
-Then item 6's `note.revise`, both paths — the other four need a second client, a day, or an agent.
+## ▶ NEXT ACTION — audit the pre-2026-09-26 batches for the un-reconcilable shape
+🔴 Batches committed before today made one draft **per line item**, and `find_match_candidates` is
+pairwise, so not one of them can ever reconcile against a bank statement. 12 batches still sit in
+the dev review queue (2026-09-19 … 09-25, several with 12 transactions). Per batch: re-import under
+the fixed mapper, or leave it for the Oct-1 clean ledger to supersede. ⛔ Ask before re-importing —
+whether pre-October data is worth the churn is the user's call, not a derivable one.
 
 ## ⛔ Waiting on the user — only these
-- ✅ **Public-repo identity scrub AUTHORISED**, ⛔ only at the END of a session. `tasks.md` § Owed.
 - 🔴 **How to get the 8 line items a vendor's mail does NOT contain** (they sit behind a link).
-  ⛔ Ask before building — following a link means fetching remote content from an email.
+  ⛔ Ask before building — following it means fetching remote content from an email.
+- 🔴 **May I copy the dev LLM credential to run an agent locally?** It is
+  `/etc/omni-me/credentials-dev.toml` on the box, and `OMNI_AGENT_SERVER_URL` overrides the
+  localhost pin, so a local agent can point at dev. Unblocks auto-approval **and** the untested
+  half of `note.revise`. ⛔ Never copy a credential unasked.
+- ✅ **Public-repo identity scrub AUTHORISED**, ⛔ only at the END of a session. `tasks.md` § Owed.
 
-## ⛔ Inherit — settled 2026-09-26, do not re-derive
-- ✅ **Total takes precedence over line items** — it balances the bank charge. 🔴 Acting on it found
-  `find_match_candidates` is **pairwise**, so one-draft-per-item could NEVER reconcile. ✅ Fixed: one
-  draft per purchase. 🔴 **Batches committed before today have that shape** — audit or re-import.
-- ✅ **Bulk/archive backfill = DOCUMENTS ONLY.** Ledger opens clean **2026-10-01** from September statements, which state their own balances. ⚠️ Email backlog in scope, archive-only.
+## ⛔ Inherit — settled, do not re-derive
+- ✅ **Dev runs `dev-a0c4d31-3d7d6bc`** (one-draft-per-purchase mapper); `/health` ok, 3 pollers
+  healthy. ⛔ `sudo docker pull` cannot reach GHCR — pull as `deploy`, no sudo, and pull *before*
+  rewriting `OMNI_IMAGE`. ⛔ Read an image tag from the run log; never construct it.
+- ✅ **`note.revise` CONFIRMED on the phone, both paths.** Accepted: a one-line event diff,
+  frontmatter byte-identical. Refused: readable sentence, **no event written**, card still
+  decidable. ⛔ Do not re-test. ⚠️ Seeded via `/sync/push` (no feature guard) because there is **no
+  agent anywhere**, so the model *choosing* the action is still unexercised.
+- ✅ **Total takes precedence over line items** — it balances the bank charge; one draft per purchase.
+- ✅ **Bulk/archive backfill = DOCUMENTS ONLY.** Ledger opens clean **2026-10-01** from September
+  statements, which state their own balances. ⚠️ Email backlog in scope, archive-only.
 - ✅ **Watermark: per account, on the document's transaction date.** 🔴 SC statements are the ONLY
   transaction source for those accounts. 💭 Closed-book framing is under consideration, not asked.
 - ✅ **Archive refinement BEFORE the tab**: tags reuse the existing `Tag` type and query path;
   reader writes them path-independently; purge manual with preview; per-tag retention opt-in.
-  ✅ **Review = confirm-and-correct** (flips `DocumentField.verified`). ✅ **Inbox: track only,
-  never write to the mailbox** — 🔴 Gmail write-back is the DESTINATION once trust is built.
-- ✅ **decide command CONFIRMED end to end on the phone** (badge 13→12, server got 1 committed + 4
-  transaction_recorded). ⛔ Do not re-test. ✅ 5 messages, 0 failures on the fixed path.
-- 🔴 **Suite deadlock BLOCKS CI, nothing merges to `main`** — its own session; the test passes alone
-  in 3.36s and ⛔ `--test-threads=1` was tried and reverted (leak is `+1 per connect()`).
-  ✅ **Stage 6 triaged — 9 gates + the deadlock = 10.** `tasks.md` § TRIAGE.
-- 🔴 **The non-production banner CANNOT fire on Android** (env-var gated), so the dev APK looks
-  exactly like live (`tasks.md` § Stage 0). ⚠️ **End every session with the roadmap** — `CLAUDE.md`.
+  ✅ Review = confirm-and-correct. ✅ Inbox: track only, ⛔ never write to the mailbox.
+- 🔴 **Suite deadlock BLOCKS CI, nothing merges to `main`** — its own session; ⛔ `--test-threads=1`
+  was tried and reverted. 💭 Fold in the BuildKit fix: 19.2 of every 20 min of image build is a
+  cold `cargo build`, because `cache-to: type=gha` does not export cache mounts (`tasks.md`).
+- 🔴 **The non-production banner CANNOT fire on Android**, so the dev APK looks exactly like live.
+  ⚠️ **End every session with the roadmap** — `CLAUDE.md`.
 
 ## 🔴 Open — pin `runs-on` before **2026-10-19** or CI breaks again, on the live release path too.
 
 ## ⛔ Standing
 Public `dev/role-split-model-seats` (draft PR #1) / overlay `dev/untested-overlay`; both pushed.
 ⛔ Never run the suite on this box · live is never a deploy target · no vendor detail in the public
-repo. ⚠️ `omni-me-private` is NOT hook-committed. ✅ Dev GHCR token replaced by the user 2026-09-26.
+repo. ⚠️ `omni-me-private` is NOT hook-committed. ✅ CDP live on `tcp:9222`; drivers
+`<scratchpad>/cdp.js` and `type.js` (CodeMirror ignores DOM writes — it needs real input events);
+⛔ expression from a FILE, never argv, and ⚠️ the WebView pid changes on every relaunch.
