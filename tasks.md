@@ -1455,6 +1455,22 @@ This was needed because **pausing does not survive a restart**, which had gone u
   hide it, not fix it. ⚠️ Open before building: whether per-test isolation survives a shared
   instance (schema is per-namespace, but `init_schema` and the projection version table are not
   yet checked for cross-namespace bleed). [S once measured, was [M]]
+
+  🔴 **PROMOTED 2026-09-26: this now BLOCKS CI, so it is a release gate, not a background defect.**
+  Two consecutive runs on `a8bfd24` hung 45min and were killed by `timeout-minutes: 45`, both on
+  `events::projection::tests::a_paged_replay_folds_exactly_what_an_unbounded_one_would`. ⚠️ The two
+  runs on its parent passed in 7m28s and 7m41s, so it correlates with a commit that touches only
+  `extraction/` — six added tests changed how many `connect()` calls the binary makes before that
+  test runs, which is all the monotonic leak needs. ✅ **The implementation is NOT at fault:** the
+  same test passes **alone in 3.36s** at `--test-threads=1`.
+  ⛔ **`--test-threads=1` was applied and reverted the same day** — the leak is `+1 per connect()`
+  and parallelism-independent, so serialising changes only *when* the process wedges. It would have
+  converted a reliable failure into an intermittent one, which is worse. The line above already
+  said this; ⚠️ the lesson is that it was read after the change, not before.
+  ⚠️ **The prerequisite has grown: 27 copies of `fn test_db`, not 24.** It grows with the codebase,
+  so the consolidation gets more expensive the longer it waits.
+  🔴 Consequence while it stands: **nothing can merge to `main`**, so no release is possible. Dev
+  deploys are unaffected — dev is precisely where an ungated build belongs.
 - [ ] **Reach import parity with paisa's seven importers.** Parity map is written (overlay
   `IMPORT_PARITY.md`; institution names are private). **Four of the seven are now covered**
   as of 2026-09-05: the old comma-splitting `statement_csv.rs` is deleted, imports run
