@@ -1913,12 +1913,30 @@ the total reads, so the same batch would raise `line-item sum 36.83 does not mat
 116.47`. ⛔ **The total fix is not about recovering a number; it is about restoring the detector for
 incomplete extraction.** ⚠️ Every batch committed before today carries this risk unaudited.
 
-⚠️ **Open, and it is a design question not a bug:** what should happen when a document's own text
-cannot supply its line items? Options seen so far — accept the total as a single posting and drop
-the itemisation, follow the link (a fetch from an email, with everything that implies), or flag the
-batch as knowingly partial and let the user decide. ⛔ Ask before building; the third is the only
-one that does not either lose data or start fetching remote content.
-⚠️ The dev ledger now holds that wrong 36.83 entry deliberately, as the artifact of this test.
+✅ **RULED + BUILT 2026-09-26.** User: *"total takes precedence since that is what will balance
+against the unmatched bank transaction, if the items can be listed it's an additional benefit."*
+
+🔴 **Acting on that exposed a STRUCTURAL defect far bigger than the missing items.**
+`reconciliation::find_match_candidates` is strictly **pairwise** — it walks pairs and requires
+`a.amount + b.amount == 0`, with no summing of several postings against one. A card charge arrives
+as **one** Unmatched posting of 116.47; the receipt produced **four** of −7.94/−12.96/−9.96/−5.97.
+⛔ **None can ever cancel it, so the per-line-item shape could never reconcile against a bank
+statement — with or without complete items.** The feature could not have worked as built.
+
+✅ **Fixed in `receipt_extraction_to_drafts`:** a stated total now yields ONE draft — line items as
+expense legs, one balancing leg for whatever they leave unaccounted, and an `Unmatched` leg of
+`−total`, which is precisely what the bank charge cancels. 17 mapper tests pass, 6 new ones built
+from the real 36.83-against-116.47 artifact, 11 pre-existing ones unchanged.
+⚠️ **Two calls that are mine, not the user's:** the balancing leg goes to the account every line
+item agrees on, else `Expenses:Unknown`, because putting a split purchase's remainder in one of its
+own categories is a guess dressed as data; and a document stating **no** total keeps the old
+per-line-item shape, since nothing authoritative exists to anchor on — ⚠️ those drafts still cannot
+reconcile 1:1, now documented in the module header rather than invisible.
+⚠️ **Still unbuilt:** nothing yet *fetches* the 8 missing items, and following a link out of an
+email is a design question of its own. The total makes the ledger correct; itemisation stays partial.
+⚠️ The dev ledger holds the pre-fix 36.83 entry deliberately, as this test's artifact.
+🔴 **Every batch committed before today has the same shape** — four-way splits that will not
+reconcile. ⛔ Audit or re-import them before trusting reconciliation on the dev ledger.
 
 ### Stage 6 — real-data validation of the new features
 
