@@ -1588,8 +1588,13 @@ that means in code. ✅ 1, 2, 3, 4, 5 and 7 are done. **Left: 6 (needs the phone
        ⛔ **`[M]` was wrong — this is five tasks with five different prerequisites, not one.**
        Surveyed on the phone 2026-09-26 (`1.1.11-dev` installed, app healthy, `ever_synced=true`,
        16148 events, CDP reachable at `@webview_devtools_remote_<pid>`):
-       - ✅ **Ready now — decide command end to end.** A real proposal is sitting in the dev review
-         queue from today's order, so there is live material to approve.
+       - [x] ✅✅ **DONE — decide command CONFIRMED END TO END ON THE PHONE 2026-09-26.** Drove the
+         real app over CDP: opened the 2026-09-26 batch, pressed `Commit all 4`, the nav badge went
+         `Finances13 → Finances12`, the batch left the queue, and the server received
+         **1 `auto_import_batch_committed` + 4 `transaction_recorded`** — so it committed *and*
+         synced. ✅ Also re-confirmed on-device: the collapse lineage renders ("3 earlier messages
+         about this order were replaced… the newest won"), and the verdict panel shows both
+         `confidence 36%` and the unreadable-total warning. ⛔ Do not re-test any of this.
        - ✅ **Ready now — `note.revise`, both the accepted and the refusal path.**
        - ⚠️ **Needs a second client — a decision syncing to another device.** The phone is the only
          one running. A `dx serve --platform web` client pointed at `:3001` would qualify; the
@@ -1892,6 +1897,28 @@ the extractor has.
       `note.revise` **both** halves including the refusal path · a decision syncing to a second
       device · a check-in firing **on its own schedule** · auto-approval against a live agent ·
       the Settings Int stepper (native styling is not Playwright-verifiable).
+
+### 🔴 A vendor's email carries only SOME of its line items — found by committing one 2026-09-26
+
+⛔ **This is why the discarded total mattered, and it is worth more than the fix.** Committed the
+2026-09-26 grocery batch on the phone and inspected what landed: **4 transactions summing to
+36.83**, correctly double-entry (`Expenses:Groceries` / `Unmatched`) and each matching a real line
+item. The document states **item subtotal 111.91** and **total 116.47**, and its body says
+`12 items` followed by a **`Show all items`** link. 🔴 **So 8 of 12 line items are not in the email
+text at all** — they are behind a link — and the ledger took 36.83 for a 116.47 purchase.
+
+🔴 **It committed *because* the total was discarded.** With `total` null, `verify` had nothing to
+cross-check the line items against, so a 67%-incomplete extraction presented as clean. ✅ Post-fix
+the total reads, so the same batch would raise `line-item sum 36.83 does not match document total
+116.47`. ⛔ **The total fix is not about recovering a number; it is about restoring the detector for
+incomplete extraction.** ⚠️ Every batch committed before today carries this risk unaudited.
+
+⚠️ **Open, and it is a design question not a bug:** what should happen when a document's own text
+cannot supply its line items? Options seen so far — accept the total as a single posting and drop
+the itemisation, follow the link (a fetch from an email, with everything that implies), or flag the
+batch as knowingly partial and let the user decide. ⛔ Ask before building; the third is the only
+one that does not either lose data or start fetching remote content.
+⚠️ The dev ledger now holds that wrong 36.83 entry deliberately, as the artifact of this test.
 
 ### Stage 6 — real-data validation of the new features
 
