@@ -1583,8 +1583,24 @@ that means in code. ✅ 1, 2, 3, 4, 5 and 7 are done. **Left: 6 (needs the phone
        `x-filename` is threaded from the picker's own `file.name()` on the first attempt *and* on the
        retry path (`RetryCapture` keeps it), with `None` reserved for a pasted email body that never
        had a name. ⚠️ Nothing to build; the lesson is `project-tasks-md-drifts-stale` again.
-6. [ ] **The five on-device confirmations** (§ Awaiting on-device confirmation, minus the Int
-       stepper, which is the user's). ✅ `pm clear` is free now — no token to re-enter. [M]
+6. [~] **The five on-device confirmations** (§ Awaiting on-device confirmation, minus the Int
+       stepper, which is the user's). ✅ `pm clear` is free now — no token to re-enter.
+       ⛔ **`[M]` was wrong — this is five tasks with five different prerequisites, not one.**
+       Surveyed on the phone 2026-09-26 (`1.1.11-dev` installed, app healthy, `ever_synced=true`,
+       16148 events, CDP reachable at `@webview_devtools_remote_<pid>`):
+       - ✅ **Ready now — decide command end to end.** A real proposal is sitting in the dev review
+         queue from today's order, so there is live material to approve.
+       - ✅ **Ready now — `note.revise`, both the accepted and the refusal path.**
+       - ⚠️ **Needs a second client — a decision syncing to another device.** The phone is the only
+         one running. A `dx serve --platform web` client pointed at `:3001` would qualify; the
+         desktop build will not run on the WSL2 box. ⛔ Unverified either way.
+       - ⏳ **Inherently slow — a check-in firing on its own schedule.** Daily cadence, and forcing
+         the clock defeats the thing being tested ("rather than being invoked directly").
+       - ⛔ **BLOCKED — auto-approval against a live agent.** No `omni-me-agent` process is running
+         on the box; there is nothing to approve against. Needs an agent instance first
+         (`reference-throwaway-hub-agent-testing` has the no-docker recipe).
+       ⚠️ So two are immediately doable, one needs a second client, one needs a day, one needs an
+       agent. [S each for the first two; the rest are their own setup]
 7. [x] ✅ **MEASURED 2026-09-25** on the dev instance's own archive, over the 8 days its poller had
        been running: **~9.4 documents/day, ~6.75 of them email**, mean 74 KB per archived message.
        The whole archive to date is 37 MB. ⚠️ **The rate is dominated by attachment-bearing mail, not
