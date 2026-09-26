@@ -17,8 +17,7 @@ Then item 6's `note.revise`, both paths — the other four need a second client,
 - ✅ **Total takes precedence over line items** — it balances the bank charge. 🔴 Acting on it found
   `find_match_candidates` is **pairwise**, so one-draft-per-item could NEVER reconcile. ✅ Fixed: one
   draft per purchase. 🔴 **Batches committed before today have that shape** — audit or re-import.
-- ✅ **Bulk/archive backfill = DOCUMENTS ONLY.** Ledger opens clean **2026-10-01** from September
-  statements, which state their own balances. ⚠️ The email backlog is in scope, archive-only.
+- ✅ **Bulk/archive backfill = DOCUMENTS ONLY.** Ledger opens clean **2026-10-01** from September statements, which state their own balances. ⚠️ Email backlog in scope, archive-only.
 - ✅ **Watermark: per account, on the document's transaction date.** 🔴 SC statements are the ONLY
   transaction source for those accounts. 💭 Closed-book framing is under consideration, not asked.
 - ✅ **Archive refinement BEFORE the tab**: tags reuse the existing `Tag` type and query path;
