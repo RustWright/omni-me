@@ -187,6 +187,15 @@ impl DocumentKind {
             Self::Receipt | Self::OrderConfirmation | Self::OrderUpdate | Self::ShippingNotice
         )
     }
+
+    /// Whether this label is positive evidence that no money was spent.
+    ///
+    /// `Other` is not: `from_label` degrades an unrecognised word to it, so it
+    /// means "unknown", and a caller must fall back to whether there is money
+    /// rather than treating it as a decision. See `docs/src/auto-import.md`.
+    pub fn rules_out_a_charge(self) -> bool {
+        matches!(self, Self::FeedbackRequest | Self::Marketing)
+    }
 }
 
 /// One file of a document.
@@ -942,6 +951,27 @@ mod tests {
             DocumentKind::Other,
         ] {
             assert!(!k.records_a_charge(), "{k:?} must never book");
+        }
+    }
+
+    /// `Other` is the unrecognised label, so it must never be read as evidence
+    /// that nothing was spent — only the two kinds that positively say so are.
+    #[test]
+    fn only_a_recognised_non_charge_rules_a_charge_out() {
+        for k in [DocumentKind::FeedbackRequest, DocumentKind::Marketing] {
+            assert!(k.rules_out_a_charge(), "{k:?} says no money was spent");
+        }
+        assert!(
+            !DocumentKind::Other.rules_out_a_charge(),
+            "Other means unknown, not 'not a charge'",
+        );
+        for k in [
+            DocumentKind::Receipt,
+            DocumentKind::OrderConfirmation,
+            DocumentKind::OrderUpdate,
+            DocumentKind::ShippingNotice,
+        ] {
+            assert!(!k.rules_out_a_charge(), "{k:?} can carry a charge");
         }
     }
 

@@ -20,6 +20,27 @@ Two separate mechanisms are needed for that, and conflating them is what made th
 unsolvable. Some of those messages are not about money at all. The rest are about the *same*
 money.
 
+## Which mail reaches the extractor
+
+All of it. There is no sender allowlist, and that is a measured decision rather than a default.
+
+omni-me used to carry one: a list of vendor substrings matched against the `From:` header, which
+you extended whenever a new service started emailing you. Replayed over 54 real messages from
+eight days of one person's mail, 17 of which record money spent, it scored **82% recall and 67%
+precision**. Handing the same 54 messages straight to the classifier, with no filter at all,
+scored **100% recall and 94% precision**. The list was simultaneously too narrow and too broad,
+and no amount of maintenance fixes both: the misses need more patterns and the noise needs fewer.
+
+A pre-filter is worth having only if the model calls are expensive. At that volume they are not.
+Reading every message costs about **ten cents a month**, and ten times the volume is about a
+dollar. A cheap structural filter (is there a currency amount, is there an order keyword) was
+implemented and measured too: it saves six cents a month and loses four purchases out of
+seventeen, because order confirmations often print no amount in the body at all.
+
+So the classifier decides alone, and a new vendor is no longer a code change, a rebuild, or a
+forwarded email. It is a review item you either commit or dismiss. What that costs is a wider
+injection surface, which the last section of this page is about.
+
 ## The ones that are not a charge
 
 The extractor classifies every message it reads — receipt, order confirmation, order update,
@@ -27,16 +48,21 @@ shipping notice, feedback request, marketing, other — and the importer propose
 class that cannot carry a charge. A satisfaction survey is not a receipt no matter what figure a
 model manages to find in it.
 
-Two directions of that gate are deliberate and pull opposite ways.
+Only a label that positively says "no money" drops a message: a feedback request or a marketing
+mail. Everything else is either a charge or an unknown, and an unknown is decided by whether
+there is money in the message.
 
-An **unrecognised** label does not book. A new vendor phrasing lands in `Other`, which carries no
-charge, and the label is still recorded verbatim so the phrasing is visible rather than lost.
+An **unrecognised** label is an unknown, not a refusal. A new vendor phrasing lands in `Other`,
+whose whole purpose is that a word this build has never seen must not cost an extraction — and
+treating `Other` as "not a charge" spent that extraction anyway. A real rental invoice was lost
+that way, the model having answered a reasonable word it was never told to use.
 
-An **absent** label still proposes. A model that omitted the field has not told us the message is
-uninteresting, and a receipt whose amount failed to extract looks identical to a survey at this
-point. Dropping it would lose a real purchase with nothing on screen to say so, where letting it
-through costs one dismissal in a queue that exists anyway. The same asymmetry decides the rest of
-this page: a duplicate is visible and costs a tap, a silently missing transaction is neither.
+An **absent** label is the same unknown and takes the same path. A model that omitted the field
+has not told us the message is uninteresting, and a receipt whose amount failed to extract looks
+identical to a survey at this point. Dropping it would lose a real purchase with nothing on
+screen to say so, where letting it through costs one dismissal in a queue that exists anyway. The
+same asymmetry decides the rest of this page: a duplicate is visible and costs a tap, a silently
+missing transaction is neither.
 
 ## The ones that are the same charge
 
