@@ -2592,6 +2592,14 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   component, so this needs the describer to reach it or the child to publish. [S]
 
 ### Release engineering
+- [ ] 🔴 **Pin `runs-on` before 2026-10-19 — `ubuntu-latest` migrates to Ubuntu 26 that day.**
+      Every CI run now prints the warning (`actions/runner-images` issue 14748), so unlike
+      2026-09-16 there is notice instead of a broken build. ⛔ That earlier migration (22.04 →
+      24.04) broke the **live release path**, not just a dev build, and it surfaced on a dev build
+      only by luck of ordering. ⚠️ `app-release.yml`'s `build-desktop` already pins `ubuntu-22.04`;
+      the Android and publish jobs float, as do the overlay's workflows — so the fix is a sweep of
+      every `runs-on` across both repos, not one line. [S] Deciding which version to pin to is the
+      only judgement in it: 24.04 is what CI runs on today and is the conservative choice.
 - [ ] **Desktop DOES flash white for ~320ms — but `backgroundColor` is NOT the culprit and the
   fix is a different layer.** Filmed at last (user installed `Xvfb` 2026-08-31; `grim` fails
   because Mutter lacks `wlr-screencopy`, and GNOME's `org.gnome.Shell.Screenshot` DBus method
