@@ -502,7 +502,7 @@ mod tests {
         let extractor = Arc::new(crate::extraction::null::NullExtractor);
         let handler = ReceiptHandler::new("receipts", "device-test", extractor);
         for from in [
-            "donotreply@audible.ca",
+            "donotreply@a-listed-vendor.example",
             "random@example.com",
             "noreply@a-vendor-nobody-listed.example",
             "",

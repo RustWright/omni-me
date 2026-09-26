@@ -1,12 +1,11 @@
 # NEXT
 
-## ▶ NEXT ACTION — the Walmart delivery mail, then `pull_only`
-🔴 **A live test is waiting on the dev box.** He ordered from Walmart late on 2026-09-25 and the
-confirmation arrived; the **delivery mail lands 09:00–11:00 on 2026-09-26** with the final cost.
-That pair is the first real mail to hit the retired gate, the `Other` fix, the printed-key parse
-and the sender-auth flag all at once. Read the review item it produces before building anything.
-Then `tasks.md` § AUTONOMOUS QUEUE item 8's remaining half: **`pull_only` holds every pulled event
-in one Vec** (up to 100k). Located, fix known, needs a progress callback first — the entry says why.
+## ▶ NEXT ACTION — 🔴 decide before 13:00Z: redeploy dev, or the live pair tests nothing new
+A real order's confirmation is archived on dev and its **receipt lands 13:00–15:00Z 2026-09-26**.
+⚠️ Dev runs `dev-90c9465-a0ad51a`, which PREDATES everything shipped today, so that pair exercises
+the OLD path unless dev is redeployed first. Detail + the offline checks: overlay `DEV_TESTING.md`.
+Then `tasks.md` § AUTONOMOUS QUEUE item 8's other half: **`pull_only` holds every pulled event in
+one Vec** (up to 100k). Located, fix known, needs a progress callback first — the entry says why.
 
 ## ⛔ Waiting on the user — only these
 - 🔴 **Inbox management after extraction** and **reviewing the email archive** — product calls.
