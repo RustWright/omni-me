@@ -40,41 +40,9 @@ use crate::extraction::{
 
 use super::imap::{ImapHandler, ImapMessage};
 use super::mime::{MimeAttachment, parse_eml};
+use super::order_ref;
 use super::sender_auth;
 use super::to_proposed_event;
-
-/// Bounds on a vendor reference worth grouping on. The floor rejects the `.`
-/// and `-` the model returns when a message has no reference; the ceiling
-/// rejects a subject line pasted into the field.
-const MIN_ORDER_REF_LEN: usize = 4;
-const MAX_ORDER_REF_LEN: usize = 64;
-
-/// A vendor reference reduced to a group key, or `None` if it cannot carry one.
-///
-/// Junk here is the expensive direction: two distinct purchases sharing a bad
-/// key merge into one review item and a transaction goes missing, where no key
-/// at all only costs a dismissal.
-fn group_key(order_ref: Option<&str>) -> Option<String> {
-    let raw = order_ref?.trim();
-    if raw.len() < MIN_ORDER_REF_LEN || raw.len() > MAX_ORDER_REF_LEN {
-        return None;
-    }
-    // An order number has no spaces in it; a subject line does.
-    if raw.chars().any(char::is_whitespace) {
-        return None;
-    }
-    let key: String = raw
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .map(|c| c.to_ascii_lowercase())
-        .collect();
-    // Punctuation is dropped before this, so `#118-762-884` and `118762884`
-    // group together. Prose with no digit in it is not a reference.
-    if key.len() < MIN_ORDER_REF_LEN || !key.chars().any(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    Some(key)
-}
 
 pub struct ReceiptHandler {
     name: String,
@@ -353,10 +321,25 @@ impl ImapHandler for ReceiptHandler {
         // Only a charge-bearing kind may group. `order_ref` on other mail is
         // junk the model filled in from a subject line, and grouping two
         // purchases on a shared junk key loses one of them silently.
+        //
+        // The document's own printing outranks the model's reading of it: the
+        // same message keyed two ways on two polls, which mints two review
+        // items for one email. Both are recorded below when they disagree.
+        let printed_key = order_ref::from_document(&combined_text);
+        let model_key = order_ref::group_key(result.order_ref.as_deref());
         let order_group = result
             .kind()
             .filter(|kind| kind.records_a_charge())
-            .and_then(|_| group_key(result.order_ref.as_deref()));
+            .and_then(|_| printed_key.clone().or_else(|| model_key.clone()));
+        if printed_key.is_some() && model_key.is_some() && printed_key != model_key {
+            tracing::info!(
+                handler = self.name(),
+                uid = message.uid,
+                printed = ?printed_key,
+                model = ?model_key,
+                "receipt: keying on the printed reference, not the model's"
+            );
+        }
         let dedup_key = match &order_group {
             Some(key) => format!("{}-order-{key}", self.name),
             None => format!("{}-uid-{}", self.name, message.uid),
@@ -384,6 +367,9 @@ impl ImapHandler for ReceiptHandler {
             "total_check": report.total_check,
             "document_kind": result.document_kind,
             "order_ref": result.order_ref,
+            // What the document printed, beside what the model read. They are
+            // both here so a divergence is reviewable rather than a log line.
+            "order_ref_printed": printed_key,
             // What the batch grouped on, and this message's identity within it.
             // The projection needs the member to tell a re-fetched message from
             // a new one about the same order.
@@ -814,6 +800,35 @@ mod tests {
             .as_str()
             .expect("dedup_key is a string")
             .to_string()
+    }
+
+    /// A message printing its own reference keys on that, not on the model's
+    /// reading of it. The same email came back with a different `order_ref` on
+    /// two polls, and a key that moves mints a second review item for one mail.
+    #[tokio::test]
+    async fn the_printed_reference_outranks_the_models() {
+        let mut result = stub_result(Some("receipt"), "105.43");
+        result.order_ref = Some(".".into());
+        let extractor = Arc::new(StubExtractor(result));
+        let handler = ReceiptHandler::new("shop", "device-test", extractor);
+        let body = b"From: shop@northwind.example\r\nSubject: about your order\r\n\
+                     Date: Sat, 16 May 2026 12:00:00 +0000\r\nContent-Type: text/plain\r\n\r\n\
+                     Order number: 600000113495028\r\n"
+            .to_vec();
+        let event = handler
+            .handle(&imap_msg_from("shop@northwind.example", body))
+            .await
+            .expect("handler ok")
+            .pop()
+            .expect("a proposal");
+        assert_eq!(
+            event.payload["dedup_key"].as_str(),
+            Some("shop-order-600000113495028"),
+            "a model answer group_key rejects must not cost the grouping"
+        );
+        let meta = &event.payload["source_metadata"];
+        assert_eq!(meta["order_ref_printed"].as_str(), Some("600000113495028"));
+        assert_eq!(meta["order_ref"].as_str(), Some("."), "the model's stays");
     }
 
     #[tokio::test]
