@@ -31,8 +31,7 @@ in one Vec** (up to 100k). Located, fix known, needs a progress callback first �
 - ✅ **The Int stepper is CONFIRMED working** on the dev phone (user, 2026-09-26). ⛔ Do not re-ask.
 
 ## 🔴 Open — **phone wedge on cold backfill.** Force-stop recovers it, volume disproven, location
-unknown. ⚠️ Core's logs **do** reach Android; the APK that looked silent predated that fix, so
-rebuild the APK before reading anything into a quiet logcat.
+unknown. ⚠️ Core's logs **do** reach Android; the silent APK predated that fix, so rebuild first.
 
 ## ⛔ Standing
 Branches: `dev/role-split-model-seats` (public; draft PR #1 open, so a push runs full CI — ⛔ never
