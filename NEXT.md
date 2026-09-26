@@ -11,8 +11,7 @@ in one Vec** (up to 100k). Located, fix known, needs a progress callback first �
 ## ⛔ Waiting on the user — only these
 - 🔴 **Inbox management after extraction** and **reviewing the email archive** — product calls.
   ✅ Ledger catch-up and the finances tab move to the END of testing. ⛔ Not blockers.
-- 🔴 **The five remaining on-device confirmations** (queue item 6). ✅ `pm clear` is free — no
-  token to re-enter.
+- 🔴 **Queue item 6, the five on-device confirmations.** ✅ `pm clear` is free — no token now.
 
 ## ⛔ Inherit — settled, do not re-derive
 - ✅ **The gate inversion is SIGNED OFF AND SHIPPED** (2026-09-26). § 5.5 → **option 2**: accept
@@ -27,10 +26,9 @@ in one Vec** (up to 100k). Located, fix known, needs a progress callback first �
   auto-import`, or local lint greens without reading the IMAP stack.
 - ✅ **Newest-wins on a collapse is CORRECT** — a confirmation is only an estimate; the delivery
   receipt is authoritative. ⛔ Never rank by confidence instead.
-- ✅ **Dev runs with NO auth token** and `POST /auto_import/tick?source=<name>` needs none.
-  Recipe: overlay `DEV_TESTING.md`.
-- ✅ **The Int stepper is CONFIRMED working** on the dev phone (user, 2026-09-26): greys out at
-  both bounds, follow sets and resets. ⛔ Closed, do not re-ask.
+- ✅ **Dev runs with NO auth token**; `POST /auto_import/tick?source=<name>` needs none. Recipe:
+  overlay `DEV_TESTING.md`.
+- ✅ **The Int stepper is CONFIRMED working** on the dev phone (user, 2026-09-26). ⛔ Do not re-ask.
 
 ## 🔴 Open — **phone wedge on cold backfill.** Force-stop recovers it, volume disproven, location
 unknown. ⚠️ Core's logs **do** reach Android; the APK that looked silent predated that fix, so
