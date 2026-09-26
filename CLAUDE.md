@@ -13,6 +13,15 @@ This project follows the structured process defined in `../../setup_files/PROJEC
 
 **Session end:** Logging and git sync are **automatic** (the session hooks — see `~/.claude/CLAUDE.md` § Session Sync): the transcript is rendered into `.log/`, `.log/` + `.curiosities/` are synced to the parent, and work is committed + pushed. Your jobs are the content updates in `PROJECT_PROCESS.md` § End-of-Session Protocol: **rewrite `NEXT.md` wholesale as soon as a stretch of work completes** — before reporting it done, not saved for session end (max 40 lines — decisions + next action, never a state snapshot), and at a phase boundary also update `project.md`'s session log and `tasks.md`. No `/export`, no manual parent-sync.
 
+**Also end every session with the roadmap to completion**, until the current push ships (user,
+2026-09-26). Not a status dump: the Definition of Ready chain with each link's state, what was
+added to scope and by which decision, what is genuinely blocking versus merely queued, and an
+honest read on what is slowing things down. He asked for it to keep a picture of progress without
+having to reconstruct it, and ⚠️ the value is the *distance-to-done* judgement, not the list.
+⛔ Say which orderings are dependencies and which are your proposals — priority is his to set.
+✅ On trial here; if it works he intends it for any multi-week stretch, which makes
+`PROJECT_PROCESS.md` § End-of-Session Protocol its eventual home rather than this file.
+
 **Session model:** Six-session process per `PROJECT_PROCESS.md` § Process Flow (Initiation → Research → Architecture → Planning → Implementation → Code Review). The AI role per session is documented in `PROJECT_PROCESS.md` § AI's Role.
 
 ## Comments: route each one to where its reader is

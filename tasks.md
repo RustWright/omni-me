@@ -1048,9 +1048,23 @@ critical path, not the tail.
   similar), so blob storage is independent of the sync server and documents stay viewable when
   that server is down. The same argument eventually puts the agent on its own machine. ⛔ Both
   are future goals. Neither may complicate today's co-located design.
-- ⚠️ **Inbox management after extraction** — how processed emails are handled and stored. Named
-  as open 2026-09-11 and not obviously closed since.
-- ⚠️ **Reviewing the archive of emails** — same origin, same status.
+- ✅ **Inbox management after extraction — ANSWERED 2026-09-26.** omni-me tracks what it has
+  processed; ⛔ the mailbox is never written to. `EXAMINE` read-only stays intact, and the state
+  already exists in `imap_cursors` and `dedup_key`, so this is a read surface, not a mechanism.
+  🔴 **Writing back to the mailbox (label / mark-read / archive in Gmail) is the user's stated
+  DESTINATION, not a rejected option** — his words: *"I would really like option 2 once I build
+  confidence in the system but that would take me using it for a while and understanding its
+  limitations and how reliable it is."* ⛔ So the precondition is accumulated trust, and
+  [[feedback-deferred-is-not-cancelled]] applies: never argue against a capability on the grounds
+  that this path is deferred. ⚠️ It also means the label-confirmation surface below is on the
+  critical path to it, because that is where the trust is supposed to come from.
+- ✅ **Reviewing the archive — ANSWERED 2026-09-26: confirm-and-correct, not search-only.** A
+  surface showing what was archived and how it was labelled, where a correction flips
+  `DocumentField.verified` from `false` to `true`. ⚠️ That distinction already exists in the
+  schema for model-derived output, so the review surface is anticipated by the data model rather
+  than bolted onto it. ⛔ Search/retrieval alone was refused: it never produces evidence that the
+  labels are trustworthy, which leaves both per-tag retention and the Gmail write-back
+  permanently ungated.
 
 ### What is already built and merely unproven on hardware
 
@@ -1828,6 +1842,55 @@ the extractor has.
       the Settings Int stepper (native styling is not Playwright-verifiable).
 
 ### Stage 6 — real-data validation of the new features
+
+#### ▶ TRIAGE — which of the 19 below are real gates (my read, 2026-09-26; user authorised it)
+
+⛔ **The test applied:** if this is wrong or missing when the tab goes on, does it **lose or corrupt
+data, or silently produce a wrong number he would act on?** Everything else is measurement quality
+and ships after. ⚠️ This is my judgement, not his ruling — the split is proposed, not settled.
+
+🔴 **GATES (9), in the order their dependencies force:**
+1. **Server backup before the backfill** (last item below). Blob bytes have **no second copy**;
+   the box is a single point of total loss. ⛔ Now doubly binding: the archive refinement agreed
+   2026-09-26 includes a **purge path that deletes blobs**. Deleting blobs with no backup is the
+   highest-risk thing on this page. ⚠️ Verify by size, never by exit code.
+2. **Per-source PDF password.** 18.3% of the corpus (140 of 765) is encrypted and silently yields
+   nothing, and the vision fallback cannot open them either. ⛔ Must precede the corpus import or
+   a fifth of it reads as empty-but-fine.
+3. **Role C has no 429 retry or backoff.** One "model busy" **loses the document**. The logic
+   already exists in the chat client and was never shared across.
+4. **`max_tokens` for C1 and C3.** Same file, same path as 3 — fix together. Uncapped, a
+   non-terminating model runs to the 300s timeout, returns nothing, and bills for every token.
+5. **What re-queues a document a model called blank.** Proven: an empty transcription for a
+   441-word document lifts `text_source` off `none` and **retires the document forever**, and
+   nothing notices. ⛔ Promoted by the 2026-09-26 decision to turn enrichment on — this is that
+   exact path.
+6. **`fields` non-optional for the document reader.** Six of seven models return an empty array;
+   without it a document is catalogued but **not findable** by account or policy number.
+   ⛔ Promoted by the same decision: document tags and search depend on the reader's output.
+7. **Control sampling, then re-rank.** The same model on the same 39-row statement scored 33%
+   with **13 sign-flips** and 100% with none. A sign flip is money in the wrong direction.
+8. **Decide production's sampling parameters** — the actionable half of 7, and role C cannot take
+   it through `extra_body` at all, so that path needs code.
+9. **Make the injection gate print its evidence.** Five of fourteen models tripped it, including
+   both C3 finalists, and the row cannot distinguish obedience from correct cataloguing. ⛔ Not
+   hygiene: it is unresolved whether the seat we point at every financial document obeys
+   instructions embedded in one.
+
+✅ **NOT gates — ship after the tab.** Seat B's case family · retrieval-bench breadth (⚠️ except
+the `document` slice, which is the role-C programme's own output) · the read-errors-first wording
+[XS, do it anyway] · seat A perf research · the C2 probe set · image-cap splitting (avoidable by
+model selection; residual 2.6%) · finances perf, which the item itself already calls polish ·
+`GET /feedback` on the box [⚠️ not a gate but high leverage and cheap — it is how bugs get
+reported during the testing that follows].
+
+⚠️ **Neither: the corpus import is not a gate, it IS the go-live action.** Gates 1 and 2 precede it.
+
+🔴 **The headline: three of the nine gates were promoted by decisions taken 2026-09-26** (5, 6 and
+the second half of 1). Turning the archive catalogue on and adding a purge path moved them from
+"bench polish" to "must hold before real data". ⛔ That is the honest answer to what is slowing
+this down — not the volume of work, but scope arriving from decisions made late.
+
 - [ ] **Archive + finance import against the real corpus** — 276 CSVs, 765 PDFs. 🔴 **Expect 140
       of those PDFs (18.3%) to yield nothing**, measured 2026-09-15 — they are **encrypted**, and
       `archive.rs:183` passes an empty password. Two issuers encrypt 100% of their statements, a
