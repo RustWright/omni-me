@@ -28,9 +28,8 @@ fixed mapper, or let the Oct-1 clean ledger supersede it. ⛔ Ask first — that
   writes them path-independently; purge manual with preview; per-tag retention opt-in. ✅ Review =
   confirm-and-correct. ✅ Inbox: track only, ⛔ never write to the mailbox.
 - 🔴 **Suite deadlock BLOCKS CI, nothing merges to `main`** — its own session; ⛔ `--test-threads=1`
-  tried and reverted. 💭 Fold in the BuildKit cache-mount fix: 19.2 of every 20 min of image build
-  is a cold `cargo build`, because `cache-to: type=gha` does not export cache mounts (`tasks.md`).
-- 🔴 **Pin `runs-on` before 2026-10-19** or CI breaks again, on the live release path too.
+  tried and reverted. 💭 Fold in the BuildKit fix — 19.2 of every 20 min of image build is a cold
+  `cargo build` because `type=gha` skips cache mounts (`tasks.md`). 🔴 **Pin `runs-on` by 2026-10-19.**
 - 🔴 **The non-production banner CANNOT fire on Android**, so the dev APK looks exactly like live.
   ⚠️ **End every session with the roadmap** — `CLAUDE.md`.
 
