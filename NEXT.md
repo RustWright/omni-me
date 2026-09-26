@@ -1,40 +1,44 @@
 # NEXT
 
-## ▶ NEXT ACTION — 🔴 [USER] the box's GHCR token expired; nothing can deploy until it is replaced
-Pulls worked at ~14:09Z, `denied` by ~16:35Z — including the **known-good tag** that pulled two
-hours earlier, so it is the credential, not the tag. 🔴 **`deploy/remote-deploy.sh` pulls on the
-same stored login, so LIVE deploys are broken too.** ✅ Builds are unaffected (CI mints its own).
-⛔ Durable fix is a deploy job authenticating the box from the Actions secret, not a hand-placed
-token that re-expires in 90 days — `tasks.md` § Release engineering.
-✅ **Dev is healthy on `dev-1c827e2-019626e`**, `.env` reverted to match it, so a restart is safe.
-⏳ **`dev-24808b0-a8bfd24` is built and waiting** — it carries the total fix.
+## ▶ NEXT ACTION — deploy build `36263562108`, then `note.revise` on the phone
+⏳ **Image build `36263562108`, dispatched 18:43Z with NO watcher** — it carries the
+one-draft-per-purchase mapper. Read its tag from the run annotations (`gh run view <id>`; ⚠️ do not
+construct it, my guess at the private SHA was wrong once), swap `OMNI_IMAGE` in `~/omni-dev/.env`,
+`pull && up -d`, smoke `/health` + `sources=3`.
+✅ **CDP is live**: `adb forward tcp:9222 localabstract:webview_devtools_remote_2208`; driver
+`<scratchpad>/cdp.js` (⛔ expression from a FILE, never argv). ⚠️ The pid changes on every relaunch.
+Then queue item 6's `note.revise`, both paths — the other four need a second client, a day, or an agent.
 
 ## ⛔ Waiting on the user — only these
-- 🔴 The GHCR token above. ⛔ Everything else below is unblocked.
 - ✅ **Public-repo identity scrub AUTHORISED**, ⛔ only at the END of a session. `tasks.md` § Owed.
+- 🔴 **How to get the 8 line items a vendor's mail does NOT contain** (they sit behind a link).
+  ⛔ Ask before building — following a link means fetching remote content from an email.
 
 ## ⛔ Inherit — settled 2026-09-26, do not re-derive
-- ✅ **Bulk/archive backfill produces DOCUMENTS ONLY, never transactions.** Ledger starts clean
-  **2026-10-01** from September statements, which state their own balances. ⚠️ The email backlog is
-  in scope and archive-only too.
-- ✅ **Watermark: per account, on the document's transaction date** — postable only after that
-  account's last statement date; ⚠️ global would silently suppress earlier-closing accounts.
-  🔴 **SC statements are the ONLY transaction source for those accounts** — never assume otherwise.
-- 💭 **Closed-book framing is under consideration, not requested** (user). ⚠️ Hazard for later: a
-  double-entry transaction straddling two accounts with different cutoffs cannot be half-posted.
-- ✅ **Archive refinement lands BEFORE the tab** (option 2). Tags reuse the existing `Tag` type and
-  query path; reader writes them path-independently; purge manual with a preview; per-tag retention
-  opt-in once a tag earns it. ⛔ Design session first.
-- ✅ **Review = confirm-and-correct** (flips `DocumentField.verified`). ✅ **Inbox: track only, never
-  write to the mailbox** — 🔴 but Gmail write-back is the user's DESTINATION once trust is built.
-- 🔴 **Suite deadlock now BLOCKS CI, so nothing merges to `main`.** Its own session; the test passes
-  alone in 3.36s. ⛔ `--test-threads=1` tried and reverted — the leak is `+1 per `connect()``.
-- ✅ **Stage 6 triaged: 9 gates, 10 ship-after** — `tasks.md` § TRIAGE. Three were promoted today.
-- 🔴 **`gmail_work` and `yahoo` are STILL PAUSED**; a paused source reports `health: healthy`.
+- ✅ **Total takes precedence over line items** — it balances the bank charge; items are a bonus.
+  🔴 Acting on it found `find_match_candidates` is **pairwise**, so the old one-draft-per-item shape
+  could NEVER reconcile. ✅ Fixed: one draft per purchase. 🔴 **Every batch committed before today
+  has the un-reconcilable shape** — audit or re-import.
+- ✅ **Bulk/archive backfill = DOCUMENTS ONLY.** Ledger opens clean **2026-10-01** from September
+  statements, which state their own balances. ⚠️ The email backlog is in scope, archive-only.
+- ✅ **Watermark: per account, on the document's transaction date.** 🔴 SC statements are the ONLY
+  transaction source for those accounts. 💭 Closed-book framing is under consideration, not asked.
+- ✅ **Archive refinement BEFORE the tab**: tags reuse the existing `Tag` type and query path;
+  reader writes them path-independently; purge manual with preview; per-tag retention opt-in.
+  ✅ **Review = confirm-and-correct** (flips `DocumentField.verified`). ✅ **Inbox: track only,
+  never write to the mailbox** — 🔴 Gmail write-back is the DESTINATION once trust is built.
+- ✅ **decide command CONFIRMED end to end on the phone** (badge 13→12, server got 1 committed + 4
+  transaction_recorded). ⛔ Do not re-test. ✅ 5 messages, 0 failures on the fixed path.
+- 🔴 **Suite deadlock BLOCKS CI, nothing merges to `main`** — its own session; the test passes alone
+  in 3.36s and ⛔ `--test-threads=1` was tried and reverted (leak is `+1 per connect()`).
+  ✅ **Stage 6 triaged — 9 gates + the deadlock = 10.** `tasks.md` § TRIAGE.
+- 🔴 **The non-production banner CANNOT fire on Android** (env-var gated), so the dev APK looks
+  exactly like live. `tasks.md` § Stage 0.
+- ⚠️ **End every session with the roadmap to completion** until this push ships. `CLAUDE.md`.
 
-## 🔴 Open — APK `1.1.11-dev` built, on the box, **not installed**. Then queue item 6, the wedge, and item 8's `pull_only` Vec. Phone answers adb at `100.109.41.53:5555`, stay-awake on.
+## 🔴 Open — pin `runs-on` before **2026-10-19** or CI breaks again, on the live release path too.
 
 ## ⛔ Standing
 Public `dev/role-split-model-seats` (draft PR #1) / overlay `dev/untested-overlay`; both pushed.
 ⛔ Never run the suite on this box · live is never a deploy target · no vendor detail in the public
-repo. ⚠️ `omni-me-private` is NOT hook-committed.
+repo. ⚠️ `omni-me-private` is NOT hook-committed. ✅ Dev GHCR token replaced by the user 2026-09-26.
