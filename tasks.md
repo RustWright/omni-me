@@ -1561,10 +1561,12 @@ that means in code. ✅ 1, 2, 3, 4, 5 and 7 are done. **Left: 6 (needs the phone
        message count** — one invoice PDF was 694 KB, nine times the mean, so a capacity plan keyed to
        message count will be wrong in the direction that matters. ⛔ Numbers only; the per-sender
        detail is overlay-tracked.
-8. [~] **Two of the four rebuild defects are done** (scoped rebuild; core tracing was already
-       fixed and the entry was stale). 🔴 **Left: the whole-log-into-memory load** — 1.3 GB peak on
-       the S9, and a fresh install's first sync hits it too, so it is an OOM with a date on it. The
-       fold is already per-event and order-only, so an ordered page walk is equivalent. [M]
+8. [~] **Three of the four rebuild defects are done.** ✅ 2026-09-26: the projection replay is
+       paged (`replay_paged`, 500 at a time, keyset `(received_at, id)` cursor). 🔴 **Left:
+       `pull_only` still holds every pulled event in one Vec** — up to 100k, and all 16k on the
+       S9's first sync. The fix is known but needs a progress callback first or the sync
+       indicator stops counting down; located call sites are in the § Awaiting on-device
+       confirmation entry above. [M]
        ⛔ **The suite deadlock stays out of this branch** — the item says so itself, its prescribed
        fix (one shared instance + a namespace per test) has an unanswered question about
        cross-namespace bleed, and its prerequisite is consolidating 24 copies of `test_db()`. Own
@@ -2219,28 +2221,47 @@ change here and a forced rebuild.
 - [ ] 🔴 **The scale, measured 2026-09-24: the dev log is 16,052 events.** A rebuild replays every
       one of them through **all ten** projections on the device. That is the number behind the
       40 minutes, and it only grows.
-- [ ] 🔴 **The rebuild loads the entire event log into memory.** `get_since(epoch, None)`, and
-      its doc says that is deliberate — "a projection rebuild wants the whole window and would
-      be wrong with a page of it". App RSS was **710 MB** mid-rebuild. ⚠️ That reasoning holds
-      for *correctness* and not for *memory*: replaying in ordered pages is the same fold.
-      ✅ **Verified 2026-09-24:** `apply_events_resilient` (`projection.rs:271`) folds per event in
-      order and keeps no cross-event state but `last_applied`, so an ordered page walk is exactly
-      equivalent — the whole-window load buys only the RAM. ⚠️ It is **not just the rebuild path**:
-      a fresh install's first sync does the same, and that is the one every real user hits.
-      Measured on the S9 — 16,052 events, **1.3 GB peak RSS**, 19+ minutes of CPU, every Tauri
-      query blocked behind it and the UI empty throughout. On a log that only grows, this is an
-      OOM with a date on it. [M]
+- [x] ✅ **THE REBUILD HALF IS DONE 2026-09-26.** `rebuild_inner` and `catch_up` both fold the
+      log through `ProjectionRunner::replay_paged` now, `REPLAY_PAGE = 500` events at a time,
+      instead of `get_since(epoch, None)`. The equivalence is a test at every page size
+      (`a_paged_replay_folds_exactly_what_an_unbounded_one_would`), and the bookmark advancing
+      per page also closes the kill-partway-through hole `rebuild_only`'s own doc names.
+      ⚠️ **The cursor is a keyset pair `(received_at, id)`, not a timestamp** — `EventStore::
+      get_page_after`. A timestamp-only cursor drops the rest of a shared `received_at` at a page
+      boundary, silently and only under a tie. Measured: `append_batch`'s `time::now()` resolves
+      per statement (~3 ms apart), so ties are unlikely rather than impossible — and the
+      regression test forces the tie rather than trusting the clock, because a test that trusted
+      it would pass either way. It also pins that the old cursor loses 4 of 6 rows.
+      ✅ Checked the class: the only other unbounded `get_since` reader is `writer.rs:282`, which
+      reads one hour. ✅ And sync's wire cursor is NOT affected — `server/src/routes/sync.rs::
+      trim_to_page` over-fetches one row and cuts on a clean boundary, so the tie is handled
+      there by a different mechanism.
+- [ ] 🔴 **The fresh-install half is still open, and it is now located.**
+      `SyncClient::pull_only` (`core/src/sync/client.rs:213`) appends each page to the local
+      store as it goes, which is right, but also accumulates every page into
+      `PullOutcome::pulled_events` — bounded only by `MAX_PULL_PAGES` (200) × `MAX_EVENTS_PER_PULL`
+      (500) = **100,000 events in one Vec**. On the S9's 16k that is all of them. Three callers
+      then apply that slice: `tauri-app/src-tauri/src/commands/sync.rs:34`,
+      `commands/notes.rs:278`, and `core/src/sync/puller.rs:201`.
+      ✅ **The fix is known and the events do not need to be returned at all** — they are already
+      durably appended, so a caller can fold them with `catch_up()`, which is paged as of today.
+      🔴 **What stops it being a one-liner:** `puller.rs::apply_in_chunks` counts the indicator
+      down from `pulled_events.len()`, and its comment says a stall must show as a number that
+      stops moving. Dropping to `catch_up()` loses that, which is a capability regression. So
+      `replay_paged` needs a progress callback first, and then the three callers migrate.
+      ⚠️ Two of the three callers are in `tauri-app`, which this box cannot cheaply build.
+      [M, design-first, own stretch]
 - [x] ✅ **ALREADY FIXED — this entry was stale.** Verified 2026-09-25: the default filter in
       `tauri-app/src-tauri/src/lib.rs` is `omni_me_app=debug,omni_me_core=info`, with a comment
       giving this exact reason. ⚠️ It reads as open because the dev APK that produced the empty
       logcat was built ~25 minutes *before* the fix landed — the code was right and the artifact
       was old. Rebuild the APK before concluding anything from a silent log again.
 
-⛔ **Shipping consequence, for whoever cuts the next release:** ✅ the first and third are now
-done (scoped rebuild, core tracing). 🔴 **The second and fourth remain**, and together they are
-still the release risk: a version bump replays 16k events through the stale projection with no
-progress shown, and `get_since(epoch, None)` loads the whole log into memory (1.3 GB peak on the
-S9) — which a fresh install's first sync hits too, not just a rebuild.
+⛔ **Shipping consequence, for whoever cuts the next release:** ✅ three of the four are done
+(scoped rebuild, core tracing, and the paged projection replay). 🔴 **What remains is the
+fresh-install path only**: `pull_only` accumulates every pulled event in memory before anything
+applies it. A version-bump rebuild no longer does — it pages — but it still shows no progress
+while it runs.
 
 ### 🔴 Projection writes swallow statement errors (found 2026-09-24, by being bitten)
 

@@ -1,33 +1,36 @@
 # NEXT
 
-## ▶ NEXT ACTION — he signs off on two calls, then I build § 5.1 + § 5.2
-✅ **The gate-inversion design is WRITTEN and MEASURED**: overlay `GATE_INVERSION_DESIGN.md`. It
-answers the 2026-09-25 ruling (the sender list must stop being a gate; ⛔ never add a vendor to fix a
-miss). ⛔ Do not re-derive it and do not re-run the corpus.
-**Recommendation: delete the gate outright and add no filter.** On 54 real emails the gate scores 82%
-recall / 67% precision; no gate at all scores **94/94**, and 100% with § 5.3. Filtering nothing costs
-**$0.10/month**, so cost was never the argument. Then `tasks.md` § AUTONOMOUS QUEUE — **only item 8's
-whole-log-in-memory half is left**, and it is release-blocking.
+## ▶ NEXT ACTION — the Walmart delivery mail, then `pull_only`
+🔴 **A live test is waiting on the dev box.** He ordered from Walmart late on 2026-09-25 and the
+confirmation arrived; the **delivery mail lands 09:00–11:00 on 2026-09-26** with the final cost.
+That pair is the first real mail to hit the retired gate, the `Other` fix, the printed-key parse
+and the sender-auth flag all at once. Read the review item it produces before building anything.
+Then `tasks.md` § AUTONOMOUS QUEUE item 8's remaining half: **`pull_only` holds every pulled event
+in one Vec** (up to 100k). Located, fix known, needs a progress callback first — the entry says why.
 
 ## ⛔ Waiting on the user — only these
-- 🔴 **§ 5.5 the injection posture** — accept it (my pick), add SPF/DKIM as a draft *signal*, or keep
-  a gate. A risk posture rather than an engineering trade, so it is his.
-- 🔴 **§ 5.6 candidate grouping keys** — yes or no. ⛔ No is defensible; I did not build it.
-- 🔴 **The Int stepper, Settings → Assistant** (check-in hour 0–23, max turns 3–50). What to check:
-  `−`/`+` are tappable, the number is centred and does not reflow the row as it widens, both buttons
-  grey out at the bounds, and the `0–23` / `3–50` hint is legible.
 - 🔴 **Inbox management after extraction** and **reviewing the email archive** — product calls.
   ✅ Ledger catch-up and the finances tab move to the END of testing. ⛔ Not blockers.
+- 🔴 **The five remaining on-device confirmations** (queue item 6). ✅ `pm clear` is free — no
+  token to re-enter.
 
 ## ⛔ Inherit — settled, do not re-derive
-- ✅ **Queue items 1, 3, 4, 5, 7 are DONE; 2 is blocked on § 5.6.** ⚠️ Three of those entries were
-  **stale or wrong as written** — read the entry in `tasks.md` before believing any premise there.
-- 🔴 **`cargo clippy -p omni-me-core` compiles NONE of `auto_import`** — non-default feature, so
-  local lint greens without reading the IMAP stack. Pass `--features auto-import`.
+- ✅ **The gate inversion is SIGNED OFF AND SHIPPED** (2026-09-26). § 5.5 → **option 2**: accept
+  the exposure, flag an unauthenticated sender on the draft. § 5.6 → **no**: no candidate keys,
+  `group_key()`'s bounds unchanged; the stability parse shipped alone. ⛔ Do not re-derive any of
+  it and do not re-run the corpus — overlay `GATE_INVERSION_DESIGN.md` § 7 is the record.
+- ⚠️ **The receipt handler must stay LAST in the dispatch list.** It claims everything now, and
+  first-match-wins order is the only thing giving the SC handlers their own mail.
+- ✅ **Queue items 1–5 and 7 are DONE; 6 needs the phone; 8 is half done.** ⚠️ Items 2, 4 and 5
+  were **stale or wrong as written** — read the entry before believing any premise in it.
+- 🔴 **`cargo clippy -p omni-me-core` compiles NONE of `auto_import`** — pass `--features
+  auto-import`, or local lint greens without reading the IMAP stack.
 - ✅ **Newest-wins on a collapse is CORRECT** — a confirmation is only an estimate; the delivery
   receipt is authoritative. ⛔ Never rank by confidence instead.
-- ✅ **Dev runs with NO auth token** and `POST /auto_import/tick?source=<name>` needs none — seconds
-  per mail test, and `pm clear` is safe. Recipe: overlay `DEV_TESTING.md`.
+- ✅ **Dev runs with NO auth token** and `POST /auto_import/tick?source=<name>` needs none.
+  Recipe: overlay `DEV_TESTING.md`.
+- ✅ **The Int stepper is CONFIRMED working** on the dev phone (user, 2026-09-26): greys out at
+  both bounds, follow sets and resets. ⛔ Closed, do not re-ask.
 
 ## 🔴 Open — **phone wedge on cold backfill.** Force-stop recovers it, volume disproven, location
 unknown. ⚠️ Core's logs **do** reach Android; the APK that looked silent predated that fix, so
