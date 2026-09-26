@@ -279,6 +279,7 @@ mod tests {
             confidence: 0.9,
             model: "deepseek-ai/DeepSeek-V4.1-Flash".into(),
             dropped_postings: 0,
+            total_as_printed: None,
             total_discarded: false,
             document_kind: None,
             order_ref: None,

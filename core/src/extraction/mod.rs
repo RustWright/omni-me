@@ -89,6 +89,11 @@ pub struct ExtractionResult {
         with = "rust_decimal::serde::str_option"
     )]
     pub total: Option<Decimal>,
+    /// The total exactly as the document prints it, kept when that differs from the
+    /// parsed value. A discarded total is otherwise unrecoverable: `raw_response` is
+    /// set in process but is not carried into the proposal event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_as_printed: Option<String>,
     pub confidence: f64,
     /// Line items `parse_response` discarded because their amount was unusable.
     /// Non-zero means this result is knowingly incomplete, so `verify` downgrades
@@ -659,24 +664,36 @@ fn salvage_confidence(value: &mut serde_json::Value) {
 /// `input contains invalid characters` it originally cited is chrono's, from the
 /// unguarded `date`. See `salvage_date`.
 fn salvage_total(value: &mut serde_json::Value) -> bool {
-    let Some(total) = value.get_mut("total") else {
-        return false;
+    // Read everything needed before writing, so the borrow ends here.
+    let printed = match value.get("total") {
+        None => return false,
+        Some(t) if t.is_null() => return false,
+        // The number's own representation, not `as_f64`, which would round.
+        Some(t) if t.is_number() => {
+            let text = t.to_string();
+            value["total"] = serde_json::Value::String(text);
+            return false;
+        }
+        Some(t) => t.as_str().map(|s| s.trim().to_string()),
     };
-    if total.is_null() {
-        return false;
+    let normalized = printed.as_deref().and_then(normalize_amount);
+    let printed_form_is_new = printed
+        .as_deref()
+        .is_some_and(|p| normalized.as_deref() != Some(p));
+    let slot_is_free = value.get("total_as_printed").is_none_or(|p| p.is_null());
+    // Keep the printed form whenever it is not already the value we parse, so a
+    // discarded total stays inspectable — `raw_response` never reaches the event.
+    if printed_form_is_new && slot_is_free {
+        let text = printed.clone().unwrap_or_default();
+        value["total_as_printed"] = serde_json::Value::String(text);
     }
-    if total.is_number() {
-        let text = total.to_string();
-        *total = serde_json::Value::String(text);
-        return false;
-    }
-    match total.as_str().map(|s| s.trim().to_string()) {
-        Some(text) if parses_as_decimal(&text) => {
-            *total = serde_json::Value::String(text);
+    match normalized {
+        Some(text) => {
+            value["total"] = serde_json::Value::String(text);
             false
         }
-        _ => {
-            *total = serde_json::Value::Null;
+        None => {
+            value["total"] = serde_json::Value::Null;
             true
         }
     }
@@ -701,25 +718,105 @@ fn salvage_postings(value: &mut serde_json::Value) -> usize {
         let Some(text) = amount.as_str().map(|s| s.trim().to_string()) else {
             return false;
         };
-        if !parses_as_decimal(&text) {
+        // A line item is printed with a currency symbol as often as the total is,
+        // so it normalises the same way rather than being dropped.
+        let Some(normalized) = normalize_amount(&text) else {
             return false;
-        }
-        // Write the trimmed form back, so what passed this check is exactly what
-        // deserialization sees. Checking a trimmed copy and leaving the padded
-        // original in place would fail the document on a line this accepted.
-        *amount = serde_json::Value::String(text);
+        };
+        // Write the normalised form back, so what passed this check is exactly what
+        // deserialization sees. Checking a copy and leaving the original in place
+        // would fail the document on a line this accepted.
+        *amount = serde_json::Value::String(normalized);
         true
     });
     before - postings.len()
 }
 
-/// Whether `rust_decimal`'s serde adapter would accept this string.
+/// Symbols and separators a document prints around an amount but which carry no
+/// value. Non-breaking space is here because rendered mail is full of it.
+const CURRENCY_TRIM: &[char] = &['$', '€', '£', '¥', '₦', '\u{a0}', ' ', '\t', '(', ')'];
+
+/// ISO codes checked on both sides, so `116.47 CAD` and `CAD 116.47` both reduce.
+const CURRENCY_CODES: &[&str] = &["CAD", "USD", "EUR", "NGN", "GBP", "JPY"];
+
+/// Turn a printed amount into a string `rust_decimal` accepts, or `None` when no
+/// number survives. A document states its total as printed — `$116.47` — and the
+/// unnormalised form is what silently cost the authoritative total on real mail.
+fn normalize_amount(raw: &str) -> Option<String> {
+    let stripped = strip_currency(raw);
+    if stripped.is_empty() {
+        return None;
+    }
+    // Scientific notation is passed through: the serde adapter accepts it, and
+    // reading separators out of an exponent would corrupt it.
+    if stripped.contains(['e', 'E']) && Decimal::from_scientific(&stripped).is_ok() {
+        return Some(stripped);
+    }
+    let negative = stripped.starts_with('-') || raw.trim().starts_with('(');
+    let body: String = stripped
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == ',' || *c == '.')
+        .collect();
+    if !body.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let read = read_separators(&body);
+    let signed = if negative { format!("-{read}") } else { read };
+    signed.parse::<Decimal>().is_ok().then_some(signed)
+}
+
+/// Drop currency symbols, ISO codes and padding from both ends.
+fn strip_currency(raw: &str) -> String {
+    let mut s = raw.trim().to_string();
+    // Twice: a code can sit outside a symbol, as in `$116.47 CAD`.
+    for _ in 0..2 {
+        for code in CURRENCY_CODES {
+            for cased in [code.to_string(), code.to_lowercase()] {
+                if let Some(rest) = s.strip_suffix(&cased) {
+                    s = rest.trim().to_string();
+                }
+                if let Some(rest) = s.strip_prefix(&cased) {
+                    s = rest.trim().to_string();
+                }
+            }
+        }
+        s = s.trim_matches(|c| CURRENCY_TRIM.contains(&c)).to_string();
+    }
+    s
+}
+
+/// Resolve `,` and `.` by position rather than by locale.
 ///
-/// It must mirror `rust_decimal::serde::str` exactly — `from_str`, falling back to
-/// scientific notation. Stricter and a line the deserializer could read is dropped;
-/// looser and the whole document fails on a line this let through.
-fn parses_as_decimal(s: &str) -> bool {
-    s.parse::<Decimal>().is_ok() || Decimal::from_scientific(s).is_ok()
+/// With two different separators the last is the decimal point. With one kind
+/// throughout it is a thousands mark only when exactly three digits follow it, so
+/// `116.47` keeps its decimal while `1.234` and `1,234,567` lose theirs. Guessing
+/// the user's locale instead would misread `1.234,56` by a factor of 1000.
+fn read_separators(body: &str) -> String {
+    let seps: Vec<(usize, char)> = body
+        .char_indices()
+        .filter(|(_, c)| *c == ',' || *c == '.')
+        .collect();
+    let Some(&(last_idx, last_ch)) = seps.last() else {
+        return body.to_string();
+    };
+    let digits_after = body[last_idx + last_ch.len_utf8()..]
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .count();
+    let mixed = seps.iter().any(|(_, c)| *c != last_ch);
+    let last_is_decimal = mixed || digits_after != 3;
+    let mut out = String::with_capacity(body.len());
+    for (i, c) in body.char_indices() {
+        match c {
+            ',' | '.' => {
+                if i == last_idx && last_is_decimal {
+                    out.push('.');
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Give an extracted draft the other side of each commodity that does not net to zero.
@@ -828,6 +925,7 @@ mod reconcile_tests {
             confidence,
             dropped_postings: 0,
             model: "scripted".into(),
+            total_as_printed: None,
             total_discarded: false,
             document_kind: Some("receipt".into()),
             order_ref: Some("ORD-1".into()),
@@ -1047,6 +1145,7 @@ mod tests {
             confidence: 0.9,
             model: "m".into(),
             dropped_postings: 0,
+            total_as_printed: None,
             total_discarded: false,
             document_kind: None,
             order_ref: None,
@@ -1081,6 +1180,7 @@ mod tests {
             confidence: 0.72,
             model: "m".into(),
             dropped_postings: 0,
+            total_as_printed: None,
             total_discarded: false,
             document_kind: None,
             order_ref: None,
@@ -1213,16 +1313,16 @@ mod tests {
                 { "commodity": "CAD", "amount": "14.06" },
                 { "commodity": "CAD", "amount": "1.83" },
             ],
+            // Was asserted as unreadable until 2026-09-26. It is a perfectly
+            // ordinary printed total, and discarding it was the defect.
             "total": "$1,234.00 CAD",
             "confidence": 0.9,
         });
         let result = parse_response(raw.clone(), "m").expect("salvaged, not failed");
         assert_eq!(result.postings.len(), 2, "the readable lines survive");
-        assert!(result.total.is_none());
-        assert!(
-            result.total_discarded,
-            "a discarded total must not read as a document that printed none"
-        );
+        assert_eq!(result.total, Some("1234.00".parse().unwrap()));
+        assert!(!result.total_discarded);
+        assert_eq!(result.total_as_printed.as_deref(), Some("$1,234.00 CAD"));
         assert_eq!(result.raw_response, raw, "the original stays inspectable");
     }
 
@@ -1281,6 +1381,75 @@ mod tests {
             Some("09/26/26"),
             "a printed form the model supplied is not clobbered"
         );
+    }
+
+    /// The separator rule, decided with the user 2026-09-26 after a real delivery
+    /// mail printed `$116.47` and lost its total. Position decides, never locale:
+    /// guessing would misread `1.234,56` by a factor of 1000.
+    #[test]
+    fn a_printed_amount_is_read_by_separator_position() {
+        for (printed, expected) in [
+            ("$116.47", "116.47"),
+            ("116.47 CAD", "116.47"),
+            ("CAD 116.47", "116.47"),
+            ("$116.47 CAD", "116.47"),
+            ("  \u{a0}€1,234.56 ", "1234.56"),
+            ("1.234,56", "1234.56"),
+            ("₦1.234", "1234"),
+            ("1,234,567", "1234567"),
+            ("1.234.567,89", "1234567.89"),
+            ("12,50", "12.50"),
+            ("1.5", "1.5"),
+            ("7.96", "7.96"),
+            ("(25.74)", "-25.74"),
+            ("-25.74", "-25.74"),
+        ] {
+            assert_eq!(
+                normalize_amount(printed).as_deref(),
+                Some(expected),
+                "{printed}"
+            );
+        }
+        for junk in ["", "  ", "n/a", "$", "CAD", "see attached"] {
+            assert_eq!(normalize_amount(junk), None, "{junk}");
+        }
+    }
+
+    /// A currency symbol on the total used to discard the authoritative number
+    /// silently. The printed form is now kept so the discard is never invisible.
+    #[test]
+    fn a_printed_total_survives_and_records_what_it_printed() {
+        let raw = serde_json::json!({
+            "postings": [{ "commodity": "CAD", "amount": "$7.96" }],
+            "total": "$116.47",
+            "confidence": 0.72,
+        });
+        let result = parse_response(raw, "m").expect("normalised, not discarded");
+        assert_eq!(result.total, Some("116.47".parse().unwrap()));
+        assert!(!result.total_discarded, "it was read, not discarded");
+        assert_eq!(
+            result.total_as_printed.as_deref(),
+            Some("$116.47"),
+            "the printed form is kept even when it parsed"
+        );
+        assert_eq!(
+            result.postings[0].amount,
+            "7.96".parse().unwrap(),
+            "a line item normalises the same way rather than being dropped"
+        );
+    }
+
+    #[test]
+    fn a_total_that_survives_nothing_is_discarded_but_still_inspectable() {
+        let raw = serde_json::json!({
+            "postings": [],
+            "total": "see attached",
+            "confidence": 0.5,
+        });
+        let result = parse_response(raw, "m").expect("salvaged");
+        assert!(result.total.is_none());
+        assert!(result.total_discarded);
+        assert_eq!(result.total_as_printed.as_deref(), Some("see attached"));
     }
 
     /// `confidence` is required and typed `f64`, so the same class of loss applies.

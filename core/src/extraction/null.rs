@@ -34,6 +34,7 @@ impl DocumentExtractor for NullExtractor {
             confidence: 0.0,
             dropped_postings: 0,
             model: "null".to_string(),
+            total_as_printed: None,
             total_discarded: false,
             document_kind: None,
             order_ref: None,

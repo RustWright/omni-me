@@ -293,6 +293,7 @@ mod tests {
             confidence: conf,
             model: "test".into(),
             dropped_postings: 0,
+            total_as_printed: None,
             total_discarded: false,
             document_kind: None,
             order_ref: None,
