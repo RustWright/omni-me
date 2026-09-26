@@ -577,6 +577,8 @@ pub(crate) fn parse_response(
     let mut salvaged = raw.clone();
     let dropped = salvage_postings(&mut salvaged);
     let total_discarded = salvage_total(&mut salvaged);
+    salvage_date(&mut salvaged);
+    salvage_confidence(&mut salvaged);
     let mut result: ExtractionResult = serde_json::from_value(salvaged)
         .map_err(|e| ExtractionError::Parse(format!("response: {e}")))?;
     result.model = model.to_string();
@@ -586,6 +588,56 @@ pub(crate) fn parse_response(
     result.dropped_postings = dropped;
     result.total_discarded = total_discarded;
     Ok(result)
+}
+
+/// Move a `date` the deserializer cannot read into `date_as_printed`.
+///
+/// `NaiveDate` deserializes through `FromStr`, which accepts only `%Y-%m-%d`, and a
+/// model asked for a date answers in many other forms. Unguarded, one of them failed
+/// the whole document — the third field in this struct to do so.
+fn salvage_date(value: &mut serde_json::Value) {
+    let Some(date) = value.get("date") else {
+        return;
+    };
+    if date.is_null() {
+        return;
+    }
+    let text = match date.as_str() {
+        Some(s) => s.trim().to_string(),
+        None => date.to_string(),
+    };
+    // `FromStr` is what serde calls, so mirroring it here cannot drift from it.
+    if text.parse::<NaiveDate>().is_ok() {
+        value["date"] = serde_json::Value::String(text);
+        return;
+    }
+    // Keep the unreadable form rather than discarding it, since that is exactly
+    // what `date_as_printed` is for. A form the model supplied itself wins.
+    if value.get("date_as_printed").is_none_or(|p| p.is_null()) {
+        value["date_as_printed"] = serde_json::Value::String(text);
+    }
+    value["date"] = serde_json::Value::Null;
+}
+
+/// Coerce a `confidence` the deserializer cannot read to 0.0, routing the draft to
+/// review rather than failing the document. It is required and typed `f64`, so a
+/// stringified number — or none at all — is the same class of loss as the other three.
+fn salvage_confidence(value: &mut serde_json::Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    let usable = obj
+        .get("confidence")
+        .map(|c| c.is_number() || c.as_str().is_some_and(|s| s.trim().parse::<f64>().is_ok()))
+        .unwrap_or(false);
+    if usable {
+        if let Some(text) = obj.get("confidence").and_then(|c| c.as_str()) {
+            let parsed: f64 = text.trim().parse().expect("checked above");
+            obj.insert("confidence".into(), serde_json::json!(parsed));
+        }
+        return;
+    }
+    obj.insert("confidence".into(), serde_json::json!(0.0));
 }
 
 /// Make the `postings` array deserializable, returning how many were discarded.
@@ -599,10 +651,13 @@ pub(crate) fn parse_response(
 /// Drop a `total` the deserializer would choke on, reporting whether it did.
 ///
 /// `salvage_postings` has always done this for line items, and leaving its twin
-/// unguarded meant one unusable total failed the whole document — a real email
-/// returned `input contains invalid characters` and extracted nothing at all.
+/// unguarded meant one unusable total could fail the whole document.
 /// A discarded total is not the same as a total that was never printed, so the
 /// caller records the difference rather than letting it read as absent.
+///
+/// This guard is sound, but the failure it was written for was misdiagnosed: the
+/// `input contains invalid characters` it originally cited is chrono's, from the
+/// unguarded `date`. See `salvage_date`.
 fn salvage_total(value: &mut serde_json::Value) -> bool {
     let Some(total) = value.get_mut("total") else {
         return false;
@@ -1145,11 +1200,12 @@ mod tests {
         );
     }
 
-    /// Real 2026-09-23 failure, found running the new prompt against archived
-    /// mail on dev: one unreadable `total` returned
-    /// `input contains invalid characters` and the document extracted nothing.
-    /// Postings had been guarded against exactly this since 2026-09-20; the
-    /// twin field had not.
+    /// An unreadable `total` drops only itself. Postings had been guarded since
+    /// 2026-09-20; the twin field had not.
+    ///
+    /// This fixture never reproduced the 2026-09-23 error it was written from —
+    /// that message came from `date`, not here — so it proves the guard works and
+    /// nothing about the failure that prompted it.
     #[test]
     fn an_unusable_total_drops_only_the_total() {
         let raw = serde_json::json!({
@@ -1168,6 +1224,94 @@ mod tests {
             "a discarded total must not read as a document that printed none"
         );
         assert_eq!(result.raw_response, raw, "the original stays inspectable");
+    }
+
+    /// Real 2026-09-26 failure: two messages the gate inversion newly claimed were
+    /// dropped whole with chrono's `input contains invalid characters`. The exact
+    /// string the model returned went unrecorded, so these are the forms chrono
+    /// rejects — asserted against `FromStr` below rather than assumed.
+    #[test]
+    fn a_date_the_deserializer_cannot_read_does_not_fail_the_document() {
+        for printed in [
+            "September 26, 2026",
+            "2026-09-26T13:00:00Z",
+            "09/26/2026",
+            "26 Sep 2026",
+            "",
+        ] {
+            assert!(
+                printed.parse::<NaiveDate>().is_err(),
+                "fixture must actually be unreadable: {printed}"
+            );
+            let raw = serde_json::json!({
+                "date": printed,
+                "postings": [{ "commodity": "CAD", "amount": "14.06" }],
+                "confidence": 0.9,
+            });
+            let result = parse_response(raw, "m").expect("salvaged, not failed");
+            assert!(
+                result.date.is_none(),
+                "{printed} must not survive as a date"
+            );
+            assert_eq!(
+                result.date_as_printed.as_deref(),
+                Some(printed),
+                "the unreadable form is kept, not discarded"
+            );
+            assert_eq!(
+                result.postings.len(),
+                1,
+                "the rest of the document survives"
+            );
+        }
+    }
+
+    #[test]
+    fn a_readable_date_survives_and_does_not_overwrite_the_printed_form() {
+        let raw = serde_json::json!({
+            "date": "  2026-09-26  ",
+            "date_as_printed": "09/26/26",
+            "postings": [],
+            "confidence": 0.5,
+        });
+        let result = parse_response(raw, "m").expect("readable");
+        assert_eq!(result.date, NaiveDate::from_ymd_opt(2026, 9, 26));
+        assert_eq!(
+            result.date_as_printed.as_deref(),
+            Some("09/26/26"),
+            "a printed form the model supplied is not clobbered"
+        );
+    }
+
+    /// `confidence` is required and typed `f64`, so the same class of loss applies.
+    #[test]
+    fn an_unusable_confidence_routes_to_review_instead_of_failing() {
+        for value in [
+            serde_json::json!("not a number"),
+            serde_json::json!(null),
+            serde_json::json!({}),
+        ] {
+            let raw = serde_json::json!({ "postings": [], "confidence": value });
+            let result = parse_response(raw, "m").expect("salvaged, not failed");
+            assert_eq!(
+                result.confidence, 0.0,
+                "lowest confidence sends it to review"
+            );
+        }
+        let absent = serde_json::json!({ "postings": [] });
+        assert_eq!(
+            parse_response(absent, "m")
+                .expect("absent is salvaged too")
+                .confidence,
+            0.0
+        );
+    }
+
+    #[test]
+    fn a_stringified_confidence_is_coerced_rather_than_dropped() {
+        let raw = serde_json::json!({ "postings": [], "confidence": " 0.82 " });
+        let result = parse_response(raw, "m").expect("coerced");
+        assert!((result.confidence - 0.82).abs() < f64::EPSILON);
     }
 
     #[test]
