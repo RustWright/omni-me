@@ -130,10 +130,17 @@ a dismissal dismissed while still letting the next real message through.
 
 ## What this does not do
 
-- **Nothing here authenticates the sender.** There is no SPF or DKIM check, so anyone who knows
-  the watched address can put text in front of the extractor. That is survivable only because
-  every draft waits for a human commit, and it is the reason nothing on this path may ever
-  auto-commit, however confident the extraction looks.
+- **Sender authentication is a signal, never a gate.** Anyone who knows the watched address can
+  put text in front of the extractor, and with no sender allowlist every message that arrives
+  does. That is survivable only because every draft waits for a human commit, and it is the
+  reason nothing on this path may ever auto-commit, however confident the extraction looks.
+
+  What review is told is your mailbox provider's own verdict. omni-me reads the **topmost**
+  `Authentication-Results` header — the one your provider wrote, since headers are prepended as
+  mail travels and anything below it can be forged by the sender — and records `authenticated`,
+  `unauthenticated` or `unknown` on the draft, with a warning on the second. No draft is ever
+  dropped for it: a genuine receipt relayed through a mailing list fails SPF, and a provider that
+  stamps no header at all would otherwise make every draft look suspect.
 - **Arithmetic cannot catch a consistent misreading.** The verification pass compares line items
   against the document's own total, which catches a dropped tax line and cannot catch a receipt
   read coherently but wrongly.

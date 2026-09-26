@@ -29,6 +29,7 @@ pub use crate::mime;
 pub mod paused;
 pub mod receipts;
 pub mod rest;
+pub mod sender_auth;
 pub mod setup;
 pub mod subprocess;
 

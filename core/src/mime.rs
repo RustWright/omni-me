@@ -25,6 +25,12 @@ pub struct ParsedMessage {
     /// to text/html (HTML-stripped) automatically.
     pub body_text: String,
     pub attachments: Vec<MimeAttachment>,
+    /// The topmost `Authentication-Results` header, raw, or `None` if absent.
+    ///
+    /// Only the topmost. Headers are prepended as mail travels, so the first is
+    /// the one your own provider wrote; a crafted message can carry as many
+    /// forged ones below it as it likes. See `auto_import::sender_auth`.
+    pub authentication_results: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -132,12 +138,20 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
         });
     }
 
+    // `ARC-Authentication-Results` is deliberately not matched: it is a relayed
+    // claim from an earlier hop, not this provider's own verdict.
+    let authentication_results = msg
+        .headers_raw()
+        .find(|(name, _)| name.eq_ignore_ascii_case("authentication-results"))
+        .map(|(_, value)| value.trim().to_string());
+
     Ok(ParsedMessage {
         from,
         subject,
         date,
         body_text,
         attachments,
+        authentication_results,
     })
 }
 
@@ -339,6 +353,32 @@ mod tests {
         assert!(!stripped.contains('>'));
     }
 
+    /// Only the topmost is read. The lower one here is what a crafted message
+    /// would carry to claim a pass it was never given.
+    #[test]
+    fn only_the_topmost_authentication_results_header_is_read() {
+        let raw =
+            b"Authentication-Results: mx.google.com; dmarc=fail header.from=spoofed.example\r\n\
+                    Authentication-Results: attacker-supplied; dmarc=pass\r\n\
+                    From: someone@spoofed.example\r\n\
+                    Subject: hello\r\n\r\nbody\r\n";
+        let parsed = parse_eml(raw).expect("parses");
+        let header = parsed.authentication_results.expect("header present");
+        assert!(header.contains("mx.google.com"), "got {header:?}");
+        assert!(!header.contains("attacker-supplied"), "got {header:?}");
+    }
+
+    /// A relayed ARC claim is a different header and must not be mistaken for
+    /// this provider's own verdict.
+    #[test]
+    fn an_arc_header_alone_is_not_a_verdict() {
+        let raw = b"ARC-Authentication-Results: i=1; mx.google.com; dmarc=pass\r\n\
+                    From: someone@vendor.example\r\n\
+                    Subject: hello\r\n\r\nbody\r\n";
+        let parsed = parse_eml(raw).expect("parses");
+        assert_eq!(parsed.authentication_results, None);
+    }
+
     #[test]
     fn find_attachment_is_case_insensitive() {
         let parsed = ParsedMessage {
@@ -352,6 +392,7 @@ mod tests {
                 bytes: vec![],
                 is_inline: false,
             }],
+            authentication_results: None,
         };
         assert!(parsed.find_attachment("application/pdf").is_some());
     }
@@ -373,6 +414,7 @@ mod tests {
                 bytes: vec![],
                 is_inline: true,
             }],
+            authentication_results: None,
         };
         assert!(
             parsed.find_attachment("application/pdf").is_some(),

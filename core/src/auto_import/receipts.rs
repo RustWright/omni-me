@@ -40,6 +40,7 @@ use crate::extraction::{
 
 use super::imap::{ImapHandler, ImapMessage};
 use super::mime::{MimeAttachment, parse_eml};
+use super::sender_auth;
 use super::to_proposed_event;
 
 /// Bounds on a vendor reference worth grouping on. The floor rejects the `.`
@@ -283,6 +284,11 @@ impl ImapHandler for ReceiptHandler {
         .await
         .map_err(|e| ImportError::Upstream(format!("receipt extract: {e}")))?;
 
+        // A signal on the draft, never a gate. Nothing is dropped for failing
+        // it: a real receipt relayed through a mailing list fails SPF, and the
+        // review step is what stands between a crafted email and the ledger.
+        let sender_auth = sender_auth::verdict(parsed.authentication_results.as_deref());
+
         tracing::info!(
             handler = self.name(),
             from = %message.from,
@@ -293,6 +299,7 @@ impl ImapHandler for ReceiptHandler {
             dropped_postings = result.dropped_postings,
             warnings = ?report.warnings,
             postings = result.postings.len(),
+            sender_auth = %sender_auth,
             "receipt: producing proposed batch"
         );
 
@@ -354,6 +361,13 @@ impl ImapHandler for ReceiptHandler {
             Some(key) => format!("{}-order-{key}", self.name),
             None => format!("{}-uid-{}", self.name, message.uid),
         };
+        let mut warnings = report.warnings.clone();
+        if sender_auth.is_worth_flagging() {
+            warnings.push(format!(
+                "the mailbox provider could not authenticate this sender ({})",
+                message.from,
+            ));
+        }
         let source_metadata = serde_json::json!({
             "from": message.from,
             "subject": parsed.subject,
@@ -362,7 +376,8 @@ impl ImapHandler for ReceiptHandler {
             // it the only record of a discarded line item is a log line.
             "effective_confidence": report.effective_confidence,
             "needs_manual_review": report.needs_manual_review,
-            "warnings": report.warnings,
+            "warnings": warnings,
+            "sender_auth": sender_auth.as_str(),
             "dropped_postings": result.dropped_postings,
             // Without this an empty `warnings` reads as "the arithmetic was
             // checked", which on a single-amount email is false.
@@ -614,6 +629,76 @@ mod tests {
 
     fn plain_eml() -> Vec<u8> {
         b"From: shop@northwind.example\r\nSubject: about your order\r\nDate: Sat, 16 May 2026 12:00:00 +0000\r\nContent-Type: text/plain\r\n\r\nSomething about your order.\r\n".to_vec()
+    }
+
+    /// The same message with a provider verdict stamped on it.
+    fn eml_with_auth(auth: &str) -> Vec<u8> {
+        format!(
+            "Authentication-Results: {auth}\r\n\
+             From: shop@northwind.example\r\n\
+             Subject: about your order\r\n\
+             Date: Sat, 16 May 2026 12:00:00 +0000\r\n\
+             Content-Type: text/plain\r\n\r\nSomething about your order.\r\n"
+        )
+        .into_bytes()
+    }
+
+    async fn proposal_for_body(body: Vec<u8>) -> NewEvent {
+        let extractor = Arc::new(StubExtractor(stub_result(Some("receipt"), "105.43")));
+        let handler = ReceiptHandler::new("shop", "device-test", extractor);
+        let msg = imap_msg_from("shop@northwind.example", body);
+        handler
+            .handle(&msg)
+            .await
+            .expect("handler ok")
+            .pop()
+            .expect("a proposal")
+    }
+
+    /// The posture the gate deletion was signed off under: every message now
+    /// reaches the model, so review is told whether the sender authenticated.
+    #[tokio::test]
+    async fn an_unauthenticated_sender_is_flagged_in_review() {
+        let event = proposal_for_body(eml_with_auth("mx.google.com; dmarc=fail")).await;
+        let meta = &event.payload["source_metadata"];
+        assert_eq!(meta["sender_auth"].as_str(), Some("unauthenticated"));
+        let warnings = meta["warnings"].as_array().expect("warnings array");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().is_some_and(|w| w.contains("authenticate"))),
+            "got {warnings:?}"
+        );
+    }
+
+    /// And it is a signal, not a gate: the draft is proposed either way.
+    #[tokio::test]
+    async fn an_unauthenticated_sender_is_still_proposed() {
+        let event = proposal_for_body(eml_with_auth("mx.google.com; dmarc=fail")).await;
+        assert!(
+            !event.payload["draft_postings"]
+                .as_array()
+                .expect("draft_postings")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_passing_sender_carries_no_warning() {
+        let event = proposal_for_body(eml_with_auth("mx.google.com; dmarc=pass")).await;
+        let meta = &event.payload["source_metadata"];
+        assert_eq!(meta["sender_auth"].as_str(), Some("authenticated"));
+        assert!(meta["warnings"].as_array().expect("warnings").is_empty());
+    }
+
+    /// A mailbox whose provider stamps nothing must not make every draft look
+    /// suspect — that is the difference between a signal and noise.
+    #[tokio::test]
+    async fn a_message_with_no_verdict_is_unknown_and_unflagged() {
+        let event = proposal_for_body(plain_eml()).await;
+        let meta = &event.payload["source_metadata"];
+        assert_eq!(meta["sender_auth"].as_str(), Some("unknown"));
+        assert!(meta["warnings"].as_array().expect("warnings").is_empty());
     }
 
     async fn events_for(kind: Option<&str>, amount: &str) -> usize {
