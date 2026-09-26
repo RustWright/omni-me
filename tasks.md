@@ -2671,6 +2671,21 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   component, so this needs the describer to reach it or the child to publish. [S]
 
 ### Release engineering
+- [ ] 🔴 **[USER] The box's GHCR token expired 2026-09-26, and it breaks LIVE deploys too.**
+      Pulls succeeded at ~13:20 and ~14:09Z and were `denied` by ~16:35Z, including the
+      **known-good tag that had pulled two hours earlier** — so it is the box's credential, not a
+      bad tag. `/home/deploy/.docker/config.json` mtime is **2026-06-28 16:03Z**; ninety days later
+      is 2026-09-26 16:03Z, which brackets the failure exactly. ⚠️ Inferred from that arithmetic,
+      not read — ⛔ never inspect the token itself.
+      🔴 **Not dev-only.** `deploy/remote-deploy.sh` states it *"assumes the box is already
+      `docker login`'d to GHCR"* and pulls on that basis, so **the next live deploy fails the same
+      way**. Found only by checking whether the failing step also exists on the release path.
+      ✅ **The builds are unaffected** — both workflows use `docker/login-action`, so CI mints its
+      own credential. The asymmetry is the point: only the box holds a long-lived hand-placed token.
+      ⛔ **The durable fix is the pipeline, not a new token** — per `feedback_ci_cd_over_sysadmin`, a
+      deploy job should authenticate the box from the Actions secret it already has rather than
+      depending on a credential that silently expires every 90 days with no warning anywhere.
+      ⚠️ A replacement token unblocks today but re-arms the same trap for 2026-12-25.
 - [ ] 🔴 **Pin `runs-on` before 2026-10-19 — `ubuntu-latest` migrates to Ubuntu 26 that day.**
       Every CI run now prints the warning (`actions/runner-images` issue 14748), so unlike
       2026-09-16 there is notice instead of a broken build. ⛔ That earlier migration (22.04 →
