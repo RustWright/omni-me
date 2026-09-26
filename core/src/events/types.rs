@@ -575,6 +575,10 @@ pub struct AttachmentRef {
     pub filename: String,
     pub mime_type: String,
     pub size: u64,
+    /// The archive document the same capture filed, which links a transaction to it.
+    /// Absent on attachments stored before captures were archived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
 }
 
 /// FX rate captured at posting time — sourced from a receipt's `@` rate or

@@ -4,6 +4,13 @@ use crate::db::Database;
 
 use super::store::{Event, EventError, EventStore, SurrealEventStore};
 
+/// Events per page when replaying the log through projections.
+///
+/// Bounds peak memory, which is the point: reading the log whole peaked at
+/// 1.3 GB on the S9. Large enough that the per-page round trip is noise
+/// against the fold, small enough that a page is a few tens of megabytes.
+const REPLAY_PAGE: u32 = 500;
+
 /// A projection transforms events into read-optimized views.
 #[async_trait]
 pub trait Projection: Send + Sync {
@@ -66,8 +73,8 @@ impl ProjectionRunner {
                  DEFINE FIELD IF NOT EXISTS last_received_at ON projection_versions TYPE option<datetime>;
                  DEFINE INDEX IF NOT EXISTS idx_pv_name ON projection_versions FIELDS name UNIQUE;",
             )
-            .await
-?;
+            .await?
+            .check()?;
 
         let mut stale: Vec<String> = Vec::new();
 
@@ -133,7 +140,8 @@ impl ProjectionRunner {
                 .bind(("name", name))
                 .bind(("version", version))
                 .bind(("seed", seed.to_rfc3339()))
-                .await?;
+                .await?
+                .check()?;
         }
 
         if !stale.is_empty() {
@@ -141,7 +149,10 @@ impl ProjectionRunner {
                 projections = ?stale,
                 "projection version changed — rebuilding from the event log"
             );
-            self.rebuild().await?;
+            // ⛔ Only the stale ones. This called `rebuild()` and so wiped every
+            // registered projection over one version bump.
+            let stale_names: Vec<&str> = stale.iter().map(String::as_str).collect();
+            self.rebuild_only(&stale_names).await?;
             return Ok(());
         }
 
@@ -186,11 +197,15 @@ impl ProjectionRunner {
         struct Watermark {
             name: Option<String>,
             lr: Option<String>,
+            lid: Option<String>,
         }
 
         let mut resp = self
             .db
-            .query("SELECT name, <string> last_received_at AS lr FROM projection_versions")
+            .query(
+                "SELECT name, <string> last_received_at AS lr, last_event_id AS lid
+                 FROM projection_versions",
+            )
             .await?;
         let rows: Vec<Watermark> = resp.take(0).unwrap_or_default();
 
@@ -200,35 +215,34 @@ impl ProjectionRunner {
         // The oldest watermark across **registered** projections — they advance
         // together, so the min only matters when the registered set changes: a
         // newly-added or re-enabled projection can't skip history.
-        let Some(since) = rows
+        // The event id rides along with the timestamp so the resume point is a
+        // keyset cursor. Without it a watermark sitting on a shared
+        // `received_at` either re-applies its neighbours or skips them.
+        let Some((since, last_id)) = rows
             .into_iter()
             .filter(|row| {
                 row.name
                     .as_deref()
                     .is_some_and(|name| registered.contains(name))
             })
-            .filter_map(|row| row.lr)
-            .filter_map(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
+            .filter_map(|row| {
+                let at = chrono::DateTime::parse_from_rfc3339(row.lr.as_deref()?)
                     .ok()
-                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .map(|dt| dt.with_timezone(&chrono::Utc))?;
+                Some((at, row.lid.unwrap_or_default()))
             })
             .min()
         else {
             return Ok(0);
         };
 
-        let store = SurrealEventStore::new(self.db.clone());
-        let missed = store.get_since(since, None).await?;
-        if missed.is_empty() {
-            return Ok(0);
-        }
-
-        let failed = self.apply_events_resilient(&missed).await;
+        let (seen, failed) = self
+            .replay_paged(Some((since, last_id)), None, REPLAY_PAGE)
+            .await?;
         if failed > 0 {
             tracing::warn!(failed, "some events could not be replayed during catch-up");
         }
-        Ok(missed.len())
+        Ok(seen)
     }
 
     /// Apply a batch of events through all matching projections, **fail-fast**:
@@ -269,12 +283,22 @@ impl ProjectionRunner {
     ///   old fail-fast behaviour where one bad event silently dropped every
     ///   later event in the batch **and** they were never re-pulled.
     pub async fn apply_events_resilient(&self, events: &[Event]) -> usize {
+        self.apply_events_scoped(events, None).await
+    }
+
+    /// As [`Self::apply_events_resilient`], restricted to the named projections.
+    ///
+    /// `only: None` means every registered projection. ⚠️ The bookmark is scoped
+    /// with the apply and not separately: advancing a projection's bookmark past
+    /// events it never folded is how `catch_up` comes to skip them for good.
+    async fn apply_events_scoped(&self, events: &[Event], only: Option<&[&str]>) -> usize {
+        let selected = |name: &str| only.is_none_or(|names| names.contains(&name));
         let mut failed = 0usize;
         let mut last_applied: Option<&Event> = None;
 
         for event in events {
             let mut event_ok = true;
-            for proj in self.projections.iter() {
+            for proj in self.projections.iter().filter(|p| selected(p.name())) {
                 if let Err(e) = proj.apply(event, &self.db).await {
                     tracing::warn!(
                         event_id = %event.id,
@@ -299,7 +323,7 @@ impl ProjectionRunner {
         // Bookkeeping only (not the sync cursor): point at the last fully-applied
         // event. Best-effort — a failure here shouldn't fail the whole apply.
         if let Some(ev) = last_applied
-            && let Err(e) = self.advance_bookmark(ev).await
+            && let Err(e) = self.advance_bookmark_scoped(ev, only).await
         {
             tracing::warn!(error = %e, "failed to advance projection last_event_id after sync apply");
         }
@@ -307,16 +331,66 @@ impl ProjectionRunner {
         failed
     }
 
+    /// Fold the log through the selected projections one page at a time,
+    /// resuming strictly after `after`. Returns `(events seen, events skipped)`.
+    ///
+    /// Paged rather than read whole because the whole log does not fit: 16k
+    /// events peaked at 1.3 GB on the S9, with every query blocked behind it.
+    /// The fold is per event and keeps no cross-event state but `last_applied`,
+    /// so an ordered page walk is exactly the same computation.
+    ///
+    /// The bookmark advances per page, which also fixes the kill-partway-through
+    /// hole named on `rebuild_only`: a rebuild killed mid-replay now resumes
+    /// from the last applied page instead of leaving the tables cleared with the
+    /// watermark still at the newest event.
+    async fn replay_paged(
+        &self,
+        after: Option<(chrono::DateTime<chrono::Utc>, String)>,
+        only: Option<&[&str]>,
+        page_size: u32,
+    ) -> Result<(usize, usize), EventError> {
+        let store = SurrealEventStore::new(self.db.clone());
+        let mut cursor = after;
+        let (mut seen, mut failed) = (0usize, 0usize);
+
+        loop {
+            let borrowed = cursor.as_ref().map(|(at, id)| (*at, id.as_str()));
+            let page = store.get_page_after(borrowed, page_size).await?;
+            let Some(last) = page.last() else { break };
+            cursor = Some((
+                last.received_at.unwrap_or_else(chrono::Utc::now),
+                last.id.clone(),
+            ));
+            seen += page.len();
+            failed += self.apply_events_scoped(&page, only).await;
+        }
+
+        Ok((seen, failed))
+    }
+
     /// Point every projection's bookmark at `event`.
     ///
     /// `last_received_at` is the one that matters — it is what `catch_up` reads.
     /// `last_event_id` is kept for diagnostics.
     async fn advance_bookmark(&self, event: &Event) -> Result<(), EventError> {
+        self.advance_bookmark_scoped(event, None).await
+    }
+
+    /// As [`Self::advance_bookmark`], restricted to the named projections.
+    async fn advance_bookmark_scoped(
+        &self,
+        event: &Event,
+        only: Option<&[&str]>,
+    ) -> Result<(), EventError> {
         let received = event
             .received_at
             .unwrap_or_else(chrono::Utc::now)
             .to_rfc3339();
-        for proj in self.projections.iter() {
+        for proj in self
+            .projections
+            .iter()
+            .filter(|p| only.is_none_or(|names| names.contains(&p.name())))
+        {
             let name = proj.name().to_string();
             self.db
                 .query(
@@ -328,40 +402,66 @@ impl ProjectionRunner {
                 .bind(("event_id", event.id.clone()))
                 .bind(("received", received.clone()))
                 .bind(("name", name))
-                .await?;
+                .await?
+                .check()?;
         }
         Ok(())
     }
 
     /// Rebuild all projections from scratch by replaying all events.
+    ///
+    /// ⚠️ Wanted by `wipe_all_data`, which really does mean all of them. A version
+    /// bump wants [`Self::rebuild_only`] instead — see the note there.
     pub async fn rebuild(&self) -> Result<(), EventError> {
-        let store = SurrealEventStore::new(self.db.clone());
+        self.rebuild_inner(None).await
+    }
 
-        // Get all events from the beginning of time
-        let epoch = chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
+    /// Rebuild only the named projections, leaving the others as they are.
+    ///
+    /// ⛔ This is what a version bump needs, and it used to call [`Self::rebuild`].
+    /// One stale projection therefore wiped **all ten** and replayed the whole log
+    /// through every one of them. Slow is the lesser half: Android kills a
+    /// backgrounded app routinely, and a kill partway through left every
+    /// projection emptied with no route back but another full rebuild.
+    ///
+    /// A name that matches no registered projection is ignored rather than an
+    /// error — a feature-gated build legitimately registers a subset, and the
+    /// caller reads its names off the same registry.
+    pub async fn rebuild_only(&self, names: &[&str]) -> Result<(), EventError> {
+        self.rebuild_inner(Some(names)).await
+    }
 
-        let events = store.get_since(epoch, None).await?;
-
-        // Clear all projection tables, then re-initialize schemas
-        for proj in self.projections.iter() {
+    async fn rebuild_inner(&self, only: Option<&[&str]>) -> Result<(), EventError> {
+        // Clear the selected projections' tables, then re-initialize their schemas
+        let mut rebuilding: Vec<&str> = Vec::new();
+        for proj in self
+            .projections
+            .iter()
+            .filter(|p| only.is_none_or(|names| names.contains(&p.name())))
+        {
             proj.clear_tables(&self.db).await?;
             proj.init_schema(&self.db).await?;
+            rebuilding.push(proj.name());
         }
+        tracing::info!(
+            projections = ?rebuilding,
+            of = self.projections.len(),
+            page = REPLAY_PAGE,
+            "rebuilding projections from the event log"
+        );
 
         // Replay resiliently, NOT fail-fast. `clear_tables` has already run, so
         // a mid-replay error under `apply_events` left every projection wiped —
         // the opposite of what a rebuild is for, and unrecoverable without a
         // second successful rebuild.
-        let failed = self.apply_events_resilient(&events).await;
+        //
+        // `None` starts at the beginning of the log rather than at an epoch
+        // timestamp, so a row with no `received_at` cannot fall outside it.
+        let (seen, failed) = self.replay_paged(None, only, REPLAY_PAGE).await?;
         if failed > 0 {
-            tracing::warn!(
-                failed,
-                total = events.len(),
-                "events skipped during rebuild"
-            );
+            tracing::warn!(failed, total = seen, "events skipped during rebuild");
         }
+        tracing::info!(events = seen, failed, "rebuild complete");
 
         Ok(())
     }
@@ -453,6 +553,76 @@ mod tests {
         }
     }
 
+    /// Records which events it saw, in order, so a page walk can be compared
+    /// against the one unbounded read it replaces.
+    struct RecordingProjection {
+        seen: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl Projection for RecordingProjection {
+        fn name(&self) -> &str {
+            "recording"
+        }
+        fn version(&self) -> u32 {
+            1
+        }
+        async fn apply(&self, event: &Event, _db: &Database) -> Result<(), EventError> {
+            self.seen.lock().unwrap().push(event.aggregate_id.clone());
+            Ok(())
+        }
+        async fn init_schema(&self, _db: &Database) -> Result<(), EventError> {
+            Ok(())
+        }
+        async fn clear_tables(&self, _db: &Database) -> Result<(), EventError> {
+            self.seen.lock().unwrap().clear();
+            Ok(())
+        }
+    }
+
+    /// The equivalence the whole change rests on: folding the log in pages is
+    /// the same computation as folding it whole, at every page size, because
+    /// the fold is per event and keeps no cross-event state.
+    #[tokio::test]
+    async fn a_paged_replay_folds_exactly_what_an_unbounded_one_would() {
+        let expected: Vec<String> = (0..9).map(|i| format!("agg-{i:02}")).collect();
+
+        for page in [1u32, 2, 4, 9, 100] {
+            let db = test_db().await;
+            let store = SurrealEventStore::new(db.clone());
+            for id in &expected {
+                store
+                    .append(NewEvent {
+                        id: None,
+                        event_type: "note_created".into(),
+                        aggregate_id: id.clone(),
+                        timestamp: Utc::now(),
+                        device_id: "d1".into(),
+                        payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                    })
+                    .await
+                    .unwrap();
+            }
+
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let runner = ProjectionRunner::new(
+                db,
+                vec![Box::new(RecordingProjection { seen: seen.clone() })],
+            );
+            runner.init_all().await.unwrap();
+            seen.lock().unwrap().clear();
+
+            let (count, failed) = runner.replay_paged(None, None, page).await.unwrap();
+            assert_eq!(failed, 0, "page {page}");
+            assert_eq!(count, expected.len(), "page {page} saw the wrong count");
+            assert_eq!(
+                *seen.lock().unwrap(),
+                expected,
+                "page {page} folded the wrong events, or out of order"
+            );
+        }
+    }
+
     /// A projection whose `version()` the test can move.
     struct VersionedProjection {
         applied: Arc<AtomicU32>,
@@ -477,6 +647,155 @@ mod tests {
         async fn clear_tables(&self, _db: &Database) -> Result<(), EventError> {
             Ok(())
         }
+    }
+
+    /// Like `VersionedProjection` but named per instance, and it counts the wipe.
+    ///
+    /// `cleared` is the assertion that matters for `rebuild_only`: a projection
+    /// nobody bumped must not have its tables emptied.
+    struct NamedProjection {
+        name: &'static str,
+        version: u32,
+        applied: Arc<AtomicU32>,
+        cleared: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl Projection for NamedProjection {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn version(&self) -> u32 {
+            self.version
+        }
+        async fn apply(&self, _event: &Event, _db: &Database) -> Result<(), EventError> {
+            self.applied.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn init_schema(&self, _db: &Database) -> Result<(), EventError> {
+            Ok(())
+        }
+        async fn clear_tables(&self, _db: &Database) -> Result<(), EventError> {
+            self.cleared.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// One stale projection must not wipe its neighbours.
+    ///
+    /// The version check called `rebuild()`, which clears and replays **every**
+    /// registered projection. On a device that is a multi-minute blank screen, and
+    /// an Android process kill partway through leaves all of them empty with no
+    /// recovery but another full rebuild.
+    #[tokio::test]
+    async fn a_version_bump_rebuilds_only_the_stale_projection() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let (a_applied, a_cleared) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)));
+        let (b_applied, b_cleared) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)));
+
+        let pair = |a_version: u32, b_version: u32| -> Vec<Box<dyn Projection>> {
+            vec![
+                Box::new(NamedProjection {
+                    name: "alpha",
+                    version: a_version,
+                    applied: a_applied.clone(),
+                    cleared: a_cleared.clone(),
+                }),
+                Box::new(NamedProjection {
+                    name: "beta",
+                    version: b_version,
+                    applied: b_applied.clone(),
+                    cleared: b_cleared.clone(),
+                }),
+            ]
+        };
+
+        let runner = ProjectionRunner::new(db.clone(), pair(1, 1));
+        runner.init_all().await.unwrap();
+        let stored = store
+            .append(NewEvent {
+                id: None,
+                event_type: "note_created".into(),
+                aggregate_id: "n1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[stored]).await.unwrap();
+        assert_eq!(a_applied.load(Ordering::SeqCst), 1);
+        assert_eq!(b_applied.load(Ordering::SeqCst), 1);
+
+        // Bump `alpha` only.
+        let bumped = ProjectionRunner::new(db.clone(), pair(2, 1));
+        bumped.init_all().await.unwrap();
+
+        assert_eq!(
+            a_cleared.load(Ordering::SeqCst),
+            1,
+            "the stale projection should have been wiped and replayed"
+        );
+        assert_eq!(
+            a_applied.load(Ordering::SeqCst),
+            2,
+            "the stale projection should have replayed the log"
+        );
+        assert_eq!(
+            b_cleared.load(Ordering::SeqCst),
+            0,
+            "a projection nobody bumped must not be wiped"
+        );
+        assert_eq!(
+            b_applied.load(Ordering::SeqCst),
+            1,
+            "a projection nobody bumped must not replay"
+        );
+    }
+
+    /// `wipe_all_data`'s path still wants everything, and its bookmark with it.
+    #[tokio::test]
+    async fn a_full_rebuild_still_covers_every_projection() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let (a_applied, a_cleared) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)));
+        let (b_applied, b_cleared) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)));
+        let runner = ProjectionRunner::new(
+            db.clone(),
+            vec![
+                Box::new(NamedProjection {
+                    name: "alpha",
+                    version: 1,
+                    applied: a_applied.clone(),
+                    cleared: a_cleared.clone(),
+                }),
+                Box::new(NamedProjection {
+                    name: "beta",
+                    version: 1,
+                    applied: b_applied.clone(),
+                    cleared: b_cleared.clone(),
+                }),
+            ],
+        );
+        runner.init_all().await.unwrap();
+        store
+            .append(NewEvent {
+                id: None,
+                event_type: "note_created".into(),
+                aggregate_id: "n1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        runner.rebuild().await.unwrap();
+        assert_eq!(a_cleared.load(Ordering::SeqCst), 1);
+        assert_eq!(b_cleared.load(Ordering::SeqCst), 1);
+        assert_eq!(a_applied.load(Ordering::SeqCst), 1);
+        assert_eq!(b_applied.load(Ordering::SeqCst), 1);
     }
 
     /// An event appended but never projected must be replayed at next startup.

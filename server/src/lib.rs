@@ -34,7 +34,7 @@ use omni_me_core::auto_import::setup::{DEFAULT_INTERVAL, spawn_sources};
 use omni_me_core::auto_import_scheduler::{AutoImportSource, SourceRegistry};
 use omni_me_core::credentials::{self, LlmRole};
 use omni_me_core::db::Database;
-use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
+use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
 use omni_me_core::extraction::DocumentExtractor;
 use omni_me_core::llm::{
     ClientOptions, LlmClient, build_extractor, build_llm_client, build_reader, build_transcriber,
@@ -191,10 +191,33 @@ pub async fn run(cfg: RunConfig) {
     // Load server credentials once (graceful: missing/unreadable → default-empty,
     // so a zero-config public engine still boots — 3.4). Reused for the text-LLM
     // client and the document extractor.
-    let creds = credentials::default_path()
-        .ok()
-        .and_then(|p| credentials::load(&p).ok())
-        .unwrap_or_default();
+    //
+    // A file that is PRESENT but unparseable is shouted about rather than
+    // silently degraded. `load` already maps a missing file to default-empty, so
+    // anything reaching the error arm is a real file this node could not read.
+    // Why it earns an ERROR: the failure is whole-file, and every section goes
+    // with it. Removing one required key from `[server]` — leaving the table
+    // present but empty — took out `[llm]` and all three `[imap.*]` accounts too;
+    // the box booted `{"status":"ok"}`, auto-import stopped dead, and the only
+    // clues were warnings about the sections that had not been touched.
+    let creds = match credentials::default_path() {
+        Ok(path) => match credentials::load(&path) {
+            Ok(creds) => creds,
+            Err(e) => {
+                tracing::error!(
+                    path = %path.display(),
+                    error = %e,
+                    "credentials file could not be parsed — CONTINUING WITH NONE OF IT: no LLM \
+                     provider, no auto-import sources, no server token. Fix the file and restart.",
+                );
+                credentials::Credentials::default()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "no credentials path — continuing with defaults");
+            credentials::Credentials::default()
+        }
+    };
 
     // HTTP bearer token. Deliberately FAILS OPEN when `[server]` is absent:
     // upgrading the box must not start rejecting devices that haven't been
@@ -250,11 +273,12 @@ pub async fn run(cfg: RunConfig) {
     // Auto-import build handles. Built before AppState so the state can carry
     // *clones* (the in-app add-source endpoint constructs + spawns a source live
     // from them) while the boot-time `SourceCtx` builder consumes the originals.
-    // Projections vec is empty: the server stores events + syncs them to clients,
-    // which run their own projections locally.
+    // Devices run their own projections; the server keeps only the tables its own
+    // background work queries. First boot on an existing log replays it.
     let device_id =
         std::env::var("OMNI_SERVER_DEVICE_ID").unwrap_or_else(|_| "server-auto-import".to_string());
-    let server_projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+    let server_projections =
+        ProjectionRunner::new((*db_arc).clone(), registry::build_projections_server());
     if let Err(e) = server_projections.init_all().await {
         tracing::warn!(error = %e, "server projection_versions init failed");
     }
@@ -301,6 +325,16 @@ pub async fn run(cfg: RunConfig) {
     // spawned (not even one boot tick). Applies uniformly to compiled overlay
     // sources too: everything the builder returns flows through here. A load
     // failure degrades to "nothing paused" rather than failing startup.
+    // Said at boot because the alternative is learning it from a pause that
+    // reports an error, long after the deployment that broke it.
+    if let Some(why) = omni_me_core::paths::state_dir_write_error() {
+        tracing::error!(
+            reason = %why,
+            "auto-import config cannot be saved — pause/resume and source changes will not \
+             survive a restart. The app's state dir must not contain a bind mount."
+        );
+    }
+
     let paused_names = match omni_me_core::auto_import::paused::default_path() {
         Ok(p) => omni_me_core::auto_import::paused::load(&p).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "failed to load persisted paused sources — treating none as paused");

@@ -140,15 +140,15 @@ pub fn parse_summary(
         .map_err(|e| ExtractionError::Parse(format!("document response: {e}")))?;
     summary.model = model.to_string();
 
-    // A blank date is not a date. Endpoints that dislike null answer "" instead,
-    // and an empty string would reach the projection as a real `document_date`
-    // and sort the document to the front of every range query.
-    if summary
-        .document_date
-        .as_deref()
-        .is_some_and(|d| d.trim().is_empty())
-    {
-        summary.document_date = None;
+    // Only an ISO date is a date: the column is range-queried as a string, so "", "null"
+    // (seen from a real reader) or "Mar 18, 2024" would misfile the document.
+    if let Some(raw) = summary.document_date.take() {
+        let trimmed = raw.trim();
+        if chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").is_ok() {
+            summary.document_date = Some(trimmed.to_string());
+        } else if !trimmed.is_empty() {
+            tracing::warn!(model, value = %raw, "reader gave a document_date that is not YYYY-MM-DD; dropped");
+        }
     }
     Ok(summary)
 }
@@ -207,9 +207,96 @@ pub fn to_fields_payload(
     }
 }
 
+/// What a capture's extraction already says about the document, as a cataloguing answer.
+///
+/// Recorded when a capture is archived, so the reader never spends a second call on it. `None`
+/// when the hint names no document type or the extractor read nothing: the reader catalogues those.
+pub fn reading_from_extraction(
+    result: &super::ExtractionResult,
+    hint: super::ExtractionHint,
+) -> Option<DocumentSummary> {
+    use super::ExtractionHint as H;
+    let kind = match hint {
+        H::Receipt => "receipt",
+        H::BankStatement => "bank_statement",
+        H::BrokerageStatement => "brokerage_statement",
+        H::Paystub => "payslip",
+        H::EmailBody | H::Generic => return None,
+    };
+    if result.postings.is_empty() && result.description.is_none() && result.total.is_none() {
+        return None;
+    }
+
+    let mut commodities: Vec<&str> = result
+        .postings
+        .iter()
+        .map(|p| p.commodity.as_str())
+        .collect();
+    commodities.sort_unstable();
+    commodities.dedup();
+    let fields = result
+        .total
+        .map(|total| ReadField {
+            key: "total".into(),
+            value: match commodities.as_slice() {
+                [one] => format!("{total} {one}"),
+                _ => total.to_string(),
+            },
+        })
+        .into_iter()
+        .collect();
+
+    Some(DocumentSummary {
+        kind: kind.to_string(),
+        title: result
+            .description
+            .clone()
+            .filter(|d| !d.trim().is_empty())
+            .unwrap_or_else(|| kind.replace('_', " ")),
+        document_date: result.date.map(|d| d.to_string()),
+        fields,
+        model: result.model.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_captured_receipt_is_catalogued_from_its_extraction() {
+        let result = super::super::ExtractionResult {
+            date: chrono::NaiveDate::from_ymd_opt(2026, 9, 3),
+            date_as_printed: Some("09/03/26".into()),
+            description: Some("Quick Trip Variety".into()),
+            postings: vec![super::super::ExtractedPosting {
+                account_hint: None,
+                commodity: "CAD".into(),
+                amount: "15.89".parse().unwrap(),
+                line_label: None,
+            }],
+            total: Some("15.89".parse().unwrap()),
+            confidence: 0.9,
+            model: "deepseek-ai/DeepSeek-V4.1-Flash".into(),
+            dropped_postings: 0,
+            total_as_printed: None,
+            total_discarded: false,
+            document_kind: None,
+            order_ref: None,
+            raw_response: serde_json::Value::Null,
+        };
+        let reading =
+            reading_from_extraction(&result, super::super::ExtractionHint::Receipt).unwrap();
+        assert_eq!(reading.kind, "receipt");
+        assert_eq!(reading.title, "Quick Trip Variety");
+        assert_eq!(reading.document_date.as_deref(), Some("2026-09-03"));
+        assert_eq!(reading.fields[0].value, "15.89 CAD");
+
+        assert!(
+            reading_from_extraction(&result, super::super::ExtractionHint::Generic).is_none(),
+            "no document type named, so the reader catalogues it"
+        );
+    }
 
     fn summary() -> DocumentSummary {
         parse_summary(
@@ -247,6 +334,10 @@ mod tests {
         let keys: Vec<&str> = payload.fields.iter().map(|f| f.key.as_str()).collect();
         assert!(keys.contains(&DOCUMENT_KIND_KEY));
         assert!(keys.contains(&DOCUMENT_TITLE_KEY));
+        assert!(
+            keys.contains(&DOCUMENT_DATE_KEY),
+            "a valid ISO date is kept"
+        );
         assert!(keys.contains(&"tax_year"));
     }
 
@@ -255,7 +346,14 @@ mod tests {
         // ⚠️ Both spellings of "no date", because an endpoint that dislikes null
         // answers with an empty string and that would reach the projection as a
         // real `document_date`.
-        for raw in [serde_json::json!(null), serde_json::json!("   ")] {
+        for raw in [
+            serde_json::json!(null),
+            serde_json::json!("   "),
+            // Sent by `gemma-4-31B-it` for an undated page on real data.
+            serde_json::json!("null"),
+            serde_json::json!("Mar 18, 2024"),
+            serde_json::json!("2024-13-40"),
+        ] {
             let s = parse_summary(
                 serde_json::json!({ "kind": "letter", "title": "A letter", "document_date": raw }),
                 "m",

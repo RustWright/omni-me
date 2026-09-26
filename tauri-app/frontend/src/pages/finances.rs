@@ -1658,13 +1658,22 @@ fn DocumentCapture(
     on_done: EventHandler<()>,
     on_extracted: EventHandler<ExtractedDraft>,
 ) -> Element {
+    /// Everything a failed extraction needs to go again. The name travels with
+    /// the bytes so a retry cannot ship the name of a different pick.
+    #[derive(Debug, Clone)]
+    struct RetryCapture {
+        bytes: Vec<u8>,
+        mime: String,
+        filename: Option<String>,
+    }
+
     #[derive(Debug, Clone)]
     enum CaptureState {
         Idle,
         Working,
         Error {
             msg: String,
-            retry_bytes: Option<(Vec<u8>, String)>,
+            retry: Option<RetryCapture>,
         },
     }
 
@@ -1692,6 +1701,9 @@ fn DocumentCapture(
             DocumentKind::Pdf => "application/pdf".to_string(),
         });
         let hint_value = hint.read().clone();
+        // The name the user picked, so the archive files it under that rather
+        // than the server's "attachment" placeholder.
+        let filename = file.name();
 
         state.set(CaptureState::Working);
 
@@ -1701,16 +1713,20 @@ fn DocumentCapture(
                 Err(e) => {
                     state.set(CaptureState::Error {
                         msg: format!("Couldn't read file: {e}"),
-                        retry_bytes: None,
+                        retry: None,
                     });
                     return;
                 }
             };
 
-            let retry_bytes = bytes.clone();
-            let retry_mime = mime.clone();
+            let again = RetryCapture {
+                bytes: bytes.clone(),
+                mime: mime.clone(),
+                filename: Some(filename.clone()),
+            };
 
-            match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
+            match bridge::invoke_extract_document(bytes, &mime, &hint_value, Some(&filename)).await
+            {
                 Ok(draft) => {
                     // Reset local state so a quick re-open shows the Idle
                     // prompt instead of a stale Working spinner.
@@ -1719,7 +1735,7 @@ fn DocumentCapture(
                 }
                 Err(e) => state.set(CaptureState::Error {
                     msg: format!("Couldn't extract: {e}"),
-                    retry_bytes: Some((retry_bytes, retry_mime)),
+                    retry: Some(again),
                 }),
             }
         });
@@ -1785,18 +1801,23 @@ fn DocumentCapture(
                             let bytes = capture.bytes.clone();
                             let mime = capture.mime.clone();
                             let hint_value = hint.read().clone();
-                            let retry_bytes = bytes.clone();
-                            let retry_mime = mime.clone();
+                            // The sending app named this file; the intent carried the name over.
+                            let filename = capture.filename.clone();
+                            let again = RetryCapture {
+                                bytes: bytes.clone(),
+                                mime: mime.clone(),
+                                filename: Some(filename.clone()),
+                            };
                             state.set(CaptureState::Working);
                             spawn(async move {
-                                match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
+                                match bridge::invoke_extract_document(bytes, &mime, &hint_value, Some(&filename)).await {
                                     Ok(draft) => {
                                         state.set(CaptureState::Idle);
                                         on_extracted.call(draft);
                                     }
                                     Err(e) => state.set(CaptureState::Error {
                                         msg: format!("Couldn't extract: {e}"),
-                                        retry_bytes: Some((retry_bytes, retry_mime)),
+                                        retry: Some(again),
                                     }),
                                 }
                             });
@@ -1840,30 +1861,28 @@ fn DocumentCapture(
                     match &*state.read() {
                         CaptureState::Idle => render_idle(kind),
                         CaptureState::Working => render_working(),
-                        CaptureState::Error { msg, retry_bytes } => {
-                            let retry = retry_bytes.clone();
+                        CaptureState::Error { msg, retry } => {
+                            let retry = retry.clone();
                             let hint_value = hint.read().clone();
                             rsx! {
                                 {render_error(msg)}
-                                if let Some((bytes, mime)) = retry {
+                                if let Some(again) = retry {
                                     div { class: "mt-3",
                                         Button {
                                             onclick: move |_| {
-                                                let bytes = bytes.clone();
-                                                let mime = mime.clone();
+                                                let again = again.clone();
                                                 let hint_value = hint_value.clone();
                                                 state.set(CaptureState::Working);
                                                 spawn(async move {
-                                                    let retry_bytes = bytes.clone();
-                                                    let retry_mime = mime.clone();
-                                                    match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
+                                                    let RetryCapture { bytes, mime, filename } = again.clone();
+                                                    match bridge::invoke_extract_document(bytes, &mime, &hint_value, filename.as_deref()).await {
                                                         Ok(draft) => {
                                                             state.set(CaptureState::Idle);
                                                             on_extracted.call(draft);
                                                         }
                                                         Err(e) => state.set(CaptureState::Error {
                                                             msg: format!("Couldn't extract: {e}"),
-                                                            retry_bytes: Some((retry_bytes, retry_mime)),
+                                                            retry: Some(again),
                                                         }),
                                                     }
                                                 });
@@ -1942,7 +1961,8 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
         spawn(async move {
             let bytes = body_text.clone().into_bytes();
             let retry_body = body_text;
-            match bridge::invoke_extract_document(bytes, "text/plain", "email_body").await {
+            // No filename: this body was pasted, so nothing on the device named it.
+            match bridge::invoke_extract_document(bytes, "text/plain", "email_body", None).await {
                 Ok(draft) => {
                     state.set(CaptureState::Idle);
                     on_extracted.call(draft);
@@ -2069,6 +2089,77 @@ fn active_capture_key() -> ContinuityKey {
     ContinuityKey::Capture("active".to_string())
 }
 
+/// What `verify` concluded about a fresh extraction, in the shape the panel
+/// below needs. Split out from `ExtractedDraft` so the form can hold onto the
+/// verdict after the draft itself has been decomposed into editable fields.
+#[derive(Debug, Clone, PartialEq)]
+struct ExtractionVerdict {
+    confidence: f64,
+    needs_review: bool,
+    warnings: Vec<String>,
+}
+
+/// Surfaces the verification result above the draft fields.
+///
+/// Warnings render verbatim rather than being reworded for the UI. They name
+/// amounts and fields ("line items sum to 42.18, but the total is 51.02"),
+/// which is what sends the user to the right row; a friendlier paraphrase
+/// layer here would be one more thing to drift out of step with `verify.rs`.
+#[component]
+fn ExtractionVerdictPanel(
+    verdict: ExtractionVerdict,
+    /// What the reader can actually do about it *here*. The confirm form has
+    /// editable fields and a Save; the batch review has Commit all / Dismiss and
+    /// no fields, so the default sentence would name a control that is not on
+    /// screen.
+    #[props(default = "Nothing is saved until you press Save — edit any field that looks wrong."
+        .to_string())]
+    hint: String,
+) -> Element {
+    // A clean extraction says nothing: the confidence number on its own gives
+    // the user no action, and a banner on every capture stops being read.
+    if !verdict.needs_review && verdict.warnings.is_empty() {
+        return rsx! {};
+    }
+
+    let pct = (verdict.confidence * 100.0).round() as i64;
+    let (tone, title_tone, headline) = if verdict.needs_review {
+        (
+            "bg-amber-500/10 border-amber-500/30",
+            "text-amber-200",
+            // Action-neutral on purpose: this panel renders on the confirm form
+            // (Save) and on the batch review (Commit all). `hint` names the
+            // control; the headline only states the verdict.
+            "Check this draft first",
+        )
+    } else {
+        (
+            "bg-obsidian-sidebar/60 border-obsidian-border/10",
+            "text-obsidian-text",
+            "Extracted, with something to confirm",
+        )
+    };
+
+    rsx! {
+        div { class: "p-4 border rounded-lg space-y-2 {tone}",
+            div { class: "flex items-baseline justify-between gap-3",
+                span { class: "text-sm font-semibold {title_tone}", "{headline}" }
+                // Never wrap: at 390px the headline takes two lines, and letting
+                // the number break with it leaves a ragged two-column header.
+                span { class: "text-xs text-obsidian-text-muted shrink-0 whitespace-nowrap",
+                    "confidence {pct}%"
+                }
+            }
+            ul { class: "list-disc pl-5 space-y-1",
+                for w in verdict.warnings.iter() {
+                    li { class: "text-xs text-obsidian-text-muted", "{w}" }
+                }
+            }
+            p { class: "text-xs text-obsidian-text-muted/80", "{hint}" }
+        }
+    }
+}
+
 #[component]
 fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -> Element {
     let store = use_continuity();
@@ -2083,6 +2174,15 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
     //      path clears the slot before navigating here, so reaching this arm
     //      with a draft is always a deliberate resume);
     //   3. otherwise a blank manual form.
+    //
+    // Only arm 1 carries a verification verdict. A resumed draft is the user's
+    // own edits by then, so replaying the model's doubts about the original
+    // extraction would be stale advice about fields they have already fixed.
+    let verdict = initial.as_ref().map(|d| ExtractionVerdict {
+        confidence: d.confidence,
+        needs_review: d.needs_review,
+        warnings: d.warnings.clone(),
+    });
     let (init_date, init_desc, init_rows, init_attachment) = if let Some(d) = initial {
         let rows: Vec<PostingRow> = if d.postings.is_empty() {
             vec![
@@ -2271,6 +2371,12 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                 h1 { class: "text-xl font-bold text-obsidian-accent", "Transaction" }
             }
 
+            // Above the fields, not beside them: the point is to be read before
+            // the draft is skimmed and saved.
+            if let Some(v) = verdict.clone() {
+                ExtractionVerdictPanel { verdict: v }
+            }
+
             // Date
             div {
                 label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
@@ -2437,7 +2543,8 @@ fn render_working() -> Element {
 fn render_error(message: &str) -> Element {
     rsx! {
         div { class: "p-4 bg-red-950/30 border border-red-500/30 rounded-lg space-y-2",
-            p { class: "text-sm text-red-300", "Couldn't extract: {message}" }
+            // Callers already prefix "Couldn't extract:"; repeating it here doubled the message.
+            p { class: "text-sm text-red-300", "{message}" }
             p { class: "text-xs text-obsidian-text-muted", "Pick another file above to retry." }
         }
     }
@@ -2619,8 +2726,15 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
                         }
                     }
                 }
-                div { class: "text-xs text-obsidian-text-muted truncate",
-                    if row_count == 1 { "1 transaction" } else { "{row_count} transactions" }
+                div { class: "flex items-baseline gap-2",
+                    div { class: "text-xs text-obsidian-text-muted truncate",
+                        if row_count == 1 { "1 transaction" } else { "{row_count} transactions" }
+                    }
+                    if batch.revises_batch_id.is_some() {
+                        span { class: "text-xs px-2 py-0.5 bg-amber-500/15 text-amber-300 rounded-full shrink-0",
+                            "revises a resolved batch"
+                        }
+                    }
                 }
             }
             svg { class: "w-5 h-5 text-obsidian-text-muted shrink-0",
@@ -2645,6 +2759,151 @@ fn email_document_id(batch: &PendingBatchView) -> Option<String> {
         .get("email_document_id")?
         .as_str()
         .map(str::to_string)
+}
+
+/// An earlier proposal about this order that a later message displaced.
+#[derive(Debug, Clone, PartialEq)]
+struct SupersededProposal {
+    status: String,
+    subject: String,
+    document_kind: String,
+    drafts: Vec<DraftTransactionView>,
+}
+
+/// Earlier proposals about this batch's order, oldest first.
+///
+/// The keys come from `AutoImportProjection::supersession_entry`; nothing but
+/// agreement on the spelling connects the two ends.
+fn superseded_proposals(batch: &PendingBatchView) -> Vec<SupersededProposal> {
+    let Some(entries) = batch.superseded.as_ref().and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .map(|e| {
+            let text = |key: &str| {
+                e.get(key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("—")
+                    .to_string()
+            };
+            SupersededProposal {
+                status: text("status"),
+                subject: text("subject"),
+                document_kind: text("document_kind"),
+                drafts: e
+                    .get("draft_postings")
+                    .cloned()
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+/// What else the vendor sent about this order, and what committing this batch
+/// will and will not do.
+///
+/// A merge keyed on a vendor reference the model read off an email is only safe
+/// while the reviewer can see what it merged; this panel is that visibility.
+#[component]
+fn BatchLineagePanel(
+    revises_batch_id: Option<String>,
+    superseded: Vec<SupersededProposal>,
+) -> Element {
+    if revises_batch_id.is_none() && superseded.is_empty() {
+        return rsx! {};
+    }
+    let replaced = superseded.len();
+    // Amber is reserved for the case that can double-book. A merge of pending
+    // mail is information, and two warning-coloured panels in a row teach the
+    // reader to skip both.
+    let (border, heading) = if revises_batch_id.is_some() {
+        ("border-amber-500/30", "text-amber-200")
+    } else {
+        ("border-obsidian-border/10", "text-obsidian-text")
+    };
+    rsx! {
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border {border} rounded-lg",
+            if revises_batch_id.is_some() {
+                p { class: "text-sm font-semibold {heading} mb-1",
+                    "This order already has a batch you committed or dismissed"
+                }
+                p { class: "text-xs text-obsidian-text-muted mb-2",
+                    "Committing this one adds new transactions. Nothing already in your books is changed or removed, so check it against what is there before accepting rows."
+                }
+            } else {
+                p { class: "text-sm font-semibold {heading} mb-1",
+                    if replaced == 1 {
+                        "One earlier message about this order was replaced"
+                    } else {
+                        "{replaced} earlier messages about this order were replaced"
+                    }
+                }
+                p { class: "text-xs text-obsidian-text-muted mb-2",
+                    "The vendor sends several mails per order and the newest won. If the wrong one won, dismiss this and enter it by hand."
+                }
+            }
+            if replaced > 0 {
+                details { class: "text-xs text-obsidian-text-muted",
+                    summary { class: "cursor-pointer hover:text-obsidian-text",
+                        "What it replaced"
+                    }
+                    div { class: "mt-2 space-y-2",
+                        for prior in superseded.iter() {
+                            div { class: "p-2 bg-obsidian-bg/40 rounded border border-obsidian-border/5",
+                                div { class: "flex items-baseline gap-2 mb-1",
+                                    span { class: "font-mono text-obsidian-text", "{prior.document_kind}" }
+                                    span { "· {prior.status}" }
+                                }
+                                div { class: "truncate mb-1", "{prior.subject}" }
+                                for draft in prior.drafts.iter() {
+                                    for posting in draft.postings.iter() {
+                                        div { class: "flex justify-between gap-3",
+                                            span { class: "font-mono truncate", "{posting.account}" }
+                                            span { class: "font-mono shrink-0",
+                                                "{posting.amount} {posting.commodity}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// What `verify` concluded about the extraction behind a batch.
+///
+/// ⚠️ These keys are written by `core::auto_import::receipts`, which spells them
+/// `effective_confidence` and `needs_manual_review` — not the `confidence` /
+/// `needs_review` of the capture route's JSON. `source_metadata` is opaque by
+/// design, so only agreement on these spellings connects the two.
+///
+/// Returning `None` when the keys are absent is deliberate: a batch from a
+/// source that runs no verification must show no verdict rather than a
+/// confident-looking zero.
+fn batch_verdict(batch: &PendingBatchView) -> Option<ExtractionVerdict> {
+    let meta = batch.source_metadata.as_ref()?;
+    Some(ExtractionVerdict {
+        confidence: meta.get("effective_confidence")?.as_f64()?,
+        needs_review: meta
+            .get("needs_manual_review")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        warnings: meta
+            .get("warnings")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|w| w.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
 }
 
 /// The message a batch was derived from, shown beside its drafts.
@@ -2789,6 +3048,14 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                     }
                 }
 
+                // Above the source, because it changes what the decision is:
+                // the other panels describe this message, this one describes
+                // what committing it does to transactions already booked.
+                BatchLineagePanel {
+                    revises_batch_id: b.revises_batch_id.clone(),
+                    superseded: superseded_proposals(&b),
+                }
+
                 // ⛔ The source, shown — not a JSON dump of its metadata. This
                 // review step is the only control between a crafted email and a
                 // fabricated ledger entry (`receipts.rs` says so explicitly, and
@@ -2797,6 +3064,20 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                 // from. The raw metadata stays available underneath.
                 if let Some(doc_id) = email_document_id(&b) {
                     SourceEmailPanel { document_id: doc_id }
+                }
+
+                // Same panel the manual confirm-draft form uses. It matters more
+                // here: on this path no human has looked at the model's work at
+                // all, and `needs_manual_review` was previously readable only by
+                // expanding the JSON below it.
+                if let Some(v) = batch_verdict(&b) {
+                    div { class: "mb-4",
+                        ExtractionVerdictPanel {
+                            verdict: v,
+                            hint: "Check these figures against the source before committing — dismissing costs nothing."
+                                .to_string(),
+                        }
+                    }
                 }
 
                 if let Some(meta_str) = metadata_pretty {

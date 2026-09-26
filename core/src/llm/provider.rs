@@ -247,7 +247,7 @@ pub fn build_llm_client(
 /// `Ok` with an empty draft rather than erroring. A caller that scores results
 /// has to check `name()`, or a misconfiguration reads as the model finding nothing.
 pub fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
-    let Some(endpoint) = vision_endpoint(creds, "extractor") else {
+    let Some(endpoint) = vision_endpoint(creds, LlmRole::Extractor, "extractor") else {
         return Arc::new(NullExtractor);
     };
     tracing::info!(model = %endpoint.model, "Document extractor: OpenAI-compatible vision");
@@ -260,7 +260,7 @@ pub fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
 /// [`build_extractor`] is deliberate: see the `NullExtractor` note on
 /// [`DocumentReader`].
 pub fn build_reader(creds: &Credentials) -> Option<Arc<dyn DocumentReader>> {
-    let endpoint = vision_endpoint(creds, "reader")?;
+    let endpoint = vision_endpoint(creds, LlmRole::Reader, "reader")?;
     tracing::info!(model = %endpoint.model, "Document reader: OpenAI-compatible vision");
     Some(Arc::new(endpoint.into_client()))
 }
@@ -271,7 +271,7 @@ pub fn build_reader(creds: &Credentials) -> Option<Arc<dyn DocumentReader>> {
 /// transcription would rank above `none` in `TextSource::rank` and stand as this
 /// document's text, which is worse than leaving it untranscribed.
 pub fn build_transcriber(creds: &Credentials) -> Option<Arc<dyn DocumentTranscriber>> {
-    let endpoint = vision_endpoint(creds, "transcriber")?;
+    let endpoint = vision_endpoint(creds, LlmRole::Transcriber, "transcriber")?;
     tracing::info!(model = %endpoint.model, "Document transcriber: OpenAI-compatible vision");
     Some(Arc::new(endpoint.into_client()))
 }
@@ -295,28 +295,37 @@ impl VisionEndpoint {
 /// document path and miss another. That asymmetry was a real defect: the text
 /// client refused closed weights from the day role wiring landed, and the
 /// document path did not.
-fn vision_endpoint(creds: &Credentials, consumer: &str) -> Option<VisionEndpoint> {
+///
+/// ⚠️ `role` is load-bearing and was not always a parameter. All three role-C
+/// builders used to resolve `LlmRole::Extractor` and pass `consumer` only to the
+/// log line, so one `[llm.extractor]` table silently served three seats that
+/// measured out to different models.
+fn vision_endpoint(creds: &Credentials, role: LlmRole, consumer: &str) -> Option<VisionEndpoint> {
+    // Named for the log so a missing table points at the one to write, rather
+    // than at whichever role-C seat happened to ask first.
+    let table = match role {
+        LlmRole::Reader => "[llm.reader]",
+        LlmRole::Transcriber => "[llm.transcriber]",
+        _ => "[llm.extractor]",
+    };
     let Some(cfg) = creds
         .llm
         .as_ref()
-        .map(|c| c.for_role(LlmRole::Extractor))
+        .map(|c| c.for_role(role))
         .filter(|c| c.provider == "openai_compatible" && c.vision)
     else {
-        tracing::warn!(
-            consumer,
-            "no [llm.extractor] openai_compatible vision endpoint"
-        );
+        tracing::warn!(consumer, "no {table} openai_compatible vision endpoint");
         return None;
     };
     let (Some(base_url), Some(model)) = (cfg.base_url.as_deref(), cfg.model.as_deref()) else {
         tracing::warn!(
             consumer,
-            "[llm.extractor] vision = true but base_url or model is missing"
+            "{table} vision = true but base_url or model is missing"
         );
         return None;
     };
     if base_url.is_empty() || model.is_empty() {
-        tracing::warn!(consumer, "[llm.extractor] base_url or model is empty");
+        tracing::warn!(consumer, "{table} base_url or model is empty");
         return None;
     }
     // Documents are the most identifying payload this system sends: a statement

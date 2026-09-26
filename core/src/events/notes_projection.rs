@@ -93,7 +93,7 @@ impl Projection for NotesProjection {
              DEFINE INDEX IF NOT EXISTS idx_note_raw_text_fts ON generic_notes
                  FIELDS raw_text FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;",
         )
-        .await?;
+        .await?.check()?;
 
         Ok(())
     }
@@ -103,7 +103,8 @@ impl Projection for NotesProjection {
             "DELETE FROM journal_entries;
              DELETE FROM generic_notes;",
         )
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -159,7 +160,8 @@ impl NotesProjection {
         .bind(("complete", complete))
         .bind(("legacy_properties", legacy_properties))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -196,7 +198,8 @@ impl NotesProjection {
         .bind(("raw_text", raw_text))
         .bind(("complete", complete))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -225,7 +228,8 @@ impl NotesProjection {
         .bind(("date", date))
         .bind(("closed", closed))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -262,7 +266,8 @@ impl NotesProjection {
         .bind(("raw_text", raw_text))
         .bind(("legacy_properties", legacy_properties))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -291,7 +296,8 @@ impl NotesProjection {
         .bind(("note_id", note_id))
         .bind(("raw_text", raw_text))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -316,7 +322,8 @@ impl NotesProjection {
         .bind(("note_id", note_id))
         .bind(("title", title))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -373,7 +380,7 @@ impl NotesProjection {
         .bind(("added", added))
         .bind(("sep", "\n\n"))
         .bind(("ts", ts))
-        .await?;
+        .await?.check()?;
 
         Ok(())
     }
@@ -415,7 +422,8 @@ impl NotesProjection {
         .bind(("tags", tags))
         .bind(("summary", summary))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }

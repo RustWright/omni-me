@@ -4,7 +4,9 @@
 //! query is the work queue, and what it deliberately cannot reach:
 //! `docs/src/archive.md`.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 
@@ -32,8 +34,53 @@ pub enum SkipReason {
     /// whose body never parsed, so ingest stored no text to send in its place.
     NoReadableForm,
     /// The reader was asked and could not answer. `derive_fields` logs the
-    /// cause; a transient one is retried on a later tick.
+    /// cause; it is retried once its [`RetryHolds`] hold lapses.
     NotRead,
+}
+
+/// First hold on a skipped document; each further skip doubles it up to [`HOLD_CAP`].
+pub const HOLD_START: Duration = Duration::from_secs(60 * 60);
+pub const HOLD_CAP: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Documents a tick skipped, set aside so one that keeps failing cannot hold the head of
+/// the queue. In memory on purpose: a restart retries everything. See `docs/src/archive.md`.
+#[derive(Debug, Default)]
+pub struct RetryHolds {
+    held: HashMap<String, Hold>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Hold {
+    skips: u32,
+    until: Instant,
+}
+
+impl RetryHolds {
+    /// Ids still set aside at `now`.
+    pub fn held_at(&self, now: Instant) -> Vec<String> {
+        self.held
+            .iter()
+            .filter(|(_, hold)| hold.until > now)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Set every skipped document aside, doubling its hold each time it is skipped again.
+    pub fn record(&mut self, skipped: &[SkippedDocument], now: Instant) {
+        for doc in skipped {
+            let skips = self.held.get(&doc.document_id).map_or(0, |h| h.skips) + 1;
+            let hold = HOLD_START
+                .saturating_mul(1 << (skips - 1).min(10))
+                .min(HOLD_CAP);
+            self.held.insert(
+                doc.document_id.clone(),
+                Hold {
+                    skips,
+                    until: now + hold,
+                },
+            );
+        }
+    }
 }
 
 /// Email MIMEs, which are candidates even though no reader accepts them raw.
@@ -109,6 +156,7 @@ impl EnrichTally {
             no_readable_form,
             not_read,
             unreadable_mime: 0,
+            held: 0,
             skipped: self.skipped,
         })
     }
@@ -128,6 +176,8 @@ pub struct EnrichSummary {
     /// Carried so they cannot be mistaken for documents that do not exist. It
     /// is a standing count of the whole archive, not of this tick.
     pub unreadable_mime: usize,
+    /// Candidates set aside by [`RetryHolds`] when this tick selected.
+    pub held: usize,
     pub skipped: Vec<SkippedDocument>,
 }
 
@@ -160,9 +210,11 @@ pub async fn enrich_fields_once(
     blob_dir: &Path,
     reader: &dyn DocumentReader,
     max: usize,
+    holds: &mut RetryHolds,
 ) -> Result<EnrichSummary, EnrichError> {
     let mimes = candidate_mimes();
-    let candidates = queries::documents_awaiting_fields(db, &mimes, max as u32).await?;
+    let held = holds.held_at(Instant::now());
+    let candidates = queries::documents_awaiting_fields(db, &mimes, max as u32, &held).await?;
     let mut tally = EnrichTally::new(candidates.len());
 
     for row in candidates {
@@ -208,6 +260,8 @@ pub async fn enrich_fields_once(
     }
 
     let mut summary = tally.finish()?;
+    holds.record(&summary.skipped, Instant::now());
+    summary.held = held.len();
     summary.unreadable_mime = queries::documents_unreadable_count(db, &mimes).await?;
     Ok(summary)
 }
@@ -233,8 +287,11 @@ pub async fn enrich_text_once(
     blob_dir: &Path,
     transcriber: &dyn DocumentTranscriber,
     max: usize,
+    holds: &mut RetryHolds,
 ) -> Result<EnrichSummary, EnrichError> {
-    let candidates = queries::documents_awaiting_text(db, &TRANSCRIBABLE_MIMES, max as u32).await?;
+    let held = holds.held_at(Instant::now());
+    let candidates =
+        queries::documents_awaiting_text(db, &TRANSCRIBABLE_MIMES, max as u32, &held).await?;
     let mut tally = EnrichTally::new(candidates.len());
 
     for row in candidates {
@@ -280,6 +337,8 @@ pub async fn enrich_text_once(
     }
 
     let mut summary = tally.finish()?;
+    holds.record(&summary.skipped, Instant::now());
+    summary.held = held.len();
     summary.unreadable_mime = queries::documents_unreadable_count(db, &TRANSCRIBABLE_MIMES).await?;
     Ok(summary)
 }
@@ -378,9 +437,7 @@ mod tests {
     // --- the pass end to end, against a real store and projection ---
 
     use crate::config::ALL_FEATURES;
-    use crate::events::{
-        DocumentsProjection, EventStore, Projection, ProjectionRunner, SurrealEventStore,
-    };
+    use crate::events::{DocumentsProjection, EventStore, ProjectionRunner, SurrealEventStore};
     use std::sync::Arc;
 
     async fn test_db() -> Database {
@@ -388,7 +445,14 @@ mod tests {
         let path = dir.path().join("enrich.db");
         let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
         std::mem::forget(dir);
-        DocumentsProjection.init_schema(&db).await.unwrap();
+        // Through the runner rather than `DocumentsProjection.init_schema` alone,
+        // which is what this used to do: that leaves `projection_versions`
+        // undefined, so every `apply_events` here failed at its bookmark write.
+        // The failure was invisible until the writes started being checked.
+        ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)])
+            .init_all()
+            .await
+            .unwrap();
         db
     }
 
@@ -516,19 +580,31 @@ mod tests {
         .await;
 
         let reader = StubReader::new(false);
-        let first =
-            enrich_fields_once(&db, &writer, blob_dir.path(), &reader, DEFAULT_MAX_PER_TICK)
-                .await
-                .unwrap();
+        let first = enrich_fields_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &reader,
+            DEFAULT_MAX_PER_TICK,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!((first.seen, first.read), (1, 1));
         assert_eq!(kind_of(&db, &id).await.as_deref(), Some("letter"));
 
         // The candidate query is the queue, so the fold that lands the answer is
         // also what removes the work. Nothing durable tracks it.
-        let second =
-            enrich_fields_once(&db, &writer, blob_dir.path(), &reader, DEFAULT_MAX_PER_TICK)
-                .await
-                .unwrap();
+        let second = enrich_fields_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &reader,
+            DEFAULT_MAX_PER_TICK,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             second.seen, 0,
             "an enriched document is no longer a candidate"
@@ -551,13 +627,111 @@ mod tests {
         let id = seed(&store, &runner, blob_dir.path(), b"a letter", "text/plain").await;
 
         let reader = StubReader::new(true);
-        let out = enrich_fields_once(&db, &writer, blob_dir.path(), &reader, 5)
-            .await
-            .unwrap();
+        let out = enrich_fields_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &reader,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!((out.seen, out.read, out.not_read), (1, 0, 1));
         assert!(kind_of(&db, &id).await.is_none(), "no event was appended");
         assert_eq!(out.sample_skipped(1)[0].reason, SkipReason::NotRead);
+    }
+
+    fn skip(id: &str) -> Vec<SkippedDocument> {
+        vec![SkippedDocument {
+            document_id: id.into(),
+            reason: SkipReason::NotRead,
+        }]
+    }
+
+    #[test]
+    fn a_hold_doubles_with_each_skip_and_stops_at_the_cap() {
+        let now = Instant::now();
+        let second = Duration::from_secs(1);
+        let mut holds = RetryHolds::default();
+
+        holds.record(&skip("a"), now);
+        assert_eq!(holds.held_at(now), vec!["a".to_string()]);
+        assert!(
+            holds.held_at(now + HOLD_START).is_empty(),
+            "first hold lapses"
+        );
+
+        holds.record(&skip("a"), now);
+        assert!(
+            !holds.held_at(now + HOLD_START).is_empty(),
+            "second hold is longer"
+        );
+        assert!(holds.held_at(now + HOLD_START * 2).is_empty());
+
+        for _ in 0..20 {
+            holds.record(&skip("a"), now);
+        }
+        assert!(!holds.held_at(now + HOLD_CAP - second).is_empty());
+        assert!(
+            holds.held_at(now + HOLD_CAP).is_empty(),
+            "never beyond the cap"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_document_that_keeps_failing_does_not_block_the_one_behind_it() {
+        // Found on real data: with one read per tick, a note the reader timed out on was
+        // selected first on every tick, and nothing behind it was read until a retry succeeded.
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)]);
+        let writer = EventWriter::new(
+            Arc::new(store.clone()),
+            runner.clone(),
+            ALL_FEATURES.iter().copied().collect(),
+            "d1",
+        );
+        let blob_dir = tempfile::tempdir().unwrap();
+        let mut holds = RetryHolds::default();
+
+        let stuck = seed(
+            &store,
+            &runner,
+            blob_dir.path(),
+            b"a hard note",
+            "text/plain",
+        )
+        .await;
+        let failing = StubReader::new(true);
+        let first = enrich_fields_once(&db, &writer, blob_dir.path(), &failing, 1, &mut holds)
+            .await
+            .unwrap();
+        assert_eq!((first.seen, first.not_read), (1, 1));
+
+        let second = enrich_fields_once(&db, &writer, blob_dir.path(), &failing, 1, &mut holds)
+            .await
+            .unwrap();
+        assert_eq!(
+            (second.seen, second.held),
+            (0, 1),
+            "the failure is set aside"
+        );
+        assert_eq!(
+            failing.calls.load(Ordering::SeqCst),
+            1,
+            "and not paid for again"
+        );
+
+        let behind = seed(&store, &runner, blob_dir.path(), b"a letter", "text/plain").await;
+        let reader = StubReader::new(false);
+        let third = enrich_fields_once(&db, &writer, blob_dir.path(), &reader, 1, &mut holds)
+            .await
+            .unwrap();
+        assert_eq!((third.seen, third.read), (1, 1));
+        assert_eq!(kind_of(&db, &behind).await.as_deref(), Some("letter"));
+        assert!(kind_of(&db, &stuck).await.is_none());
     }
 
     #[tokio::test]
@@ -586,9 +760,16 @@ mod tests {
         .await;
 
         let reader = SpyReader::default();
-        let out = enrich_fields_once(&db, &writer, blob_dir.path(), &reader, 5)
-            .await
-            .unwrap();
+        let out = enrich_fields_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &reader,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!((out.seen, out.read), (1, 1), "an email is a candidate");
         assert_eq!(kind_of(&db, &id).await.as_deref(), Some("letter"));
@@ -627,9 +808,16 @@ mod tests {
         .await;
 
         let reader = SpyReader::default();
-        let out = enrich_fields_once(&db, &writer, blob_dir.path(), &reader, 5)
-            .await
-            .unwrap();
+        let out = enrich_fields_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &reader,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!((out.seen, out.no_readable_form), (1, 1));
         assert_eq!(out.read, 0);
@@ -710,18 +898,32 @@ mod tests {
         let id = seed_scan(&store, &runner, blob_dir.path()).await;
 
         let t = StubTranscriber("INVOICE\ntotal 12.30".into());
-        let first = enrich_text_once(&db, &writer, blob_dir.path(), &t, 5)
-            .await
-            .unwrap();
+        let first = enrich_text_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &t,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!((first.seen, first.read), (1, 1));
         assert_eq!(
             text_source_of(&db, &id).await.as_deref(),
             Some("transcribed")
         );
 
-        let second = enrich_text_once(&db, &writer, blob_dir.path(), &t, 5)
-            .await
-            .unwrap();
+        let second = enrich_text_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &t,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             second.seen, 0,
             "a transcribed scan is no longer a candidate"
@@ -746,9 +948,16 @@ mod tests {
         let id = seed_scan(&store, &runner, blob_dir.path()).await;
 
         let t = StubTranscriber(String::new());
-        let out = enrich_text_once(&db, &writer, blob_dir.path(), &t, 5)
-            .await
-            .unwrap();
+        let out = enrich_text_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &t,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             (out.seen, out.read),
@@ -759,9 +968,16 @@ mod tests {
             text_source_of(&db, &id).await.as_deref(),
             Some("transcribed")
         );
-        let again = enrich_text_once(&db, &writer, blob_dir.path(), &t, 5)
-            .await
-            .unwrap();
+        let again = enrich_text_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &t,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(again.seen, 0);
     }
 
@@ -782,9 +998,16 @@ mod tests {
         seed(&store, &runner, blob_dir.path(), b"a letter", "text/plain").await;
 
         let t = StubTranscriber("should never be asked".into());
-        let out = enrich_text_once(&db, &writer, blob_dir.path(), &t, 5)
-            .await
-            .unwrap();
+        let out = enrich_text_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &t,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(out.seen, 0);
     }
 
@@ -812,9 +1035,16 @@ mod tests {
         .await;
 
         let reader = StubReader::new(false);
-        let out = enrich_fields_once(&db, &writer, blob_dir.path(), &reader, 5)
-            .await
-            .unwrap();
+        let out = enrich_fields_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &reader,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(out.seen, 0);
         assert_eq!(reader.calls.load(Ordering::SeqCst), 0, "nothing was sent");

@@ -8,9 +8,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use omni_me_core::archive;
-use omni_me_core::blob;
-use omni_me_core::events::AttachmentRef;
-use omni_me_core::extraction::{DocumentPart, ExtractionHint, ExtractionResult};
+use omni_me_core::events::{AttachmentRef, NewEvent};
+use omni_me_core::extraction::document::{reading_from_extraction, to_fields_payload};
+use omni_me_core::extraction::{
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentPart, ExtractionHint, ExtractionResult, TotalCheck,
+    add_counter_legs, verify,
+};
 
 use crate::AppState;
 
@@ -33,6 +36,12 @@ pub struct ExtractQuery {
 pub struct ExtractResponse {
     pub extraction: ExtractionResult,
     pub attachment: Option<AttachmentRef>,
+    /// What the receipt cross-check found, such as line items not adding up to the total.
+    pub warnings: Vec<String>,
+    pub needs_review: bool,
+    /// Whether the total cross-check compared anything independent. An empty
+    /// `warnings` alone does not mean the arithmetic was verified.
+    pub total_check: TotalCheck,
 }
 
 pub fn documents_routes() -> Router<AppState> {
@@ -110,10 +119,9 @@ async fn archive_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Append then project, matching `auto_import::rest`. ⚠️ Note this path is
-    // NOT feature-gated: the server resolves no `ResolvedConfig`, so
-    // `EventWriter`'s guard has nothing to read here. Pre-existing and shared
-    // with every auto-import source — see `tasks.md`.
+    // Append then project. Note this path is NOT feature-gated: the server resolves
+    // no `ResolvedConfig`, so `EventWriter`'s guard has nothing to read here.
+    // Pre-existing and shared with every auto-import source — see `tasks.md`.
     //
     // ⚠️ **One batch, not one call per event.** The fields event is about the
     // document the archive event creates; appending them separately would let a
@@ -123,11 +131,16 @@ async fn archive_handler(
         .append_batch(ingested.events)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("append: {e}")))?;
-    state
-        .projections
-        .apply_events(&appended)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("project: {e}")))?;
+    // Best-effort once stored: an error response here makes the device retry, and the
+    // retry files the same bytes as a second document.
+    let failed = state.projections.apply_events_resilient(&appended).await;
+    if failed > 0 {
+        tracing::warn!(
+            document_id = %ingested.document_id,
+            failed,
+            "archived but not all projected"
+        );
+    }
 
     tracing::info!(
         document_id = %ingested.document_id,
@@ -183,48 +196,82 @@ async fn extract_handler(
         "extract_document"
     );
 
-    let extraction = state
+    let mut extraction = state
         .extractor
         .extract(&[DocumentPart::new(&body, mime)], q.hint)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
+    // Archived only after extraction succeeds, as the bare blob store was: a failed read is
+    // retried by the device with the same bytes, and archiving first would file each retry.
     let attachment = if q.attach {
-        Some(
-            store_blob(&state, &body, mime, filename)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?,
-        )
+        Some(archive_capture(&state, &body, mime, filename, &extraction, q.hint).await?)
     } else {
         None
     };
 
+    // Before the counter leg, which would cancel the line-item sum this compares to the total.
+    // It used to run only in the extraction bench, never on a capture.
+    let report = verify(&extraction, q.hint, DEFAULT_CONFIDENCE_THRESHOLD);
+    extraction.confidence = report.effective_confidence;
+    add_counter_legs(&mut extraction, q.hint);
+
     Ok(Json(ExtractResponse {
         extraction,
         attachment,
+        warnings: report.warnings,
+        needs_review: report.needs_manual_review,
+        total_check: report.total_check,
     }))
 }
 
-/// Build an `AttachmentRef` for bytes stored through `core::blob`.
+/// File a capture in the archive and return the attachment that links a transaction to it.
 ///
-/// The hashing, temp-then-rename and idempotency all live there now — this is
-/// the metadata the caller wants back, which the store has no business knowing:
-/// a filename and a declared MIME are what the *request* said, not properties of
-/// the bytes.
-async fn store_blob(
+/// The extraction's reading goes in the same batch, so the reader never re-reads a capture;
+/// what it leaves (a capture with no document type) the scheduled pass catalogues as usual.
+async fn archive_capture(
     state: &AppState,
     body: &[u8],
     mime: &str,
     filename: &str,
-) -> Result<AttachmentRef, String> {
-    let sha256 = blob::store(&state.blob_dir, body)
+    extraction: &ExtractionResult,
+    hint: ExtractionHint,
+) -> Result<AttachmentRef, (StatusCode, String)> {
+    let internal = |e: String| (StatusCode::INTERNAL_SERVER_ERROR, e);
+    let mut ingested = archive::ingest_one(
+        &state.blob_dir,
+        body,
+        filename,
+        mime,
+        archive::IngestSource::Scan,
+        &state.device_id,
+        None,
+    )
+    .await
+    .map_err(|e| internal(e.to_string()))?;
+
+    if let Some(reading) = reading_from_extraction(extraction, hint) {
+        let payload = to_fields_payload(&ingested.document_id, &reading);
+        let event = NewEvent::document_fields_extracted(&state.device_id, &payload)
+            .map_err(|e| internal(e.to_string()))?;
+        ingested.events.push(event);
+    }
+
+    let appended = state
+        .store
+        .append_batch(ingested.events)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| internal(format!("append: {e}")))?;
+    let failed = state.projections.apply_events_resilient(&appended).await;
+    if failed > 0 {
+        tracing::warn!(document_id = %ingested.document_id, failed, "capture archived but not all projected");
+    }
 
     Ok(AttachmentRef {
-        sha256,
+        sha256: ingested.sha256,
         filename: filename.to_string(),
         mime_type: mime.to_string(),
         size: body.len() as u64,
+        document_id: Some(ingested.document_id),
     })
 }

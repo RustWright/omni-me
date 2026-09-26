@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use omni_me_core::db::Database;
 use omni_me_core::document_enrichment::{
-    DEFAULT_MAX_PER_TICK, EnrichSummary, enrich_fields_once, enrich_text_once,
+    DEFAULT_MAX_PER_TICK, EnrichSummary, RetryHolds, enrich_fields_once, enrich_text_once,
 };
 use omni_me_core::events::EventWriter;
 use omni_me_core::extraction::document::DocumentReader;
@@ -99,8 +99,12 @@ pub fn spawn(
         return;
     }
     if reader.is_none() && transcriber.is_none() {
+        // Name the seats this actually reads. It used to say [llm.extractor],
+        // which is the one table neither half consults, so acting on the
+        // message reproduced it exactly.
         tracing::warn!(
-            "document enrichment enabled but no [llm.extractor] vision endpoint — not spawning"
+            "document enrichment enabled but neither [llm.reader] nor [llm.transcriber] \
+             resolves a vision endpoint — not spawning"
         );
         return;
     }
@@ -115,14 +119,23 @@ pub fn spawn(
 
     tokio::spawn(async move {
         let mut backoff = BACKOFF_START;
+        let mut cataloguing_holds = RetryHolds::default();
+        let mut transcription_holds = RetryHolds::default();
         loop {
             // Both halves per tick, each capped separately. They compete for
             // nothing: one selects documents with no kind, the other documents
             // with no text, and a scan is usually both.
             let mut failed = None;
             if let Some(reader) = reader.as_ref() {
-                match enrich_fields_once(&db, &writer, &blob_dir, reader.as_ref(), cfg.max_per_tick)
-                    .await
+                match enrich_fields_once(
+                    &db,
+                    &writer,
+                    &blob_dir,
+                    reader.as_ref(),
+                    cfg.max_per_tick,
+                    &mut cataloguing_holds,
+                )
+                .await
                 {
                     Ok(s) => log_tick("cataloguing", &s),
                     Err(e) => failed = Some(e.to_string()),
@@ -137,6 +150,7 @@ pub fn spawn(
                     &blob_dir,
                     transcriber.as_ref(),
                     cfg.max_per_tick,
+                    &mut transcription_holds,
                 )
                 .await
                 {
@@ -170,6 +184,7 @@ fn log_tick(half: &'static str, summary: &EnrichSummary) {
     if summary.seen == 0 {
         tracing::debug!(
             half,
+            held = summary.held,
             unreadable_mime = summary.unreadable_mime,
             "enrichment: nothing waiting"
         );
@@ -182,6 +197,7 @@ fn log_tick(half: &'static str, summary: &EnrichSummary) {
         no_bytes = summary.no_bytes,
         no_readable_form = summary.no_readable_form,
         not_read = summary.not_read,
+        held = summary.held,
         unreadable_mime = summary.unreadable_mime,
         skipped = ?summary.sample_skipped(3),
         "enrichment tick"

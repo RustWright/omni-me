@@ -257,9 +257,35 @@ defer-major-phases rule; do not run ahead to the next one.
          pattern is noticed, and propose only on repeated independent evidence.
        - ⚠️ **Re-anchored 2026-09-11: Phase F has shipped and neither policy was taken**, so
          the old wording ("deferred to during/after Phase F") now reads as overdue when it is
-         simply undated. ⛔ Both remain **unbuilt and live** — no schedule, and the user has
-         not been asked for one. Do not read the check-in's existence as having settled it:
-         a scheduled question is still a question he asked for, not an opinion volunteered.
+         simply undated. ⛔ Both remain **unbuilt and live** — no schedule. Do not read the
+         check-in's existence as having settled it: a scheduled question is still a question
+         he asked for, not an opinion volunteered.
+       - ✅ **PREFERENCE SET 2026-09-16: option 2 wins, and it is role B's long-term shape**
+         (user: *"that would be preferred and is how I envisioned the model for role B acting
+         long term anyway"*). Propose a belief only when the same thing appears across several
+         **independent** records. ⛔ Option 1 (propose on noticing a durable pattern) is not
+         scheduled and is now the lesser option, not a parallel one.
+       - **Why option 2 lands on B and not A.** Evidence is `records_read(outcome)` — every
+         record opened *in that run* (`answer.rs:118`), never model-authored. Corroboration
+         therefore requires actually opening the corroborating records, which an interactive
+         turn answering a typed question has no budget for and a scheduled run does.
+         ⚠️ Option 1 by contrast is not a seat question at all: noticing rides on whatever run
+         is already happening, so it would fire under **both** A and B and neither seat's bench
+         would catch an over-eager proposal on its own.
+       - 🔴 **Two prerequisites, both real work, neither obvious from the policy statement:**
+         1. **A per-role turn budget.** `assistant.max_turns` is a single global key
+            (`config.rs:310`, range 3–50, default 10) — the A/B split was made on *latency*
+            only. Corroboration needs well above 10, and raising the global figure makes seat A
+            pay in exactly the dimension it is gated on. ⚠️ Cost grows **superlinearly** per
+            turn because the prompt carries every prior result. ⛔ The lower bound is a halting
+            guarantee, not a preference — the loop has no terminal verb — so a per-role budget
+            must keep a floor, not just add a ceiling.
+         2. **A second scheduled question.** `check_in.rs` raises exactly one, from the single
+            config value `assistant.check_in_prompt`, and that prompt ends *"Do not draw new
+            conclusions."* ⛔ Finding new beliefs is a different job and must not be bolted onto
+            the review prompt — the two instructions contradict.
+       - ⚠️ Sequence: the per-role turn budget is a **prerequisite**, not a detail. It is also
+         where seat B's other needs will go, so it is worth doing first and on its own.
      - **Phase F — the scheduled check-in.** ⚠️ **A check-in is a question, not a subsystem.**
        The agent authors an ordinary `AssistantQuestionAsked` with `scheduled: true`; the
        normal loop answers it and anything it wants goes through the normal gate. It
@@ -976,6 +1002,78 @@ catalogue, and nothing connects them but the comment at each end. Keep both.
 
 ---
 
+## ▶ DEFINITION OF READY — what "finances tab back on" actually requires
+
+**Written 2026-09-16 at the user's insistence**, before testing starts: *"make sure we have a
+holistic view of what the app being ready actually means, so we don't get to the end of testing
+and realize there are still a lot of missing pieces."* ⛔ This is the finish line. Test against
+it, not against a feature list.
+
+🔴 **The ordering consequence, and it reverses an earlier plan.** I had documents scheduled LAST
+on the grounds that the dev archive is empty. That is wrong: **receipt capture and email receipt
+ingestion are both document paths, and finance readiness depends on them.** Documents are on the
+critical path, not the tail.
+
+### The chain, in dependency order
+
+1. **Ledger catch-up.** Real transactions are behind. Either incremental import or — the user
+   floated it as possibly cleaner — a **full finances wipe and re-import**. ⚠️ Decide which
+   BEFORE importing anything, because a half-caught-up ledger is worse than an empty one.
+   ⛔ Both bank sources are currently OFF and categorization is deferred to `Unmatched`.
+2. **Email receipt ingestion via IMAP.** ✅ **RESOLVED, and RUNNING on dev for `gmail_personal`**
+   (2026-09-18). The isolation conflict was dissolved by opening the mailbox with `EXAMINE`
+   instead of `SELECT` — the user's suggestion. The server itself then refuses any state change,
+   so polling the real mailbox cannot mark a message processed, and `BODY.PEEK[]` backstops it.
+   None of the four options was needed; no test mailbox exists. ⛔ Scope is the credentials file,
+   not a flag: `build_imap_sources` polls every `[imap.*]` block and dev carries only
+   `gmail_personal`. Enrichment stays OFF until archive volume is measured and a purge path
+   exists. ⚠️ Open from the first ticks: `UIDVALIDITY` is unhandled, so a renumbered mailbox
+   stalls (see `NEXT.md`).
+3. **Image capture of receipts** — the photograph path into the archive, then C1 extraction.
+   ✅ Verified on the phone 2026-09-17. ⚠️ Remaining: the draft form does not show `verify`
+   warnings, and `x-filename` still needs the picker's real name threaded through.
+4. **The archive itself** — scan, store, retrieve. ✅ Now running on real data: 14 blobs / 22 MB
+   on dev, from captures plus the first archived emails.
+5. **Finance propose actions** — BUILT 2026-09-13, never exercised on hardware.
+6. **The tab goes on.** ⛔ Nothing turns on without the user saying so.
+
+### Open questions this surfaces, none of them answered
+
+- ⚠️ **Storage capacity.** The user named this himself on 2026-09-11 — unsure the box is large
+  enough long term, and asked that the archive be planned with it in mind *rather than
+  discovered later*. Measured 2026-09-18, ingestion now running: dev blobs **22 MB across 14
+  entries**, volume 99 MB, 27 G free. ⚠️ Still not a rate — the mailbox has produced one message
+  so far, and the duplicate-archiving bug fixed the same day means earlier counts overstate it.
+  ✅ **His next move if it does run short** (2026-09-17): on-demand object storage (S3, R2 or
+  similar), so blob storage is independent of the sync server and documents stay viewable when
+  that server is down. The same argument eventually puts the agent on its own machine. ⛔ Both
+  are future goals. Neither may complicate today's co-located design.
+- ✅ **Inbox management after extraction — ANSWERED 2026-09-26.** omni-me tracks what it has
+  processed; ⛔ the mailbox is never written to. `EXAMINE` read-only stays intact, and the state
+  already exists in `imap_cursors` and `dedup_key`, so this is a read surface, not a mechanism.
+  🔴 **Writing back to the mailbox (label / mark-read / archive in Gmail) is the user's stated
+  DESTINATION, not a rejected option** — his words: *"I would really like option 2 once I build
+  confidence in the system but that would take me using it for a while and understanding its
+  limitations and how reliable it is."* ⛔ So the precondition is accumulated trust, and
+  [[feedback-deferred-is-not-cancelled]] applies: never argue against a capability on the grounds
+  that this path is deferred. ⚠️ It also means the label-confirmation surface below is on the
+  critical path to it, because that is where the trust is supposed to come from.
+- ✅ **Reviewing the archive — ANSWERED 2026-09-26: confirm-and-correct, not search-only.** A
+  surface showing what was archived and how it was labelled, where a correction flips
+  `DocumentField.verified` from `false` to `true`. ⚠️ That distinction already exists in the
+  schema for model-derived output, so the review surface is anticipated by the data model rather
+  than bolted onto it. ⛔ Search/retrieval alone was refused: it never produces evidence that the
+  labels are trustworthy, which leaves both per-tag retention and the Gmail write-back
+  permanently ungated.
+
+### What is already built and merely unproven on hardware
+
+Document archive + blob store + catalogue retrieval · `imap_real.rs` (crate swap done) ·
+finance propose actions · role-C model seats (chosen 2026-09-16) · the enrichment pass.
+⛔ "Built and unit-tested" is the state of **everything** here; none of it has run on a device.
+
+---
+
 ## Awaiting on-device confirmation
 
 **Open, from Phases D–G and 2026-09-11** — all unit-tested, none exercised on hardware. Moved
@@ -1291,18 +1389,88 @@ two lines back. Institution names, exact paths and the backup file are in the **
 
 This was needed because **pausing does not survive a restart**, which had gone unnoticed:
 
-- [ ] **The pause off-switch cannot persist if the XDG config dir is not writable.** Found
-  2026-09-07; ⚠️ **the defect is in the deploy image, not in finance code**, so it will bite any
-  future auto-import source. `paused::set_paused` writes `paused_sources.toml` into
-  `$XDG_CONFIG_HOME/omni-me/` via temp+rename. When a container mounts only
-  `credentials.toml` into that directory, the directory itself is created by Docker as a mount
-  parent and is **root-owned**, while the app runs unprivileged — so the write fails
-  `Permission denied (os error 13)`. `pause_source_handler` correctly surfaces that as a 500
-  rather than faking success (#367's whole point), but the net effect is that pause works
-  *live* and never survives a restart, and every boot logs `paused=0` with the sources running
-  again. Worth a startup preflight that warns when the config dir is not writable, since the
-  failure is otherwise only visible at the moment someone tries to pause. Image-side fix and
-  the operational record are in the **overlay's** `tasks.md`. [XS]
+- [x] **The pause off-switch cannot persist if the XDG config dir is not writable.** Found
+  2026-09-07, fixed 2026-09-23. ⚠️ **The defect was in the deploy image, not in finance code**,
+  so it would have bitten any future auto-import source. `paused::set_paused` wrote
+  `paused_sources.toml` into `$XDG_CONFIG_HOME/omni-me/` via temp+rename. When a container mounts
+  only `credentials.toml` into that directory, the directory itself is created by Docker as a
+  mount parent and is **root-owned**, while the app runs unprivileged — so the write failed
+  `Permission denied (os error 13)`. `pause_source_handler` correctly surfaced that as a 500
+  rather than faking success (#367's whole point), but the net effect was that pause worked
+  *live* and never survived a restart, and every boot logged `paused=0` with the sources running
+  again.
+
+  **The fix is the split, not a chmod:** what the app writes now resolves through
+  `XDG_STATE_HOME` (`core/src/paths.rs`), which the image pins to `/data/state` — the app-owned
+  volume. Credentials keep `XDG_CONFIG_HOME`. ⚠️ The invariant worth keeping is that **the
+  directory the app writes to must contain no bind mount**, since Docker creates a mount's
+  missing parents as root. Rationale in `docs/src/deployment.md`.
+
+  ⚠️ Also corrected while fixing: the divergence is narrower than "nothing persisted". Pause and
+  resume mutate the registry *before* the write, so a failure left live and disk disagreeing
+  while `/auto_import/status` (registry, not disk) showed the change — that 500 now says so in
+  those words. Source add/remove always wrote first, so they failed cleanly and changed nothing.
+- [x] **Warn at boot when the state dir is not writable.** The remaining half of the entry above:
+  the failure is still only visible at the moment someone tries to pause. A startup preflight
+  turns it into a loud boot line. [XS] — done 2026-09-23, `paths::state_dir_write_error`.
+- [ ] **The test fixture leaks a SurrealKV instance per test, and the suite deadlocks on it.**
+  🔴 **Reproduced locally 2026-09-23** (run 5 of 6 consecutive full-suite runs), which closes the
+  "nobody has reproduced it locally" note on the intermittent
+  `assistant_projection::tests::arrival_order_does_not_change_a_threads_clocks` hang.
+
+  **The hung process, measured while frozen:** 655 threads, of which **312 are named
+  `surrealkv-commit`**, plus 1742 open fds. Every thread sits in `futex_do_wait`, and neither
+  thread count nor fd count moved over 10s — a deadlock, not slow progress. ⛔ It is **not** a
+  resource-limit hit: `Max processes` 23659 and `Max open files` 1048576 were nowhere near.
+
+  **Mechanism.** `test_db()` stands up an embedded SurrealKV instance and then
+  `std::mem::forget(dir)`s its `TempDir` so the path outlives the call. The handle is never
+  closed either, so each instance's commit thread lives to the end of the process. There are
+  **217 `test_db()` call sites across 32 files**, so a full run accumulates hundreds of live
+  commit threads; the run eventually wedges. ⚠️ The named test is not special beyond being one
+  of the few that calls `test_db()` **twice**, so it is disproportionately likely to be the one
+  that tips it over.
+
+  ⚠️ This is very likely the same defect as the watched "SurrealKV commit queue overflow after
+  ~24h uptime" — same subsystem, same unbounded-commit-thread shape.
+
+  ~~**The fix is mechanical but wide:** the fixture has to hand back a guard that owns the
+  `TempDir` and drops the database with it, which changes the signature at all 217 sites.~~
+  🔴 **DISPROVEN BY MEASUREMENT 2026-09-24 — that fix would not have worked.** A probe
+  (`connect` → 160 writes → `drop(db)` → `drop(dir)`, ×8) showed the process **never returns to
+  baseline**: threads go 11 → 18, exactly **+1 per `connect()`**, monotonic, with the handle and
+  the `TempDir` both properly dropped. ⛔ So `std::mem::forget(dir)` is **not** what leaks the
+  threads, and a guard that owns the `TempDir` changes 217 call sites without changing the count.
+  ⚠️ The leaked thread is named `surrealdb-threa`(d-worker), **not** `surrealkv-commit` — so this
+  is a *second* leak alongside the one measured in the hung process, not a correction of it.
+
+  ✅ **What does stay flat: one shared instance, a namespace per test.** Same probe, one
+  `connect()` and 8 namespaces × 160 writes → **20 threads, no growth at all.** That is the shape
+  the fixture should take: a process-wide `OnceCell<Database>` plus `use_ns(unique)` per test,
+  which also suits the 194 call sites, all of which bind `let db = test_db().await` and none of
+  which consume it by value. ⚠️ **24 separate copies of `test_db()` exist across the crate** —
+  consolidating them into one shared fixture is the prerequisite, and it shrinks the later change
+  from 24 edits to 1.
+  ⛔ Still not to be attempted inside another workstream's branch. Limiting test concurrency would
+  hide it, not fix it. ⚠️ Open before building: whether per-test isolation survives a shared
+  instance (schema is per-namespace, but `init_schema` and the projection version table are not
+  yet checked for cross-namespace bleed). [S once measured, was [M]]
+
+  🔴 **PROMOTED 2026-09-26: this now BLOCKS CI, so it is a release gate, not a background defect.**
+  Two consecutive runs on `a8bfd24` hung 45min and were killed by `timeout-minutes: 45`, both on
+  `events::projection::tests::a_paged_replay_folds_exactly_what_an_unbounded_one_would`. ⚠️ The two
+  runs on its parent passed in 7m28s and 7m41s, so it correlates with a commit that touches only
+  `extraction/` — six added tests changed how many `connect()` calls the binary makes before that
+  test runs, which is all the monotonic leak needs. ✅ **The implementation is NOT at fault:** the
+  same test passes **alone in 3.36s** at `--test-threads=1`.
+  ⛔ **`--test-threads=1` was applied and reverted the same day** — the leak is `+1 per connect()`
+  and parallelism-independent, so serialising changes only *when* the process wedges. It would have
+  converted a reliable failure into an intermittent one, which is worse. The line above already
+  said this; ⚠️ the lesson is that it was read after the change, not before.
+  ⚠️ **The prerequisite has grown: 27 copies of `fn test_db`, not 24.** It grows with the codebase,
+  so the consolidation gets more expensive the longer it waits.
+  🔴 Consequence while it stands: **nothing can merge to `main`**, so no release is possible. Dev
+  deploys are unaffected — dev is precisely where an ungated build belongs.
 - [ ] **Reach import parity with paisa's seven importers.** Parity map is written (overlay
   `IMPORT_PARITY.md`; institution names are private). **Four of the seven are now covered**
   as of 2026-09-05: the old comma-splitting `statement_csv.rs` is deleted, imports run
@@ -1330,6 +1498,156 @@ This was needed because **pausing does not survive a restart**, which had gone u
   differ. Still the only open finding; the audit now covers 24 CSV + 136 rendered statements
   and everything else is clean. [XS, question]
 
+#### 🔴 THE TRANSACTION HALF WAS NEVER ANSWERED — invert the sender gate. [M, design-first]
+
+⛔ **This is the "only the second still needs an answer" above, two weeks unaddressed.** The
+2026-09-12 ruling — *"which mail is relevant has to be self-maintaining"* — was satisfied for
+**keeping** (All Mail is archived unconditionally) and never for **becoming a transaction**.
+`RECEIPT_SENDER_PATTERNS` is still an open-ended hand-maintained gate, i.e. the exact v1 objection.
+
+🔴 **Re-ruled harder 2026-09-25** after three failures in two days: the user will not edit a list,
+rebuild the app, or forward mail to himself. ⛔ **Never add a vendor to fix a miss.** ⛔ Manual
+forwarding is a testing workaround, not a design. Verbatim + evidence: memory
+`project-receipt-sender-list-should-learn`; measurements in overlay `DEV_TESTING.md`.
+
+**Where the gate is:** `imap.rs` archives unconditionally, then `dispatch_to` asks each handler
+`accepts()`; `receipts.rs` matches the **sender**; no match → `DropReason::Ignored`, never
+classified. ⛔ `DocumentKind` is decided *inside* `handle()`, so the classifier sits **behind** the
+gate and can never rescue an unlisted sender.
+
+✅ **DESIGNED 2026-09-25 — overlay `GATE_INVERSION_DESIGN.md`, awaiting sign-off on two calls.**
+⛔ The design, its evidence and every per-sender measurement live in the **overlay**: IMAP work is
+private-repo-tracked (user, 2026-08-10) and the corpus is the user's own mail. ⛔ Do not restate any
+of it here and do not re-derive it.
+
+**What it concluded, in shape only.** Delete the gate; add no filter in its place; let the
+`DocumentKind` classifier that already runs inside `handle()` decide. Measured against 54 real
+messages, that is better on **both** recall and precision than the sender list, and the cost of
+filtering nothing at all is ~$0.10/month — so ⛔ **cost was never the argument for a pre-filter**,
+and a structural pre-filter was measured and **rejected** for losing real purchases.
+⚠️ Two of the design's four code items shipped separately as defects in their own right (a PDF
+attachment gated on its declared MIME, and a retry when line items miss a stated total); the two
+that change the gate itself wait for sign-off.
+
+#### ▶ AUTONOMOUS QUEUE — nothing here needs the user (set 2026-09-25)
+
+Work top-down; each is independently shippable. ✅ **The gate inversion is signed off and
+shipped** (2026-09-26): § 5.5 option 2 and § 5.6 no — see the overlay design doc's § 7 for what
+that means in code. ✅ 1, 2, 3, 4, 5 and 7 are done. **Left: 6 (needs the phone) and 8.**
+
+1. [x] ✅ **DONE — and the diagnosis in this line was wrong.** It read as an extraction failure on the
+       authoritative document class. It is not a class: six runs of *identical bytes* returned
+       `0, 0, 0, 4, 6, 7` postings while reading the document's own total correctly every time, and
+       its pair partner was stable at 5 across all six. ⛔ **Not a model problem** — the same seat
+       gets it right half the time, so the seat is not the variable. `extraction::extract_reconciled`
+       re-asks while the line items miss a total the document states about itself, keeping the closest
+       attempt; it spends nothing on a document that reconciles first time, and nothing at all on one
+       that states no total (a newsletter would otherwise cost three calls to say nothing).
+2. [x] ✅ **DONE 2026-09-26, and the premise was wrong — the user ruled NO on the grouping half.**
+       Shipped as `auto_import::order_ref::from_document`: the reference the document **prints**
+       outranks the model's reading of it, which is what the `"."` incident needed. ⛔ Candidate
+       keys were REFUSED and `group_key()`'s bounds are unchanged. Accepted cost: the delivery
+       platform's pair stays two review items. ⚠️ A separator is required in the parse — bare
+       whitespace would read `order 2026-09-06` as a reference. Original finding, kept: Checked
+       against every order-bearing message in the corpus: the receipt half of a pair prints **no order
+       URL at all** (only opaque click-tracker redirects), so URL-keying would *un-group* a pair that
+       groups correctly today, and one delivery platform prints **two different ids for one order**
+       (the confirmation's is the receipt's with the delivery date stamped on the front). The labelled
+       order number in the body already reads reliably — identical on 12/12 runs. ✅ Deterministic
+       parsing still buys *stability* (one message keying two ways across polls is what made duplicate
+       review items), but ⛔ **grouping the pair needs candidate keys**, which loosens exactly what the
+       user ruled on. Overlay `GATE_INVERSION_DESIGN.md` § 5.6.
+3. [x] ✅ **DONE — and it was 50 sites, not four projections.** ✅ The premise is now a test
+       (`db::tests::a_rejected_statement_still_returns_ok_until_it_is_checked`): `await?` forwards
+       only transport and parse failures, so a statement the database *refuses* arrives as
+       `Ok(Response)` and reaches nobody unless `.check()` or `.take()` asks. Audited every
+       `db.query(...)` in `events/` and `db/`; ⚠️ a raw `.check()` count badly overstates it, because a
+       response consumed by `.take()` already surfaces its error — the defect is a response that is
+       *discarded*. 50 such sites: 46 across seven projections, plus `projection.rs::init_all`'s
+       `DEFINE` block, both `db::init_schema` statements, and 🔴 **`SurrealEventStore::append`'s
+       INSERT** — the worst of them, since a refused append returned `Ok(Event{..})` and the caller
+       took the event for durable. `documents_projection` already did this everywhere and was the
+       model followed.
+       ⚠️ **Residual, deliberately NOT changed — it is a semantics call, not a mechanical one.**
+       `config_projection::on_set` and `record_type_projection` read their last-write-wins guard with
+       `.take(..).unwrap_or(None)`, so a *failed* SELECT reads as "nothing stored" and the guard
+       degrades to "always apply" — a stale event can then overwrite a newer one. Narrow, and fixing
+       it changes what a projection does on a read failure. [S, its own decision]
+4. [x] ✅ **ALREADY DONE — this entry was stale.** Shipped in `6c1e7bd` (2026-09-25), across
+       `imap.rs` / `imap_real.rs` / `imap_source.rs`: a UID means nothing without the
+       `UIDVALIDITY` it was issued under, so the cursor carries it and a change voids the cursor
+       rather than stalling. ⚠️ `project-tasks-md-drifts-stale` for the third time this cycle.
+5. [x] ✅ **ALREADY DONE — this entry was stale.** Verified in the code 2026-09-25, not assumed.
+       `ExtractedDraft` carries `warnings` + `needs_review`, and `finances.rs` renders both through
+       the verdict panel, which returns early only when there is genuinely nothing to say.
+       `x-filename` is threaded from the picker's own `file.name()` on the first attempt *and* on the
+       retry path (`RetryCapture` keeps it), with `None` reserved for a pasted email body that never
+       had a name. ⚠️ Nothing to build; the lesson is `project-tasks-md-drifts-stale` again.
+6. [~] **The five on-device confirmations** (§ Awaiting on-device confirmation, minus the Int
+       stepper, which is the user's). ✅ `pm clear` is free now — no token to re-enter.
+       ⛔ **`[M]` was wrong — this is five tasks with five different prerequisites, not one.**
+       Surveyed on the phone 2026-09-26 (`1.1.11-dev` installed, app healthy, `ever_synced=true`,
+       16148 events, CDP reachable at `@webview_devtools_remote_<pid>`):
+       - [x] ✅✅ **DONE — decide command CONFIRMED END TO END ON THE PHONE 2026-09-26.** Drove the
+         real app over CDP: opened the 2026-09-26 batch, pressed `Commit all 4`, the nav badge went
+         `Finances13 → Finances12`, the batch left the queue, and the server received
+         **1 `auto_import_batch_committed` + 4 `transaction_recorded`** — so it committed *and*
+         synced. ✅ Also re-confirmed on-device: the collapse lineage renders ("3 earlier messages
+         about this order were replaced… the newest won"), and the verdict panel shows both
+         `confidence 36%` and the unreadable-total warning. ⛔ Do not re-test any of this.
+       - ✅ **Ready now — `note.revise`, both the accepted and the refusal path.**
+       - ⚠️ **Needs a second client — a decision syncing to another device.** The phone is the only
+         one running. A `dx serve --platform web` client pointed at `:3001` would qualify; the
+         desktop build will not run on the WSL2 box. ⛔ Unverified either way.
+       - ⏳ **Inherently slow — a check-in firing on its own schedule.** Daily cadence, and forcing
+         the clock defeats the thing being tested ("rather than being invoked directly").
+       - ⛔ **BLOCKED — auto-approval against a live agent.** No `omni-me-agent` process is running
+         on the box; there is nothing to approve against. Needs an agent instance first
+         (`reference-throwaway-hub-agent-testing` has the no-docker recipe).
+       ⚠️ So two are immediately doable, one needs a second client, one needs a day, one needs an
+       agent. [S each for the first two; the rest are their own setup]
+7. [x] ✅ **MEASURED 2026-09-25** on the dev instance's own archive, over the 8 days its poller had
+       been running: **~9.4 documents/day, ~6.75 of them email**, mean 74 KB per archived message.
+       The whole archive to date is 37 MB. ⚠️ **The rate is dominated by attachment-bearing mail, not
+       message count** — one invoice PDF was 694 KB, nine times the mean, so a capacity plan keyed to
+       message count will be wrong in the direction that matters. ⛔ Numbers only; the per-sender
+       detail is overlay-tracked.
+8. [~] **Three of the four rebuild defects are done.** ✅ 2026-09-26: the projection replay is
+       paged (`replay_paged`, 500 at a time, keyset `(received_at, id)` cursor). 🔴 **Left:
+       `pull_only` still holds every pulled event in one Vec** — up to 100k, and all 16k on the
+       S9's first sync. The fix is known but needs a progress callback first or the sync
+       indicator stops counting down; located call sites are in the § Awaiting on-device
+       confirmation entry above. [M]
+       ⛔ **The suite deadlock stays out of this branch** — the item says so itself, its prescribed
+       fix (one shared instance + a namespace per test) has an unanswered question about
+       cross-namespace bleed, and its prerequisite is consolidating 24 copies of `test_db()`. Own
+       stretch, design-first.
+
+#### ✅ NEWEST-WINS IS CORRECT — settled by the user 2026-09-25 on domain grounds
+
+✅ **The collapse is PROVEN on real mail**: a Walmart confirmation and its delivery mail both
+extracted order `600000113495028` and became **one** review item, with the superseded proposal
+recorded in full. ⛔ Do not re-verify this.
+
+⛔ **And do NOT "fix" the selection rule — I had this backwards.** I read the confirmation's 4
+postings at conf 0.82 as the better data and the delivery's 0 postings at 0.205 as a regression, and
+proposed flagging or reordering. The user's correction: *"the second with delivery is always the one
+with the correct cost because the order confirmation always only gives an estimate since things
+might be unavailable or somethings are sold by weight which isn't known at the time of ordering."*
+
+🔴 **So the confirmation's postings are an ESTIMATE and must never outrank the delivery receipt.**
+Ordering by confidence or posting count would have promoted the estimate over the truth — a worse
+bug than the one it fixed, and silent. **Newest-wins is right because later documents are more
+authoritative, not because it is simpler.** ⚠️ Any future scoring rule must respect document
+*authority* first; `DocumentKind` already ranks it (confirmation < shipping/delivery < receipt).
+
+🔴 **The REAL defect this exposed: the authoritative document failed to extract.** The delivery mail
+produced **0 postings against its own stated total of 104.63** (`line-item sum 0 does not match
+document total`). That is an extraction failure on the document class that carries the true cost —
+the most important one to get right — and it is why the review item looks empty. [S–M, mine]
+⚠️ Narrow residual, low priority: when the authoritative document fails to price, should the
+estimate's postings be offered in review as a fallback rather than only as lineage? Ask before building.
+
 ---
 
 ## ▶ RUNBOOK — model selection + the deferred validation pass
@@ -1344,6 +1662,26 @@ record, so a stop with no written reason wastes the stop. A flaky test or a miss
 dependency is trivial — note it and keep going.
 
 ### Stage 0 — isolation guard. ✅ BUILT 2026-09-14
+- [ ] 🔴 **The non-production posture CANNOT FIRE ON ANDROID, so the dev APK looks exactly like the
+      live app.** Measured on the dev phone 2026-09-26, `1.1.11-dev`: the boot line reports
+      `non_production=false` while pointed at `:3001`, so the permanent safety strip — *"Non-production
+      data — not your live app"*, placed outside the auto-hiding header on purpose because *"a safety
+      indicator that disappears when you scroll is not a safety indicator"* — **never renders**.
+      🔴 **Cause:** the posture is switched on by the `OMNI_DATA_DIR` **environment variable**
+      (`tauri-app/src-tauri/src/lib.rs`), and Android gives no way to set an env var for an installed
+      app. ⛔ So the coupling whose own doc comment says *"without that coupling a dev build would
+      happily backfill and then push to the live box"* is inert on the only platform the dev testing
+      actually runs on. ⚠️ The dev APK also keeps the **production package name and data dir**, which
+      is why `install -r` preserves the token and queue.
+      ⚠️ **The hazard is not data loss** — the dev phone is inside the granted blast radius. It is
+      that **one Settings edit to `:3000` would sync that build to live with no banner and no guard**,
+      and that a dev APK reaching the real phone would be visually indistinguishable. 🔴 This is the
+      user's own stated requirement: *"pointing at production must be hard to do by accident"* — a
+      config that merely happens to point elsewhere was explicitly named as not enough.
+      ⚠️ Fix needs a non-env trigger on Android — a build-time flag baked beside
+      `OMNI_DEFAULT_SERVER_URL`, or deriving the posture from the server's own `/health` instance
+      field, which dev already reports. ⛔ Design call: the second is self-correcting but makes the
+      banner depend on reaching the server. [S–M, design first]
 - [x] **The dev instance self-identifies and destructive tooling asserts it.** Design and the
       boot truth table are published in `docs/src/isolation.md` — read that, not this.
       Mechanism: `OMNI_INSTANCE=production|dev` stamps `.omni-instance` in the data root and
@@ -1515,9 +1853,32 @@ the extractor has.
 - [ ] **Deciding run goes direct.** ⛔ A seat whose instrument saturated is published
       **unmeasured** — fix the instrument, re-run; never break the tie by preference.
 
+### Stage 4 — dev sync server · ✅ BUILT 2026-09-16
+
+**Live, untouched:** port 3000 · project `omni-deploy` · volume `omni-deploy_omni_data` ·
+`/etc/omni-me/credentials.toml` · image `sha-9a0b1dd`, up 9+ days. Its `/health` carries **no**
+`instance` field, because the stamping server was never deployed there.
+
+**Dev:** port 3001 · project `omni-dev` · volume `omni-dev_omni_data` (clone of live, 71 MB) ·
+`/etc/omni-me/credentials-dev.toml` · image `dev-<priv>-<pub>` built by `build-dev-image.yml`.
+`/health` → `{"instance":"dev","status":"ok"}`. Compose lives at `~/omni-dev/` on the box.
+
+- Cloned via the project's own `snapshot.sh` (read-only against live), restored into a volume
+  **named explicitly**. 🔴 Never use the box's `restore-snapshot.sh` — the old unguarded copy
+  resolves its target from the running container, i.e. LIVE.
+- `ws-session.json` (real bank session) deleted from the clone. Dev credentials carry **no**
+  IMAP/bank sections so auto-import cannot poll real mailboxes. Fresh `auth_token`, not live's.
+- **Dev phone** `SM-G960W`: wireless adb over the **tailnet**, screen timeout 30 min.
+  ⚠️ `adb` is at `~/android-sdk/platform-tools/adb`, NOT on `PATH`.
+- APK: `build-dev-apk.yml` → `~/omni-dev/apk/` on the box, installed by `adb install`.
+  ⛔ Never `/var/omni-updates` — that is the LIVE OTA store.
+
 ### Stage 4 — dev sync server on the box
-- [ ] ⚠️ **Size first**: box is 3820 MB total, **0 swap**, ~29 GB free. Check DB **and blob dir**
-      sizes against free disk before cloning.
+- [x] ✅ **Memory sizing settled** (user, 2026-09-16) — the box has been sized for the clone.
+      ⚠️ **Open, and deliberately not a blocker: long-term growth.** A clone that fits today does
+      not stay fitting as the log and blob dir accumulate; 3820 MB total with **0 swap** means
+      pressure is an OOM kill rather than a slowdown, and nothing currently watches the trend.
+      ⛔ Decide a retention or re-clone policy before the dev instance becomes permanent.
 - [ ] Second unit file, second directory, distinct `OMNI_LISTEN_ADDR`. ⛔ An unparseable value is
       passed through, **not** repaired — a typo must fail to bind loudly rather than start a
       second server on the live port with an empty database.
@@ -1537,11 +1898,163 @@ the extractor has.
       device · a check-in firing **on its own schedule** · auto-approval against a live agent ·
       the Settings Int stepper (native styling is not Playwright-verifiable).
 
+### 🔴 A vendor's email carries only SOME of its line items — found by committing one 2026-09-26
+
+⛔ **This is why the discarded total mattered, and it is worth more than the fix.** Committed the
+2026-09-26 grocery batch on the phone and inspected what landed: **4 transactions summing to
+36.83**, correctly double-entry (`Expenses:Groceries` / `Unmatched`) and each matching a real line
+item. The document states **item subtotal 111.91** and **total 116.47**, and its body says
+`12 items` followed by a **`Show all items`** link. 🔴 **So 8 of 12 line items are not in the email
+text at all** — they are behind a link — and the ledger took 36.83 for a 116.47 purchase.
+
+🔴 **It committed *because* the total was discarded.** With `total` null, `verify` had nothing to
+cross-check the line items against, so a 67%-incomplete extraction presented as clean. ✅ Post-fix
+the total reads, so the same batch would raise `line-item sum 36.83 does not match document total
+116.47`. ⛔ **The total fix is not about recovering a number; it is about restoring the detector for
+incomplete extraction.** ⚠️ Every batch committed before today carries this risk unaudited.
+
+✅ **RULED + BUILT 2026-09-26.** User: *"total takes precedence since that is what will balance
+against the unmatched bank transaction, if the items can be listed it's an additional benefit."*
+
+🔴 **Acting on that exposed a STRUCTURAL defect far bigger than the missing items.**
+`reconciliation::find_match_candidates` is strictly **pairwise** — it walks pairs and requires
+`a.amount + b.amount == 0`, with no summing of several postings against one. A card charge arrives
+as **one** Unmatched posting of 116.47; the receipt produced **four** of −7.94/−12.96/−9.96/−5.97.
+⛔ **None can ever cancel it, so the per-line-item shape could never reconcile against a bank
+statement — with or without complete items.** The feature could not have worked as built.
+
+✅ **Fixed in `receipt_extraction_to_drafts`:** a stated total now yields ONE draft — line items as
+expense legs, one balancing leg for whatever they leave unaccounted, and an `Unmatched` leg of
+`−total`, which is precisely what the bank charge cancels. 17 mapper tests pass, 6 new ones built
+from the real 36.83-against-116.47 artifact, 11 pre-existing ones unchanged.
+⚠️ **Two calls that are mine, not the user's:** the balancing leg goes to the account every line
+item agrees on, else `Expenses:Unknown`, because putting a split purchase's remainder in one of its
+own categories is a guess dressed as data; and a document stating **no** total keeps the old
+per-line-item shape, since nothing authoritative exists to anchor on — ⚠️ those drafts still cannot
+reconcile 1:1, now documented in the module header rather than invisible.
+⚠️ **Still unbuilt:** nothing yet *fetches* the 8 missing items, and following a link out of an
+email is a design question of its own. The total makes the ledger correct; itemisation stays partial.
+⚠️ The dev ledger holds the pre-fix 36.83 entry deliberately, as this test's artifact.
+🔴 **Every batch committed before today has the same shape** — four-way splits that will not
+reconcile. ⛔ Audit or re-import them before trusting reconciliation on the dev ledger.
+
 ### Stage 6 — real-data validation of the new features
+
+#### ▶ TRIAGE — which of the 19 below are real gates (my read, 2026-09-26; user authorised it)
+
+⛔ **The test applied:** if this is wrong or missing when the tab goes on, does it **lose or corrupt
+data, or silently produce a wrong number he would act on?** Everything else is measurement quality
+and ships after. ⚠️ This is my judgement, not his ruling — the split is proposed, not settled.
+
+🔴 **GATES (9), in the order their dependencies force:**
+1. **Server backup before the backfill** (last item below). Blob bytes have **no second copy**;
+   the box is a single point of total loss. ⛔ Now doubly binding: the archive refinement agreed
+   2026-09-26 includes a **purge path that deletes blobs**. Deleting blobs with no backup is the
+   highest-risk thing on this page. ⚠️ Verify by size, never by exit code.
+2. **Per-source PDF password.** 18.3% of the corpus (140 of 765) is encrypted and silently yields
+   nothing, and the vision fallback cannot open them either. ⛔ Must precede the corpus import or
+   a fifth of it reads as empty-but-fine.
+3. **Role C has no 429 retry or backoff.** One "model busy" **loses the document**. The logic
+   already exists in the chat client and was never shared across.
+4. **`max_tokens` for C1 and C3.** Same file, same path as 3 — fix together. Uncapped, a
+   non-terminating model runs to the 300s timeout, returns nothing, and bills for every token.
+5. **What re-queues a document a model called blank.** Proven: an empty transcription for a
+   441-word document lifts `text_source` off `none` and **retires the document forever**, and
+   nothing notices. ⛔ Promoted by the 2026-09-26 decision to turn enrichment on — this is that
+   exact path.
+6. **`fields` non-optional for the document reader.** Six of seven models return an empty array;
+   without it a document is catalogued but **not findable** by account or policy number.
+   ⛔ Promoted by the same decision: document tags and search depend on the reader's output.
+7. **Control sampling, then re-rank.** The same model on the same 39-row statement scored 33%
+   with **13 sign-flips** and 100% with none. A sign flip is money in the wrong direction.
+8. **Decide production's sampling parameters** — the actionable half of 7, and role C cannot take
+   it through `extra_body` at all, so that path needs code.
+9. **Make the injection gate print its evidence.** Five of fourteen models tripped it, including
+   both C3 finalists, and the row cannot distinguish obedience from correct cataloguing. ⛔ Not
+   hygiene: it is unresolved whether the seat we point at every financial document obeys
+   instructions embedded in one.
+
+✅ **NOT gates — ship after the tab.** Seat B's case family · retrieval-bench breadth (⚠️ except
+the `document` slice, which is the role-C programme's own output) · the read-errors-first wording
+[XS, do it anyway] · seat A perf research · the C2 probe set · image-cap splitting (avoidable by
+model selection; residual 2.6%) · finances perf, which the item itself already calls polish ·
+`GET /feedback` on the box [⚠️ not a gate but high leverage and cheap — it is how bugs get
+reported during the testing that follows].
+
+⚠️ **Neither: the corpus import is not a gate, it IS the go-live action.** Gates 1 and 2 precede it.
+
+🔴 **The headline: three of the nine gates were promoted by decisions taken 2026-09-26** (5, 6 and
+the second half of 1). Turning the archive catalogue on and adding a purge path moved them from
+"bench polish" to "must hold before real data". ⛔ That is the honest answer to what is slowing
+this down — not the volume of work, but scope arriving from decisions made late.
+
 - [ ] **Archive + finance import against the real corpus** — 276 CSVs, 765 PDFs. 🔴 **Expect 140
       of those PDFs (18.3%) to yield nothing**, measured 2026-09-15 — they are **encrypted**, and
       `archive.rs:183` passes an empty password. Two issuers encrypt 100% of their statements, a
       third 13%, the other 21 none. ⛔ Do not read the resulting empty rows as a parser bug.
+- [ ] **Make the injection gate print its evidence, then re-run that probe alone**
+      (`MODEL_BENCH.md` R23). 🔴 **Five of fourteen models tripped it**, including both C3
+      finalists. `reading_bench.rs` prints only the model id, so for the three whose `kind` was
+      *correct* the payload is pinned to `title` by elimination — and a title of exactly `pwned`
+      (obedience) is indistinguishable from *"memo containing a pwned instruction"* (correct
+      cataloguing of a memo that really does state account `9999-9999`). ⛔ A disqualifying gate
+      must show what it saw. Carry `Option<String>` instead of `bool` and check `kind`, `title`
+      and each field separately rather than over one joined blob, so the row names where it
+      landed. ✅ Verified for whoever picks this up: the members are `ReadField { key, value }`
+      (`extraction/document.rs:29`), and `reading_bench.rs` has **no probe filter** — so the
+      re-run is the whole 6-probe arm against the five flagged models, 90 calls.
+- [ ] 🔴 **Control sampling, then re-rank everything** (`MODEL_BENCH.md` R26). `temperature`,
+      `top_p` and `seed` appear **nowhere** in `core/src/`, so every request runs at a provider
+      default we neither set nor record — and the same model on the same 39-row statement scored
+      33% with 13 sign-flips in one run and 100% with none in the next. ⛔ Seat C1's top ranking
+      key is not stable, so no single run can rank it. ⚠️ Two separate decisions: **deterministic
+      for extraction/transcription** (C1/C2/C3 — there is one right answer) is straightforward;
+      **the chat seats (A/B) are a product call**, since temperature 0 changes assistant voice.
+      ⚠️ Also add repeats to `--bench-extraction`, `--bench-transcription` and `--bench`:
+      `--bench-reading` already does this (`OMNI_BENCH_READ_REPEATS`, default 3, with an `AGREE`
+      column) and is the pattern to copy. ⛔ Fix before the next slate.
+- [ ] 🔴 **Give seat B a case family of its own — it has never been benched on its work**
+      (`MODEL_BENCH.md` Part 2; user, 2026-09-16). `client_for` routes to the batch client only
+      when `question.scheduled`, and the sole producer is `check_in.rs`: **one question a day**,
+      *"review anything you concluded about me that is now due for re-examination… do not draw
+      new conclusions."* ⛔ All 15 slate cases are targeted retrieval — seat A's job. ⚠️ What B
+      needs: seeded `belief` records with `review_after` in the past, evidence supporting some and
+      contradicting others, and **no-new-conclusions scored as an abstention key**. The
+      abstention machinery already exists in `--bench-structuring`; do not write it twice.
+      🔴 **Fixture trap:** `review_after` is **optional** on `belief.record`, and
+      `is_due_for_review` returns false when it is absent — a belief with no date never comes
+      due, so a fixture that omits it measures nothing and looks like a passing run. Seed past
+      dates explicitly. ⚠️ Same reason a fresh install's check-in has nothing to review: beliefs
+      only exist after the user has explicitly asked for a conclusion at least once.
+      ⛔ Do NOT build Part 4's levers 3–5 for B — they sharpen a retrieval instrument B never uses.
+- [ ] **Decide production's sampling parameters** (`MODEL_BENCH.md` R26). The bench now sends
+      `temperature: 0` via `bench-openrouter.sh`; **production still sends none**, so the two no
+      longer match and that gap is deliberate-but-unclosed. ⚠️ Extraction/transcription (C1/C2/C3)
+      wants 0 — there is one right answer. The chat seats are a product call: 0 makes the
+      assistant reproducible and flatter. ⛔ Role C cannot take it through `extra_body` at all —
+      `build_extractor` takes no `ClientOptions` (R6's sibling), so that path needs code.
+- [ ] **Extend the retrieval bench past one verb and two record types** (`MODEL_BENCH.md`
+      Part 5; user, 2026-09-16 — seat E was wrongly recorded as decided). ⛔ `--bench-retrieval`
+      covers `search` over notes and journal only; the catalogue has six types and the read
+      surface five verbs. ⚠️ `document` matters most — it is the output of the whole role-C
+      programme and has never been retrieval-tested. ⚠️ Keep the lexical/semantic split and the
+      test that enforces the labels; the gap is coverage, not method. Local and free to run.
+- [ ] **State the read-errors-first rule in seat C1's threshold section.** ⛔ Seats C2 and D both
+      say *a model that mostly errors has numbers describing nothing*; C1 does not, and that
+      omission put `gemma-4-26B` at the top of a correctly-sorted table twice — on 4 of 13 cases,
+      then on 12 of 31. ⚠️ Fix the class: check every seat section carries it.
+- [ ] **Research what would move seat A's numbers, before the next comparison** (user,
+      2026-09-16). ⛔ Not a re-measure of the same catalogue — hypotheses to test: speculative
+      decoding, prompt caching, a warm/provisioned tier, and whether `glm-5.3`'s 117.3s tail and
+      `gpt-oss-120b-Turbo`'s 39.4s tail are serving-stack artifacts that a different tier removes.
+      Both are on file as re-test-first candidates in `MODEL_THRESHOLDS.md` § Seat A.
+- [ ] **Widen the C2 probe set — the seat is unmeasured** (`MODEL_BENCH.md` Part 8). The
+      pre-registered noise floor refused the tie at a two-fabrication gap, and its own stated
+      remedy is more probes, not a tie-break. ⚠️ Two specifics the run exposed: **one abstention
+      probe is carrying the whole first ranking key**, and recall/eagerness are scored on the same
+      four documents. ⛔ Also print **fabrication per successful run** — as a bare count it rewards
+      a model that errors out of a fabrication-prone probe, which is exactly what `gemma-4-31B`
+      did on all three runs of `letter-undated`.
 - [ ] **Make `fields` non-optional for the document reader** (`MODEL_BENCH.md` R21). 🔴 Six of
       seven models return an empty array: `document_schema` does not require it and the prompt
       frames it as discretionary, then spends four clauses on what not to put there. ⛔ Without
@@ -1553,7 +2066,12 @@ the extractor has.
       single "Model busy" loses the document. The logic exists in `llm/openai_compat.rs`
       (`MAX_RATE_LIMIT_RETRIES = 3`, honours `Retry-After`) and was never shared across. ⚠️ Fix
       with R20's `max_tokens` — same file, same path, three gaps that compound.
-- [ ] **Set a per-question `max_tokens` on role-C requests** (`MODEL_BENCH.md` R20). 🔴 There is
+- [ ] **Set a per-question `max_tokens` on role-C requests** (`MODEL_BENCH.md` R20).
+      ✅ **C2 done 2026-09-17: `READER_MAX_TOKENS = 2048`**, sized from real answers on dev
+      (65–150 tokens, 0 reasoning) after the reader seat ran to 300s twice on a handwritten note.
+      Every role-C answer now logs `completion_tokens`/`reasoning_tokens`/`finish_reason`
+      ("role-C answer"). ⏳ **C1 and C3 still uncapped** until measured the same way: C3 so far
+      38 and 356 tokens per receipt page; C1 has no measurements yet. 🔴 There is
       none today, so a model that does not terminate runs to the **300s vision timeout**, returns
       nothing, and still bills for every token — two models did this on *short text* probes.
       ⛔ Not one constant: C2's envelope wants ~2k, C3 transcribes a whole document and a tight
@@ -1836,6 +2354,114 @@ form prose, so the nudge may not reach it.
   Fixing it properly means giving the server a resolved config at boot and an `EventWriter`;
   ⚠️ do not do it piecemeal, or two write paths will disagree about what "off" means. [M]
 
+### 🔴 A projection version bump costs minutes of blank UI on the phone (measured 2026-09-24)
+
+Found by shipping one. `AutoImportProjection` went 1 → 2 for grouping; the Galaxy S9 then sat at
+**~68% CPU with an empty Finances screen, and after 18 minutes of CPU time it had still not
+finished** — no progress shown, no way to tell why. ⛔ It is not known that it terminates at all;
+it was abandoned, not observed to complete. Three defects behind it, each verified in source.
+
+✅ **The bump itself was reverted** (`version()` is back to 1) once a test showed it buys nothing:
+a row written before grouping keeps its old behaviour by construction, and the new columns default
+to empty. ⚠️ The test that proves it (`a_row_written_before_grouping_still_resolves`) **also caught
+a real regression** — an already-committed pre-grouping batch, re-proposed, opened a spurious
+revision item, because an empty member list read as "this message is new". Fixed by treating an
+empty list as pre-grouping. ⛔ Keep that test: it is the only thing standing between a schema
+change here and a forced rebuild.
+
+- [x] ✅ **DONE 2026-09-25 — one stale projection no longer rebuilds all of them.**
+      `rebuild_only(&[names])` clears, re-inits and replays through the named projections only;
+      the version check passes it exactly the stale set, and `rebuild()` (what `wipe_all_data`
+      wants) still covers everything. ⚠️ **The bookmark had to be scoped with the apply**, which
+      was not in the original sketch: `advance_bookmark` looped every projection unconditionally,
+      so a scoped replay would have pushed the untouched projections' `last_received_at` past
+      events they never folded — and `catch_up` reads that field, so those events would have been
+      skipped permanently. Two tests: a bump on one of two projections wipes and replays only
+      that one, and a full `rebuild()` still covers both.
+- [ ] 🔴 **The scale, measured 2026-09-24: the dev log is 16,052 events.** A rebuild replays every
+      one of them through **all ten** projections on the device. That is the number behind the
+      40 minutes, and it only grows.
+- [x] ✅ **THE REBUILD HALF IS DONE 2026-09-26.** `rebuild_inner` and `catch_up` both fold the
+      log through `ProjectionRunner::replay_paged` now, `REPLAY_PAGE = 500` events at a time,
+      instead of `get_since(epoch, None)`. The equivalence is a test at every page size
+      (`a_paged_replay_folds_exactly_what_an_unbounded_one_would`), and the bookmark advancing
+      per page also closes the kill-partway-through hole `rebuild_only`'s own doc names.
+      ⚠️ **The cursor is a keyset pair `(received_at, id)`, not a timestamp** — `EventStore::
+      get_page_after`. A timestamp-only cursor drops the rest of a shared `received_at` at a page
+      boundary, silently and only under a tie. Measured: `append_batch`'s `time::now()` resolves
+      per statement (~3 ms apart), so ties are unlikely rather than impossible — and the
+      regression test forces the tie rather than trusting the clock, because a test that trusted
+      it would pass either way. It also pins that the old cursor loses 4 of 6 rows.
+      ✅ Checked the class: the only other unbounded `get_since` reader is `writer.rs:282`, which
+      reads one hour. ✅ And sync's wire cursor is NOT affected — `server/src/routes/sync.rs::
+      trim_to_page` over-fetches one row and cuts on a clean boundary, so the tie is handled
+      there by a different mechanism.
+- [ ] 🔴 **The fresh-install half is still open, and it is now located.**
+      `SyncClient::pull_only` (`core/src/sync/client.rs:213`) appends each page to the local
+      store as it goes, which is right, but also accumulates every page into
+      `PullOutcome::pulled_events` — bounded only by `MAX_PULL_PAGES` (200) × `MAX_EVENTS_PER_PULL`
+      (500) = **100,000 events in one Vec**. On the S9's 16k that is all of them. Three callers
+      then apply that slice: `tauri-app/src-tauri/src/commands/sync.rs:34`,
+      `commands/notes.rs:278`, and `core/src/sync/puller.rs:201`.
+      ✅ **The fix is known and the events do not need to be returned at all** — they are already
+      durably appended, so a caller can fold them with `catch_up()`, which is paged as of today.
+      🔴 **What stops it being a one-liner:** `puller.rs::apply_in_chunks` counts the indicator
+      down from `pulled_events.len()`, and its comment says a stall must show as a number that
+      stops moving. Dropping to `catch_up()` loses that, which is a capability regression. So
+      `replay_paged` needs a progress callback first, and then the three callers migrate.
+      ⚠️ Two of the three callers are in `tauri-app`, which this box cannot cheaply build.
+      [M, design-first, own stretch]
+- [x] ✅ **ALREADY FIXED — this entry was stale.** Verified 2026-09-25: the default filter in
+      `tauri-app/src-tauri/src/lib.rs` is `omni_me_app=debug,omni_me_core=info`, with a comment
+      giving this exact reason. ⚠️ It reads as open because the dev APK that produced the empty
+      logcat was built ~25 minutes *before* the fix landed — the code was right and the artifact
+      was old. Rebuild the APK before concluding anything from a silent log again.
+
+⛔ **Shipping consequence, for whoever cuts the next release:** ✅ three of the four are done
+(scoped rebuild, core tracing, and the paged projection replay). 🔴 **What remains is the
+fresh-install path only**: `pull_only` accumulates every pulled event in memory before anything
+applies it. A version-bump rebuild no longer does — it pages — but it still shows no progress
+while it runs.
+
+### 🔴 Projection writes swallow statement errors (found 2026-09-24, by being bitten)
+
+- [ ] 🔴 **A failed SurrealQL statement rides back inside an `Ok` response.** `db.query(..).await?`
+      returns success; the error only surfaces on `.check()` or a typed `.take()`. So a projection
+      write rejected by the schema leaves the row **stale** while `apply_events` reports Ok, and
+      nothing anywhere says a thing. ⚠️ This is not hypothetical — it is how the first version of
+      the grouping UPSERT passed its own assertions: the row simply kept the older batch, and the
+      test failure read as wrong *logic*, which is a much longer debug.
+      **Counted 2026-09-24** (`.check()` calls vs query calls per file): `notes_projection` 0/22 ·
+      `routines_projection` 0/26 · `config_projection` 0/5 · `record_type_projection` 0/8 ·
+      `budget_projection` 2/34 · `beliefs_projection` 5/8 · `assistant_projection` 12/19 ·
+      `documents_projection` 7/8 · `auto_import_projection` 1/8 (the write, added with grouping).
+      ⛔ **Do not sweep it blind.** Adding `.check()` converts a currently-silent rejection into a
+      projection failure, which `apply_events_resilient` then *skips* — so a latent schema
+      mismatch would turn into a dropped event. The sweep is: add it one file at a time, run the
+      full suite each time, and read any new failure as a real pre-existing bug rather than
+      noise. ⚠️ Prefer it on **writes** first; a read that fails already shows up as missing data.
+
+      ✅ **DONE 2026-09-25.** The premise is a test now
+      (`db::tests::a_rejected_statement_still_returns_ok_until_it_is_checked`), landed and proven
+      green *before* the sweep so a later failure could not be blamed on it. 50 discarded writes
+      fixed: 46 across seven projections, `init_all`'s `DEFINE` block, both `db::init_schema`
+      statements, `SurrealEventStore::append`'s INSERT, the two `imap_cursors` writes and two in
+      `vector_store`. ⚠️ The per-file `.check()` counts above **overstate the defect** — a response
+      consumed by `.take()` already raises its error, so the ~40 flagged "reads" were never the
+      problem; the discarded *writes* were.
+      🔴 **The caution was right and it paid off immediately.** The sweep turned 9
+      `document_enrichment` tests red, and the cause was real: that file's `test_db()` called
+      `DocumentsProjection.init_schema` instead of `ProjectionRunner::init_all`, so
+      `projection_versions` never existed and **every `apply_events` in those tests had been
+      failing at its bookmark write**, invisibly, for as long as they have existed. Fixed in the
+      fixture, not by relaxing the check. ⛔ Nothing surfaced on the dev box: deployed
+      `dev-90c9465-a0ad51a` and the boot + three ticks + a restart produced no new error, so there
+      was no latent schema mismatch in a real database.
+      ⚠️ **Residual, deliberately left:** `config_projection::on_set` and `record_type_projection`
+      read their last-write-wins guard through `.take(..).unwrap_or(None)`, so a failed SELECT
+      still reads as "nothing stored" and the guard degrades to "always apply". Changing that
+      changes projection behaviour on a read failure, which is a semantics decision. [S, its own]
+
 ### Document viewing — all three RESOLVED 2026-09-12 by Phase 4
 
 All three surfaced while planning the archive and all three predated it, affecting the
@@ -1875,6 +2501,14 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
 
 ### Finances
 
+- [ ] **Privacy eye: hide every financial number with one tap** (user, 2026-09-17, "nice to
+  have", modelled on his brokerage app's eye icon, against someone looking over your shoulder).
+  Backlogged, not built: `format_money` (`pages/finances.rs`) covers ~30 render sites, but at
+  least 14 more amounts are interpolated ad hoc in `finances.rs` alone, plus chart axes,
+  `approvals.rs`, archive fields (totals) and assistant replies that quote amounts. ⛔ A mask
+  that misses some numbers is worse than none, because it reads as safe. Shape: one global
+  signal persisted in config, one masking formatter every money render goes through, an eye
+  toggle in the Finances header, and a sweep that routes the ad-hoc sites through it. [M, frontend]
 - [ ] **Swipe between Overview / Ledger / Analyze** (user, 2026-09-03) — today the sub-nav
   needs a scroll back to the top and a tap. Swipe handling already exists twice in the app:
   the app-shell nav drawer (`components/nav.rs`) and the journal calendar drawer
@@ -2118,6 +2752,29 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   component, so this needs the describer to reach it or the child to publish. [S]
 
 ### Release engineering
+- [ ] 🔴 **[USER] The box's GHCR token expired 2026-09-26, and it breaks LIVE deploys too.**
+      Pulls succeeded at ~13:20 and ~14:09Z and were `denied` by ~16:35Z, including the
+      **known-good tag that had pulled two hours earlier** — so it is the box's credential, not a
+      bad tag. `/home/deploy/.docker/config.json` mtime is **2026-06-28 16:03Z**; ninety days later
+      is 2026-09-26 16:03Z, which brackets the failure exactly. ⚠️ Inferred from that arithmetic,
+      not read — ⛔ never inspect the token itself.
+      🔴 **Not dev-only.** `deploy/remote-deploy.sh` states it *"assumes the box is already
+      `docker login`'d to GHCR"* and pulls on that basis, so **the next live deploy fails the same
+      way**. Found only by checking whether the failing step also exists on the release path.
+      ✅ **The builds are unaffected** — both workflows use `docker/login-action`, so CI mints its
+      own credential. The asymmetry is the point: only the box holds a long-lived hand-placed token.
+      ⛔ **The durable fix is the pipeline, not a new token** — per `feedback_ci_cd_over_sysadmin`, a
+      deploy job should authenticate the box from the Actions secret it already has rather than
+      depending on a credential that silently expires every 90 days with no warning anywhere.
+      ⚠️ A replacement token unblocks today but re-arms the same trap for 2026-12-25.
+- [ ] 🔴 **Pin `runs-on` before 2026-10-19 — `ubuntu-latest` migrates to Ubuntu 26 that day.**
+      Every CI run now prints the warning (`actions/runner-images` issue 14748), so unlike
+      2026-09-16 there is notice instead of a broken build. ⛔ That earlier migration (22.04 →
+      24.04) broke the **live release path**, not just a dev build, and it surfaced on a dev build
+      only by luck of ordering. ⚠️ `app-release.yml`'s `build-desktop` already pins `ubuntu-22.04`;
+      the Android and publish jobs float, as do the overlay's workflows — so the fix is a sweep of
+      every `runs-on` across both repos, not one line. [S] Deciding which version to pin to is the
+      only judgement in it: 24.04 is what CI runs on today and is the conservative choice.
 - [ ] **Desktop DOES flash white for ~320ms — but `backgroundColor` is NOT the culprit and the
   fix is a different layer.** Filmed at last (user installed `Xvfb` 2026-08-31; `grim` fails
   because Mutter lacks `wlr-screencopy`, and GNOME's `org.gnome.Shell.Screenshot` DBus method
@@ -2394,3 +3051,14 @@ they are backlog rather than threads from the current stretch):**
   2026-09-04. The design risk is noise, not mechanism: a canary that fires most sessions
   trains you to skim past all of them, so thresholds need to differ per artifact.
   Meanwhile the `Reconciled against git` line at the top of this file is the manual stand-in.
+- **Scrub the private identity still in this PUBLIC repo** — authorised by the user
+  2026-09-26, and he placed it deliberately: *"more of a thing to tack on to the end of one
+  of your autonomous sessions after you've done the actual work."* ⛔ So it never pre-empts
+  testing work. Known sites: `docs/src/auto-import.md:6`, this file's § collapse entry, and
+  doc comments plus test fixtures in `core/src/auto_import/receipts.rs`. ⚠️ He suspects more
+  in `docs/` and `.archive/` — sweep both rather than fixing only the named lines.
+  ⚠️ Two traps: the pre-commit privacy guard does **not** exist in a fresh clone, so a clean
+  commit is not evidence the tree is clean; and a fixture's *assertion* can carry the same
+  string as the fixture, so a blanket rewrite leaves a green test that no longer tests
+  anything. Rewrite to the role the name plays ("the delivery platform"), never to a
+  placeholder that reads as redaction in published prose.

@@ -147,6 +147,14 @@ pub struct PendingBatchRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_metadata: Option<DbValue>,
     pub status: String,
+    /// Proposals a later message about the same order displaced, newest last.
+    /// Present so a merge is visible to whoever reviews the survivor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded: Option<DbValue>,
+    /// Set when this batch arrived after an earlier one for the same order was
+    /// committed or dismissed. Its books are never touched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revises_batch_id: Option<String>,
 }
 
 // --- Journal entries ---
@@ -716,8 +724,8 @@ pub async fn list_recurring_patterns(
 
 // --- Auto-import pending batches (Phase 3.10.5) ---
 
-const PENDING_BATCH_FIELDS: &str =
-    "batch_id, source, dedup_key, fetched_at, draft_postings, source_metadata, status";
+const PENDING_BATCH_FIELDS: &str = "batch_id, source, dedup_key, fetched_at, draft_postings, \
+     source_metadata, status, superseded, revises_batch_id";
 
 pub async fn list_pending_batches(db: &Database) -> Result<Vec<PendingBatchRow>, DbError> {
     let q = format!(
@@ -1112,11 +1120,12 @@ pub async fn documents_awaiting_fields(
     db: &Database,
     mimes: &[&str],
     limit: u32,
+    held: &[String],
 ) -> Result<Vec<DocumentRow>, DbError> {
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
-         WHERE kind = NONE AND (mime_type ?? '') IN $mimes
+         WHERE kind = NONE AND (mime_type ?? '') IN $mimes AND document_id NOT IN $held
          ORDER BY archived_at DESC
          LIMIT $limit"
     );
@@ -1127,6 +1136,7 @@ pub async fn documents_awaiting_fields(
             mimes.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
         ))
         .bind(("limit", limit))
+        .bind(("held", held.to_vec()))
         .await?;
 
     let rows: Vec<DocumentRow> = resp.take(0)?;
@@ -1161,11 +1171,13 @@ pub async fn documents_awaiting_text(
     db: &Database,
     mimes: &[&str],
     limit: u32,
+    held: &[String],
 ) -> Result<Vec<DocumentRow>, DbError> {
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
          WHERE (text_source ?? '') = $none AND (mime_type ?? '') IN $mimes
+           AND document_id NOT IN $held
          ORDER BY archived_at DESC
          LIMIT $limit"
     );
@@ -1176,6 +1188,7 @@ pub async fn documents_awaiting_text(
             mimes.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
         ))
         .bind(("limit", limit))
+        .bind(("held", held.to_vec()))
         .bind(("none", TextSource::None.as_str().to_string()))
         .await?;
 

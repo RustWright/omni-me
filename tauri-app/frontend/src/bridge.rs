@@ -426,6 +426,13 @@ const BOOT_RETRY_DEADLINE_MS: f64 = 10_000.0;
 /// That "never ran" is what makes retrying safe even for a mutating command,
 /// and it is why this is matched separately from a timeout — see
 /// [`invoke_timed`], where the distinction actually bites.
+/// A rejected invoke as the text the backend sent. Tauri rejects with the command's error
+/// string; debug-formatting it wrapped every message the user saw in `JsValue("…")`.
+#[cfg(not(feature = "mock"))]
+fn invoke_error(e: wasm_bindgen::JsValue) -> String {
+    e.as_string().unwrap_or_else(|| format!("{e:?}"))
+}
+
 #[cfg(not(feature = "mock"))]
 fn backend_not_ready(err: &str) -> bool {
     err.contains("state not managed")
@@ -456,7 +463,7 @@ async fn invoke<T: serde::de::DeserializeOwned>(
             let promise = tauri_invoke(cmd, args_js);
             let result = wasm_bindgen_futures::JsFuture::from(promise)
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(invoke_error)?;
             serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
         }
         .await;
@@ -498,7 +505,7 @@ async fn invoke_unit(cmd: &str, args: &impl serde::Serialize) -> Result<(), Stri
             let promise = tauri_invoke(cmd, args_js);
             wasm_bindgen_futures::JsFuture::from(promise)
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(invoke_error)?;
             Ok(())
         }
         .await;
@@ -576,7 +583,7 @@ async fn invoke_timed<T: serde::de::DeserializeOwned>(
                 js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
             let result = wasm_bindgen_futures::JsFuture::from(race)
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(invoke_error)?;
             serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
         }
         .await;
@@ -2024,19 +2031,28 @@ pub async fn invoke_export_obsidian(target: &str) -> Result<ExportSummary, Strin
 /// server-side extractor. `hint` mirrors `core::extraction::ExtractionHint`
 /// serialised snake_case (`"receipt"`, `"bank_statement"`, ...).
 ///
+/// `filename` is what the picker or the share intent reported; `None` for the
+/// pasted email body, which never had one.
+///
 /// The mock branch fakes a ~1.2s round trip + returns a canned receipt so
-/// `dx serve --features mock` flows end-to-end without a backend.
+/// `dx serve --features mock` flows end-to-end without a backend. It answers
+/// `paystub` with a draft that fails verification, because a clean-only mock
+/// leaves the confirm form's warning panel unreachable in the browser — and
+/// paystub is the hint that actually warns most often against a real model.
 pub async fn invoke_extract_document(
     bytes: Vec<u8>,
     mime: &str,
     hint: &str,
+    filename: Option<&str>,
 ) -> Result<ExtractedDraft, String> {
     #[cfg(feature = "mock")]
     {
         let size = bytes.len() as u64;
-        let _ = (bytes, hint);
+        let _ = bytes;
+        let name = filename.unwrap_or("mock-receipt").to_string();
         // Simulate network + LLM latency so the UI's wait state is visible.
         crate::timer::sleep_ms(1200).await;
+        let unverified = hint == "paystub";
         Ok(ExtractedDraft {
             date: Some("2026-05-17".into()),
             description: Some("Loblaws — Groceries".into()),
@@ -2055,14 +2071,24 @@ pub async fn invoke_extract_document(
                 },
             ],
             total: Some("42.18".into()),
-            confidence: 0.91,
+            confidence: if unverified { 0.41 } else { 0.91 },
             model: "mock-extractor".into(),
             attachment: Some(AttachmentRef {
                 sha256: "0".repeat(64),
-                filename: "mock-receipt".into(),
+                filename: name,
                 mime_type: mime.to_string(),
                 size,
+                document_id: None,
             }),
+            warnings: if unverified {
+                vec![
+                    "line items sum to 42.18, but the document's total is 51.02".into(),
+                    "1 line item(s) discarded — the model gave an unusable amount".into(),
+                ]
+            } else {
+                Vec::new()
+            },
+            needs_review: unverified,
         })
     }
     #[cfg(not(feature = "mock"))]
@@ -2072,8 +2098,18 @@ pub async fn invoke_extract_document(
             bytes: Vec<u8>,
             mime: &'a str,
             hint: &'a str,
+            filename: Option<&'a str>,
         }
-        invoke("extract_document", &Args { bytes, mime, hint }).await
+        invoke(
+            "extract_document",
+            &Args {
+                bytes,
+                mime,
+                hint,
+                filename,
+            },
+        )
+        .await
     }
 }
 
@@ -4208,6 +4244,8 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                     },
                 ],
                 source_metadata: None,
+                superseded: None,
+                revises_batch_id: None,
             },
             PendingBatchView {
                 batch_id: "01HXMOCKMRDN000000000001".into(),
@@ -4238,6 +4276,136 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                     "subject": "April statement",
                     "uid": 42,
                 })),
+                superseded: None,
+                revises_batch_id: None,
+            },
+            // A `receipts` batch that failed verification. The two bank batches
+            // above carry no verdict — only this path runs `verify` — so without
+            // it the review screen's warning panel is unreachable in mock. The
+            // figures are a real 2026-09-23 capture: a delivery notice itemising
+            // part of a larger order.
+            PendingBatchView {
+                batch_id: "01HXMOCKRCPT000000000001".into(),
+                source: "receipts".into(),
+                dedup_key: "receipts-uid-3458".into(),
+                fetched_at: (now - chrono::Duration::minutes(2)).to_rfc3339(),
+                draft_postings: vec![DraftTransactionView {
+                    external_id: "receipts-uid-3458-row-1".into(),
+                    date: "2026-09-12".into(),
+                    description: "Northwind — order delivered".into(),
+                    postings: vec![
+                        PostingInput {
+                            account: "Expenses:Groceries".into(),
+                            commodity: "CAD".into(),
+                            amount: "27.86".into(),
+                            tags: vec![],
+                        },
+                        PostingInput {
+                            account: "Unmatched".into(),
+                            commodity: "CAD".into(),
+                            amount: "-27.86".into(),
+                            tags: vec![],
+                        },
+                    ],
+                }],
+                source_metadata: Some(serde_json::json!({
+                    "from": "me@example.com",
+                    "subject": "Fwd: Your Northwind order was delivered",
+                    "uid": 3458,
+                    "effective_confidence": 0.31,
+                    "needs_manual_review": true,
+                    "dropped_postings": 0,
+                    "warnings": [
+                        "line-item sum 27.86 does not match document total 99.83 (diff 71.97)"
+                    ],
+                    "order_group": "nw118762884",
+                    "group_member": "uid-3458",
+                })),
+                // Grouped: the delivery notice displaced the order confirmation
+                // that arrived first. Without a fixture the merge panel is
+                // unreachable in mock, and a merge nobody can see is the whole
+                // risk the panel exists to cover.
+                superseded: Some(serde_json::json!([{
+                    "batch_id": "01HXMOCKRCPT000000000000",
+                    "status": "pending",
+                    "fetched_at": (now - chrono::Duration::minutes(40)).to_rfc3339(),
+                    "subject": "Thank you for shopping with Northwind!",
+                    "document_kind": "order_confirmation",
+                    "order_ref": "NW-118-762-884",
+                    "group_member": "uid-3455",
+                    "draft_postings": [{
+                        "external_id": "receipts-uid-3455-row-1",
+                        "date": "2026-09-12",
+                        "description": "Northwind — order confirmed",
+                        "postings": [
+                            { "account": "Expenses:Groceries", "commodity": "CAD",
+                              "amount": "105.43", "tags": [] },
+                            { "account": "Unmatched", "commodity": "CAD",
+                              "amount": "-105.43", "tags": [] },
+                        ],
+                    }],
+                }])),
+                revises_batch_id: None,
+            },
+            // A message about an order whose earlier batch is already committed.
+            // Nothing amends committed books, so it arrives as its own review
+            // item — the fixture that makes that banner reachable in mock.
+            PendingBatchView {
+                batch_id: "01HXMOCKRCPT000000000002".into(),
+                source: "receipts".into(),
+                dedup_key: "receipts-order-nw124202519".into(),
+                fetched_at: (now - chrono::Duration::minutes(1)).to_rfc3339(),
+                draft_postings: vec![DraftTransactionView {
+                    external_id: "receipts-uid-3461-row-1".into(),
+                    date: "2026-09-14".into(),
+                    description: "Northwind — refund for substituted item".into(),
+                    postings: vec![
+                        PostingInput {
+                            account: "Expenses:Groceries".into(),
+                            commodity: "CAD".into(),
+                            amount: "-4.20".into(),
+                            tags: vec![],
+                        },
+                        PostingInput {
+                            account: "Unmatched".into(),
+                            commodity: "CAD".into(),
+                            amount: "4.20".into(),
+                            tags: vec![],
+                        },
+                    ],
+                }],
+                source_metadata: Some(serde_json::json!({
+                    "from": "orders@northwind.example",
+                    "subject": "We've updated your Northwind order",
+                    "uid": 3461,
+                    "effective_confidence": 0.88,
+                    "needs_manual_review": false,
+                    "dropped_postings": 0,
+                    "warnings": [],
+                    "order_group": "nw124202519",
+                    "group_member": "uid-3461",
+                })),
+                superseded: Some(serde_json::json!([{
+                    "batch_id": "01HXMOCKRCPT000000000003",
+                    "status": "committed",
+                    "fetched_at": (now - chrono::Duration::days(2)).to_rfc3339(),
+                    "subject": "Your Northwind order is on its way",
+                    "document_kind": "shipping_notice",
+                    "order_ref": "NW-124-202-519",
+                    "group_member": "uid-3457",
+                    "draft_postings": [{
+                        "external_id": "receipts-uid-3457-row-1",
+                        "date": "2026-09-13",
+                        "description": "Northwind — order shipped",
+                        "postings": [
+                            { "account": "Expenses:Groceries", "commodity": "CAD",
+                              "amount": "61.90", "tags": [] },
+                            { "account": "Unmatched", "commodity": "CAD",
+                              "amount": "-61.90", "tags": [] },
+                        ],
+                    }],
+                }])),
+                revises_batch_id: Some("01HXMOCKRCPT000000000003".into()),
             },
         ])
     }

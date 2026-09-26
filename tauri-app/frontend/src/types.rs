@@ -648,6 +648,10 @@ pub struct AttachmentRef {
     pub filename: String,
     pub mime_type: String,
     pub size: u64,
+    /// Must stay in step with core's: serde drops an unknown field, so leaving it out here
+    /// silently unlinks every captured transaction from its archive document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
 }
 
 /// Frontend view of `core::extraction::ExtractionResult` — fields normalised
@@ -668,6 +672,14 @@ pub struct ExtractedDraft {
     pub model: String,
     #[serde(default)]
     pub attachment: Option<AttachmentRef>,
+    /// What `core::extraction::verify` found wrong with this draft. Shown on
+    /// the confirm form: `confidence` already carries the penalty, but a bare
+    /// number does not tell the user which field to look at.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// `confidence` came in under the server's threshold.
+    #[serde(default)]
+    pub needs_review: bool,
 }
 
 /// Single posting line in a TransactionDraft submission. Mirrors the wire
@@ -769,6 +781,14 @@ pub struct PendingBatchView {
     pub draft_postings: Vec<DraftTransactionView>,
     #[serde(default)]
     pub source_metadata: Option<serde_json::Value>,
+    /// Earlier proposals about the same order that this one displaced.
+    #[serde(default)]
+    pub superseded: Option<serde_json::Value>,
+    /// Set when the order this describes already has a committed or dismissed
+    /// batch. Committing this one adds transactions; it changes nothing already
+    /// in the books.
+    #[serde(default)]
+    pub revises_batch_id: Option<String>,
 }
 
 /// Frontend mirror of `core::db::queries::TxnFilter`. All fields optional;

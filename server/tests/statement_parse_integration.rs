@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use axum::{Router, routing::get};
 use omni_me_core::db;
-use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
+use omni_me_core::events::{EventStore, SurrealEventStore};
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::NullLlmClient;
 use omni_me_server::{AppState, routes};
@@ -73,7 +73,7 @@ async fn start_statement_server(
 
     let db_arc = Arc::new(server_db);
     let event_store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new((*db_arc).clone()));
-    let projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+    let projections = common::server_projections(&db_arc).await;
 
     let state = AppState {
         db: db_arc.clone(),

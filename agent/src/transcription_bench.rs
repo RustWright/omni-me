@@ -306,7 +306,7 @@ pub async fn run(transcriber: Option<&dyn DocumentTranscriber>) {
     // above stays usable as a zero-token dry run.
     let Some(transcriber) = transcriber else {
         eprintln!(
-            "\nno [llm.extractor] openai_compatible vision endpoint — set one. Refusing \
+            "\nno [llm.transcriber] openai_compatible vision endpoint — set one. Refusing \
              rather than reporting a missing endpoint as a scorecard."
         );
         return;

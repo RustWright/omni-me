@@ -500,7 +500,7 @@ async fn main() {
         return;
     }
 
-    // Role C2, on role C's endpoint. `build_reader` answers `None` rather than a
+    // Role C2, on the [llm.reader] seat. `build_reader` answers `None` rather than a
     // null object, so an unconfigured run has nothing to mistake for a model
     // that answered badly — the bench still prints its plan, then refuses.
     if args.bench_reading {
@@ -517,7 +517,7 @@ async fn main() {
         return;
     }
 
-    // Role C3, on role C's endpoint again. Needs the corpus on disk but never
+    // Role C3, on the [llm.transcriber] seat. Needs the corpus on disk but never
     // the agent's database — the answer key is inside each file.
     if args.bench_transcription {
         match load_credentials() {
@@ -640,6 +640,8 @@ fn load_credentials() -> Result<omni_me_core::credentials::Credentials, String> 
         llm.interactive = None;
         llm.batch = None;
         llm.extractor = None;
+        llm.reader = None;
+        llm.transcriber = None;
         llm.structurer = None;
         // The model, never the key or the URL — a base URL can carry a key.
         tracing::info!(model = ?llm.model, "LLM endpoint overridden by environment");

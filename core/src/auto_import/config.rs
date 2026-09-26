@@ -169,22 +169,13 @@ fn default_true() -> bool {
     true
 }
 
-/// Default location for `sources.toml`. Follows XDG Base Directory, mirroring
-/// [`crate::credentials::default_path`] but for the (non-secret) source
-/// definitions file.
+/// Default location for `sources.toml`: the XDG *state* dir, not the config dir
+/// [`crate::credentials::default_path`] uses. The app writes this file, and
+/// `crate::paths` explains why that cannot live beside a bind-mounted secret.
 pub fn default_path() -> Result<PathBuf, SourcesConfigError> {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".config"))
-        })
-        .ok_or_else(|| {
-            SourcesConfigError::ConfigDir("neither XDG_CONFIG_HOME nor HOME set".to_string())
-        })?;
-    Ok(base.join("omni-me").join("sources.toml"))
+    crate::paths::state_file_for_read("sources.toml").ok_or_else(|| {
+        SourcesConfigError::ConfigDir("neither XDG_STATE_HOME nor HOME set".to_string())
+    })
 }
 
 /// Load source definitions from a TOML file. A missing file returns an

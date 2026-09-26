@@ -365,6 +365,12 @@ pub struct PendingBatchView {
     pub draft_postings: Vec<DraftTransaction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_metadata: Option<serde_json::Value>,
+    /// What a later message about the same order displaced, and whether this
+    /// batch arrived after one was already committed or dismissed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revises_batch_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -391,6 +397,10 @@ pub async fn list_pending_batches(
                 .source_metadata
                 .map(|v| v.into_json_value())
                 .filter(|v| !v.is_null());
+            let superseded_json = row
+                .superseded
+                .map(|v| v.into_json_value())
+                .filter(|v| !v.is_null());
             Ok(PendingBatchView {
                 batch_id: row.batch_id,
                 source: row.source,
@@ -398,6 +408,8 @@ pub async fn list_pending_batches(
                 fetched_at: row.fetched_at,
                 draft_postings: drafts,
                 source_metadata: metadata_json,
+                superseded: superseded_json,
+                revises_batch_id: row.revises_batch_id,
             })
         })
         .collect()

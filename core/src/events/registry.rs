@@ -122,8 +122,9 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         Box::new(BudgetProjection),
         Box::new(AutoImportProjection),
         Box::new(JournalFile::new(journal_path)),
-        // Last, and order-independent: neither reads anything another projection
-        // writes, and nothing reads their tables but the client and the agent.
+        // Last, and order-independent: none reads anything another projection
+        // writes. Their tables are read by the client, the agent, and (for
+        // `documents` only) the server's enrichment pass.
         Box::new(AssistantProjection),
         Box::new(BeliefsProjection),
         Box::new(DocumentsProjection),
@@ -170,6 +171,14 @@ pub fn build_projections_headless(config: &ResolvedConfig) -> Vec<Box<dyn Projec
         .into_iter()
         .filter(|p| enabled.contains(p.name()) && !FILESYSTEM_PROJECTIONS.contains(&p.name()))
         .collect()
+}
+
+/// The projections the sync server maintains: only what its own background work reads.
+///
+/// Devices project everything else themselves. Not feature-gated, because the server
+/// resolves no config. Why `documents` is here: `docs/src/archive.md`.
+pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
+    vec![Box::new(DocumentsProjection)]
 }
 
 #[cfg(test)]

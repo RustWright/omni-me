@@ -67,7 +67,7 @@ pub async fn init_schema(db: &Database, dim: usize) -> Result<(), DbError> {
          DEFINE INDEX IF NOT EXISTS idx_re_hnsw ON {TABLE}
              FIELDS vector HNSW DIMENSION {dim} DISTANCE COSINE TYPE F32 EFC 150 M 12;"
     );
-    db.query(&sql).await?;
+    db.query(&sql).await?.check()?;
     Ok(())
 }
 
@@ -292,7 +292,8 @@ async fn insert_chunk(
         .bind(("h", hash.to_string()))
         .bind(("m", model.to_string()))
         .bind(("v", vector))
-        .await?;
+        .await?
+        .check()?;
     Ok(())
 }
 

@@ -13,7 +13,7 @@ use std::time::Duration;
 use axum::{Json, Router, routing::get};
 use chrono::Utc;
 use omni_me_core::db;
-use omni_me_core::events::{EventStore, NewEvent, ProjectionRunner, SurrealEventStore};
+use omni_me_core::events::{EventStore, NewEvent, SurrealEventStore};
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::NullLlmClient;
 use omni_me_core::sync::{
@@ -55,7 +55,7 @@ async fn start_server_on_port(
         extractor: Arc::new(NullExtractor),
         auto_import_registry: Default::default(),
         store: Arc::new(SurrealEventStore::new((*db_arc).clone())),
-        projections: ProjectionRunner::new((*db_arc).clone(), Vec::new()),
+        projections: common::server_projections(&db_arc).await,
         device_id: "test-device".to_string(),
         default_interval: Duration::from_secs(1800),
         secrets: Default::default(),
@@ -100,7 +100,7 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
         extractor: Arc::new(NullExtractor),
         auto_import_registry: Default::default(),
         store: Arc::new(SurrealEventStore::new(server_db.clone())),
-        projections: ProjectionRunner::new(server_db.clone(), Vec::new()),
+        projections: common::server_projections(&server_db).await,
         device_id: "test-device".to_string(),
         default_interval: Duration::from_secs(1800),
         secrets: Default::default(),

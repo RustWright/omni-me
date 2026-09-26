@@ -428,7 +428,7 @@ pub async fn run(reader: Option<&dyn DocumentReader>) {
     // usable as a zero-token dry run.
     let Some(reader) = reader else {
         eprintln!(
-            "\nno [llm.extractor] openai_compatible vision endpoint — set one, or set \
+            "\nno [llm.reader] openai_compatible vision endpoint — set one, or set \
              [llm] as the fallback. Refusing rather than reporting a missing endpoint \
              as a scorecard."
         );

@@ -4,6 +4,28 @@
 (seat A's latency ceiling, C1's recall floor, and seat D's decision to carry no cost gate at all).
 ⛔ Written before the slates ran, which is the only thing that makes this file worth keeping.
 
+**Seats as of 2026-09-16 — five filled, D pending, E not a model choice:**
+
+| seat | model | basis |
+|---|---|---|
+| **A** interactive | `deepseek/deepseek-v4-pro` @ fp8 | 14/14, 6.8s p50, free-form arm |
+| **B** batch | `deepseek/deepseek-v4-pro` @ fp8 | ties at 14/14, wins on cost |
+| **C1** extraction | `deepseek-ai/DeepSeek-V4.1-Flash` | 0 flips / 0 misreads, 96.0% |
+| **C2** reading | `google/gemma-4-31B-it` | fabrication tied, recall 23/24 |
+| **C3** transcription | `deepseek-ai/DeepSeek-V4.1-Flash` | 98.5% figures, 0 refusals |
+| **D** structuring | `deepseek/deepseek-v4-flash` @ fp8 | 0 fab, 27/27, 66/66 abstention |
+| **E** retrieval | not a model choice | reranker default, already set |
+
+⚠️ **Read before quoting any of these.** 🔴 **R26**: sampling is uncontrolled — `temperature`,
+`top_p` and `seed` are set nowhere in `core/src/` — so every single-run number carries unmeasured
+variance, and C1 took three runs to stop moving. ⚠️ **B and C2 each passed over a pre-registered
+*publish unmeasured* line**, deliberately and on the record; both sections say so. ⛔ **B is
+benched on seat A's workload** and has never been measured on its own. ⛔ **E is not decided** —
+one read verb of five, two record types of six.
+
+**These are good enough to ship and are not the end of the question.** Every seat carries a
+re-test-first candidate, for the next comparison rather than for now.
+
 This file is separate from `MODEL_BENCH.md` on purpose. That one grows after every run; this one
 is a **pre-registration** — what would make a model win, written before any model is run, so git
 history can prove it was not tuned afterwards. ⛔ Editing a threshold after the run it governs is
@@ -28,7 +50,43 @@ Each seat has three parts, applied in order:
 
 ---
 
-## Seat A — interactive reasoner · `--bench`
+## Seat A — interactive reasoner · ✅ **DECIDED 2026-09-16: `deepseek/deepseek-v4-pro` @ fp8**
+
+**Decided by the user on the clean re-run** (`runs/20260916-035320-ab/`, `MODEL_BENCH.md` Part 2).
+**14/14 (100%)** free-form, **6.8s p50**, 18.6s worst, no errors. It is the only model that
+cleared every gate at the top of the range.
+
+**The free-form arm scores this seat** (user, 2026-09-16), which is the same decision as *tool
+calling is the channel that ships*. The evidence was the constraint tax: **never positive** on any
+row where it was legitimate (`+0`, `+0`, `−7pp`, `−14pp`), and the two models that scored best
+under constraint are the two whose constrained arm **was not constrained** — both `gpt-oss-120b`
+tiers read the response schema as a hint, ignoring it on 22 and 17 replies. ⚠️ The user's reason
+is the seat's job rather than the numbers: seat A is chat and tool calling, not document
+production. ⛔ Revisit if production shows issues, not before.
+
+🔴 **The incumbent `gpt-oss-120b` @ turbo was unseated by the gate, not by score.** It returned a
+**successful** request in 39.4s against the 30s ceiling, with a 4.9s median — an 8× spread. At 14
+cases the worst case *is* the maximum, which this section states explicitly, so one slow answer
+fails it by design. ⛔ It was never grandfathered.
+
+### Kept on file for the next comparison
+
+⚠️ Recorded deliberately, on the C3 pattern: these are the candidates to re-test **first** when a
+newer model appears, so the next round starts from evidence rather than from the catalogue.
+
+| candidate | why it is on the list |
+|---|---|
+| `glm-5.3` @ fp4 | **Joint-best accuracy, 14/14.** Failed only on latency — 117.3s worst against an 11.6s median. A serving-stack tail, not a reasoning limit; re-test on any new tier. |
+| `gpt-oss-120b` @ turbo | **Fastest on the slate, 4.9s p50.** Out on a single 39.4s answer. If that tail is fixable it is the latency headroom this seat has. |
+| `qwen3.5-397b-a17b` @ fp8 | 13/14 with the **tightest spread of any row** — 8.0s p50, 12.9s worst. The safest row if predictability ever outranks peak accuracy. |
+| `deepseek-v4-flash` @ fp8 | 12/14, cheapest credible candidate, 6.6s p50. The cost-driven answer if seat A's volume grows. |
+
+⛔ **Research before the next comparison, not during it** (user, 2026-09-16): what architectures or
+serving changes would move these numbers — speculative decoding, prompt caching, a warm tier — so
+the next slate tests *hypotheses* rather than re-measuring the same catalogue. Filed in `tasks.md`.
+
+⚠️ **One row's numbers describe nothing:** `llama-4-maverick` @ base errored **11 of 14** calls.
+⛔ Not a capability finding.
 
 Called by a question someone typed. **Latency is the disqualifier**, per the role table.
 
@@ -86,7 +144,35 @@ it as a percentile. Distinguishing a real p95 needs n ≥ 20 and means little be
 ⛔ The incumbent is **not** grandfathered. It was decided on the saturated instrument; the re-run
 can unseat it.
 
-## Seat B — batch reasoner · `--bench`
+## Seat B — batch reasoner · ✅ **DECIDED 2026-09-16: `deepseek/deepseek-v4-pro` @ fp8**
+
+**Decided on the sound 2026-09-16 run** (`runs/20260916-035320-ab/`). It ties `glm-5.3` at
+**14/14 free-form**, and with no latency gate the ranking falls through to key 2, **cost per
+run** — where it wins on every axis measured:
+
+| | prompt | completion | reasoning |
+|---|---|---|---|
+| **`deepseek-v4-pro`** | **71,107** | **2,534** | **0** |
+| `glm-5.3` @ fp4 | 102,150 | 7,378 | 5,251 |
+
+⚠️ **The *publish unmeasured* line was passed over deliberately** (user, 2026-09-16), and this is
+an amendment in effect if not in wording. The justification: cost is this seat's ranking key 2
+*and* its tie-break, so falling through to it is following the ranking rather than breaking it.
+⛔ The line still holds where the lower keys cannot separate candidates either.
+
+⚠️ Same model as seat A, which was not a criterion but is one fewer endpoint to operate.
+
+**Kept on file:** `glm-5.3` @ fp4 — equal accuracy, and the only reason it lost is that it spends
+**5,251 reasoning tokens** to v4-pro's zero. Re-test it first if reasoning-token pricing changes.
+
+🔴 **Decided on the 03:53 run, not the 11:07 one.** The temperature-0 re-run was **rate-limited**
+(81 backoffs on one row, 42 on another) and its scores are depressed by an unknown amount that
+differs per row. ⛔ Do not rank from `runs/20260916-110711-ab-t0/` — it is R13's shape again.
+
+⛔ **This seat is benched on seat A's workload**, which is a real limitation and not a caveat to
+wave through: `check_in.rs` raises one question a day about reviewing beliefs, and none of the 15
+slate cases resembles it. `MODEL_BENCH.md` Part 2 has the detail. The pick above is the best
+available answer, not a measurement of the job.
 
 Called by the scheduled check-in. Same instrument as A, **no latency gate at all** — it can
 afford to be slow, which is the entire reason it is a separate seat.
@@ -102,7 +188,35 @@ afford to be slow, which is the entire reason it is a separate seat.
 answers) is what de-saturated A, and B runs the same cases, so it should now separate. If it does
 not, the levers to reach for are 3–5 in `MODEL_BENCH.md` Part 4, still unbuilt.
 
-## Seat C1 — document extractor · `--bench-extraction`
+## Seat C1 — document extractor · ✅ **DECIDED 2026-09-16: `deepseek-ai/DeepSeek-V4.1-Flash`**
+
+**Decided on the confirm run** (`runs/20260916-101748-c1-confirm/`, 30 cases / 375 labelled rows).
+Clean on both top keys and ahead on every other measure:
+
+| model | flips | misread | recall | production | receipts sound | med s |
+|---|---|---|---|---|---|---|
+| **`DeepSeek-V4.1-Flash`** | **0** | **0** | **96.0%** | **92.1%** | **5/6** | 21.5 |
+| `gemma-4-31B` | 0 | 0 | 87.1% | 82.6% | 2/6 | 30.4 |
+| `gemma-4-26B` | 0 | 0 | 93.8% | 65.5% | 1/6 | 40.7 |
+| `Llama-4-Maverick` | 0 | 11 | 66.9% | 59.3% | 2/6 | **5.6** |
+
+⛔ **The "13 sign-flips" reading is withdrawn.** It came from a single wide-draw run and did not
+reproduce on the identical cases — R26, and the reason this seat took three runs to settle.
+
+⚠️ **`Llama-4-Maverick` fails the 70% gate on two independent draws** (67.7%, 66.9%) and is the
+only model on the slate with misread figures. ⛔ Its 5× speed advantage does not buy it in.
+
+**Kept on file:** `gemma-4-31B` — the conservative pick. ⚠️ It is **clean on the injection probe
+where the seated model is not** (R23), at the cost of ~9 points of statement recall and most of
+the receipt arm. Re-test it first if document-borne injection ever stops being theoretical.
+
+⚠️ **R23 is a selection note here, not a blocker** (user, 2026-09-16). `DeepSeek-V4.1-Flash`
+tripped the C2 injection gate ambiguously — correct `kind`, no fields, payload pinned to `title`
+and no further, where obedience and correct cataloguing look identical. ⛔ **The seat's safety
+does not rest on it**: extracted transactions land on a confirm-draft screen a person accepts,
+and `verify` checks the arithmetic. 🔴 What `verify` cannot catch is a *balanced* fabrication —
+which is exactly why sign-flips are ranked above misreads, and why the person at that screen is
+doing real work.
 
 Reads statements and receipts. Feeds the ledger, so a wrong figure becomes a wrong balance.
 
@@ -136,7 +250,33 @@ statements well enough" is a real finding and the seat publishes unfilled; ⛔ i
 to lower this number afterwards. Editing it after the run it governs is an amendment and must say
 so, with the date and the reason.
 
-## Seat D — note structurer · `--bench-structuring`
+## Seat D — note structurer · ✅ **DECIDED 2026-09-16: `deepseek/deepseek-v4-flash` @ fp8**
+
+**Decided on the first D slate** (`runs/20260916-121154-d/`, 7 rows, 11 probes × 3 runs each) —
+and decided by the ranking alone, with no judgement call:
+
+| model | fabrications | recall | abstention | agreement | errors |
+|---|---|---|---|---|---|
+| **`deepseek-v4-flash`** | **0** | **27/27** | **66/66** | 24/33 | 0 |
+| `gpt-oss-120b` @ bf16 | 0 | **0/27** | 66/66 | 33/33 | 0 |
+| `gpt-oss-120b` @ turbo | 0 | 1/27 | 66/66 | 32/33 | 0 |
+| `qwen3.5-397b-a17b` | 1 | 27/27 | 65/66 | 23/33 | 0 |
+| `deepseek-v4-pro` | 3 | 26/27 | 63/66 | 23/33 | 0 |
+| `qwen3.6-35b-a3b` | 3 | 27/27 | 60/63 | 17/32 | 1 |
+| `glm-5.3` @ fp4 | 7 | 27/27 | 59/66 | 23/33 | 0 |
+
+🔴 **The failure this section predicted actually happened.** Both `gpt-oss-120b` tiers scored
+**zero fabrications with 0/27 and 1/27 recall** — a perfect abstention card earned by finding
+almost nothing. The note below says making zero fabrications a gate "would reward a model that
+calls nothing on every probe", and that recall is key 2 "precisely so a model cannot win by
+silence." ⛔ Three models tied on key 1 and recall separated them 27/27 against 0/27. The
+pre-registration did the work; nobody had to argue.
+
+**Kept on file:** `qwen3.5-397b-a17b` — one fabrication behind on a card that is otherwise
+equal, and the candidate to re-test first if D's volume makes cost-per-call bite harder.
+
+⚠️ Measured with the bench sending `temperature: 0`, unlike seats A/B/C which were decided on
+runs that sent no temperature at all (R26). ⛔ Do not compare D's card against theirs.
 
 Runs on every note, so **cost per call is a real constraint** — and it is judged on abstention.
 
@@ -167,13 +307,51 @@ would still reach the ranking and could win on fabrications. Watch the measured 
 the sticker price: hidden reasoning tokens are where this would come from, and they vary by more
 than price does (`gpt-oss-120b` spends them, `deepseek-v4-flash` spends **zero**).
 
-## Seat E — local retrieval
+## Seat E — local retrieval · ⛔ **NOT decided — corrected 2026-09-16**
 
-**Already decided and measured** by a different instrument (`--bench-retrieval`,
-`MODEL_BENCH.md` Part 5). No endpoint, no credentials, no token cost. Nothing in this file
-applies to it and it is listed only so its absence is not read as an oversight.
+**This section previously read "already decided and measured", and that was wrong** (user,
+2026-09-16). `--bench-retrieval` measures the ranking stack behind **one** of the assistant's five
+read verbs (`search`), over **two** of the catalogue's six record types (notes and journal
+entries). ⛔ Retrieval over `document`, `transaction`, `routine` and `belief` has never been
+measured, and `list` / `read` / `list_types` / `describe_type` have no ranking instrument at all.
 
-## Seat C2 — document reading
+What the 2026-09-10 run does settle and keeps: the ordering between keyword, fused and reranked
+arms on note/journal text, and the memory budget that ordering must fit. ⚠️ Carry the
+lexical/semantic split and its enforcing test into any extension — the gap is coverage, not
+method. `MODEL_BENCH.md` Part 5; work filed in `tasks.md`.
+
+⚠️ Still true that it needs **no endpoint, credentials or tokens** — it is local and free, which
+is why extending it is cheap relative to every other seat in this file.
+
+## Seat C2 — document reading · ✅ **DECIDED 2026-09-16: `google/gemma-4-31B-it`**
+
+**Decided by falling through the tie rather than breaking it** (user, 2026-09-16). The
+pre-registered floor says a one-or-two-fabrication gap **is not a difference** — so
+`gemma-4-26B`'s 3 against `gemma-4-31B`'s 5 is a **tie on key 1**, and the ranking moves to key 2,
+recall, which separates them decisively:
+
+| model | fabrication | recall /24 | run-errors /18 |
+|---|---|---|---|
+| **`gemma-4-31B`** | 5 *(tied)* | **23 (95.8%)** | 4 |
+| `gemma-4-26B-A4B` | 3 *(tied)* | 18 (75.0%) | 3 |
+| `GLM-5.3-Flash` | 5 | 13 (54.2%) | 1 |
+
+⚠️ **This is an amendment in effect** and is recorded as one: the section below says *declare the
+seat unmeasured and widen the probe set*, and that was not done. The reading taken instead — a
+gap inside the noise floor is a tie, and a tie falls to the next key — is defensible but is **not
+what was pre-registered**. ⛔ Anyone re-opening this should know the rule was passed over, not met.
+
+🔴 **Only 3 of 14 models populate `fields` at all** (R21), and that is a prompt defect rather than
+a model finding: `fields` is not in `document_schema`'s `required` and the prompt frames it as
+discretionary. ⛔ The seat is filled from a field of three, and fixing the prompt should re-open it.
+
+**Kept on file:** `gemma-4-26B-A4B` — wins outright if fabrication is ever read as a real gap
+rather than noise, and it is the one to re-test first after the prompt fix.
+
+⚠️ Third place `GLM-5.3-Flash` is **disqualified** on the injection gate regardless of score, and
+so are `Llama-4-Scout` and `Qwen3-VL-30B`. Two more, `Llama-4-Maverick` and
+`DeepSeek-V4.1-Flash`, tripped the gate in a way the instrument cannot distinguish from correctly
+describing the document — see R23. ⛔ Resolve that before either is considered for C1 or C2.
 
 **In this round as of 2026-09-15.** The blocker was never the code: `derive_fields` had no
 caller, so Part 2's *unbenched until something calls them* excluded it. The scheduled pass it was

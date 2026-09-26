@@ -250,6 +250,7 @@ impl DocumentExtractor for OpenAiCompatExtractor {
                 prompt_for(hint),
                 response_schema(),
                 "extraction_result",
+                Some(EXTRACTOR_MAX_TOKENS),
             )
             .await?;
         parse_response(raw, &self.model)
@@ -272,6 +273,7 @@ impl DocumentReader for OpenAiCompatExtractor {
                 document_prompt(),
                 document_schema(),
                 "document_summary",
+                Some(READER_MAX_TOKENS),
             )
             .await?;
         parse_summary(raw, &self.model)
@@ -291,11 +293,27 @@ impl DocumentTranscriber for OpenAiCompatExtractor {
                 transcription_prompt(),
                 transcription_schema(),
                 "document_transcription",
+                Some(TRANSCRIBER_MAX_TOKENS),
             )
             .await?;
         parse_transcription(raw)
     }
 }
+
+/// Output ceiling for the cataloguing question (`MODEL_BENCH.md` R20). Real answers on dev
+/// measured 65–150 tokens, and without a ceiling the reader seat ran to the 300s timeout.
+const READER_MAX_TOKENS: u32 = 2048;
+
+/// Output ceiling for transcription. Real answers on dev measured 38–356 tokens per page,
+/// so a ten-page document lands near 3,600; this leaves roughly double that.
+const TRANSCRIBER_MAX_TOKENS: u32 = 8192;
+
+/// Output ceiling for extraction. Unlike the other two questions this one emits a posting per
+/// line item, so its length tracks the document rather than being fixed. Measured on dev:
+/// 156–257 tokens for receipts and 361 for a six-page brokerage statement with ten positions.
+/// A hundred-transaction statement would be nearer 3,000, which this still clears twice over.
+/// The headroom is deliberate — hitting the ceiling returns an error, not a short answer.
+const EXTRACTOR_MAX_TOKENS: u32 = 8192;
 
 impl OpenAiCompatExtractor {
     /// One schema-constrained request, shared by all three questions this
@@ -310,6 +328,7 @@ impl OpenAiCompatExtractor {
         instructions: String,
         schema: Value,
         schema_name: &str,
+        max_tokens: Option<u32>,
     ) -> Result<Value, ExtractionError> {
         if parts.is_empty() {
             return Err(ExtractionError::NoDocument);
@@ -354,7 +373,7 @@ impl OpenAiCompatExtractor {
             serde_json::to_string(&schema).unwrap_or_default()
         );
 
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "messages": [{ "role": "user", "content": Self::content_for(prompt, &payload) }],
             "response_format": {
@@ -370,6 +389,11 @@ impl OpenAiCompatExtractor {
             },
         });
 
+        if let Some(n) = max_tokens {
+            body["max_tokens"] = json!(n);
+        }
+
+        let started = std::time::Instant::now();
         let mut req = self
             .http
             .post(self.endpoint())
@@ -405,6 +429,29 @@ impl OpenAiCompatExtractor {
                 .as_str()
                 .unwrap_or("Unknown API error");
             return Err(ExtractionError::Upstream(format!("HTTP {status}: {msg}")));
+        }
+
+        // The measurement per-question `max_tokens` ceilings get sized from (`MODEL_BENCH.md` R20).
+        // A call that times out never reaches here, so this records only real answers.
+        let usage = crate::llm::Usage::from_response(&response_body);
+        tracing::info!(
+            model = %self.model,
+            question = schema_name,
+            segments = payload.len(),
+            completion_tokens = usage.completion_tokens,
+            reasoning_tokens = usage.reasoning_tokens,
+            finish_reason = response_body["choices"][0]["finish_reason"].as_str().unwrap_or("none"),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "role-C answer"
+        );
+
+        // A capped answer is cut mid-JSON. Say so, rather than surfacing a parse error.
+        if let Some(n) = max_tokens
+            && response_body["choices"][0]["finish_reason"] == "length"
+        {
+            return Err(ExtractionError::Upstream(format!(
+                "the model hit its {n}-token ceiling without finishing — likely a runaway answer"
+            )));
         }
 
         Self::content_json(&response_body)
@@ -477,6 +524,29 @@ mod tests {
             prompt.contains("UNTRUSTED INPUT"),
             "⚠️ the injection guard must not be lost on the second path"
         );
+        assert_eq!(body["max_tokens"], READER_MAX_TOKENS);
+    }
+
+    #[tokio::test]
+    async fn a_reader_that_hits_its_ceiling_says_so() {
+        let server = MockServer::start().await;
+        let cut = json!({
+            "choices": [{ "finish_reason": "length",
+                          "message": { "role": "assistant", "content": "{\"kind\":\"letter\",\"ti" } }],
+            "usage": { "completion_tokens": READER_MAX_TOKENS }
+        });
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(cut))
+            .mount(&server)
+            .await;
+
+        let ext = OpenAiCompatExtractor::new(server.uri(), "llava", "k");
+        let err = ext
+            .read_document(&[DocumentPart::new(&one_png(), "image/png")])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("token ceiling"), "got: {err}");
     }
 
     #[tokio::test]
@@ -507,6 +577,13 @@ mod tests {
         );
         assert_eq!(result.confidence, 0.9);
         assert_eq!(result.model, "llava");
+
+        let sent = &server.received_requests().await.unwrap()[0];
+        let body: Value = serde_json::from_slice(&sent.body).unwrap();
+        assert_eq!(
+            body["max_tokens"], EXTRACTOR_MAX_TOKENS,
+            "an uncapped question is what let a role-C seat run to the 300s timeout"
+        );
     }
 
     #[tokio::test]

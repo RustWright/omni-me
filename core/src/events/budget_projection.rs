@@ -115,7 +115,8 @@ impl Projection for BudgetProjection {
              DELETE FROM budgets;
              DELETE FROM recurring_patterns;",
         )
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -223,7 +224,8 @@ impl BudgetProjection {
         .bind(("tags_top", tags_top))
         .bind(("statement_source", statement_source))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -265,7 +267,8 @@ impl BudgetProjection {
         .bind(("txn_id", txn_id))
         .bind(("category", category))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -303,7 +306,8 @@ impl BudgetProjection {
         .bind(("txn_id", txn_id))
         .bind(("tags", tag_strings))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -378,7 +382,7 @@ impl BudgetProjection {
         if let Some(p) = postings {
             q = q.bind(("postings", p));
         }
-        q.await?;
+        q.await?.check()?;
         Ok(())
     }
 
@@ -402,7 +406,8 @@ impl BudgetProjection {
         )
         .bind(("txn_id", txn_id))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -441,7 +446,8 @@ impl BudgetProjection {
         .bind(("statement_source", statement_source))
         .bind(("cleared_date", cleared_date))
         .bind(("ts", ts))
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -507,7 +513,7 @@ impl BudgetProjection {
         for (i, mid) in merged_ids.iter().enumerate() {
             q = q.bind((format!("merged_id_{i}"), mid.clone()));
         }
-        q.await?;
+        q.await?.check()?;
         Ok(())
     }
 
@@ -541,7 +547,8 @@ impl BudgetProjection {
         .bind(("display_name", display_name))
         .bind(("hidden", hidden))
         .bind(("is_liquid", is_liquid))
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -570,7 +577,8 @@ impl BudgetProjection {
         .bind(("category", category))
         .bind(("amount", amount))
         .bind(("period", period))
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -611,7 +619,7 @@ impl BudgetProjection {
         if let Some(p) = period {
             q = q.bind(("period", p));
         }
-        q.await?;
+        q.await?.check()?;
         Ok(())
     }
 
@@ -623,7 +631,8 @@ impl BudgetProjection {
 
         db.query("UPDATE type::record('budgets', $category) SET removed = true")
             .bind(("category", category))
-            .await?;
+            .await?
+            .check()?;
         Ok(())
     }
 
@@ -648,7 +657,8 @@ impl BudgetProjection {
         )
         .bind(("pattern_id", pattern_id))
         .bind(("pattern", pattern))
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
@@ -666,7 +676,8 @@ impl BudgetProjection {
         db.query("UPDATE type::record('recurring_patterns', $pattern_id) SET status = $status")
             .bind(("pattern_id", pattern_id))
             .bind(("status", status.to_string()))
-            .await?;
+            .await?
+            .check()?;
         Ok(())
     }
 }

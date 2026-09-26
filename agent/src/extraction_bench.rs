@@ -893,6 +893,7 @@ mod tests {
     fn extraction(postings: &[&str], total: Option<&str>) -> ExtractionResult {
         ExtractionResult {
             date: None,
+            date_as_printed: None,
             description: None,
             postings: postings
                 .iter()
@@ -906,6 +907,11 @@ mod tests {
             total: total.map(dec),
             confidence: 0.9,
             model: "test".into(),
+            dropped_postings: 0,
+            total_as_printed: None,
+            total_discarded: false,
+            document_kind: None,
+            order_ref: None,
             raw_response: serde_json::Value::Null,
         }
     }

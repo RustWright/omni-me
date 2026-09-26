@@ -26,9 +26,11 @@ pub mod imap_source;
 // Moved to `crate::mime` so the archive can read an .eml without this
 // feature. Re-exported so `super::mime::…` keeps resolving in here.
 pub use crate::mime;
+pub mod order_ref;
 pub mod paused;
 pub mod receipts;
 pub mod rest;
+pub mod sender_auth;
 pub mod setup;
 pub mod subprocess;
 

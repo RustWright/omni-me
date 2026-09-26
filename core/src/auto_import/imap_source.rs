@@ -22,13 +22,34 @@ use crate::auto_import_scheduler::{
 };
 use crate::db::Database;
 use crate::events::{EventStore, ProjectionRunner};
+use surrealdb::types::SurrealValue;
 
 use super::imap::{ArchiveTarget, FetchCursor, ImapFetcher, ImapHandler, poll_once};
 
 #[async_trait]
 pub trait CursorStore: Send + Sync {
-    async fn load(&self, account_name: &str) -> Result<Option<u32>, ImportError>;
-    async fn save(&self, account_name: &str, uid: u32) -> Result<(), ImportError>;
+    /// The stored cursor, or `None` when this account has never polled.
+    ///
+    /// ⚠️ The UID alone is not a cursor — see [`FetchCursor::uid_validity`]. A row
+    /// written before the validity was recorded loads it as `None`, which reads as
+    /// "unknown" and never as a mismatch, so an upgrade does not reset a mailbox.
+    async fn load(&self, account_name: &str) -> Result<Option<StoredCursor>, ImportError>;
+    async fn save(&self, account_name: &str, cursor: StoredCursor) -> Result<(), ImportError>;
+}
+
+/// A cursor as it sits on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredCursor {
+    pub uid: u32,
+    pub uid_validity: Option<u32>,
+}
+
+/// One `imap_cursors` row. Decoded as a row so a stored `NONE` lands in the
+/// `Option` rather than failing the whole read — see the note in `load`.
+#[derive(Debug, SurrealValue)]
+struct CursorRow {
+    uid: i64,
+    uid_validity: Option<i64>,
 }
 
 /// SurrealDB-backed cursor store. Uses a dedicated `imap_cursors` table
@@ -49,9 +70,15 @@ impl SurrealCursorStore {
             .query(
                 "DEFINE TABLE IF NOT EXISTS imap_cursors SCHEMAFULL;
                  DEFINE FIELD IF NOT EXISTS uid ON imap_cursors TYPE int;
+                 -- `option<>` so rows written before this existed still load, and
+                 -- load as unknown rather than as a mismatch that would reset the
+                 -- mailbox on the first tick after an upgrade.
+                 DEFINE FIELD IF NOT EXISTS uid_validity ON imap_cursors TYPE option<int>;
                  DEFINE FIELD IF NOT EXISTS updated_at ON imap_cursors TYPE datetime;",
             )
             .await
+            .map_err(|e| ImportError::Upstream(format!("init imap_cursors: {e}")))?
+            .check()
             .map_err(|e| ImportError::Upstream(format!("init imap_cursors: {e}")))?;
         Ok(())
     }
@@ -59,32 +86,46 @@ impl SurrealCursorStore {
 
 #[async_trait]
 impl CursorStore for SurrealCursorStore {
-    async fn load(&self, account_name: &str) -> Result<Option<u32>, ImportError> {
+    async fn load(&self, account_name: &str) -> Result<Option<StoredCursor>, ImportError> {
         let mut resp = self
             .db
-            .query("SELECT uid FROM type::record('imap_cursors', $name)")
+            .query("SELECT uid, uid_validity FROM type::record('imap_cursors', $name)")
             .bind(("name", account_name.to_string()))
             .await
             .map_err(|e| ImportError::Upstream(format!("load cursor: {e}")))?;
-        let uid: Option<i64> = resp
-            .take("uid")
+        // ⚠️ Through a serde row, not two `take("<field>")` calls. Taking a single
+        // nullable field into `Option<i64>` fails outright on a stored `NONE` —
+        // "Expected int, got none" — so the row written before `uid_validity`
+        // existed would make `load` error, `ImapSource::new` fail, and the account
+        // vanish from the registry rather than poll with an unknown validity.
+        let rows: Vec<CursorRow> = resp
+            .take(0)
             .map_err(|e| ImportError::Upstream(format!("decode cursor: {e}")))?;
-        Ok(uid.map(|n| n as u32))
+        Ok(rows.into_iter().next().map(|r| StoredCursor {
+            uid: r.uid as u32,
+            uid_validity: r.uid_validity.map(|v| v as u32),
+        }))
     }
 
-    async fn save(&self, account_name: &str, uid: u32) -> Result<(), ImportError> {
+    async fn save(&self, account_name: &str, cursor: StoredCursor) -> Result<(), ImportError> {
         let ts = chrono::Utc::now().to_rfc3339();
         self.db
             .query(
                 "UPSERT type::record('imap_cursors', $name) CONTENT {
                     uid: $uid,
+                    uid_validity: $uid_validity,
                     updated_at: type::datetime($ts)
                  }",
             )
             .bind(("name", account_name.to_string()))
-            .bind(("uid", uid as i64))
+            .bind(("uid", cursor.uid as i64))
+            .bind(("uid_validity", cursor.uid_validity.map(|v| v as i64)))
             .bind(("ts", ts))
             .await
+            .map_err(|e| ImportError::Upstream(format!("save cursor: {e}")))?
+            // A refused cursor write used to read as a saved one, which is the
+            // shape that re-fetches a whole mailbox on the next tick.
+            .check()
             .map_err(|e| ImportError::Upstream(format!("save cursor: {e}")))?;
         Ok(())
     }
@@ -131,7 +172,8 @@ impl ImapSource {
             fetcher,
             handlers,
             cursor: Mutex::new(FetchCursor {
-                last_seen_uid: initial,
+                last_seen_uid: initial.map(|c| c.uid),
+                uid_validity: initial.and_then(|c| c.uid_validity),
             }),
             cursor_store,
             store,
@@ -183,16 +225,29 @@ impl AutoImportSource for ImapSource {
                 .append_batch(outcome.events)
                 .await
                 .map_err(|e| ImportError::Upstream(format!("append batch: {e}")))?;
-            self.projections
-                .apply_events(&appended)
-                .await
-                .map_err(|e| ImportError::Upstream(format!("project: {e}")))?;
+            // Best-effort once stored: failing here skips the cursor save below, so the
+            // next tick would re-archive the same messages as new documents.
+            let failed = self.projections.apply_events_resilient(&appended).await;
+            if failed > 0 {
+                tracing::warn!(
+                    source = %self.name,
+                    failed,
+                    "archived mail stored but not all projected"
+                );
+            }
         }
 
         // Advance the cursor in memory + persistent storage.
         *self.cursor.lock().await = next_cursor.clone();
         if let (Some(cs), Some(uid)) = (&self.cursor_store, next_cursor.last_seen_uid) {
-            cs.save(&self.name, uid).await?;
+            cs.save(
+                &self.name,
+                StoredCursor {
+                    uid,
+                    uid_validity: next_cursor.uid_validity,
+                },
+            )
+            .await?;
         }
 
         tally.finish()
@@ -232,7 +287,7 @@ mod tests {
 
     /// In-memory cursor store for unit tests — no SurrealDB round-trip.
     struct MemCursorStore {
-        loaded: StdMutex<std::collections::HashMap<String, u32>>,
+        loaded: StdMutex<std::collections::HashMap<String, StoredCursor>>,
     }
     impl MemCursorStore {
         fn new() -> Self {
@@ -242,17 +297,26 @@ mod tests {
         }
         fn with(name: &str, uid: u32) -> Self {
             let s = Self::new();
-            s.loaded.lock().unwrap().insert(name.into(), uid);
+            s.loaded.lock().unwrap().insert(
+                name.into(),
+                StoredCursor {
+                    uid,
+                    uid_validity: None,
+                },
+            );
             s
         }
     }
     #[async_trait]
     impl CursorStore for MemCursorStore {
-        async fn load(&self, account_name: &str) -> Result<Option<u32>, ImportError> {
+        async fn load(&self, account_name: &str) -> Result<Option<StoredCursor>, ImportError> {
             Ok(self.loaded.lock().unwrap().get(account_name).copied())
         }
-        async fn save(&self, account_name: &str, uid: u32) -> Result<(), ImportError> {
-            self.loaded.lock().unwrap().insert(account_name.into(), uid);
+        async fn save(&self, account_name: &str, cursor: StoredCursor) -> Result<(), ImportError> {
+            self.loaded
+                .lock()
+                .unwrap()
+                .insert(account_name.into(), cursor);
             Ok(())
         }
     }
@@ -285,7 +349,10 @@ mod tests {
         let summary = source.pull().await.unwrap();
         assert_eq!(summary.appended, 2, "two messages handled");
         assert_eq!(summary.lost(), 0);
-        assert_eq!(cursor_store.load("gmail").await.unwrap(), Some(102));
+        assert_eq!(
+            cursor_store.load("gmail").await.unwrap().map(|c| c.uid),
+            Some(102)
+        );
     }
 
     #[tokio::test]
@@ -315,13 +382,48 @@ mod tests {
         std::mem::forget(dir);
         let cs = SurrealCursorStore::new(db);
         cs.init_schema().await.unwrap();
-        cs.save("gmail_personal", 12345).await.unwrap();
-        let loaded = cs.load("gmail_personal").await.unwrap();
-        assert_eq!(loaded, Some(12345));
+        let first = StoredCursor {
+            uid: 12345,
+            uid_validity: Some(7),
+        };
+        cs.save("gmail_personal", first).await.unwrap();
+        assert_eq!(cs.load("gmail_personal").await.unwrap(), Some(first));
         // Overwrite via UPSERT
-        cs.save("gmail_personal", 67890).await.unwrap();
-        assert_eq!(cs.load("gmail_personal").await.unwrap(), Some(67890));
+        let second = StoredCursor {
+            uid: 67890,
+            uid_validity: Some(8),
+        };
+        cs.save("gmail_personal", second).await.unwrap();
+        assert_eq!(cs.load("gmail_personal").await.unwrap(), Some(second));
         // Missing account → None, no error
         assert_eq!(cs.load("never_seen").await.unwrap(), None);
+    }
+
+    /// A row from before the validity column existed has to keep loading, or the
+    /// first tick after an upgrade reads as a renumbering and resets the mailbox.
+    #[tokio::test]
+    async fn a_cursor_stored_without_a_validity_loads_as_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+        std::mem::forget(dir);
+        let cs = SurrealCursorStore::new(db);
+        cs.init_schema().await.unwrap();
+        cs.save(
+            "legacy",
+            StoredCursor {
+                uid: 99,
+                uid_validity: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cs.load("legacy").await.unwrap(),
+            Some(StoredCursor {
+                uid: 99,
+                uid_validity: None
+            })
+        );
     }
 }

@@ -438,10 +438,15 @@ fn pid_is_alive(pid: u32) -> bool {
 }
 
 pub fn run() {
+    // `omni_me_core` is in the default filter because leaving it out made a
+    // working projection rebuild indistinguishable from a hang on Android,
+    // where `RUST_LOG` cannot be set: the line naming the rebuild was written
+    // the whole time and dropped. Core at `info`, not `debug` — the app's own
+    // spans stay the verbose ones.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "omni_me_app=debug".into()),
+                .unwrap_or_else(|_| "omni_me_app=debug,omni_me_core=info".into()),
         )
         .init();
 
