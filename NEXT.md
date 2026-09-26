@@ -18,17 +18,15 @@ token that re-expires in 90 days — `tasks.md` § Release engineering.
   **2026-10-01** from September statements, which state their own balances. ⚠️ The email backlog is
   in scope and archive-only too.
 - ✅ **Watermark: per account, on the document's transaction date** — postable only after that
-  account's last statement date. ⚠️ Global would silently suppress real transactions for
-  earlier-closing accounts. 🔴 **SC statements are the ONLY transaction source for those accounts**,
-  so "statements are verification" must never become a blanket assumption.
+  account's last statement date; ⚠️ global would silently suppress earlier-closing accounts.
+  🔴 **SC statements are the ONLY transaction source for those accounts** — never assume otherwise.
 - 💭 **Closed-book framing is under consideration, not requested** (user). ⚠️ Hazard for later: a
   double-entry transaction straddling two accounts with different cutoffs cannot be half-posted.
 - ✅ **Archive refinement lands BEFORE the tab** (option 2). Tags reuse the existing `Tag` type and
-  query path; the reader writes them path-independently; purge is manual with a preview; per-tag
-  retention opt-in once a tag has earned it. ⛔ Design session first.
-- ✅ **Archive review = confirm-and-correct**, flipping `DocumentField.verified` to true.
-  ✅ **Inbox management: track only, never write to the mailbox** — 🔴 but Gmail write-back is the
-  user's DESTINATION once trust is built, not a rejected option.
+  query path; reader writes them path-independently; purge manual with a preview; per-tag retention
+  opt-in once a tag earns it. ⛔ Design session first.
+- ✅ **Review = confirm-and-correct** (flips `DocumentField.verified`). ✅ **Inbox: track only, never
+  write to the mailbox** — 🔴 but Gmail write-back is the user's DESTINATION once trust is built.
 - 🔴 **Suite deadlock now BLOCKS CI, so nothing merges to `main`.** Its own session; the test passes
   alone in 3.36s. ⛔ `--test-threads=1` tried and reverted — the leak is `+1 per `connect()``.
 - ✅ **Stage 6 triaged: 9 gates, 10 ship-after** — `tasks.md` § TRIAGE. Three were promoted today.
@@ -37,6 +35,6 @@ token that re-expires in 90 days — `tasks.md` § Release engineering.
 ## 🔴 Open — APK `1.1.11-dev` built, on the box, **not installed**. Then queue item 6, the wedge, and item 8's `pull_only` Vec. Phone answers adb at `100.109.41.53:5555`, stay-awake on.
 
 ## ⛔ Standing
-Public `dev/role-split-model-seats` (draft PR #1; ⛔ never run the suite on this box) / overlay
-`dev/untested-overlay`. Both pushed. ⛔ Live is never a deploy target here. ⚠️ `omni-me-private` is
-NOT hook-committed. ⛔ No sender or vendor detail in the public repo.
+Public `dev/role-split-model-seats` (draft PR #1) / overlay `dev/untested-overlay`; both pushed.
+⛔ Never run the suite on this box · live is never a deploy target · no vendor detail in the public
+repo. ⚠️ `omni-me-private` is NOT hook-committed.
