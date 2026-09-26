@@ -394,6 +394,19 @@ pub trait EventStore: Send + Sync {
         limit: u32,
     ) -> Result<Vec<Event>, EventError>;
 
+    /// One ordered page of the whole log, resuming strictly after `after`.
+    ///
+    /// Keyset paging, not offset: `after` is the previous page's last event as
+    /// `(received_at, id)`. Both halves are load-bearing. `received_at` is a
+    /// clock reading and two events can carry the same one, so a cursor made of
+    /// the timestamp alone would skip whatever else shares it across a page
+    /// boundary — silently, and only under a tie. See `page_events`.
+    async fn get_page_after(
+        &self,
+        after: Option<(DateTime<Utc>, &str)>,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError>;
+
     /// Get events from a specific device since a given timestamp.
     async fn get_since_by_device(
         &self,
@@ -602,6 +615,42 @@ impl EventStore for SurrealEventStore {
     ) -> Result<Vec<Event>, EventError> {
         self.get_since_inner(since, exclude_device, Some(limit))
             .await
+    }
+
+    async fn get_page_after(
+        &self,
+        after: Option<(DateTime<Utc>, &str)>,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError> {
+        // The tie arm is the whole reason this is not `get_since_limited`:
+        // `received_at >` alone drops the rest of a shared timestamp.
+        let where_clause = match after {
+            Some(_) => {
+                "WHERE received_at > type::datetime($since)
+                    OR (received_at = type::datetime($since) AND meta::id(id) > $eid)"
+            }
+            None => "",
+        };
+        let query = format!(
+            "SELECT meta::id(id) AS eid, event_type, aggregate_id,
+                    <string> timestamp AS ts, timestamp,
+                    <string> received_at AS rcv, received_at,
+                    device_id, payload
+             FROM events
+             {where_clause}
+             ORDER BY received_at ASC, eid ASC
+             LIMIT $limit"
+        );
+
+        let mut pending = self.db.query(query.as_str()).bind(("limit", limit));
+        if let Some((since, eid)) = after {
+            pending = pending
+                .bind(("since", since.to_rfc3339()))
+                .bind(("eid", eid.to_string()));
+        }
+
+        let rows: Vec<EventRow> = pending.await?.take(0)?;
+        rows.into_iter().map(Event::try_from).collect()
     }
 
     async fn get_since_by_device(
@@ -823,6 +872,116 @@ mod tests {
         // Newest first: notes 4, 3, 2 — not 0, 1, 2.
         assert_eq!(recent[0].aggregate_id, "note-4");
         assert_eq!(recent[2].aggregate_id, "note-2");
+    }
+
+    /// Drain the log with `get_page_after`, the way a rebuild does.
+    async fn drain_pages(store: &SurrealEventStore, page: u32) -> Vec<String> {
+        let mut cursor: Option<(DateTime<Utc>, String)> = None;
+        let mut drained = Vec::new();
+        loop {
+            let borrowed = cursor.as_ref().map(|(at, id)| (*at, id.as_str()));
+            let events = store.get_page_after(borrowed, page).await.unwrap();
+            let Some(last) = events.last() else { break };
+            cursor = Some((
+                last.received_at.expect("received_at is stamped at append"),
+                last.id.clone(),
+            ));
+            drained.extend(events.into_iter().map(|e| e.aggregate_id));
+        }
+        drained
+    }
+
+    /// The property a projection rebuild depends on: walking the log in pages
+    /// sees exactly what one unbounded read sees, in the same order.
+    #[tokio::test]
+    async fn a_page_walk_sees_every_event_exactly_once() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+
+        let base = Utc::now();
+        for i in 0..25 {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("note-{i:02}"),
+                    timestamp: base + chrono::Duration::seconds(i),
+                    device_id: "device-a".into(),
+                    payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                })
+                .await
+                .unwrap();
+        }
+
+        let expected: Vec<String> = (0..25).map(|i| format!("note-{i:02}")).collect();
+        assert_eq!(drain_pages(&store, 4).await, expected, "pages of 4");
+        assert_eq!(drain_pages(&store, 1).await, expected, "pages of 1");
+        assert_eq!(drain_pages(&store, 1000).await, expected, "one big page");
+    }
+
+    /// ⚠️ The case a timestamp-only cursor loses, written against rows forced to
+    /// share a `received_at` rather than against whatever the clock happens to
+    /// produce. `append_batch` currently spreads its stamps by a few
+    /// milliseconds, so a test that trusted the clock would pass either way and
+    /// prove nothing.
+    #[tokio::test]
+    async fn a_page_boundary_inside_one_timestamp_loses_nothing() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+
+        let base = Utc::now();
+        for i in 0..6 {
+            store
+                .append(NewEvent {
+                    id: Some(format!("tied-{i:02}")),
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("tied-{i:02}"),
+                    timestamp: base,
+                    device_id: "device-a".into(),
+                    payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                })
+                .await
+                .unwrap();
+        }
+        // Collapse every stamp onto one value, which is what a coarse clock
+        // would have produced on its own.
+        db.query("UPDATE events SET received_at = type::datetime($at)")
+            .bind(("at", base.to_rfc3339()))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+
+        let expected: Vec<String> = (0..6).map(|i| format!("tied-{i:02}")).collect();
+        // Every page size straddles the tie differently; all must agree.
+        for page in [1, 2, 3, 5, 6] {
+            assert_eq!(
+                drain_pages(&store, page).await,
+                expected,
+                "page size {page} dropped part of a shared timestamp"
+            );
+        }
+
+        // And the cursor the old timestamp-only walk would have used loses the
+        // tie, which is what stops `get_page_after` being "simplified" back to
+        // `get_since_limited`.
+        let mut cursor = chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut by_timestamp: Vec<String> = Vec::new();
+        for _ in 0..10 {
+            let page = store.get_since_limited(cursor, None, 2).await.unwrap();
+            let Some(next) = page.iter().filter_map(|e| e.received_at).max() else {
+                break;
+            };
+            cursor = next;
+            by_timestamp.extend(page.into_iter().map(|e| e.aggregate_id));
+        }
+        assert_eq!(
+            by_timestamp.len(),
+            2,
+            "a timestamp-only cursor is expected to lose the rest of the tie"
+        );
     }
 
     /// Paging must be lossless: draining page by page with the cursor the

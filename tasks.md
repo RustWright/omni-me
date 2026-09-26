@@ -1501,8 +1501,9 @@ that change the gate itself wait for sign-off.
 
 #### ▶ AUTONOMOUS QUEUE — nothing here needs the user (set 2026-09-25)
 
-Work top-down; each is independently shippable. ⛔ The gate-inversion code above still needs
-sign-off. ✅ 1 and 7 are done and 2 is blocked on a design call, so **3–8 is the live stretch**.
+Work top-down; each is independently shippable. ✅ **The gate inversion is signed off and
+shipped** (2026-09-26): § 5.5 option 2 and § 5.6 no — see the overlay design doc's § 7 for what
+that means in code. ✅ 1, 2, 3, 4, 5 and 7 are done. **Left: 6 (needs the phone) and 8.**
 
 1. [x] ✅ **DONE — and the diagnosis in this line was wrong.** It read as an extraction failure on the
        authoritative document class. It is not a class: six runs of *identical bytes* returned
@@ -1512,7 +1513,12 @@ sign-off. ✅ 1 and 7 are done and 2 is blocked on a design call, so **3–8 is 
        re-asks while the line items miss a total the document states about itself, keeping the closest
        attempt; it spends nothing on a document that reconciles first time, and nothing at all on one
        that states no total (a newsletter would otherwise cost three calls to say nothing).
-2. [~] 🔴 **BLOCKED ON A DESIGN CALL — the premise is wrong, do not build it as written.** Checked
+2. [x] ✅ **DONE 2026-09-26, and the premise was wrong — the user ruled NO on the grouping half.**
+       Shipped as `auto_import::order_ref::from_document`: the reference the document **prints**
+       outranks the model's reading of it, which is what the `"."` incident needed. ⛔ Candidate
+       keys were REFUSED and `group_key()`'s bounds are unchanged. Accepted cost: the delivery
+       platform's pair stays two review items. ⚠️ A separator is required in the parse — bare
+       whitespace would read `order 2026-09-06` as a reference. Original finding, kept: Checked
        against every order-bearing message in the corpus: the receipt half of a pair prints **no order
        URL at all** (only opaque click-tracker redirects), so URL-keying would *un-group* a pair that
        groups correctly today, and one delivery platform prints **two different ids for one order**
@@ -1537,7 +1543,10 @@ sign-off. ✅ 1 and 7 are done and 2 is blocked on a design call, so **3–8 is 
        `.take(..).unwrap_or(None)`, so a *failed* SELECT reads as "nothing stored" and the guard
        degrades to "always apply" — a stale event can then overwrite a newer one. Narrow, and fixing
        it changes what a projection does on a read failure. [S, its own decision]
-4. [ ] **`UIDVALIDITY` unhandled** — a renumbered mailbox stalls the poller forever. [S]
+4. [x] ✅ **ALREADY DONE — this entry was stale.** Shipped in `6c1e7bd` (2026-09-25), across
+       `imap.rs` / `imap_real.rs` / `imap_source.rs`: a UID means nothing without the
+       `UIDVALIDITY` it was issued under, so the cursor carries it and a change voids the cursor
+       rather than stalling. ⚠️ `project-tasks-md-drifts-stale` for the third time this cycle.
 5. [x] ✅ **ALREADY DONE — this entry was stale.** Verified in the code 2026-09-25, not assumed.
        `ExtractedDraft` carries `warnings` + `needs_review`, and `finances.rs` renders both through
        the verdict panel, which returns early only when there is genuinely nothing to say.

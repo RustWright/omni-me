@@ -4,6 +4,13 @@ use crate::db::Database;
 
 use super::store::{Event, EventError, EventStore, SurrealEventStore};
 
+/// Events per page when replaying the log through projections.
+///
+/// Bounds peak memory, which is the point: reading the log whole peaked at
+/// 1.3 GB on the S9. Large enough that the per-page round trip is noise
+/// against the fold, small enough that a page is a few tens of megabytes.
+const REPLAY_PAGE: u32 = 500;
+
 /// A projection transforms events into read-optimized views.
 #[async_trait]
 pub trait Projection: Send + Sync {
@@ -190,11 +197,15 @@ impl ProjectionRunner {
         struct Watermark {
             name: Option<String>,
             lr: Option<String>,
+            lid: Option<String>,
         }
 
         let mut resp = self
             .db
-            .query("SELECT name, <string> last_received_at AS lr FROM projection_versions")
+            .query(
+                "SELECT name, <string> last_received_at AS lr, last_event_id AS lid
+                 FROM projection_versions",
+            )
             .await?;
         let rows: Vec<Watermark> = resp.take(0).unwrap_or_default();
 
@@ -204,35 +215,34 @@ impl ProjectionRunner {
         // The oldest watermark across **registered** projections — they advance
         // together, so the min only matters when the registered set changes: a
         // newly-added or re-enabled projection can't skip history.
-        let Some(since) = rows
+        // The event id rides along with the timestamp so the resume point is a
+        // keyset cursor. Without it a watermark sitting on a shared
+        // `received_at` either re-applies its neighbours or skips them.
+        let Some((since, last_id)) = rows
             .into_iter()
             .filter(|row| {
                 row.name
                     .as_deref()
                     .is_some_and(|name| registered.contains(name))
             })
-            .filter_map(|row| row.lr)
-            .filter_map(|s| {
-                chrono::DateTime::parse_from_rfc3339(&s)
+            .filter_map(|row| {
+                let at = chrono::DateTime::parse_from_rfc3339(row.lr.as_deref()?)
                     .ok()
-                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .map(|dt| dt.with_timezone(&chrono::Utc))?;
+                Some((at, row.lid.unwrap_or_default()))
             })
             .min()
         else {
             return Ok(0);
         };
 
-        let store = SurrealEventStore::new(self.db.clone());
-        let missed = store.get_since(since, None).await?;
-        if missed.is_empty() {
-            return Ok(0);
-        }
-
-        let failed = self.apply_events_resilient(&missed).await;
+        let (seen, failed) = self
+            .replay_paged(Some((since, last_id)), None, REPLAY_PAGE)
+            .await?;
         if failed > 0 {
             tracing::warn!(failed, "some events could not be replayed during catch-up");
         }
-        Ok(missed.len())
+        Ok(seen)
     }
 
     /// Apply a batch of events through all matching projections, **fail-fast**:
@@ -321,6 +331,43 @@ impl ProjectionRunner {
         failed
     }
 
+    /// Fold the log through the selected projections one page at a time,
+    /// resuming strictly after `after`. Returns `(events seen, events skipped)`.
+    ///
+    /// Paged rather than read whole because the whole log does not fit: 16k
+    /// events peaked at 1.3 GB on the S9, with every query blocked behind it.
+    /// The fold is per event and keeps no cross-event state but `last_applied`,
+    /// so an ordered page walk is exactly the same computation.
+    ///
+    /// The bookmark advances per page, which also fixes the kill-partway-through
+    /// hole named on `rebuild_only`: a rebuild killed mid-replay now resumes
+    /// from the last applied page instead of leaving the tables cleared with the
+    /// watermark still at the newest event.
+    async fn replay_paged(
+        &self,
+        after: Option<(chrono::DateTime<chrono::Utc>, String)>,
+        only: Option<&[&str]>,
+        page_size: u32,
+    ) -> Result<(usize, usize), EventError> {
+        let store = SurrealEventStore::new(self.db.clone());
+        let mut cursor = after;
+        let (mut seen, mut failed) = (0usize, 0usize);
+
+        loop {
+            let borrowed = cursor.as_ref().map(|(at, id)| (*at, id.as_str()));
+            let page = store.get_page_after(borrowed, page_size).await?;
+            let Some(last) = page.last() else { break };
+            cursor = Some((
+                last.received_at.unwrap_or_else(chrono::Utc::now),
+                last.id.clone(),
+            ));
+            seen += page.len();
+            failed += self.apply_events_scoped(&page, only).await;
+        }
+
+        Ok((seen, failed))
+    }
+
     /// Point every projection's bookmark at `event`.
     ///
     /// `last_received_at` is the one that matters — it is what `catch_up` reads.
@@ -385,15 +432,6 @@ impl ProjectionRunner {
     }
 
     async fn rebuild_inner(&self, only: Option<&[&str]>) -> Result<(), EventError> {
-        let store = SurrealEventStore::new(self.db.clone());
-
-        // Get all events from the beginning of time
-        let epoch = chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
-
-        let events = store.get_since(epoch, None).await?;
-
         // Clear the selected projections' tables, then re-initialize their schemas
         let mut rebuilding: Vec<&str> = Vec::new();
         for proj in self
@@ -408,7 +446,7 @@ impl ProjectionRunner {
         tracing::info!(
             projections = ?rebuilding,
             of = self.projections.len(),
-            events = events.len(),
+            page = REPLAY_PAGE,
             "rebuilding projections from the event log"
         );
 
@@ -416,14 +454,14 @@ impl ProjectionRunner {
         // a mid-replay error under `apply_events` left every projection wiped —
         // the opposite of what a rebuild is for, and unrecoverable without a
         // second successful rebuild.
-        let failed = self.apply_events_scoped(&events, only).await;
+        //
+        // `None` starts at the beginning of the log rather than at an epoch
+        // timestamp, so a row with no `received_at` cannot fall outside it.
+        let (seen, failed) = self.replay_paged(None, only, REPLAY_PAGE).await?;
         if failed > 0 {
-            tracing::warn!(
-                failed,
-                total = events.len(),
-                "events skipped during rebuild"
-            );
+            tracing::warn!(failed, total = seen, "events skipped during rebuild");
         }
+        tracing::info!(events = seen, failed, "rebuild complete");
 
         Ok(())
     }
@@ -512,6 +550,76 @@ mod tests {
             device_id: "d1".into(),
             payload: serde_json::json!({}),
             received_at: None,
+        }
+    }
+
+    /// Records which events it saw, in order, so a page walk can be compared
+    /// against the one unbounded read it replaces.
+    struct RecordingProjection {
+        seen: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl Projection for RecordingProjection {
+        fn name(&self) -> &str {
+            "recording"
+        }
+        fn version(&self) -> u32 {
+            1
+        }
+        async fn apply(&self, event: &Event, _db: &Database) -> Result<(), EventError> {
+            self.seen.lock().unwrap().push(event.aggregate_id.clone());
+            Ok(())
+        }
+        async fn init_schema(&self, _db: &Database) -> Result<(), EventError> {
+            Ok(())
+        }
+        async fn clear_tables(&self, _db: &Database) -> Result<(), EventError> {
+            self.seen.lock().unwrap().clear();
+            Ok(())
+        }
+    }
+
+    /// The equivalence the whole change rests on: folding the log in pages is
+    /// the same computation as folding it whole, at every page size, because
+    /// the fold is per event and keeps no cross-event state.
+    #[tokio::test]
+    async fn a_paged_replay_folds_exactly_what_an_unbounded_one_would() {
+        let expected: Vec<String> = (0..9).map(|i| format!("agg-{i:02}")).collect();
+
+        for page in [1u32, 2, 4, 9, 100] {
+            let db = test_db().await;
+            let store = SurrealEventStore::new(db.clone());
+            for id in &expected {
+                store
+                    .append(NewEvent {
+                        id: None,
+                        event_type: "note_created".into(),
+                        aggregate_id: id.clone(),
+                        timestamp: Utc::now(),
+                        device_id: "d1".into(),
+                        payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                    })
+                    .await
+                    .unwrap();
+            }
+
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let runner = ProjectionRunner::new(
+                db,
+                vec![Box::new(RecordingProjection { seen: seen.clone() })],
+            );
+            runner.init_all().await.unwrap();
+            seen.lock().unwrap().clear();
+
+            let (count, failed) = runner.replay_paged(None, None, page).await.unwrap();
+            assert_eq!(failed, 0, "page {page}");
+            assert_eq!(count, expected.len(), "page {page} saw the wrong count");
+            assert_eq!(
+                *seen.lock().unwrap(),
+                expected,
+                "page {page} folded the wrong events, or out of order"
+            );
         }
     }
 
