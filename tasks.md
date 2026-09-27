@@ -2833,6 +2833,15 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
       we eventually get here**, partly to limit repeated-build cost. Needs the agent in the image,
       a compose service, and its credential wiring. [M] ⛔ Not before the Stage 6 gates: it puts a
       new deployable service in the release path.
+      🔴 **Capacity finding, measured locally 2026-09-26 and it changes the sizing.** A first agent
+      boot against a full corpus runs `vector_store::sweep` for **13+ minutes at ~5.3 cores
+      sustained and 1.8 GB RSS**, with **no progress log**, embedding every note and document
+      (`bge-small-en-v1.5`, dim 384; the model itself is a 128 MB download). ⚠️ The deploy host has
+      **38 GB disk and runs the LIVE server on the same machine** — an agent container doing this on
+      every fresh data dir would contend with live for CPU and RAM. ⛔ So the on-box work is not just
+      "add it to the compose file": it needs the index to survive redeploys (a volume, not a fresh
+      dir each time) or the sweep becomes a recurring multi-minute CPU storm next to live.
+      ⚠️ Release build only — the debug build could not even finish `init_all`.
 - [ ] **Every dev image build recompiles the whole dependency tree: the Dockerfile caches via
       BuildKit cache mounts, which `cache-to: type=gha` does not export.** MEASURED 2026-09-26 on
       run `36263562108`: of 20.5 min, **19.2 min is layer #21 alone** — the `cargo build --release`
