@@ -1609,7 +1609,16 @@ that means in code. ✅ 1, 2, 3, 4, 5 and 7 are done. **Left: 6 (needs the phone
          `POST /sync/push` applies **no feature guard**, so a proposal can be seeded directly
          and the phone pulls it within its 20s interval. ⛔ So this did **not** test the model
          choosing `note.revise` — only the card, the approval-time resolve and the splice, which
-         is what the two checklist lines asked for. Model action-selection is still unexercised.
+         is what the two checklist lines asked for.
+       - [x] ✅✅ **MODEL ACTION-SELECTION CONFIRMED TOO, 2026-09-27** — the gap the seeded test left.
+         A real local agent against the dev server, asked on the phone to change 'due in June' to
+         'due in August', chose the action unaided: `verbs=["search","read","describe_type",
+         "propose"]`, `actions=["note.revise"]`, 11.3 s, 15,921 prompt tokens. ⚠️ It **found the note
+         by title and copied the anchor exactly** — `{"note_id":"01M3FZG18DY7YT2FZ18GXQ9X20",
+         "find":"The shipment is due in June.","replace":"The shipment is due in August."}` — which
+         is precisely the accuracy burden the `find` parameter's own description says it carries.
+         Accepted on the phone: one-line diff, the frontmatter's own "May" untouched. ⛔ Do not
+         re-test. 🔴 **It only got that far with `RUST_MIN_STACK=64MB` — see the abort defect.**
        - ⚠️ **Needs a second client — a decision syncing to another device.** The phone is the only
          one running. A `dx serve --platform web` client pointed at `:3001` would qualify; the
          desktop build will not run on the WSL2 box. ⛔ Unverified either way.
@@ -2823,6 +2832,26 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
       the Android and publish jobs float, as do the overlay's workflows — so the fix is a sweep of
       every `runs-on` across both repos, not one line. [S] Deciding which version to pin to is the
       only judgement in it: 24.04 is what CI runs on today and is the conservative choice.
+- [ ] 🔴🔴 **THE AGENT STACK-OVERFLOWS AND ABORTS ON ITS FIRST ANSWER-LOOP TICK. Found 2026-09-27.**
+      Release build, real dev server, real model. `thread 'tokio-rt-worker' has overflowed its stack
+      / fatal runtime error: stack overflow, aborting`, SIGABRT (exit 134), core dumped — **within a
+      second of logging `agent running; answering questions`**, in one case with no question pending
+      at all.
+      ✅ **Controlled to a single variable.** Three runs, all with `semantic=false`, same data dir,
+      same binary. Runs 1 and 2 at tokio's default worker stack (2 MB) **crashed, 2/2**. Run 3 with
+      `RUST_MIN_STACK=67108864` (64 MB) **did not crash**, and went on to answer a question and
+      author a proposal. ⛔ So keyword-only mode is NOT the trigger and the stale-question path is
+      NOT the trigger — **stack size is the only thing that differed.** It is deep-but-BOUNDED
+      recursion, not infinite: a bigger stack fixes it rather than merely delaying it.
+      🔴 **Shipping blocker, and it would bite in production exactly as it bit here** — nothing in
+      the codebase sets `RUST_MIN_STACK` or tokio's `thread_stack_size`, so a deployed agent aborts
+      instead of answering. ⛔ Raising the stack is a mitigation, NOT the fix: something in that path
+      recurses ~30x deeper than a 2 MB frame budget allows, and that wants finding.
+      ⚠️ **Unknown and worth stating:** whether it also happens with `semantic=true`. The embedder-on
+      run never reached the loop at all (see the sweep finding below), so the answer loop has only
+      ever been observed in keyword-only mode.
+      ⚠️ No post-mortem available on WSL: `ulimit -c` is 0, cores route to `/wsl-capture-crash`, and
+      there is no gdb — so narrowing needs instrumentation, not a core file. [M]
 - [ ] 🔴 **`omni-me-agent` is deployed NOWHERE — it is in no Dockerfile and no compose file.** Found
       2026-09-26: the app tells the user "Answers come from the assistant running on your server …
       they arrive even if you close the app", and nothing can keep that promise. Asking a question on
@@ -2834,9 +2863,13 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
       a compose service, and its credential wiring. [M] ⛔ Not before the Stage 6 gates: it puts a
       new deployable service in the release path.
       🔴 **Capacity finding, measured locally 2026-09-26 and it changes the sizing.** A first agent
-      boot against a full corpus runs `vector_store::sweep` for **13+ minutes at ~5.3 cores
-      sustained and 1.8 GB RSS**, with **no progress log**, embedding every note and document
-      (`bge-small-en-v1.5`, dim 384; the model itself is a 128 MB download). ⚠️ The deploy host has
+      boot against a full corpus runs `vector_store::sweep` for **24m12s WITHOUT FINISHING** — a
+      release build, ~5.3 cores sustained, 1.8 GB RSS, agent DB 237 → 381 MB — and it emits **not one
+      log line** the whole time. ⛔ That is a lower bound: the run was killed by my own timeout, so
+      the true duration is still unmeasured. It embeds every note and document
+      (`bge-small-en-v1.5`, dim 384; the model itself is a 128 MB download). 🔴 **The agent cannot
+      answer anything until the sweep returns** — startup blocks on it — so a fresh deployment is
+      mute for 25+ minutes. ⚠️ The deploy host has
       **38 GB disk and runs the LIVE server on the same machine** — an agent container doing this on
       every fresh data dir would contend with live for CPU and RAM. ⛔ So the on-box work is not just
       "add it to the compose file": it needs the index to survive redeploys (a volume, not a fresh
