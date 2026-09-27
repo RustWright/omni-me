@@ -2460,6 +2460,14 @@ fresh-install path only**: `pull_only` accumulates every pulled event in memory 
 applies it. A version-bump rebuild no longer does — it pages — but it still shows no progress
 while it runs.
 
+✅ **MEASURED on a real fresh install 2026-09-26** — a first agent boot against the dev instance.
+It logs `no shared config yet — pulling before choosing projections` and then **emits nothing for
+90+ seconds**, while its WAL grows to **10.9 MB**. So it is working, not hung, and the WAL is the
+only way to tell them apart from outside. ⚠️ That is exactly the "no progress while it runs" shape,
+now with a number on it: a user watching a fresh install sees a silent app for over a minute and a
+half. ⛔ Do not read the silence as a defect — ⚠️ but do not read it as acceptable either; it is the
+strongest argument yet for streaming the pull instead of accumulating it.
+
 ### 🔴 Projection writes swallow statement errors (found 2026-09-24, by being bitten)
 
 - [ ] 🔴 **A failed SurrealQL statement rides back inside an `Ok` response.** `db.query(..).await?`
