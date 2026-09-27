@@ -1988,6 +1988,19 @@ reconcile. ⛔ Audit or re-import them before trusting reconciliation on the dev
 
 #### ▶ TRIAGE — which of the 19 below are real gates (my read, 2026-09-26; user authorised it)
 
+🔴 **RULING 2026-09-27 — THE RELEASE IS THREE THINGS, NOT ONE.** User: *"for this to work the
+assistant, archive, and finance re-enabling all have to ship."* ⛔ So the triage test below, which
+asked only "what breaks when **the tab** goes on", was scoped too narrowly and under-counted the
+blockers. Anything that stops the **assistant** shipping is a release blocker on the same footing as
+a data-corruption gate. Reclassified by this ruling:
+- 🔴 **The agent's stack-overflow abort** — was "queued, doesn't block the tab". It blocks the
+  assistant entirely, so it is now a **release blocker**.
+- 🔴 **The agent is deployed nowhere, and its first boot is mute for 25+ min** — the app promises
+  answers arrive with it closed, which only a deployed agent delivers. Also a **release blocker**,
+  which reverses "⛔ not before the Stage 6 gates": it is now *among* them, not after.
+⚠️ Re-run the whole triage against all three legs before trusting the "9 gates" count — it was
+derived from the tab alone.
+
 ⛔ **The test applied:** if this is wrong or missing when the tab goes on, does it **lose or corrupt
 data, or silently produce a wrong number he would act on?** Everything else is measurement quality
 and ships after. ⚠️ This is my judgement, not his ruling — the split is proposed, not settled.

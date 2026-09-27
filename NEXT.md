@@ -1,15 +1,15 @@
 # NEXT
 
-## ▶ NEXT ACTION — auto-approval (now unblocked), then audit the pre-09-26 batches
-⛔ Both ready; the ORDER is my proposal, not his priority. Auto-approval needs a live agent:
-`./target/release/omni-me-agent` with `OMNI_AGENT_DATA=<tmp>`, `OMNI_AGENT_SERVER_URL` at dev's
-`:3001`, `FASTEMBED_CACHE_DIR=/dev/null/not-a-dir` (skips a 25-min sweep), 🔴 `RUST_MIN_STACK=67108864`
-or it ABORTS. Then the 12 pre-today batches — pairwise matching, so none reconcile. ⛔ Ask first.
+## ▶ NEXT ACTION — ARCHIVE REFINEMENT DESIGN, in plan mode (his decision, 2026-09-27)
+✅ He chose design-next over gates-next and will open the next session in **plan mode**. ⛔ DESIGN only,
+not build: tags + reader + query path + purge-with-preview + per-tag retention is more than one
+session, and 3 of the 9 gates depend on what this design says. 🔴 **The release is THREE legs —
+assistant, archive, finance re-enabling — all must ship** (`tasks.md` § TRIAGE), so the agent's abort is a release blocker, not a queued item, and the gate count needs re-deriving.
+💭 Gates 3+4 (role C 429 retry, `max_tokens`) need no design, are one file, and each loses a document today — my proposal is to grab them in the design session's gaps; ⛔ his call, never assumed.
 
-## ⛔ Waiting on the user — only these
-- 🔴 **Consider rotating the DeepInfra key** — a file-change diff put its value into this session's transcript, which the hooks mirror into `logs/`. Credit-capped so bounded, but his call.
-- ✅ **Public-repo identity scrub AUTHORISED**, ⛔ END of a session only. ⚠️ It now also owes the 3
-  email addresses this session printed into `.log/`. `tasks.md` § Owed.
+## ⛔ Waiting on the user — only this
+- ✅ **Public-repo identity scrub AUTHORISED**, ⛔ END of a session only. `tasks.md` § Owed.
+  ⛔ **PUBLIC repo ONLY** — he ruled 2026-09-27 that flagging exposure in the overlay, `.log/` or the transcript is a distraction, and the dev LLM key a non-issue. The line is *published vs not*.
 
 ## ⛔ Inherit — settled, do not re-derive
 - 🔴🔴 **THE AGENT ABORTS on its first answer-loop tick** — `tokio-rt-worker` stack overflow, SIGABRT,
@@ -19,8 +19,8 @@ or it ABORTS. Then the 12 pre-today batches — pairwise matching, so none recon
 - ✅ **`note.revise` FULLY CONFIRMED** — card both halves, accept, refusal, deletion, **and the model
   choosing the action unaided**, anchor copied exactly, frontmatter untouched. ⛔ Do not re-test.
 - 🔴 **First agent boot sweeps the vector index 24m12s WITHOUT finishing** (release, ~5 cores, 1.8 GB,
-  no progress logs) and cannot answer until it returns. ⛔ Blocks the on-box deploy until the index
-  survives redeploys on a volume. ⛔ Debug builds cannot finish `init_all` at all, so release only.
+  no progress logs) and cannot answer until it returns — so the index must survive redeploys on a
+  volume. ⛔ Release builds only: debug cannot finish `init_all` at all. `tasks.md`.
 - ✅ **Total takes precedence; ⛔ NEVER fetch a receipt's linked page.** The catch-all remainder leg
   already exists; only *surfacing* "4 of 12 listed" is left, and it is not a blocker.
 - ✅ **Bulk/archive backfill = DOCUMENTS ONLY.** Ledger opens clean **2026-10-01** from September
