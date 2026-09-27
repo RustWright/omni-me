@@ -1937,6 +1937,22 @@ incomplete extraction.** ⚠️ Every batch committed before today carries this 
 ✅ **RULED + BUILT 2026-09-26.** User: *"total takes precedence since that is what will balance
 against the unmatched bank transaction, if the items can be listed it's an additional benefit."*
 
+✅ **RULED 2026-09-26 — ⛔ NEVER fetch the linked page. The missing items are not worth pursuing.**
+User: *"only use the information provided to create the most accurate balancing transaction, so even
+if the breakdown shows the items shown plus a catch-all category for the things not included in the
+email receipt then that's fine, it's still miles better than what I have today which is nothing …
+I don't want this edge case to be a blocker, and I don't want to add more fragility to a process
+that is already complex enough for information that isn't critical."* ⛔ So the two rejected options
+stay rejected: no URL allowlist (it would rebuild the gate the 2026-09-25 sender ruling removed) and
+no per-receipt manual fetch. ✅ **The catch-all he describes already exists** — `total_anchored_draft`
+pushes a remainder leg accounted to `sole_expense_account` or `Expenses:Unknown`, so the money side
+is done and needs nothing.
+- [ ] **All that is left is SURFACING it**: the document should say "4 items listed, the total covers
+      more" rather than leaving the remainder leg to imply it. Detectable already as
+      `sum(items) < total`, which post-fix also raises the `verify` mismatch. ⛔ Not a blocker; it is
+      the "never silently skip data" half. 💭 Natural home is the archive-tags work, where per-item
+      categorisation first gets consumed. [S]
+
 🔴 **Acting on that exposed a STRUCTURAL defect far bigger than the missing items.**
 `reconciliation::find_match_candidates` is strictly **pairwise** — it walks pairs and requires
 `a.amount + b.amount == 0`, with no summing of several postings against one. A card charge arrives
@@ -2796,6 +2812,16 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
       the Android and publish jobs float, as do the overlay's workflows — so the fix is a sweep of
       every `runs-on` across both repos, not one line. [S] Deciding which version to pin to is the
       only judgement in it: 24.04 is what CI runs on today and is the conservative choice.
+- [ ] 🔴 **`omni-me-agent` is deployed NOWHERE — it is in no Dockerfile and no compose file.** Found
+      2026-09-26: the app tells the user "Answers come from the assistant running on your server …
+      they arrive even if you close the app", and nothing can keep that promise. Asking a question on
+      the phone returns "No answer yet. The assistant may not be running." ⚠️ **The box is not an
+      architectural requirement, it is the only always-on host** (user, 2026-09-26) — which is why
+      running it locally first is a real test rather than a shortcut: *"testing it with and without
+      the server is actually a good thing."* ✅ He accepted the local agent now **on condition that
+      we eventually get here**, partly to limit repeated-build cost. Needs the agent in the image,
+      a compose service, and its credential wiring. [M] ⛔ Not before the Stage 6 gates: it puts a
+      new deployable service in the release path.
 - [ ] **Every dev image build recompiles the whole dependency tree: the Dockerfile caches via
       BuildKit cache mounts, which `cache-to: type=gha` does not export.** MEASURED 2026-09-26 on
       run `36263562108`: of 20.5 min, **19.2 min is layer #21 alone** — the `cargo build --release`
