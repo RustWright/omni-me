@@ -2460,13 +2460,16 @@ fresh-install path only**: `pull_only` accumulates every pulled event in memory 
 applies it. A version-bump rebuild no longer does — it pages — but it still shows no progress
 while it runs.
 
-✅ **MEASURED on a real fresh install 2026-09-26** — a first agent boot against the dev instance.
-It logs `no shared config yet — pulling before choosing projections` and then **emits nothing for
-90+ seconds**, while its WAL grows to **10.9 MB**. So it is working, not hung, and the WAL is the
-only way to tell them apart from outside. ⚠️ That is exactly the "no progress while it runs" shape,
-now with a number on it: a user watching a fresh install sees a silent app for over a minute and a
-half. ⛔ Do not read the silence as a defect — ⚠️ but do not read it as acceptable either; it is the
-strongest argument yet for streaming the pull instead of accumulating it.
+✅ **OBSERVED on a real fresh install 2026-09-26**, a first agent boot against the dev instance.
+⚠️ **DEBUG build, so treat every duration here as an upper bound, not a shipping number** — the
+shapes are real, the timings are not. Two silent phases, neither of which logs progress:
+1. `no shared config yet — pulling before choosing projections` → **126 s**, `pulled=6669`.
+2. `registered projections` → then `init_all()` catching 9 projections up over **16,169 events**,
+   writing at **~52 MB/min** with **no log line at all** and ~96% CPU. Still running at 7+ min.
+⚠️ **The WAL is the only way to tell working from hung from outside**, which is the finding: a user
+on a fresh install sees a silent app for minutes, and so does an operator. ⛔ Do not read the silence
+as a defect — ⚠️ nor as acceptable. It is the strongest argument yet for streaming the pull and for
+emitting progress from `init_all`. 🔴 Re-measure on a release build before quoting any number.
 
 ### 🔴 Projection writes swallow statement errors (found 2026-09-24, by being bitten)
 
