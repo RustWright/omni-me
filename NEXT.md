@@ -7,8 +7,7 @@
 or it ABORTS. Then the 12 pre-today batches — pairwise matching, so none reconcile. ⛔ Ask first.
 
 ## ⛔ Waiting on the user — only these
-- 🔴 **Consider rotating the DeepInfra key.** A file-change diff put its value into this session's
-  transcript, which the hooks mirror into `logs/`. Credit-capped so bounded — but it is his call.
+- 🔴 **Consider rotating the DeepInfra key** — a file-change diff put its value into this session's transcript, which the hooks mirror into `logs/`. Credit-capped so bounded, but his call.
 - ✅ **Public-repo identity scrub AUTHORISED**, ⛔ END of a session only. ⚠️ It now also owes the 3
   email addresses this session printed into `.log/`. `tasks.md` § Owed.
 
