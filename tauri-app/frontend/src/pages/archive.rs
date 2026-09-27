@@ -35,11 +35,14 @@ const TAGS_FIELD_KEY: &str = "tags";
 enum View {
     List,
     Detail(String),
-    /// The purge queue for one tag group.
+    /// The purge queue for one tag group, optionally narrowed to what is past
+    /// that tag's retention (RFC3339).
     ///
     /// ⛔ A nested view on this page, never the assistant inbox: approval lives
     /// with the domain the thing belongs to, and these are archive documents.
-    Purge(String),
+    /// ⛔ The cutoff travels from `RetentionGroup::cutoff` untouched — re-deriving
+    /// it here would let the screen and the server disagree about the set.
+    Purge(String, Option<String>),
 }
 
 #[component]
@@ -52,13 +55,14 @@ pub fn ArchivePage() -> Element {
     // mail filter would return nothing and look like an empty archive.
     let mut mail_only = use_signal(|| false);
     let mut tag = use_signal(String::new);
+    let mut retention_open = use_signal(|| false);
     let mut reload = use_signal(|| 0u32);
 
     // Hardware back pops the detail view before it leaves the tab.
     use_page_back(
         move || match *view.read() {
             View::List => 0,
-            View::Detail(_) | View::Purge(_) => 1,
+            View::Detail(_) | View::Purge(_, _) => 1,
         },
         move || view.set(View::List),
     );
@@ -88,9 +92,10 @@ pub fn ArchivePage() -> Element {
     rsx! {
         div { class: "h-full overflow-y-auto",
             match view.read().clone() {
-                View::Purge(tag) => rsx! {
+                View::Purge(tag, cutoff) => rsx! {
                     PurgeGroup {
                         tag: tag,
+                        archived_before: cutoff,
                         on_back: move |_| view.set(View::List),
                         on_purged: move |_| {
                             reload += 1;
@@ -158,13 +163,32 @@ pub fn ArchivePage() -> Element {
                                 button {
                                     onclick: move |_| {
                                         let t = tag.read().clone();
-                                        view.set(View::Purge(t));
+                                        view.set(View::Purge(t, None));
                                     },
                                     class: "px-3 py-2 text-sm rounded-lg border \
                                             border-red-500/30 bg-red-950/20 text-red-300 \
                                             hover:bg-red-950/40",
                                     "Purge \"{tag}\"…"
                                 }
+                            }
+                            // Retention is a policy surface, not a filter, so it
+                            // is behind a toggle: the list's job is finding a
+                            // document, and a rules editor sitting open above it
+                            // competes with that on every visit.
+                            button {
+                                onclick: move |_| {
+                                    let next = !*retention_open.read();
+                                    retention_open.set(next);
+                                },
+                                class: if *retention_open.read() {
+                                    "px-3 py-2 text-sm rounded-lg border border-obsidian-accent/50 \
+                                     bg-obsidian-accent/15 text-obsidian-text"
+                                } else {
+                                    "px-3 py-2 text-sm rounded-lg border border-obsidian-border/10 \
+                                     bg-obsidian-sidebar/60 text-obsidian-text-muted \
+                                     hover:text-obsidian-text"
+                                },
+                                "Retention"
                             }
                             // ⚠️ Its own control rather than an entry in the kind
                             // dropdown: mail has no `kind`, so listing it there
@@ -184,6 +208,14 @@ pub fn ArchivePage() -> Element {
                                      hover:text-obsidian-text"
                                 },
                                 "Mail only"
+                            }
+                        }
+
+                        if *retention_open.read() {
+                            RetentionPanel {
+                                on_review: move |(t, cutoff): (String, String)| {
+                                    view.set(View::Purge(t, Some(cutoff)));
+                                },
                             }
                         }
 
@@ -603,8 +635,199 @@ fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
 /// action. What makes this satisfy the autonomy rule is that nothing goes without
 /// the person having seen it listed — so if the list is ever truncated, the
 /// confirm must cover only what was listed, and say so.
+/// Retention rules, and what they have caught.
+///
+/// ⛔ Proposes only. "Review" opens the same purge preview and confirm every purge
+/// goes through — retention never removes anything itself, which is the standing
+/// ruling, not a limitation of this screen.
 #[component]
-fn PurgeGroup(tag: String, on_back: EventHandler<()>, on_purged: EventHandler<()>) -> Element {
+fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
+    let mut reload = use_signal(|| 0u32);
+    let mut chosen = use_signal(String::new);
+    let mut days = use_signal(String::new);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let mut saving = use_signal(|| false);
+
+    let tags = use_resource(move || async move { bridge::invoke_document_tags().await });
+    let rules = use_resource(move || {
+        let _ = reload.read();
+        async move { bridge::invoke_list_document_retention().await }
+    });
+    let groups = use_resource(move || {
+        let _ = reload.read();
+        async move { bridge::invoke_list_retention_candidates().await }
+    });
+
+    // `None` clears the rule. Both paths go through here so the two buttons cannot
+    // drift apart on what "saved" means.
+    let mut apply = move |keep_days: Option<u32>| {
+        let tag = chosen.read().clone();
+        if tag.is_empty() {
+            error.set(Some("pick a tag first".into()));
+            return;
+        }
+        if *saving.read() {
+            return;
+        }
+        saving.set(true);
+        spawn(async move {
+            match bridge::invoke_set_document_retention(&tag, keep_days).await {
+                Ok(()) => {
+                    error.set(None);
+                    reload += 1;
+                }
+                Err(e) => error.set(Some(e)),
+            }
+            saving.set(false);
+        });
+    };
+
+    rsx! {
+        div { class: "p-3 rounded-lg border border-obsidian-border/10 bg-obsidian-sidebar/30 space-y-3",
+            div { class: "space-y-1",
+                h2 { class: "text-sm font-semibold text-obsidian-text", "Retention" }
+                // ⛔ The sentence this surface exists to carry. An empty rules list
+                // is not "nothing configured yet", it is "everything is kept", and
+                // a tag with no rule keeps its documents even when another tag on
+                // them says to let go.
+                p { class: "text-[11px] text-obsidian-text-muted",
+                    "A tag with no rule is kept forever, and a document is only ever proposed when \
+                     every tag on it has one — the longest of them decides."
+                }
+            }
+
+            div { class: "flex flex-wrap items-center gap-2",
+                select {
+                    value: "{chosen}",
+                    onchange: move |e| chosen.set(e.value()),
+                    class: "px-2 py-1.5 text-sm rounded bg-obsidian-bg border \
+                            border-obsidian-border/10 text-obsidian-text focus:outline-none",
+                    option { value: "", "Pick a tag…" }
+                    if let Some(Ok(list)) = tags.read().as_ref() {
+                        for t in list.iter() {
+                            option { key: "{t}", value: "{t}", "{t}" }
+                        }
+                    }
+                }
+                span { class: "text-[11px] text-obsidian-text-muted", "keep for" }
+                input {
+                    r#type: "number",
+                    min: "1",
+                    placeholder: "days",
+                    value: "{days}",
+                    oninput: move |e| days.set(e.value()),
+                    class: "w-24 px-2 py-1.5 text-sm rounded bg-obsidian-bg border \
+                            border-obsidian-border/10 text-obsidian-text focus:outline-none",
+                }
+                button {
+                    onclick: move |_| {
+                        match days.read().trim().parse::<u32>() {
+                            Ok(n) if n > 0 => apply(Some(n)),
+                            // ⛔ Zero is refused rather than read as "purge now" —
+                            // the most destructive reading of a typo.
+                            _ => error.set(Some("give a number of days, at least 1".into())),
+                        }
+                    },
+                    disabled: *saving.read(),
+                    class: "px-2 py-1.5 text-[11px] rounded bg-obsidian-accent text-black \
+                            font-medium disabled:opacity-50",
+                    "Save"
+                }
+                button {
+                    onclick: move |_| apply(None),
+                    disabled: *saving.read(),
+                    class: "px-2 py-1.5 text-[11px] rounded border border-obsidian-border/20 \
+                            text-obsidian-text-muted hover:text-obsidian-text disabled:opacity-50",
+                    "Keep forever"
+                }
+            }
+            if let Some(msg) = error.read().clone() {
+                p { class: "text-[11px] text-red-300", "{msg}" }
+            }
+
+            match rules.read().as_ref() {
+                Some(Ok(list)) if !list.is_empty() => rsx! {
+                    div { class: "flex flex-wrap gap-1.5",
+                        for rule in list.iter() {
+                            span {
+                                key: "{rule.tag}",
+                                class: "px-2 py-0.5 text-[10px] rounded-full bg-obsidian-bg \
+                                        border border-obsidian-border/10 text-obsidian-text-muted",
+                                "{rule.tag} · {rule.keep_days}d"
+                            }
+                        }
+                    }
+                },
+                Some(Ok(_)) => rsx! {
+                    p { class: "text-[11px] text-obsidian-text-muted", "No rules yet, so nothing is proposed." }
+                },
+                Some(Err(e)) => rsx! {
+                    p { class: "text-[11px] text-red-300", "Couldn't read the rules: {e}" }
+                },
+                None => rsx! {
+                    p { class: "text-[11px] text-obsidian-text-muted", "Reading the rules…" }
+                },
+            }
+
+            match groups.read().as_ref() {
+                Some(Ok(list)) if !list.is_empty() => rsx! {
+                    div { class: "space-y-1.5",
+                        h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                            "Past their retention"
+                        }
+                        for group in list.iter() {
+                            div {
+                                key: "{group.tag}",
+                                class: "flex items-center justify-between gap-2 p-2 rounded \
+                                        border border-obsidian-border/10 text-xs",
+                                div {
+                                    p { class: "text-obsidian-text", "{group.tag} · {group.count} document(s)" }
+                                    p { class: "text-[10px] text-obsidian-text-muted",
+                                        "kept {group.keep_days} days"
+                                        if let Some(oldest) = group.oldest_archived_at.as_deref() {
+                                            ", oldest {oldest}"
+                                        }
+                                    }
+                                }
+                                // ⛔ "Review", not "Purge". What this opens is the
+                                // preview: every document listed, each sparable,
+                                // one confirm.
+                                button {
+                                    onclick: {
+                                        let tag = group.tag.clone();
+                                        let cutoff = group.cutoff.clone();
+                                        move |_| on_review.call((tag.clone(), cutoff.clone()))
+                                    },
+                                    class: "px-2 py-1 text-[11px] rounded border border-obsidian-accent/40 \
+                                            text-obsidian-accent hover:bg-obsidian-accent/10 shrink-0",
+                                    "Review {group.count}…"
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Ok(_)) => rsx! {
+                    p { class: "text-[11px] text-obsidian-text-muted", "Nothing is past its retention." }
+                },
+                Some(Err(e)) => rsx! {
+                    p { class: "text-[11px] text-red-300", "Couldn't work out what is due: {e}" }
+                },
+                None => rsx! {
+                    p { class: "text-[11px] text-obsidian-text-muted", "Checking what is due…" }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn PurgeGroup(
+    tag: String,
+    // Set for a retention group: only documents archived before this are in it.
+    archived_before: Option<String>,
+    on_back: EventHandler<()>,
+    on_purged: EventHandler<()>,
+) -> Element {
     // Ids the user has unchecked. Absent means going — the default is that the
     // group the user chose to purge is purged.
     let mut spared: Signal<std::collections::HashSet<String>> =
@@ -614,9 +837,11 @@ fn PurgeGroup(tag: String, on_back: EventHandler<()>, on_purged: EventHandler<()
     let mut report: Signal<Option<crate::types::PurgeReport>> = use_signal(|| None);
 
     let for_load = tag.clone();
+    let cutoff_for_load = archived_before.clone();
     let preview = use_resource(move || {
         let t = for_load.clone();
-        async move { bridge::invoke_preview_document_purge(&t).await }
+        let before = cutoff_for_load.clone();
+        async move { bridge::invoke_preview_document_purge(&t, before.as_deref()).await }
     });
 
     rsx! {
@@ -907,6 +1132,49 @@ fn TagPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
     }
 }
 
+/// Record that a person read the document and these values are right.
+///
+/// Goes through the correction path with the value unchanged, which is what lands
+/// `human` / `verified: true`. A later reader separates a confirm from a
+/// correction by comparing with the model's own event, so neither needs a flag.
+fn confirm_fields(
+    document_id: String,
+    fields: Vec<(String, String)>,
+    mut saving: Signal<bool>,
+    mut error: Signal<Option<String>>,
+    sync_epoch: Signal<u64>,
+    on_saved: EventHandler<()>,
+) {
+    if *saving.read() {
+        return;
+    }
+    saving.set(true);
+    spawn(async move {
+        // One event per key, never one batched event: fields fold by key, and
+        // each value has to stay separately attributable to the person who
+        // checked it. See `human_correction` in `core/src/document_fields.rs`.
+        let mut confirmed = 0usize;
+        let mut failure = None;
+        for (key, value) in fields {
+            match bridge::invoke_correct_document_field(&document_id, &key, &value).await {
+                Ok(()) => confirmed += 1,
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            }
+        }
+        // Refreshed whenever anything landed, even when a later key failed: those
+        // events are real, and the unverified count the badge reads has moved.
+        if confirmed > 0 {
+            crate::sync_refresh::bump_sync_epoch(sync_epoch);
+            on_saved.call(());
+        }
+        error.set(failure);
+        saving.set(false);
+    });
+}
+
 #[component]
 fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
     // ⛔ `tags` is a folded field like any other, so it arrives here too — and it
@@ -921,10 +1189,53 @@ fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
         .filter(|f| f.key != TAGS_FIELD_KEY)
         .collect();
 
+    // ⛔ A purged document cannot be checked against anything — its bytes are
+    // gone — so confirming or correcting a value here would write `verified: true`
+    // with no oracle behind it. Same argument that hides the tag editor above.
+    let purged = doc.purged.unwrap_or(false);
+    let unchecked: Vec<(String, String)> = fields
+        .iter()
+        .filter(|f| !f.verified)
+        .map(|f| (f.key.clone(), f.value.clone()))
+        .collect();
+
+    let error: Signal<Option<String>> = use_signal(|| None);
+    let saving = use_signal(|| false);
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
+    let id_for_all = doc.document_id.clone();
+    // Cloned for the closure so the count stays readable in the label beside it.
+    let unchecked_for_all = unchecked.clone();
+
     rsx! {
         div { class: "space-y-2",
-            h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
-                "What we know"
+            div { class: "flex items-baseline justify-between gap-2",
+                h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                    "What we know"
+                }
+                // Offered from two unchecked values up: below that the row's own
+                // control is the shorter path, and this would read as a second way
+                // to do the same thing.
+                if !purged && unchecked.len() > 1 {
+                    button {
+                        onclick: move |_| {
+                            confirm_fields(
+                                id_for_all.clone(),
+                                unchecked_for_all.clone(),
+                                saving,
+                                error,
+                                sync_epoch,
+                                on_saved,
+                            );
+                        },
+                        disabled: *saving.read(),
+                        class: "px-2 py-0.5 text-[10px] rounded border border-obsidian-accent/40 \
+                                text-obsidian-accent hover:bg-obsidian-accent/10 disabled:opacity-50",
+                        if *saving.read() { "Confirming…" } else { "All {unchecked.len()} look right" }
+                    }
+                }
+            }
+            if let Some(msg) = error.read().clone() {
+                p { class: "text-[11px] text-red-300", "Couldn't confirm: {msg}" }
             }
             if fields.is_empty() {
                 div { class: "p-3 rounded border border-obsidian-border/10 text-xs text-obsidian-text-muted space-y-1",
@@ -941,6 +1252,7 @@ fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
                     key: "{field.key}",
                     document_id: doc.document_id.clone(),
                     field: field.clone(),
+                    read_only: purged,
                     on_saved: move |_| on_saved.call(()),
                 }
             }
@@ -949,7 +1261,14 @@ fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
 }
 
 #[component]
-fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()>) -> Element {
+fn FieldRow(
+    document_id: String,
+    field: DocumentField,
+    /// Set for a purged document: the value stays readable, but there is nothing
+    /// left to check it against. See [`FieldPanel`].
+    read_only: bool,
+    on_saved: EventHandler<()>,
+) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft = use_signal(|| field.value.clone());
     let mut error: Signal<Option<String>> = use_signal(|| None);
@@ -961,6 +1280,8 @@ fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()
 
     let field_for_save = field.clone();
     let id_for_save = document_id.clone();
+    let field_for_confirm = field.clone();
+    let id_for_confirm = document_id.clone();
     let save = move |_| {
         if *saving.read() {
             return;
@@ -1026,16 +1347,44 @@ fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()
                             "Cancel"
                         }
                     }
-                    if let Some(msg) = error.read().clone() {
-                        p { class: "text-[11px] text-red-300", "{msg}" }
+                }
+            } else if read_only {
+                p { class: "text-sm text-obsidian-text", "{field.value}" }
+            } else {
+                div { class: "flex items-start justify-between gap-2",
+                    button {
+                        onclick: move |_| editing.set(true),
+                        class: "flex-1 text-left text-sm text-obsidian-text hover:text-obsidian-accent",
+                        "{field.value}"
+                    }
+                    // Only on an unchecked value: confirming one already checked
+                    // would write a second event saying what the first said.
+                    if !field.verified {
+                        button {
+                            onclick: move |_| {
+                                confirm_fields(
+                                    id_for_confirm.clone(),
+                                    vec![(
+                                        field_for_confirm.key.clone(),
+                                        field_for_confirm.value.clone(),
+                                    )],
+                                    saving,
+                                    error,
+                                    sync_epoch,
+                                    on_saved,
+                                );
+                            },
+                            disabled: *saving.read(),
+                            class: "px-2 py-0.5 text-[10px] rounded border border-obsidian-accent/40 \
+                                    text-obsidian-accent hover:bg-obsidian-accent/10 shrink-0 \
+                                    disabled:opacity-50",
+                            if *saving.read() { "…" } else { "Looks right" }
+                        }
                     }
                 }
-            } else {
-                button {
-                    onclick: move |_| editing.set(true),
-                    class: "w-full text-left text-sm text-obsidian-text hover:text-obsidian-accent",
-                    "{field.value}"
-                }
+            }
+            if let Some(msg) = error.read().clone() {
+                p { class: "text-[11px] text-red-300", "{msg}" }
             }
         }
     }

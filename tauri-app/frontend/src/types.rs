@@ -155,6 +155,24 @@ impl PurgePreview {
     }
 }
 
+/// One tag's retention rule. Mirrors `commands::documents::RetentionRule`.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct RetentionRule {
+    pub tag: String,
+    pub keep_days: u32,
+}
+
+/// Documents past their retention, grouped by the tag whose rule decided them.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct RetentionGroup {
+    pub tag: String,
+    pub keep_days: u32,
+    pub count: usize,
+    pub oldest_archived_at: Option<String>,
+    /// ⛔ Goes to the purge preview unchanged.
+    pub cutoff: String,
+}
+
 /// What a purge did. Mirrors `purge::PurgeReport`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PurgeReport {

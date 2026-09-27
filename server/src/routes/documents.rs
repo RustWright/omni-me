@@ -302,6 +302,11 @@ pub struct PurgeTicket {
 pub struct PurgePreviewRequest {
     /// The tag forming this group.
     pub tag: String,
+    /// RFC3339. Narrows the group to documents archived before it, which is how a
+    /// retention group is previewed — "tagged X and past X's rule" rather than the
+    /// whole tag. Absent means the whole tag.
+    #[serde(default)]
+    pub archived_before: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -328,7 +333,7 @@ async fn purge_preview_handler(
     State(state): State<AppState>,
     Json(body): Json<PurgePreviewRequest>,
 ) -> Result<Json<PurgePreviewResponse>, (StatusCode, String)> {
-    let preview = purge::preview(&state.db, &body.tag)
+    let preview = purge::preview(&state.db, &body.tag, body.archived_before.as_deref())
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

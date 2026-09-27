@@ -19,7 +19,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pinned on purpose: a rolling ubuntu-latest broke the release path once, with no
+    # workflow change of ours. Raise it deliberately, never by alias.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -47,7 +49,7 @@ jobs:
   deploy:
     needs: build
     if: vars.PUBLISH_DOCS == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

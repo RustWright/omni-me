@@ -5593,13 +5593,86 @@ pub async fn invoke_set_document_tags(document_id: &str, tags: Vec<String>) -> R
     }
 }
 
+/// Set, change or clear how long a tag's documents are kept. `None` clears.
+pub async fn invoke_set_document_retention(
+    tag: &str,
+    keep_days: Option<u32>,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (tag, keep_days);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            tag: &'a str,
+            keep_days: Option<u32>,
+        }
+        invoke("set_document_retention", &Args { tag, keep_days }).await
+    }
+}
+
+/// Every tag with a live rule. ⚠️ A tag absent from this list is kept forever.
+pub async fn invoke_list_document_retention() -> Result<Vec<crate::types::RetentionRule>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(vec![crate::types::RetentionRule {
+            tag: "newsletter".into(),
+            keep_days: 90,
+        }])
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_document_retention", &Args {}).await
+    }
+}
+
+/// Documents past their retention, grouped by the rule that caught them. ⛔ A
+/// proposal: opening one goes to the ordinary purge preview and confirm.
+pub async fn invoke_list_retention_candidates() -> Result<Vec<crate::types::RetentionGroup>, String>
+{
+    #[cfg(feature = "mock")]
+    {
+        // ⚠️ One group with a plausible count, so the surface can be looked at
+        // without a governed archive behind it.
+        Ok(vec![crate::types::RetentionGroup {
+            tag: "newsletter".into(),
+            keep_days: 90,
+            count: 3,
+            oldest_archived_at: Some("2025-01-04T09:12:00Z".into()),
+            cutoff: "2026-06-29T00:00:00Z".into(),
+        }])
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_retention_candidates", &Args {}).await
+    }
+}
+
 /// What purging this group would remove. ⛔ Writes nothing.
-pub async fn invoke_preview_document_purge(tag: &str) -> Result<PurgePreview, String> {
+pub async fn invoke_preview_document_purge(
+    tag: &str,
+    // Retention's cutoff, from `RetentionGroup::cutoff`. `None` previews the tag.
+    archived_before: Option<&str>,
+) -> Result<PurgePreview, String> {
     #[cfg(feature = "mock")]
     {
         let items: Vec<crate::types::PurgeItem> = mock_documents()
             .into_iter()
             .filter(|d| d.tags.as_ref().is_some_and(|t| t.iter().any(|x| x == tag)))
+            // The cutoff narrows the same set here too, or the mock would show a
+            // retention group as if it were the whole tag.
+            .filter(|d| match (archived_before, d.archived_at.as_deref()) {
+                (Some(before), Some(at)) => at < before,
+                (Some(_), None) => false,
+                (None, _) => true,
+            })
             .map(|d| crate::types::PurgeItem {
                 document_id: d.document_id.clone(),
                 label: d.display_name(),
@@ -5638,8 +5711,16 @@ pub async fn invoke_preview_document_purge(tag: &str) -> Result<PurgePreview, St
         #[derive(serde::Serialize)]
         struct Args<'a> {
             tag: &'a str,
+            archived_before: Option<&'a str>,
         }
-        invoke("preview_document_purge", &Args { tag }).await
+        invoke(
+            "preview_document_purge",
+            &Args {
+                tag,
+                archived_before,
+            },
+        )
+        .await
     }
 }
 

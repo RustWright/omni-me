@@ -36,7 +36,20 @@ pub enum SkipReason {
     /// The reader was asked and could not answer. `derive_fields` logs the
     /// cause; it is retried once its [`RetryHolds`] hold lapses.
     NotRead,
+    /// A model already read this document and returned nothing, and the attempt
+    /// budget is spent. Counted and reported rather than silent: retiring a
+    /// document is the outcome most worth being able to see.
+    AlreadyRead,
 }
+
+/// How many models may try to read one document before it is left alone.
+///
+/// ⚠️ An empty transcription is a real outcome — a blank page reads as nothing —
+/// but it is also what a silently failed read looks like, and the two are
+/// indistinguishable from here. Two attempts buys a second opinion from a
+/// different model without letting the archive re-read every blank page forever;
+/// 💭 the number is a proposal, not a measurement.
+pub const MAX_TRANSCRIPTION_ATTEMPTS: usize = 2;
 
 /// First hold on a skipped document; each further skip doubles it up to [`HOLD_CAP`].
 pub const HOLD_START: Duration = Duration::from_secs(60 * 60);
@@ -142,7 +155,8 @@ impl EnrichTally {
         let no_bytes = count(SkipReason::NoBytes);
         let no_readable_form = count(SkipReason::NoReadableForm);
         let not_read = count(SkipReason::NotRead);
-        let accounted = self.read + no_bytes + no_readable_form + not_read;
+        let already_read = count(SkipReason::AlreadyRead);
+        let accounted = self.read + no_bytes + no_readable_form + not_read + already_read;
         if accounted != self.seen {
             return Err(EnrichError::Unaccounted {
                 seen: self.seen,
@@ -155,6 +169,7 @@ impl EnrichTally {
             no_bytes,
             no_readable_form,
             not_read,
+            already_read,
             unreadable_mime: 0,
             held: 0,
             skipped: self.skipped,
@@ -171,6 +186,9 @@ pub struct EnrichSummary {
     pub no_bytes: usize,
     pub no_readable_form: usize,
     pub not_read: usize,
+    /// Candidates a model had already read and found nothing in, with the attempt
+    /// budget spent. See [`SkipReason::AlreadyRead`].
+    pub already_read: usize,
     /// Uncatalogued documents the pass can never select, by MIME.
     ///
     /// Carried so they cannot be mistaken for documents that do not exist. It
@@ -295,6 +313,24 @@ pub async fn enrich_text_once(
     let mut tally = EnrichTally::new(candidates.len());
 
     for row in candidates {
+        // Before the blob read, because this is the cheap refusal. The candidate
+        // query selects any document with no text, which now includes ones a model
+        // already read and found nothing in; the log is what stops that becoming a
+        // re-read every tick.
+        let attempts = queries::transcription_attempts(db, &row.document_id).await?;
+        if attempts.len() >= MAX_TRANSCRIPTION_ATTEMPTS
+            || attempts.iter().any(|m| m == transcriber.name())
+        {
+            tracing::debug!(
+                document_id = %row.document_id,
+                attempts = attempts.len(),
+                transcriber = transcriber.name(),
+                "a model already read this document and found nothing"
+            );
+            tally.skipped(&row.document_id, SkipReason::AlreadyRead);
+            continue;
+        }
+
         let Some(bytes) = read_blob(blob_dir, row.sha256.as_deref()).await else {
             tally.skipped(&row.document_id, SkipReason::NoBytes);
             continue;
@@ -394,6 +430,7 @@ mod tests {
                 title: "A letter".into(),
                 document_date: None,
                 fields: vec![],
+                tags: vec![],
                 model: "stub@1".into(),
             })
         }
@@ -491,6 +528,7 @@ mod tests {
                 title: "A letter".into(),
                 document_date: None,
                 fields: vec![],
+                tags: vec![],
                 model: "spy@1".into(),
             })
         }
@@ -842,6 +880,24 @@ mod tests {
         }
     }
 
+    /// As [`StubTranscriber`], but its name is part of the fixture — the attempt
+    /// budget is keyed on which models have already looked.
+    struct NamedTranscriber {
+        name: &'static str,
+        text: String,
+    }
+
+    #[async_trait]
+    impl DocumentTranscriber for NamedTranscriber {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        async fn transcribe(&self, _parts: &[DocumentPart<'_>]) -> Result<String, ExtractionError> {
+            Ok(self.text.clone())
+        }
+    }
+
     async fn text_source_of(db: &Database, id: &str) -> Option<String> {
         queries::get_document(db, id)
             .await
@@ -931,10 +987,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_blank_page_is_recorded_rather_than_retried_forever() {
-        // ⛔ The starvation case. An empty transcription is a real answer, and
-        // appending it is what lifts text_source off `none`. Skipping it instead
-        // would re-read every blank page on every tick and starve the cap.
+    async fn the_same_model_never_re_reads_a_document_it_found_blank() {
+        // ⛔ The starvation case, and the shape of its fix. An empty transcription
+        // is a real answer and is still appended; what stops the re-read is the
+        // attempt history in the event log, not the document going invisible.
+        // Before, lifting text_source off `none` retired it on one blank answer.
         let db = test_db().await;
         let store = SurrealEventStore::new(db.clone());
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)]);
@@ -978,7 +1035,128 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(again.seen, 0);
+        assert_eq!(
+            (again.seen, again.read, again.already_read),
+            (1, 0, 1),
+            "still selected, but no second call to the model that already looked"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_model_may_read_a_document_the_first_found_blank() {
+        // 🔴 The retirement bug. `Qwen3-VL-235B` returned an empty transcription
+        // for a 441-word document without erroring; the old candidate rule then
+        // never offered it to anything again, and nothing said so.
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)]);
+        let writer = EventWriter::new(
+            Arc::new(store.clone()),
+            runner.clone(),
+            ALL_FEATURES.iter().copied().collect(),
+            "d1",
+        );
+        let blob_dir = tempfile::tempdir().unwrap();
+        let id = seed_scan(&store, &runner, blob_dir.path()).await;
+
+        let blind = NamedTranscriber {
+            name: "blind@1",
+            text: String::new(),
+        };
+        let first = enrich_text_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &blind,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!((first.seen, first.read), (1, 1));
+
+        let seeing = NamedTranscriber {
+            name: "seeing@1",
+            text: "441 words, as it turns out".into(),
+        };
+        let second = enrich_text_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &seeing,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (second.seen, second.read),
+            (1, 1),
+            "a different model gets the document the first one gave up on"
+        );
+        assert_eq!(
+            queries::document_text(&db, &id).await.unwrap().as_deref(),
+            Some("441 words, as it turns out")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_attempt_budget_stops_after_two_models() {
+        // The other half of the same rule: a document really can be blank, so the
+        // re-reading has to end somewhere rather than costing a call per tick.
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)]);
+        let writer = EventWriter::new(
+            Arc::new(store.clone()),
+            runner.clone(),
+            ALL_FEATURES.iter().copied().collect(),
+            "d1",
+        );
+        let blob_dir = tempfile::tempdir().unwrap();
+        seed_scan(&store, &runner, blob_dir.path()).await;
+
+        for name in ["blind@1", "blind@2"] {
+            let t = NamedTranscriber {
+                name,
+                text: String::new(),
+            };
+            let out = enrich_text_once(
+                &db,
+                &writer,
+                blob_dir.path(),
+                &t,
+                5,
+                &mut RetryHolds::default(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                (out.seen, out.read),
+                (1, 1),
+                "{name} should have been asked"
+            );
+        }
+
+        let third = NamedTranscriber {
+            name: "blind@3",
+            text: "too late".into(),
+        };
+        let out = enrich_text_once(
+            &db,
+            &writer,
+            blob_dir.path(),
+            &third,
+            5,
+            &mut RetryHolds::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (out.seen, out.read, out.already_read),
+            (1, 0, 1),
+            "MAX_TRANSCRIPTION_ATTEMPTS is spent, and the tick says so"
+        );
     }
 
     #[tokio::test]

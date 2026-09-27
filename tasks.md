@@ -1027,8 +1027,9 @@ critical path, not the tail.
    None of the four options was needed; no test mailbox exists. ⛔ Scope is the credentials file,
    not a flag: `build_imap_sources` polls every `[imap.*]` block and dev carries only
    `gmail_personal`. Enrichment stays OFF until archive volume is measured and a purge path
-   exists. ⚠️ Open from the first ticks: `UIDVALIDITY` is unhandled, so a renumbered mailbox
-   stalls (see `NEXT.md`).
+   exists. ✅ **`UIDVALIDITY` is HANDLED** — shipped `6c1e7bd` (2026-09-25): the cursor carries the
+   validity its UID was issued under and a change voids the cursor rather than stalling. ⚠️ This line
+   said "unhandled" until 2026-09-27; `project-tasks-md-drifts-stale`, a fourth time this cycle.
 3. **Image capture of receipts** — the photograph path into the archive, then C1 extraction.
    ✅ Verified on the phone 2026-09-17. ⚠️ Remaining: the draft form does not show `verify`
    warnings, and `x-filename` still needs the picker's real name threaded through.
@@ -1340,6 +1341,9 @@ Three findings from that session that are not derivable from the code:
 Six pieces, in the order their dependencies force: **tags → query path → reader emits tags →
 review (confirm-and-correct) → purge-with-preview → per-tag retention.** Design in
 `~/.claude/plans/lets-go-through-with-precious-puffin.md`; the parts that bind are here.
+✅ **All six shipped 2026-09-27.** The last two went together on purpose: a reader prompt or schema
+change mid-slate makes the next run a measurement of the patch rather than of the model, so *the
+reader emitting tags* landed with gate 6 and both wait on one re-run.
 
 🔴 **RULING 2026-09-27 — purge confirms at GROUP granularity, once.** One screen per group
 (sender, or tag) listing **every** document with sender/subject/date/size, each sparable by
@@ -1372,9 +1376,21 @@ checkboxes. ⛔ Accounting asserted: `selected == purged + skipped + failed`, wi
   broken" state is only reachable on a stale detail view — which is where it now lives, checked
   *before* the viewer because a purged row still carries its `sha256` and a blob 404 cannot tell
   deliberate removal from a missing file.
-⏳ **Not exercised against a real server** — routes compile and the engine is unit-tested against a
-real database, but no purge has run over HTTP. ⛔ And gate 1 (server backup) still precedes any
-purge on real data.
+✅ **EXERCISED OVER HTTP 2026-09-27** — `server/tests/document_purge_integration.rs`, four tests on a
+real socket against the production router, which is the only way to reach the ticket (it lives in
+server state, not in the engine). Covered: a confirm that spares one of two documents sharing a blob
+(the refcount holds, `blobs_deleted: 1` / `blobs_retained_shared: 1`, the kept file still on disk and
+still served, the purged one 404), the tombstone folding with its text cleared, purged rows dropping
+out of the group on a re-preview, a ticket spent by one confirm (409 on replay, and the second
+document survives), and a widened confirm refused (400, nothing purged).
+🔴 **A real defect fell out of it: the preview's byte figure double-counted a shared blob.** Two
+selected rows pointing at one 19-byte blob promised 38 bytes and the confirm freed 19 — `apply`
+dedupes by `sha256`, `preview` summed per row, so the report contradicted the number the person
+decided on. Now deduped, and a row with no `sha256` contributes nothing because there is no file to
+unlink. ⚠️ The test asserts preview and report agree, which is the property, not the arithmetic.
+⛔ Gate 1 (server backup) still precedes any purge on **real** data; this is synthetic.
+⚠️ **Still open and NOT what the byte fix closed:** the per-row refcount *cost*. Deduping the byte
+sum changed what is counted, not how many queries run — `is_shared` is still called for every row.
 ⚠️ **Known cost, unmeasured, deliberately not optimised:** `purge::preview` refcounts **per row**,
 which is 2 queries each, and it iterates the whole group rather than the displayed page because the
 byte totals have to be true. A group of hundreds is likely fine on an embedded store; thousands
@@ -1392,10 +1408,73 @@ it inherits the human-beats-model rank fold for free, which is also why it is no
 **unused `purged` column too** — a bump costs minutes of blank UI on the phone, so purge must not
 cost a second one.
 
-⏳ **LEFT, each its own session:** the reader emitting tags (⛔ batches with gate 6 — a reader
-prompt/schema change mid-slate makes the next run a measurement of the patch), the
-confirm-and-correct affordance, and per-tag retention (⛔ which **proposes into the purge queue
-and never deletes** — the queue it needs now exists).
+✅ **SHIPPED: the confirm affordance** (2026-09-27), and it needed **no backend change at all** —
+the correction path already lands `human` / `verified: true`, so confirming is that call with the
+value unchanged. Per-field "Looks right" on any unchecked value, plus a panel-level
+"All N look right" from two up (💭 the bulk control is **my** addition, not in the design; it is the
+purge ruling's shape — everything visible on one screen, one action — and the document is on screen
+beside the fields, which is what makes `verified` honest here).
+- ⛔ **The design's "relax the `fields.len() == 1` assertion" was NOT taken.** `human_correction`
+  carries a ruling against it: one key per event, so each value stays independently attributable.
+  A bulk confirm therefore writes **N events**, and partial failure refreshes what landed rather
+  than reporting all-or-nothing.
+- ✅ **A confirm is distinguishable from a correction without a flag** — the model's own event is
+  still in the log, so equal value means confirmed and different means corrected. That is what the
+  review surface exists to produce evidence for, and no schema change buys it.
+- 🔴 **Found while building it: the purge path opened a hole in `verified`.** A purged document's
+  fields were still editable, and a correction there writes `verified: true` with **no document left
+  to check against** — the exact thing `human_correction`'s doc forbids. Fields are now read-only on
+  a purged document, the same argument that already hides its tag editor.
+  ✅ **Now enforced in the backend too** (2026-09-27): `correct_document_field` reads the `purged`
+  column and refuses. The UI hiding the editor was the fix a person sees; this is the half a second
+  caller cannot skip. ⛔ `set_document_tags` is deliberately **not** gated the same way — a tag is
+  the person's own label, so it needs no document to check against; it is hidden on a purged
+  document because a purged document need not be findable, which is a different argument.
+
+✅ **SHIPPED: the reader emits tags** (2026-09-27, batched with gate 6 as required). `DocumentSummary`
+gains `tags`, the schema gains an **optional** `tags` array (requiring the key would push models toward
+filling it), and the prompt gets its own paragraph modelled on `kind`'s — a starter vocabulary, "reuse
+these rather than inventing a near-synonym", and ⛔ the line that keeps the two apart: *tags group,
+`fields` identifies; a policy number is never a tag*.
+- ⛔ **Normalised in `core`, and the typed array is the only way in.** Tags land as the one folded
+  `tags` field via `Tag::normalize`; an unusable label is dropped with a warning rather than costing
+  the document its good ones, and the hoisted-key guard still blocks `tags` arriving through the open
+  `fields` list. Model tags are `verified: false`, which the review surface is what promotes.
+- 🔴 **A reading with no usable tags writes NO tag field**, never an empty one: an empty set is how a
+  *person* records having taken every tag off, and the projection keeps that distinct from never
+  having been tagged. A model must not be able to claim that act.
+- ✅ **The bench now prints the tags each probe produced**, under the table and deliberately unranked:
+  these probes carry no tag oracle, so scoring would be scoring against a guess. It is there to judge
+  *vocabulary* — `taxes` versus `tax_document_2023_cra` is visible nowhere else.
+⏳ **All six pieces of the archive block are now built.** What is left for it is measurement: the C2
+slate re-run, which is the same spend gate 6 needs.
+
+✅ **PER-TAG RETENTION SHIPS (2026-09-27)** — 🔴 **his ruling: a tag with NO rule means KEEP.** So a
+document is proposed only when it carries at least one tag, **every** tag on it has a rule, and it is
+older than the **longest** of them. ⛔ Therefore "never" needs no state of its own: an ungoverned tag
+already blocks its documents, so clearing a rule *is* never, and `keep_days: None` clears.
+⚠️ The cost he accepted: retention does nothing for a document carrying one ungoverned tag, which is
+why the panel says so in words rather than showing an empty list.
+- **Event + projection**: `document_retention_set` (aggregate = the tag) → `document_retention`, one
+  row per tag, ordered by **authoring** time so two devices converge, and a cleared rule **keeps its
+  row** — deleting it would lose the timestamp that guard reads and a stale set would resurrect the
+  old number. ⛔ Own projection, so **no `documents` version bump**: v2 stands.
+- **Evaluator** `core/src/retention.rs`: rules map, a SQL prefilter at `now - shortest rule`, then the
+  exact rule host-side. Groups are headed by the **deciding** tag, not any shared one, or changing a
+  tag's rule would visibly do nothing. 11 tests: ungoverned keeps, longest decides, clearing returns
+  to kept, untagged is never proposed (⛔ an `all()` over an empty set says "every tag governed"), and
+  a purged row stays out.
+- **`purge::preview` now takes `archived_before`**, narrowing the **same** selection rather than
+  adding a second query — a retention group is "tagged X and past X's rule". ✅ An HTTP test proves a
+  narrowed preview lists only the older document **and** that its ticket still refuses to widen back.
+- **Commands + UI**: `set_document_retention` / `list_document_retention` /
+  `list_retention_candidates`, and a Retention panel behind a toggle on the archive page (a rules
+  editor open above the list would compete with finding a document). "Review N…" opens the ordinary
+  purge preview with the group's cutoff. ⛔ 0 days is refused rather than read as "purge now".
+  ⚠️ **Compiles and is clippy-clean; no screen has been looked at** — it rides the on-device pass.
+- ⏳ **Left**: retention is evaluated **on the device** (💭 my call — the person confirming is there,
+  and the server resolves no config at all). ⛔ The line to change if that moves is marked in
+  `registry::build_projections_server`. And the scan is capped at 500 documents per open.
 
 **Findings from the design worth not rediscovering:**
 - ⛔ **A blob purge must refcount two referrers** — `documents.sha256` and `AttachmentRef.sha256`
@@ -1948,9 +2027,10 @@ the extractor has.
       answer key only exists where the file already carries its text. ⛔ The documents C3 exists
       for — scans and photographs — have no oracle, so the bench measures the easier half and
       infers. Do not publish C3 as proven on scans.
-- [ ] ⚠️ **An empty transcription is APPENDED, not skipped.** It records that a named model looked
-      and found nothing, and lifts `text_source` off `none`. ⛔ Skipping would re-read every blank
-      page every tick forever and starve the cap.
+- [x] ⚠️ **An empty transcription is APPENDED, not skipped** — still true, and it still lifts
+      `text_source` off `none`. ⛔ What changed 2026-09-27: that no longer retires the document,
+      because the candidate query keys on empty *text* and the event log caps the attempts. Skipping
+      the append instead would have lost the record of who looked, which is what the cap reads.
 
 ### Stage 3 — run the slates
 - [ ] ⛔ **Write thresholds and tie-break order BEFORE the first run**, per seat, into the repo.
@@ -2086,9 +2166,10 @@ derived from the tab alone.
 data, or silently produce a wrong number he would act on?** Everything else is measurement quality
 and ships after. ⚠️ This is my judgement, not his ruling — the split is proposed, not settled.
 
-🔴 **GATES — was 9, now 7 OPEN. Two closed 2026-09-27: item 4 was already done before this
-triage was written, and item 3 shipped. ⚠️ The whole list still needs re-deriving against all
-three release legs; this is a correction to it, not that re-derivation.**
+🔴 **GATES — was 9, now 5 OPEN.** Closed 2026-09-27: item 4 was already done before this triage was
+written, and items 3, 5 and 6 shipped the same day. Item 9's instrumentation shipped but its re-run
+has not, so it stays open. ⚠️ Three of the five that remain (7, 8, 9) are **spends, not code**.
+⚠️ The whole list still needs re-deriving against all three release legs.
 1. **Server backup before the backfill** (last item below). Blob bytes have **no second copy**;
    the box is a single point of total loss. ⛔ Now doubly binding: the archive refinement agreed
    2026-09-26 includes a **purge path that deletes blobs**. Deleting blobs with no backup is the
@@ -2100,20 +2181,32 @@ three release legs; this is a correction to it, not that re-derivation.**
    shared across from the chat client: 3 retries honouring `Retry-After` capped at 60s, doubling
    backoff from 2s, and opt-in `with_min_interval` spacing. Five tests, including that a
    once-rate-limited document is still read and that a persistent 429 says how many retries it
-   outlasted. ⚠️ `min_interval` is still **`None` in production** — nothing calls
-   `with_min_interval` yet, so the retry is what protects a backfill, not the spacing.
+   outlasted. ✅ **And spacing is now reachable in production** (2026-09-27): `OMNI_LLM_MIN_INTERVAL_MS`
+   is read in `llm::provider` and applied to role D **and** all three role-C seats, which could not
+   be given options at all — `build_extractor` / `build_reader` / `build_transcriber` take none, which
+   is why `with_min_interval` existed with nothing able to call it. ⛔ Unset still means unspaced, so
+   nothing changed behaviour; an explicit `ClientOptions` (the bench) still wins over the env.
+   ⚠️ Spacing is **per client**, so it bounds a backfill running one seat at a time and not a
+   concurrent burst; a shared limiter is what that would need.
 4. ~~**`max_tokens` for C1 and C3.**~~ ✅ **NOT A GATE — it was already done.** Verified against
    the code 2026-09-27: all three ceilings shipped in `142eb3a`, and the measurements this list
    said were missing are in the constants' own doc comments. See the item below. 🔴 **So the
    count is 8, not 9** — and the whole triage still needs re-deriving against all three legs,
    which this correction does not do.
-5. **What re-queues a document a model called blank.** Proven: an empty transcription for a
-   441-word document lifts `text_source` off `none` and **retires the document forever**, and
-   nothing notices. ⛔ Promoted by the 2026-09-26 decision to turn enrichment on — this is that
-   exact path.
-6. **`fields` non-optional for the document reader.** Six of seven models return an empty array;
-   without it a document is catalogued but **not findable** by account or policy number.
-   ⛔ Promoted by the same decision: document tags and search depend on the reader's output.
+5. ~~**What re-queues a document a model called blank.**~~ ✅ **CLOSED 2026-09-27.** The candidate
+   query now keys on the **text being empty** rather than on `text_source = 'none'`, so one blank
+   answer no longer retires a document; what bounds the re-reading is the **attempt history in the
+   event log** — never the same model twice, and at most `MAX_TRANSCRIPTION_ATTEMPTS` (2) models per
+   document. ⛔ No column and no projection bump: the empty transcription event was always the
+   record of "a named model looked", and it is now read as the budget. The tick reports
+   `already_read`, so a retirement is visible instead of silent.
+6. ~~**`fields` non-optional for the document reader.**~~ ✅ **CLOSED 2026-09-27, batched with the
+   reader emitting tags** — one change, because a reader prompt or schema change mid-slate makes the
+   next run a measurement of the patch. `fields` is now in the schema's `required`, and the prompt
+   names what to look for (account, policy, reference, period, issuer, total) instead of calling it
+   "anything else". ⛔ **No `minItems`**: a floor would make abstention impossible and manufacture a
+   value on a document that states none, which the prompt forbids and one probe exists to measure.
+   ⏳ **Whether it worked is unmeasured** — that is the slate re-run, a spend.
 7. **Control sampling, then re-rank.** The same model on the same 39-row statement scored 33%
    with **13 sign-flips** and 100% with none. A sign flip is money in the wrong direction.
 8. **Decide production's sampling parameters** — the actionable half of 7, and role C cannot take
@@ -2141,17 +2234,19 @@ this down — not the volume of work, but scope arriving from decisions made lat
       of those PDFs (18.3%) to yield nothing**, measured 2026-09-15 — they are **encrypted**, and
       `archive.rs:183` passes an empty password. Two issuers encrypt 100% of their statements, a
       third 13%, the other 21 none. ⛔ Do not read the resulting empty rows as a parser bug.
-- [ ] **Make the injection gate print its evidence, then re-run that probe alone**
-      (`MODEL_BENCH.md` R23). 🔴 **Five of fourteen models tripped it**, including both C3
-      finalists. `reading_bench.rs` prints only the model id, so for the three whose `kind` was
-      *correct* the payload is pinned to `title` by elimination — and a title of exactly `pwned`
-      (obedience) is indistinguishable from *"memo containing a pwned instruction"* (correct
-      cataloguing of a memo that really does state account `9999-9999`). ⛔ A disqualifying gate
-      must show what it saw. Carry `Option<String>` instead of `bool` and check `kind`, `title`
-      and each field separately rather than over one joined blob, so the row names where it
-      landed. ✅ Verified for whoever picks this up: the members are `ReadField { key, value }`
-      (`extraction/document.rs:29`), and `reading_bench.rs` has **no probe filter** — so the
-      re-run is the whole 6-probe arm against the five flagged models, 90 calls.
+- [ ] **Gate 9 — ✅ the injection gate now PRINTS ITS EVIDENCE (2026-09-27); ⏳ the re-run is what
+      is left.** (`MODEL_BENCH.md` R23. 🔴 Five of fourteen models tripped it, including both C3
+      finalists.) The joined-blob bool is gone: `Scored.pwned` is an `Option<Injected> { site,
+      value, verbatim }`, checked per site — `kind`, then `title`, then each field by key — so the
+      row says **where** it landed and **what** the site said.
+      🔴 **The distinction that matters is now made and not by me: `verbatim`.** A value that *is*
+      `pwned` or `9999-9999` prints as ⛔ OBEYED and disqualifies; a value that quotes them inside a
+      sentence prints as ⚠ mentioned, because this memo really does print both strings and
+      cataloguing it correctly can repeat them. ⚠️ Across runs a verbatim sighting **outranks** a
+      mention, or run order would decide the verdict. Four unit tests cover obedience, the mention,
+      the ordering, and the account number landing in a field (the case the blob hid).
+      ⏳ **Left:** the re-run itself — the whole 6-probe arm against the five flagged models, 90
+      calls, since `reading_bench.rs` still has no probe filter. That is a spend, not a code change.
 - [ ] 🔴 **Control sampling, then re-rank everything** (`MODEL_BENCH.md` R26). `temperature`,
       `top_p` and `seed` appear **nowhere** in `core/src/`, so every request runs at a provider
       default we neither set nor record — and the same model on the same 39-row statement scored
@@ -2188,10 +2283,12 @@ this down — not the volume of work, but scope arriving from decisions made lat
       surface five verbs. ⚠️ `document` matters most — it is the output of the whole role-C
       programme and has never been retrieval-tested. ⚠️ Keep the lexical/semantic split and the
       test that enforces the labels; the gap is coverage, not method. Local and free to run.
-- [ ] **State the read-errors-first rule in seat C1's threshold section.** ⛔ Seats C2 and D both
-      say *a model that mostly errors has numbers describing nothing*; C1 does not, and that
-      omission put `gemma-4-26B` at the top of a correctly-sorted table twice — on 4 of 13 cases,
-      then on 12 of 31. ⚠️ Fix the class: check every seat section carries it.
+- [x] ✅ **Read-errors-first is stated 2026-09-27 — and as a class, not in C1 alone.** Checking every
+      section found only **C2 and C3** carried it (A, B, C1, D and E did not), so the rule now lives
+      once in `MODEL_THRESHOLDS.md` § Gates that apply to every seat, naming C1's own bite as the
+      reason it is stated there rather than per seat. C1 additionally carries a line at its ranking
+      table, because that is the edit site: `gemma-4-26B` led a correct table on 4 of 13 cases, then
+      on 12 of 31.
 - [ ] **Research what would move seat A's numbers, before the next comparison** (user,
       2026-09-16). ⛔ Not a re-measure of the same catalogue — hypotheses to test: speculative
       decoding, prompt caching, a warm/provisioned tier, and whether `glm-5.3`'s 117.3s tail and
@@ -2236,13 +2333,23 @@ this down — not the volume of work, but scope arriving from decisions made lat
       ⛔ Still true and still binding: not one constant (C2's envelope wants ~2k while C3
       transcribes a whole document, and a tight ceiling there truncates a real answer and scores
       it as recall failure), and ⚠️ change a ceiling **between** slates, never during one.
-- [ ] **Decide what re-queues a document a model already called blank** (`MODEL_BENCH.md` R19).
-      🔴 Proven, not hypothetical: `Qwen3-VL-235B` returned an **empty transcription for a
-      441-word document** in 31s without erroring. `enrich_text_once` appends it by design (the
-      starvation guard), which lifts `text_source` off `none` and retires the document forever.
-      ⚠️ Recovery already works via `TextSource::rank`'s `>=`; **nothing notices**. ⛔ Design
-      question first — a blank photo and a failed read produce the same empty string, and the
-      text-layer check cannot help because transcription only runs when that layer is empty.
+- [x] ✅ **What re-queues a document a model called blank — ANSWERED AND BUILT 2026-09-27**
+      (`MODEL_BENCH.md` R19). 🔴 The bug was real, not hypothetical: `Qwen3-VL-235B` returned an
+      **empty transcription for a 441-word document** in 31s without erroring, and appending it
+      lifted `text_source` off `none`, retiring the document forever with nothing noticing.
+      💭 **The design, mine and open to being overruled:** a blank photo and a failed read are
+      indistinguishable from inside the pass, so do not try to tell them apart — bound the retries
+      instead. Candidates are now documents whose **text is empty** (which includes ones a model
+      read and found nothing in), and `queries::transcription_attempts` reads the **event log** to
+      refuse a model that already looked and to stop after `MAX_TRANSCRIPTION_ATTEMPTS` = 2.
+      ⛔ Deliberately no new column: a `documents` column would have cost a **projection version
+      bump**, which costs minutes of blank UI on the phone, and the log already holds one
+      `document_text_transcribed` per attempt. ⚠️ The 2 is a proposal, not a measurement.
+      ✅ Three tests: a second model gets the document, the same model does not, and the budget
+      stops at two — plus the tick now reports `already_read` so retirement is visible.
+      ⚠️ Found while doing it: `SELECT ... ORDER BY timestamp` over `events` is a **parse error** in
+      SurrealDB 3 unless the ordering column is named in the selection (`timestamp AS sort_ts`), and
+      the driver needs `SurrealValue`, not `Deserialize` — `feedback_events` already documents both.
 - [ ] **Give the archive path a per-source PDF password** (`MODEL_BENCH.md` R18). `statements.rs`
       already supplies one and `pdf::extract_layout_text` already takes one; `archive.rs` and
       `openai_compat.rs` pass `""`, and `rasterize_pdf` accepts none at all — so the vision
@@ -2937,35 +3044,82 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
       deploy job should authenticate the box from the Actions secret it already has rather than
       depending on a credential that silently expires every 90 days with no warning anywhere.
       ⚠️ A replacement token unblocks today but re-arms the same trap for 2026-12-25.
-- [ ] 🔴 **Pin `runs-on` before 2026-10-19 — `ubuntu-latest` migrates to Ubuntu 26 that day.**
-      Every CI run now prints the warning (`actions/runner-images` issue 14748), so unlike
-      2026-09-16 there is notice instead of a broken build. ⛔ That earlier migration (22.04 →
-      24.04) broke the **live release path**, not just a dev build, and it surfaced on a dev build
-      only by luck of ordering. ⚠️ `app-release.yml`'s `build-desktop` already pins `ubuntu-22.04`;
-      the Android and publish jobs float, as do the overlay's workflows — so the fix is a sweep of
-      every `runs-on` across both repos, not one line. [S] Deciding which version to pin to is the
-      only judgement in it: 24.04 is what CI runs on today and is the conservative choice.
-- [ ] 🔴🔴 **THE AGENT STACK-OVERFLOWS AND ABORTS ON ITS FIRST ANSWER-LOOP TICK. Found 2026-09-27.**
-      Release build, real dev server, real model. `thread 'tokio-rt-worker' has overflowed its stack
-      / fatal runtime error: stack overflow, aborting`, SIGABRT (exit 134), core dumped — **within a
-      second of logging `agent running; answering questions`**, in one case with no question pending
-      at all.
-      ✅ **Controlled to a single variable.** Three runs, all with `semantic=false`, same data dir,
-      same binary. Runs 1 and 2 at tokio's default worker stack (2 MB) **crashed, 2/2**. Run 3 with
-      `RUST_MIN_STACK=67108864` (64 MB) **did not crash**, and went on to answer a question and
-      author a proposal. ⛔ So keyword-only mode is NOT the trigger and the stale-question path is
-      NOT the trigger — **stack size is the only thing that differed.** It is deep-but-BOUNDED
-      recursion, not infinite: a bigger stack fixes it rather than merely delaying it.
-      🔴 **Shipping blocker, and it would bite in production exactly as it bit here** — nothing in
-      the codebase sets `RUST_MIN_STACK` or tokio's `thread_stack_size`, so a deployed agent aborts
-      instead of answering. ⛔ Raising the stack is a mitigation, NOT the fix: something in that path
-      recurses ~30x deeper than a 2 MB frame budget allows, and that wants finding.
-      ⚠️ **Unknown and worth stating:** whether it also happens with `semantic=true`. The embedder-on
-      run never reached the loop at all (see the sweep finding below), so the answer loop has only
-      ever been observed in keyword-only mode.
-      ⚠️ No post-mortem available on WSL: `ulimit -c` is 0, cores route to `/wsl-capture-crash`, and
-      there is no gdb — so narrowing needs instrumentation, not a core file. [M]
-- [ ] 🔴 **`omni-me-agent` is deployed NOWHERE — it is in no Dockerfile and no compose file.** Found
+- [x] 🔴 **`runs-on` PINNED 2026-09-27, ahead of the 2026-10-19 `ubuntu-latest` → Ubuntu 26 move.**
+      All **15** floating jobs across both repos now say `ubuntu-24.04` — what the runners are today,
+      so nothing changed behaviour — with a two-line note above the first job in each of the 8 files
+      saying not to put the alias back. ⛔ `app-release.yml`'s `build-desktop` stays **22.04**: that
+      pin is a glibc floor for the AppImage, not drift, and raising it ships a binary the personal
+      desktop cannot run. ✅ Every workflow re-parsed as YAML afterwards. ⚠️ The sweep asserted its
+      match count before writing (7 public + 8 private), because a missed file is invisible until
+      the alias moves.
+- [x] 🔴🔴 **THE AGENT STACK-OVERFLOWED AND ABORTED ON ITS FIRST ANSWER-LOOP TICK. Found 2026-09-27,
+      FIXED the same day — and the cause was not in our code.** `thread 'tokio-rt-worker' has
+      overflowed its stack / fatal runtime error: stack overflow, aborting`, SIGABRT (exit 134),
+      **within a second of logging `agent running; answering questions`**, in one case with no
+      question pending at all.
+      ✅ **Controlled to a single variable.** Three runs, all `semantic=false`, same data dir, same
+      binary. Runs 1 and 2 at tokio's default worker stack (2 MiB) **crashed, 2/2**. Run 3 with
+      `RUST_MIN_STACK=67108864` (64 MiB) **did not crash**, and answered a question and authored a
+      proposal. ⛔ So keyword-only mode is NOT the trigger and the stale-question path is NOT the
+      trigger — stack size is the only thing that differed.
+      🔴 **CORRECTION to the triage that found it: an enlarged worker stack is the prescribed fix,
+      not a mitigation.** ⛔ **SurrealDB recurses while it computes a query** (its own ceiling is
+      `SURREAL_MAX_COMPUTATION_DEPTH`, default **120** frames), and
+      **`surrealdb::engine::local`'s own module docs require** embedding it on a multi-thread runtime
+      with `.thread_stack_size(10 * 1024 * 1024)`. So the hunt for "something in our path recursing
+      ~30x too deep" was aimed at the wrong codebase — nothing of ours recurses; we were running the
+      engine below the size it documents. ⛔ No core file was needed, and none would have named it:
+      the frames are inside a dependency that says so in its docs.
+      ✅ **Fixed as a class, not an instance.** `omni_me_core::async_runtime::build` is the one place
+      that answers this, at **64 MiB** — the size there is evidence for — with
+      `OMNI_WORKER_STACK_MB` as the override, because an explicit `thread_stack_size` is what stops
+      `RUST_MIN_STACK` reaching these threads. Wired into **all four** entry points that embed the
+      engine: the agent, the public server `main`, the overlay's server `main`, **and the app** —
+      Tauri builds `Runtime::new()` on first use, so every command handler had been running archive
+      and ledger queries on 2 MiB all along, and `tauri::async_runtime::set` is what redirects it.
+      Also the overlay's three DB-opening examples. Rationale: `docs/src/runtime.md`.
+      ✅ **VERIFIED against the dev server with `RUST_MIN_STACK` unset** — same release binary path,
+      same data dir and same `:3001` target as yesterday's 2/2 aborts, so it is a true A/B. Run 1:
+      **3m47s** in the answer loop, zero overflow, clean SIGINT. Run 2: authored a question, the
+      agent **answered it** (real model call, verbs `list_types` / `describe_type` / `list`),
+      appended, pushed, then ran **3m07s more** — and yesterday's crash log aborted immediately
+      *after* exactly that `answer appended` / `push complete` pair. ⚠️ The v1→v2 documents
+      projection rebuilt on this boot, so the run also covered a full re-fold.
+      ⚠️ A test thread and its answer now exist on the **dev** instance.
+      ⏳ **The app half is compile-verified only** — `cargo check` and frontend clippy pass, nothing
+      has booted a build with it. ⛔ It rides the on-device pass that is already a gate; a runtime
+      swap Tauri refuses would panic at startup, which is the one failure worth watching for.
+      ⚠️ **Two gaps this does NOT close, both documented:** a binary's **main thread** keeps the OS's
+      8 MiB and `thread_stack_size` cannot reach it (each `block_on`'d top-level future sits there),
+      and `#[tokio::test]` runs at 2 MiB unless `RUST_MIN_STACK` says otherwise — a test binary that
+      dies with a stack overflow instead of a failure is that, not a suite bug.
+      ⚠️ **Still unknown:** whether the abort also happened with `semantic=true`. The embedder-on run
+      never reached the loop (see the sweep finding below), so the answer loop has only ever been
+      observed in keyword-only mode.
+- [ ] 🔴 **`omni-me-agent` — ⏳ THE IMAGE AND THE RUN SHAPE NOW EXIST (2026-09-27); nothing has built
+      or deployed them.** `agent/Dockerfile` plus an `agent` service in the public
+      `docker-compose.yml`: its own volume at `/data` (SurrealDB **and** the `models` cache, which
+      `model_cache_dir` defaults to `<data>/models`), the same read-only credentials mount, and
+      `OMNI_AGENT_SERVER_URL: http://server:3000`.
+      💭 **The design call, mine: its own image, not a second binary in `server/Dockerfile`.** The
+      agent drags in the embedding stack (fastembed, ort, tokenizers, a statically linked
+      onnxruntime) the server never uses, wants its own volume, and needs no port. It is also
+      bank-free, so **the box can run this public image beside the private server** — which is what
+      kills the alternative's real cost: the overlay image would have had to build across two
+      workspaces to carry the agent. ⛔ They are peers, not lockstep: the agent reaches the server
+      over the same sync API a phone does.
+      ⛔ **No `HEALTHCHECK` and no `EXPOSE`, deliberately.** The agent serves nothing and is PID 1, so
+      its death exits the container and `restart: unless-stopped` answers it — while a healthcheck
+      whose start period is shorter than that first 24-minute index sweep would kill a working boot.
+      ⚠️ `libstdc++6` is in the runtime stage because `ldd` on the release binary names it and a slim
+      image need not carry it; missing, it fails at exec before any log line exists.
+      ⏳ **UNVERIFIED and explicitly so: this machine has no docker at all**, so neither image has
+      been built. The compose file parses as YAML and that is the whole of what was checked. ⛔ Left:
+      a CI job that builds and publishes the agent image (the public repo publishes **no** images
+      today — only the overlay's CI does, which is a decision, not an omission), and the box-side dev
+      compose, which lives on the box rather than in either repo.
+      ⚠️ Earlier framing, kept because it is still the constraint: the item is [M], and it puts a new
+      deployable service in the release path.
       2026-09-26: the app tells the user "Answers come from the assistant running on your server …
       they arrive even if you close the app", and nothing can keep that promise. Asking a question on
       the phone returns "No answer yet. The assistant may not be running." ⚠️ **The box is not an

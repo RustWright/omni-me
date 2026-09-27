@@ -227,6 +227,11 @@ Reads statements and receipts. Feeds the ledger, so a wrong figure becomes a wro
 | **Tie-break** | cost per document |
 | **Publish unmeasured if** | candidates tie on sign-flips and misreads |
 
+⚠️ **Read the answered-case count before this ranking.** It is the every-seat rule below, and this
+is the seat where its absence cost twice: `gemma-4-26B` led a correctly-sorted table on 4 of 13
+cases, then on 12 of 31. ⛔ A ranking computed over a model's own successful subset is not a
+comparison with a model that answered everything.
+
 **Why sign-flips rank above misreads.** A misread figure is wrong and looks wrong next to the
 document. A sign-flip is *arithmetically plausible* — it balances, it passes `verify`, and it
 silently inverts an expense into income. The instrument counts them separately for this reason.
@@ -463,3 +468,9 @@ and infers. ⛔ Do not publish a C3 seat as proven on scans.
 - ⚠️ **Screening runs on OpenRouter pinned to DeepInfra; the deciding run goes direct.** Screen
   generously — wide slate, repeat runs, more cases. Spending those credits is the goal.
 - ⛔ **A cost number that does not reconcile is not a cost number** (R11, still open).
+- ⚠️ **Read the error count before the ranking — every seat, every run.** A model that mostly
+  errored has numbers describing only the cases it answered, and every table here sorts correctly
+  regardless, so nothing about the output looks wrong. ⛔ Stated once, here, because stating it
+  per seat is exactly how it went missing: C2 and C3 carried the rule, C1 did not, and
+  `gemma-4-26B` reached the top of a correctly-sorted C1 table **twice** — on 4 of 13 cases, then
+  on 12 of 31.

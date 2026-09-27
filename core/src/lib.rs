@@ -2,6 +2,7 @@ pub mod accounts;
 pub mod approvals;
 pub mod archive;
 pub mod assistant;
+pub mod async_runtime;
 pub mod auto_close;
 #[cfg(feature = "auto-import")]
 pub mod auto_import;
@@ -40,6 +41,7 @@ pub mod query;
 pub mod reconciliation;
 pub mod record_type;
 pub mod recurring;
+pub mod retention;
 pub mod routines;
 pub mod runtime;
 pub mod statement;

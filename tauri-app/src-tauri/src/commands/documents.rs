@@ -15,7 +15,8 @@ use tauri::State;
 use omni_me_core::config::Feature;
 use omni_me_core::db::queries::{self, DocumentRow};
 use omni_me_core::document_fields;
-use omni_me_core::events::{NewEvent, normalize_tag_set};
+use omni_me_core::events::{DocumentRetentionSetPayload, NewEvent, normalize_tag_set};
+use omni_me_core::retention;
 
 use super::shared::{append_new_and_apply, require_feature};
 use crate::AppState;
@@ -181,11 +182,139 @@ pub async fn correct_document_field(
         return Err("a correction needs a document".to_string());
     }
 
+    // ⛔ Refused on a purged document. `verified: true` claims a person checked
+    // the value against the document, and its bytes are gone — so here the flag
+    // could only ever be a lie. The archive page hides the editor; this is the
+    // half a second caller cannot skip.
+    let purged = queries::get_document(&state.db, &document_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .and_then(|row| row.purged)
+        .unwrap_or(false);
+    if purged {
+        return Err("this document was purged, so its values can no longer be checked".to_string());
+    }
+
     tracing::info!(document_id = %document_id, key = %key, "correct_document_field");
     let payload = document_fields::human_correction(&document_id, key, &value);
     let event = NewEvent::document_fields_extracted(state.device_id.clone(), &payload)
         .map_err(|e| e.to_string())?;
     append_new_and_apply(&state, event).await.map(|_| ())
+}
+
+/// Set, change or clear how long a tag's documents are kept.
+///
+/// The rule this feeds, and why `keep_days: None` means kept rather than kept for
+/// zero days: `omni_me_core::retention`.
+///
+/// Normalized here rather than in the UI, for [`set_document_tags`]' reason: the
+/// rule is keyed by the stored spelling of the tag, and a rule keyed differently
+/// from the tag is invisible rather than wrong.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_document_retention(
+    state: State<'_, AppState>,
+    tag: String,
+    keep_days: Option<u32>,
+) -> Result<(), String> {
+    require_feature(&state, Feature::Documents)?;
+
+    let normalized = normalize_tag_set(std::slice::from_ref(&tag))?;
+    let tag = normalized
+        .first()
+        .ok_or_else(|| "a retention rule needs a tag".to_string())?
+        .to_string();
+    if keep_days == Some(0) {
+        // ⛔ Refused rather than treated as "purge immediately". Zero is what a
+        // slider reaches by accident, and the thing it would mean is the most
+        // destructive reading available.
+        return Err("a retention rule of 0 days is not allowed; clear it instead".to_string());
+    }
+
+    tracing::info!(tag = %tag, ?keep_days, "set_document_retention");
+    let payload = DocumentRetentionSetPayload { tag, keep_days };
+    let event = NewEvent::document_retention_set(state.device_id.clone(), &payload)
+        .map_err(|e| e.to_string())?;
+    append_new_and_apply(&state, event).await.map(|_| ())
+}
+
+/// Every tag with a live rule, and the days it keeps for.
+///
+/// ⚠️ Tags absent from this list are **kept** — the surface has to say so.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_document_retention(
+    state: State<'_, AppState>,
+) -> Result<Vec<RetentionRule>, String> {
+    require_feature(&state, Feature::Documents)?;
+    let mut rules: Vec<RetentionRule> = retention::rules(&state.db)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|(tag, keep_days)| RetentionRule { tag, keep_days })
+        .collect();
+    rules.sort_by(|a, b| a.tag.cmp(&b.tag));
+    Ok(rules)
+}
+
+/// One tag's rule, as a surface reads it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RetentionRule {
+    pub tag: String,
+    pub keep_days: u32,
+}
+
+/// Documents past their retention, grouped by the tag whose rule decided it.
+///
+/// ⛔ Proposes only; the purge confirm remains the only thing that removes anything.
+/// Each group's `cutoff` goes to [`preview_document_purge`] unchanged, or the screen
+/// and the server would disagree about the set.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_retention_candidates(
+    state: State<'_, AppState>,
+) -> Result<Vec<RetentionGroup>, String> {
+    require_feature(&state, Feature::Documents)?;
+
+    let now = chrono::Utc::now();
+    let rules = retention::rules(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    let candidates = retention::candidates(&state.db, now, RETENTION_SCAN_LIMIT)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(retention::group_by_deciding_tag(&candidates, &rules)
+        .into_iter()
+        .map(|(tag, members)| {
+            let keep_days = members.first().map(|m| m.keep_days).unwrap_or_default();
+            RetentionGroup {
+                tag,
+                keep_days,
+                count: members.len(),
+                oldest_archived_at: members.first().map(|m| m.archived_at.clone()),
+                // The instant the server must filter on, computed from the same
+                // clock and rule that selected these — never re-derived there.
+                cutoff: (now - chrono::Duration::days(i64::from(keep_days))).to_rfc3339(),
+            }
+        })
+        .collect())
+}
+
+/// How many documents one retention scan looks at.
+///
+/// ⚠️ A page, not the archive: the scan is a read of every document older than the
+/// shortest rule, and this is a screen a person opened. A group larger than one
+/// confirm can list is already capped by `purge::MAX_PREVIEW_ITEMS`.
+const RETENTION_SCAN_LIMIT: u32 = 500;
+
+/// A group retention proposes, as a surface reads it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RetentionGroup {
+    /// The tag whose rule decided these — the longest one they carry.
+    pub tag: String,
+    pub keep_days: u32,
+    pub count: usize,
+    pub oldest_archived_at: Option<String>,
+    /// RFC3339. ⛔ Hand this to the purge preview unchanged.
+    pub cutoff: String,
 }
 
 /// `POST /documents/purge/preview` — what purging this group would remove.
@@ -199,6 +328,8 @@ pub async fn correct_document_field(
 pub async fn preview_document_purge(
     state: State<'_, AppState>,
     tag: String,
+    // From `RetentionGroup::cutoff`, unchanged. Absent previews the whole tag.
+    archived_before: Option<String>,
 ) -> Result<serde_json::Value, String> {
     require_feature(&state, Feature::Documents)?;
     if tag.trim().is_empty() {
@@ -208,7 +339,7 @@ pub async fn preview_document_purge(
     let resp = state
         .box_request(reqwest::Method::POST, "/documents/purge/preview")
         .await
-        .json(&serde_json::json!({ "tag": tag }))
+        .json(&serde_json::json!({ "tag": tag, "archived_before": archived_before }))
         .send()
         .await
         .map_err(|e| format!("purge preview: {e}"))?;

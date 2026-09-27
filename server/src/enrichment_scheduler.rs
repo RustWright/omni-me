@@ -197,6 +197,10 @@ fn log_tick(half: &'static str, summary: &EnrichSummary) {
         no_bytes = summary.no_bytes,
         no_readable_form = summary.no_readable_form,
         not_read = summary.not_read,
+        // The count that used to be invisible: a document a model read and found
+        // nothing in was retired silently, which is indistinguishable from one
+        // nothing ever looked at.
+        already_read = summary.already_read,
         held = summary.held,
         unreadable_mime = summary.unreadable_mime,
         skipped = ?summary.sample_skipped(3),

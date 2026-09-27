@@ -96,6 +96,8 @@ pub enum EventType {
     /// comes back on every rebuild and this is what makes it come back *purged*
     /// rather than pointing at bytes that are gone.
     DocumentPurged,
+    /// A retention rule for one document tag. See `crate::retention`.
+    DocumentRetentionSet,
 }
 
 impl fmt::Display for EventType {
@@ -154,6 +156,7 @@ impl fmt::Display for EventType {
             EventType::DocumentFieldsExtracted => "document_fields_extracted",
             EventType::DocumentTextTranscribed => "document_text_transcribed",
             EventType::DocumentPurged => "document_purged",
+            EventType::DocumentRetentionSet => "document_retention_set",
         };
         write!(f, "{s}")
     }
@@ -217,6 +220,7 @@ impl FromStr for EventType {
             "document_fields_extracted" => Ok(EventType::DocumentFieldsExtracted),
             "document_text_transcribed" => Ok(EventType::DocumentTextTranscribed),
             "document_purged" => Ok(EventType::DocumentPurged),
+            "document_retention_set" => Ok(EventType::DocumentRetentionSet),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -282,6 +286,7 @@ impl EventType {
         EventType::DocumentFieldsExtracted,
         EventType::DocumentTextTranscribed,
         EventType::DocumentPurged,
+        EventType::DocumentRetentionSet,
     ];
 
     /// The features that may author this event, or `None` for an event no feature
@@ -385,7 +390,8 @@ impl EventType {
             EventType::DocumentArchived
             | EventType::DocumentFieldsExtracted
             | EventType::DocumentTextTranscribed
-            | EventType::DocumentPurged => &[Feature::Documents],
+            | EventType::DocumentPurged
+            | EventType::DocumentRetentionSet => &[Feature::Documents],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -1705,6 +1711,24 @@ pub struct DocumentPurgedPayload {
     pub reason: Option<String>,
 }
 
+/// How long documents carrying one tag are kept.
+///
+/// `aggregate_id` is the tag, so `get_by_aggregate` yields that tag's rule history
+/// for free. Why a rule per tag rather than a `ConfigKey`, and what an absent rule
+/// means: [`crate::retention`].
+///
+/// ⛔ `keep_days: None` clears the rule, which is the same state as never having
+/// set one. There is deliberately no separate "never".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentRetentionSetPayload {
+    /// The tag this governs, already normalized by [`normalize_tag_set`]'s rules.
+    pub tag: String,
+    /// Days to keep a document carrying this tag, counted from `archived_at`.
+    /// `None` clears the rule.
+    #[serde(default)]
+    pub keep_days: Option<u32>,
+}
+
 /// Keys the projection hoists into columns. See [`DocumentFieldsExtractedPayload::fields`].
 pub const DOCUMENT_KIND_KEY: &str = "kind";
 pub const DOCUMENT_TITLE_KEY: &str = "title";
@@ -1843,6 +1867,9 @@ pub fn validate_payload(
         }
         EventType::ConfigSet => {
             serde_json::from_value::<ConfigSetPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::DocumentRetentionSet => {
+            serde_json::from_value::<DocumentRetentionSetPayload>(payload.clone()).map(|_| ())
         }
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
@@ -2004,10 +2031,11 @@ mod tests {
                 | EventType::DocumentArchived
                 | EventType::DocumentFieldsExtracted
                 | EventType::DocumentTextTranscribed
-                | EventType::DocumentPurged => counted += 1,
+                | EventType::DocumentPurged
+                | EventType::DocumentRetentionSet => counted += 1,
             }
         }
-        assert_eq!(counted, 53, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 54, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

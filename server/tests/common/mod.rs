@@ -98,20 +98,39 @@ pub async fn start_full_server_with_auth(
     updates_dir: Option<std::path::PathBuf>,
     auth_token: Option<String>,
 ) -> (String, tokio::task::JoinHandle<()>) {
-    let (url, _db, handle) = boot_full_server(updates_dir, auth_token).await;
+    let (url, _db, _blobs, handle) = boot_full_server(updates_dir, auth_token).await;
     (url, handle)
 }
 
 /// As [`start_full_server`], also returning the server's database so a test can
 /// check what the server itself projected.
 pub async fn start_full_server_with_db() -> (String, db::Database, tokio::task::JoinHandle<()>) {
+    let (url, db, _blobs, handle) = boot_full_server(None, None).await;
+    (url, db, handle)
+}
+
+/// As [`start_full_server_with_db`], also returning the blob directory.
+///
+/// For tests about bytes rather than rows: a purge that reports reclaimed space
+/// is only honest if the file left the disk the server serves from.
+pub async fn start_full_server_with_blobs() -> (
+    String,
+    db::Database,
+    std::path::PathBuf,
+    tokio::task::JoinHandle<()>,
+) {
     boot_full_server(None, None).await
 }
 
 async fn boot_full_server(
     updates_dir: Option<std::path::PathBuf>,
     auth_token: Option<String>,
-) -> (String, db::Database, tokio::task::JoinHandle<()>) {
+) -> (
+    String,
+    db::Database,
+    std::path::PathBuf,
+    tokio::task::JoinHandle<()>,
+) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.db");
     let server_db = db::connect(path.to_str().unwrap()).await.unwrap();
@@ -119,6 +138,7 @@ async fn boot_full_server(
 
     let blob_dir = tempfile::tempdir().unwrap();
     let blob_path = blob_dir.path().to_path_buf();
+    let blob_path_for_tests = blob_path.clone();
     std::mem::forget(blob_dir);
 
     let db_arc = Arc::new(server_db);
@@ -154,7 +174,7 @@ async fn boot_full_server(
         axum::serve(listener, app).await.unwrap();
     });
 
-    (url, (*db_arc).clone(), handle)
+    (url, (*db_arc).clone(), blob_path_for_tests, handle)
 }
 
 /// Create a temp SurrealDB instance — simulates a device's local DB.

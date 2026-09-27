@@ -6,12 +6,12 @@ This project follows the structured process defined in `../../setup_files/PROJEC
 
 **Session start:**
 
-0. **`NEXT.md` is already in your context** — SessionStart printed it. Start there. Trust it about **decisions** (if it says a choice is settled, or names files as not-worth-re-surveying, skip them — that is permission, take it). Never trust it about **state**.
+0. **`NEXT.md` is already in your context** — SessionStart printed it. Start there: it names the next action and what is waiting on the user, and points at where the decisions live. ⛔ Follow the pointer instead of re-deriving; a settled choice in `tasks.md` is permission to skip that ground, not an invitation to re-open it. Never trust any of it about **state**.
 1. Re-verify live state (`git status`, read what you'll touch). Git sync itself is automatic (SessionStart hook) — don't run it by hand. Inherit decisions already agreed in prior sessions; don't re-derive settled context.
 2. Read `project.md` to find current state and next session. Confirm with user before proceeding.
 3. If resuming mid-session, also read `tasks.md` and `architecture.md` for context.
 
-**Session end:** Logging and git sync are **automatic** (the session hooks — see `~/.claude/CLAUDE.md` § Session Sync): the transcript is rendered into `.log/`, `.log/` + `.curiosities/` are synced to the parent, and work is committed + pushed. Your jobs are the content updates in `PROJECT_PROCESS.md` § End-of-Session Protocol: **rewrite `NEXT.md` wholesale as soon as a stretch of work completes** — before reporting it done, not saved for session end (max 40 lines — decisions + next action, never a state snapshot), and at a phase boundary also update `project.md`'s session log and `tasks.md`. No `/export`, no manual parent-sync.
+**Session end:** Logging and git sync are **automatic** (the session hooks — see `~/.claude/CLAUDE.md` § Session Sync): the transcript is rendered into `.log/`, `.log/` + `.curiosities/` are synced to the parent, and work is committed + pushed. Your jobs are the content updates in `PROJECT_PROCESS.md` § End-of-Session Protocol: **rewrite `NEXT.md` wholesale as soon as a stretch of work completes** — before reporting it done, not saved for session end (⛔ **next action + what is blocked on him, and nothing else** — user, 2026-09-27. Decisions and findings go to `tasks.md`, rationale to `docs/src/` or the edit site, and `NEXT.md` **points** at them. A line that could be derived from either does not belong in it, and reflowing it to fit a cap is the symptom of having crammed it), and at a phase boundary also update `project.md`'s session log and `tasks.md`. No `/export`, no manual parent-sync.
 
 **Also end every session with the roadmap to completion**, until the current push ships (user,
 2026-09-26). Not a status dump: the Definition of Ready chain with each link's state, what was

@@ -6,8 +6,9 @@ use surrealdb::types::{SurrealValue, Value as DbValue};
 use super::types::{
     AssistantAnswerGivenPayload, AssistantProposalMadePayload, AssistantQuestionAskedPayload,
     BeliefRecordedPayload, BeliefSupersededPayload, ConfigSetPayload, DocumentArchivedPayload,
-    DocumentFieldsExtractedPayload, DocumentPurgedPayload, DocumentTextTranscribedPayload,
-    EventType, FeedbackCapturedPayload, RecordTypeDeclaredPayload, TransactionRecordedPayload,
+    DocumentFieldsExtractedPayload, DocumentPurgedPayload, DocumentRetentionSetPayload,
+    DocumentTextTranscribedPayload, EventType, FeedbackCapturedPayload, RecordTypeDeclaredPayload,
+    TransactionRecordedPayload,
 };
 use crate::db::Database;
 
@@ -362,6 +363,22 @@ impl NewEvent {
             id: None,
             event_type: EventType::DocumentPurged.to_string(),
             aggregate_id: payload.document_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `DocumentRetentionSet` event. The **tag** is the aggregate,
+    /// not a document, so one tag's rule history reads back on its own.
+    pub fn document_retention_set(
+        device_id: impl Into<String>,
+        payload: &DocumentRetentionSetPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::DocumentRetentionSet.to_string(),
+            aggregate_id: payload.tag.clone(),
             timestamp: Utc::now(),
             device_id: device_id.into(),
             payload: serde_json::to_value(payload)?,

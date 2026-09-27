@@ -437,6 +437,27 @@ fn pid_is_alive(pid: u32) -> bool {
     Path::new(&format!("/proc/{pid}")).exists()
 }
 
+/// Hand Tauri a runtime with a database-sized worker stack.
+///
+/// Tauri builds `tokio::runtime::Runtime::new()` on first use, which gives every
+/// command handler tokio's 2 MiB — the size the agent aborted on. This must run
+/// before anything touches `tauri::async_runtime`, which panics if it is already
+/// initialised, and the runtime must outlive the app.
+fn install_async_runtime() {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = match omni_me_core::async_runtime::build() {
+        Ok(runtime) => runtime,
+        // Not fatal on purpose: Tauri falls back to its own runtime, and a
+        // smaller stack is a better outcome than an app that will not open.
+        Err(e) => {
+            tracing::error!(error = %e, "could not build the async runtime; using Tauri's");
+            return;
+        }
+    };
+    let runtime = RUNTIME.get_or_init(|| runtime);
+    tauri::async_runtime::set(runtime.handle().clone());
+}
+
 pub fn run() {
     // `omni_me_core` is in the default filter because leaving it out made a
     // working projection rebuild indistinguishable from a hang on Android,
@@ -449,6 +470,8 @@ pub fn run() {
                 .unwrap_or_else(|_| "omni_me_app=debug,omni_me_core=info".into()),
         )
         .init();
+
+    install_async_runtime();
 
     // Bake the (possibly CI-`--config`-merged) config now so we can inspect it
     // before registering config-driven plugins.
@@ -884,6 +907,9 @@ pub fn run() {
             commands::documents::document_children,
             commands::documents::correct_document_field,
             commands::documents::set_document_tags,
+            commands::documents::set_document_retention,
+            commands::documents::list_document_retention,
+            commands::documents::list_retention_candidates,
             commands::documents::preview_document_purge,
             commands::documents::confirm_document_purge,
             // Auto-import observability (Phase 3.9)

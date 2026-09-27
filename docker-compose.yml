@@ -55,5 +55,44 @@ services:
     # room before Docker escalates to SIGKILL.
     stop_grace_period: 30s
 
+  # The resident assistant. A peer of the server rather than a sidecar: it reaches
+  # it over the same sync API a phone uses, which is why it holds its own database
+  # instead of sharing one (surrealkv takes an exclusive lock on its directory, so
+  # sharing is not merely undesirable — it is impossible).
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    image: omni-me-agent:dev
+    container_name: omni-me-agent
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+
+    env_file:
+      - path: .env
+        required: false
+
+    environment:
+      # Service name, not localhost: the agent is its own container. ⛔ Required —
+      # OMNI_AGENT_DATA marks the run non-production, which makes the agent ignore
+      # any persisted URL rather than aim a test build at a real box.
+      OMNI_AGENT_SERVER_URL: http://server:3000
+
+    volumes:
+      # ⛔ Its own volume, and not optional: it holds the vector index, whose first
+      # build sweeps the corpus for over 24 minutes without answering. An ephemeral
+      # data dir pays that again on every redeploy.
+      - omni_agent_data:/data
+      # The same read-only credentials file the server reads — the agent needs the
+      # LLM section of it. Keys stay out of the environment for the same reason.
+      - ./secrets/credentials.toml:/config/omni-me/credentials.toml:ro
+
+    # Longer than the server's: a tick in flight is a model call, and cutting one
+    # off loses the answer rather than delaying it.
+    stop_grace_period: 60s
+
 volumes:
   omni_data:
+  omni_agent_data:

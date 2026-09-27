@@ -8,6 +8,7 @@ mod notes_projection;
 mod projection;
 mod record_type_projection;
 pub mod registry;
+mod retention_projection;
 mod routines_projection;
 mod store;
 mod types;
@@ -24,6 +25,7 @@ pub use projection::{Projection, ProjectionRunner};
 pub use record_type_projection::{
     RecordTypeProjection, journal_record_type, load_record_type, seed_journal_record_type,
 };
+pub use retention_projection::RetentionProjection;
 pub use routines_projection::RoutinesProjection;
 pub use store::{Event, EventError, EventStore, NewEvent, SurrealEventStore};
 pub use types::*;

@@ -122,24 +122,44 @@ impl PurgeReport {
 /// ⛔ Writes nothing and deletes nothing. The same selection the apply half uses,
 /// so the preview cannot drift from what actually happens — the rule
 /// `preview_obsidian_export` states outright.
-pub async fn preview(db: &Database, tag: &str) -> Result<PurgePreview, PurgeError> {
-    let rows = queries::documents_tagged(db, tag).await?;
+///
+/// `archived_before` narrows the group to documents older than an RFC3339 instant,
+/// which is how a **retention** group is previewed: its members are "tagged X and
+/// past X's rule", not the whole tag. ⛔ It narrows the one selection rather than
+/// adding a second query, because the preview and the confirm have to be looking at
+/// the same set.
+pub async fn preview(
+    db: &Database,
+    tag: &str,
+    archived_before: Option<&str>,
+) -> Result<PurgePreview, PurgeError> {
+    let rows = queries::documents_tagged(db, tag, archived_before).await?;
     let total = rows.len();
 
     let mut bytes_reclaimable = 0u64;
     let mut bytes_shared = 0u64;
     let mut items = Vec::with_capacity(rows.len().min(MAX_PREVIEW_ITEMS));
+    // Bytes are a property of the blob, not of the row. Two selected documents
+    // sharing one blob free it once, and [`apply`] dedupes for the same reason —
+    // counting per row promised twice what a confirm could deliver, and the
+    // report then contradicted the preview the person decided on.
+    let mut counted: std::collections::HashSet<&str> = std::collections::HashSet::new();
 
     // ⚠️ Counted over the whole set, not just the listed page. A total derived
     // from the truncated list would shrink as the selection grew, which is
     // exactly backwards.
     for row in &rows {
         let shared = is_shared(db, row, &rows).await?;
-        let size = row.size.unwrap_or(0).max(0) as u64;
-        if shared {
-            bytes_shared += size;
-        } else {
-            bytes_reclaimable += size;
+        // A row with no blob has no bytes to reclaim, whatever `size` says it was
+        // at ingest — there is nothing to unlink.
+        let first_sighting = row.sha256.as_deref().is_some_and(|sha| counted.insert(sha));
+        if first_sighting {
+            let size = row.size.unwrap_or(0).max(0) as u64;
+            if shared {
+                bytes_shared += size;
+            } else {
+                bytes_reclaimable += size;
+            }
         }
         if items.len() < MAX_PREVIEW_ITEMS {
             items.push(PurgeItem {
@@ -391,7 +411,7 @@ mod tests {
         let h = harness().await;
         let id = seed(&h, b"one newsletter", "newsletter").await;
 
-        let p = preview(&h.db, "newsletter").await.unwrap();
+        let p = preview(&h.db, "newsletter", None).await.unwrap();
         assert_eq!(p.total, 1);
         assert_eq!(p.items[0].document_id, id);
         assert!(!p.items[0].bytes_shared);
@@ -438,7 +458,7 @@ mod tests {
         assert_eq!(row.purged, Some(true));
         // And it has left every read surface.
         assert!(
-            queries::documents_tagged(&h.db, "newsletter")
+            queries::documents_tagged(&h.db, "newsletter", None)
                 .await
                 .unwrap()
                 .is_empty()
@@ -494,7 +514,7 @@ mod tests {
         let a = seed(&h, b"identical bytes", "newsletter").await;
         let b = seed(&h, b"identical bytes", "newsletter").await;
 
-        let p = preview(&h.db, "newsletter").await.unwrap();
+        let p = preview(&h.db, "newsletter", None).await.unwrap();
         assert_eq!(p.total, 2);
         assert_eq!(p.bytes_shared, 0, "both referrers are in the selection");
 

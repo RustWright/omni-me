@@ -170,6 +170,41 @@ pub struct ClientOptions {
     pub min_interval: Option<std::time::Duration>,
 }
 
+/// Spacing applied to every client this process builds, in milliseconds.
+///
+/// ⛔ Read from the environment rather than passed in, because the callers that
+/// need it most cannot pass anything: the server's enrichment passes build role C
+/// through [`build_extractor`], [`build_reader`] and [`build_transcriber`], none of
+/// which take options. Without this, `with_min_interval` existed and nothing in
+/// production could reach it — so a backfill was protected by the 429 retry alone.
+///
+/// Unset means no spacing, which is the behaviour up to now.
+///
+/// ⚠️ **Per client, not per process.** Three role-C seats each space their own
+/// calls, so this bounds a backfill (one seat at a time) and not a genuinely
+/// concurrent burst; that would need a limiter they share.
+pub const MIN_INTERVAL_ENV: &str = "OMNI_LLM_MIN_INTERVAL_MS";
+
+/// Parse [`MIN_INTERVAL_ENV`], or `None`.
+///
+/// An unusable value warns and yields `None` rather than refusing to boot: this is
+/// a deployment knob, and a server that will not start because a compose file has
+/// a typo in a delay is worse than one that starts unspaced and says so.
+fn min_interval_from_env() -> Option<std::time::Duration> {
+    let raw = std::env::var(MIN_INTERVAL_ENV).ok()?;
+    match raw.trim().parse::<u64>() {
+        Ok(ms) if ms > 0 => Some(std::time::Duration::from_millis(ms)),
+        _ => {
+            tracing::warn!(
+                var = MIN_INTERVAL_ENV,
+                value = %raw,
+                "unusable request spacing; requests will not be spaced"
+            );
+            None
+        }
+    }
+}
+
 /// Build the text LLM client a config selects.
 ///
 /// `provider = "openai_compatible"` with a non-empty `base_url` and `model`
@@ -230,7 +265,9 @@ pub fn build_llm_client(
     if let Some(extra) = options.extra_body {
         client = client.with_extra_body(extra);
     }
-    if let Some(interval) = options.min_interval {
+    // An explicit option wins over the environment: the bench harness says what it
+    // wants per run, and a deployment knob must not quietly override it.
+    if let Some(interval) = options.min_interval.or_else(min_interval_from_env) {
         tracing::info!(?interval, "spacing requests for a rate-capped endpoint");
         client = client.with_min_interval(interval);
     }
@@ -285,7 +322,16 @@ struct VisionEndpoint {
 
 impl VisionEndpoint {
     fn into_client(self) -> OpenAiCompatExtractor {
-        OpenAiCompatExtractor::new(self.base_url, self.model, self.api_key)
+        let client = OpenAiCompatExtractor::new(self.base_url, self.model, self.api_key);
+        // All three role-C seats, from one knob: the rate cap belongs to the
+        // account, not to the seat. See [`MIN_INTERVAL_ENV`].
+        match min_interval_from_env() {
+            Some(interval) => {
+                tracing::info!(?interval, "spacing role C requests");
+                client.with_min_interval(interval)
+            }
+            None => client,
+        }
     }
 }
 
@@ -651,5 +697,27 @@ mod tests {
             "anthropic/claude-opus-4-8",
             "allow_closed_weights is the documented escape and must still work"
         );
+    }
+
+    #[test]
+    fn request_spacing_reads_the_environment_and_a_typo_does_not_stop_the_boot() {
+        // ⚠️ One test, not four: the var is process-global, so separate tests
+        // would interleave and read each other's values.
+        unsafe { std::env::remove_var(MIN_INTERVAL_ENV) };
+        assert_eq!(min_interval_from_env(), None, "unset means unspaced");
+
+        unsafe { std::env::set_var(MIN_INTERVAL_ENV, "250") };
+        assert_eq!(
+            min_interval_from_env(),
+            Some(std::time::Duration::from_millis(250))
+        );
+
+        // A deployment knob with a typo in it must not be the reason a server
+        // refuses to start, and must not silently become a different number.
+        for bad in ["", "0", "half a second", "-5", "250ms"] {
+            unsafe { std::env::set_var(MIN_INTERVAL_ENV, bad) };
+            assert_eq!(min_interval_from_env(), None, "{bad:?} should not parse");
+        }
+        unsafe { std::env::remove_var(MIN_INTERVAL_ENV) };
     }
 }

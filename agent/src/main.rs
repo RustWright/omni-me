@@ -425,8 +425,21 @@ fn server_url_policy() -> ServerUrlPolicy<'static> {
     }
 }
 
-#[tokio::main]
-async fn main() {
+/// Built by hand rather than with `#[tokio::main]`: the database engine needs a
+/// worker stack larger than tokio's default, and this binary is where that was
+/// first proven — it aborted on its first answer-loop tick without it.
+fn main() {
+    let runtime = match omni_me_core::async_runtime::build() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("could not start the async runtime: {e}");
+            std::process::exit(1);
+        }
+    };
+    runtime.block_on(run_agent());
+}
+
+async fn run_agent() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

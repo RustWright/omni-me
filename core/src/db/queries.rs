@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
 
 use super::{Database, DbError};
-use crate::archive::TextSource;
 
 /// A journal entry (one per day) from the `journal_entries` projection table.
 #[derive(Debug, Clone, Serialize, SurrealValue)]
@@ -1245,16 +1244,81 @@ pub async fn blob_reference_count(db: &Database, sha256: &str) -> Result<usize, 
 /// ⚠️ Uncapped on purpose: the caller needs the true total and the true byte
 /// figures, and truncating here would understate both. The *display* list is cut
 /// by `purge::MAX_PREVIEW_ITEMS`, which is a different decision.
-pub async fn documents_tagged(db: &Database, tag: &str) -> Result<Vec<DocumentRow>, DbError> {
+pub async fn documents_tagged(
+    db: &Database,
+    tag: &str,
+    archived_before: Option<&str>,
+) -> Result<Vec<DocumentRow>, DbError> {
+    // ⚠️ The cutoff narrows the same selection rather than forming a second one,
+    // so a retention group and a whole-tag group go through one query. ⛔ And it
+    // is cast: comparing a `datetime` column against a bound string matches
+    // nothing instead of erroring.
+    let cutoff = match archived_before {
+        Some(_) => "AND archived_at != NONE AND archived_at < type::datetime($before)",
+        None => "",
+    };
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
-         WHERE tags CONTAINS $tag AND {NOT_PURGED}
+         WHERE tags CONTAINS $tag AND {NOT_PURGED} {cutoff}
          ORDER BY archived_at ASC"
+    );
+    let mut query = db.query(sql).bind(("tag", tag.trim().to_lowercase()));
+    if let Some(before) = archived_before {
+        query = query.bind(("before", before.to_string()));
+    }
+    let mut resp = query.await?;
+    Ok(resp.take(0)?)
+}
+
+/// Every tag with a live retention rule, and the days it keeps for.
+///
+/// ⛔ A cleared rule (`keep_days = NONE`) is **omitted**, never returned as zero —
+/// zero would purge that tag's whole history. See `crate::retention`.
+pub async fn retention_rules(db: &Database) -> Result<Vec<(String, u32)>, DbError> {
+    #[derive(Debug, SurrealValue)]
+    struct RuleRow {
+        tag: String,
+        keep_days: Option<i64>,
+    }
+
+    let mut resp = db
+        .query("SELECT tag, keep_days FROM document_retention WHERE keep_days != NONE")
+        .await?;
+    let rows: Vec<RuleRow> = resp.take(0)?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let days = r.keep_days?;
+            u32::try_from(days).ok().map(|d| (r.tag, d))
+        })
+        .collect())
+}
+
+/// Live documents archived before `boundary`, oldest first.
+///
+/// The prefilter under retention's exact evaluation — see `crate::retention`. It
+/// carries `tags`, because the rule the caller applies is a property of them.
+///
+/// ⚠️ `boundary` is RFC3339 and **must** be cast: the column is a `datetime`, and
+/// comparing it against a bound string matches nothing at all rather than erroring
+/// — an empty candidate list that reads exactly like "nothing is due".
+pub async fn documents_archived_before(
+    db: &Database,
+    boundary: &str,
+    limit: u32,
+) -> Result<Vec<DocumentRow>, DbError> {
+    let sql = format!(
+        "SELECT {DOCUMENT_COLUMNS}
+         FROM documents
+         WHERE archived_at != NONE AND archived_at < type::datetime($boundary) AND {NOT_PURGED}
+         ORDER BY archived_at ASC
+         LIMIT $limit"
     );
     let mut resp = db
         .query(sql)
-        .bind(("tag", tag.trim().to_lowercase()))
+        .bind(("boundary", boundary.to_string()))
+        .bind(("limit", limit))
         .await?;
     Ok(resp.take(0)?)
 }
@@ -1312,20 +1376,58 @@ pub async fn documents_unreadable_count(db: &Database, mimes: &[&str]) -> Result
     Ok(rows.into_iter().next().unwrap_or(0).max(0) as usize)
 }
 
-/// Documents nothing could read text off at ingest, newest first.
+/// Which models have already tried to read this document, oldest first.
 ///
-/// `text_source` is the column `TextSource::None` writes, so this selects
-/// exactly the scans a transcriber exists for.
+/// ⛔ From the **event log**, not the projection: the log holds one
+/// `document_text_transcribed` per read, so it is already the attempt record and
+/// needs no column and no projection bump. What reads it:
+/// `crate::document_enrichment`.
+pub async fn transcription_attempts(
+    db: &Database,
+    document_id: &str,
+) -> Result<Vec<String>, DbError> {
+    // ⚠️ `sort_ts` rather than ordering by `timestamp` directly, and the same
+    // reason as `feedback_events`: SurrealDB resolves an `ORDER BY` idiom against
+    // the *selection*, so a column the projection does not name is a parse error
+    // rather than a sort. `AttemptRow` ignores it; the driver drops what the
+    // struct does not name.
+    #[derive(Debug, SurrealValue)]
+    struct AttemptRow {
+        model: Option<String>,
+    }
+
+    let mut resp = db
+        .query(
+            "SELECT payload.model AS model, timestamp AS sort_ts FROM events
+             WHERE event_type = 'document_text_transcribed'
+               AND payload.document_id = $id
+             ORDER BY sort_ts ASC",
+        )
+        .bind(("id", document_id.to_string()))
+        .await?;
+
+    let rows: Vec<AttemptRow> = resp.take(0)?;
+    Ok(rows.into_iter().filter_map(|r| r.model).collect())
+}
+
+/// Documents that still have no text, newest first.
+///
+/// Selects the scans a transcriber exists for — including ones a model has
+/// already read and returned nothing for. See the note on the query.
 pub async fn documents_awaiting_text(
     db: &Database,
     mimes: &[&str],
     limit: u32,
     held: &[String],
 ) -> Result<Vec<DocumentRow>, DbError> {
+    // ⚠️ Keyed on the text being EMPTY, not on `text_source = 'none'`: an empty
+    // transcription still lifts the source off `none`, so the narrower rule retired
+    // a document on one blank answer. What bounds the re-reading instead is
+    // `transcription_attempts` — see `crate::document_enrichment`.
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
-         WHERE (text_source ?? '') = $none AND (mime_type ?? '') IN $mimes
+         WHERE (text ?? '') = '' AND (mime_type ?? '') IN $mimes
            AND document_id NOT IN $held
            AND {NOT_PURGED}
          ORDER BY archived_at DESC
@@ -1339,7 +1441,6 @@ pub async fn documents_awaiting_text(
         ))
         .bind(("limit", limit))
         .bind(("held", held.to_vec()))
-        .bind(("none", TextSource::None.as_str().to_string()))
         .await?;
 
     let rows: Vec<DocumentRow> = resp.take(0)?;
