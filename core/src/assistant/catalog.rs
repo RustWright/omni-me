@@ -120,6 +120,16 @@ pub struct ChildCollection {
     /// deliberate, since the other half had clearly been reviewed. See
     /// [`CatalogEntry::hidden_fields`].
     pub hidden_fields: &'static [&'static str],
+    /// Column marking a row on [`ChildCollection::table`] as hidden, for a child
+    /// table **no entry of its own owns**.
+    ///
+    /// ⚠️ `routine_items` is that case: it has a `removed` column and no entry, so
+    /// there is nothing for `store::fetch_children` to inherit a rule from. Where
+    /// the table *does* have an entry — `documents`, read by its own `attachments`
+    /// collection — leave this `None` and let the entry's
+    /// [`CatalogEntry::hidden_when`] be the single declaration, rather than
+    /// restating it here where the two can drift apart.
+    pub hidden_when: Option<&'static str>,
 }
 
 /// A computed view `read` returns alongside the raw child rows.
@@ -331,6 +341,11 @@ const ROUTINE: CatalogEntry = CatalogEntry {
             limit: 200,
             description: "The individual things done as part of this routine.",
             hidden_fields: &[],
+            // ⛔ An item the user removed is not part of the routine any more, and
+            // `routine_items` has no entry of its own to inherit this from. The
+            // completion rollup already filtered them, so `read` was handing the
+            // model a raw `items` array that disagreed with its own derived view.
+            hidden_when: Some("removed"),
         },
         ChildCollection {
             name: "completions",
@@ -344,6 +359,10 @@ const ROUTINE: CatalogEntry = CatalogEntry {
             limit: 60,
             description: "Recent completion history, newest first, including skips.",
             hidden_fields: &[],
+            // ⚠️ None, and `skipped` is NOT the column for this: a skip is a
+            // recorded outcome the user chose, not a removed row, and the
+            // description promises it.
+            hidden_when: None,
         },
     ],
     derived: Some(DerivedView::CompletionRollup {
@@ -468,6 +487,14 @@ const DOCUMENT: CatalogEntry = CatalogEntry {
                           transcribed (a model read a scan, so it may be wrong), or none \
                           (unreadable — only the filename is searchable).",
         },
+        FilterField {
+            key: "tags",
+            kind: FilterKind::Tag,
+            description: "A tag on the document. Lowercase, and either a bare word or \
+                          key:value. Tags are the user's own labels, so ask by one only \
+                          when they have used it — `describe_type` lists nothing about \
+                          which tags exist.",
+        },
     ],
     // By when it was archived, not by `document_date`: the latter is absent for
     // anything whose fields have not been extracted, which would sort most of the
@@ -492,11 +519,20 @@ const DOCUMENT: CatalogEntry = CatalogEntry {
         limit: 20,
         description: "Files that arrived inside this one, for an email.",
         hidden_fields: DOCUMENT_INTERNALS,
+        // ⚠️ None on purpose. `documents` has its own entry declaring
+        // `hidden_when: Some("purged")`, and `fetch_children` inherits it — one
+        // declaration, so the two cannot drift.
+        hidden_when: None,
     }],
     derived: None,
     record_type: None,
     hidden_fields: DOCUMENT_INTERNALS,
-    hidden_when: None,
+    // ⛔ This one line is what takes a purged document out of `search`, `list`,
+    // `read`, the result counts **and** the vector index — the sweep reads it to
+    // decide which rows' chunks to delete. Without it a purged spam email stays
+    // reachable by `knn_search` long after every other path stopped returning it,
+    // which is the failure `vector_store::sweep` documents at length.
+    hidden_when: Some("purged"),
 };
 
 /// Reconciliation bookkeeping on `transactions`, and the merge trail.
@@ -700,27 +736,32 @@ mod tests {
 
     /// Whatever an entry hides, a child collection must not hand back.
     ///
-    /// ⚠️ `fetch_children` queries [`ChildCollection::table`] directly and knows
-    /// nothing about the parent's [`CatalogEntry::hidden_when`]. Today no child
-    /// reads a table that hides rows, and this is what makes adding one fail here
-    /// rather than silently reopening the path the field was added to close —
-    /// `documents` is already self-referential, so the shape is one column away.
+    /// ⚠️ This used to forbid the shape outright — no child could read a table
+    /// with hidden rows — because `fetch_children` ignored the rule entirely and
+    /// the only safe answer was "never do that". `documents` is self-referential
+    /// and gained `hidden_when: Some("purged")`, so the shape now exists.
+    ///
+    /// ⛔ The guarantee moved rather than weakened: `store::fetch_children` now
+    /// applies the child's own rule, or the rule of the entry owning its table.
+    /// What this asserts is that **exactly one** of those is declared, because two
+    /// declarations for one table is how they come to disagree. The behaviour is
+    /// covered by `store::tests::a_purged_attachment_is_not_returned_through_its_parent`
+    /// and `store::tests::a_removed_routine_item_is_not_returned_through_its_group`.
     #[test]
-    fn no_child_collection_reads_a_table_with_hidden_rows() {
-        let hidden: Vec<&str> = ALL_ENTRIES
-            .iter()
-            .filter(|e| e.hidden_when.is_some())
-            .map(|e| e.table)
-            .collect();
+    fn a_child_tables_hidden_rule_is_declared_exactly_once() {
         for entry in ALL_ENTRIES {
             for child in entry.children {
+                let owner = ALL_ENTRIES.iter().find(|e| e.table == child.table);
+                let inherited = owner.and_then(|e| e.hidden_when);
                 assert!(
-                    !hidden.contains(&child.table),
-                    "`{}`'s `{}` collection reads `{}`, whose rows can be hidden — \
-                     fetch_children does not apply `hidden_when`",
+                    !(child.hidden_when.is_some() && inherited.is_some()),
+                    "`{}`'s `{}` collection declares `{:?}` while `{}` already \
+                     declares `{:?}` — one table, two rules to drift apart",
                     entry.name,
                     child.name,
-                    child.table
+                    child.hidden_when,
+                    child.table,
+                    inherited
                 );
             }
         }

@@ -879,9 +879,13 @@ pub fn run() {
             commands::documents::list_documents,
             commands::documents::get_document,
             commands::documents::document_kinds,
+            commands::documents::document_tags,
             commands::documents::get_document_text,
             commands::documents::document_children,
             commands::documents::correct_document_field,
+            commands::documents::set_document_tags,
+            commands::documents::preview_document_purge,
+            commands::documents::confirm_document_purge,
             // Auto-import observability (Phase 3.9)
             commands::auto_import::list_auto_import_sources,
             commands::auto_import::trigger_auto_import_tick,

@@ -976,6 +976,19 @@ pub struct DocumentRow {
     pub kind: Option<String>,
     pub title: Option<String>,
     pub document_date: Option<String>,
+    /// The tag set, hoisted out of the `tags` field into its own array column.
+    ///
+    /// Shipped on the row rather than left for the caller to pull out of
+    /// `fields`, because the list renders it and the filter matches it — and a
+    /// reader parsing the joined value itself is a second decoder to drift.
+    pub tags: Option<Vec<String>>,
+    /// Whether this document was purged on purpose.
+    ///
+    /// ⚠️ Carried on the row because the detail view must render a purged entry
+    /// as *purged* rather than as a document whose file failed to load — a blob
+    /// 404 cannot tell those apart, and the reader would see "couldn't load
+    /// attachment" for bytes that were deliberately removed.
+    pub purged: Option<bool>,
     pub fields: Option<Vec<DocumentFieldRow>>,
     /// The document this one arrived inside, for an email's attachments.
     ///
@@ -986,6 +999,18 @@ pub struct DocumentRow {
     pub parent_document_id: Option<String>,
 }
 
+/// Rows a purge retired, excluded from every archive read.
+///
+/// ⛔ `!= true`, not `= false`, matching `store::hidden_clause`: the column is
+/// `option<bool>` and absent on every document that was never purged, so
+/// `= false` would hide the entire archive.
+///
+/// ⚠️ One constant because this is a **class** of query, not one query. The
+/// enrichment work queues are the easy ones to forget — a purged document with no
+/// `kind` would otherwise be selected forever, spending a model call per tick on
+/// bytes that no longer exist.
+const NOT_PURGED: &str = "purged != true";
+
 /// Every column the archive reads, in one place so list and detail cannot drift.
 ///
 /// ⚠️ `archived_at` is cast to a string because the column is a `datetime`; the
@@ -993,11 +1018,11 @@ pub struct DocumentRow {
 /// ⛔ **v3 refuses `ORDER BY` over a field the selection omits.**
 const DOCUMENT_COLUMNS: &str = "document_id, sha256, filename, mime_type, size,
      <string> archived_at AS archived_at, ingest_source, text_source,
-     kind, title, document_date, fields, parent_document_id";
+     kind, title, document_date, tags, purged, fields, parent_document_id";
 
 /// Documents matching an optional free-text query and an optional kind.
 ///
-/// ⚠️ **Both filters are always bound and an empty string means "no filter".**
+/// ⚠️ **Every filter is always bound and an empty string means "no filter".**
 /// Building the `WHERE` clause by string concatenation instead would be one
 /// interpolation away from a query a filename could steer.
 ///
@@ -1009,6 +1034,7 @@ pub async fn list_documents(
     query: &str,
     kind: &str,
     mime: &str,
+    tag: &str,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<DocumentRow>, DbError> {
@@ -1024,6 +1050,15 @@ pub async fn list_documents(
                        OR string::lowercase(text ?? '') CONTAINS $q)
            AND ($kind = '' OR kind = $kind)
            AND ($mime = '' OR mime_type = $mime)
+           -- ⛔ No coalesce needed here, unlike the text columns above: checked
+           -- against a real database, `NONE CONTAINS 'x'` is `false` rather than
+           -- the hard error `string::lowercase(NONE)` gives.
+           -- ⛔ `CONTAINS` on an ARRAY is whole-element equality; on a string it is
+           -- substring. Verified: `'receipts-2026,taxes' CONTAINS 'receipt'` is
+           -- true. That is why the column is an array and not the joined value —
+           -- filtering the string would make `receipt` find `receipts-2026`.
+           AND ($tag = '' OR tags CONTAINS $tag)
+           AND {NOT_PURGED}
          ORDER BY archived_at DESC
          LIMIT $limit START $offset"
     );
@@ -1032,6 +1067,9 @@ pub async fn list_documents(
         .bind(("q", query.to_ascii_lowercase()))
         .bind(("kind", kind.to_string()))
         .bind(("mime", mime.to_string()))
+        // Lowercased to match the stored form — `Tag::normalize` folds case, so a
+        // filter that did not would miss every document it should find.
+        .bind(("tag", tag.trim().to_lowercase()))
         .bind(("limit", limit))
         .bind(("offset", offset))
         .await?;
@@ -1056,7 +1094,7 @@ pub async fn document_children(
 ) -> Result<Vec<DocumentRow>, DbError> {
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS} FROM documents
-         WHERE parent_document_id = $parent
+         WHERE parent_document_id = $parent AND {NOT_PURGED}
          ORDER BY filename"
     );
     let mut resp = db
@@ -1102,14 +1140,123 @@ pub async fn document_text(db: &Database, id: &str) -> Result<Option<String>, Db
 /// document whose kind the UI had not been taught about.
 pub async fn document_kinds(db: &Database) -> Result<Vec<String>, DbError> {
     let mut resp = db
-        .query(
+        .query(format!(
             "SELECT VALUE kind FROM documents
-             WHERE kind != NONE GROUP BY kind ORDER BY kind",
-        )
+                 WHERE kind != NONE AND {NOT_PURGED} GROUP BY kind ORDER BY kind"
+        ))
         .await?;
 
     let rows: Vec<Option<String>> = resp.take(0)?;
     Ok(rows.into_iter().flatten().collect())
+}
+
+/// Every tag in use across the archive, for the filter control.
+///
+/// ⛔ Derived from the data for [`document_kinds`]' reason, and more so: tags
+/// come from a person typing them, so no list written in advance could be right.
+///
+/// ⚠️ **The split between the two halves is forced, not stylistic.** Under
+/// `GROUP ALL`, `array::group` collects each row's array *without* flattening, so
+/// the flatten is needed — and it is the only wrapper allowed: `array::distinct`
+/// and `array::sort` are aggregates too, and nesting one over `array::group`
+/// fails with "Nested aggregate functions are not supported". So the database
+/// flattens and the caller deduplicates.
+///
+/// ⛔ Verified against a real database, not inferred from the function names. The
+/// first attempt here returned an array of arrays that decoded as an error, and
+/// the shape a wrong-but-parseable aggregate returns is an empty list — which
+/// reads exactly like an archive with no tags in it.
+pub async fn document_tags(db: &Database) -> Result<Vec<String>, DbError> {
+    let mut resp = db
+        .query(format!(
+            "SELECT VALUE array::flatten(array::group(tags))
+                 FROM documents WHERE tags != NONE AND {NOT_PURGED} GROUP ALL"
+        ))
+        .await?;
+
+    let rows: Vec<Vec<String>> = resp.take(0)?;
+    let mut tags = rows.into_iter().next().unwrap_or_default();
+    tags.sort();
+    tags.dedup();
+    Ok(tags)
+}
+
+/// How many live things still reference a blob.
+///
+/// 🔴 **Two referrers, and they are read from two different places.**
+/// `documents.sha256` comes from the projection. Transaction attachments come
+/// from the **event log**, because the server — the one host that holds the
+/// blobs, and therefore the only place a purge can delete them — builds its
+/// `ProjectionRunner` with `DocumentsProjection` alone. `transactions` does not
+/// exist there, and querying a missing table is a hard error, not an empty set.
+///
+/// ⛔ That distinction is the difference between a purge that fails loudly on the
+/// server and one that silently reports "no references" and deletes bytes a
+/// committed receipt still points at, leaving a ledger entry whose evidence is
+/// gone. `known_top_tag_values` learned the same lesson: a filter that looks
+/// correct, tests green against a harness carrying `BudgetProjection`, and does
+/// nothing in production.
+///
+/// ⚠️ **Deliberately conservative.** The log has no cheap notion of current
+/// visibility, so a transaction the user later deleted still counts. Over-counting
+/// keeps bytes that might be reclaimable; under-counting destroys bytes something
+/// needs. Only one of those is recoverable.
+///
+/// ⛔ Purged documents do not count — that is what makes a blob become
+/// reclaimable once every document naming it has gone.
+pub async fn blob_reference_count(db: &Database, sha256: &str) -> Result<usize, DbError> {
+    let docs_sql = format!(
+        "SELECT VALUE count() FROM documents
+         WHERE sha256 = $h AND {NOT_PURGED} GROUP ALL"
+    );
+    let mut resp = db.query(docs_sql).bind(("h", sha256.to_string())).await?;
+    let docs: Vec<i64> = resp.take(0)?;
+
+    // ⚠️ Both shapes, and both are needed: a merge writes the surviving
+    // attachment as `combined_attachment` on a different event type, so counting
+    // `transaction_recorded` alone would miss every reconciled receipt.
+    let mut resp = db
+        .query(
+            "SELECT VALUE count() FROM events
+             WHERE (event_type = 'transaction_recorded'
+                    AND payload.attachment.sha256 = $h)
+                OR (event_type = 'transactions_merged'
+                    AND payload.combined_attachment.sha256 = $h)
+             GROUP ALL",
+        )
+        .bind(("h", sha256.to_string()))
+        .await?;
+    let txns: Vec<i64> = resp.take(0)?;
+
+    let total = docs.first().copied().unwrap_or(0) + txns.first().copied().unwrap_or(0);
+    Ok(total.max(0) as usize)
+}
+
+/// Every live document carrying `tag`, oldest first.
+///
+/// ⛔ The **same selection the purge applies**, so a preview cannot promise one
+/// thing and the confirm do another — the rule `preview_obsidian_export` states
+/// outright and the reason it resolves names exactly as the real export does.
+///
+/// ⚠️ Oldest first, unlike every other archive read. A purge queue is worked from
+/// the end a retention window reaches first, and newest-first would put the items
+/// least likely to be purged at the top of the list a person has to scroll.
+///
+/// ⚠️ Uncapped on purpose: the caller needs the true total and the true byte
+/// figures, and truncating here would understate both. The *display* list is cut
+/// by `purge::MAX_PREVIEW_ITEMS`, which is a different decision.
+pub async fn documents_tagged(db: &Database, tag: &str) -> Result<Vec<DocumentRow>, DbError> {
+    let sql = format!(
+        "SELECT {DOCUMENT_COLUMNS}
+         FROM documents
+         WHERE tags CONTAINS $tag AND {NOT_PURGED}
+         ORDER BY archived_at ASC"
+    );
+    let mut resp = db
+        .query(sql)
+        .bind(("tag", tag.trim().to_lowercase()))
+        .await?;
+    Ok(resp.take(0)?)
 }
 
 /// Documents no producer has catalogued yet, newest first.
@@ -1126,6 +1273,7 @@ pub async fn documents_awaiting_fields(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
          WHERE kind = NONE AND (mime_type ?? '') IN $mimes AND document_id NOT IN $held
+           AND {NOT_PURGED}
          ORDER BY archived_at DESC
          LIMIT $limit"
     );
@@ -1149,10 +1297,11 @@ pub async fn documents_awaiting_fields(
 /// so without a count they would look like documents that simply never arrived.
 pub async fn documents_unreadable_count(db: &Database, mimes: &[&str]) -> Result<usize, DbError> {
     let mut resp = db
-        .query(
+        .query(format!(
             "SELECT VALUE count() FROM documents
-             WHERE kind = NONE AND (mime_type ?? '') NOT IN $mimes GROUP ALL",
-        )
+                 WHERE kind = NONE AND (mime_type ?? '') NOT IN $mimes
+                   AND {NOT_PURGED} GROUP ALL"
+        ))
         .bind((
             "mimes",
             mimes.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
@@ -1178,6 +1327,7 @@ pub async fn documents_awaiting_text(
          FROM documents
          WHERE (text_source ?? '') = $none AND (mime_type ?? '') IN $mimes
            AND document_id NOT IN $held
+           AND {NOT_PURGED}
          ORDER BY archived_at DESC
          LIMIT $limit"
     );
@@ -1317,7 +1467,7 @@ mod tests {
         fold_doc(&db, "old", "a.pdf", "", "2024-01-01T00:00:00Z", None).await;
         fold_doc(&db, "new", "b.pdf", "", "2026-09-01T00:00:00Z", None).await;
 
-        let rows = list_documents(&db, "", "", "", 50, 0).await.unwrap();
+        let rows = list_documents(&db, "", "", "", "", 50, 0).await.unwrap();
 
         let ids: Vec<&str> = rows.iter().map(|r| r.document_id.as_str()).collect();
         assert_eq!(ids, vec!["new", "old"]);
@@ -1347,7 +1497,7 @@ mod tests {
         )
         .await;
 
-        let hits = list_documents(&db, "hydro quebec", "", "", 50, 0)
+        let hits = list_documents(&db, "hydro quebec", "", "", "", 50, 0)
             .await
             .unwrap();
         assert_eq!(hits.len(), 1);
@@ -1355,7 +1505,7 @@ mod tests {
 
         // Case-insensitive both ways, and the filename still matches.
         assert_eq!(
-            list_documents(&db, "LEASE", "", "", 50, 0)
+            list_documents(&db, "LEASE", "", "", "", 50, 0)
                 .await
                 .unwrap()
                 .len(),
@@ -1363,7 +1513,10 @@ mod tests {
         );
         // An empty query is not a filter.
         assert_eq!(
-            list_documents(&db, "", "", "", 50, 0).await.unwrap().len(),
+            list_documents(&db, "", "", "", "", 50, 0)
+                .await
+                .unwrap()
+                .len(),
             2
         );
     }
@@ -1382,7 +1535,7 @@ mod tests {
         .await;
         fold_doc(&db, "u1", "u1.pdf", "", "2026-01-02T00:00:00Z", None).await;
 
-        let narrowed = list_documents(&db, "", "brokerage_statement", "", 50, 0)
+        let narrowed = list_documents(&db, "", "brokerage_statement", "", "", 50, 0)
             .await
             .unwrap();
         assert_eq!(narrowed.len(), 1);
@@ -1441,7 +1594,7 @@ mod tests {
         fold_part(&db, "mail", "statement.eml", "message/rfc822", None).await;
         fold_part(&db, "pdf", "statement.pdf", "application/pdf", Some("mail")).await;
 
-        let mail = list_documents(&db, "", "", "message/rfc822", 50, 0)
+        let mail = list_documents(&db, "", "", "message/rfc822", "", 50, 0)
             .await
             .unwrap();
         assert_eq!(mail.len(), 1, "{mail:?}");
@@ -1449,10 +1602,276 @@ mod tests {
         assert_eq!(mail[0].kind, None, "the filter must not depend on a kind");
 
         assert_eq!(
-            list_documents(&db, "", "", "", 50, 0).await.unwrap().len(),
+            list_documents(&db, "", "", "", "", 50, 0)
+                .await
+                .unwrap()
+                .len(),
             2,
             "⛔ an attachment stays listed in its own right — hiding it would \
              make the archive's breadth claim false"
+        );
+    }
+
+    /// Fold a document carrying a tag set, through the real projection.
+    ///
+    /// `tags_value` is the stored joined form, so a test can hand in exactly what
+    /// a badly-normalized writer would and see what the hoist makes of it.
+    async fn fold_doc_with_tags(db: &Database, id: &str, tags_value: &str) {
+        use crate::events::{Event, EventType, Projection, validate_payload};
+
+        let payloads = vec![
+            (
+                EventType::DocumentArchived,
+                serde_json::json!({
+                    "document_id": id,
+                    "sha256": "b".repeat(64),
+                    "filename": format!("{id}.pdf"),
+                    "mime_type": "application/pdf",
+                    "size": 10u64,
+                    "archived_at": "2026-09-01T00:00:00Z",
+                    "source": "bulk",
+                    "text_source": "none",
+                }),
+            ),
+            (
+                EventType::DocumentFieldsExtracted,
+                serde_json::json!({
+                    "document_id": id,
+                    "extracted_at": "2026-09-01T00:00:00Z",
+                    "fields": [
+                        { "key": "tags", "value": tags_value,
+                          "source": "human", "verified": true },
+                    ],
+                }),
+            ),
+        ];
+
+        for (event_type, payload) in payloads {
+            validate_payload(&event_type, &payload).expect("payload must be valid");
+            let event = Event {
+                id: ulid::Ulid::new().to_string(),
+                event_type: event_type.to_string(),
+                aggregate_id: id.to_string(),
+                timestamp: chrono::Utc::now(),
+                device_id: "test-device".to_string(),
+                payload,
+                received_at: None,
+            };
+            crate::events::DocumentsProjection
+                .apply(&event, db)
+                .await
+                .unwrap();
+        }
+    }
+
+    /// The joined field value becomes an array column, and the filter matches a
+    /// whole element.
+    #[tokio::test]
+    async fn the_tag_field_is_hoisted_into_an_array_and_filters_on_it() {
+        let (_d, db) = doc_db().await;
+        fold_doc_with_tags(&db, "groceries", "receipt,groceries").await;
+        fold_doc_with_tags(&db, "lease", "lease").await;
+
+        let all = list_documents(&db, "", "", "", "", 50, 0).await.unwrap();
+        let hoisted = all
+            .iter()
+            .find(|r| r.document_id == "groceries")
+            .expect("the row is listed");
+        assert_eq!(
+            hoisted.tags.as_deref(),
+            Some(&["receipt".to_string(), "groceries".to_string()][..]),
+            "the joined value must arrive as elements, not one string"
+        );
+
+        let hits = list_documents(&db, "", "", "", "receipt", 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].document_id, "groceries");
+
+        // Case folds, matching how the tag was normalized on the way in.
+        assert_eq!(
+            list_documents(&db, "", "", "", "RECEIPT", 50, 0)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        // An empty tag is not a filter.
+        assert_eq!(
+            list_documents(&db, "", "", "", "", 50, 0)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    /// ⛔ `CONTAINS` on an array is whole-element equality. A substring match
+    /// would make `receipt` find `receipts-2026`, which is the bug the array
+    /// column exists to prevent.
+    #[tokio::test]
+    async fn a_tag_filter_never_matches_a_prefix_of_another_tag() {
+        let (_d, db) = doc_db().await;
+        fold_doc_with_tags(&db, "plural", "receipts-2026").await;
+
+        let hits = list_documents(&db, "", "", "", "receipt", 50, 0)
+            .await
+            .unwrap();
+        assert!(hits.is_empty(), "matched a prefix: {hits:?}");
+    }
+
+    /// An untagged document must not empty the filter.
+    ///
+    /// ⚠️ Most of a real archive has no tags, so this is the ordinary case rather
+    /// than an edge one. It holds because `NONE CONTAINS 'x'` is `false` — which is
+    /// worth a test precisely because the neighbouring `string::lowercase(NONE)`
+    /// *is* a hard error, so the behaviour here is not the one you would guess.
+    #[tokio::test]
+    async fn an_untagged_document_does_not_break_the_tag_filter() {
+        let (_d, db) = doc_db().await;
+        fold_doc(&db, "bare", "bare.pdf", "", "2026-01-01T00:00:00Z", None).await;
+        fold_doc_with_tags(&db, "tagged", "receipt").await;
+
+        let hits = list_documents(&db, "", "", "", "receipt", 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].document_id, "tagged");
+
+        let untagged = list_documents(&db, "", "", "", "", 50, 0).await.unwrap();
+        assert_eq!(
+            untagged
+                .iter()
+                .find(|r| r.document_id == "bare")
+                .and_then(|r| r.tags.as_ref()),
+            None,
+            "absent must stay absent, not become an empty array"
+        );
+    }
+
+    /// The filter control's vocabulary, flattened and deduplicated in the query.
+    ///
+    /// ⚠️ This is the test that proves the SurrealQL, not the intent: an
+    /// aggregate spelled wrong returns an empty list rather than failing, which
+    /// reads exactly like an archive with no tags.
+    #[tokio::test]
+    async fn every_tag_in_use_comes_back_once_sorted() {
+        let (_d, db) = doc_db().await;
+        fold_doc_with_tags(&db, "a", "receipt,groceries").await;
+        fold_doc_with_tags(&db, "b", "receipt,institution:rbc").await;
+        fold_doc(&db, "c", "c.pdf", "", "2026-01-01T00:00:00Z", None).await;
+
+        let tags = document_tags(&db).await.unwrap();
+        assert_eq!(
+            tags,
+            vec!["groceries", "institution:rbc", "receipt"],
+            "flattened, deduplicated and sorted"
+        );
+    }
+
+    async fn seed_doc_with_hash(db: &Database, id: &str, sha: &str, purged: bool) {
+        db.query(
+            "UPSERT type::record('documents', $id) SET document_id = $id,
+             filename = 'f.pdf', sha256 = $s, purged = $p",
+        )
+        .bind(("id", id.to_string()))
+        .bind(("s", sha.to_string()))
+        .bind(("p", purged))
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+    }
+
+    /// Append a raw event, the way the server's log holds one.
+    async fn seed_event(db: &Database, event_type: &str, payload: serde_json::Value) {
+        db.query(
+            "CREATE events CONTENT {
+                event_type: $t, aggregate_id: 'a', timestamp: time::now(),
+                device_id: 'test-device', payload: $p, received_at: time::now() }",
+        )
+        .bind(("t", event_type.to_string()))
+        .bind(("p", payload))
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+    }
+
+    /// 🔴 The bug this function exists to prevent: deleting bytes a committed
+    /// transaction still points at, leaving a ledger entry whose evidence is gone.
+    ///
+    /// ⛔ The fixture is the **server's** shape — `documents` present, no budget
+    /// projection — because that is the only host that holds blobs and so the only
+    /// one that can delete them. A fixture carrying `BudgetProjection` would pass
+    /// while production counted nothing.
+    #[tokio::test]
+    async fn a_transaction_attachment_keeps_a_blob_alive_without_the_budget_table() {
+        let (_d, db) = doc_db().await;
+        let sha = "c".repeat(64);
+        seed_doc_with_hash(&db, "doc", &sha, true).await; // the only document, purged
+        seed_event(
+            &db,
+            "transaction_recorded",
+            serde_json::json!({
+                "txn_id": "t1", "date": "2026-09-01", "description": "receipt", "postings": [],
+                "attachment": { "sha256": sha, "filename": "r.pdf",
+                                "mime_type": "application/pdf", "size": 10 },
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            blob_reference_count(&db, &sha).await.unwrap(),
+            1,
+            "every document is purged, so counting documents alone says 0"
+        );
+    }
+
+    /// A merge writes the surviving attachment under a different key on a
+    /// different event type, so counting `transaction_recorded` alone misses every
+    /// reconciled receipt.
+    #[tokio::test]
+    async fn a_merged_transactions_attachment_counts_too() {
+        let (_d, db) = doc_db().await;
+        let sha = "f".repeat(64);
+        seed_event(
+            &db,
+            "transactions_merged",
+            serde_json::json!({
+                "primary_id": "t1", "merged_ids": ["t2"], "combined_postings": [],
+                "combined_description": "receipt",
+                "combined_attachment": { "sha256": sha, "filename": "r.pdf",
+                                         "mime_type": "application/pdf", "size": 10 },
+            }),
+        )
+        .await;
+
+        assert_eq!(blob_reference_count(&db, &sha).await.unwrap(), 1);
+    }
+
+    /// Bytes shared by two documents survive purging one of them.
+    #[tokio::test]
+    async fn a_blob_two_documents_share_is_not_reclaimable_until_both_go() {
+        let (_d, db) = doc_db().await;
+        let sha = "d".repeat(64);
+        seed_doc_with_hash(&db, "emailed", &sha, false).await;
+        seed_doc_with_hash(&db, "scanned", &sha, false).await;
+        assert_eq!(blob_reference_count(&db, &sha).await.unwrap(), 2);
+
+        seed_doc_with_hash(&db, "scanned", &sha, true).await;
+        assert_eq!(
+            blob_reference_count(&db, &sha).await.unwrap(),
+            1,
+            "the other filing still needs these bytes"
+        );
+
+        seed_doc_with_hash(&db, "emailed", &sha, true).await;
+        assert_eq!(
+            blob_reference_count(&db, &sha).await.unwrap(),
+            0,
+            "now, and only now, the bytes are reclaimable"
         );
     }
 

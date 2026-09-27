@@ -6,8 +6,8 @@ use surrealdb::types::{SurrealValue, Value as DbValue};
 use super::types::{
     AssistantAnswerGivenPayload, AssistantProposalMadePayload, AssistantQuestionAskedPayload,
     BeliefRecordedPayload, BeliefSupersededPayload, ConfigSetPayload, DocumentArchivedPayload,
-    DocumentFieldsExtractedPayload, DocumentTextTranscribedPayload, EventType,
-    FeedbackCapturedPayload, RecordTypeDeclaredPayload, TransactionRecordedPayload,
+    DocumentFieldsExtractedPayload, DocumentPurgedPayload, DocumentTextTranscribedPayload,
+    EventType, FeedbackCapturedPayload, RecordTypeDeclaredPayload, TransactionRecordedPayload,
 };
 use crate::db::Database;
 
@@ -341,6 +341,26 @@ impl NewEvent {
         Ok(NewEvent {
             id: None,
             event_type: EventType::DocumentTextTranscribed.to_string(),
+            aggregate_id: payload.document_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `DocumentPurged` event. Same aggregate again, so the
+    /// tombstone folds onto the row it retires no matter which device wrote it.
+    ///
+    /// ⚠️ It can legitimately fold **before** the archive event it purges — the
+    /// pull filter runs on the authoring device's clock — which is why the
+    /// projection materializes a purged stub rather than updating in place.
+    pub fn document_purged(
+        device_id: impl Into<String>,
+        payload: &DocumentPurgedPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::DocumentPurged.to_string(),
             aggregate_id: payload.document_id.clone(),
             timestamp: Utc::now(),
             device_id: device_id.into(),

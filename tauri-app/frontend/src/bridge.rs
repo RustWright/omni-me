@@ -53,9 +53,9 @@ use crate::types::{
     BudgetProgress, BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView,
     DocumentItem, ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementResult,
     JournalDayStat, JournalEntryItem, LlmResult, MatchCandidateView, NetWorthSeriesView,
-    PendingBatchView, PendingShareCapture, ReconciliationTxnPreview, RecurringPattern,
-    RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot,
-    TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
+    PendingBatchView, PendingShareCapture, PurgePreview, PurgeReport, ReconciliationTxnPreview,
+    RecurringPattern, RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus,
+    SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
 };
 #[cfg(feature = "mock")]
 use crate::types::{
@@ -5362,6 +5362,7 @@ pub async fn invoke_list_documents(
     query: Option<String>,
     kind: Option<String>,
     mime: Option<String>,
+    tag: Option<String>,
     offset: Option<u32>,
 ) -> Result<Vec<DocumentItem>, String> {
     #[cfg(feature = "mock")]
@@ -5384,6 +5385,16 @@ pub async fn invoke_list_documents(
                 Some(m) if !m.is_empty() => d.mime_type.as_deref() == Some(m.as_str()),
                 _ => true,
             })
+            // ⚠️ Whole-element equality, matching the `CONTAINS` the real query
+            // emits. A `contains()` on the string here would make the mock accept
+            // a prefix the backend rejects.
+            .filter(|d| match &tag {
+                Some(t) if !t.is_empty() => {
+                    let t = t.trim().to_lowercase();
+                    d.tags.as_ref().is_some_and(|tags| tags.contains(&t))
+                }
+                _ => true,
+            })
             .collect())
     }
     #[cfg(not(feature = "mock"))]
@@ -5393,6 +5404,7 @@ pub async fn invoke_list_documents(
             query: Option<String>,
             kind: Option<String>,
             mime: Option<String>,
+            tag: Option<String>,
             offset: Option<u32>,
         }
         invoke(
@@ -5401,6 +5413,7 @@ pub async fn invoke_list_documents(
                 query,
                 kind,
                 mime,
+                tag,
                 offset,
             },
         )
@@ -5460,6 +5473,27 @@ pub async fn invoke_document_kinds() -> Result<Vec<String>, String> {
         #[derive(serde::Serialize)]
         struct Args {}
         invoke("document_kinds", &Args {}).await
+    }
+}
+
+/// Every tag in use across the archive, for the filter control.
+pub async fn invoke_document_tags() -> Result<Vec<String>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let mut tags: Vec<String> = mock_documents()
+            .into_iter()
+            .filter_map(|d| d.tags)
+            .flatten()
+            .collect();
+        tags.sort();
+        tags.dedup();
+        Ok(tags)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("document_tags", &Args {}).await
     }
 }
 
@@ -5536,6 +5570,120 @@ pub async fn invoke_correct_document_field(
     }
 }
 
+/// Replace a document's tag set.
+///
+/// ⚠️ **Send the whole set, not the delta** — to add a tag, pass the current tags
+/// plus the new one. The backend normalizes (trim, lowercase) and refuses the
+/// whole set if any tag is malformed, so a caller must not pre-sanitize here and
+/// assume the two agree.
+pub async fn invoke_set_document_tags(document_id: &str, tags: Vec<String>) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (document_id, tags);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            document_id: &'a str,
+            tags: Vec<String>,
+        }
+        invoke("set_document_tags", &Args { document_id, tags }).await
+    }
+}
+
+/// What purging this group would remove. ⛔ Writes nothing.
+pub async fn invoke_preview_document_purge(tag: &str) -> Result<PurgePreview, String> {
+    #[cfg(feature = "mock")]
+    {
+        let items: Vec<crate::types::PurgeItem> = mock_documents()
+            .into_iter()
+            .filter(|d| d.tags.as_ref().is_some_and(|t| t.iter().any(|x| x == tag)))
+            .map(|d| crate::types::PurgeItem {
+                document_id: d.document_id.clone(),
+                label: d.display_name(),
+                archived_at: d.archived_at.clone(),
+                ingest_source: d.ingest_source.clone(),
+                size: d.size,
+                // ⚠️ One shared item in the fixture on purpose: a preview where
+                // everything is reclaimable cannot show that the surface
+                // distinguishes the two.
+                bytes_shared: d.mime_type.as_deref() == Some("text/csv"),
+            })
+            .collect();
+        let bytes_reclaimable = items
+            .iter()
+            .filter(|i| !i.bytes_shared)
+            .map(|i| i.size.unwrap_or(0).max(0) as u64)
+            .sum();
+        let bytes_shared = items
+            .iter()
+            .filter(|i| i.bytes_shared)
+            .map(|i| i.size.unwrap_or(0).max(0) as u64)
+            .sum();
+        let listed = items.len();
+        Ok(PurgePreview {
+            group: tag.to_string(),
+            items,
+            total: listed,
+            bytes_reclaimable,
+            bytes_shared,
+            token: "mock-token".into(),
+            listed,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            tag: &'a str,
+        }
+        invoke("preview_document_purge", &Args { tag }).await
+    }
+}
+
+/// ⛔ Irreversible. Only ever called with a set the user has just confirmed, and
+/// the `token` is what lets the server check that.
+pub async fn invoke_confirm_document_purge(
+    token: &str,
+    document_ids: Vec<String>,
+    reason: Option<String>,
+) -> Result<PurgeReport, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (token, &reason);
+        let n = document_ids.len();
+        Ok(PurgeReport {
+            selected: n,
+            purged: n,
+            skipped: 0,
+            failed: 0,
+            blobs_deleted: n,
+            blobs_retained_shared: 0,
+            bytes_deleted: 0,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            token: &'a str,
+            document_ids: Vec<String>,
+            reason: Option<String>,
+        }
+        invoke(
+            "confirm_document_purge",
+            &Args {
+                token,
+                document_ids,
+                reason,
+            },
+        )
+        .await
+    }
+}
+
 #[cfg(feature = "mock")]
 fn mock_documents() -> Vec<DocumentItem> {
     use crate::types::DocumentField;
@@ -5560,6 +5708,9 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: Some("brokerage_statement".into()),
             title: None,
             document_date: Some("2026-01-31".into()),
+            // Two tags, one of them key:value, so the chip row renders both forms.
+            tags: Some(vec!["statement".into(), "period:2026-01".into()]),
+            purged: None,
             fields: Some(vec![
                 parsed("kind", "brokerage_statement", false),
                 parsed("period_start", "2026-01-02", true),
@@ -5581,6 +5732,8 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: Some("notice_of_assessment".into()),
             title: Some("Notice of assessment, 2023 tax year".into()),
             document_date: Some("2024-06-14".into()),
+            tags: Some(vec!["taxes".into()]),
+            purged: None,
             fields: Some(vec![
                 DocumentField {
                     key: "kind".into(),
@@ -5611,6 +5764,10 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: None,
             title: None,
             document_date: None,
+            // ⚠️ Never tagged. Distinct from the cleared case below, and the
+            // state most of a real archive is in.
+            tags: None,
+            purged: None,
             fields: None,
             parent_document_id: None,
         },
@@ -5634,6 +5791,11 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: None,
             title: None,
             document_date: None,
+            // ⚠️ Tags cleared by a person — `Some(vec![])`, not `None`. A fixture
+            // carrying only one of these two states cannot show that the UI
+            // distinguishes them.
+            tags: Some(vec![]),
+            purged: None,
             fields: None,
             parent_document_id: None,
         },
@@ -5649,6 +5811,8 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: None,
             title: None,
             document_date: None,
+            tags: None,
+            purged: None,
             fields: None,
             parent_document_id: Some("doc-email".into()),
         },

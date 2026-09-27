@@ -1335,6 +1335,87 @@ Three findings from that session that are not derivable from the code:
 - 🔴 **Android WebView has no PDF renderer**, and **HEIC is classified viewable but is not**.
 - **Capacity is not a constraint**: 38G disk, 29G free, 71M used, against a 233 MB corpus.
 
+### ▶ ARCHIVE REFINEMENT — designed 2026-09-27, tags slice SHIPPED the same day
+
+Six pieces, in the order their dependencies force: **tags → query path → reader emits tags →
+review (confirm-and-correct) → purge-with-preview → per-tag retention.** Design in
+`~/.claude/plans/lets-go-through-with-precious-puffin.md`; the parts that bind are here.
+
+🔴 **RULING 2026-09-27 — purge confirms at GROUP granularity, once.** One screen per group
+(sender, or tag) listing **every** document with sender/subject/date/size, each sparable by
+checkbox, then a single Purge action. ⛔ This is the autonomy rule satisfied, not relaxed: nothing
+irreversible happens without him having seen what goes. Strict per-item was refused as unusable at
+backfill scale (412 taps for one newsletter sender), and approve-the-rule was refused because it
+grants autonomy over an irreversible action.
+⛔ **So per-tag retention NEVER deletes** — it fills that queue with groups and the confirm removes.
+
+✅ **SHIPPED: purge-with-preview** (2026-09-27). `document_purged` event → tombstone column;
+the fold is an **UPSERT** because a purge can arrive before the archive event it purges, and a
+bare UPDATE would no-op and let that event resurrect a visible row over deleted bytes. Text is
+cleared and the catalogue's `hidden_when` takes the row out of search/list/read/count **and** the
+vector index. Server routes `POST /documents/purge/preview` + `/documents/purge`, gated by a
+single-use ticket the confirm may only *shrink*. Archive-page group screen with per-item spare
+checkboxes. ⛔ Accounting asserted: `selected == purged + skipped + failed`, with
+`blobs_deleted` and `blobs_retained_shared` separate.
+🔴 **Three findings from building it, none derivable from the design:**
+- ⛔ **The refcount reads TWO STORES, not two tables.** Documents from the projection;
+  transaction attachments from the **event log** — because the server maintains
+  `DocumentsProjection` *alone* (`registry::build_projections_server`), so `transactions` does
+  not exist where purge runs, and querying a missing table is a hard error. A projection-only
+  count fails on the server, or silently reports zero and deletes a receipt's evidence.
+- ⛔ **`hidden_when` opened a door that a prohibition had been holding shut.** `fetch_children`
+  knew nothing about hidden rows, so the rule was "no child may read a hiding table" — and
+  `documents` is self-referential. Teaching it to resolve the rule found the twin already
+  shipping: **removed routine items were reaching the assistant** through `read`, while the
+  rollup over the same items filtered them. Fixed with the same change.
+- ⚠️ **Purged documents are excluded from every archive read**, so the "reads as purged, never as
+  broken" state is only reachable on a stale detail view — which is where it now lives, checked
+  *before* the viewer because a purged row still carries its `sha256` and a blob 404 cannot tell
+  deliberate removal from a missing file.
+⏳ **Not exercised against a real server** — routes compile and the engine is unit-tested against a
+real database, but no purge has run over HTTP. ⛔ And gate 1 (server backup) still precedes any
+purge on real data.
+⚠️ **Known cost, unmeasured, deliberately not optimised:** `purge::preview` refcounts **per row**,
+which is 2 queries each, and it iterates the whole group rather than the displayed page because the
+byte totals have to be true. A group of hundreds is likely fine on an embedded store; thousands
+would not be. 💭 The fix is one line of memoisation over the distinct `sha256` in the selection —
+documents sharing bytes are exactly the wasteful case. ⛔ Not done because nothing has measured it,
+and the preview is a user-facing wait where guessing is how you optimise the wrong thing. [S]
+
+✅ **SHIPPED: tags, the query path, and the filter UI.** Tags are a `DocumentField` key (`tags`)
+holding the whole set joined by `,`, hoisted into an indexed `option<array>` column.
+⛔ **The reason it is one field and not one per tag: `merge_fields` can overwrite a key but never
+remove one**, so per-tag keys would leave a model's wrong tag impossible to take off. As a field
+it inherits the human-beats-model rank fold for free, which is also why it is not its own event —
+`DocumentFieldsExtractedPayload::fields` already rules against a second provenance mechanism.
+⚠️ Replace-whole-set, like `TransactionTagged`. ⚠️ `projection version 1 → 2`, and it carries the
+**unused `purged` column too** — a bump costs minutes of blank UI on the phone, so purge must not
+cost a second one.
+
+⏳ **LEFT, each its own session:** the reader emitting tags (⛔ batches with gate 6 — a reader
+prompt/schema change mid-slate makes the next run a measurement of the patch), the
+confirm-and-correct affordance, and per-tag retention (⛔ which **proposes into the purge queue
+and never deletes** — the queue it needs now exists).
+
+**Findings from the design worth not rediscovering:**
+- ⛔ **A blob purge must refcount two referrers** — `documents.sha256` and `AttachmentRef.sha256`
+  on `transactions.attachment` / `combined_attachment`. ✅ Held, with a correction: they come from
+  two different *stores*, not two tables. See the shipped entry above.
+- ⛔ **`hidden_when: Some("purged")` on the catalogue entry is what reaps the embeddings**
+  (`vector_store.rs:176`), without which a purged spam email's text stays semantically
+  retrievable forever. ⚠️ It also trips `no_child_collection_reads_a_table_with_hidden_rows` by
+  design — `documents` is self-referential, so `fetch_children` must learn `hidden_when`.
+- ⛔ **`ConfigKey` cannot hold per-tag retention** — closed key space, eight exhaustive matches.
+  It wants an event + a small projection keyed by tag, like `set_account_override`.
+  ⚠️ And the server reads no config at all today, so a server-side evaluator needs that read added
+  or retention is a device-only preference that never fires.
+- ⚠️ **`search` takes no `filters` at all** (`assistant/verbs.rs:113-140`) — only `list` does. So
+  the model cannot combine a tag with text search on **any** record type. Not fixed here. [S]
+- ⚠️ **`array::group` under `GROUP ALL` does not flatten**, and `array::distinct`/`array::sort`
+  are aggregates too, so nesting either over it fails outright. `document_tags` flattens in
+  SurrealQL and dedupes host-side. ⛔ Found by a real query, not by reading the names — a
+  wrong-but-parseable aggregate returns an empty list, which reads as an archive with no tags.
+
 ⚠️ **The items below are the pre-planning record.** They describe where finance work stopped
 in 2026-09; read them for what was established, not as the current plan.
 
@@ -2005,7 +2086,9 @@ derived from the tab alone.
 data, or silently produce a wrong number he would act on?** Everything else is measurement quality
 and ships after. ⚠️ This is my judgement, not his ruling — the split is proposed, not settled.
 
-🔴 **GATES (9), in the order their dependencies force:**
+🔴 **GATES — was 9, now 7 OPEN. Two closed 2026-09-27: item 4 was already done before this
+triage was written, and item 3 shipped. ⚠️ The whole list still needs re-deriving against all
+three release legs; this is a correction to it, not that re-derivation.**
 1. **Server backup before the backfill** (last item below). Blob bytes have **no second copy**;
    the box is a single point of total loss. ⛔ Now doubly binding: the archive refinement agreed
    2026-09-26 includes a **purge path that deletes blobs**. Deleting blobs with no backup is the
@@ -2013,10 +2096,17 @@ and ships after. ⚠️ This is my judgement, not his ruling — the split is pr
 2. **Per-source PDF password.** 18.3% of the corpus (140 of 765) is encrypted and silently yields
    nothing, and the vision fallback cannot open them either. ⛔ Must precede the corpus import or
    a fifth of it reads as empty-but-fine.
-3. **Role C has no 429 retry or backoff.** One "model busy" **loses the document**. The logic
-   already exists in the chat client and was never shared across.
-4. **`max_tokens` for C1 and C3.** Same file, same path as 3 — fix together. Uncapped, a
-   non-terminating model runs to the 300s timeout, returns nothing, and bills for every token.
+3. ~~**Role C has no 429 retry or backoff.**~~ ✅ **CLOSED 2026-09-27** — all three controls
+   shared across from the chat client: 3 retries honouring `Retry-After` capped at 60s, doubling
+   backoff from 2s, and opt-in `with_min_interval` spacing. Five tests, including that a
+   once-rate-limited document is still read and that a persistent 429 says how many retries it
+   outlasted. ⚠️ `min_interval` is still **`None` in production** — nothing calls
+   `with_min_interval` yet, so the retry is what protects a backfill, not the spacing.
+4. ~~**`max_tokens` for C1 and C3.**~~ ✅ **NOT A GATE — it was already done.** Verified against
+   the code 2026-09-27: all three ceilings shipped in `142eb3a`, and the measurements this list
+   said were missing are in the constants' own doc comments. See the item below. 🔴 **So the
+   count is 8, not 9** — and the whole triage still needs re-deriving against all three legs,
+   which this correction does not do.
 5. **What re-queues a document a model called blank.** Proven: an empty transcription for a
    441-word document lifts `text_source` off `none` and **retires the document forever**, and
    nothing notices. ⛔ Promoted by the 2026-09-26 decision to turn enrichment on — this is that
@@ -2120,22 +2210,32 @@ this down — not the volume of work, but scope arriving from decisions made lat
       `fields` a document is catalogued but not findable by account or policy number, which is
       the point of the reader. ⚠️ Fix as its own change and re-run the whole C2 slate after —
       patching mid-selection makes the next run a measurement of the patch.
-- [ ] **Give role C the resilience the chat client already has** (`MODEL_BENCH.md` R22).
-      🔴 `extraction/openai_compat.rs` has **no 429 retry, no backoff, no request spacing** — a
-      single "Model busy" loses the document. The logic exists in `llm/openai_compat.rs`
-      (`MAX_RATE_LIMIT_RETRIES = 3`, honours `Retry-After`) and was never shared across. ⚠️ Fix
-      with R20's `max_tokens` — same file, same path, three gaps that compound.
-- [ ] **Set a per-question `max_tokens` on role-C requests** (`MODEL_BENCH.md` R20).
-      ✅ **C2 done 2026-09-17: `READER_MAX_TOKENS = 2048`**, sized from real answers on dev
-      (65–150 tokens, 0 reasoning) after the reader seat ran to 300s twice on a handwritten note.
-      Every role-C answer now logs `completion_tokens`/`reasoning_tokens`/`finish_reason`
-      ("role-C answer"). ⏳ **C1 and C3 still uncapped** until measured the same way: C3 so far
-      38 and 356 tokens per receipt page; C1 has no measurements yet. 🔴 There is
-      none today, so a model that does not terminate runs to the **300s vision timeout**, returns
-      nothing, and still bills for every token — two models did this on *short text* probes.
-      ⛔ Not one constant: C2's envelope wants ~2k, C3 transcribes a whole document and a tight
-      ceiling would truncate a real answer and score it as recall failure. ⚠️ Change it between
-      slates, never during one.
+- [x] ✅ **DONE 2026-09-27 — role C now has the resilience the chat client had** (`MODEL_BENCH.md`
+      R22). `extraction/openai_compat.rs` gained `MAX_RATE_LIMIT_RETRIES = 3`, a doubling backoff
+      from `DEFAULT_RETRY_BACKOFF = 2s` honouring `Retry-After` and capped by
+      `MAX_RETRY_WAIT = 60s`, and an opt-in `with_min_interval` — the same three controls, shared
+      rather than reimplemented.
+      ⚠️ **The retry sits BEFORE the body is read**, because a 429 body carries no answer; and a
+      429 that outlasts the retries now says `after 3 retries`, so a provider that is down stays
+      distinguishable from one briefly congested.
+      ⛔ **`min_interval` is `None` in production** — nothing calls `with_min_interval`, so a
+      capped endpoint is protected by the retry and not by spacing. Wiring it needs a per-provider
+      value, which is a config question and not this change. [S]
+      💭 The `max_tokens` half of "three gaps that compound" was already closed — see the R20 item.
+- [x] ✅ **DONE — all three seats, and this item was stale for longer than it should have been.**
+      Verified against the code 2026-09-27: `READER_MAX_TOKENS = 2048`, `TRANSCRIBER_MAX_TOKENS
+      = 8192` and `EXTRACTOR_MAX_TOKENS = 8192` (`extraction/openai_compat.rs:305-316`), each
+      wired at its own call site (`:253` C1, `:276` C2, `:296` C3). Shipped in `142eb3a`
+      ("extract: printed-date check, role-C ceilings").
+      ⛔ **The text below claimed C1 had no measurements. It does** — they are in the constants'
+      doc comments: C1 156–257 tokens for receipts and 361 for a six-page brokerage statement
+      with ten positions; C3 38–356 per page, so a ten-page document lands near 3,600. Both
+      ceilings leave roughly double. ⚠️ This was listed as **release gate 4** and cost a design
+      session's triage on a false premise, which is [[project-tasks-md-drifts-stale]] exactly:
+      verify an item against git before believing it. 🔴 **The gate count is 9 → 8.**
+      ⛔ Still true and still binding: not one constant (C2's envelope wants ~2k while C3
+      transcribes a whole document, and a tight ceiling there truncates a real answer and scores
+      it as recall failure), and ⚠️ change a ceiling **between** slates, never during one.
 - [ ] **Decide what re-queues a document a model already called blank** (`MODEL_BENCH.md` R19).
       🔴 Proven, not hypothetical: `Qwen3-VL-235B` returned an **empty transcription for a
       441-word document** in 31s without erroring. `enrich_text_once` appends it by design (the

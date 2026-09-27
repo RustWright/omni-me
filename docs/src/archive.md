@@ -87,6 +87,56 @@ later machine pass, and a parser checked against the bank's own figures survives
 The fallback within a rank matters too. Comparing with "strictly greater" would discard a
 *second* human correction of the same field — a save that reports success and changes nothing.
 
+## Tags are a field, and that is what makes them removable
+
+A document's tags are one folded field keyed `tags`, whose value is the whole set joined by
+commas, hoisted into an array column the filter matches against.
+
+Three other shapes were available and each loses something the fold already provides. Its own
+`document_tagged` event would buy a second provenance mechanism beside the first, which is two
+places for the human-beats-model rule to be got wrong — the same argument that keeps `kind`,
+`title` and `document_date` as keys rather than payload fields. Tags as a column written directly
+would skip the rank comparison, so a later model pass would overwrite what a person had typed.
+
+**One field per tag is the shape that looks best and cannot work.** The fold inserts and
+overwrites a key; it has no removal, because removal is not expressible in an append-only log
+without a tombstone per key. So `tag:groceries` as its own field can be added and can never be
+taken off. A single field holding the set makes untagging an ordinary write: the new value is the
+set without that tag, and it wins on rank like any other human correction.
+
+The cost is that tags are replace-whole-set rather than add-one, which the write path has to know
+— a caller sending one tag would silently clear the rest. Transactions already work this way for
+the same reason, so it is the codebase's existing contract rather than a new one.
+
+### Why the column is an array and the value is a string
+
+The field value has to be a string: `documents` is `SCHEMAFULL` and every `DocumentField` column
+is spelled out, `value` among them. The queryable column does not, and making it an array is what
+keeps `CONTAINS` meaning whole-element equality. Filtering the joined string instead would be a
+substring match, so `receipt` would find `receipts-2026` and the two tags would be impossible to
+tell apart from a filter.
+
+That is also why the separator is a comma rather than a colon: a colon already splits a
+`key:value` tag, and normalization refuses a tag containing the comma, so a set cannot round-trip
+into more tags than it went in with.
+
+### Normalizing is the write path's job, and only the write path's
+
+Tags are trimmed and lowercased before they are stored, and a tag with an empty half
+(`:x`), an embedded separator, or nothing but whitespace is refused. `FromStr` stays lenient
+because it parses tags already in the log, written before any of this existed.
+
+Every comparison downstream is against the stored string, so a tag differing from another only by
+case or padding is a second tag. The symptom is not an error: it is a filter returning nothing for
+a document that visibly carries the tag.
+
+⚠️ **The one bad tag fails the whole set**, rather than being dropped. A silently skipped tag is a
+tag someone typed, watched land, and can never find again.
+
+The frontend does not normalize, and the shared chip editor's sanitizer is explicitly switched off
+for the archive: it filters to alphanumerics plus `-_/`, which strips the colon a `key:value` tag
+is built on. Two normalizers is how the stored form and the queried form come apart.
+
 ## Text travels in the event
 
 A document's text is stored on the archive event rather than derived per device, which looks
@@ -267,6 +317,104 @@ to go and look at.
 `archived` counts documents, not events, and the two are no longer the same number: a file a parser
 recognises yields two. Deriving the count from the event list instead would make the check written
 to catch a miscount produce one, and produce it only on the runs that went well.
+
+## Purging, and why a deletion has to be an append
+
+A purge is the one irreversible thing the archive does, and the only place this
+project deletes a person's data. It writes `document_purged`, tombstones the row, and
+reclaims the blob when nothing else references it.
+
+**It cannot be a deletion, because state is a fold over an append-only log.** Removing the
+`document_archived` event is not possible — there is no per-event delete, and sync would
+re-append it from the server anyway — and removing the projection row achieves nothing,
+because a rebuild replays the log and recreates it. A row recreated that way is the
+dangerous case: it looks like an ordinary document and points at bytes that are gone. So
+the purge is another event, and the fold is what makes the row come back *purged*.
+
+The tombstone folds with an `UPSERT` rather than an `UPDATE`, which is the lesson routines
+paid for. A purge can arrive **before** the archive event it purges, because the pull filter
+runs on the authoring device's clock. A bare `UPDATE` matches nothing, and nothing ever
+retries a no-op'd mutation, so the archive event would then arrive and materialize a fully
+visible row for a document whose bytes had already been deleted.
+
+The same reasoning is why the text guard lives where both writers of text pass through it.
+An archive event carries `extracted` and a transcription carries `transcribed`; both
+outrank the `none` a purge leaves behind, so either would restore a purged document's words
+— on a device that never held the bytes and has no way to notice.
+
+### What a purge does and does not reclaim
+
+It reclaims the **blob**. It does not empty the log: the archive event still carries the
+document's text, and always will.
+
+What it removes from every *read* surface is the projection row's content. That is what
+takes a purged spam email out of search, out of `list` and `read`, and out of the embedding
+index. The words survive in a place nothing reads them back from, and pretending otherwise
+would be the more comfortable description rather than the true one.
+
+Hiding it from the vector index is one line — the catalogue entry declares `purged` as its
+hidden column — and it is not optional. The sweep selects hidden rows rather than filtering
+them out, precisely so that a row indexed while it was visible has its chunks deleted;
+without that, a purged document stays reachable by vector search after every other path has
+stopped returning it.
+
+That one line also exposed a door that had been closed by a prohibition rather than a
+mechanism. Child collections are fetched by a query that knew nothing about hidden rows, so
+the rule was "no child may read a table that hides rows" — and `documents` is
+self-referential, because an attachment is a document. Teaching the fetch to apply the
+hidden rule of whatever table it reads opened the shape legitimately, and found that
+removed routine items had been reaching the assistant the same way, while the rollup
+computed over the same items filtered them.
+
+### Counting what still needs the bytes, from two different places
+
+Blobs are shared: the same statement emailed and scanned is one file and two entries. So
+bytes are reclaimable only when nothing else references them, and "nothing else" spans two
+kinds of referrer — other documents, and transaction attachments.
+
+The two are read from different stores, and that is not an inconsistency. Documents come
+from the projection. Transaction attachments come from the **event log**, because the
+server is the only host holding blobs and therefore the only one that can delete them — and
+the server maintains the documents projection alone. `transactions` does not exist there,
+and querying a missing table is a hard error rather than an empty set. A count that assumed
+otherwise would fail loudly on the server, or, worse, quietly report no references and
+delete bytes a committed receipt still points at.
+
+The count is deliberately conservative: the log has no cheap notion of current visibility,
+so a transaction the user later deleted still holds its bytes. Over-counting keeps bytes
+that might be reclaimable; under-counting destroys bytes something needs. Only one of those
+is recoverable.
+
+### Preview, then confirm, and the confirm can only shrink
+
+Deletion is irreversible and therefore never grantable to autonomy: the user confirms, and
+the model may only flag. Per-item confirmation is what that rule originally implied, and it
+does not survive contact with a mail backfill — one newsletter sender is hundreds of taps,
+and the storage the purge exists to reclaim stays occupied until they finish.
+
+So confirmation is per **group**, once, with every document in it listed and individually
+sparable. That satisfies what the rule is for — nothing irreversible happens without the
+person having seen what goes — while staying usable at the scale the archive actually
+reaches. Approving a *rule* instead, and letting matches purge unattended, was refused: it
+buys the same scale by spending the thing the rule protects.
+
+The preview mints a ticket, and the confirm may only act on a subset of the ids that
+preview returned. Sparing rows shrinks the set, which is the point of the checkboxes;
+nothing can widen it. That is what stops a caller purging a group nobody looked at. If the
+group is larger than one preview page, the confirm covers the listed rows only and the
+screen says so, because a confirm reaching rows the user never saw is exactly what the
+listing exists to prevent.
+
+Both numbers are reported rather than netted off: bytes that will actually come back, and
+bytes that will not because something else still holds them. "Frees 31 MB" and "frees
+0.3 MB of the 31 MB you selected" are different answers, and on a corpus that shares bytes
+the second is the true one.
+
+The result asserts `selected == purged + skipped + failed` rather than assuming it, the
+same discipline a backfill report follows and for a sharper reason: a bare count of
+successes is unfalsifiable, and for an irreversible operation a gap between "selected" and
+"done" is the worst thing to discover later. Already-purged is *skipped*, not failed — two
+devices can confirm the same group.
 
 ## Blobs, and what content-addressing does not mean
 

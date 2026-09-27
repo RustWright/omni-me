@@ -56,6 +56,7 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
         // Tests are non-production by construction. `None` reports `unknown`,
         // which every destructive tool refuses.
         instance: None,
+        purge_ticket: Default::default(),
     };
 
     let app = Router::new()
@@ -138,6 +139,7 @@ async fn boot_full_server(
         // Tests are non-production by construction. `None` reports `unknown`,
         // which every destructive tool refuses.
         instance: None,
+        purge_ticket: Default::default(),
     };
 
     let app = omni_me_server::build_app(state, updates_dir, auth_token);

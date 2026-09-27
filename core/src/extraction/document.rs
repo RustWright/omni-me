@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{DocumentPart, ExtractionError};
 use crate::events::{
-    DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DOCUMENT_TITLE_KEY, DocumentField,
+    DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DOCUMENT_TAGS_KEY, DOCUMENT_TITLE_KEY, DocumentField,
     DocumentFieldsExtractedPayload,
 };
 
@@ -189,11 +189,21 @@ pub fn to_fields_payload(
         fields.push(field(DOCUMENT_DATE_KEY, date));
     }
     for extra in &summary.fields {
-        // ⛔ A model must not be able to overwrite the hoisted three through the
-        // open `fields` list. They have their own slots above; a duplicate key
-        // here would fold against its own sibling and which one won would depend
-        // on vector order, not on provenance.
-        if [DOCUMENT_KIND_KEY, DOCUMENT_TITLE_KEY, DOCUMENT_DATE_KEY].contains(&extra.key.as_str())
+        // ⛔ A model must not be able to overwrite a hoisted key through the open
+        // `fields` list. They have their own slots above; a duplicate key here
+        // would fold against its own sibling and which one won would depend on
+        // vector order, not on provenance.
+        //
+        // `tags` is reserved with them although nothing on this path emits it
+        // yet: the column is an array parsed out of the value, so a model writing
+        // a raw string there would land tags nobody normalized.
+        if [
+            DOCUMENT_KIND_KEY,
+            DOCUMENT_TITLE_KEY,
+            DOCUMENT_DATE_KEY,
+            DOCUMENT_TAGS_KEY,
+        ]
+        .contains(&extra.key.as_str())
         {
             continue;
         }

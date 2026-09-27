@@ -87,6 +87,7 @@ async fn start_statement_server(
         default_interval: std::time::Duration::from_secs(1800),
         secrets: Arc::new(secrets),
         instance: None,
+        purge_ticket: Default::default(),
     };
 
     let app = Router::new()

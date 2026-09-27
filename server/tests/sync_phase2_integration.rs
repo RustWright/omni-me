@@ -60,6 +60,7 @@ async fn start_server_on_port(
         default_interval: Duration::from_secs(1800),
         secrets: Default::default(),
         instance: None,
+        purge_ticket: Default::default(),
     };
 
     let app = make_router(state);
@@ -105,6 +106,7 @@ async fn start_server_ephemeral() -> (u16, omni_me_core::db::Database, tokio::ta
         default_interval: Duration::from_secs(1800),
         secrets: Default::default(),
         instance: None,
+        purge_ticket: Default::default(),
     };
     let app = make_router(state);
 

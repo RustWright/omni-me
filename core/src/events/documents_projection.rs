@@ -20,8 +20,9 @@ use crate::db::Database;
 use super::projection::Projection;
 use super::store::{Event, EventError};
 use super::types::{
-    DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DOCUMENT_TITLE_KEY, DocumentArchivedPayload,
-    DocumentField, DocumentFieldsExtractedPayload, DocumentTextTranscribedPayload,
+    DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DOCUMENT_TAGS_KEY, DOCUMENT_TITLE_KEY,
+    DocumentArchivedPayload, DocumentField, DocumentFieldsExtractedPayload, DocumentPurgedPayload,
+    DocumentTextTranscribedPayload, Tag, decode_tag_set,
 };
 
 pub struct DocumentsProjection;
@@ -37,7 +38,9 @@ impl Projection for DocumentsProjection {
     }
 
     fn version(&self) -> u32 {
-        1
+        // 2: `tags`, and the purge tombstone columns. One bump for both because a
+        // bump costs minutes of blank UI on the phone while the rebuild runs.
+        2
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -69,6 +72,19 @@ impl Projection for DocumentsProjection {
              DEFINE FIELD IF NOT EXISTS kind ON documents TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS title ON documents TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS document_date ON documents TYPE option<string>;
+             -- Hoisted from the `tags` key, which stores the whole set joined by
+             -- `TAG_SEPARATOR`. An array here rather than that string so the
+             -- filter is `CONTAINS` against a value, not a substring match that
+             -- would make `receipt` find `receipts-2026`.
+             DEFINE FIELD IF NOT EXISTS tags ON documents TYPE option<array>;
+             DEFINE FIELD IF NOT EXISTS tags.* ON documents TYPE string;
+             -- A document removed on purpose. ⛔ The row stays and reads as
+             -- purged; the `document_archived` event is still in the log and a
+             -- rebuild replays it, so without this the row would come back
+             -- looking ordinary while its bytes were gone.
+             DEFINE FIELD IF NOT EXISTS purged ON documents TYPE option<bool>;
+             DEFINE FIELD IF NOT EXISTS purged_at ON documents TYPE option<datetime>;
+             DEFINE FIELD IF NOT EXISTS purge_reason ON documents TYPE option<string>;
              -- A SCHEMAFULL table validates objects inside an array key by key,
              -- so every `DocumentField` column is spelled out. Same closed-struct
              -- argument as `beliefs.evidence`, and the same trap if FLEXIBLE is
@@ -83,6 +99,7 @@ impl Projection for DocumentsProjection {
              DEFINE INDEX IF NOT EXISTS documents_kind ON documents FIELDS kind;
              DEFINE INDEX IF NOT EXISTS documents_date ON documents FIELDS document_date;
              DEFINE INDEX IF NOT EXISTS documents_parent ON documents FIELDS parent_document_id;
+             DEFINE INDEX IF NOT EXISTS documents_tags ON documents FIELDS tags;
              -- One index per field, as the catalog's `text_fields` requires.
              -- ⚠️ `filename` is indexed and the other two may be absent: a scan
              -- carries `text_source: none` and never gains a title, so its name
@@ -110,6 +127,7 @@ impl Projection for DocumentsProjection {
             "document_archived" => self.on_archived(event, db).await,
             "document_fields_extracted" => self.on_fields(event, db).await,
             "document_text_transcribed" => self.on_transcribed(event, db).await,
+            "document_purged" => self.on_purged(event, db).await,
             _ => Ok(()),
         }
     }
@@ -197,6 +215,58 @@ impl DocumentsProjection {
         .await
     }
 
+    /// Tombstone a document: the row stays, marked purged, and its text goes.
+    ///
+    /// ⛔ **`UPSERT`, not `UPDATE`** — the lesson `routines_projection` paid for.
+    /// A bare `UPDATE` silently matches nothing when the purge folds before the
+    /// archive event it purges, and nothing ever retries a no-op'd mutation; the
+    /// archive event would then arrive and materialize a fully visible row whose
+    /// bytes had already been deleted. That is the one outcome this whole design
+    /// exists to prevent.
+    ///
+    /// ⚠️ **`text` is cleared here, and that is the only place purging reclaims
+    /// anything from the log.** Blob bytes live on disk and are deleted by the
+    /// caller; a document's text lives in the *event payload*, which is
+    /// append-only and stays. Nulling the column is what takes a purged spam
+    /// email out of search and out of the embedding sweep — the log still holds
+    /// the words, but nothing reads them back.
+    async fn on_purged(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+        let parsed: DocumentPurgedPayload = match serde_json::from_value(event.payload.clone()) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    event_id = %event.id,
+                    error = %e,
+                    "skipping a purge this build cannot read"
+                );
+                return Ok(());
+            }
+        };
+
+        db.query(
+            "UPSERT type::record('documents', $id) SET
+                document_id = $id,
+                purged = true,
+                purged_at = type::datetime($purged_at),
+                purge_reason = $reason,
+                text = NONE,
+                text_source = $none",
+        )
+        .bind(("id", parsed.document_id.clone()))
+        .bind(("purged_at", parsed.purged_at.clone()))
+        .bind(("reason", parsed.reason.clone()))
+        .bind(("none", TextSource::None.as_str().to_string()))
+        .await?
+        .check()?;
+
+        tracing::info!(
+            document_id = %parsed.document_id,
+            reason = parsed.reason.as_deref().unwrap_or("none given"),
+            "document purged"
+        );
+        Ok(())
+    }
+
     async fn on_fields(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         let parsed: DocumentFieldsExtractedPayload =
             match serde_json::from_value(event.payload.clone()) {
@@ -242,19 +312,29 @@ impl DocumentsProjection {
         let fields = serde_json::to_value(&merged)
             .map_err(|e| EventError::Validation(format!("could not serialize fields: {e}")))?;
 
+        // ⚠️ `None`, not `Some(vec![])`, when the key is absent. An empty array
+        // would make an untagged document indistinguishable from one whose tags
+        // were cleared, and `docs/src/archive.md` records why an absent column
+        // has to stay absent: `string::concat` renders it as the literal `NONE`
+        // and the embedding sweep would index that word as the document's text.
+        let tags: Option<Vec<String>> = hoisted(DOCUMENT_TAGS_KEY)
+            .map(|joined| decode_tag_set(&joined).iter().map(Tag::to_string).collect());
+
         db.query(
             "UPSERT type::record('documents', $id) SET
                 document_id = $id,
                 fields = $fields,
                 kind = $kind,
                 title = $title,
-                document_date = $document_date",
+                document_date = $document_date,
+                tags = $tags",
         )
         .bind(("id", parsed.document_id.clone()))
         .bind(("fields", fields))
         .bind(("kind", hoisted(DOCUMENT_KIND_KEY)))
         .bind(("title", hoisted(DOCUMENT_TITLE_KEY)))
         .bind(("document_date", hoisted(DOCUMENT_DATE_KEY)))
+        .bind(("tags", tags))
         .await?
         .check()?;
         Ok(())
@@ -301,6 +381,32 @@ async fn write_text_if_it_outranks(
     text: Option<String>,
     text_source: &str,
 ) -> Result<(), EventError> {
+    // ⛔ A purge outranks every text source there is, and this is the one place
+    // that has to know it. Both writers of text come through here, and either
+    // would otherwise restore a purged document's words: the archive event
+    // carries `extracted`, a transcription carries `transcribed`, and both beat
+    // the `none` a purge leaves behind. The pull filter runs on the authoring
+    // device's clock, so either can arrive *after* the purge and undo it — on a
+    // device that never held the bytes and has no way to notice.
+    let purged: bool = db
+        .query("SELECT VALUE purged FROM type::record('documents', $id)")
+        .bind(("id", document_id.to_string()))
+        .await?
+        .check()?
+        .take::<Vec<Option<bool>>>(0)
+        .ok()
+        .and_then(|rows| rows.into_iter().next().flatten())
+        .unwrap_or(false);
+
+    if purged {
+        tracing::debug!(
+            document_id,
+            incoming = text_source,
+            "not restoring text to a purged document"
+        );
+        return Ok(());
+    }
+
     let held: String = db
         .query("SELECT VALUE text_source FROM type::record('documents', $id)")
         .bind(("id", document_id.to_string()))
@@ -487,6 +593,270 @@ mod tests {
             column(&db, "doc-3", "title").await.as_deref(),
             Some("2023 Notice of Assessment"),
             "a re-run must never undo what the user fixed by hand"
+        );
+    }
+
+    /// The `tags` column, read as elements rather than as a string.
+    async fn tags_column(db: &Database, id: &str) -> Option<Vec<String>> {
+        db.query("SELECT VALUE tags FROM type::record('documents', $id)")
+            .bind(("id", id.to_string()))
+            .await
+            .unwrap()
+            .take::<Vec<serde_json::Value>>(0)
+            .ok()
+            .and_then(|rows| rows.into_iter().next())
+            .and_then(|v| serde_json::from_value(v).ok())
+    }
+
+    #[tokio::test]
+    async fn the_tag_field_is_hoisted_into_elements() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived("t1"), &db)
+            .await
+            .unwrap();
+        DocumentsProjection
+            .apply(
+                &extracted(
+                    "t1",
+                    &[field("tags", "taxes,institution:rbc", "model:qwen@2")],
+                ),
+                &db,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            tags_column(&db, "t1").await,
+            Some(vec!["taxes".to_string(), "institution:rbc".to_string()]),
+            "the joined value must land as elements the filter can match whole"
+        );
+    }
+
+    /// Tags fold by rank like any other key, which is the whole reason they are a
+    /// field rather than a column of their own.
+    #[tokio::test]
+    async fn a_persons_tags_survive_a_later_model_pass() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived("t2"), &db)
+            .await
+            .unwrap();
+
+        for e in [
+            extracted("t2", &[field("tags", "receipt", "model:qwen@2")]),
+            extracted("t2", &[field("tags", "taxes,receipt", "human")]),
+            extracted("t2", &[field("tags", "receipt", "model:qwen@3")]),
+        ] {
+            DocumentsProjection.apply(&e, &db).await.unwrap();
+        }
+
+        assert_eq!(
+            tags_column(&db, "t2").await,
+            Some(vec!["taxes".to_string(), "receipt".to_string()]),
+            "a later model pass must not undo the user's own labels"
+        );
+    }
+
+    /// ⚠️ Cleared is not the same state as never tagged, and the column has to
+    /// keep them apart: an empty array means a person took the tags off, absent
+    /// means nothing has ever tagged this document. Collapsing the two would make
+    /// "I removed that tag" and "no tag was ever suggested" look identical.
+    #[tokio::test]
+    async fn clearing_tags_is_distinguishable_from_never_having_any() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived("t3"), &db)
+            .await
+            .unwrap();
+        assert_eq!(tags_column(&db, "t3").await, None, "never tagged");
+
+        DocumentsProjection
+            .apply(&extracted("t3", &[field("tags", "receipt", "human")]), &db)
+            .await
+            .unwrap();
+        assert_eq!(tags_column(&db, "t3").await, Some(vec!["receipt".into()]));
+
+        // The whole set, emptied — which is what removing the last chip sends.
+        DocumentsProjection
+            .apply(&extracted("t3", &[field("tags", "", "human")]), &db)
+            .await
+            .unwrap();
+        assert_eq!(
+            tags_column(&db, "t3").await,
+            Some(vec![]),
+            "cleared must be an empty array, never absent"
+        );
+    }
+
+    /// The `>=` rule reaches tags too: a second edit by the same person lands
+    /// rather than reporting a save that changed nothing.
+    #[tokio::test]
+    async fn a_second_human_tag_edit_lands() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived("t4"), &db)
+            .await
+            .unwrap();
+
+        for e in [
+            extracted("t4", &[field("tags", "receipt", "human")]),
+            extracted("t4", &[field("tags", "receipt,groceries", "human")]),
+        ] {
+            DocumentsProjection.apply(&e, &db).await.unwrap();
+        }
+
+        assert_eq!(
+            tags_column(&db, "t4").await,
+            Some(vec!["receipt".to_string(), "groceries".to_string()])
+        );
+    }
+
+    fn purged(document_id: &str, reason: Option<&str>) -> Event {
+        event(
+            EventType::DocumentPurged,
+            document_id,
+            serde_json::json!({
+                "document_id": document_id,
+                "purged_at": "2026-09-27T10:00:00Z",
+                "reason": reason,
+            }),
+        )
+    }
+
+    async fn flag(db: &Database, id: &str, col: &str) -> Option<bool> {
+        let sql = format!("SELECT VALUE {col} FROM type::record('documents', $id)");
+        db.query(&sql)
+            .bind(("id", id.to_string()))
+            .await
+            .unwrap()
+            .take::<Vec<Option<bool>>>(0)
+            .ok()
+            .and_then(|rows| rows.into_iter().next().flatten())
+    }
+
+    /// A purge tombstones the row and takes its text out of every read surface.
+    ///
+    /// ⚠️ The text lives in the *event payload* as well, and that stays — the log
+    /// is append-only. Nulling the column is what removes a purged spam email from
+    /// search and from the embedding sweep; the words survive where nothing reads
+    /// them back.
+    #[tokio::test]
+    async fn a_purge_tombstones_the_row_and_clears_its_text() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived("p1"), &db)
+            .await
+            .unwrap();
+        assert!(
+            column(&db, "p1", "text").await.is_some(),
+            "text to begin with"
+        );
+
+        DocumentsProjection
+            .apply(&purged("p1", Some("newsletter")), &db)
+            .await
+            .unwrap();
+
+        assert_eq!(flag(&db, "p1", "purged").await, Some(true));
+        assert_eq!(column(&db, "p1", "text").await, None, "text must be gone");
+        assert_eq!(
+            column(&db, "p1", "purge_reason").await.as_deref(),
+            Some("newsletter"),
+            "a purge is irreversible, so why it happened has to survive"
+        );
+        assert_eq!(
+            column(&db, "p1", "text_source").await.as_deref(),
+            Some("none")
+        );
+    }
+
+    /// ⛔ The case the `UPSERT` exists for, and the one a bare `UPDATE` loses.
+    ///
+    /// The pull filter runs on the authoring device's clock, so a purge can reach
+    /// a device before the archive event it purges. `routines_projection` paid for
+    /// this lesson: a bare `UPDATE` matches nothing, nothing retries a no-op'd
+    /// mutation, and the archive event then materializes a fully visible row whose
+    /// bytes have already been deleted.
+    #[tokio::test]
+    async fn a_purge_that_arrives_before_its_archive_event_still_holds() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&purged("p2", None), &db)
+            .await
+            .unwrap();
+        DocumentsProjection
+            .apply(&archived("p2"), &db)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            flag(&db, "p2", "purged").await,
+            Some(true),
+            "the archive event must not resurrect a purged document"
+        );
+        assert_eq!(
+            column(&db, "p2", "text").await,
+            None,
+            "⛔ and it must not restore the text either — on a device with no \
+             bytes, nothing would ever notice"
+        );
+    }
+
+    /// The same guard from the other direction: a transcription is the second
+    /// writer of text, and it arrives later by design.
+    #[tokio::test]
+    async fn a_transcription_cannot_give_text_back_to_a_purged_document() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived("p3"), &db)
+            .await
+            .unwrap();
+        DocumentsProjection
+            .apply(&purged("p3", None), &db)
+            .await
+            .unwrap();
+
+        let t = event(
+            EventType::DocumentTextTranscribed,
+            "p3",
+            serde_json::json!({
+                "document_id": "p3",
+                "text": "a model read the scan",
+                "model": "qwen@3",
+                "transcribed_at": "2026-09-27T11:00:00Z",
+            }),
+        );
+        DocumentsProjection.apply(&t, &db).await.unwrap();
+
+        assert_eq!(column(&db, "p3", "text").await, None);
+    }
+
+    /// ⚠️ Fields are NOT blocked, deliberately. A purged row keeps its title and
+    /// kind so the archive can say *which* document went; only the content goes.
+    #[tokio::test]
+    async fn a_purged_document_keeps_the_labels_that_say_what_it_was() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived("p4"), &db)
+            .await
+            .unwrap();
+        DocumentsProjection
+            .apply(
+                &extracted("p4", &[field("title", "Weekly digest", "human")]),
+                &db,
+            )
+            .await
+            .unwrap();
+        DocumentsProjection
+            .apply(&purged("p4", None), &db)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            column(&db, "p4", "title").await.as_deref(),
+            Some("Weekly digest"),
+            "a tombstone nobody can identify is not an account of anything"
         );
     }
 

@@ -122,6 +122,13 @@ pub struct AppState {
     /// a destructive tool can ask before it acts. `None` means nothing declared
     /// one, which every such tool must treat as a refusal.
     pub instance: Option<Instance>,
+    /// The one purge preview a confirm may act on. See
+    /// [`routes::PurgeTicket`].
+    ///
+    /// ⚠️ In memory, not persisted, and that is correct: a restart should void an
+    /// unconfirmed preview rather than let one be redeemed against an archive that
+    /// has moved on.
+    pub purge_ticket: Arc<tokio::sync::Mutex<Option<routes::PurgeTicket>>>,
 }
 
 /// The shared runtime handles [`run`] hands a [`SourceBuilder`] so it can
@@ -307,6 +314,7 @@ pub async fn run(cfg: RunConfig) {
         default_interval: interval,
         secrets: Arc::new(creds.secrets.clone()),
         instance,
+        purge_ticket: Arc::new(tokio::sync::Mutex::new(None)),
     };
 
     // Auto-import: the engine owns the store/projections/device_id but not the

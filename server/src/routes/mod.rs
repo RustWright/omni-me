@@ -10,6 +10,8 @@ mod sync;
 pub use auto_import::auto_import_routes;
 pub use blobs::blob_routes;
 pub use documents::documents_routes;
+// The purge ticket is held on `AppState`, so its type has to be nameable there.
+pub use documents::PurgeTicket;
 pub use feedback::feedback_routes;
 pub use llm::llm_routes;
 pub use notes::notes_routes;

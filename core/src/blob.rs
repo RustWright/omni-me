@@ -63,6 +63,26 @@ pub fn path_for(dir: &Path, hash: &str) -> Result<PathBuf, BlobError> {
     Ok(dir.join(hash))
 }
 
+/// Delete a blob. `Ok(false)` when it was already gone.
+///
+/// ⛔ **Never call this without first proving nothing else references the hash.**
+/// Blobs are content-addressed and therefore *shared*: a statement that arrived
+/// by email and the same statement scanned from paper are one file here and two
+/// archive entries, and a transaction attachment can point at it as well. See
+/// `queries::blob_reference_count`, which is the only sanctioned way to decide.
+///
+/// ⚠️ Absent is success, not an error. Purge is a batch over documents that may
+/// share bytes, so the second document to release a hash finds it already gone —
+/// which is the normal path, not a failure to report.
+pub async fn delete(dir: &Path, hash: &str) -> Result<bool, BlobError> {
+    let path = path_for(dir, hash)?;
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(io("delete")(e)),
+    }
+}
+
 /// Store `bytes` under their own hash, returning it. Idempotent.
 ///
 /// ⚠️ **Write to a temp name, then rename.** A reader can open a blob the moment

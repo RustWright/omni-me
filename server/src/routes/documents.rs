@@ -8,12 +8,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use omni_me_core::archive;
-use omni_me_core::events::{AttachmentRef, NewEvent};
+use omni_me_core::events::{AttachmentRef, EventWriter, NewEvent};
 use omni_me_core::extraction::document::{reading_from_extraction, to_fields_payload};
 use omni_me_core::extraction::{
     DEFAULT_CONFIDENCE_THRESHOLD, DocumentPart, ExtractionHint, ExtractionResult, TotalCheck,
     add_counter_legs, verify,
 };
+use omni_me_core::purge;
 
 use crate::AppState;
 
@@ -48,6 +49,10 @@ pub fn documents_routes() -> Router<AppState> {
     Router::new()
         .route("/documents/extract", post(extract_handler))
         .route("/documents/archive", post(archive_handler))
+        // ⛔ Two routes, never one. The preview is what the user reads; the
+        // confirm may only act on what that preview returned.
+        .route("/documents/purge/preview", post(purge_preview_handler))
+        .route("/documents/purge", post(purge_handler))
         .layer(DefaultBodyLimit::max(MAX_DOCUMENT_BYTES))
 }
 
@@ -274,4 +279,129 @@ async fn archive_capture(
         size: body.len() as u64,
         document_id: Some(ingested.document_id),
     })
+}
+
+/// A preview the user has been shown, and the only set a purge may act on.
+///
+/// ⛔ **The gate that keeps deletion out of a caller's hands.** `apply` accepts a
+/// subset of the ids the matching preview returned and nothing else, so a client
+/// — buggy, or driven from a console — cannot purge a group nobody looked at, and
+/// cannot widen a set the user narrowed. It is `last_import_root`'s pattern,
+/// moved server-side because this is where the bytes are.
+///
+/// ⚠️ Single-use and single-slot. A second preview replaces the first, so a stale
+/// ticket cannot be replayed later against a group that has since changed.
+#[derive(Debug, Clone)]
+pub struct PurgeTicket {
+    pub token: String,
+    pub group: String,
+    pub ids: std::collections::HashSet<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PurgePreviewRequest {
+    /// The tag forming this group.
+    pub tag: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PurgePreviewResponse {
+    #[serde(flatten)]
+    pub preview: purge::PurgePreview,
+    /// Hand back with the confirm. See [`PurgeTicket`].
+    pub token: String,
+    /// How many of `total` are listed in `items`.
+    pub listed: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PurgeRequest {
+    pub token: String,
+    /// The ids to purge — the previewed set, minus anything spared.
+    pub document_ids: Vec<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// What a purge of this group would remove. Writes nothing.
+async fn purge_preview_handler(
+    State(state): State<AppState>,
+    Json(body): Json<PurgePreviewRequest>,
+) -> Result<Json<PurgePreviewResponse>, (StatusCode, String)> {
+    let preview = purge::preview(&state.db, &body.tag)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let token = ulid::Ulid::new().to_string();
+    let ticket = PurgeTicket {
+        token: token.clone(),
+        group: body.tag.clone(),
+        ids: preview
+            .items
+            .iter()
+            .map(|i| i.document_id.clone())
+            .collect(),
+    };
+
+    // ⚠️ A group larger than one preview page cannot be confirmed in one action,
+    // and that is deliberate rather than a limitation to route around: the ruling
+    // is that every item going is *listed*, so a confirm covering rows the user
+    // never saw would be the thing the grouped preview exists to avoid.
+    let listed = preview.items.len();
+    *state.purge_ticket.lock().await = Some(ticket);
+
+    Ok(Json(PurgePreviewResponse {
+        preview,
+        token,
+        listed,
+    }))
+}
+
+/// Purge a confirmed set. ⛔ Irreversible.
+async fn purge_handler(
+    State(state): State<AppState>,
+    Json(body): Json<PurgeRequest>,
+) -> Result<Json<purge::PurgeReport>, (StatusCode, String)> {
+    // Taken, not read: a ticket is spent by the confirm it authorises, so a
+    // retry after a partial failure has to preview again and see current state.
+    let ticket = state.purge_ticket.lock().await.take();
+    let Some(ticket) = ticket.filter(|t| t.token == body.token) else {
+        return Err((
+            StatusCode::CONFLICT,
+            "no matching preview — preview the group again before confirming".to_string(),
+        ));
+    };
+
+    // ⛔ Subset only. Sparing items shrinks the set, which is the whole point of
+    // the checkboxes; nothing may add to it.
+    if let Some(stray) = body
+        .document_ids
+        .iter()
+        .find(|id| !ticket.ids.contains(*id))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("{stray} was not in the preview this token belongs to"),
+        ));
+    }
+
+    let writer = EventWriter::new(
+        state.store.clone(),
+        state.projections.clone(),
+        omni_me_core::config::ALL_FEATURES.iter().copied().collect(),
+        state.device_id.clone(),
+    );
+    let reason = body.reason.clone().or_else(|| Some(ticket.group.clone()));
+
+    let report = purge::apply(
+        &state.db,
+        &writer,
+        &state.blob_dir,
+        &body.document_ids,
+        reason.as_deref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(report))
 }

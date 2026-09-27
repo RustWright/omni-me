@@ -35,6 +35,7 @@ pub mod llm;
 pub mod mime;
 pub mod paths;
 pub mod preprocess;
+pub mod purge;
 pub mod query;
 pub mod reconciliation;
 pub mod record_type;
