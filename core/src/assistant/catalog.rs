@@ -640,6 +640,10 @@ mod tests {
     const NOT_QUERYABLE: &[&str] = &[
         // Settings, not records.
         "config",
+        // A retention rule per tag — a setting about documents, not one of them.
+        // Searching it would answer questions about the archive's policy while
+        // reading as though it had found the documents themselves.
+        "document_retention",
         // Declarations about shape; reached through `describe_type`, not searched.
         "record_types",
         // Import staging — proposals awaiting review, which is Phase D's surface,
