@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::sampling::Sampling;
 use super::{LlmClient, NullLlmClient, OpenAiCompatClient};
 use crate::credentials::{Credentials, LlmRole};
 use crate::extraction::{
@@ -162,6 +163,10 @@ fn refusal_reason(model: &str) -> Option<String> {
 /// passes [`ClientOptions::default`] and only the bench harness populates it.
 /// The privacy guarantee on the direct path comes from the provider's own policy
 /// plus [`refusal_reason`], not from anything sent per-request.
+///
+/// ⚠️ Every seat takes one, and that is load-bearing rather than tidy: role C's
+/// builders took no options until 2026-09-27, so a bench that set the pin and the
+/// privacy terms applied them to the chat seats and to no document request.
 #[derive(Debug, Clone, Default)]
 pub struct ClientOptions {
     /// Merged into every request body. See [`OpenAiCompatClient::with_extra_body`].
@@ -184,6 +189,56 @@ pub struct ClientOptions {
 /// calls, so this bounds a backfill (one seat at a time) and not a genuinely
 /// concurrent burst; that would need a limiter they share.
 pub const MIN_INTERVAL_ENV: &str = "OMNI_LLM_MIN_INTERVAL_MS";
+
+/// The sampling a role runs at when its config names none.
+///
+/// Decided 2026-09-28 (user), and the line is not between document work and chat —
+/// it is between a question with one right answer and a voice someone hears.
+/// Role C's three questions and role D's structuring have one right answer each.
+/// Role B answers one scheduled question a day and is told not to draw new
+/// conclusions, so variety buys it nothing and determinism is what would let its
+/// saturated bench separate anything.
+///
+/// ⛔ Role A is the exception and deliberately so: it is the seat being conversed
+/// with, and temperature 0 there costs phrasing that varies. One line to change
+/// whenever that trade is worth making.
+fn default_sampling(role: LlmRole) -> Sampling {
+    match role {
+        LlmRole::Extractor
+        | LlmRole::Reader
+        | LlmRole::Transcriber
+        | LlmRole::Structurer
+        | LlmRole::Batch => Sampling::deterministic(),
+        LlmRole::Interactive => Sampling::provider_default(),
+    }
+}
+
+/// Resolve one seat's sampling: the config's value per parameter, else the role's.
+///
+/// Parameter by parameter, not whole-struct, so `[llm.reader] seed = 7` adds a
+/// seed without silently dropping role C's temperature.
+fn sampling_for(cfg: &crate::credentials::LlmProviderConfig, role: LlmRole) -> Sampling {
+    let fallback = default_sampling(role);
+    Sampling {
+        temperature: cfg.temperature.or(fallback.temperature),
+        top_p: cfg.top_p.or(fallback.top_p),
+        seed: cfg.seed.or(fallback.seed),
+    }
+}
+
+/// What a seat will actually sample at, for a caller that has to print it.
+///
+/// Exists because a scorecard that does not carry its sampling cannot be compared
+/// against the next one (`MODEL_BENCH.md` R26), and the bench prints its header
+/// before it holds a client. Fold the run's `extra_body` over the result with
+/// [`Sampling::with_overrides`] or the line will name a value the request did not
+/// carry.
+pub fn resolved_sampling(creds: &Credentials, role: LlmRole) -> Sampling {
+    match creds.llm.as_ref() {
+        Some(cfg) => sampling_for(&cfg.for_role(role), role),
+        None => default_sampling(role),
+    }
+}
 
 /// Parse [`MIN_INTERVAL_ENV`], or `None`.
 ///
@@ -259,9 +314,16 @@ pub fn build_llm_client(
         None => {}
     }
 
-    tracing::info!(?role, model = %model, "LLM client: OpenAI-compatible");
+    let sampling = sampling_for(&cfg, role);
+    tracing::info!(
+        ?role,
+        model = %model,
+        sampling = %sampling.describe(),
+        "LLM client: OpenAI-compatible"
+    );
     let mut client =
-        OpenAiCompatClient::new(base_url, model, cfg.api_key.clone().unwrap_or_default());
+        OpenAiCompatClient::new(base_url, model, cfg.api_key.clone().unwrap_or_default())
+            .with_sampling(sampling);
     if let Some(extra) = options.extra_body {
         client = client.with_extra_body(extra);
     }
@@ -283,12 +345,16 @@ pub fn build_llm_client(
 /// A refused or unconfigured extractor is a `NullExtractor`, and that answers
 /// `Ok` with an empty draft rather than erroring. A caller that scores results
 /// has to check `name()`, or a misconfiguration reads as the model finding nothing.
-pub fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
+///
+/// ⛔ `options` is not optional scaffolding. It carries the gateway pin, and
+/// without it every role-C measurement ever taken was routed to an upstream of
+/// the gateway's choosing — see [`VisionEndpoint::into_client`].
+pub fn build_extractor(creds: &Credentials, options: ClientOptions) -> Arc<dyn DocumentExtractor> {
     let Some(endpoint) = vision_endpoint(creds, LlmRole::Extractor, "extractor") else {
         return Arc::new(NullExtractor);
     };
     tracing::info!(model = %endpoint.model, "Document extractor: OpenAI-compatible vision");
-    Arc::new(endpoint.into_client())
+    Arc::new(endpoint.into_client(options))
 }
 
 /// Build the document reader a config selects — role C2, the cataloguing half.
@@ -296,10 +362,13 @@ pub fn build_extractor(creds: &Credentials) -> Arc<dyn DocumentExtractor> {
 /// Returns `None` rather than a null object, and the asymmetry with
 /// [`build_extractor`] is deliberate: see the `NullExtractor` note on
 /// [`DocumentReader`].
-pub fn build_reader(creds: &Credentials) -> Option<Arc<dyn DocumentReader>> {
+pub fn build_reader(
+    creds: &Credentials,
+    options: ClientOptions,
+) -> Option<Arc<dyn DocumentReader>> {
     let endpoint = vision_endpoint(creds, LlmRole::Reader, "reader")?;
     tracing::info!(model = %endpoint.model, "Document reader: OpenAI-compatible vision");
-    Some(Arc::new(endpoint.into_client()))
+    Some(Arc::new(endpoint.into_client(options)))
 }
 
 /// Build the document transcriber a config selects — role C3.
@@ -307,10 +376,13 @@ pub fn build_reader(creds: &Credentials) -> Option<Arc<dyn DocumentReader>> {
 /// `None` rather than a null object for [`build_reader`]'s reason: an empty
 /// transcription would rank above `none` in `TextSource::rank` and stand as this
 /// document's text, which is worse than leaving it untranscribed.
-pub fn build_transcriber(creds: &Credentials) -> Option<Arc<dyn DocumentTranscriber>> {
+pub fn build_transcriber(
+    creds: &Credentials,
+    options: ClientOptions,
+) -> Option<Arc<dyn DocumentTranscriber>> {
     let endpoint = vision_endpoint(creds, LlmRole::Transcriber, "transcriber")?;
     tracing::info!(model = %endpoint.model, "Document transcriber: OpenAI-compatible vision");
-    Some(Arc::new(endpoint.into_client()))
+    Some(Arc::new(endpoint.into_client(options)))
 }
 
 /// A role-C endpoint that passed every gate.
@@ -318,20 +390,35 @@ struct VisionEndpoint {
     base_url: String,
     model: String,
     api_key: String,
+    sampling: Sampling,
+    /// Tried in turn when a PDF part turns out to be encrypted. Role C is the one
+    /// path that can fall back to *rendering* a statement it cannot read, and
+    /// without these that fallback could not open one either.
+    pdf_passwords: crate::credentials::PdfPasswords,
 }
 
 impl VisionEndpoint {
-    fn into_client(self) -> OpenAiCompatExtractor {
-        let client = OpenAiCompatExtractor::new(self.base_url, self.model, self.api_key);
-        // All three role-C seats, from one knob: the rate cap belongs to the
-        // account, not to the seat. See [`MIN_INTERVAL_ENV`].
-        match min_interval_from_env() {
-            Some(interval) => {
-                tracing::info!(?interval, "spacing role C requests");
-                client.with_min_interval(interval)
-            }
-            None => client,
+    /// ⚠️ `options` reaching here is the fix for a defect that ran the length of
+    /// the role-C programme: these three builders took none, so the bench's
+    /// `extra_body` — the upstream pin, `require_parameters`, and the `zdr` /
+    /// `data_collection: "deny"` terms — was applied to roles A and B and to no
+    /// document request at all. `MODEL_BENCH.md` R27.
+    fn into_client(self, options: ClientOptions) -> OpenAiCompatExtractor {
+        tracing::info!(sampling = %self.sampling.describe(), "role C sampling");
+        let mut client = OpenAiCompatExtractor::new(self.base_url, self.model, self.api_key)
+            .with_sampling(self.sampling)
+            .with_pdf_passwords(self.pdf_passwords);
+        if let Some(extra) = options.extra_body {
+            client = client.with_extra_body(extra);
         }
+        // All three role-C seats, from one knob: the rate cap belongs to the
+        // account, not to the seat. An explicit option still wins, as it does on
+        // the text client. See [`MIN_INTERVAL_ENV`].
+        if let Some(interval) = options.min_interval.or_else(min_interval_from_env) {
+            tracing::info!(?interval, "spacing role C requests");
+            client = client.with_min_interval(interval);
+        }
+        client
     }
 }
 
@@ -393,6 +480,8 @@ fn vision_endpoint(creds: &Credentials, role: LlmRole, consumer: &str) -> Option
         base_url: base_url.to_string(),
         model: model.to_string(),
         api_key: cfg.api_key.clone().unwrap_or_default(),
+        sampling: sampling_for(&cfg, role),
+        pdf_passwords: creds.pdf_passwords(),
     })
 }
 
@@ -639,20 +728,82 @@ mod tests {
         }
     }
 
+    /// The gate-8 decision, where it can regress. The split is one-right-answer
+    /// versus a voice someone hears — not documents versus chat, which is what an
+    /// earlier version of this test asserted.
+    #[test]
+    fn every_seat_but_the_conversational_one_is_sampled_deterministically() {
+        let cfg = openai(Some("http://x/v1"), Some("m"));
+        for role in [
+            LlmRole::Extractor,
+            LlmRole::Reader,
+            LlmRole::Transcriber,
+            LlmRole::Structurer,
+            LlmRole::Batch,
+        ] {
+            assert_eq!(
+                sampling_for(&cfg, role),
+                Sampling::deterministic(),
+                "{role:?} answers a question with one right answer"
+            );
+        }
+        assert_eq!(
+            sampling_for(&cfg, LlmRole::Interactive),
+            Sampling::provider_default(),
+            "role A is conversed with; flatness there is a felt cost (user, 2026-09-28)"
+        );
+    }
+
+    /// Parameter by parameter, not whole-struct: a seat that names one sampling
+    /// key keeps the role default for the others. Whole-struct fallback would let
+    /// `seed = 7` silently restore role C to the provider's temperature.
+    #[test]
+    fn a_seat_that_names_a_seed_keeps_role_cs_temperature() {
+        let mut cfg = openai(Some("http://x/v1"), Some("m"));
+        cfg.reader = Some(LlmRoleOverride {
+            seed: Some(7),
+            ..Default::default()
+        });
+        let resolved = sampling_for(&cfg.for_role(LlmRole::Reader), LlmRole::Reader);
+        assert_eq!(resolved.temperature, Some(0.0));
+        assert_eq!(resolved.seed, Some(7));
+    }
+
+    #[test]
+    fn a_configured_temperature_beats_the_role_default() {
+        let mut cfg = openai(Some("http://x/v1"), Some("m"));
+        cfg.temperature = Some(0.4);
+        assert_eq!(
+            sampling_for(&cfg, LlmRole::Extractor).temperature,
+            Some(0.4)
+        );
+    }
+
     #[test]
     fn the_vision_flag_gates_the_extractor() {
         // Opted in, so the extractor is the endpoint and names its model. With
         // vision off there is no extractor rather than a silent image POST to an
         // endpoint that may not accept one.
         assert_eq!(
-            build_extractor(&creds_with(Some(vision("llava", true)))).name(),
+            build_extractor(
+                &creds_with(Some(vision("llava", true))),
+                ClientOptions::default()
+            )
+            .name(),
             "llava"
         );
         assert_eq!(
-            build_extractor(&creds_with(Some(vision("llava", false)))).name(),
+            build_extractor(
+                &creds_with(Some(vision("llava", false))),
+                ClientOptions::default()
+            )
+            .name(),
             "null"
         );
-        assert_eq!(build_extractor(&Credentials::default()).name(), "null");
+        assert_eq!(
+            build_extractor(&Credentials::default(), ClientOptions::default()).name(),
+            "null"
+        );
     }
 
     #[test]
@@ -666,7 +817,7 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            build_extractor(&creds_with(Some(cfg))).name(),
+            build_extractor(&creds_with(Some(cfg)), ClientOptions::default()).name(),
             "z-ai/glm-5.3-flash"
         );
     }
@@ -676,7 +827,11 @@ mod tests {
         // Behaviour must be exactly as before the role split, or every existing
         // credentials.toml changes meaning.
         assert_eq!(
-            build_extractor(&creds_with(Some(vision("llava", true)))).name(),
+            build_extractor(
+                &creds_with(Some(vision("llava", true))),
+                ClientOptions::default()
+            )
+            .name(),
             "llava"
         );
     }
@@ -686,14 +841,18 @@ mod tests {
         // Documents are the most identifying payload sent anywhere, so the
         // stricter of the two paths is the one that must carry the guard.
         assert_eq!(
-            build_extractor(&creds_with(Some(vision("anthropic/claude-opus-4-8", true)))).name(),
+            build_extractor(
+                &creds_with(Some(vision("anthropic/claude-opus-4-8", true))),
+                ClientOptions::default()
+            )
+            .name(),
             "null"
         );
 
         let mut opted_in = vision("anthropic/claude-opus-4-8", true);
         opted_in.allow_closed_weights = true;
         assert_eq!(
-            build_extractor(&creds_with(Some(opted_in))).name(),
+            build_extractor(&creds_with(Some(opted_in)), ClientOptions::default()).name(),
             "anthropic/claude-opus-4-8",
             "allow_closed_weights is the documented escape and must still work"
         );

@@ -68,6 +68,8 @@ pub enum MediaError {
     Failed { status: String, stderr: String },
     #[error("scanned pdf has more than {MAX_RASTER_PAGES} pages — too large to send as images")]
     TooManyPages,
+    #[error("the pdf is encrypted and none of the {tried} configured password(s) opened it")]
+    Encrypted { tried: usize },
     #[error(
         "document is {encoded} base64 bytes after downscaling, over the \
          {MAX_ENCODED_BYTES}-byte request limit"
@@ -222,7 +224,10 @@ fn check_budget(images: &[PreparedImage]) -> Result<(), MediaError> {
 /// Only reached when `pdftotext` came back empty — a generated PDF still goes
 /// the text route, which is both cheaper and more accurate than asking a model
 /// to read a picture of text it could have had verbatim.
-pub async fn rasterize_pdf(pdf_bytes: &[u8]) -> Result<Vec<PreparedImage>, MediaError> {
+pub async fn rasterize_pdf(
+    pdf_bytes: &[u8],
+    passwords: &[&str],
+) -> Result<Vec<PreparedImage>, MediaError> {
     if pdf_bytes.len() > MAX_PDF_BYTES {
         return Err(MediaError::PdfTooLarge {
             size: pdf_bytes.len(),
@@ -239,7 +244,7 @@ pub async fn rasterize_pdf(pdf_bytes: &[u8]) -> Result<Vec<PreparedImage>, Media
 
     let out_dir =
         tempfile::tempdir().map_err(|e| MediaError::Spawn(format!("create temp dir: {e}")))?;
-    let pages = run_pdftoppm(temp.path(), out_dir.path()).await?;
+    let pages = rasterize_with_any(temp.path(), out_dir.path(), passwords).await?;
 
     // `-l` clamps silently to the document's own page count, so asking for one
     // page past the cap is how "there are more" is distinguished from "that is
@@ -340,11 +345,51 @@ pub fn fits_request(images: &[PreparedImage]) -> Result<(), MediaError> {
 }
 
 /// Spawn `pdftoppm` into `out_dir` and read the page images back in page order.
-async fn run_pdftoppm(pdf: &Path, out_dir: &Path) -> Result<Vec<Vec<u8>>, MediaError> {
+/// Try each candidate password until one renders, on the terms
+/// [`crate::statement::pdf::extract_layout_text_with_any`] explains — including
+/// the empty password first, so an unencrypted document costs one `pdftoppm` run
+/// however many passwords are configured.
+///
+/// ⚠️ Without this the vision fallback could not open an encrypted statement that
+/// the text path had just failed on, so the 18.3% of the corpus that is encrypted
+/// had no route at all: no text layer, and no picture of one either.
+async fn rasterize_with_any(
+    pdf: &Path,
+    out_dir: &Path,
+    passwords: &[&str],
+) -> Result<Vec<Vec<u8>>, MediaError> {
+    match run_pdftoppm(pdf, out_dir, "").await {
+        Ok(pages) => return Ok(pages),
+        Err(MediaError::Failed { stderr, .. })
+            if crate::statement::pdf::stderr_is_wrong_password(&stderr) => {}
+        Err(e) => return Err(e),
+    }
+    for password in passwords {
+        match run_pdftoppm(pdf, out_dir, password).await {
+            Ok(pages) => return Ok(pages),
+            Err(MediaError::Failed { stderr, .. })
+                if crate::statement::pdf::stderr_is_wrong_password(&stderr) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(MediaError::Encrypted {
+        tried: passwords.len(),
+    })
+}
+
+async fn run_pdftoppm(
+    pdf: &Path,
+    out_dir: &Path,
+    password: &str,
+) -> Result<Vec<Vec<u8>>, MediaError> {
     let prefix = out_dir.join("page");
     // `kill_on_drop` pairs with the timeout: without it a poppler stuck on a
     // malformed page outlives its own deadline and keeps the CPU.
     let child = Command::new("pdftoppm")
+        // Same argv exposure as `pdftotext`: poppler offers no password file or
+        // stdin variant. The trade is recorded on `statement::pdf`.
+        .arg("-upw")
+        .arg(password)
         .arg("-jpeg")
         .arg("-r")
         .arg(RASTER_DPI.to_string())
@@ -512,10 +557,31 @@ mod tests {
     }
 
     /// The size gate must reject before poppler is spawned.
+    /// The half that had no route at all before 2026-09-27: an encrypted PDF whose
+    /// text layer cannot be read also could not be rendered, because `rasterize_pdf`
+    /// took no password.
+    #[tokio::test]
+    async fn an_encrypted_pdf_rasterizes_once_a_password_matches() {
+        let encrypted: &[u8] =
+            include_bytes!("../../tests/fixtures/encrypted/encrypted-statement.pdf");
+
+        let pages = rasterize_pdf(encrypted, &["wrong", "letmein"])
+            .await
+            .expect("one candidate opens it");
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].mime, "image/jpeg");
+
+        let err = rasterize_pdf(encrypted, &["wrong"]).await.unwrap_err();
+        assert!(
+            matches!(err, MediaError::Encrypted { tried: 1 }),
+            "must name encryption rather than reporting poppler's exit 1: {err}"
+        );
+    }
+
     #[tokio::test]
     async fn an_oversized_pdf_is_refused_before_poppler_sees_it() {
         let huge = vec![0u8; MAX_PDF_BYTES + 1];
-        let err = rasterize_pdf(&huge).await.unwrap_err();
+        let err = rasterize_pdf(&huge, &[]).await.unwrap_err();
         assert!(matches!(err, MediaError::PdfTooLarge { .. }), "{err}");
     }
 
@@ -523,7 +589,7 @@ mod tests {
     /// that would read as an empty but valid document.
     #[tokio::test]
     async fn a_non_pdf_fails_rather_than_returning_no_pages() {
-        let err = rasterize_pdf(b"this is not a pdf").await.unwrap_err();
+        let err = rasterize_pdf(b"this is not a pdf", &[]).await.unwrap_err();
         // Absent poppler this is a Spawn error; the assertion is that no path
         // reaches `Ok` with an empty page list.
         assert!(

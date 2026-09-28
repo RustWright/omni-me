@@ -1016,10 +1016,65 @@ critical path, not the tail.
 
 ### The chain, in dependency order
 
-1. **Ledger catch-up.** Real transactions are behind. Either incremental import or — the user
-   floated it as possibly cleaner — a **full finances wipe and re-import**. ⚠️ Decide which
-   BEFORE importing anything, because a half-caught-up ledger is worse than an empty one.
-   ⛔ Both bank sources are currently OFF and categorization is deferred to `Unmatched`.
+1. **Ledger catch-up.** 🔴 **DECIDED 2026-09-28 (user): a full finances wipe and re-import — but
+   prove the wipe is SCOPED first, on dev.** His words: *"I want option 2, but I think we should
+   test what it means to have a full ledger wipe without affecting any of the other data, and it
+   makes sense to test that in dev... in general if there is a way to define a clean separation, I
+   always prefer that, hence why I want to do the official import after September is done and I have
+   all the statements for it ready."*
+   ⛔ **Three things follow, and none of them is "import now":**
+   - **The deliverable is a scoped wipe, demonstrated.** Finance data goes; documents, journal,
+     notes, beliefs, config and blobs stay. Proven on the dev instance, by measurement, before live.
+   - **Timing is his: after September closes**, when he has every statement for the period. So the
+     official import is days away and is not the thing to build toward this week.
+   - ✅ **Standing preference, stated generally**: where a clean separation can be defined, he wants
+     it defined. It is the reason for this sequencing and applies past this task.
+   ⛔ Both bank sources are currently OFF and categorization is deferred to `Unmatched`, which is
+   what makes a wipe cheap: there is little hand-categorization to lose.
+
+   ✅ **The scoped wipe is BUILT 2026-09-28** — `EventStore::purge_features(&[Feature])`, which reads
+   ownership off the **same** `authoring_features` map that gates writes (a second list would
+   eventually let a new finance event be gated correctly and still survive a finances wipe). It
+   returns the number of events removed rather than just succeeding, so the wipe is checkable
+   against what was there — gate 1's "verify by size, not exit code", applied here.
+   Three tests, one of which is the separation itself: finance events go; journal, notes, routines,
+   documents, `config_set` and `feedback_captured` all named as survivors.
+   🔴 **Three findings, and two of them change what the real import has to do:**
+   - ⛔ **A finances-only wipe would silently suppress the re-import.** `transaction_recorded` is
+     owned by Finances *and* AutoImport, so a finances wipe takes the transaction and leaves the
+     batch that proposed it — and the batch carries the content `dedup_key`. Re-importing the same
+     statements then collapses onto a row already marked committed: nothing to review, nothing to
+     commit, ledger still empty, no error. **The real wipe must name `[Finances, AutoImport]`.**
+     A test pins this rather than a comment claiming it.
+   - ⛔ **A wipe is per node.** Push watermarks are each device's own clock, so a wiped event never
+     comes back from a peer — but every other node still holds and projects its copy. Wiping the
+     server alone leaves the phone showing the old ledger. Clearing everywhere means clearing on
+     each node, and the returned count is how that is checked.
+   - ✅ **Config and audit events are owned by no feature** and cannot be reached by a scoped wipe,
+     which is what stops a wipe taking the switch that says the feature is on.
+   🔴 **DECIDED 2026-09-28 (user): a SERVER ROUTE, preview-then-confirm** — the document purge's own
+   gate, reused rather than a second one invented: a preview reporting how many events per type
+   would go, a confirm redeeming a single-use ticket that may only **shrink** (its feature set must
+   be a subset of the preview's), and a required match against the instance the server declares on
+   `/health`. ⛔ No SSH step, and the counts are seen before anything is destroyed.
+   ⚠️ **Generic over features, not finances-specific** — my call, on the mechanism already being
+   generic and on his asking whether it would serve other resets. ⛔ But `Feature::Documents` is
+   REFUSED through it: deleting document events orphans the blob files, and reclaiming bytes is what
+   the document purge's refcounting exists for.
+   ✅ **The route is BUILT 2026-09-28**: `POST /wipe/preview` (counts per event type, writes nothing,
+   hands back a token and names the deployment), `POST /wipe/confirm` (spends the token, subset-only
+   features, and must name the instance `/health` reports — a server declaring none refuses every
+   wipe), and `GET /wipe/features` listing what each feature owns with `documents` carrying its
+   refusal rather than being omitted. The confirm purges, appends the `DataWiped` audit record with
+   the features and the count, then rebuilds projections — ⛔ not optional, or the read models keep
+   answering with transactions whose events are gone.
+   **Six integration tests over a real socket**: the separation end to end, the ticket refusing a
+   replay, a widened confirm refused, a wipe addressed to production refused by the dev server,
+   documents refused with its reason, and an unknown feature naming the known ones.
+   ⏳ **What is left before the official import:** the dev demonstration he asked for — wipe on dev,
+   show the ledger empty and documents/journal/notes intact, then re-import. ⚠️ Needs the dev box and
+   a `[server] auth_token`; the route is behind the bearer gate like everything else.
+   `docs/src/features.md` § Wiping one feature's data.
 2. **Email receipt ingestion via IMAP.** ✅ **RESOLVED, and RUNNING on dev for `gmail_personal`**
    (2026-09-18). The isolation conflict was dissolved by opening the mailbox with `EXAMINE`
    instead of `SELECT` — the user's suggestion. The server itself then refuses any state change,
@@ -2166,17 +2221,25 @@ derived from the tab alone.
 data, or silently produce a wrong number he would act on?** Everything else is measurement quality
 and ships after. ⚠️ This is my judgement, not his ruling — the split is proposed, not settled.
 
-🔴 **GATES — was 9, now 5 OPEN.** Closed 2026-09-27: item 4 was already done before this triage was
-written, and items 3, 5 and 6 shipped the same day. Item 9's instrumentation shipped but its re-run
-has not, so it stays open. ⚠️ Three of the five that remain (7, 8, 9) are **spends, not code**.
+🔴 **GATES — was 9, now 4 OPEN, and every one of them is a spend, a decision of his, or an
+operation on the box. There is no gate code left.**
+Closed 2026-09-27: item 4 was already done before this triage was written, and items 2, 3, 5 and 6
+shipped the same day. Items 7, 8 and 9 have had their **code** halves shipped (sampling +
+repeats, role C's sampling decision, the injection gate's evidence) and stay open on the runs
+that have not happened. ⚠️ Item 8 keeps one decision that is genuinely his: the chat seats' and
+the structurer's sampling. What remains is gate 1 (a backup on the box), the three spends, and
+R27's disclosure question.
 ⚠️ The whole list still needs re-deriving against all three release legs.
 1. **Server backup before the backfill** (last item below). Blob bytes have **no second copy**;
    the box is a single point of total loss. ⛔ Now doubly binding: the archive refinement agreed
    2026-09-26 includes a **purge path that deletes blobs**. Deleting blobs with no backup is the
    highest-risk thing on this page. ⚠️ Verify by size, never by exit code.
-2. **Per-source PDF password.** 18.3% of the corpus (140 of 765) is encrypted and silently yields
-   nothing, and the vision fallback cannot open them either. ⛔ Must precede the corpus import or
-   a fifth of it reads as empty-but-fine.
+2. ~~**Per-source PDF password.**~~ ✅ **CLOSED 2026-09-27.** Ingest tries every `pdf_password*`
+   secret in turn (his ruling: try all, since a statement arriving by email has no issuer identity
+   to select one by — only a sender, which is not a gate). The empty password goes first, so an
+   unencrypted document still costs one `pdftotext` run. `rasterize_pdf` takes the list too, so the
+   vision fallback can open what the text path opened. A document no password opens is archived
+   textless with a warning naming how many were tried. `docs/src/archive.md` § Encrypted documents.
 3. ~~**Role C has no 429 retry or backoff.**~~ ✅ **CLOSED 2026-09-27** — all three controls
    shared across from the chat client: 3 retries honouring `Retry-After` capped at 60s, doubling
    backoff from 2s, and opt-in `with_min_interval` spacing. Five tests, including that a
@@ -2207,10 +2270,22 @@ has not, so it stays open. ⚠️ Three of the five that remain (7, 8, 9) are **
    "anything else". ⛔ **No `minItems`**: a floor would make abstention impossible and manufacture a
    value on a document that states none, which the prompt forbids and one probe exists to measure.
    ⏳ **Whether it worked is unmeasured** — that is the slate re-run, a spend.
-7. **Control sampling, then re-rank.** The same model on the same 39-row statement scored 33%
-   with **13 sign-flips** and 100% with none. A sign flip is money in the wrong direction.
-8. **Decide production's sampling parameters** — the actionable half of 7, and role C cannot take
-   it through `extra_body` at all, so that path needs code.
+7. **Control sampling, then re-rank.** ✅ **The code half is DONE 2026-09-27** — sampling is
+   part of a seat's config, role C1/C2/C3 default to `temperature: 0`, every arm has repeats with
+   an `AGREE` column, and a single-run run prints *stability UNMEASURED* rather than a number
+   that looks rankable. ⏳ The re-rank itself is the spend and is still open.
+8. **Decide production's sampling parameters.** ✅ **Role C is decided and shipped** on the
+   grounds item 7 states: one right answer per question, so `temperature: 0`. ⛔ **Still his
+   call: the chat seats (A/B) and the structurer (D)**, which stay at the provider default. It
+   is a product decision, not a correctness one — temperature 0 makes the assistant
+   reproducible and flatter. `docs/src/assistant.md` § How each seat is sampled.
+   ⚠️ **NEW, and larger than either: R27.** The gateway pin, `require_parameters` and the
+   `zdr` / `data_collection: "deny"` terms reached roles A and B only — role C's builders took
+   no `ClientOptions` and role D was passed a default one. So every C1/C2/C3/D number on
+   `MODEL_BENCH.md` was routed to an upstream of the gateway's choosing, and the role-C log
+   line carried no `provider` field to catch it with. ✅ Both fixed. ⏳ Two consequences:
+   the re-run is now also the first measurement of the stack we ship, and **the privacy
+   question below is his.**
 9. **Make the injection gate print its evidence.** Five of fourteen models tripped it, including
    both C3 finalists, and the row cannot distinguish obedience from correct cataloguing. ⛔ Not
    hygiene: it is unresolved whether the seat we point at every financial document obeys
@@ -2247,16 +2322,46 @@ this down — not the volume of work, but scope arriving from decisions made lat
       the ordering, and the account number landing in a field (the case the blob hid).
       ⏳ **Left:** the re-run itself — the whole 6-probe arm against the five flagged models, 90
       calls, since `reading_bench.rs` still has no probe filter. That is a spend, not a code change.
-- [ ] 🔴 **Control sampling, then re-rank everything** (`MODEL_BENCH.md` R26). `temperature`,
-      `top_p` and `seed` appear **nowhere** in `core/src/`, so every request runs at a provider
-      default we neither set nor record — and the same model on the same 39-row statement scored
-      33% with 13 sign-flips in one run and 100% with none in the next. ⛔ Seat C1's top ranking
-      key is not stable, so no single run can rank it. ⚠️ Two separate decisions: **deterministic
-      for extraction/transcription** (C1/C2/C3 — there is one right answer) is straightforward;
-      **the chat seats (A/B) are a product call**, since temperature 0 changes assistant voice.
-      ⚠️ Also add repeats to `--bench-extraction`, `--bench-transcription` and `--bench`:
-      `--bench-reading` already does this (`OMNI_BENCH_READ_REPEATS`, default 3, with an `AGREE`
-      column) and is the pattern to copy. ⛔ Fix before the next slate.
+- [x] ✅ **Sampling is controlled and recorded 2026-09-27** (`MODEL_BENCH.md` R26). It is part of
+      a seat's config (`[llm] temperature / top_p / seed`, inherited per role, parameter by
+      parameter so one key does not drop the others), role C1/C2/C3 default to `temperature: 0`,
+      and the resolved value is logged at client build and printed in every bench header —
+      folded over any `extra_body` override, so a header cannot name a value the request did not
+      carry. ⛔ `seed` is plumbed and sent **nowhere** by default: under `require_parameters` an
+      endpoint lacking it becomes a routing error, which shrinks a slate silently. ⚠️ Both floats
+      are `f64` because TOML and JSON both are — declared `f32`, a configured `0.9` reaches the
+      wire as `0.8999999761581421`.
+      ✅ **And every arm now has the C2 repeats pattern**: `OMNI_BENCH_EXTRACT_REPEATS`,
+      `OMNI_BENCH_TRANSCRIBE_REPEATS`, `OMNI_BENCH_SLATE_REPEATS`, all default 3, each with an
+      `AGREE` column and a **stability UNMEASURED** line when only one run was asked for.
+      C3 rasterizes once and reuses the images across the repeats. ⏳ **The re-rank is the
+      spend and is still owed** — and R27 below changes what it has to cover.
+- [x] ✅ **Sampling for the chat seats and the structurer — DECIDED 2026-09-28 (user)**
+      (`MODEL_BENCH.md` R26). **Role D and role B go to `temperature: 0`; role A stays at the
+      provider default.** The reasoning he chose: D and B each answer a question with one right
+      answer and neither has a voice heard conversationally, where A is the seat he actually converses
+      with and flatness there is a cost he would feel rather than measure. ⚠️ B going deterministic
+      is also what makes its saturated 14/14 tie rankable at all. ⛔ A is one line in
+      `llm::provider::default_sampling` whenever he wants it the other way.
+- [ ] 🔴 **R27 — the gateway pin never reached role C or D, so every document measurement on
+      record describes a stack nobody chose** (`MODEL_BENCH.md` R27). ✅ The code is fixed: all
+      six seats take `ClientOptions`, and the `role-C answer` log line now names the upstream
+      that answered (it never did, which is why the script's own "confirm provider=deepinfra"
+      instruction was unfollowable on a document run). Real statements were sent through OpenRouter
+      without the per-request `zdr` / `data_collection: "deny"` terms the harness was written to
+      send, on every `--bench-extraction` and `--bench-transcription` run.
+      🔴 **DECIDED 2026-09-28 (user): the account side is HIS, and the reconstruction was
+      deliberately NOT done.** He chose *"just the guard, I'll handle the account"* — he can see the
+      OpenRouter data-collection setting and the upstreams' retention, and this repo cannot. ⛔ So no
+      list exists anywhere of which runs sent what; that is a choice, not an omission. Do not assume
+      one exists and do not produce one unasked. ✅ **The recurrence guard SHIPPED 2026-09-28:**
+      `privacy_preflight` refuses `--bench-extraction` and `--bench-transcription` when the role's
+      endpoint is a gateway and the run carries neither `zdr` nor `data_collection`. Four tests.
+      ⚠️ Keyed on the gateway's **hostname** (`openrouter.ai`), which is a real limitation and says so:
+      those keys are OpenRouter's vocabulary, a direct provider ignores them, so a second gateway
+      needs its name added. A direct or local endpoint is deliberately not held to it. ⚠️ Expect the next C slate to fail loudly
+      where a pinned tag lacks `structured_outputs` — that is `require_parameters` working for
+      the first time on this path, not a regression.
 - [ ] 🔴 **Give seat B a case family of its own — it has never been benched on its work**
       (`MODEL_BENCH.md` Part 2; user, 2026-09-16). `client_for` routes to the batch client only
       when `question.scheduled`, and the sole producer is `check_in.rs`: **one question a day**,
@@ -2271,12 +2376,11 @@ this down — not the volume of work, but scope arriving from decisions made lat
       dates explicitly. ⚠️ Same reason a fresh install's check-in has nothing to review: beliefs
       only exist after the user has explicitly asked for a conclusion at least once.
       ⛔ Do NOT build Part 4's levers 3–5 for B — they sharpen a retrieval instrument B never uses.
-- [ ] **Decide production's sampling parameters** (`MODEL_BENCH.md` R26). The bench now sends
-      `temperature: 0` via `bench-openrouter.sh`; **production still sends none**, so the two no
-      longer match and that gap is deliberate-but-unclosed. ⚠️ Extraction/transcription (C1/C2/C3)
-      wants 0 — there is one right answer. The chat seats are a product call: 0 makes the
-      assistant reproducible and flatter. ⛔ Role C cannot take it through `extra_body` at all —
-      `build_extractor` takes no `ClientOptions` (R6's sibling), so that path needs code.
+- [x] ✅ **Production's sampling is decided for role C and shipped 2026-09-27** — `temperature: 0`
+      for C1/C2/C3, on the grounds that each question has one right answer. The bench and
+      production now agree on that seat instead of the bench alone setting it. ⛔ The `extra_body`
+      half of this item was the real blocker and is the R27 entry above: `build_extractor` took
+      no `ClientOptions`, so nothing a caller set ever reached role C.
 - [ ] **Extend the retrieval bench past one verb and two record types** (`MODEL_BENCH.md`
       Part 5; user, 2026-09-16 — seat E was wrongly recorded as decided). ⛔ `--bench-retrieval`
       covers `search` over notes and journal only; the catalogue has six types and the read
@@ -2350,11 +2454,24 @@ this down — not the volume of work, but scope arriving from decisions made lat
       ⚠️ Found while doing it: `SELECT ... ORDER BY timestamp` over `events` is a **parse error** in
       SurrealDB 3 unless the ordering column is named in the selection (`timestamp AS sort_ts`), and
       the driver needs `SurrealValue`, not `Deserialize` — `feedback_events` already documents both.
-- [ ] **Give the archive path a per-source PDF password** (`MODEL_BENCH.md` R18). `statements.rs`
-      already supplies one and `pdf::extract_layout_text` already takes one; `archive.rs` and
-      `openai_compat.rs` pass `""`, and `rasterize_pdf` accepts none at all — so the vision
-      fallback cannot open these either. ⚠️ Design question first: where a bulk-ingest path is
-      supposed to *get* a password, since `pdf.rs`'s header deliberately leaves that to the caller.
+- [x] ✅ **The archive path opens encrypted PDFs 2026-09-27** (`MODEL_BENCH.md` R18). The design
+      question was settled by him: **try every configured password**, because ingest has no
+      document-to-issuer attribution and inventing one from the sender is exactly what the receipt
+      sender list was ruled out for. They live in `credentials.toml` as `pdf_password*` secrets —
+      the same name-keyed map the statement-upload route already resolves a *named* password from.
+      ⚠️ Two findings worth keeping:
+      **(1) Poppler reports a wrong password and a damaged file identically** — both exit 1,
+      measured on 24.02, and the man page documents no encryption code. Only stderr separates them,
+      so `is_wrong_password` matches `"Incorrect password"`; if a release rewords it, an encrypted
+      file starts reading as a damaged one. A real encrypted fixture is committed at
+      `core/tests/fixtures/encrypted/` (with its generator) so the match is measured, not assumed.
+      **(2) `--bench-transcription` was scoring only the unencrypted 82%** and counting the rest as
+      scans — and since two issuers encrypt 100% of their statements, it had never seen those two
+      layouts. It takes the password list now.
+      ⚠️ `ingest_one` crossed clippy's argument limit, so the blob dir, device and passwords became
+      `archive::IngestContext` — which also absorbed `auto_import::imap::ArchiveTarget`, the same
+      triple under a second name. `ImapSource::new`'s archive tuple became `ArchiveConfig` for the
+      same reason; the overlay's builder is updated.
 - [ ] **Split a document across requests when it exceeds the endpoint's image cap**
       (`MODEL_BENCH.md` R17). ⚠️ **Downgraded from urgent on the full slate**: only **3 of 14**
       models cap at 4 images, so preferring an uncapped one avoids it by selection. Still worth

@@ -289,6 +289,35 @@ impl EventType {
         EventType::DocumentRetentionSet,
     ];
 
+    /// Every event type a set of features owns, for a scoped wipe.
+    ///
+    /// Derived from [`EventType::authoring_features`] rather than from a second list,
+    /// because a second list is how one of them ends up stale — a new finance event
+    /// would be gated correctly and then survive a finances wipe, leaving a ledger
+    /// that is neither empty nor complete.
+    ///
+    /// ⚠️ **Ownership is read off the authoring gate, and the two are not quite the
+    /// same question.** `TransactionRecorded` is authored under *either* finances or
+    /// auto-import, so it belongs to both and a wipe of either claims it — which is
+    /// right for a ledger wipe (a transaction is a transaction, whoever proposed it)
+    /// and is the reason a finances wipe cannot leave auto-import's own events alone.
+    /// See `docs/src/features.md` § Wiping one feature's data.
+    ///
+    /// The four types with no feature at all — `DataWiped`, `FeedbackCaptured`,
+    /// `ConfigSet`, `RecordTypeDeclared` — are owned by nothing and so survive every
+    /// scoped wipe. That is deliberate: a wipe must not take the config that says
+    /// which features are on, nor the audit record of itself.
+    pub fn owned_by(features: &[Feature]) -> Vec<&'static EventType> {
+        EventType::ALL
+            .iter()
+            .filter(|t| {
+                t.authoring_features()
+                    .iter()
+                    .any(|owner| features.contains(owner))
+            })
+            .collect()
+    }
+
     /// The features that may author this event, or `None` for an event no feature
     /// owns.
     ///

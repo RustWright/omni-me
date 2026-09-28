@@ -80,6 +80,68 @@ pub struct Credentials {
     pub server: Option<ServerConfig>,
 }
 
+/// Secret names holding a PDF password are recognised by this prefix.
+///
+/// A prefix rather than one key because a household has several issuers, each
+/// inventing its own rule — `pdf_password_globepay`, `pdf_password_northwind`.
+pub const PDF_PASSWORD_PREFIX: &str = "pdf_password";
+
+/// The PDF passwords an installation offers, in the order they will be tried.
+///
+/// Ingest cannot know *which* password a document needs: a statement arriving as
+/// an email attachment carries no issuer identity, only a sender, and the sender
+/// list is deliberately not a gate. So every configured password is tried in turn.
+/// See `docs/src/archive.md` § Encrypted documents.
+#[derive(Clone, Default)]
+pub struct PdfPasswords(Vec<(String, String)>);
+
+impl PdfPasswords {
+    /// Collect every `pdf_password*` secret, ordered by key name.
+    ///
+    /// ⚠️ Ordered by **name**, not by position in the file: `secrets` is a
+    /// `HashMap`, so file order is not recoverable. A `pdf_password_1_*` /
+    /// `pdf_password_2_*` naming is therefore how the order is controlled, and the
+    /// order matters only for which candidate is tried first.
+    pub fn from_secrets(secrets: &std::collections::HashMap<String, String>) -> Self {
+        let mut found: Vec<(String, String)> = secrets
+            .iter()
+            .filter(|(name, _)| name.starts_with(PDF_PASSWORD_PREFIX))
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        Self(found)
+    }
+
+    /// The values, for the one caller that has to try them.
+    pub fn values(&self) -> Vec<&str> {
+        self.0.iter().map(|(_, value)| value.as_str()).collect()
+    }
+
+    /// The *name* of the nth password, for a log line that must not carry a value.
+    pub fn name_of(&self, index: usize) -> Option<&str> {
+        self.0.get(index).map(|(name, _)| name.as_str())
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// ⛔ Never derive `Debug` here. The whole type is secret values; only the names
+/// they are filed under may be printed.
+impl std::fmt::Debug for PdfPasswords {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PdfPasswords")
+            .field("names", &self.0.iter().map(|(n, _)| n).collect::<Vec<_>>())
+            .finish()
+    }
+}
+
 /// `[server]` section — the shared bearer token each device sends.
 ///
 /// One token for all devices rather than per-device credentials: the threat
@@ -141,6 +203,24 @@ pub struct LlmProviderConfig {
     /// `docs/src/assistant.md`.
     #[serde(default)]
     pub allow_closed_weights: bool,
+
+    // --- Sampling (`docs/src/assistant.md` § How each seat is sampled) ---
+    //
+    // Beside the seat's model rather than in an environment variable: sampling is
+    // part of what a seat is, where the request spacing describes the deployment.
+    // Absent means the role's default, not "send nothing" — `sampling_for`.
+    /// Overrides the role's default temperature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    /// Nucleus cutoff. Setting this as well as `temperature` is worse than
+    /// setting either; the docs section says why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    /// A reproducibility request. On a gateway pinned with `require_parameters`,
+    /// sending it excludes every endpoint that lacks it, which surfaces as a
+    /// routing error rather than as a slower run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 
     // --- Per-role overrides (`docs/src/assistant.md` § One model per job) ---
     //
@@ -230,6 +310,22 @@ pub struct LlmRoleOverride {
     pub vision: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allow_closed_weights: Option<bool>,
+    // Sampling, per seat. A role that names one of these keeps inheriting the
+    // other two — resolved parameter by parameter, so `[llm.reader] seed = 7`
+    // does not silently drop role C's temperature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+}
+
+impl Credentials {
+    /// Every PDF password this file offers. See [`PdfPasswords`].
+    pub fn pdf_passwords(&self) -> PdfPasswords {
+        PdfPasswords::from_secrets(&self.secrets)
+    }
 }
 
 impl LlmProviderConfig {
@@ -255,6 +351,9 @@ impl LlmProviderConfig {
             api_key: self.api_key.clone(),
             vision: self.vision,
             allow_closed_weights: self.allow_closed_weights,
+            temperature: self.temperature,
+            top_p: self.top_p,
+            seed: self.seed,
             interactive: None,
             batch: None,
             extractor: None,
@@ -280,6 +379,15 @@ impl LlmProviderConfig {
         }
         if let Some(v) = o.allow_closed_weights {
             out.allow_closed_weights = v;
+        }
+        if o.temperature.is_some() {
+            out.temperature = o.temperature;
+        }
+        if o.top_p.is_some() {
+            out.top_p = o.top_p;
+        }
+        if o.seed.is_some() {
+            out.seed = o.seed;
         }
         out
     }
@@ -563,6 +671,59 @@ mod tests {
         // Inherited, not restated.
         assert_eq!(role.base_url.as_deref(), Some("https://example.test/v1"));
         assert_eq!(role.api_key.as_deref(), Some("k"));
+    }
+
+    #[test]
+    fn pdf_passwords_are_collected_by_prefix_in_a_stable_order() {
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert("pdf_password_2_northwind".to_string(), "second".to_string());
+        secrets.insert("pdf_password_1_globepay".to_string(), "first".to_string());
+        secrets.insert("some_api_key".to_string(), "not a password".to_string());
+        // An empty value is a half-filled config, not a password to try.
+        secrets.insert("pdf_password_3_blank".to_string(), String::new());
+
+        let found = PdfPasswords::from_secrets(&secrets);
+        assert_eq!(found.len(), 2);
+        // Ordered by NAME, which is the only order a HashMap can offer — and why
+        // the numeric prefix is the documented way to control it.
+        assert_eq!(found.values(), vec!["first", "second"]);
+        assert_eq!(found.name_of(0), Some("pdf_password_1_globepay"));
+        assert_eq!(found.name_of(2), None);
+    }
+
+    /// ⛔ The whole type is secret values. A `{:?}` in a log line must print the
+    /// names they are filed under and nothing else.
+    #[test]
+    fn debugging_pdf_passwords_never_prints_a_value() {
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert("pdf_password_x".to_string(), "hunter2".to_string());
+        let shown = format!("{:?}", PdfPasswords::from_secrets(&secrets));
+        assert!(shown.contains("pdf_password_x"), "{shown}");
+        assert!(!shown.contains("hunter2"), "leaked a password: {shown}");
+    }
+
+    /// Sampling is written in the file, so it has to survive the parse and the
+    /// per-role overlay. A float that parses and then does not is the silent
+    /// config failure this file keeps guarding against.
+    #[test]
+    fn sampling_parses_and_overlays_per_role() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        std::fs::write(
+            &path,
+            "[llm]\nprovider = \"openai_compatible\"\n\
+             base_url = \"https://example.test/v1\"\nmodel = \"m\"\n\
+             temperature = 0.9\n\n[llm.reader]\nvision = true\nseed = 7\n",
+        )
+        .unwrap();
+        let llm = load(&path).expect("sampling must parse").llm.unwrap();
+
+        assert_eq!(llm.temperature, Some(0.9));
+        let reader = llm.for_role(LlmRole::Reader);
+        // The role names only a seed, so the shared temperature is still inherited.
+        assert_eq!(reader.seed, Some(7));
+        assert_eq!(reader.temperature, Some(0.9));
+        assert_eq!(llm.for_role(LlmRole::Batch).seed, None);
     }
 
     /// The three role-C seats resolve to three different models.

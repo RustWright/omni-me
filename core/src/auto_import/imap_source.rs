@@ -147,7 +147,21 @@ pub struct ImapSource {
     /// archive — ⛔ not because archiving is optional policy. Production passes
     /// it; leaving it `None` files every statement email as transactions only,
     /// with the message itself gone.
-    archive: Option<(std::path::PathBuf, String)>,
+    archive: Option<ArchiveConfig>,
+}
+
+/// What archiving a fetched message needs.
+///
+/// A named struct rather than a tuple since the PDF passwords joined it: reading
+/// `(PathBuf, String, PdfPasswords)` at a call site tells you nothing about which
+/// string is the device.
+#[derive(Debug, Clone)]
+pub struct ArchiveConfig {
+    pub blob_dir: std::path::PathBuf,
+    pub device_id: String,
+    /// Tried in turn on an encrypted PDF attachment. See
+    /// [`crate::credentials::PdfPasswords`].
+    pub pdf_passwords: crate::credentials::PdfPasswords,
 }
 
 impl ImapSource {
@@ -159,7 +173,7 @@ impl ImapSource {
         cursor_store: Option<Arc<dyn CursorStore>>,
         store: Arc<dyn EventStore>,
         projections: ProjectionRunner,
-        archive: Option<(std::path::PathBuf, String)>,
+        archive: Option<ArchiveConfig>,
     ) -> Result<Self, ImportError> {
         let name = name.into();
         let initial = if let Some(cs) = &cursor_store {
@@ -191,9 +205,10 @@ impl AutoImportSource for ImapSource {
 
     async fn pull(&self) -> Result<ImportSummary, ImportError> {
         let cursor_snapshot = self.cursor.lock().await.clone();
-        let target = self.archive.as_ref().map(|(dir, device_id)| ArchiveTarget {
-            blob_dir: dir.as_path(),
-            device_id,
+        let target = self.archive.as_ref().map(|a| ArchiveTarget {
+            blob_dir: a.blob_dir.as_path(),
+            device_id: &a.device_id,
+            passwords: &a.pdf_passwords,
         });
         let outcome = poll_once(
             self.fetcher.as_ref(),

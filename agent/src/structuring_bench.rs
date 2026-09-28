@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use omni_me_core::llm::{LlmClient, NoteProcessingResult, derive_note_structure};
+use omni_me_core::llm::{LlmClient, NoteProcessingResult, Sampling, derive_note_structure};
 
 /// Repeat count per probe. Three is the floor at which "it abstained" and "it
 /// abstained twice out of three" become distinguishable, which is the whole
@@ -370,8 +370,11 @@ fn summarise(id: &'static str, runs: Vec<Run>) -> Scored {
     }
 }
 
-fn report(rows: &[Scored], model: &str, repeats: usize) {
-    println!("\nrole D — note structuring · model {model} · {repeats} runs per probe\n");
+fn report(rows: &[Scored], model: &str, repeats: usize, sampling: Sampling) {
+    println!(
+        "\nrole D — note structuring · model {model} · {repeats} runs per probe · sampling {}\n",
+        sampling.describe()
+    );
     println!(
         "{:<20} {:>5} {:>5} {:>6} {:>7} {:>7} {:>6} {:>7}",
         "PROBE", "FABR", "MISS", "RECALL", "ABSTAIN", "AGREE", "PROSE", "MS"
@@ -436,7 +439,7 @@ fn report(rows: &[Scored], model: &str, repeats: usize) {
     println!("rank on: fabrications ascending, then recall descending, then agreement descending.");
 }
 
-pub async fn run(llm: &dyn LlmClient) {
+pub async fn run(llm: &dyn LlmClient, sampling: Sampling) {
     let repeats: usize = std::env::var(REPEATS_ENV)
         .ok()
         .and_then(|v| v.parse().ok())
@@ -445,9 +448,10 @@ pub async fn run(llm: &dyn LlmClient) {
 
     let model = llm.model_name().to_string();
     println!(
-        "plan: {} probes x {repeats} runs = {} calls · model {model}",
+        "plan: {} probes x {repeats} runs = {} calls · model {model} · sampling {}",
         PROBES.len(),
-        PROBES.len() * repeats
+        PROBES.len() * repeats,
+        sampling.describe()
     );
     for probe in PROBES {
         println!("  {:<20} {}", probe.id, probe.purpose);
@@ -472,7 +476,7 @@ pub async fn run(llm: &dyn LlmClient) {
         }
         rows.push(summarise(probe.id, runs));
     }
-    report(&rows, &model, repeats);
+    report(&rows, &model, repeats, sampling);
 }
 
 #[cfg(test)]

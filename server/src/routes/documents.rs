@@ -8,6 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use omni_me_core::archive;
+use omni_me_core::credentials::PdfPasswords;
 use omni_me_core::events::{AttachmentRef, EventWriter, NewEvent};
 use omni_me_core::extraction::document::{reading_from_extraction, to_fields_payload};
 use omni_me_core::extraction::{
@@ -17,6 +18,24 @@ use omni_me_core::extraction::{
 use omni_me_core::purge;
 
 use crate::AppState;
+
+/// The blob dir, device and PDF passwords every ingest here files under.
+///
+/// `passwords` is borrowed rather than resolved inside, because
+/// [`archive::IngestContext`] holds a reference and a temporary would not outlive
+/// the call. The same `secrets` map the statement-upload route resolves a *named*
+/// password from — here every configured one is tried, since an uploaded file
+/// names none.
+fn ingest_context<'a>(
+    state: &'a AppState,
+    passwords: &'a PdfPasswords,
+) -> archive::IngestContext<'a> {
+    archive::IngestContext {
+        blob_dir: &state.blob_dir,
+        device_id: &state.device_id,
+        passwords,
+    }
+}
 
 const MAX_DOCUMENT_BYTES: usize = 15 * 1024 * 1024;
 
@@ -111,13 +130,13 @@ async fn archive_handler(
         )
     })?;
 
+    let passwords = PdfPasswords::from_secrets(&state.secrets);
     let ingested = archive::ingest_one(
-        &state.blob_dir,
+        &ingest_context(&state, &passwords),
         &body,
         filename,
         mime,
         source,
-        &state.device_id,
         // ⛔ A single uploaded file has no container. Only email ingest nests.
         None,
     )
@@ -243,13 +262,13 @@ async fn archive_capture(
     hint: ExtractionHint,
 ) -> Result<AttachmentRef, (StatusCode, String)> {
     let internal = |e: String| (StatusCode::INTERNAL_SERVER_ERROR, e);
+    let passwords = PdfPasswords::from_secrets(&state.secrets);
     let mut ingested = archive::ingest_one(
-        &state.blob_dir,
+        &ingest_context(state, &passwords),
         body,
         filename,
         mime,
         archive::IngestSource::Scan,
-        &state.device_id,
         None,
     )
     .await

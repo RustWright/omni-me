@@ -170,10 +170,10 @@ fn stamp_email_document(event: &mut NewEvent, document_id: &str) {
 /// and the handlers differ per deployment (the overlay adds its own). Put this
 /// in `ReceiptHandler` and a bank statement claimed by another handler would go
 /// unarchived, which is exactly backwards: those are the ones most worth having.
-pub struct ArchiveTarget<'a> {
-    pub blob_dir: &'a std::path::Path,
-    pub device_id: &'a str,
-}
+///
+/// The same type every other ingest entry point takes: this was its own struct
+/// until the PDF passwords made the two identical.
+pub type ArchiveTarget<'a> = crate::archive::IngestContext<'a>;
 
 /// Run one polling pass for one account: fetch new messages, dispatch each to
 /// the first willing handler, and return a [`PollOutcome`] accounting for every
@@ -220,14 +220,7 @@ pub async fn poll_once(
         if let Some(target) = archive {
             match crate::mime::parse_eml(&msg.body) {
                 Ok(parsed) => {
-                    match crate::archive::ingest_email(
-                        target.blob_dir,
-                        &msg.body,
-                        &parsed,
-                        target.device_id,
-                    )
-                    .await
-                    {
+                    match crate::archive::ingest_email(target, &msg.body, &parsed).await {
                         Ok(mut archived) => {
                             email_document_id = Some(archived.email_document_id.clone());
                             events.append(&mut archived.events);
@@ -692,6 +685,7 @@ mod tests {
         let target = ArchiveTarget {
             blob_dir: dir.path(),
             device_id: "dev",
+            passwords: &crate::credentials::PdfPasswords::default(),
         };
         let outcome = poll_once(
             &fetcher,
@@ -810,6 +804,7 @@ mod tests {
         let target = ArchiveTarget {
             blob_dir: dir.path(),
             device_id: "dev",
+            passwords: &crate::credentials::PdfPasswords::default(),
         };
         let outcome = poll_once(
             &fetcher,
@@ -855,6 +850,7 @@ mod tests {
         let target = ArchiveTarget {
             blob_dir: dir.path(),
             device_id: "dev",
+            passwords: &crate::credentials::PdfPasswords::default(),
         };
         let outcome = poll_once(
             &fetcher,
@@ -907,6 +903,7 @@ mod tests {
         let target = ArchiveTarget {
             blob_dir: dir.path(),
             device_id: "dev",
+            passwords: &crate::credentials::PdfPasswords::default(),
         };
         let outcome = poll_once(
             &fetcher,

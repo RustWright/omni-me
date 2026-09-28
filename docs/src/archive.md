@@ -200,6 +200,47 @@ every caller — the HTTP route today, a device capture or a backfill later — 
 opting in, and none of them can forget. Ingest returns two events instead of one, and the caller
 appends what it is given.
 
+## Encrypted documents
+
+Around a fifth of a real statement corpus is encrypted — and not evenly: it is institutional
+practice, so an issuer that locks its statements locks all of them. The password is never in
+the file. Each institution invents its own rule for deriving one, so omni-me holds passwords
+rather than rules, in `credentials.toml` under any secret named `pdf_password*`:
+
+```toml
+[secrets]
+pdf_password_1_globepay  = "..."
+pdf_password_2_northwind = "..."
+```
+
+**Ingest tries all of them, in name order.** That is the part worth explaining, because trying
+one would be tidier: ingest has nothing to select a password *by*. A statement that arrives as
+an email attachment carries no issuer identity — only a sender, and the sender list is
+deliberately not a gate anywhere in this system. A folder import has a directory name, an
+upload has neither. Rather than invent an attribution that only sometimes exists, every
+configured password is offered.
+
+The empty password is always tried first, which is what keeps this cheap: an unencrypted
+document opens on it, and poppler succeeds on an unencrypted file even when handed a wrong
+password, so the majority of a corpus still costs exactly one `pdftotext` run however many
+passwords are configured. Only a file that actually reports `Incorrect password` walks the list.
+
+**A document that no password opens is still archived**, textless, with a warning that says how
+many were tried. It is never refused and never silently dropped: the bytes are worth keeping,
+and the missing text is recoverable later by configuring the password and re-reading. What this
+replaces is worse — before 2026-09-27 an encrypted statement was archived as though it simply
+had nothing to read, indistinguishable from a blank page.
+
+Both routes into a document's content take the same list, and they have to: the fallback for a
+statement whose text cannot be read is to *photograph* it and send the pictures to a model, and
+a renderer that cannot decrypt either leaves an encrypted document with no route at all.
+
+One trade is deliberate and worth stating plainly: **the password is passed to poppler on the
+command line**, where anything able to read the process table can see it. There is no
+alternative in poppler itself — `pdftotext` and `pdftoppm` both take the value inline, with no
+file or stdin variant — so closing it means adding a dependency (`qpdf --password-file=-`) or a
+Rust PDF decryption crate. It is recorded at the call site rather than left to be discovered.
+
 ## Enriching a document after ingest
 
 The pass ingest defers to is `document_enrichment`, and it runs where the bytes are. Every

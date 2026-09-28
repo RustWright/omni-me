@@ -122,6 +122,11 @@ pub struct AppState {
     /// a destructive tool can ask before it acts. `None` means nothing declared
     /// one, which every such tool must treat as a refusal.
     pub instance: Option<Instance>,
+    /// The one feature-wipe preview a confirm may act on. See
+    /// [`routes::WipeTicket`]. Separate slot from the document purge's: the two
+    /// destroy different things, and one ticket covering both would let a
+    /// document-purge confirm redeem a token issued for a ledger wipe.
+    pub wipe_ticket: Arc<tokio::sync::Mutex<Option<routes::WipeTicket>>>,
     /// The one purge preview a confirm may act on. See
     /// [`routes::PurgeTicket`].
     ///
@@ -271,7 +276,10 @@ pub async fn run(cfg: RunConfig) {
     // rather than panicking — part of the zero-config boot guarantee (3.4). Its
     // provider-swap (OpenAI-compatible vision) is a deferred fast-follow that
     // will read the same `[llm]` section.
-    let extractor: Arc<dyn DocumentExtractor> = build_extractor(&creds);
+    // `ClientOptions::default()` on purpose: production goes direct to the
+    // committed provider, so there is no gateway to pin and nothing per-request to
+    // add. The sampling role C runs at comes from the config, not from here.
+    let extractor: Arc<dyn DocumentExtractor> = build_extractor(&creds, ClientOptions::default());
 
     // Shared registry — populated below by spawn_sources, read by the
     // /auto_import/status + /auto_import/tick route handlers via AppState.
@@ -315,6 +323,7 @@ pub async fn run(cfg: RunConfig) {
         secrets: Arc::new(creds.secrets.clone()),
         instance,
         purge_ticket: Arc::new(tokio::sync::Mutex::new(None)),
+        wipe_ticket: Arc::new(tokio::sync::Mutex::new(None)),
     };
 
     // Auto-import: the engine owns the store/projections/device_id but not the
@@ -380,8 +389,8 @@ pub async fn run(cfg: RunConfig) {
         (*state.db).clone(),
         enrich_writer,
         (*state.blob_dir).clone(),
-        build_reader(&creds),
-        build_transcriber(&creds),
+        build_reader(&creds, ClientOptions::default()),
+        build_transcriber(&creds, ClientOptions::default()),
         enrichment_scheduler::config_from_env(),
     );
 
@@ -437,7 +446,10 @@ pub fn build_app(
         .merge(routes::statement_routes())
         .merge(routes::auto_import_routes())
         .merge(routes::feedback_routes())
-        .merge(routes::llm_routes());
+        .merge(routes::llm_routes())
+        // Behind the bearer gate like the rest, and with two gates of its own on
+        // top: a preview ticket and a named instance. See `routes::wipe`.
+        .merge(routes::wipe_routes());
 
     if let Some(token) = auth_token {
         // `route_layer`, NOT `layer`: a plain `layer` also wraps the fallback,
@@ -641,6 +653,9 @@ mod tests {
             build_llm_client(&creds, ClientOptions::default(), LlmRole::Structurer).model_name(),
             "llava"
         );
-        assert_eq!(build_extractor(&creds).name(), "null");
+        assert_eq!(
+            build_extractor(&creds, ClientOptions::default()).name(),
+            "null"
+        );
     }
 }

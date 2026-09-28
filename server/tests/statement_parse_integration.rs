@@ -88,6 +88,7 @@ async fn start_statement_server(
         secrets: Arc::new(secrets),
         instance: None,
         purge_ticket: Default::default(),
+        wipe_ticket: Default::default(),
     };
 
     let app = Router::new()

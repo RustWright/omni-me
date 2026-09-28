@@ -34,6 +34,7 @@ use super::{
     DocumentExtractor, DocumentPart, ExtractionError, ExtractionHint, ExtractionResult,
     MAX_DOCUMENT_PARTS, parse_response, prompt_for, response_schema,
 };
+use crate::llm::Sampling;
 
 /// How many times a 429 is retried before the document is given up on.
 ///
@@ -101,6 +102,18 @@ pub struct OpenAiCompatExtractor {
     /// First wait after a 429, doubling per retry. See [`MAX_RATE_LIMIT_RETRIES`].
     retry_backoff: Duration,
     last_request: Arc<Mutex<Instant>>,
+    /// Passwords tried, in order, when a PDF turns out to be encrypted.
+    ///
+    /// Empty by default: a document arriving here is usually not encrypted, and an
+    /// installation that has configured none must still read the other 82%.
+    /// See [`crate::credentials::PdfPasswords`].
+    pdf_passwords: crate::credentials::PdfPasswords,
+    /// What every request says about how to sample. See [`crate::llm::Sampling`].
+    ///
+    /// Role C defaults to deterministic, which the chat client does not: these
+    /// three questions have one right answer each, and a sign flip in a statement
+    /// is money in the wrong direction.
+    sampling: Sampling,
 }
 
 impl OpenAiCompatExtractor {
@@ -119,6 +132,11 @@ impl OpenAiCompatExtractor {
             extra_body: None,
             min_interval: None,
             retry_backoff: DEFAULT_RETRY_BACKOFF,
+            // `new` is not where the role default lives: the client does not know
+            // which seat it is. `llm::provider::sampling_for` decides, and every
+            // production path goes through it.
+            sampling: Sampling::provider_default(),
+            pdf_passwords: crate::credentials::PdfPasswords::default(),
             last_request: Arc::new(Mutex::new(
                 // Far enough back that the first request is never delayed.
                 Instant::now() - MAX_RETRY_WAIT,
@@ -135,6 +153,18 @@ impl OpenAiCompatExtractor {
     /// Space requests at least this far apart. See [`Self::min_interval`].
     pub fn with_min_interval(mut self, interval: Duration) -> Self {
         self.min_interval = Some(interval);
+        self
+    }
+
+    /// Sample every request this way. See [`crate::llm::Sampling`].
+    pub fn with_sampling(mut self, sampling: Sampling) -> Self {
+        self.sampling = sampling;
+        self
+    }
+
+    /// Try these passwords on an encrypted PDF. See [`Self::pdf_passwords`].
+    pub fn with_pdf_passwords(mut self, passwords: crate::credentials::PdfPasswords) -> Self {
+        self.pdf_passwords = passwords;
         self
     }
 
@@ -230,7 +260,10 @@ impl OpenAiCompatExtractor {
     /// budget; every other part converts on its own. The final check spans all
     /// of them, because a rasterized PDF beside a photo overflows in a way
     /// neither source can see alone.
-    async fn payload_for(parts: &[DocumentPart<'_>]) -> Result<Vec<Segment>, ExtractionError> {
+    async fn payload_for(
+        parts: &[DocumentPart<'_>],
+        passwords: &[&str],
+    ) -> Result<Vec<Segment>, ExtractionError> {
         let photos: Vec<(&[u8], &str)> = parts
             .iter()
             .filter(|p| p.mime.starts_with("image/"))
@@ -246,15 +279,24 @@ impl OpenAiCompatExtractor {
                 continue;
             }
             if part.mime == "application/pdf" {
-                let text = crate::statement::pdf::extract_layout_text(part.bytes, "")
-                    .await
-                    .map_err(|e| ExtractionError::Upstream(e.to_string()))?;
-                if text.trim().is_empty() {
-                    let pages = media::rasterize_pdf(part.bytes).await?;
+                let opened =
+                    crate::statement::pdf::extract_layout_text_with_any(part.bytes, passwords)
+                        .await
+                        .map_err(|e| ExtractionError::Upstream(e.to_string()))?;
+                if opened.text.trim().is_empty() {
+                    // The password that opened the text layer is the one that will
+                    // render it, so the rasterizer is handed that one rather than
+                    // walking the whole list a second time.
+                    let winner: Vec<&str> = opened
+                        .opened_by
+                        .and_then(|i| passwords.get(i).copied())
+                        .into_iter()
+                        .collect();
+                    let pages = media::rasterize_pdf(part.bytes, &winner).await?;
                     tracing::info!(pages = pages.len(), "scanned pdf rasterized for extraction");
                     segments.extend(pages.into_iter().map(Segment::Image));
                 } else {
-                    segments.push(Segment::Text(text));
+                    segments.push(Segment::Text(opened.text));
                 }
                 continue;
             }
@@ -421,7 +463,7 @@ impl OpenAiCompatExtractor {
 
         // Converted and size-fitted before anything else, so the rest of this
         // method sees only shapes the endpoint accepts.
-        let payload = Self::payload_for(parts).await?;
+        let payload = Self::payload_for(parts, &self.pdf_passwords.values()).await?;
 
         // ⚠️ `json_schema`, NOT `json_object`, and the difference is measured.
         //
@@ -465,6 +507,9 @@ impl OpenAiCompatExtractor {
             body["max_tokens"] = json!(n);
         }
 
+        // Sampling first, `extra_body` second: a caller naming a parameter itself
+        // still wins, the precedence `min_interval` already has.
+        self.sampling.apply_to(&mut body);
         let prepared = self.apply_extra(body);
         let mut attempt = 0u32;
         // ⚠️ Reset per attempt, never started before the loop. `elapsed_ms` is what
@@ -562,6 +607,11 @@ impl OpenAiCompatExtractor {
         let usage = crate::llm::Usage::from_response(&response_body);
         tracing::info!(
             model = %self.model,
+            // Top level, as the chat client reads it: a gateway names the upstream
+            // it routed to here. It was missing from this line for the whole role-C
+            // programme, so `bench-openrouter.sh`'s instruction to confirm the pin
+            // could not be followed on a document run. `MODEL_BENCH.md` R27.
+            provider = response_body["provider"].as_str().unwrap_or("unreported"),
             question = schema_name,
             segments = payload.len(),
             completion_tokens = usage.completion_tokens,
@@ -743,6 +793,55 @@ mod tests {
                 .unwrap();
         }
         assert!(started.elapsed() < Duration::from_millis(150));
+    }
+
+    /// Role C's three questions have one right answer each, so a request that
+    /// samples at the provider's default cannot be reproduced — the finding behind
+    /// `MODEL_BENCH.md` R26.
+    #[tokio::test]
+    async fn role_c_sends_the_sampling_it_was_built_with() {
+        let server = MockServer::start().await;
+        let content = r#"{"kind":"receipt","title":"r","fields":[]}"#;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(wiremock::matchers::body_partial_json(
+                json!({ "temperature": 0.0 }),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(extraction_response(content)))
+            .mount(&server)
+            .await;
+
+        let ext = OpenAiCompatExtractor::new(server.uri(), "llava", "k")
+            .with_sampling(Sampling::deterministic());
+        // The mock matches only when the key is present, so an answer is the
+        // assertion. `ask` is the one choke point, so extract, read and transcribe
+        // are all covered by it.
+        ext.read_document(&[DocumentPart::new(&one_png(), "image/png")])
+            .await
+            .unwrap();
+    }
+
+    /// A gateway pin arrives through `extra_body` and may carry a temperature of
+    /// its own; it is the caller speaking for this run, so it wins.
+    #[tokio::test]
+    async fn an_explicit_extra_body_outranks_role_cs_sampling() {
+        let server = MockServer::start().await;
+        let content = r#"{"kind":"receipt","title":"r","fields":[]}"#;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(wiremock::matchers::body_partial_json(
+                json!({ "temperature": 0.3 }),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(extraction_response(content)))
+            .mount(&server)
+            .await;
+
+        let ext = OpenAiCompatExtractor::new(server.uri(), "llava", "k")
+            .with_sampling(Sampling::deterministic())
+            .with_extra_body(json!({ "temperature": 0.3 }));
+        ext.read_document(&[DocumentPart::new(&one_png(), "image/png")])
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

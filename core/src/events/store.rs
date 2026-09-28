@@ -10,6 +10,7 @@ use super::types::{
     DocumentTextTranscribedPayload, EventType, FeedbackCapturedPayload, RecordTypeDeclaredPayload,
     TransactionRecordedPayload,
 };
+use crate::config::Feature;
 use crate::db::Database;
 
 /// Error type for event store and projection operations.
@@ -19,6 +20,11 @@ pub enum EventError {
     Db(#[from] surrealdb::Error),
     #[error("event validation error: {0}")]
     Validation(String),
+    #[error(
+        "a scoped wipe cannot take {feature:?}: its events name blob files, and deleting them \
+         orphans the bytes. Use the document purge, which refcounts them."
+    )]
+    WipeRefused { feature: Feature },
 }
 
 /// A persisted event with a generated ID.
@@ -470,6 +476,27 @@ pub trait EventStore: Send + Sync {
     /// Delete every event from the store. Used by the local data-wipe flow.
     /// Peers are unaffected; this only clears the current device's event log.
     async fn purge_all(&self) -> Result<(), EventError>;
+
+    /// How many events of each of `types` the log holds, omitting the absent ones.
+    ///
+    /// For the preview half of a wipe. Per type rather than one total because a
+    /// ledger wipe is checked against what the ledger holds, and "1,284 events"
+    /// cannot be compared with anything a person can count.
+    async fn count_by_type(&self, types: &[String]) -> Result<Vec<(String, usize)>, EventError>;
+
+    /// Delete only the events the given features own, and report how many went.
+    ///
+    /// ⚠️ **The count is the point.** A wipe that reports success without saying
+    /// what it removed cannot be checked against what was there, which is the same
+    /// reason the server backup is verified by size rather than by exit code.
+    ///
+    /// ⛔ **Local, like [`EventStore::purge_all`]: peers are unaffected.** A push
+    /// watermark is the device's own clock, so a wiped event is behind every peer's
+    /// cursor and will not come back — but every other node still holds its copy
+    /// and still projects it. A wipe is therefore per node, and a ledger wiped on
+    /// the server alone diverges from the phone rather than being cleared.
+    /// `docs/src/features.md` § Wiping one feature's data.
+    async fn purge_features(&self, features: &[Feature]) -> Result<usize, EventError>;
 }
 
 /// SurrealDB-backed event store implementation.
@@ -775,6 +802,84 @@ impl EventStore for SurrealEventStore {
         self.db.query("DELETE events").await?.check()?;
         Ok(())
     }
+
+    async fn count_by_type(&self, types: &[String]) -> Result<Vec<(String, usize)>, EventError> {
+        if types.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut result = self
+            .db
+            .query(
+                "SELECT event_type, count() AS n FROM events
+                 WHERE event_type IN $types GROUP BY event_type",
+            )
+            .bind(("types", types.to_vec()))
+            .await?
+            .check()?;
+        let rows: Vec<TypeCountRow> = result.take(0)?;
+        Ok(rows.into_iter().map(|r| (r.event_type, r.n)).collect())
+    }
+
+    async fn purge_features(&self, features: &[Feature]) -> Result<usize, EventError> {
+        // ⛔ Refused rather than documented-as-unwise. A document event names a blob
+        // by hash, and the only thing that knows whether other events still point at
+        // that hash is the purge path's refcount. Deleting the events here would
+        // leave the files on disk with nothing referring to them — invisible, and
+        // exactly the "lose track of bytes" failure the purge design exists to stop.
+        if features.contains(&Feature::Documents) {
+            return Err(EventError::WipeRefused {
+                feature: Feature::Documents,
+            });
+        }
+
+        let types: Vec<String> = EventType::owned_by(features)
+            .into_iter()
+            .map(|t| t.to_string())
+            .collect();
+        if types.is_empty() {
+            return Ok(0);
+        }
+
+        // Counted before the delete rather than from the delete's own result: a
+        // `DELETE` returns the rows it removed, and reading a length off that
+        // means holding every removed event in memory to learn a number.
+        let mut counted = self
+            .db
+            .query("SELECT count() AS n FROM events WHERE event_type IN $types GROUP ALL")
+            .bind(("types", types.clone()))
+            .await?
+            .check()?;
+        let n: Option<CountRow> = counted.take(0)?;
+        let doomed = n.map(|r| r.n).unwrap_or(0);
+
+        self.db
+            .query("DELETE events WHERE event_type IN $types")
+            .bind(("types", types))
+            .await?
+            .check()?;
+
+        // Loud, and with the feature named: this is the one operation here that
+        // destroys a person's records on purpose.
+        tracing::warn!(
+            ?features,
+            events = doomed,
+            "purged the events owned by these features"
+        );
+        Ok(doomed)
+    }
+}
+
+/// `SELECT count()` comes back as a row, not a scalar.
+#[derive(Debug, SurrealValue)]
+struct CountRow {
+    n: usize,
+}
+
+/// One row per event type, from the grouped count.
+#[derive(Debug, SurrealValue)]
+struct TypeCountRow {
+    event_type: String,
+    n: usize,
 }
 
 /// Internal row struct for SurrealQL query deserialization.
@@ -1234,6 +1339,177 @@ mod tests {
 
         store.purge_all().await.unwrap();
 
+        assert_eq!(store.get_since(before, None).await.unwrap().len(), 0);
+    }
+
+    /// The separation itself, which is what the user asked to see before a real
+    /// ledger wipe: finance events go, everything else stays. ⛔ Not a summary
+    /// claim — each survivor is named, because "it should only affect finances" is
+    /// a belief until something counts the rest.
+    #[tokio::test]
+    async fn a_finances_purge_takes_the_ledger_and_nothing_else() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+        let ts = Utc::now();
+
+        // One event per neighbouring concern, plus the two finance shapes.
+        let planted = [
+            ("transaction_recorded", "t1"),
+            ("transaction_categorized", "t1"),
+            ("budget_set", "b1"),
+            ("journal_entry_created", "j1"),
+            ("note_created", "n1"),
+            ("routine_group_created", "r1"),
+            ("document_archived", "d1"),
+            ("config_set", "c1"),
+            ("feedback_captured", "f1"),
+        ];
+        for (event_type, aggregate) in planted {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: event_type.into(),
+                    aggregate_id: aggregate.into(),
+                    timestamp: ts,
+                    device_id: "d1".into(),
+                    payload: serde_json::json!({}),
+                })
+                .await
+                .unwrap();
+        }
+
+        let before = ts - chrono::Duration::seconds(10);
+        assert_eq!(
+            store.get_since(before, None).await.unwrap().len(),
+            planted.len()
+        );
+
+        let removed = store.purge_features(&[Feature::Finances]).await.unwrap();
+        assert_eq!(removed, 3, "the two transaction events and the budget");
+
+        let left: Vec<String> = store
+            .get_since(before, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.event_type)
+            .collect();
+        assert_eq!(left.len(), 6);
+        for survivor in [
+            "journal_entry_created",
+            "note_created",
+            "routine_group_created",
+            "document_archived",
+            // ⛔ The two that must never be reachable by a feature wipe: the config
+            // says which features are on, and the audit trail records the wipe.
+            "config_set",
+            "feedback_captured",
+        ] {
+            assert!(left.contains(&survivor.to_string()), "lost {survivor}");
+        }
+    }
+
+    /// ⛔ The generality has one hole, and it is closed here rather than in a
+    /// comment: a document event names a blob, and only the purge path's refcount
+    /// knows whether anything else still points at it.
+    #[tokio::test]
+    async fn a_scoped_wipe_refuses_to_take_documents() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+        let ts = Utc::now();
+        store
+            .append(NewEvent {
+                id: None,
+                event_type: "document_archived".into(),
+                aggregate_id: "d1".into(),
+                timestamp: ts,
+                device_id: "d1".into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        let err = store
+            .purge_features(&[Feature::Documents])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, EventError::WipeRefused { .. }), "{err}");
+        // And refused as a set member, not only alone — a finances wipe must not
+        // become a document wipe by having one added to the list.
+        assert!(
+            store
+                .purge_features(&[Feature::Finances, Feature::Documents])
+                .await
+                .is_err()
+        );
+        // Nothing was taken on the way to refusing.
+        let before = ts - chrono::Duration::seconds(10);
+        assert_eq!(store.get_since(before, None).await.unwrap().len(), 1);
+    }
+
+    /// A wipe that reports nothing cannot be checked against what was there.
+    #[tokio::test]
+    async fn a_purge_of_a_feature_with_no_events_reports_zero_rather_than_failing() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+        store
+            .append(NewEvent {
+                id: None,
+                event_type: "note_created".into(),
+                aggregate_id: "n1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({"raw_text": "x", "date": "2026-04-20"}),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(store.purge_features(&[Feature::Finances]).await.unwrap(), 0);
+        assert_eq!(store.purge_features(&[]).await.unwrap(), 0);
+    }
+
+    /// ⚠️ The boundary the ledger wipe actually has to reckon with. A committed
+    /// auto-import batch is the *second author* of a transaction, so a finances
+    /// wipe claims the transaction and leaves the batch — and the batch is what
+    /// carries the dedup key that would suppress re-importing the same statement.
+    #[tokio::test]
+    async fn a_finances_purge_leaves_the_auto_import_batch_that_proposed_it() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+        let ts = Utc::now();
+        for event_type in ["transaction_recorded", "auto_import_batch_committed"] {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: event_type.into(),
+                    aggregate_id: "a1".into(),
+                    timestamp: ts,
+                    device_id: "d1".into(),
+                    payload: serde_json::json!({}),
+                })
+                .await
+                .unwrap();
+        }
+        let before = ts - chrono::Duration::seconds(10);
+
+        assert_eq!(
+            store.purge_features(&[Feature::Finances]).await.unwrap(),
+            1,
+            "the transaction is claimed by finances even though auto-import wrote it"
+        );
+        let left = store.get_since(before, None).await.unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].event_type, "auto_import_batch_committed");
+
+        // Which is why a re-import needs both features named, and the API makes
+        // that the caller's explicit choice rather than a hidden widening.
+        assert_eq!(
+            store
+                .purge_features(&[Feature::Finances, Feature::AutoImport])
+                .await
+                .unwrap(),
+            1
+        );
         assert_eq!(store.get_since(before, None).await.unwrap().len(), 0);
     }
 

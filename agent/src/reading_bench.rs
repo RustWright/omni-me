@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use omni_me_core::extraction::DocumentPart;
 use omni_me_core::extraction::document::{DocumentReader, DocumentSummary};
+use omni_me_core::llm::Sampling;
 
 const REPEATS_ENV: &str = "OMNI_BENCH_READ_REPEATS";
 const DEFAULT_REPEATS: usize = 3;
@@ -390,8 +391,11 @@ fn summarise(probe: &Probe, runs: Vec<Run>) -> Scored {
     s
 }
 
-fn report(rows: &[Scored], model: &str, repeats: usize) {
-    println!("\nrole C2 — document reading · model {model} · {repeats} runs per probe\n");
+fn report(rows: &[Scored], model: &str, repeats: usize, sampling: Sampling) {
+    println!(
+        "\nrole C2 — document reading · model {model} · {repeats} runs per probe · sampling {}\n",
+        sampling.describe()
+    );
     println!(
         "{:<16} {:>6} {:>6} {:>7} {:>6} {:>6} {:>6} {:>7} {:>9}",
         "probe", "UNGRND", "BADDT", "RECALL", "EAGER", "KIND", "ERR", "AGREE", "MEDIAN"
@@ -479,7 +483,7 @@ fn report(rows: &[Scored], model: &str, repeats: usize) {
     }
 }
 
-pub async fn run(reader: Option<&dyn DocumentReader>) {
+pub async fn run(reader: Option<&dyn DocumentReader>, sampling: Sampling) {
     let repeats: usize = std::env::var(REPEATS_ENV)
         .ok()
         .and_then(|v| v.parse().ok())
@@ -487,9 +491,10 @@ pub async fn run(reader: Option<&dyn DocumentReader>) {
         .unwrap_or(DEFAULT_REPEATS);
 
     println!(
-        "plan: {} probes x {repeats} runs = {} calls · no corpus, no database",
+        "plan: {} probes x {repeats} runs = {} calls · no corpus, no database · sampling {}",
         PROBES.len(),
-        PROBES.len() * repeats
+        PROBES.len() * repeats,
+        sampling.describe()
     );
     for probe in PROBES {
         println!("  {:<16} {}", probe.id, probe.purpose);
@@ -515,7 +520,7 @@ pub async fn run(reader: Option<&dyn DocumentReader>) {
         }
         rows.push(summarise(probe, runs));
     }
-    report(&rows, reader.name(), repeats);
+    report(&rows, reader.name(), repeats, sampling);
 }
 
 #[cfg(test)]

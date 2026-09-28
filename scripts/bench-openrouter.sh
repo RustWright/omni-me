@@ -152,12 +152,17 @@ export OMNI_AGENT_LLM_API_KEY="$OPENROUTER_KEY"
 # that would treat `response_format` as a hint becomes a routing ERROR instead of
 # a clean-looking scorecard measuring nothing.
 #
-# ⚠️ **`temperature` is set here because nothing else in the codebase sets it**
-# (R26). Left unsent, every request samples at whatever the provider defaults to,
-# and the same model scored 33% with 13 sign-flips on one run of a statement and
-# 100% with none on the next. A bench that cannot reproduce itself cannot rank
-# anything. ⛔ This does not change production, which still sends no temperature
-# — that is a separate, deliberate decision, filed in `tasks.md`.
+# ⚠️ `temperature` is still set here, but it is no longer the only place it is set:
+# role C now defaults to 0 in `core` (R26's code half, 2026-09-27) and the chat
+# seats still send nothing. It stays because this object is what a screening run
+# uses to pin the *whole* request shape, and because an explicit value here wins
+# over the config — so a run can sample differently on purpose without editing
+# credentials. ⚠️ It is also what the scorecard header prints, folded over the
+# seat's own sampling.
+#
+# ⛔ Until 2026-09-27 this object reached roles A and B ONLY: the role-C and role-D
+# builders took no options, so neither the pin nor these terms were ever applied to
+# a document request. See R27 before reading any C or D result on this page.
 #
 # ⚠️ Folded into the DEFAULT rather than exported separately, because
 # `OMNI_AGENT_LLM_EXTRA_BODY` replaces this whole object rather than merging into

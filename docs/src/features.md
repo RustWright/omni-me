@@ -80,6 +80,81 @@ launch boundary is the only point where the whole set changes together.
 Theme and accent are different: they are pure presentation, so they repaint the moment
 you change them.
 
+## Wiping one feature's data
+
+Switching a feature off freezes its data. Wiping is the other operation, and it is
+deliberately harder to reach: it deletes the events one feature owns, then rebuilds what
+was derived from them. The use for it is a clean re-import — a ledger whose rows came
+from several versions of an importer is neither empty nor complete, and the gap left by
+an old one is invisible once it is in the data.
+
+**What a feature owns is read off the same map that decides what it may write.** There is
+one classification of event types to features, used both to refuse a write while a
+feature is off and to decide what a wipe of that feature takes. A second list would
+eventually disagree with the first, and the way it would show up is a new kind of finance
+event that is correctly gated and then survives a finances wipe.
+
+Three consequences of that, and none of them is obvious from the outside:
+
+**Some events belong to two features.** A recorded transaction is authored under either
+Finances or auto-import, because a committed import batch is the second author of a
+transaction. So a wipe of *either* feature claims it. That is right for a ledger wipe — a
+transaction is a transaction, whoever proposed it — but it means a finances wipe removes
+transactions while leaving the batch that proposed them.
+
+**Which matters because the batch carries the dedup key.** Import batches are identified
+by a content hash so that re-fetching an overlapping window collapses onto the row
+already proposed rather than adding a second one. That record is derived from the batch
+events, so it survives a finances-only wipe — and the same statements, imported again,
+collapse onto a batch already marked committed. The ledger stays empty and nothing says
+why. A re-import therefore has to name both features, which is why the operation takes a
+list rather than a single feature and never widens one silently.
+
+**Four event types belong to no feature at all** and so survive every wipe: the config
+that records which features are on, a filed problem report, a declared record type, and
+the audit record of a wipe itself. A wipe that could take the config would be a wipe that
+turns off the feature it just emptied.
+
+**A wipe is per node, not global.** Every device keeps a complete log, and each one pushes
+what it authored using its own watermark. A wiped event is behind every peer's cursor, so
+it does not come back — but the other nodes still hold their copies and still project
+them. Wiping the server alone leaves the phone showing the old ledger: not a stale cache,
+a genuinely different answer. Clearing a feature everywhere means clearing it on every
+node, and the count each one reports is how you check that it happened.
+
+That count is the other half of the design. The operation reports how many events it
+removed rather than simply succeeding, for the same reason a backup is verified by size
+and not by exit code: "it worked" cannot be checked against what was there.
+
+### Two steps, and three gates
+
+A wipe is reached over the server's own API, in the shape the document purge already
+uses: **preview, then confirm.**
+
+The preview reports how many events of each type would go — per type, because a total
+cannot be compared against anything a person can count — and writes nothing. Looking and
+walking away leaves the log untouched. It also hands back a token, and reports which
+deployment answered.
+
+The confirm has to present three things, and each closes a different way of destroying
+the wrong data:
+
+- **The token**, which is spent by the confirm it authorises. A second confirm with the
+  same token is refused rather than being a second wipe, so a retry has to preview again
+  and see current state.
+- **A subset of the previewed features.** The confirm may narrow what the preview
+  described and may never widen it. Previewing one feature and confirming two would
+  destroy events nobody counted.
+- **The name of the deployment it believes it is talking to**, as `/health` reports it. A
+  server that declares itself `dev` refuses a wipe addressed to production, and a server
+  that declares nothing at all refuses every wipe — an undeclared deployment is treated
+  as a refusal wherever a destructive tool asks, so a half-provisioned box can never be
+  mistaken for the dev one.
+
+Listing what can be wiped is its own read-only endpoint, and documents appear on it
+carrying their refusal rather than being left off. Omitted, the refusal would read as an
+oversight to route around.
+
 ## Two things this does not cover
 
 **The server does not read these switches.** Auto-import runs on your server, and

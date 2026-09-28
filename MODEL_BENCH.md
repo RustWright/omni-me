@@ -100,6 +100,72 @@ fix; the other three arms need it before any of their numbers rank anything.
 
 Filed in `tasks.md`. ⛔ Fix before any further slate, or the next run produces a fourth answer.
 
+✅ **The code half landed 2026-09-27.** Sampling is a first-class part of a seat's config
+(`[llm] temperature / top_p / seed`, inherited per role), and the seats split on whether the question
+has one right answer: C1/C2/C3, D and **B** default to `temperature: 0`, while **role A alone** stays
+at the provider default (user, 2026-09-28 — it is the seat being conversed with),
+and every bench header now prints the sampling it ran at — folding in any `extra_body`
+override, so the line cannot name a value the request did not carry. `seed` is plumbed and
+**sent nowhere by default**: under `require_parameters` an endpoint that does not support it
+becomes a routing error, which would silently shrink a slate.
+
+✅ **And the C2 repeats pattern is now on every arm**: `--bench-extraction`
+(`OMNI_BENCH_EXTRACT_REPEATS`), `--bench-transcription` (`OMNI_BENCH_TRANSCRIBE_REPEATS`) and
+`--bench` (`OMNI_BENCH_SLATE_REPEATS`), all defaulting to 3 with an `AGREE` column, and a
+single-run run now prints **stability UNMEASURED** rather than a number that looks rankable.
+⚠️ Three runs of both slate variants is three times the most expensive run in the project; the
+plan line prints the call count before it starts.
+
+⏳ **What is left is the spend**: the re-rank itself. ⛔ And read R27 first — it names a second
+uncontrolled variable that was present in every run on this page.
+
+## R27 · 🔴 **The gateway pin never reached role C or role D — every document measurement on this page was routed to an upstream of OpenRouter's choosing**
+
+Found 2026-09-27 while plumbing R26's sampling, and it is the larger half of the same defect.
+
+`bench-openrouter.sh` sets `OMNI_AGENT_LLM_EXTRA_BODY` to `{provider: {only: [pin],
+allow_fallbacks: false, zdr: true, data_collection: "deny", require_parameters: true},
+temperature: 0}`. That object reached **roles A and B only**. `build_extractor`,
+`build_reader` and `build_transcriber` took no `ClientOptions` at all, and
+`--bench-structuring` passed `ClientOptions::default()`, so:
+
+| what the pin was for | roles A, B | roles C1, C2, C3, D |
+|---|---|---|
+| `provider.only` + `allow_fallbacks: false` — one named serving stack | sent | **never sent** |
+| `require_parameters` — a schema-ignoring endpoint becomes a routing error | sent | **never sent** |
+| `zdr` + `data_collection: "deny"` — the privacy terms | sent | **never sent** |
+| `temperature: 0` (R26's stop-gap) | sent | **never sent** |
+
+⛔ **What this costs the numbers.** Every C1, C2, C3 and D result on this page was produced
+against whatever upstream the gateway picked, at whatever quantization it happened to serve —
+the failure this harness's own comments call unattributable, and the one the script's
+"confirm every `llm call` line reads provider=deepinfra" instruction exists to catch. ⚠️ That
+instruction was also unfollowable on those runs: the role-C log line never carried a `provider`
+field, so there was nothing to read. Both halves are fixed — options reach all six seats, and
+the `role-C answer` line now names the upstream.
+
+🔴 **This is a second, larger candidate cause for R26's own finding.** Two runs of the same
+model on the same statement scored 33% and 100%; uncontrolled sampling was the explanation
+offered, and uncontrolled *routing* was present at the same time and is not smaller. The
+`gemma-4-26B` error rate moving 69% → 61% → 19% while its median latency halved was read as
+"endpoint load" — an unpinned run is exactly what that looks like.
+
+⚠️ **It does not overturn a seat decision by itself**, and saying so would be inventing a
+result: an unpinned request often does land on the same upstream, and nobody knows which rows
+did. It means the role-C and role-D numbers describe *a* stack rather than ours, so the
+re-run R26 already required is now also the run that first measures the stack we ship.
+
+🔴 **The privacy half is not a measurement question.** `--bench-extraction` and
+`--bench-transcription` read the real corpus, so real statements were sent through OpenRouter
+without the per-request `zdr` / `data_collection: "deny"` terms the harness was written to
+send. Whether the account's own settings covered that is not something this repo can answer —
+it is in `tasks.md` as a question for the account holder, not a code item.
+
+⚠️ **Watch for a loud failure on the next C slate, and read it as the fix working.**
+`require_parameters` now reaches role C, so a pinned tag that does not advertise
+`structured_outputs` will produce a routing error where it previously returned a 200 whose
+schema was quietly ignored — the `commodity: "HAND WASH"` class of result.
+
 ## Part 1 — What the instrument measures
 
 Ten fixed cases (`agent/src/bench.rs`, `CASES`), each a natural-language request paired with
@@ -362,7 +428,20 @@ that arrives through archive ingest therefore yields no text, no fields, and no 
 ⚠️ **This bounds what C3 can ever be measured on**, which is why it is recorded here — but the gap
 itself is an **ingest** capability, not a model-selection one. It is exactly the shape `pdf.rs`'s
 own header anticipates (*"this takes a password"*, the caller supplies it); the archive path simply
-never had one to give. Filed as work, not fixed here.
+never had one to give.
+
+✅ **FIXED 2026-09-27.** Ingest now tries every `pdf_password*` secret in turn, in name order, and
+so does `rasterize_pdf` — so the vision fallback can open what the text path opened. The empty
+password goes first, which keeps an unencrypted document at one `pdftotext` run however many are
+configured. A document no password opens is still archived, textless, with a warning naming how
+many were tried; it used to be indistinguishable from a blank page.
+⚠️ **And `--bench-transcription` now takes the list too**, so an encrypted statement can be a case
+at all: without it this arm was silently scoring the unencrypted 82% and counting the rest as
+scans — which, given two issuers encrypt 100% of theirs, means it never saw those two issuers'
+layouts. ⛔ Read any pre-2026-09-27 C3 row with that in mind.
+⚠️ Poppler reports a wrong password and a damaged file with the **same exit code** (1, measured on
+24.02); only stderr separates them. `statement::pdf::is_wrong_password` matches on it, against a
+real encrypted fixture committed at `core/tests/fixtures/encrypted/`.
 
 **The ranking consequence is worse, and it is the C3 twin of R13's withheld tax.** `rank_and_print`
 filters errored documents out of `scored` before summing, so the denominator is *only the documents
