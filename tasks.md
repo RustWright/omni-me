@@ -1133,6 +1133,28 @@ critical path, not the tail.
    ⚠️ It ends **2026-08-28** against dev's pre-wipe 2026-09-26. That month is September
    auto-import, which is exactly what the cursor finding says cannot come back — explained, not a
    gap to chase.
+   🔴 **A FOURTH finding, from running the same check against every other table — and this one is
+   a wipe that does not wipe.** Classifying all 25 tables the engine defines: everything else is a
+   projection (rebuilt by the wipe) except `events`, `projection_versions`, `sync_state` (the
+   per-node watermark, already documented as intended), `imap_cursors` (finding three) — and
+   **`record_embeddings`**, the assistant's vector index.
+   ⛔ `vector_store::sweep_one` iterates the rows that **exist** in a projection table, so a record
+   deleted outright produces no row and its chunks are never visited. ⚠️ It is not the same as the
+   `hidden` case the file already guards: there the record is still present. And the consequence is
+   not merely a stale index — `retrieval::describe` takes a semantic hit's **snippet from the
+   stored chunk text** rather than re-reading the record, filling `handle` from a live lookup that
+   comes back empty. So after a finances wipe every transaction keeps ranking and **answers searches
+   in its own words**, with finances still switched on so `catalog::visible` still targets it.
+   ✅ **FIXED 2026-09-28** (`62edf7e`): the sweep now prunes chunks whose record id is no longer in
+   the table. ⚠️ Safe only because that scan is unpaged — under a `LIMIT` the same prune would read
+   every record past the page as deleted and drop live vectors; the comment says so at the edit site.
+   Test asserts the search goes empty, not just that rows went.
+   ⛔ **Read from the code, not observed running** — `record_embeddings` is populated on whichever
+   node hosts the assistant, and the agent is deployed nowhere yet, so dev's index is empty and the
+   leak is latent. It stops being latent the moment the assistant runs, which is the next push.
+   🔴 **Still his call, and I did not decide it:** whether a wipe should clear the index
+   *synchronously* rather than leaving it to the next sweep. The fix above closes the window at the
+   next sweep; it does not make the wipe itself complete.
    ⚠️ **Mass document ingestion is built but unreachable.** `archive::ingest_paths` +
    `walk_dir` exist — `walk_dir`'s own doc names this corpus ("the finance corpus carries 785
    generated `.ledger` files") — but **nothing calls either**. Same shape as the LLM surface that
