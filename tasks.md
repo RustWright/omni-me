@@ -1100,17 +1100,39 @@ critical path, not the tail.
    record (one blob each, since blobs are content-addressed). The alternatives it beat were folding
    the reset into the wipe (makes "wipe and re-import" true end to end, but pays the duplicate
    documents as an invisible side effect) and documenting the gap only.
-   ⏳ **What is left before the official import:** the ledger re-import on dev (below), and the
-   cursor-reset route.
+   ✅ **The cursor-reset route is BUILT 2026-09-28** and green in CI:
+   `POST /auto_import/sources/{name}/cursor/reset`. It clears **both** halves — the `imap_cursors`
+   row and the in-memory cursor — because the in-memory one is what the next pull writes back, so
+   clearing only the row lets a running source re-save the position just cleared. It reports the
+   uid it rewound past rather than just succeeding (a wipe reports its count for the same reason),
+   ⛔ does **not** tick, so a source can be rewound while paused, and is gated on the declared
+   instance exactly like the wipe — refused before the registry is consulted, so a right-named
+   source on the wrong host cannot get that far. Two unit tests (the re-fetch itself, and
+   `AlreadyClear` as a distinct answer from `Cleared`) plus three socket tests.
+   ⚠️ The `dev`-declaring test harness moved into `server/tests/common` rather than being copied;
+   `feature_wipe_integration` now shares it.
+   ⏳ **What is left before the official import:** exercising the reset live on dev, which needs the
+   dev image rebuilt onto `fece433`.
    `docs/src/features.md` § Wiping one feature's data.
    ✅ **The historical ledger is RECOVERED** — he supplied `paisa-ledger-461.zip` (2026-09-28),
    restored to `~/paisa-ledger-restore/extracted/paisa-ledger/` ⛔ **outside both repos, and it
    stays there** (real financial data). 26 account dirs, ~1,800 files, 785 `.ledger` files, ~700
-   PDFs. `main.ledger` resolves its 98 include globs to 784 files carrying **10,575 transactions,
-   2019/05/30 → 2026/08/28**. ⚠️ That is 23 short of dev's pre-wipe 10,598 and stops a month
-   earlier, exactly as he said — the remainder is September auto-import, which is precisely what the
-   cursor finding says cannot come back. So the re-import's expected outcome is ~10,575, **not**
-   10,598, and the gap is explained rather than a discrepancy to chase.
+   PDFs.
+   ✅ **RE-IMPORTED ONTO DEV 2026-09-28, and it closes the round trip.** `parse_journal` on
+   `main.ledger`: **10,582 transactions, 0 parse errors, 0 balance failures**, pushed under device
+   `reimport-20260928` from a throwaway DB at `~/reimport-device`. Dev went **5,558 → 16,140** with
+   `transaction_recorded` **+10,582 and every other event type +0** — so the wipe's separation
+   survived a full re-import, not just the moment after the delete.
+   ✅ **Verified as data, not as a count**: 10,582 **distinct** `txn_id` (the content hash does not
+   collide across the corpus), multi-commodity ETF postings balanced, and the range starts
+   **2019-05-29** — dev's own pre-wipe start date, reproduced exactly.
+   ⚠️ **10,582, not the 10,575 predicted here earlier.** My prediction came from a regex over the
+   98 globs `main.ledger` names; `parse_journal` resolves includes **recursively** and finds 7 more.
+   ⛔ The discrepancy was in the cheap instrument, not the data — a reminder that the real parser is
+   the only thing that can say how many transactions a journal holds.
+   ⚠️ It ends **2026-08-28** against dev's pre-wipe 2026-09-26. That month is September
+   auto-import, which is exactly what the cursor finding says cannot come back — explained, not a
+   gap to chase.
    ⚠️ **Mass document ingestion is built but unreachable.** `archive::ingest_paths` +
    `walk_dir` exist — `walk_dir`'s own doc names this corpus ("the finance corpus carries 785
    generated `.ledger` files") — but **nothing calls either**. Same shape as the LLM surface that
