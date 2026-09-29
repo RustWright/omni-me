@@ -155,6 +155,11 @@ async function openTab(page, tab) {
 
 const failures = [];
 const notes = [];
+// ⛔ What was actually measured, printed on success. A pass that does not say
+// what it looked at is indistinguishable from a pass that looked at nothing —
+// and the deep archive check, which covers the one screen that has really
+// overflowed, is skipped silently when its fixture is missing.
+const measured = [];
 
 const browser = await chromium.launch();
 try {
@@ -209,6 +214,7 @@ try {
         break;
       }
       const rep = await overflowReport(page);
+      measured.push(label);
       if (rep.pans || rep.offenders.length) {
         failures.push({ where: label, ...rep });
       }
@@ -225,6 +231,7 @@ try {
           await doc.click();
           await page.waitForTimeout(600);
           const deep = await overflowReport(page);
+          measured.push(`${label} › detail (wide CSV)`);
           if (deep.pans || deep.offenders.length) {
             failures.push({ where: `${label} › detail`, ...deep });
           }
@@ -264,4 +271,15 @@ if (failures.length) {
   process.exit(1);
 }
 
+const deepRan = measured.filter((m) => m.includes("detail")).length;
+console.log(`\nMeasured ${measured.length} screens:`);
+for (const m of measured) console.log(`  ${m}`);
+if (deepRan === 0) {
+  // ⛔ Fatal, not a note. The archive detail view is the one screen that has
+  // actually overflowed; a run that never reached it has checked everything
+  // except the thing this was written for, and saying "no overflow" would be a
+  // green built on an untested screen.
+  console.error("\nThe archive detail view was never reached — nothing verified the case this exists for.");
+  process.exit(1);
+}
 console.log("\nNo horizontal overflow at any checked width.");
