@@ -23,7 +23,9 @@ use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::account_input::{AccountInput, AccountMode, AccountSuggestions};
-use crate::components::attachment_viewer::{AttachmentViewer, extract_attachment_meta};
+use crate::components::attachment_viewer::{
+    AttachmentViewer, document_meta, extract_attachment_meta,
+};
 use crate::components::date_field::DateField;
 use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{
@@ -263,6 +265,26 @@ pub fn FinancesPage() -> Element {
     // hardware-back handler needs to clear it too.
     let mut pending_share: Signal<Option<PendingShareCapture>> = use_context();
 
+    // A reminder row that named this tab asked for its review queue.
+    //
+    // ⛔ Lands on the review inbox card, not inside one queue. The count that
+    // produced the row merges auto-import batches with assistant proposals, so
+    // there is no single queue it can mean — the card is where that split is
+    // visible, and it is one tap from either half. Before this the row switched
+    // tabs and nothing else, leaving the user at the top of Overview above a
+    // net-worth hero and a chart, with the thing they tapped for off-screen.
+    let mut highlight_review = use_signal(|| false);
+    let mut nav_intent = crate::use_nav_intent();
+    use_effect(move || {
+        // Snapshot before writing — a held read guard across a set deadlocks.
+        let intent = *nav_intent.read();
+        if intent == Some(crate::NavIntent::FinancesReview) {
+            nav_intent.set(None);
+            view.set(FinancesView::Overview);
+            highlight_review.set(true);
+        }
+    });
+
     // Hardware/gesture-back (#372): pop one Finances drill-down per back press,
     // routed through the same `finances_back_target` map the on-screen Back
     // buttons use, and clearing the same per-view selection state those handlers
@@ -467,6 +489,8 @@ pub fn FinancesPage() -> Element {
                     OverviewView {
                         pending_count: *pending_batch_count.read(),
                         suggestion_count: *pending_suggestion_count.read(),
+                        highlight_review: *highlight_review.read(),
+                        on_review_seen: move |_| highlight_review.set(false),
                         has_pending_capture: pending_capture.is_some(),
                         pending_capture_label: pending_capture_label.clone(),
                         on_resume_capture: move |_| view.set(FinancesView::TransactionForm),
@@ -1058,6 +1082,12 @@ fn ReviewInboxCard(
     suggestion_count: u64,
     unmatched: Option<String>,
     base_currency: String,
+    /// Arrived here by a reminder row naming this queue: bring the card into
+    /// view and mark it. ⚠️ On a phone it sits below the net-worth hero and the
+    /// history chart, so without the scroll the destination is off-screen and
+    /// the tap reads as having gone nowhere.
+    highlight: bool,
+    on_shown: EventHandler<()>,
     on_open_batches: EventHandler<()>,
     on_open_suggestions: EventHandler<()>,
     on_open_reconciliation: EventHandler<()>,
@@ -1087,39 +1117,59 @@ fn ReviewInboxCard(
     };
 
     rsx! {
-        Card {
-            div { class: "flex items-center gap-2 mb-3",
-                Icon { name: IconName::Inbox, class: "w-4 h-4 text-obsidian-text-muted" }
-                h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Review inbox" }
-            }
-            div { class: "space-y-1",
-                // Batches are auto-import's; reconciling Unmatched is finances'
-                // own, and stays whichever way auto-import is set.
-                if feature_on(Feature::AutoImport) {
+        div {
+            // ⚠️ A wrapper rather than a prop on `Card`: `onmounted` is a DOM
+            // attribute and `Card` is a component, so there is no element on it
+            // to hang this from.
+            onmounted: move |e| async move {
+                if !highlight {
+                    return;
+                }
+                // Failure is not worth surfacing — the card is on screen either
+                // way, just not scrolled to. Reporting it would put an error in
+                // front of someone whose navigation actually worked.
+                let _ = e.scroll_to(ScrollBehavior::Smooth).await;
+                on_shown.call(());
+            },
+            class: if highlight {
+                "rounded-xl ring-2 ring-obsidian-accent/70 transition-shadow"
+            } else {
+                ""
+            },
+            Card {
+                div { class: "flex items-center gap-2 mb-3",
+                    Icon { name: IconName::Inbox, class: "w-4 h-4 text-obsidian-text-muted" }
+                    h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Review inbox" }
+                }
+                div { class: "space-y-1",
+                    // Batches are auto-import's; reconciling Unmatched is finances'
+                    // own, and stays whichever way auto-import is set.
+                    if feature_on(Feature::AutoImport) {
+                        button {
+                            class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
+                            onclick: move |_| on_open_batches.call(()),
+                            span { class: "text-obsidian-text", "Auto-imported batches" }
+                            span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
+                        }
+                    }
+                    // ⛔ A row here rather than a queue of its own. One entry point
+                    // means one number to watch — "things waiting for you in
+                    // finances" — and the sections stay separate one tap in, where
+                    // an import batch and an assistant proposal genuinely differ.
+                    // ⚠️ Shown even at zero, unlike a badge: the row is how the user
+                    // learns the assistant can offer ledger changes at all.
                     button {
                         class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
-                        onclick: move |_| on_open_batches.call(()),
-                        span { class: "text-obsidian-text", "Auto-imported batches" }
-                        span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
+                        onclick: move |_| on_open_suggestions.call(()),
+                        span { class: "text-obsidian-text", "Assistant suggestions" }
+                        span { class: "tabular-nums font-semibold {suggestion_tone}", "{suggestion_count}" }
                     }
-                }
-                // ⛔ A row here rather than a queue of its own. One entry point
-                // means one number to watch — "things waiting for you in
-                // finances" — and the sections stay separate one tap in, where
-                // an import batch and an assistant proposal genuinely differ.
-                // ⚠️ Shown even at zero, unlike a badge: the row is how the user
-                // learns the assistant can offer ledger changes at all.
-                button {
-                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
-                    onclick: move |_| on_open_suggestions.call(()),
-                    span { class: "text-obsidian-text", "Assistant suggestions" }
-                    span { class: "tabular-nums font-semibold {suggestion_tone}", "{suggestion_count}" }
-                }
-                button {
-                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
-                    onclick: move |_| on_open_reconciliation.call(()),
-                    span { class: "text-obsidian-text", "Unmatched to reconcile" }
-                    span { class: "tabular-nums font-semibold text-xs {unmatched_tone}", "{unmatched_str}" }
+                    button {
+                        class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
+                        onclick: move |_| on_open_reconciliation.call(()),
+                        span { class: "text-obsidian-text", "Unmatched to reconcile" }
+                        span { class: "tabular-nums font-semibold text-xs {unmatched_tone}", "{unmatched_str}" }
+                    }
                 }
             }
         }
@@ -1222,6 +1272,12 @@ fn OverviewView(
     suggestion_count: u64,
     has_pending_capture: bool,
     pending_capture_label: Option<String>,
+    /// Scroll the review inbox into view and mark it, for an arrival that asked
+    /// for it by name. See `NavIntent::FinancesReview`.
+    highlight_review: bool,
+    /// Fired once the review inbox has been brought into view, so the mark does
+    /// not persist into an ordinary later visit.
+    on_review_seen: EventHandler<()>,
     on_resume_capture: EventHandler<()>,
     on_open_batches: EventHandler<()>,
     on_open_suggestions: EventHandler<()>,
@@ -1376,6 +1432,8 @@ fn OverviewView(
                     suggestion_count,
                     unmatched,
                     base_currency: base_currency.clone(),
+                    highlight: highlight_review,
+                    on_shown: move |_| on_review_seen.call(()),
                     on_open_batches: move |_| on_open_batches.call(()),
                     on_open_suggestions: move |_| on_open_suggestions.call(()),
                     on_open_reconciliation: move |_| on_open_reconciliation.call(()),
@@ -2911,8 +2969,13 @@ fn batch_verdict(batch: &PendingBatchView) -> Option<ExtractionVerdict> {
 /// ⚠️ Renders the archive's **extracted** text (headers + body), not the raw
 /// `.eml`: the raw form is mostly MIME scaffolding and base64 attachment
 /// payloads, so showing it would technically display the source while hiding
-/// what it says. Attachments are documents of their own in the archive — this
-/// panel links there rather than duplicating a viewer.
+/// what it says.
+///
+/// ⛔ **Attachments render here, not by a link to the Archive.** The figures on
+/// a receipt often live in a PDF while the covering mail states none of them, so
+/// a reviewer sent to another tab to check provenance is a reviewer approving a
+/// number they never saw. One viewer at a time, opened on tap — rendering every
+/// attachment eagerly would parse several PDFs to show one.
 #[component]
 fn SourceEmailPanel(document_id: String) -> Element {
     let id_for_text = document_id.clone();
@@ -2920,6 +2983,12 @@ fn SourceEmailPanel(document_id: String) -> Element {
         let id = id_for_text.clone();
         async move { bridge::invoke_get_document_text(&id).await }
     });
+    let id_for_children = document_id.clone();
+    let children = use_resource(move || {
+        let id = id_for_children.clone();
+        async move { bridge::invoke_document_children(&id).await }
+    });
+    let mut open_attachment: Signal<Option<String>> = use_signal(|| None);
 
     rsx! {
         details { class: "mb-4", open: true,
@@ -2950,8 +3019,71 @@ fn SourceEmailPanel(document_id: String) -> Element {
                         }
                     },
                 }
+                // ⚠️ Silent when the message had none. "No attachments" on every
+                // body-only receipt is a line the reviewer learns to skip, and
+                // the absence is already legible from the body being the receipt.
+                match children.read().as_ref() {
+                    Some(Ok(kids)) if !kids.is_empty() => {
+                        let kids = kids.clone();
+                        rsx! {
+                            div { class: "mt-3 space-y-1",
+                                p { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                                    "Arrived with this message"
+                                }
+                                for kid in kids {
+                                    {
+                                        let kid_id = kid.document_id.clone();
+                                        let is_open = open_attachment
+                                            .read()
+                                            .as_deref()
+                                            == Some(kid_id.as_str());
+                                        let meta = document_meta(&kid);
+                                        rsx! {
+                                            div { key: "{kid.document_id}", class: "min-w-0",
+                                                button {
+                                                    onclick: move |_| {
+                                                        let next = if is_open { None } else { Some(kid_id.clone()) };
+                                                        open_attachment.set(next);
+                                                    },
+                                                    class: "w-full text-left px-3 py-2 rounded border \
+                                                            border-obsidian-border/10 hover:border-obsidian-accent/40 \
+                                                            text-xs text-obsidian-text flex items-center gap-2",
+                                                    span { class: "text-obsidian-text-muted shrink-0",
+                                                        if is_open { "▾" } else { "▸" }
+                                                    }
+                                                    span { class: "truncate", "{kid.display_name()}" }
+                                                }
+                                                if is_open {
+                                                    div { class: "mt-1 min-w-0",
+                                                        match meta {
+                                                            Some(meta) => rsx! { AttachmentViewer { meta: meta } },
+                                                            // The document is catalogued but its bytes
+                                                            // have not reached this device — distinct
+                                                            // from a viewer that failed.
+                                                            None => rsx! {
+                                                                p { class: "text-[11px] text-obsidian-text-muted",
+                                                                    "This file hasn't arrived on this device yet."
+                                                                }
+                                                            },
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(Err(e)) => rsx! {
+                        p { class: "mt-2 text-[11px] text-amber-400/80",
+                            "Couldn't check this message for attachments: {e}"
+                        }
+                    },
+                    _ => rsx! {},
+                }
                 p { class: "mt-1 text-[10px] text-obsidian-text-muted/70",
-                    "Archived as {document_id} — attachments are separate entries in the Archive."
+                    "Archived as {document_id}"
                 }
             }
         }

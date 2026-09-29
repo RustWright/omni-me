@@ -328,3 +328,50 @@ jobs:
       - name: Clippy (non-mock)
         working-directory: tauri-app/frontend
         run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
+      # Phone-width layout sweep. The archive detail view shipped overflowing the
+      # screen and review never saw it, because the defect is a measurement — a
+      # grid item at `min-width: auto` refusing to shrink — and not something a
+      # diff shows. `tests/viewport-check.mjs` drives every tab at 360px and
+      # 390px and fails if the page can be panned sideways.
+      #
+      # ⚠️ `continue-on-error` until it has proven itself on a few real runs. It
+      # has never executed: the box this was written on cannot link a wasm build,
+      # so CI is its first run. Drop the flag once it has passed and caught at
+      # least one deliberate regression — a gate nobody trusts gets disabled, and
+      # a flaky one nobody trusts gets ignored, which is worse.
+      #
+      # ⛔ The mock build lands in the DEBUG output dir, which is what
+      # `tauri.conf.json` pins `frontendDist` to. Harmless on a CI runner and
+      # dangerous on a dev machine: that is exactly how a mock-data APK once
+      # shipped. Never copy this step into a job that also bundles the app.
+      - name: Install Playwright
+        continue-on-error: true
+        working-directory: tauri-app/frontend
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Build frontend (mock, for the layout sweep)
+        continue-on-error: true
+        working-directory: tauri-app/frontend
+        run: dx build --platform web --features mock
+
+      - name: Layout sweep at phone widths
+        continue-on-error: true
+        working-directory: tauri-app/frontend
+        run: |
+          dist=target/dx/frontend/debug/web/public
+          test -f "$dist/index.html" || { echo "no mock build at $dist"; exit 1; }
+          python3 -m http.server 8080 --directory "$dist" &
+          server=$!
+          # Fail fast with a clear message rather than letting Playwright time
+          # out against a port nothing is listening on.
+          for _ in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8080/ >/dev/null && break
+            sleep 0.5
+          done
+          node tests/viewport-check.mjs http://127.0.0.1:8080
+          status=$?
+          kill $server
+          exit $status

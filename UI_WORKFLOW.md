@@ -172,6 +172,37 @@ pending" until it runs against a real backend.
 
 `ui-checklist.md` holds the interaction checklist.
 
+### The layout sweep
+
+`tests/viewport-check.mjs` drives every tab at 360px and 390px and fails if the page can
+be panned sideways. It exists because the archive detail view shipped overflowing and no
+amount of reading the diff would have shown it: the defect was a grid item at its default
+`min-width: auto` refusing to shrink, so the inner viewer's `overflow-auto` never engaged
+and the page widened instead. That is a measurement, not a code smell.
+
+```bash
+cd tauri-app/frontend
+dx build --platform web --features mock
+python3 -m http.server 8080 --directory target/dx/frontend/debug/web/public &
+npm install --no-save playwright && npx playwright install chromium
+node tests/viewport-check.mjs http://127.0.0.1:8080
+```
+
+It also reports controls under 44px, which it never fails on — shrinking a control is a
+bug and enlarging one is a design decision.
+
+⚠️ **The sweep is only as wide as the fixture.** Every mock document except
+`doc-wide-statement` is narrow enough to render clean in a phone column, so before that
+fixture existed this check would have reported green on the build that was broken. When
+adding a viewer branch, add a fixture that is *hostile* to it — the corpus earns its keep
+by failing, not by loading.
+
+⛔ **The mock build writes to the DEBUG output dir**, which `tauri.conf.json` pins
+`frontendDist` to. Run `npm run clean:release` / rebuild before bundling anything, or you
+ship mock data — which has happened.
+
+CI runs this as `continue-on-error` until it has proven itself; see the note in `ci.yml`.
+
 ---
 
 ## Build pipeline

@@ -121,12 +121,61 @@ pub fn home_tab(features: &types::Features) -> Tab {
 /// not rendering, the same way the share intent already does — a page can be
 /// holding a destination that a feature toggle removed.
 #[derive(Clone, Copy)]
-pub struct NavRequest(pub Signal<Option<Tab>>);
+pub struct NavRequest(pub Signal<Option<NavTarget>>);
+
+/// Where inside a tab a caller wants to land.
+///
+/// ⛔ **A tab alone is not a destination.** Switching to Finances mounts its
+/// Overview and switching to Archive mounts an unfiltered list, so a reminder
+/// row saying "12 items waiting" used to leave the user on a screen that shows
+/// neither the 12 items nor a way to find them. Typed rather than a string key:
+/// a mistyped key would route to the tab root and look exactly like the bug it
+/// replaced.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NavIntent {
+    /// Finances: draw attention to the review inbox card.
+    ///
+    /// ⚠️ Not a jump to one queue. The count behind it merges auto-import
+    /// batches with assistant proposals (`core::approvals::summary` adds both
+    /// under `Feature::Finances`), so the honest landing is the one card where
+    /// the split is visible and each half is one tap away.
+    FinancesReview,
+    /// Archive: open the list already narrowed to unchecked fields.
+    ArchiveUnverified,
+}
+
+/// A tab plus where in it to land.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct NavTarget {
+    pub tab: Tab,
+    pub intent: Option<NavIntent>,
+}
+
+/// The intent from the last honoured [`NavRequest`], for the page it named.
+///
+/// ⚠️ **The page clears it once acted on.** Left set, returning to that tab by
+/// hand would re-apply a filter the user had just cleared.
+#[derive(Clone, Copy)]
+pub struct PendingNavIntent(pub Signal<Option<NavIntent>>);
+
+/// Read the pending intent, for a page deciding where to open. `None` outside
+/// the app root, so a page rendered in isolation opens at its own root.
+pub fn use_nav_intent() -> Signal<Option<NavIntent>> {
+    match try_use_context::<PendingNavIntent>() {
+        Some(PendingNavIntent(intent)) => intent,
+        None => use_signal(|| None),
+    }
+}
 
 /// Ask the shell to switch tabs. No-op outside the app root.
 pub fn request_tab(tab: Tab) {
+    request_nav(NavTarget { tab, intent: None });
+}
+
+/// Ask the shell to switch tabs and land somewhere specific inside.
+pub fn request_nav(target: NavTarget) {
     if let Some(NavRequest(mut req)) = try_use_context::<NavRequest>() {
-        req.set(Some(tab));
+        req.set(Some(target));
     }
 }
 
@@ -341,23 +390,34 @@ fn App() -> Element {
     // so the same destination can be requested twice in a row — a user who
     // navigates away and taps the reminder again expects it to work the second
     // time.
-    let mut nav_request = use_signal(|| None::<Tab>);
+    let mut nav_request = use_signal(|| None::<NavTarget>);
     use_context_provider(|| NavRequest(nav_request));
+    // The destination inside the tab, handed to the page that is about to mount.
+    // Provided here so a page can read it with `use_nav_intent`; the page clears
+    // it once it has acted.
+    let mut pending_nav_intent = use_signal(|| None::<NavIntent>);
+    use_context_provider(|| PendingNavIntent(pending_nav_intent));
     use_effect(move || {
-        let Some(tab) = *nav_request.read() else {
+        let Some(target) = *nav_request.read() else {
             return;
         };
         nav_request.set(None);
         // Refused rather than obeyed when the tab is not rendered this launch —
         // the same check the share intent makes, for the same reason: switching
         // to a hidden tab shows an empty shell with no way back to it.
-        if !tab.visible(&feature_set.peek().clone().unwrap_or_default()) {
+        if !target
+            .tab
+            .visible(&feature_set.peek().clone().unwrap_or_default())
+        {
             web_sys::console::warn_1(
                 &"nav request for a tab this launch does not render; ignoring".into(),
             );
             return;
         }
-        active_tab.set(tab);
+        // ⛔ Set before the tab switch: the page reads this as it mounts, and a
+        // write landing after that mount arrives too late to place it.
+        pending_nav_intent.set(target.intent);
+        active_tab.set(target.tab);
     });
 
     // Mobile nav drawer open/close (1.11). Desktop uses the persistent SideNav,

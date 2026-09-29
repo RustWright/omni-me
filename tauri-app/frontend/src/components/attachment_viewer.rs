@@ -135,6 +135,27 @@ pub struct AttachmentMeta {
     pub size: u64,
 }
 
+/// The same four fields off an archived document.
+///
+/// ⚠️ `None` when the row has no `sha256` — a fields event can fold before the
+/// archive event that carries the hash, so a document can legitimately exist
+/// with nothing to render yet.
+///
+/// Lives here rather than beside either caller: the archive detail view and the
+/// finances review panel both draw archived documents, and a second copy is how
+/// the two drift on what a missing hash means.
+pub fn document_meta(doc: &crate::types::DocumentItem) -> Option<AttachmentMeta> {
+    Some(AttachmentMeta {
+        sha256: doc.sha256.clone()?,
+        filename: doc.filename.clone().unwrap_or_else(|| doc.display_name()),
+        mime_type: doc
+            .mime_type
+            .clone()
+            .unwrap_or_else(|| "application/octet-stream".to_string()),
+        size: doc.size.unwrap_or(0).max(0) as u64,
+    })
+}
+
 /// Pull the four `AttachmentRef` fields out of the `serde_json::Value` the
 /// backend ships. `None` when the field is null or a required key is missing —
 /// defensive only; `record_transaction` validates upstream.

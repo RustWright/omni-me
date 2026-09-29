@@ -15,7 +15,7 @@
 use dioxus::prelude::*;
 
 use crate::bridge;
-use crate::components::attachment_viewer::{AttachmentMeta, AttachmentViewer};
+use crate::components::attachment_viewer::{AttachmentViewer, document_meta};
 use crate::components::tag_editor::TagChipEditor;
 use crate::types::{DocumentField, DocumentItem};
 use crate::use_page_back;
@@ -30,6 +30,13 @@ const MAIL_MIME: &str = "message/rfc822";
 /// a mismatch is that `FieldPanel` starts offering the joined tag value as an
 /// editable text row again.
 const TAGS_FIELD_KEY: &str = "tags";
+
+/// Rows per list call.
+///
+/// ⚠️ The page size is the caller's, deliberately: a short page is how this
+/// screen knows it has reached the end, and that inference only holds if it
+/// chose the number. The command clamps it to its own ceiling.
+const DOC_PAGE: u32 = 50;
 
 #[derive(Clone, PartialEq)]
 enum View {
@@ -57,6 +64,24 @@ pub fn ArchivePage() -> Element {
     let mut tag = use_signal(String::new);
     let mut retention_open = use_signal(|| false);
     let mut reload = use_signal(|| 0u32);
+    // The badge's set, reachable. ⛔ Without this the count on the nav and the
+    // assistant's reminder row name a queue with no way in — the list has no
+    // other way to tell a counted document from the rest, and past one page they
+    // are not on screen at all.
+    let mut unverified_only = use_signal(|| false);
+
+    // A reminder row that named this tab asked for its queue, not its root.
+    let mut nav_intent = crate::use_nav_intent();
+    use_effect(move || {
+        // Snapshot before any .set() — a read guard held across a write to the
+        // same signal deadlocks (the pattern `pending_share` documents).
+        let intent = *nav_intent.read();
+        if intent == Some(crate::NavIntent::ArchiveUnverified) {
+            nav_intent.set(None);
+            unverified_only.set(true);
+            view.set(View::List);
+        }
+    });
 
     // Hardware back pops the detail view before it leaves the tab.
     use_page_back(
@@ -67,6 +92,14 @@ pub fn ArchivePage() -> Element {
         move || view.set(View::List),
     );
 
+    // Pages past the first, appended as the user asks for them. ⛔ Reset whenever
+    // a filter moves, or rows fetched under the old one survive into the new
+    // result — see the effect below.
+    let mut extra_pages: Signal<Vec<DocumentItem>> = use_signal(Vec::new);
+    let mut loading_more = use_signal(|| false);
+    let mut page_error: Signal<Option<String>> = use_signal(|| None);
+    let mut exhausted = use_signal(|| false);
+
     let documents = use_resource(move || {
         let q = search.read().clone();
         let k = kind.read().clone();
@@ -76,8 +109,38 @@ pub fn ArchivePage() -> Element {
             String::new()
         };
         let t = tag.read().clone();
+        let u = *unverified_only.read();
         let _ = reload.read();
-        async move { bridge::invoke_list_documents(Some(q), Some(k), Some(m), Some(t), None).await }
+        async move {
+            bridge::invoke_list_documents(
+                Some(q),
+                Some(k),
+                Some(m),
+                Some(t),
+                Some(u),
+                Some(DOC_PAGE),
+                Some(0),
+            )
+            .await
+        }
+    });
+
+    // Every filter the resource above keys on, read again here so a change to any
+    // of them drops the accumulated pages. ⚠️ Reading them in the resource's
+    // closure does not do this — that closure re-runs to fetch page 0, it does
+    // not know page 1..n exist.
+    use_effect(move || {
+        let _ = (
+            search.read().clone(),
+            kind.read().clone(),
+            tag.read().clone(),
+            *mail_only.read(),
+            *unverified_only.read(),
+            *reload.read(),
+        );
+        extra_pages.write().clear();
+        exhausted.set(false);
+        page_error.set(None);
     });
 
     let kinds = use_resource(move || async move { bridge::invoke_document_kinds().await });
@@ -209,6 +272,25 @@ pub fn ArchivePage() -> Element {
                                 },
                                 "Mail only"
                             }
+                            // The nav badge's set. ⛔ A filter, never a queue of
+                            // its own: the module header's rule is that a value
+                            // is corrected beside its document, and narrowing the
+                            // list still opens the detail view to do it.
+                            button {
+                                onclick: move |_| {
+                                    let next = !*unverified_only.read();
+                                    unverified_only.set(next);
+                                },
+                                class: if *unverified_only.read() {
+                                    "px-3 py-2 text-sm rounded-lg border border-amber-500/50 \
+                                     bg-amber-500/15 text-obsidian-text"
+                                } else {
+                                    "px-3 py-2 text-sm rounded-lg border border-obsidian-border/10 \
+                                     bg-obsidian-sidebar/60 text-obsidian-text-muted \
+                                     hover:text-obsidian-text"
+                                },
+                                "Unchecked only"
+                            }
                         }
 
                         if *retention_open.read() {
@@ -239,20 +321,96 @@ pub fn ArchivePage() -> Element {
                                     searching: !search.read().is_empty()
                                         || !kind.read().is_empty()
                                         || !tag.read().is_empty()
-                                        || *mail_only.read(),
+                                        || *mail_only.read()
+                                        || *unverified_only.read(),
                                 }
                             },
-                            Some(Ok(docs)) => rsx! {
-                                ul { class: "space-y-1.5",
-                                    for doc in docs.iter() {
-                                        DocumentCard {
-                                            key: "{doc.document_id}",
-                                            doc: doc.clone(),
-                                            on_open: move |id| view.set(View::Detail(id)),
+                            Some(Ok(docs)) => {
+                                let first_len = docs.len() as u32;
+                                let extra = extra_pages.read().clone();
+                                let shown = docs.len() + extra.len();
+                                // The first page filling exactly is the only
+                                // evidence there is more; a short page is the end.
+                                // ⚠️ `exhausted` then records what a later page
+                                // actually returned, so this never has to guess
+                                // twice.
+                                let more_possible = first_len == DOC_PAGE && !*exhausted.read();
+                                rsx! {
+                                    ul { class: "space-y-1.5",
+                                        for doc in docs.iter().chain(extra.iter()) {
+                                            DocumentCard {
+                                                key: "{doc.document_id}",
+                                                doc: doc.clone(),
+                                                on_open: move |id| view.set(View::Detail(id)),
+                                            }
+                                        }
+                                    }
+
+                                    if let Some(msg) = page_error.read().clone() {
+                                        p { class: "text-[11px] text-red-300", "Couldn't load more: {msg}" }
+                                    }
+
+                                    // ⛔ The count is always stated once there is
+                                    // more than a page. Newest-first ordering makes
+                                    // a silent cut-off read as "nothing older
+                                    // exists", which is the failure this replaces.
+                                    if more_possible {
+                                        div { class: "flex items-center gap-3 pt-1",
+                                            button {
+                                                disabled: *loading_more.read(),
+                                                onclick: move |_| {
+                                                    if *loading_more.peek() { return; }
+                                                    loading_more.set(true);
+                                                    page_error.set(None);
+                                                    let q = search.peek().clone();
+                                                    let k = kind.peek().clone();
+                                                    let m = if *mail_only.peek() {
+                                                        MAIL_MIME.to_string()
+                                                    } else {
+                                                        String::new()
+                                                    };
+                                                    let t = tag.peek().clone();
+                                                    let u = *unverified_only.peek();
+                                                    // `peek`, not `read`: this runs
+                                                    // inside an event handler, and a
+                                                    // tracked read here would
+                                                    // subscribe the handler's scope
+                                                    // to every filter it touches.
+                                                    let next_offset = shown as u32;
+                                                    spawn(async move {
+                                                        let got = bridge::invoke_list_documents(
+                                                            Some(q), Some(k), Some(m), Some(t),
+                                                            Some(u), Some(DOC_PAGE), Some(next_offset),
+                                                        ).await;
+                                                        match got {
+                                                            Ok(rows) => {
+                                                                if (rows.len() as u32) < DOC_PAGE {
+                                                                    exhausted.set(true);
+                                                                }
+                                                                extra_pages.write().extend(rows);
+                                                            }
+                                                            Err(e) => page_error.set(Some(e)),
+                                                        }
+                                                        loading_more.set(false);
+                                                    });
+                                                },
+                                                class: "px-3 py-2 text-sm rounded-lg border \
+                                                        border-obsidian-border/10 bg-obsidian-sidebar/60 \
+                                                        text-obsidian-text hover:border-obsidian-accent/40 \
+                                                        disabled:opacity-50",
+                                                if *loading_more.read() { "Loading…" } else { "Load more" }
+                                            }
+                                            span { class: "text-[11px] text-obsidian-text-muted",
+                                                "{shown} shown"
+                                            }
+                                        }
+                                    } else if shown > docs.len() {
+                                        p { class: "pt-1 text-[11px] text-obsidian-text-muted",
+                                            "{shown} shown — that's everything."
                                         }
                                     }
                                 }
-                            },
+                            }
                         }
                     }
                 },
@@ -385,7 +543,7 @@ fn DocumentDetail(
                 },
                 Some(Ok(Some(d))) => {
                     let d = d.clone();
-                    let meta = viewer_meta(&d);
+                    let meta = document_meta(&d);
                     rsx! {
                         h1 { class: "text-lg font-semibold text-obsidian-text", "{d.display_name()}" }
 
@@ -402,7 +560,12 @@ fn DocumentDetail(
                         // stacked below. Editing a value requires seeing the
                         // document; this grid is that requirement, in layout.
                         div { class: "grid md:grid-cols-2 gap-4 items-start",
-                            div {
+                            // min-w-0 on both children is load-bearing. A grid item
+                            // defaults to min-width:auto, so it refuses to shrink
+                            // below its content and the viewers below — each of
+                            // which sets overflow-auto expecting to scroll itself —
+                            // widen the track instead. The page then pans sideways.
+                            div { class: "min-w-0",
                                 // ⛔ An email renders from its stored text, never
                                 // from its bytes. The bytes are raw MIME — quoted-
                                 // printable and base64 parts — so the byte viewer
@@ -437,7 +600,7 @@ fn DocumentDetail(
                                     }
                                 }
                             }
-                            div { class: "space-y-4",
+                            div { class: "min-w-0 space-y-4",
                                 // ⚠️ No tag editor on a purged document: tags exist
                                 // to find a document again, and this one is gone.
                                 if !d.purged.unwrap_or(false) {
@@ -463,21 +626,6 @@ fn DocumentDetail(
             }
         }
     }
-}
-
-/// ⚠️ `None` when the row has no `sha256` — a fields event can fold before the
-/// archive event that carries the hash, so a document can legitimately exist
-/// with nothing to render yet.
-fn viewer_meta(doc: &DocumentItem) -> Option<AttachmentMeta> {
-    Some(AttachmentMeta {
-        sha256: doc.sha256.clone()?,
-        filename: doc.filename.clone().unwrap_or_else(|| doc.display_name()),
-        mime_type: doc
-            .mime_type
-            .clone()
-            .unwrap_or_else(|| "application/octet-stream".to_string()),
-        size: doc.size.unwrap_or(0).max(0) as u64,
-    })
 }
 
 /// Split the archive's stored email text into headers and body.
@@ -1494,7 +1642,7 @@ mod tests {
         // that carries the hash, so this row shape is reachable in normal sync.
         let mut d = doc();
         d.sha256 = None;
-        assert!(viewer_meta(&d).is_none());
+        assert!(document_meta(&d).is_none());
     }
 
     #[test]
@@ -1502,7 +1650,7 @@ mod tests {
         let mut d = doc();
         d.mime_type = None;
         d.filename = None;
-        let meta = viewer_meta(&d).expect("a hash is all the viewer needs");
+        let meta = document_meta(&d).expect("a hash is all the viewer needs");
         assert_eq!(meta.mime_type, "application/octet-stream");
         assert!(
             !meta.filename.is_empty(),

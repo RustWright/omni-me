@@ -13,7 +13,7 @@
 use tauri::State;
 
 use omni_me_core::config::Feature;
-use omni_me_core::db::queries::{self, DocumentRow};
+use omni_me_core::db::queries::{self, DocumentFilter, DocumentRow};
 use omni_me_core::document_fields;
 use omni_me_core::events::{DocumentRetentionSetPayload, NewEvent, normalize_tag_set};
 use omni_me_core::retention;
@@ -21,34 +21,64 @@ use omni_me_core::retention;
 use super::shared::{append_new_and_apply, require_feature};
 use crate::AppState;
 
-/// How many documents one list call returns.
+/// The most documents one list call will return, whatever the caller asks for.
 ///
 /// ⚠️ The corpus is over a thousand files, so this is a real page rather than a
-/// generous ceiling. The archive page pages with `offset`.
+/// generous ceiling — the caller must offer a way past it. ⛔ A list that stops
+/// here silently reads as the whole archive: the rows are ordered newest-first,
+/// so the cut-off looks like nothing older exists.
+///
+/// ⚠️ A **ceiling**, not the page size. The caller passes its own `limit` and so
+/// knows whether a short page means the end — the alternative is a second copy
+/// of this number in the frontend, drifting silently. Same split as
+/// `list_transactions` and its `TXN_PAGE_SIZE`.
 const PAGE: u32 = 100;
 
-/// Documents matching an optional search string, kind, MIME type and tag.
+/// How the archive list is narrowed, as it crosses the IPC boundary.
 ///
-/// Every filter is optional and an absent one means "no filter" — the query
-/// layer takes `''` for that, so `None` and `Some("")` behave identically and a
-/// cleared search box does not need a different call.
-#[tauri::command(rename_all = "snake_case")]
-pub async fn list_documents(
-    state: State<'_, AppState>,
+/// Every field is optional and an absent one means "no filter" — the query layer
+/// takes `''` for that, so `None` and `Some("")` behave identically and a cleared
+/// search box does not need a different call.
+///
+/// ⚠️ One struct rather than five parameters, matching `list_transactions` and
+/// its `TxnFilter`. Adding the fifth tripped `clippy::too_many_arguments` on both
+/// sides of the boundary at once, which is the lint doing its job: four `&str` in
+/// a row is a call site nobody can read.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DocumentListFilter {
     query: Option<String>,
     kind: Option<String>,
     mime: Option<String>,
     tag: Option<String>,
+    /// Narrow to documents carrying a field nothing has checked — the set the nav
+    /// badge counts. ⛔ Without it that count names a queue with no way in: the
+    /// list offers no other way to tell the counted documents from the rest, and
+    /// past `PAGE` rows they are not on screen at all.
+    unverified_only: Option<bool>,
+}
+
+/// Documents matching [`DocumentListFilter`], newest first.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn list_documents(
+    state: State<'_, AppState>,
+    filter: Option<DocumentListFilter>,
+    limit: Option<u32>,
     offset: Option<u32>,
 ) -> Result<Vec<DocumentRow>, String> {
     require_feature(&state, Feature::Documents)?;
+    let filter = filter.unwrap_or_default();
+    let filter = DocumentFilter {
+        query: filter.query.as_deref().unwrap_or_default(),
+        kind: filter.kind.as_deref().unwrap_or_default(),
+        mime: filter.mime.as_deref().unwrap_or_default(),
+        tag: filter.tag.as_deref().unwrap_or_default(),
+        unverified_only: filter.unverified_only.unwrap_or(false),
+    };
     queries::list_documents(
         &state.db,
-        query.as_deref().unwrap_or_default(),
-        kind.as_deref().unwrap_or_default(),
-        mime.as_deref().unwrap_or_default(),
-        tag.as_deref().unwrap_or_default(),
-        PAGE,
+        &filter,
+        limit.unwrap_or(PAGE).clamp(1, PAGE),
         offset.unwrap_or(0),
     )
     .await

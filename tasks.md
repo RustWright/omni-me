@@ -2813,6 +2813,62 @@ called it (2026-09-14). **Decisions live in `NEXT.md`, inventory lives here.**
 
 ## Open — from daily use
 
+### ✅ On-device UX pass 2026-09-29 — four defects, all FIXED; two findings left open
+
+His own pass on the dev phone, and the framing matters: *"my willingness to sign off on
+releasing the app is the actual gate"*. ⛔ Not a bug list — a statement that UX and
+performance are release criteria alongside correctness.
+
+**Fixed.**
+- **Archive panned sideways.** Two mechanisms compounding. `archive.rs`'s detail grid gave
+  its children no `min-w-0`, and a grid item's default `min-width: auto` refuses to shrink
+  below its content — so the viewers' own `overflow-auto` never engaged and the track
+  widened. Separately `main.rs`'s content pane is `overflow-y-auto` with no `overflow-x`,
+  and CSS computes the unset axis to `auto`, which is what made the whole page the
+  scroller. ⚠️ Fixed the grid only. The pane was left pannable on purpose: a visible pan is
+  how he found this, and clamping it would convert the next instance into silent clipping.
+  The loud version is the sweep below.
+- **The archive queue could not be cleared.** `approvals.rs` counts documents with an
+  unverified field; nothing could filter to them and the list had no pagination, so the
+  badge named a set that was unreachable past the newest 100 rows. Added `unverified_only`
+  through query → command → bridge → an "Unchecked only" toggle, plus Load more. ⛔ The
+  module header's rule (a value is corrected only beside its document) is intact — a filter
+  still opens the detail view.
+- **"Items waiting" landed on a tab root.** `NavRequest` carried a bare `Tab`, so both the
+  Archive and Finances rows switched tabs and stopped. Now carries `NavIntent`. Finances
+  lands on the review inbox card, scrolled to and ringed — ⚠️ **not** inside one queue,
+  because the count merges batches with proposals and the card is where that split shows.
+- **Attachment provenance was invisible in review.** `SourceEmailPanel` printed "attachments
+  are separate entries in the Archive" with no link. Now lists the children and opens one
+  inline, one at a time. ⚠️ Pure frontend — `invoke_document_children` already existed.
+
+**Two findings, still open.**
+- 🔴 **Reconciliation cannot match a tentative charge plus its balancing charge.** His
+  itemisation worry is already answered — `event_mapper.rs:124` anchors on the stated total,
+  his own 2026-09-26 ruling. The real gap is the Walmart/Instacart shape: `reconciliation.rs`
+  pairs *iff* amounts cancel exactly, strictly pairwise, so an auth + adjustment against one
+  receipt has no match. ⛔ Left alone at his instruction ("don't chase those too far").
+  Narrower sibling: a receipt with no stated total still emits one draft per line item,
+  documented as unreconcilable.
+- **Tap targets.** 14 buttons at `px-2 py-1` with 10–11px text land near 26px against
+  Android's 48dp. Several are the destructive two-step confirms in `routines.rs`. ⚠️ Not
+  fixed: raising them is a visual redesign across several screens, not a bug fix, and it is
+  his call. The sweep reports them without failing on them.
+
+**The tooling half of his question** — *"ways to set up a system where these are things you
+could have caught on your own"*. Two artifacts, only one of which exists yet:
+- ✅ `tests/viewport-check.mjs` + a `continue-on-error` CI step. ⛔ **Never executed** — this
+  box cannot link a wasm build, so CI is its first run. Promote it to blocking only after it
+  has passed and caught a deliberate regression.
+- ⚠️ **The fixture was the real problem, not the absence of a checker.** Every mock document
+  was narrow enough to render clean; a viewport check written a week ago would have reported
+  green on the broken build. Added `doc-wide-statement`, which exists to fail. **A new viewer
+  branch needs a fixture hostile to it.**
+- ⏳ **Not built: the counter → destination → action inventory.** One table of every badge,
+  count and notification, where tapping it lands, and what can be done there. It is what
+  makes the class behind three of these four obvious rather than clever — no tool finds
+  "the app promises something it cannot deliver". Proposed, not agreed.
+
 ### ✅ Answering "not found" — FIXED 2026-09-14 (found by the new bench)
 
 ⛔ **The first diagnosis was WRONG and is worth keeping as a lesson.** It looked like a

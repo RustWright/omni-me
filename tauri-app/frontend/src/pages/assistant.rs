@@ -220,6 +220,20 @@ fn ThreadList(
 /// ⚠️ Renders nothing when there is nothing waiting, rather than an
 /// all-clear line: a permanent row on the assistant's landing screen costs
 /// attention every visit and pays it back only occasionally.
+/// Where a "N items waiting" row should land inside the tab it names.
+///
+/// ⛔ `None` is a landing at the tab root, which for a queue row is the bug this
+/// exists to fix — so a tab that grows a review queue must be added here. There
+/// is no warning if it is not: the row still navigates, it just arrives nowhere
+/// useful.
+fn intent_for(tab: Tab) -> Option<crate::NavIntent> {
+    match tab {
+        Tab::Finances => Some(crate::NavIntent::FinancesReview),
+        Tab::Archive => Some(crate::NavIntent::ArchiveUnverified),
+        _ => None,
+    }
+}
+
 #[component]
 fn ApprovalsElsewhere() -> Element {
     let approvals = crate::approvals::use_pending_approvals();
@@ -246,7 +260,9 @@ fn ApprovalsElsewhere() -> Element {
                     key: "{tab_label(tab)}",
                     class: "px-3 py-2 rounded-md bg-obsidian-border/5 border border-obsidian-border/10 \
                             cursor-pointer hover:bg-obsidian-border/10 flex items-center justify-between gap-2",
-                    onclick: move |_| crate::request_tab(tab),
+                    onclick: move |_| {
+                        crate::request_nav(crate::NavTarget { tab, intent: intent_for(tab) })
+                    },
                     div { class: "text-obsidian-text text-sm",
                         if count == 1 {
                             "1 item waiting in {tab_label(tab)}"
@@ -867,5 +883,41 @@ fn Composer(placeholder: String, on_send: EventHandler<String>) -> Element {
                 "Ask"
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::NavIntent;
+
+    /// ⛔ Every tab that can appear in a reminder row needs a destination inside
+    /// it. Without one the row switches tabs and stops, which is what it did
+    /// before: "12 items waiting in Archive" landed on an unfiltered list of the
+    /// newest hundred documents, with no way to tell which twelve it meant.
+    ///
+    /// ⚠️ Not asserted over `ALL_TABS` — Journal and Notes have no review queue
+    /// and correctly map to `None`. The list below is the set `core::approvals::
+    /// summary` can actually produce a count for.
+    #[test]
+    fn every_tab_with_a_review_queue_names_where_to_land() {
+        assert_eq!(
+            intent_for(Tab::Finances),
+            Some(NavIntent::FinancesReview),
+            "the finances count merges batches and proposals; the card shows the split"
+        );
+        assert_eq!(
+            intent_for(Tab::Archive),
+            Some(NavIntent::ArchiveUnverified),
+            "the archive count is documents with unchecked fields"
+        );
+    }
+
+    /// A tab with nothing to review lands at its root, which is correct — the
+    /// row is never drawn for one.
+    #[test]
+    fn a_tab_without_a_queue_has_no_destination() {
+        assert_eq!(intent_for(Tab::Journal), None);
+        assert_eq!(intent_for(Tab::Settings), None);
     }
 }

@@ -200,11 +200,27 @@ unreachable from a browser.
 
 ## Cross-cutting
 
-- [ ] Layout holds at 360px, 390px and 1280px with no horizontal overflow
+- [ ] Layout holds at 360px, 390px and 1280px with no horizontal overflow — ⚠️ **do not
+      eyeball this**; it shipped broken once. `node tests/viewport-check.mjs` measures it,
+      and the archive *detail* view is the one that failed, not the list
 - [ ] Native `<select>` controls are legible — **verify on the desktop app, not
       Playwright**; Chromium and webkit2gtk disagree here and a screenshot has lied before
 - [ ] Destructive actions all require confirmation
 - [ ] Long-press / touch targets usable at mobile width
+
+## Every count leads somewhere
+
+⛔ Added 2026-09-29, after a badge counted a queue the UI could not open. For **each** badge
+or "N waiting" row: does tapping it reach the counted items, and is there an action there?
+A count whose destination is a tab root is the defect, not a rough edge.
+
+- [ ] Nav badge on Archive → the list, narrowed by "Unchecked only", showing those documents
+- [ ] Assistant's "N items waiting in Archive" row → same, filter already applied
+- [ ] Assistant's "N items waiting in Finances" → Overview with the review inbox scrolled
+      to and ringed (⚠️ not a jump into one queue — the count merges batches and proposals)
+- [ ] Archive list past 100 rows offers "Load more" and states how many are shown
+- [ ] Finance review shows a receipt's attachments and opens one inline, without leaving
+      the review
 - [D] Share-intent hand-off from the Android share sheet
 - [D] OTA update check, download, sha256 verify, install prompt
 

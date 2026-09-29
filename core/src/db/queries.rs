@@ -1019,24 +1019,43 @@ const DOCUMENT_COLUMNS: &str = "document_id, sha256, filename, mime_type, size,
      <string> archived_at AS archived_at, ingest_source, text_source,
      kind, title, document_date, tags, purged, fields, parent_document_id";
 
-/// Documents matching an optional free-text query and an optional kind.
+/// How a document list is narrowed.
 ///
-/// ⚠️ **Every filter is always bound and an empty string means "no filter".**
-/// Building the `WHERE` clause by string concatenation instead would be one
-/// interpolation away from a query a filename could steer.
+/// ⚠️ **An empty string is "no filter", never "match empty".** Every field is
+/// always bound; the `WHERE` clause is never built by concatenation, which would
+/// be one interpolation away from a query a filename could steer.
 ///
-/// The text search covers `filename`, `title` and the document's own `text`, so
-/// a statement is findable by a merchant printed inside it and not only by
-/// whatever the exporting bank named the file.
+/// A struct rather than five more parameters: four of them are `&str` in a row,
+/// so a positional call site read `("", "", "", "receipt", false, …)` and only a
+/// careful count told you which filter that was.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DocumentFilter<'a> {
+    /// Free text over `filename`, `title` and the document's own extracted text,
+    /// so a statement is findable by a merchant printed inside it and not only by
+    /// whatever the exporting bank named the file.
+    pub query: &'a str,
+    pub kind: &'a str,
+    pub mime: &'a str,
+    pub tag: &'a str,
+    /// Narrow to documents carrying a field no oracle has checked — the set the
+    /// nav badge counts.
+    pub unverified_only: bool,
+}
+
+/// Documents matching [`DocumentFilter`], newest first.
 pub async fn list_documents(
     db: &Database,
-    query: &str,
-    kind: &str,
-    mime: &str,
-    tag: &str,
+    filter: &DocumentFilter<'_>,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<DocumentRow>, DbError> {
+    let DocumentFilter {
+        query,
+        kind,
+        mime,
+        tag,
+        unverified_only,
+    } = *filter;
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
@@ -1057,6 +1076,13 @@ pub async fn list_documents(
            -- true. That is why the column is an array and not the joined value —
            -- filtering the string would make `receipt` find `receipts-2026`.
            AND ($tag = '' OR tags CONTAINS $tag)
+           -- ⛔ Must stay the same predicate as `approvals::
+           -- count_documents_with_unverified_fields`. That count is the nav badge
+           -- and the assistant's reminder row; this filter is the only way to
+           -- reach what it counts, so a drift between them is a queue the user is
+           -- told about and cannot open. Both also require NOT_PURGED — a purged
+           -- document keeps its fields.
+           AND ($unverified = false OR fields[WHERE verified = false] != [])
            AND {NOT_PURGED}
          ORDER BY archived_at DESC
          LIMIT $limit START $offset"
@@ -1069,6 +1095,7 @@ pub async fn list_documents(
         // Lowercased to match the stored form — `Tag::normalize` folds case, so a
         // filter that did not would miss every document it should find.
         .bind(("tag", tag.trim().to_lowercase()))
+        .bind(("unverified", unverified_only))
         .bind(("limit", limit))
         .bind(("offset", offset))
         .await?;
@@ -1568,7 +1595,9 @@ mod tests {
         fold_doc(&db, "old", "a.pdf", "", "2024-01-01T00:00:00Z", None).await;
         fold_doc(&db, "new", "b.pdf", "", "2026-09-01T00:00:00Z", None).await;
 
-        let rows = list_documents(&db, "", "", "", "", 50, 0).await.unwrap();
+        let rows = list_documents(&db, &DocumentFilter::default(), 50, 0)
+            .await
+            .unwrap();
 
         let ids: Vec<&str> = rows.iter().map(|r| r.document_id.as_str()).collect();
         assert_eq!(ids, vec!["new", "old"]);
@@ -1598,23 +1627,39 @@ mod tests {
         )
         .await;
 
-        let hits = list_documents(&db, "hydro quebec", "", "", "", 50, 0)
-            .await
-            .unwrap();
+        let hits = list_documents(
+            &db,
+            &DocumentFilter {
+                query: "hydro quebec",
+                ..Default::default()
+            },
+            50,
+            0,
+        )
+        .await
+        .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].document_id, "stmt");
 
         // Case-insensitive both ways, and the filename still matches.
         assert_eq!(
-            list_documents(&db, "LEASE", "", "", "", 50, 0)
-                .await
-                .unwrap()
-                .len(),
+            list_documents(
+                &db,
+                &DocumentFilter {
+                    query: "LEASE",
+                    ..Default::default()
+                },
+                50,
+                0
+            )
+            .await
+            .unwrap()
+            .len(),
             1
         );
         // An empty query is not a filter.
         assert_eq!(
-            list_documents(&db, "", "", "", "", 50, 0)
+            list_documents(&db, &DocumentFilter::default(), 50, 0)
                 .await
                 .unwrap()
                 .len(),
@@ -1636,9 +1681,17 @@ mod tests {
         .await;
         fold_doc(&db, "u1", "u1.pdf", "", "2026-01-02T00:00:00Z", None).await;
 
-        let narrowed = list_documents(&db, "", "brokerage_statement", "", "", 50, 0)
-            .await
-            .unwrap();
+        let narrowed = list_documents(
+            &db,
+            &DocumentFilter {
+                kind: "brokerage_statement",
+                ..Default::default()
+            },
+            50,
+            0,
+        )
+        .await
+        .unwrap();
         assert_eq!(narrowed.len(), 1);
         assert_eq!(narrowed[0].document_id, "s1");
 
@@ -1695,15 +1748,23 @@ mod tests {
         fold_part(&db, "mail", "statement.eml", "message/rfc822", None).await;
         fold_part(&db, "pdf", "statement.pdf", "application/pdf", Some("mail")).await;
 
-        let mail = list_documents(&db, "", "", "message/rfc822", "", 50, 0)
-            .await
-            .unwrap();
+        let mail = list_documents(
+            &db,
+            &DocumentFilter {
+                mime: "message/rfc822",
+                ..Default::default()
+            },
+            50,
+            0,
+        )
+        .await
+        .unwrap();
         assert_eq!(mail.len(), 1, "{mail:?}");
         assert_eq!(mail[0].document_id, "mail");
         assert_eq!(mail[0].kind, None, "the filter must not depend on a kind");
 
         assert_eq!(
-            list_documents(&db, "", "", "", "", 50, 0)
+            list_documents(&db, &DocumentFilter::default(), 50, 0)
                 .await
                 .unwrap()
                 .len(),
@@ -1765,6 +1826,158 @@ mod tests {
         }
     }
 
+    /// Fold one document carrying a single field with the given `verified` flag.
+    async fn fold_doc_with_verified_field(db: &Database, id: &str, verified: bool) {
+        use crate::events::{Event, EventType, Projection, validate_payload};
+
+        let payloads = vec![
+            (
+                EventType::DocumentArchived,
+                serde_json::json!({
+                    "document_id": id,
+                    "sha256": "c".repeat(64),
+                    "filename": format!("{id}.pdf"),
+                    "mime_type": "application/pdf",
+                    "size": 10u64,
+                    "archived_at": "2026-09-01T00:00:00Z",
+                    "source": "bulk",
+                    "text_source": "none",
+                }),
+            ),
+            (
+                EventType::DocumentFieldsExtracted,
+                serde_json::json!({
+                    "document_id": id,
+                    "extracted_at": "2026-09-01T00:00:00Z",
+                    "fields": [
+                        { "key": "total", "value": "12.00",
+                          "source": "model", "verified": verified },
+                    ],
+                }),
+            ),
+        ];
+
+        for (event_type, payload) in payloads {
+            validate_payload(&event_type, &payload).expect("payload must be valid");
+            let event = Event {
+                id: ulid::Ulid::new().to_string(),
+                event_type: event_type.to_string(),
+                aggregate_id: id.to_string(),
+                timestamp: chrono::Utc::now(),
+                device_id: "test-device".to_string(),
+                payload,
+                received_at: None,
+            };
+            crate::events::DocumentsProjection
+                .apply(&event, db)
+                .await
+                .unwrap();
+        }
+    }
+
+    /// ⛔ The set the nav badge counts must be reachable. `approvals::summary`
+    /// counts documents with any `verified = false` field; this filter is the
+    /// only way into that set, so the two predicates have to agree — if they
+    /// drift, the badge names a queue the archive cannot open.
+    #[tokio::test]
+    async fn the_unverified_filter_returns_exactly_what_the_badge_counts() {
+        let (_d, db) = doc_db().await;
+        fold_doc_with_verified_field(&db, "unchecked", false).await;
+        fold_doc_with_verified_field(&db, "checked", true).await;
+
+        let narrowed = list_documents(
+            &db,
+            &DocumentFilter {
+                unverified_only: true,
+                ..Default::default()
+            },
+            50,
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            narrowed.len(),
+            1,
+            "only the document with an unchecked field is listed"
+        );
+        assert_eq!(narrowed[0].document_id, "unchecked");
+
+        // ⚠️ `false` is "no filter", not "only verified" — the same convention
+        // every other filter on this query follows.
+        let all = list_documents(&db, &DocumentFilter::default(), 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2, "off, the filter narrows nothing");
+    }
+
+    /// A document is counted once however many of its fields are unchecked, and
+    /// one checked field alongside does not exempt it.
+    #[tokio::test]
+    async fn a_partly_checked_document_still_needs_review() {
+        use crate::events::{Event, EventType, Projection, validate_payload};
+        let (_d, db) = doc_db().await;
+
+        let payloads = vec![
+            (
+                EventType::DocumentArchived,
+                serde_json::json!({
+                    "document_id": "mixed",
+                    "sha256": "d".repeat(64),
+                    "filename": "mixed.pdf",
+                    "mime_type": "application/pdf",
+                    "size": 10u64,
+                    "archived_at": "2026-09-01T00:00:00Z",
+                    "source": "bulk",
+                    "text_source": "none",
+                }),
+            ),
+            (
+                EventType::DocumentFieldsExtracted,
+                serde_json::json!({
+                    "document_id": "mixed",
+                    "extracted_at": "2026-09-01T00:00:00Z",
+                    "fields": [
+                        { "key": "total", "value": "12.00",
+                          "source": "human", "verified": true },
+                        { "key": "tax", "value": "1.20",
+                          "source": "model", "verified": false },
+                    ],
+                }),
+            ),
+        ];
+        for (event_type, payload) in payloads {
+            validate_payload(&event_type, &payload).expect("payload must be valid");
+            let event = Event {
+                id: ulid::Ulid::new().to_string(),
+                event_type: event_type.to_string(),
+                aggregate_id: "mixed".to_string(),
+                timestamp: chrono::Utc::now(),
+                device_id: "test-device".to_string(),
+                payload,
+                received_at: None,
+            };
+            crate::events::DocumentsProjection
+                .apply(&event, &db)
+                .await
+                .unwrap();
+        }
+
+        let narrowed = list_documents(
+            &db,
+            &DocumentFilter {
+                unverified_only: true,
+                ..Default::default()
+            },
+            50,
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(narrowed.len(), 1);
+        assert_eq!(narrowed[0].document_id, "mixed");
+    }
+
     /// The joined field value becomes an array column, and the filter matches a
     /// whole element.
     #[tokio::test]
@@ -1773,7 +1986,9 @@ mod tests {
         fold_doc_with_tags(&db, "groceries", "receipt,groceries").await;
         fold_doc_with_tags(&db, "lease", "lease").await;
 
-        let all = list_documents(&db, "", "", "", "", 50, 0).await.unwrap();
+        let all = list_documents(&db, &DocumentFilter::default(), 50, 0)
+            .await
+            .unwrap();
         let hoisted = all
             .iter()
             .find(|r| r.document_id == "groceries")
@@ -1784,23 +1999,39 @@ mod tests {
             "the joined value must arrive as elements, not one string"
         );
 
-        let hits = list_documents(&db, "", "", "", "receipt", 50, 0)
-            .await
-            .unwrap();
+        let hits = list_documents(
+            &db,
+            &DocumentFilter {
+                tag: "receipt",
+                ..Default::default()
+            },
+            50,
+            0,
+        )
+        .await
+        .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].document_id, "groceries");
 
         // Case folds, matching how the tag was normalized on the way in.
         assert_eq!(
-            list_documents(&db, "", "", "", "RECEIPT", 50, 0)
-                .await
-                .unwrap()
-                .len(),
+            list_documents(
+                &db,
+                &DocumentFilter {
+                    tag: "RECEIPT",
+                    ..Default::default()
+                },
+                50,
+                0
+            )
+            .await
+            .unwrap()
+            .len(),
             1
         );
         // An empty tag is not a filter.
         assert_eq!(
-            list_documents(&db, "", "", "", "", 50, 0)
+            list_documents(&db, &DocumentFilter::default(), 50, 0)
                 .await
                 .unwrap()
                 .len(),
@@ -1816,9 +2047,17 @@ mod tests {
         let (_d, db) = doc_db().await;
         fold_doc_with_tags(&db, "plural", "receipts-2026").await;
 
-        let hits = list_documents(&db, "", "", "", "receipt", 50, 0)
-            .await
-            .unwrap();
+        let hits = list_documents(
+            &db,
+            &DocumentFilter {
+                tag: "receipt",
+                ..Default::default()
+            },
+            50,
+            0,
+        )
+        .await
+        .unwrap();
         assert!(hits.is_empty(), "matched a prefix: {hits:?}");
     }
 
@@ -1834,13 +2073,23 @@ mod tests {
         fold_doc(&db, "bare", "bare.pdf", "", "2026-01-01T00:00:00Z", None).await;
         fold_doc_with_tags(&db, "tagged", "receipt").await;
 
-        let hits = list_documents(&db, "", "", "", "receipt", 50, 0)
-            .await
-            .unwrap();
+        let hits = list_documents(
+            &db,
+            &DocumentFilter {
+                tag: "receipt",
+                ..Default::default()
+            },
+            50,
+            0,
+        )
+        .await
+        .unwrap();
         assert_eq!(hits.len(), 1, "{hits:?}");
         assert_eq!(hits[0].document_id, "tagged");
 
-        let untagged = list_documents(&db, "", "", "", "", 50, 0).await.unwrap();
+        let untagged = list_documents(&db, &DocumentFilter::default(), 50, 0)
+            .await
+            .unwrap();
         assert_eq!(
             untagged
                 .iter()

@@ -5363,11 +5363,15 @@ pub async fn invoke_list_documents(
     kind: Option<String>,
     mime: Option<String>,
     tag: Option<String>,
+    unverified_only: Option<bool>,
+    limit: Option<u32>,
     offset: Option<u32>,
 ) -> Result<Vec<DocumentItem>, String> {
     #[cfg(feature = "mock")]
     {
-        let _ = offset;
+        // The mock corpus is a handful of rows, so paging it would only ever
+        // return page 0 — the filters below are what this twin exists to mirror.
+        let _ = (limit, offset);
         let all = mock_documents();
         let needle = query.unwrap_or_default().to_lowercase();
         Ok(all
@@ -5395,25 +5399,41 @@ pub async fn invoke_list_documents(
                 }
                 _ => true,
             })
+            // Mirrors the real query's `fields[WHERE verified = false] != []`.
+            .filter(|d| !unverified_only.unwrap_or(false) || d.unverified_count() > 0)
             .collect())
     }
     #[cfg(not(feature = "mock"))]
     {
+        // ⛔ The filter is nested, matching `list_documents`'s
+        // `Option<DocumentListFilter>`. Flat fields deserialize to a default
+        // filter and return the whole archive unnarrowed — no error, just the
+        // wrong rows, which is the failure mode worth naming here.
         #[derive(serde::Serialize)]
-        struct Args {
+        struct Filter {
             query: Option<String>,
             kind: Option<String>,
             mime: Option<String>,
             tag: Option<String>,
+            unverified_only: Option<bool>,
+        }
+        #[derive(serde::Serialize)]
+        struct Args {
+            filter: Filter,
+            limit: Option<u32>,
             offset: Option<u32>,
         }
         invoke(
             "list_documents",
             &Args {
-                query,
-                kind,
-                mime,
-                tag,
+                filter: Filter {
+                    query,
+                    kind,
+                    mime,
+                    tag,
+                    unverified_only,
+                },
+                limit,
                 offset,
             },
         )
@@ -5897,6 +5917,30 @@ fn mock_documents() -> Vec<DocumentItem> {
             fields: None,
             parent_document_id: Some("doc-email".into()),
         },
+        // ⛔ The adversarial one, and the reason it exists is worth keeping. The
+        // detail view overflowed the screen on a real statement and every other
+        // fixture here is narrow enough to have rendered it clean — a viewport
+        // check run against them would have reported green on the broken build.
+        // Keep this wider than any phone: it is the only row that can fail.
+        DocumentItem {
+            document_id: "doc-wide-statement".into(),
+            sha256: Some("f".repeat(64)),
+            filename: Some("chequing-2026-02-full-export.csv".into()),
+            mime_type: Some("text/csv".into()),
+            size: Some(64_233),
+            archived_at: Some("2026-03-05T08:00:00Z".into()),
+            ingest_source: Some("bulk".into()),
+            text_source: Some("extracted".into()),
+            kind: Some("bank_statement".into()),
+            title: None,
+            document_date: Some("2026-02-28".into()),
+            tags: Some(vec!["statement".into()]),
+            purged: None,
+            // One unchecked field, so the "Unchecked only" filter has something
+            // to find in the mock.
+            fields: Some(vec![parsed("closing_balance", "4102.88", false)]),
+            parent_document_id: None,
+        },
     ]
 }
 
@@ -5919,6 +5963,18 @@ fn mock_document_bytes(sha256: &str) -> Option<Vec<u8>> {
               2026-01-09,\"BUY ACME, LTD\",-320.00,11680.00\n\
               2026-01-18,DIVIDEND,45.55,11725.55\n\
               2026-01-31,BUY WIDGETCO,755.00,12480.55\n"
+                .to_vec(),
+        )
+    } else if sha256 == "f".repeat(64) {
+        // ⛔ Deliberately far wider than a phone. `whitespace-pre` cells cannot
+        // wrap, so this is what pushes the CSV table past its container — the
+        // exact shape that made the archive detail view pan sideways. Narrowing
+        // it to tidy the fixture would silently retire the only case that fails.
+        Some(
+            b"Posted Date,Transaction Date,Description,Merchant Category Code,Reference Number,Debit Amount,Credit Amount,Running Balance,Currency,Exchange Rate,Originating Institution,Channel\n\
+              2026-02-01,2026-01-31,\"PREAUTHORIZED DEBIT - MUNICIPAL PROPERTY TAX INSTALMENT\",9311,000000000418277341,842.15,,4102.88,CAD,1.0000,Bank of Somewhere,Online Banking\n\
+              2026-02-03,2026-02-02,\"POINT OF SALE PURCHASE - GROCERY WAREHOUSE #2281 TORONTO ON\",5411,000000000418277342,164.72,,3938.16,CAD,1.0000,Bank of Somewhere,Debit Card\n\
+              2026-02-14,2026-02-14,\"INCOMING WIRE TRANSFER - PAYROLL DEPOSIT FEBRUARY\",0000,000000000418277343,,3200.00,7138.16,CAD,1.0000,Bank of Somewhere,Wire\n"
                 .to_vec(),
         )
     } else if sha256 == c {
