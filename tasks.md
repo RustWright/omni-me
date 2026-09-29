@@ -1111,6 +1111,20 @@ critical path, not the tail.
    `AlreadyClear` as a distinct answer from `Cleared`) plus three socket tests.
    ⚠️ The `dev`-declaring test harness moved into `server/tests/common` rather than being copied;
    `feature_wipe_integration` now shares it.
+   🔴 **The first build of it was WRONG and shipped nowhere — caught pre-deploy 2026-09-28.** It
+   *deleted* the cursor row. ⛔ An absent cursor does not mean "start from the beginning": every
+   fetcher here reads it as **never polled**, and never-polled deliberately anchors to the mailbox's
+   newest message so a new account does not back-import years of mail. The route therefore moved
+   the source **forward to now** — the exact opposite of its promise, and it would have looked like
+   a successful reset that silently guaranteed the receipts could never return.
+   ✅ Corrected in `bb6b866`: a rewind **stores uid 0** (range `1:*` = every message) and keeps the
+   stored `uid_validity`. `AlreadyClear`/`Cleared` became `AlreadyAtStart`/`Rewound { from_uid }`.
+   ⚠️ **The test was complicit, and that is the transferable part.** It was named
+   `a_reset_makes_the_next_pull_refetch_what_it_already_read` and asserted only that the cursor was
+   empty — never a second pull. ⛔ `MockFetcher::fetch_new` ignores the cursor and replays a script,
+   so no mock-based test can ever prove re-fetching. The real invariant lives in the UID range, so
+   `uid_range` was extracted from `imap_real::poll_once` and now carries its own test: `Some(0)` →
+   `1:*`, `None` → `*`, `Some(41)` → `42:*`. Exactly the fixture-and-code-agree trap.
    ⏳ **What is left before the official import:** exercising the reset live on dev, which needs the
    dev image rebuilt onto `fece433`.
    `docs/src/features.md` § Wiping one feature's data.
