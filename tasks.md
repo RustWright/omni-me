@@ -1132,8 +1132,31 @@ critical path, not the tail.
    therefore: rewind → tick until drained → **review and re-commit each batch on a device**.
    ⚠️ And the receipts' `dedup_key` is model-derived, so re-proposed batches need not carry the
    keys the originals did — see [[project-model-derived-keys-are-nondeterministic]].
-   ⏳ **What is left before the official import:** exercising the reset live on dev, which needs the
-   dev image rebuilt onto `bb6b866`.
+   ✅ **EXERCISED LIVE ON DEV 2026-09-29**, image `dev-ad0e828-bb6b866`. Both gates fired (a reset
+   addressed to `production` refused 409 *before* the registry lookup; an unknown source 404). The
+   rewind reported `{"status":"rewound","from_uid":14878}` and a second call `already_at_start`.
+   🔴 **The decisive check was the tick, not the report**: `fetched: 200` — the per-tick cap. An
+   *absent* cursor would have fetched ~1 and re-anchored to now, so this is the empirical proof the
+   pre-fix version was broken and the rewind is real. Tick 2 fetched a **different** 200 (blobs
+   308 → 508), so the cursor advances rather than re-serving the same page.
+   ⚠️ **My duplicate-documents prediction did NOT materialise, and the reason matters.** 400
+   messages produced 400 *new distinct* blobs; duplicate records stayed at exactly 3 (5 extra),
+   unchanged from before the rewind. The oldest UIDs are mail this dev instance had **never**
+   archived — its clone only ever saw a forward-only window. Duplicates will appear only as the
+   drain reaches the UID range already archived, at the *far* end. ⛔ The prediction was right in
+   principle and wrong about when.
+   📊 **Measured, do not re-derive:** ~11 KB of volume per message (186.4 → 190.9 MB over 400), so
+   a full 14,878-message drain is ~165 MB — disk is not the constraint against 23 G free. **The
+   constraint is model calls**: every archived message runs receipt extraction, so the remaining
+   ~14,478 are that many calls, order **$30** on DeepSeek-V4-Pro. ⛔ Paused at ~UID 400 pending his
+   call; the cursor is persisted, so a resume continues exactly there.
+   ✅ **Real-mail failure rate, first honest sample**: 1 in 400 failed extraction (uid 5926, model
+   hit its 8192-token ceiling). It was counted in `dropped` and the pass continued — the
+   per-message resilience in `imap.rs` working as its comment says it should.
+   ⚠️ **There is a THIRD dev source, `yahoo`**, which I had not listed and therefore never paused
+   during the wipe measurements. It fetches 0 and has emitted nothing, so the numbers stand — but
+   the tooling now reads the source list off `/auto_import/status` instead of a literal, because a
+   hardcoded list is the same class of instrument error as the 10,575 regex above.
    `docs/src/features.md` § Wiping one feature's data.
    ✅ **The historical ledger is RECOVERED** — he supplied `paisa-ledger-461.zip` (2026-09-28),
    restored to `~/paisa-ledger-restore/extracted/paisa-ledger/` ⛔ **outside both repos, and it
