@@ -357,12 +357,27 @@ jobs:
         working-directory: tauri-app/frontend
         run: dx build --platform web --features mock
 
+      # ⛔ Load-bearing, and its absence does NOT look like a missing file. Without
+      # `editor.bundle.js` the first tab switch calls the undefined `destroyEditor`
+      # through a wasm-bindgen import that is not marked `catch`, which ABORTS the
+      # wasm — the app then ignores every click and presents as broken navigation.
+      # That is exactly how the sweep failed on its first run. All three bundles are
+      # tracked, so this is a copy and needs no npm install.
+      - name: Copy the JS bundles the app aborts without
+        continue-on-error: true
+        working-directory: tauri-app
+        run: npm run copy:editor:dev
+
       - name: Layout sweep at phone widths
         continue-on-error: true
         working-directory: tauri-app/frontend
         run: |
           dist=target/dx/frontend/debug/web/public
           test -f "$dist/index.html" || { echo "no mock build at $dist"; exit 1; }
+          test -f "$dist/assets/js/editor.bundle.js" || {
+            echo "editor.bundle.js missing — the wasm will abort on the first tab switch"
+            exit 1
+          }
           python3 -m http.server 8080 --directory "$dist" &
           server=$!
           # Fail fast with a clear message rather than letting Playwright time

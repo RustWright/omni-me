@@ -126,11 +126,28 @@ async function tapTargetReport(page, minPx) {
   }, minPx);
 }
 
+/**
+ * The drawer is always in the DOM — its visibility is class-toggled so the slide
+ * can animate — so "is it open" is a class check, not a presence check.
+ */
+async function drawerOpen(page) {
+  return page
+    .locator("aside.fixed")
+    .first()
+    .evaluate((el) => el.className.includes("translate-x-0"))
+    .catch(() => false);
+}
+
 async function openTab(page, tab) {
-  // The SideNav is off-viewport at phone widths (`md:hidden` swap), so the
-  // drawer is the only way in. Opening it when it is already open is harmless.
-  await page.click('[aria-label="Open navigation"]');
-  await page.click(`[data-tab="${tab}"]`);
+  // The SideNav is off-viewport at phone widths (`md:hidden` swap), so the drawer
+  // is the only way in. ⛔ Clicking the hamburger while the drawer is already open
+  // targets a button underneath it and times out against the panel intercepting
+  // pointer events — which reads as "the app is broken" rather than "the script
+  // is confused".
+  if (!(await drawerOpen(page))) {
+    await page.click('[aria-label="Open navigation"]');
+  }
+  await page.click(`aside [data-tab="${tab}"]`);
   // The drawer animates out over 200ms; measuring through it reports the
   // translating panel rather than the page.
   await page.waitForTimeout(400);
@@ -145,6 +162,23 @@ try {
     const page = await browser.newPage({
       viewport: { width: vp.width, height: vp.height },
     });
+
+    // ⛔ Collected so a dead app names itself. When the wasm aborts — which it
+    // does on the first tab switch if `editor.bundle.js` is missing — every
+    // subsequent click times out against a page that has stopped responding, and
+    // the bare Playwright error blames the selector. These lines carry the cause.
+    // Two dx artifacts are filtered: the flapping hot-reload socket and its toast
+    // helper, neither of which is an app fault.
+    const pageErrors = [];
+    const isDxNoise = (t) =>
+      t.includes("_dioxus?build_id") || t.includes("showDXToast");
+    page.on("pageerror", (e) => {
+      if (!isDxNoise(String(e))) pageErrors.push(String(e));
+    });
+    page.on("console", (m) => {
+      if (m.type() === "error" && !isDxNoise(m.text())) pageErrors.push(m.text());
+    });
+
     await page.addInitScript(cssPathSource());
     await page.goto(BASE, { waitUntil: "networkidle" });
     // The wasm bundle boots after load; without this the first measurement is
@@ -152,8 +186,28 @@ try {
     await page.waitForSelector('[aria-label="Open navigation"]', { timeout: 30_000 });
 
     for (const tab of TABS) {
-      await openTab(page, tab);
       const label = `${vp.name} ${tab}`;
+      try {
+        await openTab(page, tab);
+      } catch (e) {
+        // ⛔ Never swallowed into a pass. A tab the sweep could not open is a
+        // screen it did not measure, and reporting "no overflow" for it would be
+        // the false green this whole check exists to prevent.
+        console.error(`\nCould not open ${label}: ${e.message.split("\n")[0]}`);
+        if (pageErrors.length) {
+          console.error("  the page had already failed:");
+          for (const p of [...new Set(pageErrors)].slice(0, 5)) {
+            console.error(`    ${p}`);
+          }
+        }
+        failures.push({
+          where: label,
+          scrollWidth: 0,
+          clientWidth: 0,
+          offenders: [{ path: "(tab unreachable — not measured)", right: 0 }],
+        });
+        break;
+      }
       const rep = await overflowReport(page);
       if (rep.pans || rep.offenders.length) {
         failures.push({ where: label, ...rep });
