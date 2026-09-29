@@ -4,16 +4,20 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — push, so CI runs what this box cannot
-The 2026-09-29 UX fixes are on the branch, unpushed. Local gates are all green (both frontend
-clippy configs, 169 frontend tests, `-p core -p server -p agent` clippy, `-p omni-me-app` clippy).
-⛔ **The core/server/agent test suite has NOT run** — no local `cargo test`, by the rule below.
-Draft PR #1 is open, so a plain `git push` runs the full gate in ~8 min. `tasks.md` § Open — from
-daily use carries every finding.
+## ▶ NEXT ACTION — the four UX fixes need a device pass; only one is verified
+Pushed through `f7a1f74`; CI green on every job, and the layout sweep now measures 16 screens
+including `archive › detail (wide CSV)` at both widths. ⛔ **That verifies the overflow fix and
+nothing else** — the unverified-filter, the two nav intents and the attachment panel are
+compile-and-lint-clean only and have run nowhere. `tasks.md` § Open — from daily use has the detail.
 
-⚠️ **The layout sweep has never executed.** `tests/viewport-check.mjs` + its `ci.yml` step are
-written but this box cannot link a wasm build, so CI is its first run. It is `continue-on-error`
-on purpose; ⛔ do not promote it to blocking until it has passed and caught a deliberate regression.
+⚠️ **The sweep is not a gate yet.** Its first two runs were broken while reporting green — see
+`tasks.md`. ⛔ Do not drop `continue-on-error` until it fails for a regression deliberately
+introduced; a check that has never failed for a real reason is not evidence.
+
+⚠️ **Tap-target numbers came from measurement, not the earlier grep, and the grep was wrong.**
+Settings toggles are 358×20 and Journal's "Raw properties" is 104×16 — worse than anything
+`px-2 py-1` flagged. `routines.rs`'s destructive confirms never rendered in mock, so they remain
+unmeasured.
 
 ⚠️ **`gmail_personal` is PAUSED mid-drain**, at roughly UID 400 of 14,878, cursor persisted so a
 resume continues exactly there. `gmail_work` and `yahoo` run normally. ⛔ Do not resume it without

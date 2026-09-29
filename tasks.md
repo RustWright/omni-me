@@ -2857,9 +2857,23 @@ performance are release criteria alongside correctness.
 
 **The tooling half of his question** — *"ways to set up a system where these are things you
 could have caught on your own"*. Two artifacts, only one of which exists yet:
-- ✅ `tests/viewport-check.mjs` + a `continue-on-error` CI step. ⛔ **Never executed** — this
-  box cannot link a wasm build, so CI is its first run. Promote it to blocking only after it
-  has passed and caught a deliberate regression.
+- ✅ `tests/viewport-check.mjs` + a `continue-on-error` CI step. Now measures 16 screens
+  (7 tabs × 2 widths + the archive detail at both) and reports no overflow, which is what
+  verifies the `min-w-0` fix. ⛔ Promote it to blocking only after it fails for a deliberately
+  introduced regression.
+- 🔴 **It reported green twice while completely broken, and that is the lesson worth keeping.**
+  Run 1: `editor.bundle.js` was missing from the served bundle, so the first tab switch aborted
+  the wasm (the trap in `project-dx-serve-needs-the-editor-bundle`, which I had and did not
+  apply) and every click timed out. Run 2: it passed, but the only evidence the archive deep
+  check had run was the *absence* of a note. Both were invisible at job level because
+  ⛔ **`continue-on-error: true` makes GitHub report `conclusion: success` on a failed step** —
+  the real value is `outcome`, or the step log. Three changes followed: copy the bundles before
+  serving, assert their presence with a named error, and print every screen measured plus exit
+  non-zero if the archive detail was never reached.
+- ⚠️ **Measurement corrected the static estimate.** The `px-2 py-1` grep found ~26px buttons; the
+  real worst are Settings' feature toggles at **358×20** and Journal's "Raw properties" at
+  **104×16**, neither of which uses that class. ⛔ `routines.rs`'s destructive confirms never
+  render in mock, so they are still unmeasured — the fixture bounds the finding, again.
 - ⚠️ **The fixture was the real problem, not the absence of a checker.** Every mock document
   was narrow enough to render clean; a viewport check written a week ago would have reported
   green on the broken build. Added `doc-wide-statement`, which exists to fail. **A new viewer
