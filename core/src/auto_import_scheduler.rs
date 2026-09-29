@@ -346,13 +346,17 @@ pub enum ReauthOutcome {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CursorResetOutcome {
-    /// The position that was cleared. Reported rather than discarded, for the
-    /// reason a wipe reports its count: "it worked" cannot be checked against
-    /// what was there.
-    Cleared { uid: u32, uid_validity: Option<u32> },
-    /// Nothing was stored, so the next pull already starts from the beginning.
-    /// Not an error — resetting twice is the same as resetting once.
-    AlreadyClear,
+    /// Where the source was before the rewind. Reported rather than discarded,
+    /// for the reason a wipe reports its count: "it worked" cannot be checked
+    /// against what was there, and a uid can be.
+    Rewound { from_uid: u32 },
+    /// It was already at the start, so the next pull re-reads everything either
+    /// way. Not an error — rewinding twice is rewinding once.
+    ///
+    /// ⚠️ Also the answer for a source that had never polled. That one was not at
+    /// the start in the same sense — an absent cursor anchors to the newest
+    /// message — but the rewind has put it at the start now regardless.
+    AlreadyAtStart,
     /// This source keeps no read position (the trait default), so there is
     /// nothing to rewind. A caller reaching this hit the route for a source
     /// that is handed its material rather than reading a stream.

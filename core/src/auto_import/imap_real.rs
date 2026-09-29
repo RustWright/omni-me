@@ -90,6 +90,20 @@ fn tls_config() -> Result<ClientConfig, ImportError> {
 
 /// Whether the stored cursor belongs to a numbering the mailbox no longer uses.
 ///
+/// The IMAP UID range one tick enumerates.
+///
+/// ⛔ Absent and zero are opposite instructions, and the difference is the whole
+/// reason a rewind stores `Some(0)` rather than deleting the row. `None` means
+/// "never polled", which resolves to `*` — the single highest UID — so a new
+/// account anchors to now instead of back-importing years of mail. `Some(0)`
+/// asks for `1:*`, which is every message the mailbox holds.
+fn uid_range(cursor: &FetchCursor) -> String {
+    match cursor.last_seen_uid {
+        Some(uid) => format!("{}:*", uid + 1),
+        None => "*".to_string(),
+    }
+}
+
 /// A UID means nothing without the `UIDVALIDITY` it was issued under, so a change
 /// voids the cursor: left in place, `{last+1}:*` matches nothing and the mailbox
 /// never polls again. ⛔ Only a *known* disagreement counts. An unknown on either
@@ -166,10 +180,7 @@ async fn fetch(creds: &ImapCredentials, cursor: &FetchCursor) -> Result<FetchOut
     // every later tick re-requests the same empty window forever. Enumerating first
     // keeps the range open — only the *body* fetch is bounded — so the cursor always
     // advances and a backlog simply drains over several ticks.
-    let range = match cursor.last_seen_uid {
-        Some(uid) => format!("{}:*", uid + 1),
-        None => "*".to_string(),
-    };
+    let range = uid_range(cursor);
 
     // ⚠️ Each `uid_fetch` stream borrows the session mutably and must be driven to
     // completion before the next command: a stream dropped early leaves an unread
@@ -326,6 +337,28 @@ mod tests {
     use super::*;
 
     /// The case the guard exists for: the server issued a new numbering, so the
+    fn at(last_seen_uid: Option<u32>) -> FetchCursor {
+        FetchCursor {
+            last_seen_uid,
+            uid_validity: None,
+        }
+    }
+
+    /// ⛔ The invariant the cursor-reset route depends on, and it is not obvious:
+    /// a rewind stores `Some(0)` precisely because deleting the row would mean
+    /// `None`, and `None` fetches only the newest message. Storing zero is what
+    /// asks for the whole mailbox.
+    #[test]
+    fn a_rewound_cursor_asks_for_every_message_and_an_absent_one_does_not() {
+        assert_eq!(uid_range(&at(Some(0))), "1:*", "a rewind must ask for all");
+        assert_eq!(
+            uid_range(&at(None)),
+            "*",
+            "never polled must stay anchored to the newest message, not backfill"
+        );
+        assert_eq!(uid_range(&at(Some(41))), "42:*", "resume is exclusive");
+    }
+
     /// stored UID is meaningless and keeping it stalls the mailbox forever.
     #[test]
     fn a_changed_validity_voids_the_cursor() {
