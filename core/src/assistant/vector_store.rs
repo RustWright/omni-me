@@ -170,8 +170,16 @@ async fn sweep_one(
     let mut resp = db.query(&sql).await.map_err(DbError::from)?;
     let rows: Vec<SourceRow> = resp.take(0).map_err(DbError::from)?;
 
+    // ⚠️ Collected because the scan above is the only thing that knows which
+    // records still exist, and the prune below needs exactly that set. Safe only
+    // because the query is unpaged: under a LIMIT this would read every record
+    // beyond the page as deleted and drop live vectors.
+    let mut live: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(rows.len());
+
     for row in rows {
         let Some(record_id) = row.id else { continue };
+        live.insert(record_id.clone());
         let text = row.text.unwrap_or_default();
         report.scanned += 1;
 
@@ -216,7 +224,40 @@ async fn sweep_one(
         }
         report.embedded += 1;
     }
+
+    // ⛔ Records that no longer exist at all, which the loop above can never
+    // reach: it iterates what is there, so a deleted record simply produces no
+    // row and its chunks are never visited.
+    //
+    // Left in place they are not merely wasted index — `retrieval::describe`
+    // takes a semantic hit's snippet from the *stored* chunk text rather than
+    // re-reading the record, and fills the handle from a live lookup that comes
+    // back empty. So a deleted record keeps ranking, and its text is handed to
+    // the model as a current result. A scoped wipe of finances is exactly this
+    // case: the events go, the projection empties, and every transaction stays
+    // searchable by its own words.
+    for stale in embedded_ids(db, entry.name).await? {
+        if !live.contains(&stale) {
+            report.removed += delete_chunks(db, entry.name, &stale).await?;
+        }
+    }
     Ok(())
+}
+
+/// Every record id this type currently has chunks for.
+async fn embedded_ids(db: &Database, record_type: &str) -> Result<Vec<String>, DbError> {
+    #[derive(Debug, SurrealValue)]
+    struct IdRow {
+        record_id: String,
+    }
+    let mut resp = db
+        .query(format!(
+            "SELECT record_id FROM {TABLE} WHERE record_type = $t GROUP BY record_id"
+        ))
+        .bind(("t", record_type.to_string()))
+        .await?;
+    let rows: Vec<IdRow> = resp.take(0)?;
+    Ok(rows.into_iter().map(|r| r.record_id).collect())
 }
 
 /// Is this record already indexed, under this exact text and this exact model?
@@ -548,6 +589,52 @@ mod tests {
         let second = sweep(&db, &config(), embedder).await.unwrap();
         assert_eq!(second.embedded, 0, "re-embedded unchanged text: {second:?}");
         assert_eq!(second.skipped, 1, "{second:?}");
+    }
+
+    /// A record that is deleted outright must leave the index with it.
+    ///
+    /// ⚠️ This is the wipe's case, and it is not the shrinking one below: there
+    /// the record still exists and the sweep visits it. Here it is gone, so the
+    /// scan produces no row for it and nothing in the per-record path can ever
+    /// run. Without the prune its chunks stay, keep ranking, and
+    /// `retrieval::describe` serves their stored text as a current result —
+    /// which is a wiped record answering a search in its own words.
+    #[tokio::test]
+    async fn a_deleted_record_does_not_stay_searchable() {
+        let embedder = shared_embedder();
+        let db = test_db(embedder.dim()).await;
+        seed_note(
+            &db,
+            "01JKVEC0000000000000000009",
+            "Gone",
+            "the landlord raised the rent again this spring",
+        )
+        .await;
+        sweep(&db, &config(), embedder).await.unwrap();
+        assert!(
+            count_chunks(&db).await > 0,
+            "nothing was indexed to begin with"
+        );
+
+        // Straight out of the projection table, which is what a projection
+        // rebuild after a scoped wipe leaves behind.
+        db.query("DELETE FROM generic_notes").await.unwrap();
+
+        let report = sweep(&db, &config(), embedder).await.unwrap();
+        assert!(report.removed > 0, "pruned nothing: {report:?}");
+        assert_eq!(
+            count_chunks(&db).await,
+            0,
+            "the deleted record's vectors outlived it"
+        );
+
+        let hits = knn_search(&db, &config(), embedder, "rent increase", 5)
+            .await
+            .unwrap();
+        assert!(
+            hits.is_empty(),
+            "a deleted record still answers a search: {hits:?}"
+        );
     }
 
     /// Editing a long record down to a short one must not strand the vanished
