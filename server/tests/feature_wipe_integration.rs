@@ -12,60 +12,8 @@
 
 mod common;
 
-use std::sync::Arc;
-
 use omni_me_core::db;
 use omni_me_core::events::{EventStore, NewEvent, SurrealEventStore};
-use omni_me_core::extraction::null::NullExtractor;
-use omni_me_core::llm::NullLlmClient;
-use omni_me_core::runtime::Instance;
-use omni_me_server::AppState;
-
-/// A server that declares itself `dev`.
-///
-/// ⛔ The shared harness deliberately declares no instance, because an undeclared
-/// deployment is what every destructive tool must refuse — so a wipe's happy path
-/// cannot be reached through it. This one names `dev` on purpose, which is also
-/// the only instance a test should ever claim to be.
-async fn dev_server() -> (String, db::Database, tokio::task::JoinHandle<()>) {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("server.db");
-    let server_db = db::connect(path.to_str().unwrap()).await.unwrap();
-    std::mem::forget(dir);
-
-    let blob_dir = tempfile::tempdir().unwrap();
-    let blob_path = blob_dir.path().to_path_buf();
-    std::mem::forget(blob_dir);
-
-    let db_arc = Arc::new(server_db);
-    let event_store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new((*db_arc).clone()));
-    let projections = common::server_projections(&db_arc).await;
-
-    let state = AppState {
-        db: db_arc.clone(),
-        llm_client: Arc::new(NullLlmClient::unconfigured()),
-        blob_dir: Arc::new(blob_path),
-        extractor: Arc::new(NullExtractor),
-        auto_import_registry: Default::default(),
-        store: event_store,
-        projections,
-        device_id: "test-device".to_string(),
-        default_interval: std::time::Duration::from_secs(1800),
-        secrets: Default::default(),
-        instance: Some(Instance::Dev),
-        purge_ticket: Default::default(),
-        wipe_ticket: Default::default(),
-    };
-
-    let app = omni_me_server::build_app(state, None, None);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let url = format!("http://{addr}");
-    let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (url, (*db_arc).clone(), handle)
-}
 
 /// Put one event of each named type straight into the server's own log.
 async fn seed(db: &db::Database, types: &[&str]) {
@@ -102,7 +50,7 @@ async fn event_types(db: &db::Database) -> Vec<String> {
 /// and the wipe leaves its own record behind.
 #[tokio::test]
 async fn a_previewed_wipe_takes_the_ledger_and_leaves_everything_else() {
-    let (url, db, _h) = dev_server().await;
+    let (url, db, _h) = common::start_dev_server().await;
     seed(
         &db,
         &[
@@ -167,7 +115,7 @@ async fn a_previewed_wipe_takes_the_ledger_and_leaves_everything_else() {
 /// A ticket authorises one confirm. The second is a 409, not a second wipe.
 #[tokio::test]
 async fn a_wipe_ticket_cannot_be_replayed() {
-    let (url, db, _h) = dev_server().await;
+    let (url, db, _h) = common::start_dev_server().await;
     seed(&db, &["transaction_recorded"]).await;
     let client = reqwest::Client::new();
 
@@ -208,7 +156,7 @@ async fn a_wipe_ticket_cannot_be_replayed() {
 /// nobody counted.
 #[tokio::test]
 async fn a_confirm_may_narrow_the_previewed_features_but_never_widen_them() {
-    let (url, db, _h) = dev_server().await;
+    let (url, db, _h) = common::start_dev_server().await;
     seed(
         &db,
         &["transaction_recorded", "auto_import_batch_committed"],
@@ -248,7 +196,7 @@ async fn a_confirm_may_narrow_the_previewed_features_but_never_widen_them() {
 /// This is the guard against a shell pointed at the wrong host.
 #[tokio::test]
 async fn a_wipe_addressed_to_production_is_refused_by_the_dev_server() {
-    let (url, db, _h) = dev_server().await;
+    let (url, db, _h) = common::start_dev_server().await;
     seed(&db, &["transaction_recorded"]).await;
     let client = reqwest::Client::new();
 
@@ -280,7 +228,7 @@ async fn a_wipe_addressed_to_production_is_refused_by_the_dev_server() {
 /// only the purge path's refcount knows whether anything else still points at it.
 #[tokio::test]
 async fn documents_are_refused_and_the_route_says_why() {
-    let (url, db, _h) = dev_server().await;
+    let (url, db, _h) = common::start_dev_server().await;
     seed(&db, &["document_archived"]).await;
     let client = reqwest::Client::new();
 
@@ -338,7 +286,7 @@ async fn documents_are_refused_and_the_route_says_why() {
 /// and reporting success.
 #[tokio::test]
 async fn an_unknown_feature_is_a_bad_request_naming_the_known_ones() {
-    let (url, _db, _h) = dev_server().await;
+    let (url, _db, _h) = common::start_dev_server().await;
     let resp = reqwest::Client::new()
         .post(format!("{url}/wipe/preview"))
         .json(&serde_json::json!({ "features": ["ledger"] }))

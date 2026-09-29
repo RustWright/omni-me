@@ -99,14 +99,14 @@ pub async fn start_full_server_with_auth(
     updates_dir: Option<std::path::PathBuf>,
     auth_token: Option<String>,
 ) -> (String, tokio::task::JoinHandle<()>) {
-    let (url, _db, _blobs, handle) = boot_full_server(updates_dir, auth_token).await;
+    let (url, _db, _blobs, handle) = boot_full_server(updates_dir, auth_token, None).await;
     (url, handle)
 }
 
 /// As [`start_full_server`], also returning the server's database so a test can
 /// check what the server itself projected.
 pub async fn start_full_server_with_db() -> (String, db::Database, tokio::task::JoinHandle<()>) {
-    let (url, db, _blobs, handle) = boot_full_server(None, None).await;
+    let (url, db, _blobs, handle) = boot_full_server(None, None, None).await;
     (url, db, handle)
 }
 
@@ -120,12 +120,25 @@ pub async fn start_full_server_with_blobs() -> (
     std::path::PathBuf,
     tokio::task::JoinHandle<()>,
 ) {
-    boot_full_server(None, None).await
+    boot_full_server(None, None, None).await
+}
+
+/// A server that declares itself `dev`.
+///
+/// ⛔ Every other harness here declares no instance on purpose, because that is
+/// what a destructive route must refuse — which also means the happy path of one
+/// cannot be reached through them. This is the opt-in, and `dev` is the only
+/// instance a test should ever claim to be.
+pub async fn start_dev_server() -> (String, db::Database, tokio::task::JoinHandle<()>) {
+    let (url, db, _blobs, handle) =
+        boot_full_server(None, None, Some(omni_me_core::runtime::Instance::Dev)).await;
+    (url, db, handle)
 }
 
 async fn boot_full_server(
     updates_dir: Option<std::path::PathBuf>,
     auth_token: Option<String>,
+    instance: Option<omni_me_core::runtime::Instance>,
 ) -> (
     String,
     db::Database,
@@ -157,9 +170,10 @@ async fn boot_full_server(
         device_id: "test-device".to_string(),
         default_interval: std::time::Duration::from_secs(1800),
         secrets: Default::default(),
-        // Tests are non-production by construction. `None` reports `unknown`,
-        // which every destructive tool refuses.
-        instance: None,
+        // `None` by default, and that default is load-bearing: an undeclared
+        // deployment is what every destructive tool refuses, so the happy path of
+        // one cannot be reached by accident. `start_dev_server` opts in.
+        instance,
         purge_ticket: Default::default(),
         wipe_ticket: Default::default(),
     };

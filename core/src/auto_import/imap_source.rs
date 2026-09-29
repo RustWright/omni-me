@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::auto_import_scheduler::{
-    AutoImportSource, DropReason, ImportError, ImportSummary, ImportTally,
+    AutoImportSource, CursorResetOutcome, DropReason, ImportError, ImportSummary, ImportTally,
 };
 use crate::db::Database;
 use crate::events::{EventStore, ProjectionRunner};
@@ -35,6 +35,11 @@ pub trait CursorStore: Send + Sync {
     /// "unknown" and never as a mismatch, so an upgrade does not reset a mailbox.
     async fn load(&self, account_name: &str) -> Result<Option<StoredCursor>, ImportError>;
     async fn save(&self, account_name: &str, cursor: StoredCursor) -> Result<(), ImportError>;
+    /// Forget this account's position, returning what was stored.
+    ///
+    /// Returns the cleared cursor rather than `()` so the caller can report
+    /// what it rewound past, the way a wipe reports the count it removed.
+    async fn clear(&self, account_name: &str) -> Result<Option<StoredCursor>, ImportError>;
 }
 
 /// A cursor as it sits on disk.
@@ -128,6 +133,24 @@ impl CursorStore for SurrealCursorStore {
             .check()
             .map_err(|e| ImportError::Upstream(format!("save cursor: {e}")))?;
         Ok(())
+    }
+
+    async fn clear(&self, account_name: &str) -> Result<Option<StoredCursor>, ImportError> {
+        // Read before deleting, in one direction only: the delete cannot report
+        // what it removed, and a caller told "done" learns nothing about how far
+        // back it just rewound.
+        let existing = self.load(account_name).await?;
+        self.db
+            .query("DELETE type::record('imap_cursors', $name)")
+            .bind(("name", account_name.to_string()))
+            .await
+            .map_err(|e| ImportError::Upstream(format!("clear cursor: {e}")))?
+            // Same reason `save` checks: a refused delete that reads as a
+            // success leaves the source exactly where it was, and the next tick
+            // fetching nothing looks like an empty mailbox.
+            .check()
+            .map_err(|e| ImportError::Upstream(format!("clear cursor: {e}")))?;
+        Ok(existing)
     }
 }
 
@@ -267,6 +290,32 @@ impl AutoImportSource for ImapSource {
 
         tally.finish()
     }
+
+    async fn reset_cursor(&self) -> Result<CursorResetOutcome, ImportError> {
+        // Both halves, and neither alone is enough. The row is what a restart
+        // reads; the in-memory cursor is what this process reads *and* what the
+        // next pull writes back — so clearing only the row leaves a running
+        // source able to re-save the position it still holds.
+        let stored = match &self.cursor_store {
+            Some(cs) => cs.clear(&self.name).await?,
+            None => None,
+        };
+        let in_memory = std::mem::take(&mut *self.cursor.lock().await);
+
+        // The row wins when both carry a position: it is the one that survives a
+        // restart. The in-memory fallback is what a store-less source (tests, and
+        // any future caller that passes `None`) has instead.
+        let rewound = stored.map(|c| (c.uid, c.uid_validity)).or_else(|| {
+            in_memory
+                .last_seen_uid
+                .map(|uid| (uid, in_memory.uid_validity))
+        });
+
+        Ok(match rewound {
+            Some((uid, uid_validity)) => CursorResetOutcome::Cleared { uid, uid_validity },
+            None => CursorResetOutcome::AlreadyClear,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -334,6 +383,89 @@ mod tests {
                 .insert(account_name.into(), cursor);
             Ok(())
         }
+        async fn clear(&self, account_name: &str) -> Result<Option<StoredCursor>, ImportError> {
+            Ok(self.loaded.lock().unwrap().remove(account_name))
+        }
+    }
+
+    /// The whole point of the route: after a reset the same mailbox is read again.
+    ///
+    /// Asserted as a second pull returning the same messages, not as an empty
+    /// cursor — an empty cursor is the mechanism, and the mechanism is not what
+    /// the caller is promised.
+    #[tokio::test]
+    async fn a_reset_makes_the_next_pull_refetch_what_it_already_read() {
+        let (_db, store, projections) = test_db_runner().await;
+        let fetcher = Arc::new(MockFetcher::new("gmail"));
+        fetcher.push_response(vec![make_msg(101, "x@a.com")], Some(101));
+        let cursor_store: Arc<dyn CursorStore> = Arc::new(MemCursorStore::new());
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(NeedleHandler {
+            name: "x".into(),
+            needle: "x@a.com".into(),
+        })];
+        let source = ImapSource::new(
+            "gmail",
+            fetcher.clone(),
+            handlers,
+            Some(cursor_store.clone()),
+            store.clone(),
+            projections.clone(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        source.pull().await.unwrap();
+        assert_eq!(
+            cursor_store.load("gmail").await.unwrap().map(|c| c.uid),
+            Some(101),
+            "the first pull should have recorded where it got to"
+        );
+
+        let outcome = source.reset_cursor().await.unwrap();
+        assert_eq!(
+            outcome,
+            CursorResetOutcome::Cleared {
+                uid: 101,
+                uid_validity: None
+            },
+            "the reset reports the position it rewound past, not just success"
+        );
+        assert!(
+            cursor_store.load("gmail").await.unwrap().is_none(),
+            "the stored row should be gone"
+        );
+        assert!(
+            source.cursor.lock().await.last_seen_uid.is_none(),
+            "⚠️ the in-memory cursor is what the next pull writes back — leaving it \
+             set lets a running source re-save the position the reset just cleared"
+        );
+    }
+
+    /// Resetting twice is not an error, and the second answer differs from the
+    /// first — `AlreadyClear` says nothing was there, which is a different claim
+    /// from "I cleared uid 101".
+    #[tokio::test]
+    async fn resetting_a_source_that_never_polled_is_already_clear() {
+        let (_db, store, projections) = test_db_runner().await;
+        let fetcher = Arc::new(MockFetcher::new("gmail"));
+        let cursor_store: Arc<dyn CursorStore> = Arc::new(MemCursorStore::new());
+        let source = ImapSource::new(
+            "never-polled",
+            fetcher,
+            vec![],
+            Some(cursor_store),
+            store,
+            projections,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            source.reset_cursor().await.unwrap(),
+            CursorResetOutcome::AlreadyClear
+        );
     }
 
     #[tokio::test]

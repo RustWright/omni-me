@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use omni_me_core::auto_import::config::{self, SourceDef};
 use omni_me_core::auto_import::paused;
 use omni_me_core::auto_import_scheduler::{
-    ReauthOutcome, SourceHealth, SourceStatus, classify_source_health,
+    CursorResetOutcome, ReauthOutcome, SourceHealth, SourceStatus, classify_source_health,
 };
 
 use crate::AppState;
@@ -52,6 +52,12 @@ pub fn auto_import_routes() -> Router<AppState> {
         .route(
             "/auto_import/sources/{name}/resume",
             post(resume_source_handler),
+        )
+        // Rewinding is its own route rather than part of a wipe, because what it
+        // costs only shows up when you run it. `docs/src/features.md`.
+        .route(
+            "/auto_import/sources/{name}/cursor/reset",
+            post(reset_cursor_handler),
         )
 }
 
@@ -147,6 +153,56 @@ async fn reauth_handler(
             Err((StatusCode::NOT_FOUND, msg))
         }
         Err(e) => Err(upstream_err("reauth", &req.source, e)),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CursorResetRequest {
+    /// The instance the caller believes it is talking to, as `/health` reports
+    /// it. Same gate as the wipe's confirm, for the same reason: a shell with
+    /// the wrong host should not be able to aim this at the live mailbox.
+    pub instance: String,
+}
+
+/// `POST /auto_import/sources/{name}/cursor/reset` — rewind one source so its
+/// next pull re-fetches from the beginning.
+///
+/// ⚠️ Not a restore. Re-fetched mail is archived again, so every message this
+/// rewinds past gains a second document record — one blob each, since blobs are
+/// addressed by content. That is the price of getting the batches back, and it
+/// is why this is not folded into the wipe.
+async fn reset_cursor_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<CursorResetRequest>,
+) -> Result<Json<CursorResetOutcome>, (StatusCode, String)> {
+    // ⛔ An undeclared deployment refuses, exactly as it does for a wipe: a
+    // half-provisioned box must not be mistakable for the dev one.
+    let Some(declared) = state.instance else {
+        return Err((
+            StatusCode::CONFLICT,
+            "this server declares no instance, so a re-fetch cannot be addressed to it. \
+             Set OMNI_INSTANCE."
+                .to_string(),
+        ));
+    };
+    if req.instance.trim() != declared.as_str() {
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "this server is `{}`, not `{}` — refusing a re-fetch addressed elsewhere",
+                declared.as_str(),
+                req.instance.trim()
+            ),
+        ));
+    }
+
+    match state.auto_import_registry.reset_cursor(&name).await {
+        Ok(outcome) => Ok(Json(outcome)),
+        Err(omni_me_core::auto_import_scheduler::ImportError::NotConfigured(msg)) => {
+            Err((StatusCode::NOT_FOUND, msg))
+        }
+        Err(e) => Err(upstream_err("reset_cursor", &name, e)),
     }
 }
 

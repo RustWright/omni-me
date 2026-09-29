@@ -340,6 +340,25 @@ pub enum ReauthOutcome {
     Error { message: String },
 }
 
+/// Outcome of rewinding a source's read position. Serialized verbatim as the
+/// `POST /auto_import/sources/{name}/cursor/reset` body, tagged like
+/// [`ReauthOutcome`].
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CursorResetOutcome {
+    /// The position that was cleared. Reported rather than discarded, for the
+    /// reason a wipe reports its count: "it worked" cannot be checked against
+    /// what was there.
+    Cleared { uid: u32, uid_validity: Option<u32> },
+    /// Nothing was stored, so the next pull already starts from the beginning.
+    /// Not an error — resetting twice is the same as resetting once.
+    AlreadyClear,
+    /// This source keeps no read position (the trait default), so there is
+    /// nothing to rewind. A caller reaching this hit the route for a source
+    /// that is handed its material rather than reading a stream.
+    NotSupported,
+}
+
 /// Object-safe — sources can be held as `Arc<dyn AutoImportSource>`.
 #[async_trait]
 pub trait AutoImportSource: Send + Sync {
@@ -375,6 +394,17 @@ pub trait AutoImportSource: Send + Sync {
     /// credential themselves (server-side); the engine only relays the code.
     async fn reauth(&self, _otp: &str) -> ReauthOutcome {
         ReauthOutcome::NotSupported
+    }
+
+    /// Forget how far this source has read, so its next pull starts from the
+    /// beginning. Default `NotSupported`: most sources are handed their
+    /// material and keep no place in a stream.
+    ///
+    /// ⚠️ This is not the inverse of a wipe. What returns is re-fetched, not
+    /// restored, so whatever the source archives on the way past it archives a
+    /// second time. `docs/src/features.md` § Three things this does not cover.
+    async fn reset_cursor(&self) -> Result<CursorResetOutcome, ImportError> {
+        Ok(CursorResetOutcome::NotSupported)
     }
 }
 
@@ -646,6 +676,29 @@ impl SourceRegistry {
         let outcome = source.pull().await;
         self.record_tick(name, &outcome).await;
         outcome
+    }
+
+    /// Rewind `name`'s read position so its next tick re-fetches from the
+    /// beginning. Clones the source under the read lock, like `trigger_manual`.
+    ///
+    /// ⛔ Does not tick. Rewinding and re-fetching are separate so the position
+    /// can be cleared while the source is paused — a reset that immediately
+    /// re-pulled would give no chance to stop between them.
+    pub async fn reset_cursor(&self, name: &str) -> Result<CursorResetOutcome, ImportError> {
+        let source = {
+            let guard = self.inner.read().await;
+            guard
+                .get(name)
+                .map(|r| r.source.clone())
+                .ok_or_else(|| ImportError::NotConfigured(format!("unknown source: {name}")))?
+        };
+        let outcome = source.reset_cursor().await?;
+        tracing::warn!(
+            source = name,
+            ?outcome,
+            "rewound a source's read position — the next pull re-fetches"
+        );
+        Ok(outcome)
     }
 
     /// Drive interactive re-auth for `name` with a single-use `otp`. Clones the

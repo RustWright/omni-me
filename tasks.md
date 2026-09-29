@@ -1071,10 +1071,50 @@ critical path, not the tail.
    **Six integration tests over a real socket**: the separation end to end, the ticket refusing a
    replay, a widened confirm refused, a wipe addressed to production refused by the dev server,
    documents refused with its reason, and an unknown feature naming the known ones.
-   ⏳ **What is left before the official import:** the dev demonstration he asked for — wipe on dev,
-   show the ledger empty and documents/journal/notes intact, then re-import. ⚠️ Needs the dev box and
-   a `[server] auth_token`; the route is behind the bearer gate like everything else.
+   ✅ **DEMONSTRATED ON DEV 2026-09-28**, on image `dev-25d3120-e2f1279`; live stayed on
+   `sha-9a0b1dd` throughout. ⛔ The auth-token prerequisite written here was wrong — dev's bearer
+   gate is off, and what actually blocked it was that the dev image predated the route by 18
+   commits. Volume backed up first (`~/omni-dev-backups/omni-dev-20260928-143019.tar.gz`,
+   59,780,741 bytes of a 152.4 MB volume), verified by size.
+   **Measured against an instrument the wipe does not share:** the log was tallied by event type
+   over `/sync/pull`, because counting with the same ownership map the wipe reads proves only that
+   the map agrees with itself. Preview 10,645 · independent tally 10,645 · confirm removed 10,645.
+   Every claimed type went to 0; every spared type is unchanged to the event (journal 4,789, notes
+   553, documents 125, config 53, record types 5, feedback 4, assistant 14) and **all 103 distinct
+   blobs still serve** after the rebuild — the archive is intact as bytes, not just as rows. The
+   wrong-instance and spent-ticket gates both refused live; the `DataWiped` record names both
+   features and the count.
+   🔴 **A THIRD finding, and it is the one that changes the live operation.** After the wipe both
+   mailboxes ticked `fetched: 0`. **A scoped wipe does not reset the auto-import cursors** —
+   `imap_cursors` is a plain table, not an event and not a projection, so neither `purge_features`
+   (`DELETE events …` only) nor the projection rebuild touches it. Every source still believes it
+   has read every message, so the 29 receipt/wise batches and their transactions are gone and
+   **cannot be re-derived from the mailbox**; `imap.rs` says as much — "no recovery short of editing
+   `imap_cursors` by hand". ⚠️ Worse than the `dedup_key` trap, which at least fails at the dedup
+   check: this one never re-fetches at all. ⛔ On live this would permanently lose every
+   receipt-derived transaction.
+   🔴 **DECIDED 2026-09-28 (user): a SEPARATE cursor-reset route, not a change to the wipe.** The
+   wipe keeps its narrow contract — it deletes events and nothing else — and resetting a source's
+   cursor is a deliberate second act, taken when a re-fetch is actually wanted. ⚠️ It has a cost to
+   accept at that moment: a re-fetch re-archives every message, so each one gains a second document
+   record (one blob each, since blobs are content-addressed). The alternatives it beat were folding
+   the reset into the wipe (makes "wipe and re-import" true end to end, but pays the duplicate
+   documents as an invisible side effect) and documenting the gap only.
+   ⏳ **What is left before the official import:** the ledger re-import on dev (below), and the
+   cursor-reset route.
    `docs/src/features.md` § Wiping one feature's data.
+   ✅ **The historical ledger is RECOVERED** — he supplied `paisa-ledger-461.zip` (2026-09-28),
+   restored to `~/paisa-ledger-restore/extracted/paisa-ledger/` ⛔ **outside both repos, and it
+   stays there** (real financial data). 26 account dirs, ~1,800 files, 785 `.ledger` files, ~700
+   PDFs. `main.ledger` resolves its 98 include globs to 784 files carrying **10,575 transactions,
+   2019/05/30 → 2026/08/28**. ⚠️ That is 23 short of dev's pre-wipe 10,598 and stops a month
+   earlier, exactly as he said — the remainder is September auto-import, which is precisely what the
+   cursor finding says cannot come back. So the re-import's expected outcome is ~10,575, **not**
+   10,598, and the gap is explained rather than a discrepancy to chase.
+   ⚠️ **Mass document ingestion is built but unreachable.** `archive::ingest_paths` +
+   `walk_dir` exist — `walk_dir`'s own doc names this corpus ("the finance corpus carries 785
+   generated `.ledger` files") — but **nothing calls either**. Same shape as the LLM surface that
+   had no consumer: reaching the ~700 PDFs needs a caller written first.
 2. **Email receipt ingestion via IMAP.** ✅ **RESOLVED, and RUNNING on dev for `gmail_personal`**
    (2026-09-18). The isolation conflict was dissolved by opening the mailbox with `EXAMINE`
    instead of `SELECT` — the user's suggestion. The server itself then refuses any state change,

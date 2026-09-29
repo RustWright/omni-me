@@ -155,7 +155,7 @@ Listing what can be wiped is its own read-only endpoint, and documents appear on
 carrying their refusal rather than being left off. Omitted, the refusal would read as an
 oversight to route around.
 
-## Two things this does not cover
+## Three things this does not cover
 
 **The server does not read these switches.** Auto-import runs on your server, and
 whether a source is polled is governed by that server's own source configuration and
@@ -167,3 +167,22 @@ not stop the server fetching them. To stop the fetching, pause the source.
 updated, and nothing reads them, but they are not cleared. Clearing them would buy
 tidiness at the cost of making re-enabling slow — and the replay is what makes the
 round trip safe in the first place.
+
+**A wipe does not rewind how far a source has read.** Each auto-import source keeps a
+cursor recording the last message it processed, and that cursor is neither an event nor
+a projection — it is a row in a table of its own. A wipe deletes events and rebuilds
+projections, so it passes the cursor by. The source still believes it has seen
+everything it had seen before, and the next poll fetches nothing.
+
+For a source whose material you re-feed yourself, that is invisible: you hand the
+statements over again and the ledger comes back. For a mailbox it is the difference
+between "wipe and re-import" and "wipe and lose", because there is no second copy to
+re-feed — the messages are still in the mailbox, but nothing will go back for them.
+
+Rewinding a cursor is therefore its own operation rather than part of the wipe, and it
+is deliberately separate for a reason that only shows up when you run it: a re-fetch
+re-archives every message it pulls, and archived documents are not what a finance wipe
+takes. Each message picks up a second document record. The bytes are not duplicated —
+blobs are addressed by content, so both records name one file — but the archive now
+lists the same receipt twice. That is a fair price when you want the batches back and a
+silly one to pay by accident, which is what folding it into the wipe would have meant.
