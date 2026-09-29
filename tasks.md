@@ -1125,8 +1125,15 @@ critical path, not the tail.
    so no mock-based test can ever prove re-fetching. The real invariant lives in the UID range, so
    `uid_range` was extracted from `imap_real::poll_once` and now carries its own test: `Some(0)` →
    `1:*`, `None` → `*`, `Some(41)` → `42:*`. Exactly the fixture-and-code-agree trap.
+   ⛔ **A rewind restores PROPOSALS, not transactions — and that changes what the live recovery
+   costs him.** `transaction_recorded` is emitted by the Tauri *commit* command
+   (`commands/auto_import.rs`), not by the fetch, so re-fetched mail comes back as
+   `auto_import_batch_proposed` awaiting review. Recovering the wiped receipt transactions is
+   therefore: rewind → tick until drained → **review and re-commit each batch on a device**.
+   ⚠️ And the receipts' `dedup_key` is model-derived, so re-proposed batches need not carry the
+   keys the originals did — see [[project-model-derived-keys-are-nondeterministic]].
    ⏳ **What is left before the official import:** exercising the reset live on dev, which needs the
-   dev image rebuilt onto `fece433`.
+   dev image rebuilt onto `bb6b866`.
    `docs/src/features.md` § Wiping one feature's data.
    ✅ **The historical ledger is RECOVERED** — he supplied `paisa-ledger-461.zip` (2026-09-28),
    restored to `~/paisa-ledger-restore/extracted/paisa-ledger/` ⛔ **outside both repos, and it
