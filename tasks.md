@@ -1162,6 +1162,31 @@ critical path, not the tail.
    ✅ **Date rewind BUILT 2026-09-30** (`0912470`): `since: "YYYY-MM-DD"` on the cursor-reset route,
    `UID SEARCH SINCE` → store one below the first match, under the validity the search observed.
    Nothing since the date leaves the source at the newest message. Answers `moved_to_date`.
+   ✅ **Exercised on dev 2026-09-30**, image `dev-ad0e828-0912470`: a reset addressed to
+   `production` refused 409; the real one answered `{"from_uid":12916,"to_uid":14689}`.
+   🔴 **The drain numbers above were wrong by a factor, and `from_uid` is what showed it.** After 400
+   messages the cursor stood at uid **12,916**, not near 400. 14,878 was the highest UID, never a
+   message count: Gmail UIDs are sparse. At most ~2,000 UIDs were left, so every "full drain" cost
+   quoted here was inflated several times over. ⛔ Never size a mailbox from its highest UID.
+   🔴 **A manual tick died when its HTTP client hung up** (found the same day). `trigger_manual`
+   awaited `pull()` inside the request, axum drops a handler's future on disconnect, and a pull
+   stores nothing until its end: ~140 extracted messages were lost, the cursor did not move, and
+   `last_tick_at` stayed empty with nothing logged. ✅ Fixed in `918656c`: the pull runs as its own
+   task, with a test that gives up mid-tick and checks the outcome is still recorded.
+   ⚠️ **The same shape in two destructive routes**, fixed in the same commit: `wipe/confirm`
+   (delete → audit record → rebuild) and `documents/purge`. ⛔ Only the manual tick has a test; the
+   two route fixes are clippy-clean and unexercised. Short request-bound writes (archive upload,
+   cursor reset) were left as they are.
+   ✅ **The September re-fetch RAN on dev 2026-09-30** (scheduled tick, uid 14690 onward): 180
+   fetched, 178 appended, 2 failed (two bank mails with no extractable text), 229 model calls.
+   Of the 178: 43 `Marketing` and 14 `FeedbackRequest` dropped, 39 with no amount dropped, **68
+   with postings**, the rest reaching review unpriced. Walmart 25 and Uber 12 lead. ⚠️ Digikey
+   webinar mail produced postings 5 times: false positives landing in review, input for the filter.
+   ⏳ **Next on this path: he reviews and commits the re-proposed batches on a device.**
+   🔴 **A flaky HANG in CI, unrelated to this work**: `events::projection::tests::
+   a_paged_replay_folds_exactly_what_an_unbounded_one_would` passed at 14:32 and hung past the 45-min
+   job limit at 15:23 on unchanged code. A hang costs a whole CI slot where a failure costs seconds;
+   it wants a per-test timeout at minimum, and a diagnosis.
    ⏳ **Queued by his decision: a cheap first-pass filter** before full extraction (sender, subject
    and snippet to a cheaper model). It must decide by inference, not a list (the 2026-09-25 ruling),
    and needs its receipt-miss rate measured before it gates anything, since a miss is silent.
