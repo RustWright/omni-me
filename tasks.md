@@ -1187,11 +1187,8 @@ critical path, not the tail.
    a_paged_replay_folds_exactly_what_an_unbounded_one_would` passed at 14:32 and hung past the 45-min
    job limit at 15:23 on unchanged code. A hang costs a whole CI slot where a failure costs seconds;
    it wants a per-test timeout at minimum, and a diagnosis.
-   ⏳ **Queued by his decision: a cheap first-pass filter** before full extraction (sender, subject
-   and snippet to a cheaper model). It must decide by inference, not a list (the 2026-09-25 ruling),
-   and needs its receipt-miss rate measured before it gates anything, since a miss is silent.
-   Gmail's own categories are a second signal: `X-GM-RAW` takes web-search syntax, but the docs do
-   not confirm `category:` works through it, and Yahoo has no equivalent.
+   ⏳ **Queued by his decision: a cheap first-pass filter.** Measured and designed 2026-09-30 —
+   § Mail triage seat, below the DoR.
    ✅ **Real-mail failure rate, first honest sample**: 1 in 400 failed extraction (uid 5926, model
    hit its 8192-token ceiling). It was counted in `dropped` and the pass continued — the
    per-message resilience in `imap.rs` working as its comment says it should.
@@ -1291,6 +1288,55 @@ critical path, not the tail.
   than bolted onto it. ⛔ Search/retrieval alone was refused: it never produces evidence that the
   labels are trustworthy, which leaves both per-tag retention and the Gmail write-back
   permanently ungated.
+
+### Mail triage seat — MEASURED 2026-09-30, a PROPOSAL awaiting his call
+
+**Asked for** by him 2026-09-30, as its own seat (his words: "it may need a different seat for
+it"). Everything below except that is my proposal.
+
+**The eval.** gmail_personal uids 14690–14885, 180 mails, fetched read-only on the box and kept
+there (`~deploy/triage-eval/`, scripts beside it). Reference = the September tick's own verdicts,
+aligned by uid with 0 mismatches. Recall is scored against MY hand labels from sender and subject:
+55 MUST (a money event), 28 OPTIONAL (order logistics, statement-ready, earnings reports), 97 NO.
+⚠️ Inferred labels, and the prompt was written by someone who had seen these subjects. His review
+decisions on the phone are the better truth, and a holdout (another mailbox or month) is owed
+before any gating.
+
+**Results** (triage input = From + Subject + first 800 chars; answer MONEY or NONE; unsure → MONEY):
+
+| model ($/M in) | MUST kept | NO skipped | est. saving | runs |
+|---|---|---|---|---|
+| `mistralai/Mistral-Small-24B-Instruct-2501` (0.05) | **55/55 ×3** | 87–88/97 | **47%** | 3, one flip |
+| `google/gemma-3-12b-it` (0.05) | 55/55 | 81/97 | 44% | 1 |
+| `deepseek-ai/DeepSeek-V4-Flash-0731` (0.06) | 55/55 | 71/97 | 34% | 1 |
+| `mistralai/Mistral-Nemo-Instruct-2407` (0.019) | 55/55 | 58/97 | 33% | 1 |
+| `meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo` (0.02) | ⛔ 53, 54, 54 | 92–95/97 | 55% | 3, a DIFFERENT receipt missed each run |
+
+Savings are an ESTIMATE (extraction = 2,000 prompt tokens + body/4, V4.1-Flash prices); triage
+tokens are measured (~440 in per mail).
+📊 **What it is actually worth.** Steady state (<100 mails/week) saves about **$0.10 a month**. The
+money case is the one-time live backlog only. ✅ **The better case is the review queue**:
+Mistral-Small skips all six Claude.ai login-link mails and all five Digikey promos that full
+extraction pushed into review, 11 of 82 proposals.
+⛔ **Gmail `category:purchases` is not a gate** (verified: `X-GM-RAW "category:…"` works over IMAP).
+It misses rides, e-transfers, money-transfer and brokerage notices, storage receipts and a royalty.
+
+**Proposed shape.**
+- Seat `[llm.triage]`, model Mistral-Small-24B-2501, temperature 0.
+- Runs inside `ReceiptHandler::handle` before `extract_reconciled`. ⛔ It never gates ARCHIVING:
+  every mail is still stored.
+- Fail-open: an error or an unparseable answer runs full extraction.
+- Every mail it skips is counted by uid in the tick summary, like `dropped`, so a miss is findable.
+- ▶ **Shadow mode first** (my recommendation): triage runs and logs its verdict, but everything is
+  still extracted, until his review decisions have scored it on real weeks. Costs cents. It beat
+  gating immediately, because the recall above is measured on one month of one mailbox against my
+  labels.
+
+**Wiring checklist.** The last seat split missed callers, then config slots
+(`project-role-c-split-never-recrossed-callers`), so every one of these gets a named check:
+`LlmRole` · `for_role` · `ROLE_KEYS` · the role's default sampling · `docs/src/assistant.md` seat
+table · a resolves-its-own-model test · `server/src/lib.rs` seat construction · the overlay's
+`ReceiptHandler::new` (`omni-me-private/src/main.rs`) · `credentials-dev.toml` on the box.
 
 ### What is already built and merely unproven on hardware
 
