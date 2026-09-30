@@ -417,14 +417,19 @@ async fn purge_handler(
     );
     let reason = body.reason.clone().or_else(|| Some(ticket.group.clone()));
 
-    let report = purge::apply(
-        &state.db,
-        &writer,
-        &state.blob_dir,
-        &body.document_ids,
-        reason.as_deref(),
-    )
+    // Its own task: a client that hangs up must not stop a purge between deleting
+    // records and reclaiming their blobs. Same reason as the feature wipe.
+    let ids = body.document_ids;
+    let report = tokio::spawn(async move {
+        purge::apply(&state.db, &writer, &state.blob_dir, &ids, reason.as_deref()).await
+    })
     .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("purge task: {e}"),
+        )
+    })?
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(report))

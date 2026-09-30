@@ -212,9 +212,35 @@ async fn confirm_handler(
         ));
     }
 
+    // Its own task, so the three steps finish together. Awaited inline, a client
+    // that hung up after the delete would cancel the audit record and the rebuild.
+    let task_state = state.clone();
+    let features = confirmed.clone();
+    let removed = tokio::spawn(async move { destroy(&task_state, &features).await })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("wipe task: {e}")))??;
+
+    tracing::warn!(
+        instance = declared.as_str(),
+        features = ?confirmed,
+        previewed = ticket.counted,
+        removed,
+        "wiped a feature's events"
+    );
+
+    Ok(Json(WipeReport {
+        features: confirmed.iter().map(|f| feature_name(*f)).collect(),
+        events_removed: removed,
+        projections_rebuilt: true,
+        scope: "this node only — every other device still holds its own copy",
+    }))
+}
+
+/// Delete, record, rebuild: the part of a confirm that cannot be half done.
+async fn destroy(state: &AppState, confirmed: &[Feature]) -> Result<usize, (StatusCode, String)> {
     let removed = state
         .store
-        .purge_features(&confirmed)
+        .purge_features(confirmed)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -255,20 +281,7 @@ async fn confirm_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    tracing::warn!(
-        instance = declared.as_str(),
-        features = ?confirmed,
-        previewed = ticket.counted,
-        removed,
-        "wiped a feature's events"
-    );
-
-    Ok(Json(WipeReport {
-        features: confirmed.iter().map(|f| feature_name(*f)).collect(),
-        events_removed: removed,
-        projections_rebuilt: true,
-        scope: "this node only — every other device still holds its own copy",
-    }))
+    Ok(removed)
 }
 
 /// The name a feature is spelled with on the wire: its config key's suffix.

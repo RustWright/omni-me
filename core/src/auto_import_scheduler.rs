@@ -684,9 +684,18 @@ impl SourceRegistry {
                 .map(|r| r.source.clone())
                 .ok_or_else(|| ImportError::NotConfigured(format!("unknown source: {name}")))?
         };
-        let outcome = source.pull().await;
-        self.record_tick(name, &outcome).await;
-        outcome
+        // Its own task, so the pull outlives the caller. Awaited inline, a client
+        // that hung up dropped the tick mid-message, and a pull stores nothing
+        // until its end: every model call made so far was lost.
+        let registry = self.clone();
+        let name = name.to_string();
+        tokio::spawn(async move {
+            let outcome = source.pull().await;
+            registry.record_tick(&name, &outcome).await;
+            outcome
+        })
+        .await
+        .map_err(|e| ImportError::Upstream(format!("manual tick task: {e}")))?
     }
 
     /// Rewind `name`'s read position so its next tick re-fetches from the
@@ -957,6 +966,8 @@ pub mod null {
         /// `None` keeps the trait default so a plain `NullSource` inherits the
         /// global interval; `.with_poll_interval(...)` exercises the override.
         poll_interval: Option<Duration>,
+        /// How long each `pull()` takes before answering.
+        pull_delay: Duration,
     }
 
     impl NullSource {
@@ -967,7 +978,14 @@ pub mod null {
                 call_count: Mutex::new(0),
                 scripted_reauth: Mutex::new(None),
                 poll_interval: None,
+                pull_delay: Duration::ZERO,
             }
+        }
+
+        /// Make every `pull()` take `delay`, so a caller can give up mid-tick.
+        pub fn with_pull_delay(mut self, delay: Duration) -> Self {
+            self.pull_delay = delay;
+            self
         }
 
         /// Declare a per-source poll interval (overrides the global default in
@@ -1002,6 +1020,7 @@ pub mod null {
 
         async fn pull(&self) -> Result<ImportSummary, ImportError> {
             *self.call_count.lock().unwrap() += 1;
+            tokio::time::sleep(self.pull_delay).await;
             let next = self.scripted.lock().unwrap().pop_front();
             next.unwrap_or(Ok(ImportSummary::empty()))
         }
@@ -1287,6 +1306,37 @@ mod tests {
         assert_eq!(snap[0].name, "snap-src");
         assert!(matches!(snap[0].last_outcome, TickOutcome::NotYetRun));
         assert_eq!(snap[0].interval_secs, 60);
+    }
+
+    /// Found on dev 2026-09-30: a curl that gave up cancelled a tick 140 messages
+    /// in, and nothing it had extracted was stored.
+    #[tokio::test]
+    async fn a_manual_tick_finishes_after_its_caller_hangs_up() {
+        let registry = SourceRegistry::new();
+        let src = Arc::new(
+            null::NullSource::new("slow-src")
+                .with_pull_delay(Duration::from_millis(200))
+                .with_script(vec![Ok(ImportSummary::all_appended(3))]),
+        );
+        registry
+            .register(src.clone(), Duration::from_secs(60))
+            .await;
+
+        let gave_up = tokio::time::timeout(
+            Duration::from_millis(20),
+            registry.trigger_manual("slow-src"),
+        )
+        .await;
+        assert!(gave_up.is_err(), "the caller should have stopped waiting");
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(
+            registry.snapshot().await[0].last_outcome,
+            TickOutcome::Success {
+                summary: ImportSummary::all_appended(3),
+            },
+            "the tick must complete and be recorded without anyone waiting on it"
+        );
     }
 
     #[tokio::test]
