@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::NaiveDate;
 use futures_util::StreamExt;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
@@ -20,7 +21,7 @@ use tokio_rustls::TlsConnector;
 use crate::auto_import_scheduler::ImportError;
 use crate::credentials::ImapCredentials;
 
-use super::imap::{FetchCursor, FetchOutcome, ImapFetcher, ImapMessage};
+use super::imap::{DateAnchor, FetchCursor, FetchOutcome, ImapFetcher, ImapMessage};
 
 /// Most message BODIES one tick will fetch. The UID enumeration stays
 /// open-ended, so the cursor always advances and a backlog drains across
@@ -64,6 +65,10 @@ impl ImapFetcher for AsyncImapFetcher {
 
     async fn fetch_new(&self, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError> {
         fetch(&self.creds, cursor).await
+    }
+
+    async fn first_uid_since(&self, since: NaiveDate) -> Result<DateAnchor, ImportError> {
+        anchor_since(&self.creds, since).await
     }
 }
 
@@ -121,7 +126,12 @@ fn mailbox_was_renumbered(stored: Option<u32>, observed: Option<u32>) -> bool {
     matches!((stored, observed), (Some(a), Some(b)) if a != b)
 }
 
-async fn fetch(creds: &ImapCredentials, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError> {
+type ImapSession = async_imap::Session<tokio_rustls::client::TlsStream<TcpStream>>;
+
+/// Connect, log in and open the watched label read-only.
+async fn open(
+    creds: &ImapCredentials,
+) -> Result<(ImapSession, async_imap::types::Mailbox), ImportError> {
     let tcp = TcpStream::connect((creds.host.as_str(), creds.port))
         .await
         .map_err(|e| ImportError::Io(format!("connect {}:{}: {e}", creds.host, creds.port)))?;
@@ -146,6 +156,37 @@ async fn fetch(creds: &ImapCredentials, cursor: &FetchCursor) -> Result<FetchOut
         .examine(&creds.watched_label)
         .await
         .map_err(|e| ImportError::Upstream(format!("examine {}: {e}", creds.watched_label)))?;
+    Ok((session, mailbox))
+}
+
+/// `UID SEARCH` criteria for mail received on or after `since`. RFC 3501 dates
+/// are `d-Mon-yyyy` with an English month; SINCE compares the INTERNALDATE,
+/// ignoring time and timezone.
+fn search_since(since: NaiveDate) -> String {
+    format!("SINCE {}", since.format("%-d-%b-%Y"))
+}
+
+async fn anchor_since(
+    creds: &ImapCredentials,
+    since: NaiveDate,
+) -> Result<DateAnchor, ImportError> {
+    let (mut session, mailbox) = open(creds).await?;
+    let matches = session
+        .uid_search(search_since(since))
+        .await
+        .map_err(|e| ImportError::Upstream(format!("uid_search since {since}: {e}")))?;
+    let _ = session.logout().await;
+    Ok(DateAnchor {
+        first_uid: matches.into_iter().min(),
+        // UIDNEXT is one past the highest UID ever assigned, which is at least the
+        // highest present — enough for "nothing since, resume from the newest".
+        highest_uid: mailbox.uid_next.map(|next| next.saturating_sub(1)),
+        uid_validity: mailbox.uid_validity,
+    })
+}
+
+async fn fetch(creds: &ImapCredentials, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError> {
+    let (mut session, mailbox) = open(creds).await?;
     let uid_validity = mailbox.uid_validity;
 
     let renumbered = mailbox_was_renumbered(cursor.uid_validity, uid_validity);
@@ -348,6 +389,14 @@ mod tests {
     /// a rewind stores `Some(0)` precisely because deleting the row would mean
     /// `None`, and `None` fetches only the newest message. Storing zero is what
     /// asks for the whole mailbox.
+    /// RFC 3501's grammar allows only `d-Mon-yyyy`; an ISO date is outside it.
+    #[test]
+    fn a_date_search_uses_the_imap_date_form() {
+        let d = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        assert_eq!(search_since(d(2026, 8, 28)), "SINCE 28-Aug-2026");
+        assert_eq!(search_since(d(2026, 9, 1)), "SINCE 1-Sep-2026");
+    }
+
     #[test]
     fn a_rewound_cursor_asks_for_every_message_and_an_absent_one_does_not() {
         assert_eq!(uid_range(&at(Some(0))), "1:*", "a rewind must ask for all");

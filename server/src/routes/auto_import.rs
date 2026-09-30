@@ -162,10 +162,14 @@ pub struct CursorResetRequest {
     /// it. Same gate as the wipe's confirm, for the same reason: a shell with
     /// the wrong host should not be able to aim this at the live mailbox.
     pub instance: String,
+    /// Re-fetch from the first message received on or after this date instead of
+    /// from the beginning. `YYYY-MM-DD`.
+    #[serde(default)]
+    pub since: Option<chrono::NaiveDate>,
 }
 
 /// `POST /auto_import/sources/{name}/cursor/reset` — rewind one source so its
-/// next pull re-fetches from the beginning.
+/// next pull re-fetches from the beginning, or from `since`.
 ///
 /// ⚠️ Not a restore. Re-fetched mail is archived again, so every message this
 /// rewinds past gains a second document record — one blob each, since blobs are
@@ -197,7 +201,11 @@ async fn reset_cursor_handler(
         ));
     }
 
-    match state.auto_import_registry.reset_cursor(&name).await {
+    match state
+        .auto_import_registry
+        .reset_cursor(&name, req.since)
+        .await
+    {
         Ok(outcome) => Ok(Json(outcome)),
         Err(omni_me_core::auto_import_scheduler::ImportError::NotConfigured(msg)) => {
             Err((StatusCode::NOT_FOUND, msg))

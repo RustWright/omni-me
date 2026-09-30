@@ -14,6 +14,7 @@
 //! `SurrealCursorStore` and test-side mocks share the same surface.
 
 use async_trait::async_trait;
+use chrono::NaiveDate;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -24,7 +25,9 @@ use crate::db::Database;
 use crate::events::{EventStore, ProjectionRunner};
 use surrealdb::types::SurrealValue;
 
-use super::imap::{ArchiveTarget, FetchCursor, ImapFetcher, ImapHandler, poll_once};
+use super::imap::{
+    ArchiveTarget, FetchCursor, ImapFetcher, ImapHandler, cursor_for_anchor, poll_once,
+};
 
 #[async_trait]
 pub trait CursorStore: Send + Sync {
@@ -268,7 +271,10 @@ impl AutoImportSource for ImapSource {
         tally.finish()
     }
 
-    async fn reset_cursor(&self) -> Result<CursorResetOutcome, ImportError> {
+    async fn reset_cursor(
+        &self,
+        since: Option<NaiveDate>,
+    ) -> Result<CursorResetOutcome, ImportError> {
         // ⛔ Rewound to zero, NOT deleted — and the difference is the whole
         // behaviour. An absent cursor means "never polled" to every fetcher here,
         // and that case deliberately anchors to the mailbox's newest message so a
@@ -276,6 +282,15 @@ impl AutoImportSource for ImapSource {
         // therefore move the source *forward* to now, which is the opposite of
         // what a rewind promises. `uid_range` holds this line.
         const REWOUND: u32 = 0;
+
+        // A date is located in the mailbox's numbering as it is now, so the validity
+        // stored with it is the one just observed, not the one on file.
+        let anchor = match since {
+            Some(date) => Some(self.fetcher.first_uid_since(date).await?),
+            None => None,
+        };
+        let target = anchor.as_ref().map_or(REWOUND, cursor_for_anchor);
+        let observed_validity = anchor.and_then(|a| a.uid_validity);
 
         // Both halves, and neither alone is enough. The row is what a restart
         // reads; the in-memory cursor is what this process reads *and* what the
@@ -287,11 +302,11 @@ impl AutoImportSource for ImapSource {
                 cs.save(
                     &self.name,
                     StoredCursor {
-                        uid: REWOUND,
+                        uid: target,
                         // Kept: the mailbox has not been renumbered by us asking
                         // to re-read it, and dropping it would make the next tick
                         // treat the validity as unknown.
-                        uid_validity: existing.and_then(|c| c.uid_validity),
+                        uid_validity: observed_validity.or(existing.and_then(|c| c.uid_validity)),
                     },
                 )
                 .await?;
@@ -303,7 +318,10 @@ impl AutoImportSource for ImapSource {
         let previous = {
             let mut guard = self.cursor.lock().await;
             let was = guard.last_seen_uid;
-            guard.last_seen_uid = Some(REWOUND);
+            guard.last_seen_uid = Some(target);
+            if observed_validity.is_some() {
+                guard.uid_validity = observed_validity;
+            }
             was
         };
 
@@ -312,10 +330,14 @@ impl AutoImportSource for ImapSource {
         // future caller passing `None`) has instead.
         let from = stored.map(|c| c.uid).or(previous);
 
-        Ok(match from {
+        Ok(match (anchor, from) {
+            (Some(_), from) => CursorResetOutcome::MovedToDate {
+                from_uid: from,
+                to_uid: target,
+            },
             // Reported as where it was, not where it now is: "rewound past 4,812"
             // is checkable against the mailbox; "set to 0" is not.
-            Some(uid) if uid != REWOUND => CursorResetOutcome::Rewound { from_uid: uid },
+            (None, Some(uid)) if uid != REWOUND => CursorResetOutcome::Rewound { from_uid: uid },
             _ => CursorResetOutcome::AlreadyAtStart,
         })
     }
@@ -424,7 +446,7 @@ mod tests {
             "the first pull should have recorded where it got to"
         );
 
-        let outcome = source.reset_cursor().await.unwrap();
+        let outcome = source.reset_cursor(None).await.unwrap();
         assert_eq!(
             outcome,
             CursorResetOutcome::Rewound { from_uid: 101 },
@@ -465,9 +487,62 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            source.reset_cursor().await.unwrap(),
+            source.reset_cursor(None).await.unwrap(),
             CursorResetOutcome::AlreadyAtStart
         );
+    }
+
+    /// A date rewind lands one below the first match, in both halves, under the
+    /// validity the search observed rather than the one on file.
+    #[tokio::test]
+    async fn a_date_rewind_stops_just_before_the_first_message_since() {
+        use super::super::imap::DateAnchor;
+        let (_db, store, projections) = test_db_runner().await;
+        let fetcher = Arc::new(MockFetcher::new("gmail"));
+        fetcher.set_anchor(DateAnchor {
+            first_uid: Some(14_500),
+            highest_uid: Some(14_878),
+            uid_validity: Some(7),
+        });
+        let cursor_store: Arc<dyn CursorStore> = Arc::new(MemCursorStore::new());
+        cursor_store
+            .save(
+                "gmail",
+                StoredCursor {
+                    uid: 400,
+                    uid_validity: Some(7),
+                },
+            )
+            .await
+            .unwrap();
+        let source = ImapSource::new(
+            "gmail",
+            fetcher,
+            vec![],
+            Some(cursor_store.clone()),
+            store,
+            projections,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let since = NaiveDate::from_ymd_opt(2026, 8, 28);
+        assert_eq!(
+            source.reset_cursor(since).await.unwrap(),
+            CursorResetOutcome::MovedToDate {
+                from_uid: Some(400),
+                to_uid: 14_499,
+            },
+        );
+        assert_eq!(
+            cursor_store.load("gmail").await.unwrap(),
+            Some(StoredCursor {
+                uid: 14_499,
+                uid_validity: Some(7),
+            }),
+        );
+        assert_eq!(source.cursor.lock().await.last_seen_uid, Some(14_499));
     }
 
     #[tokio::test]

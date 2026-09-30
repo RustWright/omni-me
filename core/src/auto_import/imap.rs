@@ -30,7 +30,7 @@
 //! yours?" in order.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 
 use crate::auto_import_scheduler::ImportError;
 use crate::events::{EventType, NewEvent};
@@ -93,6 +93,30 @@ pub trait ImapFetcher: Send + Sync {
     /// from `cursor.uid_validity` as a reset rather than as a gap: the stored UID
     /// belongs to a numbering that no longer exists.
     async fn fetch_new(&self, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError>;
+
+    /// Where `since` falls in this mailbox's numbering, so a rewind can start at a
+    /// date instead of at the first message ever received.
+    async fn first_uid_since(&self, since: NaiveDate) -> Result<DateAnchor, ImportError>;
+}
+
+/// What [`ImapFetcher::first_uid_since`] found.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DateAnchor {
+    /// Lowest UID received on or after the date; `None` when nothing was.
+    pub first_uid: Option<u32>,
+    /// Highest UID the mailbox holds, used when nothing matched the date.
+    pub highest_uid: Option<u32>,
+    pub uid_validity: Option<u32>,
+}
+
+/// The UID a date rewind stores: one below the first match, so the next pull's
+/// `{uid+1}:*` starts on it. With no match the source goes to the newest message,
+/// since "nothing since then" means up to date, not start over.
+pub fn cursor_for_anchor(anchor: &DateAnchor) -> u32 {
+    match anchor.first_uid {
+        Some(first) => first.saturating_sub(1),
+        None => anchor.highest_uid.unwrap_or(0),
+    }
 }
 
 /// Per-source handler — receipts, AED statements, etc. Each handler claims
@@ -361,6 +385,7 @@ pub mod mock {
         name: String,
         // Returned one per `fetch_new` call, in order.
         scripted: Mutex<std::collections::VecDeque<FetchOutcome>>,
+        anchor: Mutex<DateAnchor>,
     }
 
     impl MockFetcher {
@@ -368,7 +393,12 @@ pub mod mock {
             Self {
                 name: name.into(),
                 scripted: Mutex::new(std::collections::VecDeque::new()),
+                anchor: Mutex::new(DateAnchor::default()),
             }
+        }
+        /// What every `first_uid_since` call answers, whatever the date.
+        pub fn set_anchor(&self, anchor: DateAnchor) {
+            *self.anchor.lock().unwrap() = anchor;
         }
         pub fn push_response(&self, messages: Vec<ImapMessage>, max_uid: Option<u32>) {
             self.scripted.lock().unwrap().push_back(FetchOutcome {
@@ -404,6 +434,9 @@ pub mod mock {
                 .unwrap()
                 .pop_front()
                 .unwrap_or_default())
+        }
+        async fn first_uid_since(&self, _since: NaiveDate) -> Result<DateAnchor, ImportError> {
+            Ok(*self.anchor.lock().unwrap())
         }
     }
 
@@ -488,6 +521,22 @@ mod tests {
         let msg = make_message(101, "noreply@meridian.example");
         let h = dispatch_to(&msg, &handlers).expect("first handler should match");
         assert_eq!(h.name(), "meridian");
+    }
+
+    #[test]
+    fn a_date_with_no_mail_since_leaves_the_source_at_the_newest() {
+        let anchor = |first_uid, highest_uid| DateAnchor {
+            first_uid,
+            highest_uid,
+            uid_validity: None,
+        };
+        assert_eq!(
+            cursor_for_anchor(&anchor(Some(14_500), Some(14_878))),
+            14_499
+        );
+        assert_eq!(cursor_for_anchor(&anchor(Some(1), Some(10))), 0);
+        assert_eq!(cursor_for_anchor(&anchor(None, Some(14_878))), 14_878);
+        assert_eq!(cursor_for_anchor(&anchor(None, None)), 0);
     }
 
     #[test]

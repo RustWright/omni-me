@@ -22,7 +22,7 @@
 //! for tests + as a placeholder when a real source isn't yet configured.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -357,6 +357,9 @@ pub enum CursorResetOutcome {
     /// the start in the same sense — an absent cursor anchors to the newest
     /// message — but the rewind has put it at the start now regardless.
     AlreadyAtStart,
+    /// Moved to the first message received on or after the requested date. Either
+    /// direction: from the start, this skips forward past the older mail.
+    MovedToDate { from_uid: Option<u32>, to_uid: u32 },
     /// This source keeps no read position (the trait default), so there is
     /// nothing to rewind. A caller reaching this hit the route for a source
     /// that is handed its material rather than reading a stream.
@@ -401,13 +404,17 @@ pub trait AutoImportSource: Send + Sync {
     }
 
     /// Forget how far this source has read, so its next pull starts from the
-    /// beginning. Default `NotSupported`: most sources are handed their
-    /// material and keep no place in a stream.
+    /// beginning, or from the first message on or after `since`. Default
+    /// `NotSupported`: most sources are handed their material and keep no place
+    /// in a stream.
     ///
     /// ⚠️ This is not the inverse of a wipe. What returns is re-fetched, not
     /// restored, so whatever the source archives on the way past it archives a
     /// second time. `docs/src/features.md` § Three things this does not cover.
-    async fn reset_cursor(&self) -> Result<CursorResetOutcome, ImportError> {
+    async fn reset_cursor(
+        &self,
+        _since: Option<NaiveDate>,
+    ) -> Result<CursorResetOutcome, ImportError> {
         Ok(CursorResetOutcome::NotSupported)
     }
 }
@@ -688,7 +695,11 @@ impl SourceRegistry {
     /// ⛔ Does not tick. Rewinding and re-fetching are separate so the position
     /// can be cleared while the source is paused — a reset that immediately
     /// re-pulled would give no chance to stop between them.
-    pub async fn reset_cursor(&self, name: &str) -> Result<CursorResetOutcome, ImportError> {
+    pub async fn reset_cursor(
+        &self,
+        name: &str,
+        since: Option<NaiveDate>,
+    ) -> Result<CursorResetOutcome, ImportError> {
         let source = {
             let guard = self.inner.read().await;
             guard
@@ -696,7 +707,7 @@ impl SourceRegistry {
                 .map(|r| r.source.clone())
                 .ok_or_else(|| ImportError::NotConfigured(format!("unknown source: {name}")))?
         };
-        let outcome = source.reset_cursor().await?;
+        let outcome = source.reset_cursor(since).await?;
         tracing::warn!(
             source = name,
             ?outcome,
