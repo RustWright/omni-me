@@ -1148,8 +1148,25 @@ critical path, not the tail.
    📊 **Measured, do not re-derive:** ~11 KB of volume per message (186.4 → 190.9 MB over 400), so
    a full 14,878-message drain is ~165 MB — disk is not the constraint against 23 G free. **The
    constraint is model calls**: every archived message runs receipt extraction, so the remaining
-   ~14,478 are that many calls, order **$30** on DeepSeek-V4-Pro. ⛔ Paused at ~UID 400 pending his
-   call; the cursor is persisted, so a resume continues exactly there.
+   ~14,478 are that many calls. ⚠️ The **$30** first quoted here was priced on V4-Pro; dev's receipt
+   seat is **DeepSeek-V4.1-Flash** ($0.20 / $0.60 per M, DeepInfra catalogue 2026-09-30), so the
+   full drain is est. $5–15, inferred rather than measured (no per-message token counts exist).
+   🔴 **DECIDED 2026-09-30 (user): no full drain on dev — rewind to a DATE and re-fetch from
+   2026-08-28 only**, the day the restored historical ledger ends. His reasons: dev results cannot
+   be carried to live (events come from newer code, blobs need a separate copy, the live cursor and
+   his review decisions would have to move too), so a full dev drain is paid twice. Steady state is
+   under 100 mails a week, so only the one-time backlog costs anything. Whole-mailbox archiving is
+   a separate question, for live, once.
+   📊 **What the first 406 were**: 275 labelled `Marketing` by the model, 376 from facebookmail.com.
+   The oldest UIDs, so not a representative sample of the mailbox.
+   ✅ **Date rewind BUILT 2026-09-30** (`0912470`): `since: "YYYY-MM-DD"` on the cursor-reset route,
+   `UID SEARCH SINCE` → store one below the first match, under the validity the search observed.
+   Nothing since the date leaves the source at the newest message. Answers `moved_to_date`.
+   ⏳ **Queued by his decision: a cheap first-pass filter** before full extraction (sender, subject
+   and snippet to a cheaper model). It must decide by inference, not a list (the 2026-09-25 ruling),
+   and needs its receipt-miss rate measured before it gates anything, since a miss is silent.
+   Gmail's own categories are a second signal: `X-GM-RAW` takes web-search syntax, but the docs do
+   not confirm `category:` works through it, and Yahoo has no equivalent.
    ✅ **Real-mail failure rate, first honest sample**: 1 in 400 failed extraction (uid 5926, model
    hit its 8192-token ceiling). It was counted in `dropped` and the pass continued — the
    per-message resilience in `imap.rs` working as its comment says it should.
@@ -2243,7 +2260,8 @@ the extractor has.
 - `ws-session.json` (real bank session) deleted from the clone. Dev credentials carry **no**
   IMAP/bank sections so auto-import cannot poll real mailboxes. Fresh `auth_token`, not live's.
 - **Dev phone** `SM-G960W`: wireless adb over the **tailnet**, screen timeout 30 min.
-  ⚠️ `adb` is at `~/android-sdk/platform-tools/adb`, NOT on `PATH`.
+  `adb connect galaxy-s9:5555` from any tailnet machine. ⚠️ The adb path differs per machine:
+  `~/android-sdk/platform-tools/adb` on the old build host, `/usr/bin/adb` on the WSL box.
 - APK: `build-dev-apk.yml` → `~/omni-dev/apk/` on the box, installed by `adb install`.
   ⛔ Never `/var/omni-updates` — that is the LIVE OTA store.
 
@@ -2841,6 +2859,11 @@ performance are release criteria alongside correctness.
 - **Attachment provenance was invisible in review.** `SourceEmailPanel` printed "attachments
   are separate entries in the Archive" with no link. Now lists the children and opens one
   inline, one at a time. ⚠️ Pure frontend — `invoke_document_children` already existed.
+
+**Seen while installing 1.1.12-dev (2026-09-30), not yet diagnosed.** Launch showed Today
+2026-09-30 with the editor on "Loading…" through the documents projection rebuild (~60 s, 27,196
+events, 0 failed). When the rebuild finished, the view was **Entry 2026-09-24** with "Back to
+today", and nobody had touched the phone. It could be restored navigation state or a real jump.
 
 **Two findings, still open.**
 - 🔴 **Reconciliation cannot match a tentative charge plus its balancing charge.** His
