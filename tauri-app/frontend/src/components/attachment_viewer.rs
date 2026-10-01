@@ -269,15 +269,19 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
                 "Attachment"
             }
             div { class: "p-3 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg space-y-3",
-                div { class: "flex items-center gap-2 text-xs text-obsidian-text-muted",
-                    svg { class: "w-3.5 h-3.5 text-obsidian-accent",
+                // An unbreakable filename once pushed this row 80px past a phone screen,
+                // so the name truncates and the size and type never shrink.
+                div { class: "flex items-center gap-2 text-xs text-obsidian-text-muted min-w-0",
+                    svg { class: "w-3.5 h-3.5 text-obsidian-accent shrink-0",
                         fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
                         path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
                             d: "M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
                         }
                     }
-                    span { class: "font-mono text-obsidian-text", "{meta.filename}" }
-                    span { " · {size_kb} KB · {meta.mime_type}" }
+                    span { class: "font-mono text-obsidian-text truncate min-w-0", title: "{meta.filename}",
+                        "{meta.filename}"
+                    }
+                    span { class: "shrink-0", " · {size_kb} KB · {meta.mime_type}" }
                 }
 
                 if let Some(msg) = error.read().clone() {
