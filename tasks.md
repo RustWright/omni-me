@@ -2979,7 +2979,9 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   another step. It was parked on `feature_set.peek().is_none()` forever, because `App` called
   `features::use_features_provider()` TWICE (both in `c7ad928`, 2026-09-06). The config read
   filled the second signal, which the pages saw; the restore and the share intake waited on the
-  first, never filled. ✅ FIXED `9c93fd3`, one provider. ⚠️ Same casualty: a receipt shared into
+  first, never filled. ✅ FIXED `9c93fd3`, one provider. ✅ **VERIFIED on the phone, 1.1.14-dev**:
+  launch reopened Notes (stored); switched to Routines, force-stopped, relaunched onto Routines,
+  splash lifting in ~1.9s both times. ⚠️ Same casualty: a receipt shared into
   the app from Android's share sheet never switched to Finances. Class check: every other context
   in the frontend is provided exactly once.
   The 2026-09-24 jump is the journal restoring its own last-viewed date (`nav.journal_date`),
@@ -3045,7 +3047,10 @@ could have caught on your own"*. Two artifacts, only one of which exists yet:
   one failed exactly the archive detail, pane panning 200px at 360 and 170px at 390, with no
   other screen flagged (`3efd332`). ⚠️ The header fix (`cd76437`) did NOT clear it: same 200px and
   170px, so the long-filename fixture exposes a second overflow in the archive detail. The sweep
-  now names the descendants pushing a pane (`a9467a5`) to find it.
+  now traces it (`9310455`): the detail's `h1` title, the filename, text 512px wide in a 296px
+  box. Text spilling out of an in-bounds box is invisible to a bounding-box check, which is why
+  the culprit list came back empty. ✅ Fixed `c7b0ad0` (`break-all`). A real bug for any long
+  filename, not a fixture artefact.
 - 🔴 **It reported green twice while completely broken, and that is the lesson worth keeping.**
   Run 1: `editor.bundle.js` was missing from the served bundle, so the first tab switch aborted
   the wasm (the trap in `project-dx-serve-needs-the-editor-bundle`, which I had and did not
