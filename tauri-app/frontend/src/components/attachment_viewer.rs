@@ -429,7 +429,8 @@ fn DocumentLightbox(
 
     rsx! {
         div {
-            class: "fixed inset-0 z-50 bg-black/95 flex flex-col",
+            // Opaque: at 95% the page underneath read through on the phone.
+            class: "fixed inset-0 z-50 bg-black flex flex-col",
             tabindex: "0",
             onkeydown: move |e| {
                 if e.key() == Key::Escape {
@@ -534,7 +535,9 @@ fn PdfView(url: String, #[props(default)] full: bool) -> Element {
                     }
                 },
                 Some(Ok((pages, _))) => rsx! {
-                    p { class: "text-[10px] text-obsidian-text-muted", "{pages} pages" }
+                    p { class: "text-[10px] text-obsidian-text-muted",
+                        if *pages == 1 { "1 page" } else { "{pages} pages" }
+                    }
                 },
             }
         }

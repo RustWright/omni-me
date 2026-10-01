@@ -3022,6 +3022,23 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
     "Load full resolution". Expected ~200–400 KB, so ~1 s on his link instead of 10–24 s.
   - ⛔ Previews are derived and disposable: never synced, never referenced by an event, and
     deleting the cache directory is always safe.
+  ✅ **Built 2026-10-01**: server `GET /blobs/{hash}/preview` (`9dd22d0`, EXIF-upright,
+  `previews/` beside the blob dir, two socket tests); app `fetch_attachment_preview` with a 404
+  fallback to the original; `DocumentLightbox` (pinch, +/−/1×, Escape, Android back through a new
+  `BackNav.overlay_open`); per-instance PDF container ids (`cb033be`).
+  ✅ **On the phone, 1.1.16-dev + dev image `dev-c0b6611-517af2b`, 2026-10-01**: the 3.9 MB photo
+  previews at 228 KB in 1.7s cold (server generating it) and 34 ms cached; the original took 2.6s
+  this time against 23.6s overnight, so his link varies through the day and the preview is the
+  constant 17× saving. Storage receipt PDF: the overlay opened with the page rendered, zoom
+  attached (`touch-action: none`), and a dispatched `omni:back` closed the overlay and stayed on
+  the batch. The overlay was 95% black and the page read through it, so it is opaque now.
+  ⏳ **Not verified: an actual pinch.** CDP cannot produce a two-finger gesture; his hands can.
+  ⚠️ Found on the way: the model-input path (`prepare_image`) ignores EXIF orientation, so sideways
+  phone photos reach the vision model rotated. Not fixed; it changes what the model sees.
+  🔴 **CI and the APK build broke on Rust 1.99** (`stable` moved 2026-09-28), not on this code:
+  `double_must_use` ×54 on `#[async_trait]`, and wasm-bindgen's `isArray` adapter. Pinned to
+  1.98.1 in both repos and the Dockerfile (`517af2b`, overlay `c0b6611`). The 1.99 upgrade is
+  owed as its own task.
 - F2. **Correct a proposed transaction before committing it.** Review is commit or dismiss only,
   so one wrong account forces a choice between committing an error and losing the rest.
 - F2a. **Batch rows cannot be told apart** (seen driving the phone 2026-10-01): every row reads
