@@ -394,7 +394,10 @@ fn App() -> Element {
     // this component makes. Seeded to `Tab::Journal` and corrected once the set
     // resolves — the render gate below holds the nav until then, so a hidden tab
     // is never briefly drawn.
-    let feature_set = features::use_features_provider();
+    // The only provider. A second call further down once shadowed this one: the
+    // config read filled the second, the tab restore and share intake waited on
+    // this one forever, and every launch opened on Journal for 3½ weeks.
+    let mut feature_set = features::use_features_provider();
     // Not a hook, so it is safe to call inside an effect or an event closure.
     // Reading the signal is what makes those callers reactive.
     let home_of = move || home_tab(&feature_set.read().clone().unwrap_or_default());
@@ -769,7 +772,6 @@ fn App() -> Element {
     use_context_provider(|| AccentPref(accent_signal));
     // One `get_config` serves both appearance and the feature set — the two are
     // in the same response, and this sits on the pre-paint path.
-    let mut feature_set = features::use_features_provider();
     use_future(move || async move {
         // Bounded retry, mirroring the workspace boot read in `continuity.rs`.
         // An invoke fired before the native IPC handler is ready is *dropped* —
