@@ -3080,6 +3080,9 @@ could have caught on your own"*. Two artifacts, only one of which exists yet:
   excuse, and any unmarked container scrolling sideways fails.
   ✅ **It has now failed for a deliberately introduced regression.** A fixture with a long
   unbreakable filename, pushed without the B1 fix: the old sweep passed it (`f9805df`); the new
+  🔴 **DECIDED 2026-10-01 (user): stays report-only** (`continue-on-error`) for now, even after
+  failing correctly once; he wants more history first. ⛔ Do not re-ask until it has run clean
+  for a few weeks of real pushes.
   one failed exactly the archive detail, pane panning 200px at 360 and 170px at 390, with no
   other screen flagged (`3efd332`). ⚠️ The header fix (`cd76437`) did NOT clear it: same 200px and
   170px, so the long-filename fixture exposes a second overflow in the archive detail. The sweep

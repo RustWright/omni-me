@@ -13,8 +13,6 @@ Owed and not blocking: the Rust 1.99 upgrade (CI is pinned to 1.98.1 since it br
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
-The layout sweep has now failed for a real regression and passed after the fixes; whether to drop
-its `continue-on-error` is his call, `tasks.md` § Open — from daily use.
 
 ## ⛔ Waiting on him
 - **Try F1 on the dev phone (1.1.17-dev)**: pinch-zoom a receipt photo and a PDF. Everything
