@@ -6,9 +6,9 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 
 ## ▶ NEXT ACTION — F2: correct a proposal before commit, with F2a (rows that say what they are)
 His order 2026-09-30: bugs, F1, then F2. F1 is built and running on the dev phone (1.1.17-dev);
-`tasks.md` § On-device pass, F1. Design first: which fields are editable, and how an edit is
-recorded so the original proposal stays auditable. Then F5 (encrypted statements, decided;
-`tasks.md` § On-device pass, F5).
+`tasks.md` § On-device pass. F2's design calls are DECIDED there (F2 design); build it, deploy to
+dev, verify on the dev phone, then continue straight into F5 without waiting (his go-ahead,
+2026-10-01). He is away: no questions he can't answer later, a decision log for each judgement call.
 Owed and not blocking: the Rust 1.99 upgrade (CI is pinned to 1.98.1 since it broke on
 `stable`), and the triage scoring query once batches carrying a verdict have been reviewed.
 
