@@ -5927,7 +5927,9 @@ fn mock_documents() -> Vec<DocumentItem> {
         DocumentItem {
             document_id: "doc-wide-statement".into(),
             sha256: Some("f".repeat(64)),
-            filename: Some("chequing-2026-02-full-export_AllAccounts__20260228_000123456789.csv".into()),
+            filename: Some(
+                "chequing-2026-02-full-export_AllAccounts__20260228_000123456789.csv".into(),
+            ),
             mime_type: Some("text/csv".into()),
             size: Some(64_233),
             archived_at: Some("2026-03-05T08:00:00Z".into()),

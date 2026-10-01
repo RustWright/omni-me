@@ -75,7 +75,7 @@ pub fn SettingsPage() -> Element {
                     label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Sync Server Address" }
                     div { class: "flex gap-2",
                         input {
-                            class: "{INPUT_CLASS} flex-1",
+                            class: "{INPUT_CLASS} flex-1 min-w-0",
                             r#type: "text",
                             value: "{server_url}",
                             oninput: move |e| {
@@ -110,7 +110,7 @@ pub fn SettingsPage() -> Element {
                     }
                     div { class: "flex gap-2",
                         input {
-                            class: "{INPUT_CLASS} flex-1",
+                            class: "{INPUT_CLASS} flex-1 min-w-0",
                             r#type: "password",
                             autocomplete: "off",
                             placeholder: if *has_token.read() { "Configured — type to replace" } else { "Not set" },
@@ -182,7 +182,7 @@ pub fn SettingsPage() -> Element {
                     }
                     div { class: "flex gap-2",
                         input {
-                            class: "{INPUT_CLASS} flex-1",
+                            class: "{INPUT_CLASS} flex-1 min-w-0",
                             r#type: "text",
                             placeholder: "e.g. America/New_York",
                             value: "{tz_input}",
@@ -1571,7 +1571,9 @@ fn AccountOverrideRow(
     let mut saving = use_signal(|| false);
     let row_dim = if hidden { "opacity-50" } else { "" };
 
-    let inp = "flex-1 min-w-0 px-2 py-1 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-50";
+    // `w-full`, not `flex-1`: the input's parent is a block, so flex sizing never
+    // applied and the default input width ran 42px under the Liquid button.
+    let inp = "w-full min-w-0 px-2 py-1 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-50";
 
     // Current rename value → Option (empty = clear the override label).
     let current_name = move || {

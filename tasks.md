@@ -2951,6 +2951,43 @@ performance are release criteria alongside correctness.
   are separate entries in the Archive" with no link. Now lists the children and opens one
   inline, one at a time. ⚠️ Pure frontend — `invoke_document_children` already existed.
 
+### On-device pass on 1.1.12-dev — his, 2026-09-30 evening
+
+✅ **Verified on the phone:** the archive's Unchecked-only filter; the assistant's archive row
+landing on the filtered list; no sideways pan in the archive detail; cached blobs reopen fast.
+The finances row lands on the overview with the review card ringed, not inside a queue. He
+accepted that as designed. 16 archive reviews cleared; the ~70 finance batches spot-checked only.
+
+**Bugs, mine to fix:**
+- B1. **Finance review attachment overflows the page** (the storage receipt): the side pan is back,
+  in `SourceEmailPanel`. Same class as the archive's `min-w-0` fix, and the layout sweep missed it
+  because no fixture puts a wide attachment in a finance review.
+- B2. **Settings › accounts rows overflow onto the Liquid button.** Long-standing.
+- B3. **The app always reopens on Journal (Today)**, whatever page it was closed on. `main.rs` says
+  the continuity store restores the last tab behind the splash, so this is a broken restore, not a
+  default. The unexplained jump to the 2026-09-24 entry is probably the same store.
+- B4. **A receipt image takes 5–10 s to appear** on first open in the archive (cached reopen fast).
+  📊 Measured 2026-10-01 over DevTools on the phone, 3.9 MB photo: **23.6 s cold**, 0.25 s cached.
+  The server sends it in 8 ms on the box, and the cached path (bytes returned as a JSON number
+  array over IPC) costs ~0.3 s, so neither is the problem. **The link is**: 170–380 KB/s over the
+  tailnet, and only 0.6–1.2 MB/s from the same home machine to Hetzner's public speed-test
+  servers, US ones included. ▶ The fix is to send less: a downscaled preview (a few hundred KB)
+  for viewing, the original only on zoom. Folded into F1, which needs the original anyway.
+  ⚠️ Side find: `list_documents` with `mime: "image/jpeg"` returns nothing although 10 JPEGs exist.
+- ~~B5. The same order appears several times in archive review.~~ Not a bug: the repeated one is
+  three separate photo captures from 2026-09-17, the day photo capture was first tested on the
+  phone. Three photos, three documents, minutes apart. Catching near-identical captures would be a
+  feature, not filed.
+
+**Design calls.** 🔴 Order DECIDED 2026-09-30 (user): bugs first, then **F1, then F2**; F3 later.
+- F1. **Zoom and full screen for images and PDFs**, in the archive and in finance review. A
+  payslip PDF is unreadable at its current size, so fine print cannot be confirmed.
+- F2. **Correct a proposed transaction before committing it.** Review is commit or dismiss only,
+  so one wrong account forces a choice between committing an error and losing the rest.
+- F3. **A multi-image receipt as one document.** Two photos of one bank receipt became two.
+- F4. **How a superseded order reads in the email receipt view** "makes no sense". Needs an example
+  before it can be designed.
+
 **Seen while installing 1.1.12-dev (2026-09-30), not yet diagnosed.** Launch showed Today
 2026-09-30 with the editor on "Loading…" through the documents projection rebuild (~60 s, 27,196
 events, 0 failed). When the rebuild finished, the view was **Entry 2026-09-24** with "Back to

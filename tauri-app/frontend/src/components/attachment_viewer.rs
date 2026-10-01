@@ -308,6 +308,7 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
                             AttachmentRender::Csv => rsx! { CsvTable { text: text.clone() } },
                             _ => rsx! {
                                 pre {
+                                    "data-scroll-x": "true",
                                     class: "max-h-[600px] overflow-auto p-3 rounded border border-obsidian-border/10 \
                                             bg-obsidian-bg text-[11px] font-mono text-obsidian-text whitespace-pre-wrap",
                                     "{text}"
@@ -426,7 +427,9 @@ fn CsvTable(text: String) -> Element {
 
     rsx! {
         div { class: "space-y-2",
-            div { class: "max-h-[600px] overflow-auto rounded border border-obsidian-border/10",
+            div {
+                "data-scroll-x": "true",
+                class: "max-h-[600px] overflow-auto rounded border border-obsidian-border/10",
                 table { class: "w-full text-[11px] font-mono border-collapse",
                     tbody {
                         for (i, row) in rows.iter().enumerate() {

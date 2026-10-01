@@ -63,25 +63,36 @@ function cssPathSource() {
 }
 
 /**
- * Elements sticking out past the right edge.
+ * Elements sticking out past the right edge, and containers that scroll sideways.
  *
- * Anything inside a scroll container is skipped: a wide CSV table inside a box
- * that scrolls is working as designed, and reporting it would bury the real
- * finding under every legitimately-scrollable child.
+ * A container meant to scroll sideways (a CSV table, raw text) carries
+ * `data-scroll-x` and excuses what is inside it. Nothing else does.
  */
 async function overflowReport(page) {
   return page.evaluate(() => {
     const limit = window.innerWidth + 1; // 1px for sub-pixel rounding
-    const scrolls = (el) => {
-      const o = getComputedStyle(el).overflowX;
-      return o === "auto" || o === "scroll" || o === "hidden" || o === "clip";
-    };
-    const insideScroller = (el) => {
+    // Excused only by a container that clips, or one marked as meant to scroll
+    // sideways. Any `overflow-y-auto` pane computes overflow-x to `auto`, so
+    // excusing every scroller excused the whole page: the sweep was blind to the
+    // content pane panning, which is the failure users see. Found 2026-10-01.
+    const excused = (el) => {
       for (let p = el.parentElement; p; p = p.parentElement) {
-        if (scrolls(p)) return true;
+        const o = getComputedStyle(p).overflowX;
+        if (o === "hidden" || o === "clip") return true;
+        if (p.hasAttribute("data-scroll-x")) return true;
       }
       return false;
     };
+    // A container that actually scrolls sideways without being marked for it.
+    const panners = [];
+    for (const el of document.querySelectorAll("body *")) {
+      const o = getComputedStyle(el).overflowX;
+      if (o !== "auto" && o !== "scroll") continue;
+      if (el.scrollWidth <= el.clientWidth + 1) continue;
+      if (el.closest("[data-scroll-x]")) continue;
+      panners.push({ path: window.__omniPath(el), by: el.scrollWidth - el.clientWidth });
+    }
+    const insideScroller = excused;
     const offenders = [];
     for (const el of document.querySelectorAll("body *")) {
       const r = el.getBoundingClientRect();
@@ -103,6 +114,7 @@ async function overflowReport(page) {
       scrollWidth: doc.scrollWidth,
       clientWidth: doc.clientWidth,
       offenders: unique.slice(0, 6),
+      panners: panners.slice(0, 6),
     };
   });
 }
@@ -215,7 +227,7 @@ try {
       }
       const rep = await overflowReport(page);
       measured.push(label);
-      if (rep.pans || rep.offenders.length) {
+      if (rep.pans || rep.offenders.length || rep.panners.length) {
         failures.push({ where: label, ...rep });
       }
       for (const t of await tapTargetReport(page, MIN_TAP_PX)) {
@@ -232,7 +244,7 @@ try {
           await page.waitForTimeout(600);
           const deep = await overflowReport(page);
           measured.push(`${label} › detail (wide CSV)`);
-          if (deep.pans || deep.offenders.length) {
+          if (deep.pans || deep.offenders.length || deep.panners.length) {
             failures.push({ where: `${label} › detail`, ...deep });
           }
         } else {
@@ -265,6 +277,9 @@ if (failures.length) {
     console.error(`  ${f.where}: page ${f.scrollWidth}px wide in ${f.clientWidth}px`);
     for (const o of f.offenders) {
       console.error(`      reaches ${o.right}px — ${o.path}`);
+    }
+    for (const p of f.panners ?? []) {
+      console.error(`      scrolls sideways by ${p.by}px — ${p.path}`);
     }
   }
   console.error(`\n${failures.length} screen(s) overflow. Nothing should pan sideways.`);

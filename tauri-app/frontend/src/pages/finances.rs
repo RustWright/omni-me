@@ -3013,6 +3013,7 @@ fn SourceEmailPanel(document_id: String) -> Element {
                     },
                     Some(Ok(Some(body))) => rsx! {
                         pre {
+                            "data-scroll-x": "true",
                             class: "max-h-64 overflow-auto p-3 rounded border border-obsidian-border/10 \
                                     bg-obsidian-bg text-[11px] font-mono text-obsidian-text whitespace-pre-wrap",
                             "{body}"
@@ -3215,7 +3216,9 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                 if let Some(meta_str) = metadata_pretty {
                     details { class: "mb-4 text-xs text-obsidian-text-muted",
                         summary { class: "cursor-pointer hover:text-obsidian-text", "Source metadata" }
-                        pre { class: "mt-2 p-3 bg-obsidian-sidebar/60 rounded border border-obsidian-border/5 overflow-x-auto",
+                        pre {
+                            "data-scroll-x": "true",
+                            class: "mt-2 p-3 bg-obsidian-sidebar/60 rounded border border-obsidian-border/5 overflow-x-auto",
                             "{meta_str}"
                         }
                     }
@@ -6892,7 +6895,9 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                                 "Imported despite failing these checks:"
                             }
                         }
-                        div { class: "overflow-x-auto",
+                        div {
+                            "data-scroll-x": "true",
+                            class: "overflow-x-auto",
                             for blocker in result.blockers.iter() {
                                 div { class: "text-xs font-mono whitespace-pre-wrap bg-obsidian-bg border border-red-500/20 rounded px-2 py-1 mb-1 text-obsidian-text",
                                     "• {blocker}"

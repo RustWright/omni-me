@@ -364,6 +364,21 @@ const HEADER_TOGGLE_COOLDOWN_MS: i64 = 400;
 /// while a deliberate scroll clears it easily.
 const HEADER_TOGGLE_DELTA_PX: f64 = 12.0;
 
+/// Appends one boot step to `window.__omniBoot`, readable over WebView DevTools.
+/// Tab restore fails on the phone and nowhere else, and this is how it is watched.
+fn record_boot(step: &str) {
+    if let Some(win) = web_sys::window() {
+        let key = wasm_bindgen::JsValue::from_str("__omniBoot");
+        let log = js_sys::Reflect::get(&win, &key)
+            .ok()
+            .filter(|v| v.is_array())
+            .map(|v| js_sys::Array::from(&v))
+            .unwrap_or_default();
+        log.push(&wasm_bindgen::JsValue::from_str(step));
+        let _ = js_sys::Reflect::set(&win, &key, &log);
+    }
+}
+
 fn main() {
     // Before `launch`, so a failure during the app's own first render is
     // already being recorded. Installing from inside a component would miss
@@ -526,6 +541,11 @@ fn App() -> Element {
             waited += POLL_MS;
         }
 
+        record_boot(&format!(
+            "splash lifts: tab={:?} loaded={} waited={waited}ms",
+            *active_tab.peek(),
+            continuity_store.loaded_peek()
+        ));
         // Disarm before fading: releases every outstanding hold, stops new ones
         // being taken, and opens the render gate on the failure path.
         boot_armed.set(false);
@@ -704,7 +724,9 @@ fn App() -> Element {
         while !continuity_store.loaded_peek() {
             timer::sleep_ms(20).await;
         }
+        record_boot("restore: store loaded");
         if *share_claimed_tab.peek() {
+            record_boot("restore: yielded to a share intent");
             return;
         }
         // Wait for the feature set too: restoring onto a tab that turns out to be
@@ -721,12 +743,17 @@ fn App() -> Element {
         // An unknown key already fell through to the seed; a *known* key whose
         // feature has since been switched off has to fall through the same way,
         // and to the first visible tab rather than to Journal.
+        record_boot(&format!(
+            "restore: stored={:?} parsed={stored:?}",
+            continuity_store.nav_peek().tab
+        ));
         match stored {
             Some(tab) if tab.visible(&feature_set.peek().clone().unwrap_or_default()) => {
                 active_tab.set(tab);
             }
             _ => active_tab.set(home_of()),
         }
+        record_boot(&format!("restore: set {:?}", *active_tab.peek()));
     });
 
     // Appearance. Both keys are held as the *chosen* value, not the resolved one,
