@@ -3064,6 +3064,14 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
     unchanged. No source sets one today; this only stops a silent drop if one ever does.
   - F2a: the row headline is the email subject (else the first description, else the source), the
     sub-line is the receipt's own date(s) · sender · count. The processing date is only a fallback.
+  ✅ **On the phone, 1.1.18-dev, 2026-10-01**: the list reads by subject, receipt date and sender;
+  the form opens seeded from the proposal; a saved correction shows on the row with "corrected";
+  Undo restores it; Commit is disabled while a row is open. The real backend refused a correction
+  to an unticked row and an unbalanced one, and the batch stayed pending.
+  ⏳ **Not run: a successful commit with a correction.** It would spend one of his batches, so
+  the first one he commits is the first run. CI covers `apply_corrections` and the payload.
+  The date wrapped under the chip at 360 px; fixed (header wraps, Undo/Edit grouped), checked
+  live on the page, not yet in an APK.
 - F2a. **Batch rows cannot be told apart** (seen driving the phone 2026-10-01): every row reads
   "Email receipts · 2026-09-30 · 1 transaction", with no vendor or subject, and the date is the
   processing date, not the receipt's. 68 such rows is part of why the queue went unreviewed.

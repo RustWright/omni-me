@@ -3464,26 +3464,27 @@ fn DraftRow(
                     onchange: move |_| on_toggle.call(()),
                 }
                 div { class: "flex-1 min-w-0",
-                    div { class: "flex items-baseline gap-2 mb-1",
+                    div { class: "flex flex-wrap items-baseline gap-2 mb-1",
                         span { class: "text-xs text-obsidian-text-muted font-mono", "#{idx + 1}" }
-                        span { class: "text-sm font-medium text-obsidian-text", "{draft.date}" }
+                        span { class: "text-sm font-medium text-obsidian-text whitespace-nowrap", "{draft.date}" }
                         if corrected {
-                            span { class: "text-xs px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full",
+                            span { class: "text-xs px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full whitespace-nowrap",
                                 "corrected"
                             }
                         }
-                        span { class: "flex-1" }
-                        if corrected {
-                            button {
-                                class: "text-xs px-2.5 py-1 text-obsidian-text-muted hover:text-obsidian-text",
-                                onclick: move |_| on_revert.call(()),
-                                "Undo"
+                        div { class: "ml-auto flex items-baseline gap-1",
+                            if corrected {
+                                button {
+                                    class: "text-xs px-2.5 py-1 text-obsidian-text-muted hover:text-obsidian-text",
+                                    onclick: move |_| on_revert.call(()),
+                                    "Undo"
+                                }
                             }
-                        }
-                        button {
-                            class: "text-xs px-2.5 py-1 rounded-md border border-obsidian-border/10 text-obsidian-text-muted hover:text-obsidian-text hover:border-obsidian-border/20",
-                            onclick: move |_| on_edit.call(()),
-                            "Edit"
+                            button {
+                                class: "text-xs px-2.5 py-1 rounded-md border border-obsidian-border/10 text-obsidian-text-muted hover:text-obsidian-text hover:border-obsidian-border/20",
+                                onclick: move |_| on_edit.call(()),
+                                "Edit"
+                            }
                         }
                     }
                     div { class: "text-sm text-obsidian-text truncate mb-2", "{draft.description}" }
