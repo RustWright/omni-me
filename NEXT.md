@@ -4,12 +4,12 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — put the triage seat on dev in shadow mode, confirm verdicts land
-His decision 2026-09-30: shadow first. Built in `77b31b5` + overlay `9b158a9`; `tasks.md` § Mail
-triage seat. Order: CI green on both → deploy the dev image → back up `credentials-dev.toml`, add
-`[llm.triage] model = "mistralai/Mistral-Small-24B-Instruct-2501"` → restart → check the boot line
-says the seat is on, and the next tick logs a verdict per uid and stores one on each proposal.
-⛔ Dev only; live runs the stamp. Then the scoring query (not built).
+## ▶ NEXT ACTION — build the triage scoring query
+The seat runs on dev in shadow mode (`tasks.md` § Mail triage seat). Scoring joins each
+proposal's `source_metadata.triage` with his decision on it: a committed batch that triage called
+`none` is a miss. It is only meaningful once he has reviewed batches carrying a verdict, so the
+September batches (proposed before the seat existed) do not score it.
+⛔ Dev only; live runs the stamp.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
