@@ -39,6 +39,24 @@ use crate::events::{DraftTransaction, EventStore, ProjectionRunner};
 /// for the lifetime of the process.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Write a helper's one-line request, then close its stdin. A helper that exits
+/// without reading it breaks the pipe, and then its exit status and stderr are the
+/// error worth reporting, so a broken pipe is passed through to the wait.
+pub async fn feed_stdin(
+    mut stdin: tokio::process::ChildStdin,
+    request: &str,
+) -> std::io::Result<()> {
+    let written = async {
+        stdin.write_all(request.as_bytes()).await?;
+        stdin.write_all(b"\n").await
+    }
+    .await;
+    match written {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other,
+    }
+}
+
 /// Cap on how much of a helper's stdout/stderr is retained. `wait_with_output`
 /// buffers both streams in full, so an unbounded writer is an OOM on the box.
 /// The response contract is a single JSON line, so anything past this is noise.
@@ -277,17 +295,10 @@ impl SubprocessSource {
                 ImportError::Io(format!("spawn helper {}: {e}", self.command.display()))
             })?;
 
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(request_json.as_bytes())
+        if let Some(stdin) = child.stdin.take() {
+            feed_stdin(stdin, &request_json)
                 .await
                 .map_err(|e| ImportError::Io(format!("write stdin: {e}")))?;
-            stdin
-                .write_all(b"\n")
-                .await
-                .map_err(|e| ImportError::Io(format!("write stdin newline: {e}")))?;
-            // Drop stdin → EOF, so the helper's stdin read completes.
-            drop(stdin);
         }
 
         // A helper that never exits used to block its scheduler task forever —
@@ -497,6 +508,19 @@ impl AutoImportSource for SubprocessSource {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// Lost a race in overlay CI on 2026-10-01: a helper that exits first must not
+    /// turn into "write stdin: Broken pipe". 1 MB outruns any pipe buffer.
+    #[tokio::test]
+    async fn a_helper_that_never_reads_its_request_is_not_a_write_error() {
+        let mut child = Command::new("true").stdin(Stdio::piped()).spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        child.wait().await.unwrap();
+        let request = "x".repeat(1 << 20);
+        feed_stdin(stdin, &request)
+            .await
+            .expect("a broken pipe is the helper's exit to report, not ours");
+    }
 
     /// Write an executable shell script standing in for a real helper. Returns
     /// the TempDir (kept alive for the script's lifetime) + the script path.
