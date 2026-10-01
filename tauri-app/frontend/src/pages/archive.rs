@@ -545,7 +545,8 @@ fn DocumentDetail(
                     let d = d.clone();
                     let meta = document_meta(&d);
                     rsx! {
-                        h1 { class: "text-lg font-semibold text-obsidian-text", "{d.display_name()}" }
+                        // `break-all`: a filename has no spaces, and unbroken it panned the page.
+                        h1 { class: "text-lg font-semibold text-obsidian-text break-all", "{d.display_name()}" }
 
                         // The reverse of the email view's attachment list. Without
                         // it the parent link is navigable one way only, and a
