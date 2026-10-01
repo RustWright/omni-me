@@ -2974,8 +2974,17 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   📊 Reproduced over DevTools on a warm reload too: stored `nav.tab` = `notes`, shown Journal,
   and saving works in the same session. So the save is fine and the restore loses. Reading the
   code found no cause, and an injected invoke tracer cannot see Tauri's IPC (`__TAURI__` is
-  frozen). ▶ `record_boot` (main.rs) writes each restore step to `window.__omniBoot`; read it on
-  the phone after 1.1.13-dev.
+  frozen). `record_boot` (main.rs) writes each restore step to `window.__omniBoot`.
+  ✅ **ROOT CAUSE, read off the phone on 1.1.13-dev**: the restore logged "store loaded" and never
+  another step. It was parked on `feature_set.peek().is_none()` forever, because `App` called
+  `features::use_features_provider()` TWICE (both in `c7ad928`, 2026-09-06). The config read
+  filled the second signal, which the pages saw; the restore and the share intake waited on the
+  first, never filled. ✅ FIXED `9c93fd3`, one provider. ⚠️ Same casualty: a receipt shared into
+  the app from Android's share sheet never switched to Finances. Class check: every other context
+  in the frontend is provided exactly once.
+  The 2026-09-24 jump is the journal restoring its own last-viewed date (`nav.journal_date`),
+  which worked: Journal (the stuck default) opened on the last date viewed. ❓ Whether a new day
+  should open on today instead is a design question for him, not asked yet.
 - B4. **A receipt image takes 5–10 s to appear** on first open in the archive (cached reopen fast).
   📊 Measured 2026-10-01 over DevTools on the phone, 3.9 MB photo: **23.6 s cold**, 0.25 s cached.
   The server sends it in 8 ms on the box, and the cached path (bytes returned as a JSON number
@@ -3034,7 +3043,9 @@ could have caught on your own"*. Two artifacts, only one of which exists yet:
   ✅ **It has now failed for a deliberately introduced regression.** A fixture with a long
   unbreakable filename, pushed without the B1 fix: the old sweep passed it (`f9805df`); the new
   one failed exactly the archive detail, pane panning 200px at 360 and 170px at 390, with no
-  other screen flagged (`3efd332`). The fix then went in as `cd76437`.
+  other screen flagged (`3efd332`). ⚠️ The header fix (`cd76437`) did NOT clear it: same 200px and
+  170px, so the long-filename fixture exposes a second overflow in the archive detail. The sweep
+  now names the descendants pushing a pane (`a9467a5`) to find it.
 - 🔴 **It reported green twice while completely broken, and that is the lesson worth keeping.**
   Run 1: `editor.bundle.js` was missing from the served bundle, so the first tab switch aborted
   the wasm (the trap in `project-dx-serve-needs-the-editor-bundle`, which I had and did not

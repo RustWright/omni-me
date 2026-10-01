@@ -99,7 +99,17 @@ async function overflowReport(page) {
         .sort((a, b) => b.r.right - a.r.right)
         .slice(0, 6)
         .map(({ d, r }) => `${Math.round(r.width)}px "${(d.textContent || "").trim().slice(0, 30)}" ${window.__omniPath(d)}`);
-      panners.push({ path: window.__omniPath(el), by: el.scrollWidth - el.clientWidth, culprits });
+      // Follow the overflow down: at each level, the child with the widest scrollWidth.
+      const chain = [];
+      for (let n = el, i = 0; n && i < 12; i++) {
+        const kids = [...n.children];
+        if (!kids.length) break;
+        n = kids.reduce((a, b) => (b.scrollWidth > a.scrollWidth ? b : a));
+        const cs = getComputedStyle(n);
+        chain.push(`${n.tagName.toLowerCase()}.${(n.getAttribute("class") || "").split(/\s+/).slice(0, 3).join(".")} ` +
+          `offset=${n.offsetWidth} scroll=${n.scrollWidth} ox=${cs.overflowX} pos=${cs.position} minw=${cs.minWidth}`);
+      }
+      panners.push({ path: window.__omniPath(el), by: el.scrollWidth - el.clientWidth, culprits, chain });
     }
     const insideScroller = excused;
     const offenders = [];
@@ -290,6 +300,7 @@ if (failures.length) {
     for (const p of f.panners ?? []) {
       console.error(`      scrolls sideways by ${p.by}px — ${p.path}`);
       for (const c of p.culprits ?? []) console.error(`        pushed by ${c}`);
+      for (const c of p.chain ?? []) console.error(`        ↳ ${c}`);
     }
   }
   console.error(`\n${failures.length} screen(s) overflow. Nothing should pan sideways.`);
