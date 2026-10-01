@@ -3048,6 +3048,22 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   from corrections: record now, learn later** as its own task built on F2's saved corrections
   (beat: learn in F2, roughly doubles it). Autonomy: after F2 passes on the dev phone, continue
   into F5 unattended, deriving the PDF password into dev config (backup first, never printed).
+  ▶ **Built 2026-10-01, decision log (mine, made while he was away):**
+  - `TransactionEditForm` split into `TxnFieldsForm` (fields + checks) and a thin wrapper that
+    saves; review opens the same form in place of the row ("Use these values", Undo, a
+    "corrected" chip). Commit is disabled while a row is open, so an unsaved edit can't be lost.
+  - `AutoImportBatchCommittedPayload.corrections: Vec<DraftCorrection>` (index + date +
+    description + postings), skipped when empty, so old payloads and old readers are unchanged.
+  - The txn id is hashed from the **proposed** draft, not the correction, so a re-proposal of the
+    same upstream row collapses onto the corrected transaction instead of duplicating it.
+  - A correction to an unticked row is dropped client-side; the command refuses one anyway.
+  - Corrections are refused unless balanced. ⚠️ Found on the way: `update_transaction` (the
+    saved-transaction editor) never checked balance, only `record_transaction` did. Now all three
+    share `budget::refuse_imbalance`. Fixed as the same class, not a new decision.
+  - A correction posting inherits the proposed posting's `fx_rate` when the commodity is
+    unchanged. No source sets one today; this only stops a silent drop if one ever does.
+  - F2a: the row headline is the email subject (else the first description, else the source), the
+    sub-line is the receipt's own date(s) · sender · count. The processing date is only a fallback.
 - F2a. **Batch rows cannot be told apart** (seen driving the phone 2026-10-01): every row reads
   "Email receipts · 2026-09-30 · 1 transaction", with no vendor or subject, and the date is the
   processing date, not the receipt's. 68 such rows is part of why the queue went unreviewed.

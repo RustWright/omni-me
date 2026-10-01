@@ -51,11 +51,12 @@ pub static OMNI_MOCK_BUILD_SENTINEL: &[u8; 32] = b"OMNI_MOCK_BUILD__DO_NOT_SHIP_
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AutoImportSourceView, BalanceCheckView,
     BudgetProgress, BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView,
-    DocumentItem, ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementResult,
-    JournalDayStat, JournalEntryItem, LlmResult, MatchCandidateView, NetWorthSeriesView,
-    PendingBatchView, PendingShareCapture, PurgePreview, PurgeReport, ReconciliationTxnPreview,
-    RecurringPattern, RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus,
-    SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
+    DocumentItem, DraftCorrectionInput, ExportPreview, ExtractedDraft, GenericNoteItem,
+    ImportStatementResult, JournalDayStat, JournalEntryItem, LlmResult, MatchCandidateView,
+    NetWorthSeriesView, PendingBatchView, PendingShareCapture, PurgePreview, PurgeReport,
+    ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem, ScanRecurringResult,
+    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView,
+    TxnFilter,
 };
 #[cfg(feature = "mock")]
 use crate::types::{
@@ -4439,10 +4440,11 @@ pub async fn invoke_commit_batch(
     accepted_indices: Vec<usize>,
     fx_rate: Option<String>,
     fx_commodity: Option<String>,
+    corrections: Vec<DraftCorrectionInput>,
 ) -> Result<CommitBatchResult, String> {
     #[cfg(feature = "mock")]
     {
-        let _ = (batch_id, fx_rate, fx_commodity);
+        let _ = (batch_id, fx_rate, fx_commodity, corrections);
         crate::timer::sleep_ms(450).await;
         Ok(CommitBatchResult {
             events_appended: accepted_indices.len() + 1,
@@ -4460,6 +4462,8 @@ pub async fn invoke_commit_batch(
             fx_rate: Option<String>,
             #[serde(skip_serializing_if = "Option::is_none")]
             fx_commodity: Option<String>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            corrections: Vec<DraftCorrectionInput>,
         }
         invoke(
             "commit_batch",
@@ -4468,6 +4472,7 @@ pub async fn invoke_commit_batch(
                 accepted_indices,
                 fx_rate,
                 fx_commodity,
+                corrections,
             },
         )
         .await

@@ -1068,6 +1068,20 @@ pub struct AutoImportBatchCommittedPayload {
     /// the user's configured base currency at commit time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fx_commodity: Option<String>,
+    /// Rows the reviewer changed before committing. The `Proposed` event keeps
+    /// the model's version, so original and correction are both on record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corrections: Vec<DraftCorrection>,
+}
+
+/// One proposed row as the reviewer committed it, replacing the draft at
+/// `index` in `Proposed.draft_postings`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DraftCorrection {
+    pub index: usize,
+    pub date: chrono::NaiveDate,
+    pub description: String,
+    pub postings: Vec<Posting>,
 }
 
 /// User dismisses the batch — no transactions recorded. Reason is free-form
@@ -2106,6 +2120,7 @@ mod tests {
             accepted_indices: vec![0, 2, 3],
             fx_rate: Some(Decimal::new(84, 5)), // 0.00084
             fx_commodity: Some("AED".into()),
+            corrections: vec![],
         };
         let json = serde_json::to_value(&payload).unwrap();
         validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
@@ -2123,6 +2138,7 @@ mod tests {
             accepted_indices: vec![0, 1, 2, 3, 4],
             fx_rate: None,
             fx_commodity: None,
+            corrections: vec![],
         };
         let json = serde_json::to_value(&payload).unwrap();
         validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
@@ -2130,6 +2146,29 @@ mod tests {
         let json_str = serde_json::to_string(&payload).unwrap();
         assert!(!json_str.contains("fx_rate"));
         assert!(!json_str.contains("fx_commodity"));
+        assert!(!json_str.contains("corrections"));
+    }
+
+    #[test]
+    fn auto_import_batch_committed_payload_carries_corrections() {
+        let json = serde_json::json!({
+            "batch_id": "01HJ...",
+            "accepted_indices": [0, 1],
+            "corrections": [{
+                "index": 1,
+                "date": "2026-09-14",
+                "description": "Pharmacy",
+                "postings": [
+                    { "account": "Expenses:Health", "commodity": "CAD", "amount": "12.40" },
+                    { "account": "Liabilities:Visa", "commodity": "CAD", "amount": "-12.40" },
+                ],
+            }],
+        });
+        validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
+        let back: AutoImportBatchCommittedPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back.corrections.len(), 1);
+        assert_eq!(back.corrections[0].index, 1);
+        assert_eq!(back.corrections[0].postings[0].account, "Expenses:Health");
     }
 
     #[test]

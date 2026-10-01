@@ -19,6 +19,8 @@
 //! according to `surface_of`, but physically sit down among the Analyze code.
 //! Group by surface, not by the order things happened to get written.
 
+use std::collections::BTreeMap;
+
 use dioxus::prelude::*;
 
 use crate::bridge;
@@ -37,11 +39,11 @@ use crate::features::feature_on;
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AssistantProposal,
     AttachmentRef, BalanceCheckView, BudgetProgress, BudgetRow, DashboardSummaryView,
-    DraftTransactionView, ExtractedDraft, Feature, ImportStatementResult, JournalImportPlan,
-    JournalImportPreview, JournalImportResult, MatchCandidateView, MonthlyTrendBucketView,
-    NetWorthPointView, NetWorthSeriesView, PendingBatchView, PendingShareCapture, PostingInput,
-    ReconciliationTxnPreview, RecurringObligationView, RecurringPattern, ScanRecurringResult,
-    TransactionFormDraft, TransactionView, TxnFilter,
+    DraftCorrectionInput, DraftTransactionView, ExtractedDraft, Feature, ImportStatementResult,
+    JournalImportPlan, JournalImportPreview, JournalImportResult, MatchCandidateView,
+    MonthlyTrendBucketView, NetWorthPointView, NetWorthSeriesView, PendingBatchView,
+    PendingShareCapture, PostingInput, ReconciliationTxnPreview, RecurringObligationView,
+    RecurringPattern, ScanRecurringResult, TransactionFormDraft, TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -2763,12 +2765,8 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
     let row_count = batch.draft_postings.len();
     let fx_hint = batch_needs_manual_fx(&batch);
     let source_label = pretty_source(&batch.source);
-    let fetched_short = batch
-        .fetched_at
-        .split('T')
-        .next()
-        .unwrap_or(&batch.fetched_at)
-        .to_string();
+    let when = batch_date_label(&batch);
+    let (headline, sender) = batch_headline(&batch);
 
     rsx! {
         button {
@@ -2776,8 +2774,7 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
             onclick: move |_| on_open.call(()),
             div { class: "flex-1 min-w-0",
                 div { class: "flex items-baseline gap-2 mb-1",
-                    span { class: "text-sm font-semibold text-obsidian-text", "{source_label}" }
-                    span { class: "text-xs text-obsidian-text-muted", "· {fetched_short}" }
+                    span { class: "text-sm font-semibold text-obsidian-text truncate", "{headline}" }
                     if let Some(c) = fx_hint {
                         span { class: "text-xs px-2 py-0.5 bg-amber-500/15 text-amber-300 rounded-full",
                             "needs {c} rate"
@@ -2786,6 +2783,8 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
                 }
                 div { class: "flex items-baseline gap-2",
                     div { class: "text-xs text-obsidian-text-muted truncate",
+                        "{when} · "
+                        if let Some(from) = sender { "{from} · " } else { "{source_label} · " }
                         if row_count == 1 { "1 transaction" } else { "{row_count} transactions" }
                     }
                     if batch.revises_batch_id.is_some() {
@@ -2803,6 +2802,48 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
             }
         }
     }
+}
+
+/// The dates the batch's transactions carry, which for a receipt is when the
+/// purchase happened. The fetch date is only a fallback: it is when the server
+/// read the mail, and a backlog gives every row the same one.
+fn batch_date_label(batch: &PendingBatchView) -> String {
+    let dates = batch.draft_postings.iter().map(|d| d.date.as_str());
+    match (dates.clone().min(), dates.max()) {
+        (Some(first), Some(last)) if first == last => first.to_string(),
+        (Some(first), Some(last)) => format!("{first} – {last}"),
+        _ => batch
+            .fetched_at
+            .split('T')
+            .next()
+            .unwrap_or(&batch.fetched_at)
+            .to_string(),
+    }
+}
+
+/// What the row is about, and who sent it: the email subject when there is
+/// one, else the first transaction's description, else the source name.
+fn batch_headline(batch: &PendingBatchView) -> (String, Option<String>) {
+    let meta = |key: &str| {
+        batch
+            .source_metadata
+            .as_ref()
+            .and_then(|m| m.get(key))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let headline = meta("subject")
+        .or_else(|| {
+            batch
+                .draft_postings
+                .first()
+                .map(|d| d.description.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| pretty_source(&batch.source).to_string());
+    (headline, meta("from"))
 }
 
 /// The archived email a batch came from, when it came from one.
@@ -3106,6 +3147,11 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
     let batch_id_for_resource = batch_id.clone();
     let mut batch: Signal<Option<Result<PendingBatchView, String>>> = use_signal(|| None);
     let mut accepted: Signal<Vec<bool>> = use_signal(Vec::new);
+    // Rows the reviewer corrected, by position. Committed alongside the indices;
+    // the proposal itself is never rewritten.
+    let mut corrections: Signal<BTreeMap<usize, TxnFields>> = use_signal(BTreeMap::new);
+    let mut editing_row: Signal<Option<usize>> = use_signal(|| None);
+    let account_suggestions = use_context::<AccountSuggestions>();
     let mut fx_rate_input: Signal<String> = use_signal(String::new);
     let mut busy: Signal<bool> = use_signal(|| false);
     let mut feedback: Signal<Option<String>> = use_signal(|| None);
@@ -3226,17 +3272,48 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
 
                 div { class: "space-y-2 mb-6",
                     for (idx, draft) in b.draft_postings.iter().enumerate() {
-                        DraftRow {
-                            key: "{draft.external_id}",
-                            idx: idx,
-                            draft: draft.clone(),
-                            accepted: accepted.read().get(idx).copied().unwrap_or(true),
-                            on_toggle: move |_| {
-                                let mut current_accepted = accepted.write();
-                                if let Some(slot) = current_accepted.get_mut(idx) {
-                                    *slot = !*slot;
+                        if *editing_row.read() == Some(idx) {
+                            div {
+                                key: "{idx}-edit",
+                                class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-accent/40 rounded-lg",
+                                TxnFieldsForm {
+                                    seed: corrections
+                                        .read()
+                                        .get(&idx)
+                                        .cloned()
+                                        .unwrap_or_else(|| draft_fields(draft)),
+                                    submit_label: "Use these values",
+                                    busy: false,
+                                    submit_error: None,
+                                    on_submit: move |fields: TxnFields| {
+                                        corrections.write().insert(idx, fields);
+                                        editing_row.set(None);
+                                    },
+                                    on_cancel: move |_| editing_row.set(None),
                                 }
-                            },
+                            }
+                        } else {
+                            DraftRow {
+                                key: "{idx}-{draft.external_id}",
+                                idx: idx,
+                                draft: corrections
+                                    .read()
+                                    .get(&idx)
+                                    .map(|f| corrected_draft(draft, f))
+                                    .unwrap_or_else(|| draft.clone()),
+                                corrected: corrections.read().contains_key(&idx),
+                                accepted: accepted.read().get(idx).copied().unwrap_or(true),
+                                on_toggle: move |_| {
+                                    let mut current_accepted = accepted.write();
+                                    if let Some(slot) = current_accepted.get_mut(idx) {
+                                        *slot = !*slot;
+                                    }
+                                },
+                                on_edit: move |_| editing_row.set(Some(idx)),
+                                on_revert: move |_| {
+                                    corrections.write().remove(&idx);
+                                },
+                            }
                         }
                     }
                 }
@@ -3264,6 +3341,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                     button {
                         class: "flex-1 px-4 py-3 bg-obsidian-accent text-black font-semibold rounded-lg hover:bg-obsidian-accent/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
                         disabled: *busy.read() || accepted_count == 0
+                            || editing_row.read().is_some()
                             || (manual_fx_commodity.is_some() && fx_rate_input.read().trim().is_empty()),
                         onclick: {
                             let batch_id = b.batch_id.clone();
@@ -3276,6 +3354,18 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                     .iter()
                                     .enumerate()
                                     .filter_map(|(i, on)| if *on { Some(i) } else { None })
+                                    .collect();
+                                // A correction to a row left unticked is not committed.
+                                let fixes: Vec<DraftCorrectionInput> = corrections
+                                    .read()
+                                    .iter()
+                                    .filter(|(i, _)| accepted_indices.contains(*i))
+                                    .map(|(&index, f)| DraftCorrectionInput {
+                                        index,
+                                        date: f.date.clone(),
+                                        description: f.description.clone(),
+                                        postings: fields_postings(f),
+                                    })
                                     .collect();
                                 let rate = fx_rate_input.read().trim().to_string();
                                 spawn(async move {
@@ -3290,11 +3380,13 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                         accepted_indices,
                                         fx_rate,
                                         fx_commodity,
+                                        fixes,
                                     )
                                     .await;
                                     busy.set(false);
                                     match res {
                                         Ok(_) => {
+                                            account_suggestions.refresh();
                                             // Before `on_done`, which unmounts this view:
                                             // tell every subscribed read view that the
                                             // ledger changed underneath it.
@@ -3351,8 +3443,11 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
 fn DraftRow(
     idx: usize,
     draft: DraftTransactionView,
+    corrected: bool,
     accepted: bool,
     on_toggle: EventHandler<()>,
+    on_edit: EventHandler<()>,
+    on_revert: EventHandler<()>,
 ) -> Element {
     let border = if accepted {
         "border-obsidian-accent/40"
@@ -3372,6 +3467,24 @@ fn DraftRow(
                     div { class: "flex items-baseline gap-2 mb-1",
                         span { class: "text-xs text-obsidian-text-muted font-mono", "#{idx + 1}" }
                         span { class: "text-sm font-medium text-obsidian-text", "{draft.date}" }
+                        if corrected {
+                            span { class: "text-xs px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full",
+                                "corrected"
+                            }
+                        }
+                        span { class: "flex-1" }
+                        if corrected {
+                            button {
+                                class: "text-xs px-2.5 py-1 text-obsidian-text-muted hover:text-obsidian-text",
+                                onclick: move |_| on_revert.call(()),
+                                "Undo"
+                            }
+                        }
+                        button {
+                            class: "text-xs px-2.5 py-1 rounded-md border border-obsidian-border/10 text-obsidian-text-muted hover:text-obsidian-text hover:border-obsidian-border/20",
+                            onclick: move |_| on_edit.call(()),
+                            "Edit"
+                        }
                     }
                     div { class: "text-sm text-obsidian-text truncate mb-2", "{draft.description}" }
                     div { class: "space-y-1",
@@ -3387,6 +3500,37 @@ fn DraftRow(
                 }
             }
         }
+    }
+}
+
+/// A proposed row as the starting values of the correction form.
+fn draft_fields(draft: &DraftTransactionView) -> TxnFields {
+    TxnFields {
+        date: draft.date.clone(),
+        description: draft.description.clone(),
+        postings: draft
+            .postings
+            .iter()
+            .filter_map(|p| serde_json::to_value(p).ok())
+            .collect(),
+    }
+}
+
+fn fields_postings(fields: &TxnFields) -> Vec<PostingInput> {
+    fields
+        .postings
+        .iter()
+        .filter_map(|p| serde_json::from_value(p.clone()).ok())
+        .collect()
+}
+
+/// The row as it will be committed, for display in the review list.
+fn corrected_draft(draft: &DraftTransactionView, fields: &TxnFields) -> DraftTransactionView {
+    DraftTransactionView {
+        external_id: draft.external_id.clone(),
+        date: fields.date.clone(),
+        description: fields.description.clone(),
+        postings: fields_postings(fields),
     }
 }
 
@@ -4762,12 +4906,10 @@ fn TransactionDetailBody(
     }
 }
 
-/// Edit form for a committed transaction — date, description, and postings
-/// (account / amount / commodity), reachable from the detail view's Edit button.
-/// Save emits `TransactionUpdated` via `update_transaction`; the backend
+/// Edit form for a committed transaction, reachable from the detail view's Edit
+/// button. Save emits `TransactionUpdated` via `update_transaction`; the backend
 /// re-renders the entry in `budget.journal` in place so journal-derived balances
-/// stay correct. Each posting carries its original JSON so an edit to
-/// account/amount/commodity doesn't drop fx-rate or posting-tag metadata.
+/// stay correct.
 #[component]
 fn TransactionEditForm(
     txn: TransactionView,
@@ -4775,16 +4917,89 @@ fn TransactionEditForm(
     on_cancel: EventHandler<()>,
 ) -> Element {
     let account_suggestions = use_context::<AccountSuggestions>();
-    let txn_id = txn.id.clone();
-
-    let mut date = use_signal(|| txn.date.clone());
-    let mut description = use_signal(|| txn.description.clone());
-    let mut postings = use_signal(|| seed_edit_postings(&txn.postings));
     let mut saving = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let seed = TxnFields {
+        date: txn.date.clone(),
+        description: txn.description.clone(),
+        postings: txn.postings.as_array().cloned().unwrap_or_default(),
+    };
+
+    let on_submit = move |fields: TxnFields| {
+        if *saving.read() {
+            return;
+        }
+        error.set(None);
+        saving.set(true);
+        let postings = serde_json::Value::Array(fields.postings);
+        let changes = serde_json::json!({
+            "date": fields.date,
+            "description": fields.description,
+            "postings": postings,
+        });
+        // Optimistic view for the detail body: same fields the backend applied.
+        let mut updated = txn.clone();
+        updated.date = fields.date;
+        updated.description = fields.description;
+        updated.postings = postings;
+
+        let id = txn.id.clone();
+        spawn(async move {
+            match bridge::invoke_update_transaction(&id, changes).await {
+                Ok(()) => {
+                    saving.set(false);
+                    account_suggestions.refresh();
+                    on_saved.call(updated);
+                }
+                Err(e) => {
+                    saving.set(false);
+                    error.set(Some(format!("Save failed: {e}")));
+                }
+            }
+        });
+    };
+
+    rsx! {
+        TxnFieldsForm {
+            seed,
+            submit_label: "Save changes",
+            busy: *saving.read(),
+            submit_error: error.read().clone(),
+            on_submit,
+            on_cancel,
+        }
+    }
+}
+
+/// What [`TxnFieldsForm`] hands back once its rows pass the form's checks.
+#[derive(Clone, PartialEq)]
+struct TxnFields {
+    date: String,
+    description: String,
+    postings: Vec<serde_json::Value>,
+}
+
+/// Date, description and postings (account / amount / commodity), shared by the
+/// saved-transaction editor and the correction of a proposed row in batch review.
+/// Each posting carries its original JSON so an edit to account/amount/commodity
+/// doesn't drop fx-rate or posting-tag metadata. The caller owns what Save does.
+#[component]
+fn TxnFieldsForm(
+    seed: TxnFields,
+    submit_label: String,
+    busy: bool,
+    submit_error: Option<String>,
+    on_submit: EventHandler<TxnFields>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    let mut date = use_signal(|| seed.date.clone());
+    let mut description = use_signal(|| seed.description.clone());
+    let mut postings =
+        use_signal(|| seed_edit_postings(&serde_json::Value::Array(seed.postings.clone())));
     let mut error = use_signal(|| None::<String>);
 
     let on_save = move |_| {
-        if *saving.read() {
+        if busy {
             return;
         }
         let date_v = date.read().trim().to_string();
@@ -4830,31 +5045,10 @@ fn TransactionEditForm(
         }
 
         error.set(None);
-        saving.set(true);
-        let changes = serde_json::json!({
-            "date": date_v,
-            "description": desc_v,
-            "postings": postings_out,
-        });
-        // Optimistic view for the detail body: same fields the backend applied.
-        let mut updated = txn.clone();
-        updated.date = date_v;
-        updated.description = desc_v;
-        updated.postings = serde_json::Value::Array(postings_out);
-
-        let id = txn_id.clone();
-        spawn(async move {
-            match bridge::invoke_update_transaction(&id, changes).await {
-                Ok(()) => {
-                    saving.set(false);
-                    account_suggestions.refresh();
-                    on_saved.call(updated);
-                }
-                Err(e) => {
-                    saving.set(false);
-                    error.set(Some(format!("Save failed: {e}")));
-                }
-            }
+        on_submit.call(TxnFields {
+            date: date_v,
+            description: desc_v,
+            postings: postings_out,
         });
     };
 
@@ -4967,7 +5161,7 @@ fn TransactionEditForm(
             }
 
             // Error
-            if let Some(msg) = error.read().clone() {
+            if let Some(msg) = error.read().clone().or(submit_error) {
                 div { class: "p-3 bg-red-950/30 border border-red-500/30 rounded-md text-sm text-red-300",
                     "{msg}"
                 }
@@ -4977,21 +5171,21 @@ fn TransactionEditForm(
             div { class: "flex justify-end gap-2",
                 Button {
                     variant: ButtonVariant::Ghost,
-                    disabled: *saving.read(),
+                    disabled: busy,
                     onclick: move |_| on_cancel.call(()),
                     "Cancel"
                 }
                 Button {
-                    disabled: *saving.read(),
+                    disabled: busy,
                     onclick: on_save,
-                    if *saving.read() { "Saving…" } else { "Save changes" }
+                    if busy { "Saving…" } else { "{submit_label}" }
                 }
             }
         }
     }
 }
 
-/// One editable posting in [`TransactionEditForm`]. `original` preserves the
+/// One editable posting in [`TxnFieldsForm`]. `original` preserves the
 /// row's source JSON (fx-rate, posting tags) so editing account/amount/commodity
 /// doesn't silently drop metadata the form doesn't surface; added rows start empty.
 #[derive(Clone, PartialEq)]

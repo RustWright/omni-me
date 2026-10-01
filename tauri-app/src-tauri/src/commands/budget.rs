@@ -106,19 +106,7 @@ pub async fn record_transaction(
     state: State<'_, AppState>,
     draft: TransactionDraft,
 ) -> Result<TransactionRow, String> {
-    // The form checks only that rows are filled in, and an unbalanced entry saved silently.
-    let off = omni_me_core::accounts::imbalances(&draft.postings);
-    if !off.is_empty() {
-        let by = off
-            .iter()
-            .map(|(commodity, sum)| format!("{sum} {commodity}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(format!(
-            "These postings don't balance (off by {by}). Add the other side; if you don't know it \
-             yet, `Unmatched` holds it until the bank's record arrives."
-        ));
-    }
+    refuse_imbalance(&draft.postings)?;
 
     let txn_id = ulid::Ulid::new().to_string();
     tracing::info!(txn_id = %txn_id, "record_transaction");
@@ -140,6 +128,24 @@ pub async fn record_transaction(
         .ok_or_else(|| "transaction created but not found in projection".to_string())
 }
 
+/// The forms check only that rows are filled in, so without this an unbalanced
+/// entry saves silently. Shared by every path that writes postings.
+pub(crate) fn refuse_imbalance(postings: &[Posting]) -> Result<(), String> {
+    let off = omni_me_core::accounts::imbalances(postings);
+    if off.is_empty() {
+        return Ok(());
+    }
+    let by = off
+        .iter()
+        .map(|(commodity, sum)| format!("{sum} {commodity}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "These postings don't balance (off by {by}). Add the other side; if you don't know it \
+         yet, `Unmatched` holds it until the bank's record arrives."
+    ))
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn update_transaction(
     state: State<'_, AppState>,
@@ -147,6 +153,11 @@ pub async fn update_transaction(
     changes: serde_json::Value,
 ) -> Result<(), String> {
     tracing::info!(txn_id = %txn_id, "update_transaction");
+    if let Some(postings) = changes.get("postings") {
+        let postings: Vec<Posting> = serde_json::from_value(postings.clone())
+            .map_err(|e| format!("decode postings: {e}"))?;
+        refuse_imbalance(&postings)?;
+    }
     let payload = serde_json::json!({ "txn_id": txn_id, "changes": changes });
     append_and_apply(&state, EventType::TransactionUpdated, txn_id, payload).await
 }

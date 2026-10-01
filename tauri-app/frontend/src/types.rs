@@ -889,6 +889,16 @@ pub struct DraftTransactionView {
     pub postings: Vec<PostingInput>,
 }
 
+/// A draft the reviewer edited before committing. Mirrors
+/// `core::events::DraftCorrection`; `index` is the row's position in the batch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DraftCorrectionInput {
+    pub index: usize,
+    pub date: String,
+    pub description: String,
+    pub postings: Vec<PostingInput>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingBatchView {
     pub batch_id: String,
