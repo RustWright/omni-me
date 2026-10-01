@@ -94,9 +94,10 @@ async function overflowReport(page) {
       const edge = el.getBoundingClientRect().left + el.clientWidth + 1;
       const culprits = [...el.querySelectorAll("*")]
         .map((d) => ({ d, r: d.getBoundingClientRect() }))
-        .filter(({ r }) => r.right > edge && r.width > 0)
+        // Inside a marked scroller is that scroller's business, not this pane's.
+        .filter(({ d, r }) => r.right > edge && r.width > 0 && !d.parentElement?.closest("[data-scroll-x]"))
         .sort((a, b) => b.r.right - a.r.right)
-        .slice(0, 4)
+        .slice(0, 6)
         .map(({ d, r }) => `${Math.round(r.width)}px "${(d.textContent || "").trim().slice(0, 30)}" ${window.__omniPath(d)}`);
       panners.push({ path: window.__omniPath(el), by: el.scrollWidth - el.clientWidth, culprits });
     }
