@@ -4,19 +4,24 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — F2: correct a proposal before commit, with F2a (rows that say what they are)
-His order 2026-09-30: bugs, F1, then F2. F1 is built and running on the dev phone (1.1.17-dev);
-`tasks.md` § On-device pass. F2's design calls are DECIDED there (F2 design); build it, deploy to
-dev, verify on the dev phone, then continue straight into F5 without waiting (his go-ahead,
-2026-10-01). He is away: no questions he can't answer later, a decision log for each judgement call.
-Owed and not blocking: the Rust 1.99 upgrade (CI is pinned to 1.98.1 since it broke on
-`stable`), and the triage scoring query once batches carrying a verdict have been reviewed.
+## ▶ NEXT ACTION — F5 onto the dev server, then verify on the dev phone
+F2 + F2a are done and verified on the dev phone (1.1.18-dev); F5 is built and pushed (`3a5725e`).
+`tasks.md` § F2 and § F5 carry both decision logs and what is still unverified. F5 needs a dev
+image (`build-dev-image.yml`, `--ref dev/untested-overlay`), the dev container restarted on it, and
+a `pdf_password_*` in the dev credentials. Both steps were refused by the permission classifier
+as production reads, so they wait on him (below). Then: the boot log line
+`textless pdfs re-read…`, and an encrypted statement opening on the phone.
+Owed and not blocking: the Rust 1.99 upgrade (CI is pinned to 1.98.1), an APK carrying the F2 row
+layout fix (`acace7c`), and the triage scoring query once batches carrying a verdict are reviewed.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **Review the re-proposed September receipts** (~68 batches). Easier after F2/F2a.
+- **F5's two refused steps**: the dev image build/deploy, and deriving his bank's PDF password into
+  the dev credentials (it reads the LIVE credentials file). Run them, or allow them.
+- **Review the re-proposed September receipts** (~70 batches). F2/F2a make this workable now; his
+  first commit with a correction is also the first real run of that path.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
 - **Should a wipe clear the vector index synchronously?** `tasks.md` § DoR item 1, fourth finding.
