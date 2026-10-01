@@ -3056,6 +3056,9 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   re-reads an already-archived textless document once a password exists, although
   `docs/src/archive.md` § Encrypted documents says the text "is recoverable later". Searched, not
   found; treat (3) as unbuilt until shown otherwise.
+  🔴 DECIDED 2026-10-01 (user): **the server serves a decrypted copy** (the preview mechanism;
+  the phone never holds a password), with a re-read of archived textless PDFs, built **after F2**.
+  Beat: a password prompt on each view (types a bank password every time; server stays textless).
 
 **Seen while installing 1.1.12-dev (2026-09-30), not yet diagnosed.** Launch showed Today
 2026-09-30 with the editor on "Loading…" through the documents projection rebuild (~60 s, 27,196

@@ -7,7 +7,8 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 ## ▶ NEXT ACTION — F2: correct a proposal before commit, with F2a (rows that say what they are)
 His order 2026-09-30: bugs, F1, then F2. F1 is built and running on the dev phone (1.1.17-dev);
 `tasks.md` § On-device pass, F1. Design first: which fields are editable, and how an edit is
-recorded so the original proposal stays auditable.
+recorded so the original proposal stays auditable. Then F5 (encrypted statements, decided;
+`tasks.md` § On-device pass, F5).
 Owed and not blocking: the Rust 1.99 upgrade (CI is pinned to 1.98.1 since it broke on
 `stable`), and the triage scoring query once batches carrying a verdict have been reviewed.
 
@@ -15,8 +16,6 @@ Owed and not blocking: the Rust 1.99 upgrade (CI is pinned to 1.98.1 since it br
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **F5, encrypted statements in the archive**: how the viewer gets a readable copy, and where it
-  sits against F2. `tasks.md` § On-device pass, F5.
 - **Review the re-proposed September receipts** (~68 batches). Easier after F2/F2a.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
