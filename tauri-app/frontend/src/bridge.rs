@@ -5921,11 +5921,13 @@ fn mock_documents() -> Vec<DocumentItem> {
         // detail view overflowed the screen on a real statement and every other
         // fixture here is narrow enough to have rendered it clean — a viewport
         // check run against them would have reported green on the broken build.
-        // Keep this wider than any phone: it is the only row that can fail.
+        // Keep this wider than any phone: it is the only row that can fail. The
+        // filename is long and unbreakable for the same reason: one pushed the
+        // attachment header off a phone screen on 2026-09-30.
         DocumentItem {
             document_id: "doc-wide-statement".into(),
             sha256: Some("f".repeat(64)),
-            filename: Some("chequing-2026-02-full-export.csv".into()),
+            filename: Some("chequing-2026-02-full-export_AllAccounts__20260228_000123456789.csv".into()),
             mime_type: Some("text/csv".into()),
             size: Some(64_233),
             archived_at: Some("2026-03-05T08:00:00Z".into()),

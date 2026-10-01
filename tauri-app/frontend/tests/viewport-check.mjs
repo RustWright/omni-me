@@ -226,7 +226,7 @@ try {
       // view is what actually broke. `doc-wide-statement` is the mock fixture
       // that exists to make this measurable.
       if (tab === "archive") {
-        const doc = page.locator("text=chequing-2026-02-full-export.csv").first();
+        const doc = page.locator("text=chequing-2026-02-full-export_AllAccounts__20260228_000123456789.csv").first();
         if (await doc.count()) {
           await doc.click();
           await page.waitForTimeout(600);
