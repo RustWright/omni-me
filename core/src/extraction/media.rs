@@ -154,6 +154,39 @@ fn shrink(img: &image::DynamicImage) -> Option<image::DynamicImage> {
     })
 }
 
+/// Long edge of a viewing preview: sharp on a phone screen, a few hundred KB.
+pub const PREVIEW_LONG_EDGE: u32 = 1600;
+const PREVIEW_QUALITY: u8 = 80;
+
+/// A smaller, upright JPEG for viewing, or `None` when the original already fits
+/// or would not shrink, in which case the original is the preview. Fitting
+/// images are left alone: re-encoding a screenshot as JPEG blurs its text.
+///
+/// EXIF orientation is applied first: the browser turns the original upright by
+/// reading the tag, and a re-encode drops it, so a phone photo would lie sideways.
+pub fn preview_jpeg(bytes: &[u8]) -> Result<Option<Vec<u8>>, MediaError> {
+    use image::ImageDecoder;
+    let decode_err = |source| MediaError::Decode {
+        mime: "preview".into(),
+        source,
+    };
+    let reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| decode_err(image::ImageError::IoError(e)))?;
+    let mut decoder = reader.into_decoder().map_err(decode_err)?;
+    let orientation = decoder.orientation().map_err(decode_err)?;
+    let mut img = image::DynamicImage::from_decoder(decoder).map_err(decode_err)?;
+    if img.width().max(img.height()) <= PREVIEW_LONG_EDGE {
+        return Ok(None);
+    }
+    img.apply_orientation(orientation);
+    // `thumbnail`, not `resize`: a 12-megapixel photo through Lanczos3 costs
+    // seconds on the box's shared CPU, and a preview does not need it.
+    let small = img.thumbnail(PREVIEW_LONG_EDGE, PREVIEW_LONG_EDGE);
+    let out = encode_jpeg(&small, PREVIEW_QUALITY)?;
+    Ok((out.len() < bytes.len()).then_some(out))
+}
+
 /// Prepare a single image for the request: downscale if oversized, otherwise
 /// pass the original bytes through untouched.
 ///
@@ -485,6 +518,29 @@ mod tests {
         use image::GenericImageView;
         let (w, h) = img.dimensions();
         assert_eq!(w.max(h), MAX_LONG_EDGE, "long edge not clamped: {w}x{h}");
+    }
+
+    /// A phone photo previews at the viewing size and smaller than it started.
+    #[test]
+    fn a_phone_photo_previews_small() {
+        let photo = synth(4032, 3024, ImageFormat::Jpeg);
+        let preview = preview_jpeg(&photo)
+            .unwrap()
+            .expect("a 12 MP photo needs a preview");
+        assert!(preview.len() < photo.len());
+        let img = image::load_from_memory_with_format(&preview, ImageFormat::Jpeg).unwrap();
+        use image::GenericImageView;
+        let (w, h) = img.dimensions();
+        assert_eq!(w.max(h), PREVIEW_LONG_EDGE, "long edge {w}x{h}");
+        assert!(w > h, "landscape stays landscape when there is no EXIF tag");
+    }
+
+    /// Nothing to gain from re-encoding something already small: the original is
+    /// the preview.
+    #[test]
+    fn a_small_image_has_no_separate_preview() {
+        let small = synth(400, 300, ImageFormat::Png);
+        assert!(preview_jpeg(&small).unwrap().is_none());
     }
 
     /// An image already inside both limits must be forwarded byte-identical —

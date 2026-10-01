@@ -3005,6 +3005,23 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
 **Design calls.** 🔴 Order DECIDED 2026-09-30 (user): bugs first, then **F1, then F2**; F3 later.
 - F1. **Zoom and full screen for images and PDFs**, in the archive and in finance review. A
   payslip PDF is unreadable at its current size, so fine print cannot be confirmed.
+  ▶ **Design, 2026-10-01 (mine, inside his F1-then-F2 order):**
+  - **Full screen**: tap an image or PDF in `AttachmentViewer` and it opens in a fixed overlay with
+    a close button and Android back closing it (`BackNav` depth), so one component serves both the
+    archive and finance review.
+  - **Zoom**: `@panzoom/panzoom` (pinch, double-tap, pan; MIT, ~4 KB) rather than hand-written
+    gesture code, per [[feedback_prefer_integration_over_rewrite]]. ⚠️ Bundled INTO
+    `pdfview.bundle.js`, not a new file: the bundle copy lists (`package.json` ×2, the CI copy step)
+    are the trap that once shipped a page aborting on a missing bundle, and one more name is one
+    more place to forget.
+  - **PDF legibility**: pages already render at 900 CSS px × devicePixelRatio (2700 px on the S9),
+    so zooming the existing canvases stays sharp to ~3×. No re-render needed for the first cut.
+  - **Previews (B4)**: `GET /blobs/{hash}/preview` on the server, a ≤1600 px JPEG made with
+    `core::extraction::media`'s existing resize + encode and cached beside the blob. The inline
+    view and the overlay open on the preview, and the original loads when zoom passes ~1.5× or on
+    "Load full resolution". Expected ~200–400 KB, so ~1 s on his link instead of 10–24 s.
+  - ⛔ Previews are derived and disposable: never synced, never referenced by an event, and
+    deleting the cache directory is always safe.
 - F2. **Correct a proposed transaction before committing it.** Review is commit or dismiss only,
   so one wrong account forces a choice between committing an error and losing the rest.
 - F2a. **Batch rows cannot be told apart** (seen driving the phone 2026-10-01): every row reads

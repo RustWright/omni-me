@@ -4312,6 +4312,7 @@ version = "1.1.2"
 dependencies = [
  "axum",
  "chrono",
+ "image",
  "infer",
  "omni-me-core",
  "reqwest 0.12.28",

@@ -21,6 +21,8 @@ thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3"
+# Already in the tree through core; here only so the preview test can make an image.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # ⚠️ `default-features = false` is load-bearing even in a dev-dependency. reqwest's
 # defaults include `default-tls`, which is native-tls — and `cargo tree --workspace`
 # unions features across members, so this one line put openssl-sys back into a tree
