@@ -90,7 +90,15 @@ async function overflowReport(page) {
       if (o !== "auto" && o !== "scroll") continue;
       if (el.scrollWidth <= el.clientWidth + 1) continue;
       if (el.closest("[data-scroll-x]")) continue;
-      panners.push({ path: window.__omniPath(el), by: el.scrollWidth - el.clientWidth });
+      // What pushes it: the widest descendants reaching past its visible edge.
+      const edge = el.getBoundingClientRect().left + el.clientWidth + 1;
+      const culprits = [...el.querySelectorAll("*")]
+        .map((d) => ({ d, r: d.getBoundingClientRect() }))
+        .filter(({ r }) => r.right > edge && r.width > 0)
+        .sort((a, b) => b.r.right - a.r.right)
+        .slice(0, 4)
+        .map(({ d, r }) => `${Math.round(r.width)}px "${(d.textContent || "").trim().slice(0, 30)}" ${window.__omniPath(d)}`);
+      panners.push({ path: window.__omniPath(el), by: el.scrollWidth - el.clientWidth, culprits });
     }
     const insideScroller = excused;
     const offenders = [];
@@ -280,6 +288,7 @@ if (failures.length) {
     }
     for (const p of f.panners ?? []) {
       console.error(`      scrolls sideways by ${p.by}px — ${p.path}`);
+      for (const c of p.culprits ?? []) console.error(`        pushed by ${c}`);
     }
   }
   console.error(`\n${failures.length} screen(s) overflow. Nothing should pan sideways.`);

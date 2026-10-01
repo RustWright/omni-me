@@ -2959,13 +2959,23 @@ The finances row lands on the overview with the review card ringed, not inside a
 accepted that as designed. 16 archive reviews cleared; the ~70 finance batches spot-checked only.
 
 **Bugs, mine to fix:**
-- B1. **Finance review attachment overflows the page** (the storage receipt): the side pan is back,
-  in `SourceEmailPanel`. Same class as the archive's `min-w-0` fix, and the layout sweep missed it
-  because no fixture puts a wide attachment in a finance review.
-- B2. **Settings › accounts rows overflow onto the Liquid button.** Long-standing.
+- B1. **Finance review attachment overflows the page** (the storage receipt). ✅ FIXED `cd76437`.
+  Measured on the phone over DevTools: the attachment header's filename
+  (`AccessStorage-345HigginsAvenue_Receipt__20260928_359.pdf`) cannot wrap, and pushed the size
+  label to 442px on a 360px screen. One component, so the archive had it too. The layout sweep
+  could not have caught it; see its entry below.
+- B2. **Settings › accounts rows overflow onto the Liquid button.** ✅ FIXED `3efd332`. Measured:
+  the rename input ran 25→236px against a box ending at 186. Its `flex-1` sat in a block parent,
+  so the browser's default input width applied. Six sibling inputs had `flex-1` without
+  `min-w-0` and got it too.
 - B3. **The app always reopens on Journal (Today)**, whatever page it was closed on. `main.rs` says
   the continuity store restores the last tab behind the splash, so this is a broken restore, not a
   default. The unexplained jump to the 2026-09-24 entry is probably the same store.
+  📊 Reproduced over DevTools on a warm reload too: stored `nav.tab` = `notes`, shown Journal,
+  and saving works in the same session. So the save is fine and the restore loses. Reading the
+  code found no cause, and an injected invoke tracer cannot see Tauri's IPC (`__TAURI__` is
+  frozen). ▶ `record_boot` (main.rs) writes each restore step to `window.__omniBoot`; read it on
+  the phone after 1.1.13-dev.
 - B4. **A receipt image takes 5–10 s to appear** on first open in the archive (cached reopen fast).
   📊 Measured 2026-10-01 over DevTools on the phone, 3.9 MB photo: **23.6 s cold**, 0.25 s cached.
   The server sends it in 8 ms on the box, and the cached path (bytes returned as a JSON number
@@ -2984,6 +2994,10 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   payslip PDF is unreadable at its current size, so fine print cannot be confirmed.
 - F2. **Correct a proposed transaction before committing it.** Review is commit or dismiss only,
   so one wrong account forces a choice between committing an error and losing the rest.
+- F2a. **Batch rows cannot be told apart** (seen driving the phone 2026-10-01): every row reads
+  "Email receipts · 2026-09-30 · 1 transaction", with no vendor or subject, and the date is the
+  processing date, not the receipt's. 68 such rows is part of why the queue went unreviewed.
+  Belongs with F2, the same review screen.
 - F3. **A multi-image receipt as one document.** Two photos of one bank receipt became two.
 - F4. **How a superseded order reads in the email receipt view** "makes no sense". Needs an example
   before it can be designed.
@@ -3008,10 +3022,19 @@ today", and nobody had touched the phone. It could be restored navigation state 
 
 **The tooling half of his question** — *"ways to set up a system where these are things you
 could have caught on your own"*. Two artifacts, only one of which exists yet:
-- ✅ `tests/viewport-check.mjs` + a `continue-on-error` CI step. Now measures 16 screens
-  (7 tabs × 2 widths + the archive detail at both) and reports no overflow, which is what
-  verifies the `min-w-0` fix. ⛔ Promote it to blocking only after it fails for a deliberately
-  introduced regression.
+- ✅ `tests/viewport-check.mjs` + a `continue-on-error` CI step, measuring 16 screens
+  (7 tabs × 2 widths + the archive detail at both).
+  🔴 **Third time green while blind, found 2026-10-01**, and the earlier "verifies the
+  `min-w-0` fix" claim is withdrawn. It excused every element inside any scroll container, and
+  the content pane is `overflow-y-auto`, whose x-axis computes to `auto`, so every element on
+  every page was excused. Only a whole-document pan could fail it, and the document never pans:
+  the pane does, which is what he sees. Fixed in `3efd332`: only clipping containers and ones
+  marked `data-scroll-x` (five: raw text, CSV table, source email, raw JSON, import blockers)
+  excuse, and any unmarked container scrolling sideways fails.
+  ✅ **It has now failed for a deliberately introduced regression.** A fixture with a long
+  unbreakable filename, pushed without the B1 fix: the old sweep passed it (`f9805df`); the new
+  one failed exactly the archive detail, pane panning 200px at 360 and 170px at 390, with no
+  other screen flagged (`3efd332`). The fix then went in as `cd76437`.
 - 🔴 **It reported green twice while completely broken, and that is the lesson worth keeping.**
   Run 1: `editor.bundle.js` was missing from the served bundle, so the first tab switch aborted
   the wasm (the trap in `project-dx-serve-needs-the-editor-bundle`, which I had and did not
