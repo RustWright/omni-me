@@ -1289,10 +1289,20 @@ critical path, not the tail.
   labels are trustworthy, which leaves both per-tag retention and the Gmail write-back
   permanently ungated.
 
-### Mail triage seat — MEASURED 2026-09-30, a PROPOSAL awaiting his call
+### Mail triage seat — 🔴 DECIDED 2026-09-30 (user): SHADOW MODE FIRST. BUILT the same day.
 
 **Asked for** by him 2026-09-30, as its own seat (his words: "it may need a different seat for
-it"). Everything below except that is my proposal.
+it"). He then chose shadow mode over gating now and over a holdout-first test: verdicts are
+recorded, nothing is skipped, and his review decisions score the seat before it gates anything.
+✅ Built in `77b31b5` (public) + `9b158a9` (overlay): `[llm.triage]` / `LlmRole::Triage`, the seat
+off unless its own table exists (`triage::from_credentials`), `ReceiptHandler::with_triage`, the
+verdict on every proposal as `source_metadata.triage` and logged per uid. Request shape is the
+measured one, system message plus a cap of 8 tokens: production's `complete()` would send one
+user message, which re-measured at 81/97 skipped instead of 87 for 37% more input tokens.
+⚠️ The snippet comes from `parse_eml`'s `body_text` (mail-parser's HTML-to-text, which skips
+`<head>`), not the eval's own stripper: close, not identical, and shadow mode measures the real one.
+⏳ **Scoring is not built.** It needs a query joining `triage: "none"` proposals with his decisions.
+The rest of this section is the measurement it was decided on.
 
 **The eval.** gmail_personal uids 14690–14885, 180 mails, fetched read-only on the box and kept
 there (`~deploy/triage-eval/`, scripts beside it). Reference = the September tick's own verdicts,
