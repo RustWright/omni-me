@@ -15,8 +15,8 @@ Owed and not blocking: the Rust 1.99 upgrade (CI is pinned to 1.98.1 since it br
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **Try F1 on the dev phone (1.1.17-dev)**: pinch-zoom a receipt photo and a PDF. Everything
-  else was measured on the device; a real pinch could not be.
+- **F5, encrypted statements in the archive**: how the viewer gets a readable copy, and where it
+  sits against F2. `tasks.md` § On-device pass, F5.
 - **Review the re-proposed September receipts** (~68 batches). Easier after F2/F2a.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.

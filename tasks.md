@@ -3048,6 +3048,14 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
 - F3. **A multi-image receipt as one document.** Two photos of one bank receipt became two.
 - F4. **How a superseded order reads in the email receipt view** "makes no sense". Needs an example
   before it can be designed.
+- F1 ✅ pinch-zoom confirmed on the phone by him, 2026-10-01.
+- F5. **An encrypted statement attachment is archived but unreadable** (his, 2026-10-01). Three
+  gaps, found 2026-10-01: (1) no `pdf_password*` secret is configured on dev or live, and the
+  overlay's per-bank password rule feeds only its statement importer, not the archive's list;
+  (2) the viewer calls pdf.js with no password, so an encrypted PDF never renders; (3) no path
+  re-reads an already-archived textless document once a password exists, although
+  `docs/src/archive.md` § Encrypted documents says the text "is recoverable later". Searched, not
+  found; treat (3) as unbuilt until shown otherwise.
 
 **Seen while installing 1.1.12-dev (2026-09-30), not yet diagnosed.** Launch showed Today
 2026-09-30 with the editor on "Loading…" through the documents projection rebuild (~60 s, 27,196
