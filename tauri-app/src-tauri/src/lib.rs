@@ -897,6 +897,7 @@ pub fn run() {
             commands::extract::extract_document,
             // Local attachment cache (Phase 3.7)
             commands::attachments::fetch_attachment,
+            commands::attachments::fetch_attachment_preview,
             commands::attachments::attachment_cache_size,
             commands::attachments::clear_attachment_cache,
             commands::documents::list_documents,

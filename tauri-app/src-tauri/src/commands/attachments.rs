@@ -229,16 +229,59 @@ pub async fn fetch_attachment(
     Ok(bytes)
 }
 
-/// Settings → Cache: current cache size in bytes (3.8 surface).
-#[tauri::command(rename_all = "snake_case")]
-pub async fn attachment_cache_size(state: State<'_, AppState>) -> Result<u64, String> {
-    cache_size(&state.attachment_cache_dir).await
+/// Previews keep their own LRU inside the attachment cache, under the same cap.
+fn preview_cache_dir(dir: &Path) -> PathBuf {
+    dir.join("previews")
 }
 
-/// Settings → Cache: clear all cached attachments; returns bytes freed.
+/// Bytes to *view* an attachment: the server's downscaled preview, cached on its
+/// own. An original already on the device wins, and a server without the route
+/// (404) falls back to the original, so this is always safe to call first.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn fetch_attachment_preview(
+    state: State<'_, AppState>,
+    sha256: String,
+) -> Result<Vec<u8>, String> {
+    let dir = preview_cache_dir(&state.attachment_cache_dir);
+    if let Some(bytes) = cache_read(&dir, &sha256).await? {
+        return Ok(bytes);
+    }
+    if let Some(bytes) = cache_read(&state.attachment_cache_dir, &sha256).await? {
+        return Ok(bytes);
+    }
+    let resp = state
+        .box_request(reqwest::Method::GET, &format!("/blobs/{sha256}/preview"))
+        .await
+        .send()
+        .await
+        .map_err(|e| format!("preview fetch: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return fetch_attachment(state, sha256).await;
+    }
+    if !resp.status().is_success() {
+        return Err(format!("preview fetch: server returned {}", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("preview fetch body: {e}"))?
+        .to_vec();
+    cache_write(&dir, &sha256, &bytes).await?;
+    Ok(bytes)
+}
+
+/// Settings → Cache: current cache size in bytes (3.8 surface), previews included.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn attachment_cache_size(state: State<'_, AppState>) -> Result<u64, String> {
+    let dir = &state.attachment_cache_dir;
+    Ok(cache_size(dir).await? + cache_size(&preview_cache_dir(dir)).await?)
+}
+
+/// Settings → Cache: clear all cached attachments and previews; returns bytes freed.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn clear_attachment_cache(state: State<'_, AppState>) -> Result<u64, String> {
-    cache_clear(&state.attachment_cache_dir).await
+    let dir = &state.attachment_cache_dir;
+    Ok(cache_clear(dir).await? + cache_clear(&preview_cache_dir(dir)).await?)
 }
 
 #[cfg(test)]

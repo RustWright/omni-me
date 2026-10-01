@@ -198,6 +198,14 @@ pub struct BackNav {
     /// page reacts in its own scope (see [`use_page_back`]), so all view-signal
     /// writes stay where they belong — the root never touches page internals.
     pop_seq: Signal<u32>,
+    /// A full-screen overlay (the document viewer) is up. Back closes it before
+    /// anything else on the page, and the root clears this to do so.
+    overlay_open: Signal<bool>,
+}
+
+/// The overlay flag, for a full-screen view that back should close.
+pub fn use_overlay_back() -> Signal<bool> {
+    use_context::<BackNav>().overlay_open
 }
 
 /// Wire a page's in-app nav into hardware/gesture-back handling (#372).
@@ -562,9 +570,11 @@ fn App() -> Element {
     // bumps; the root orchestrates below. Provided as `BackNav` context.
     let mut page_depth = use_signal(|| 0u32);
     let mut pop_seq = use_signal(|| 0u32);
+    let mut overlay_open = use_signal(|| false);
     use_context_provider(|| BackNav {
         page_depth,
         pop_seq,
+        overlay_open,
     });
 
     // Live-refresh on inbound sync (see `sync_refresh`). The backend applies
@@ -644,6 +654,8 @@ fn App() -> Element {
             while rx.next().await.is_some() {
                 if *drawer_open.peek() {
                     drawer_open.set(false);
+                } else if *overlay_open.peek() {
+                    overlay_open.set(false);
                 } else if *page_depth.peek() > 0 {
                     // Ask the active page to pop one level (it reacts in its own
                     // scope via `use_page_back`).
@@ -667,7 +679,10 @@ fn App() -> Element {
     // synchronously (#372). Reactive on drawer / page-depth / tab, so the flag
     // is always current when a back press arrives.
     use_effect(move || {
-        let can = *drawer_open.read() || *page_depth.read() > 0 || *active_tab.read() != home_of();
+        let can = *drawer_open.read()
+            || *overlay_open.read()
+            || *page_depth.read() > 0
+            || *active_tab.read() != home_of();
         bridge::set_can_go_back(can);
     });
 

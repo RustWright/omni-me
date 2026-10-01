@@ -101,3 +101,40 @@ window.destroyPdf = function (containerId) {
     container.replaceChildren();
   }
 };
+
+// Pinch, pan and wheel zoom for the full-screen document viewer.
+//
+// ⚠️ In this bundle rather than its own: the bundle copy lists (package.json,
+// the CI copy step) are what once shipped a page aborting on a missing file,
+// and a new name is one more place to forget it.
+import Panzoom from "@panzoom/panzoom";
+
+const zooms = new Map();
+
+/** Make `elementId` pinch-zoomable. Pans within its parent; 1x to 8x. */
+window.attachZoom = function (elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) {
+    throw new Error(`zoom target #${elementId} not found`);
+  }
+  const pz = Panzoom(el, { minScale: 1, maxScale: 8, contain: "outside" });
+  el.parentElement.addEventListener("wheel", pz.zoomWithWheel);
+  zooms.set(elementId, pz);
+};
+
+/** `"in"`, `"out"` or `"reset"`, for the viewer's buttons. */
+window.stepZoom = function (elementId, how) {
+  const pz = zooms.get(elementId);
+  if (!pz) return;
+  if (how === "in") pz.zoomIn();
+  else if (how === "out") pz.zoomOut();
+  else pz.reset();
+};
+
+window.detachZoom = function (elementId) {
+  const pz = zooms.get(elementId);
+  if (pz) {
+    pz.destroy();
+    zooms.delete(elementId);
+  }
+};

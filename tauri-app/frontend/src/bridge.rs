@@ -2533,6 +2533,23 @@ pub async fn invoke_fetch_attachment(sha256: &str) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Bytes to view an image: the server's small preview, falling back to the
+/// original. See `commands::attachments::fetch_attachment_preview`.
+pub async fn invoke_fetch_attachment_preview(sha256: &str) -> Result<Vec<u8>, String> {
+    #[cfg(feature = "mock")]
+    {
+        invoke_fetch_attachment(sha256).await
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            sha256: &'a str,
+        }
+        invoke("fetch_attachment_preview", &Args { sha256 }).await
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Account summaries (Phase 4.4 — Accounts screen)
 // -----------------------------------------------------------------------------
