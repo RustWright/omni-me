@@ -2985,8 +2985,10 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   the app from Android's share sheet never switched to Finances. Class check: every other context
   in the frontend is provided exactly once.
   The 2026-09-24 jump is the journal restoring its own last-viewed date (`nav.journal_date`),
-  which worked: Journal (the stuck default) opened on the last date viewed. ❓ Whether a new day
-  should open on today instead is a design question for him, not asked yet.
+  which worked: Journal (the stuck default) opened on the last date viewed.
+  🔴 **DECIDED 2026-10-01 (user): a new day opens on today**; within the same day the last-viewed
+  date is restored. Built as `nav.journal_viewed_on`, the day the date was chosen; the restore
+  applies the saved date only when that day is today.
 - B4. **A receipt image takes 5–10 s to appear** on first open in the archive (cached reopen fast).
   📊 Measured 2026-10-01 over DevTools on the phone, 3.9 MB photo: **23.6 s cold**, 0.25 s cached.
   The server sends it in 8 ms on the box, and the cached path (bytes returned as a JSON number

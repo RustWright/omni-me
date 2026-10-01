@@ -156,7 +156,8 @@ pub fn JournalPage() -> Element {
     // the note's word/char count. Written by `DayView`, read only here.
     let viewed_body = use_signal(String::new);
 
-    // 1.8b nav restoration: re-open the day the user last had here. Gated on
+    // 1.8b nav restoration: re-open the day the user last had here, but only if
+    // they had it today; a new day opens on today (`journal_viewed_on`). Gated on
     // `is_loaded` so it picks up the disk snapshot even when this page mounts
     // before the boot read finishes; re-applies on every remount for within-
     // session continuity (tab away to Notes and back keeps the viewed day).
@@ -167,7 +168,10 @@ pub fn JournalPage() -> Element {
             return;
         }
         let saved = store.nav_peek();
-        if let Some(d) = saved.journal_date {
+        let today = UserDate::today(&tz_signal.peek()).to_date_string();
+        if let Some(d) = saved.journal_date
+            && saved.journal_viewed_on.as_deref() == Some(today.as_str())
+        {
             selected_date.set(d);
         }
         restored.set(true);
@@ -209,7 +213,11 @@ pub fn JournalPage() -> Element {
             return;
         }
         let date = selected_date.read().clone();
-        store.update_nav(|n| n.journal_date = Some(date));
+        let viewed_on = UserDate::today(&tz_signal.peek()).to_date_string();
+        store.update_nav(|n| {
+            n.journal_date = Some(date);
+            n.journal_viewed_on = Some(viewed_on);
+        });
     });
 
     // Describe this screen for problem reports. The calendar drawer is reported
