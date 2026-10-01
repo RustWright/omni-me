@@ -673,6 +673,29 @@ mod tests {
             .expect("a proposal")
     }
 
+    /// Shadow triage is only scoreable if the verdict reaches the proposal his
+    /// decision lands on. `none` here, and still proposed: shadow skips nothing.
+    #[tokio::test]
+    async fn a_proposal_carries_the_triage_verdict_and_shadow_skips_nothing() {
+        let extractor = Arc::new(StubExtractor(stub_result(Some("receipt"), "105.43")));
+        let msg = imap_msg_from("shop@northwind.example", plain_eml());
+
+        let (seat, _) = crate::auto_import::triage::fake::triage(Ok("NONE"));
+        let shadowed = ReceiptHandler::new("shop", "device-test", extractor.clone())
+            .with_triage(Arc::new(seat));
+        let event = shadowed
+            .handle(&msg)
+            .await
+            .unwrap()
+            .pop()
+            .expect("still proposed");
+        assert_eq!(event.payload["source_metadata"]["triage"], "none");
+
+        let plain = ReceiptHandler::new("shop", "device-test", extractor);
+        let event = plain.handle(&msg).await.unwrap().pop().unwrap();
+        assert!(event.payload["source_metadata"]["triage"].is_null());
+    }
+
     /// The posture the gate deletion was signed off under: every message now
     /// reaches the model, so review is told whether the sender authenticated.
     #[tokio::test]

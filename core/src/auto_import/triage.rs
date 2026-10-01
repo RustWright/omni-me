@@ -98,8 +98,9 @@ pub fn parse(answer: &str) -> Verdict {
     }
 }
 
+/// A triage seat with a scripted answer, for this module's tests and the handler's.
 #[cfg(test)]
-mod tests {
+pub(crate) mod fake {
     use super::*;
     use crate::llm::{ChatResponse, LlmError, LlmResponse, ToolDef, Usage};
     use async_trait::async_trait;
@@ -107,9 +108,9 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    struct OneAnswer {
-        answer: Result<String, LlmError>,
-        seen: Mutex<Vec<ChatRequest>>,
+    pub(crate) struct OneAnswer {
+        pub(crate) answer: Result<String, LlmError>,
+        pub(crate) seen: Mutex<Vec<ChatRequest>>,
     }
 
     #[async_trait]
@@ -144,13 +145,20 @@ mod tests {
         }
     }
 
-    fn triage(answer: Result<&str, LlmError>) -> (MailTriage, Arc<OneAnswer>) {
+    pub(crate) fn triage(answer: Result<&str, LlmError>) -> (MailTriage, Arc<OneAnswer>) {
         let client = Arc::new(OneAnswer {
             answer: answer.map(str::to_string),
             seen: Mutex::new(vec![]),
         });
         (MailTriage::new(client.clone()), client)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fake::triage;
+    use super::*;
+    use crate::llm::LlmError;
 
     fn creds(toml: &str) -> Credentials {
         let dir = tempfile::tempdir().unwrap();

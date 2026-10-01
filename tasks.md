@@ -1301,7 +1301,17 @@ measured one, system message plus a cap of 8 tokens: production's `complete()` w
 user message, which re-measured at 81/97 skipped instead of 87 for 37% more input tokens.
 ⚠️ The snippet comes from `parse_eml`'s `body_text` (mail-parser's HTML-to-text, which skips
 `<head>`), not the eval's own stripper: close, not identical, and shadow mode measures the real one.
+✅ **ON DEV 2026-10-01**, image `dev-eadc46b-60d8d4a`, `[llm.triage]` added to
+`credentials-dev.toml` (backup `.bak-20261001-033142` beside it). Boot logs the seat on at
+temperature 0. First four live verdicts agree with extraction: two e-transfers `money`, two promos
+`none`, and both proposals carry `source_metadata.triage = "money"`, read back over `/sync/pull`.
 ⏳ **Scoring is not built.** It needs a query joining `triage: "none"` proposals with his decisions.
+🔴 **Found on the way: a stdin race in every helper subprocess.** Overlay CI failed once on the
+brokerage driver test with `write stdin: Broken pipe`. A helper that exits before reading its
+request (a crash, or exit 5 for re-auth) broke the pipe, and the source reported the write
+instead of the exit code and stderr, so a re-auth would read as a generic error. The same code
+sat in core's `SubprocessSource`. ✅ Fixed once in `60d8d4a` (`subprocess::feed_stdin`, broken
+pipe passed through to the wait) and used by both; overlay `eadc46b`.
 The rest of this section is the measurement it was decided on.
 
 **The eval.** gmail_personal uids 14690–14885, 180 mails, fetched read-only on the box and kept
