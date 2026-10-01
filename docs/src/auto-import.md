@@ -41,6 +41,20 @@ So the classifier decides alone, and a new vendor is no longer a code change, a 
 forwarded email. It is a review item you either commit or dismiss. What that costs is a wider
 injection surface, which the last section of this page is about.
 
+### A triage seat, in shadow mode
+
+The cost argument above still holds: a cheap model screening each email first saves about ten
+cents a month. Two things make it worth measuring anyway. A first import reads a whole mailbox
+at once, and the full extractor sends some junk to review: login-link emails and promotions
+came back priced. On one month of real mail, a 24B model given the sender, subject and first
+800 characters kept all 55 money emails on three runs and would have skipped most of the junk.
+That is one mailbox and one month, so the seat runs in **shadow mode**. Each email gets a
+verdict, logged and stored on the proposal, and every email is still extracted. Your review
+decisions then score it: a batch you commit that triage called `none` is a miss.
+
+It is off unless the credentials file has its own `[llm.triage]` table. Inheriting `[llm]` would
+put the most expensive model on every email.
+
 ## The ones that are not a charge
 
 The extractor classifies every message it reads — receipt, order confirmation, order update,

@@ -256,6 +256,12 @@ pub struct LlmProviderConfig {
     /// Chosen on cost per call and on knowing when to abstain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structurer: Option<LlmRoleOverride>,
+    /// Role C0 — mail triage: one word on whether an email could record money,
+    /// before full extraction. Chosen on never missing a receipt, then on cost.
+    /// Unlike the other seats it is only used when this table exists: inheriting
+    /// `[llm]` would put the most expensive model on every email.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triage: Option<LlmRoleOverride>,
 }
 
 /// Which job a model is being selected for. Letters map to the table in
@@ -274,6 +280,8 @@ pub enum LlmRole {
     Transcriber,
     /// D — high-volume structurer.
     Structurer,
+    /// C0 — mail triage, ahead of the extractor.
+    Triage,
 }
 
 /// A per-role override of `[llm]`. **Every field is optional**, and that is the
@@ -343,6 +351,7 @@ impl LlmProviderConfig {
             LlmRole::Reader => &self.reader,
             LlmRole::Transcriber => &self.transcriber,
             LlmRole::Structurer => &self.structurer,
+            LlmRole::Triage => &self.triage,
         };
         let mut out = LlmProviderConfig {
             provider: self.provider.clone(),
@@ -360,6 +369,7 @@ impl LlmProviderConfig {
             reader: None,
             transcriber: None,
             structurer: None,
+            triage: None,
         };
         let Some(o) = over else { return out };
         if let Some(v) = &o.provider {
@@ -394,13 +404,14 @@ impl LlmProviderConfig {
 }
 
 /// Role names understood inside `[llm]`. Anything else under it is a typo.
-const ROLE_KEYS: [&str; 6] = [
+const ROLE_KEYS: [&str; 7] = [
     "interactive",
     "batch",
     "extractor",
     "reader",
     "transcriber",
     "structurer",
+    "triage",
 ];
 
 /// Reject an unknown sub-table under `[llm]`.
@@ -517,6 +528,7 @@ impl std::fmt::Debug for LlmProviderConfig {
             .field("reader", &self.reader)
             .field("transcriber", &self.transcriber)
             .field("structurer", &self.structurer)
+            .field("triage", &self.triage)
             .finish()
     }
 }
@@ -766,6 +778,29 @@ mod tests {
             assert_eq!(c.base_url.as_deref(), Some("https://example.test/v1"));
             assert!(c.vision, "vision must survive the merge for every C seat");
         }
+    }
+
+    /// `[llm.triage]` loads under its own name and resolves its own model. A
+    /// missing entry in `ROLE_KEYS` would refuse the whole file instead.
+    #[test]
+    fn the_triage_seat_loads_and_resolves_its_own_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        std::fs::write(
+            &path,
+            "[llm]\nprovider = \"openai_compatible\"\n\
+             base_url = \"https://example.test/v1\"\nmodel = \"expensive\"\n\
+             api_key = \"k\"\n\n[llm.triage]\nmodel = \"cheap\"\n",
+        )
+        .unwrap();
+        let llm = load(&path)
+            .expect("[llm.triage] must be a known role")
+            .llm
+            .unwrap();
+        assert!(llm.triage.is_some());
+        let c = llm.for_role(LlmRole::Triage);
+        assert_eq!(c.model.as_deref(), Some("cheap"));
+        assert_eq!(c.base_url.as_deref(), Some("https://example.test/v1"));
     }
 
     /// An unset C seat falls back to `[llm]`, NOT to `[llm.extractor]`.

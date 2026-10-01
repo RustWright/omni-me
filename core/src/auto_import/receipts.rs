@@ -43,11 +43,13 @@ use super::mime::{MimeAttachment, parse_eml};
 use super::order_ref;
 use super::sender_auth;
 use super::to_proposed_event;
+use super::triage::MailTriage;
 
 pub struct ReceiptHandler {
     name: String,
     device_id: String,
     extractor: Arc<dyn DocumentExtractor>,
+    triage: Option<Arc<MailTriage>>,
 }
 
 impl ReceiptHandler {
@@ -60,7 +62,15 @@ impl ReceiptHandler {
             name: name.into(),
             device_id: device_id.into(),
             extractor,
+            triage: None,
         }
+    }
+
+    /// Screen each message with the triage seat first. Shadow mode: the verdict is
+    /// logged and carried on the proposal, and every message is still extracted.
+    pub fn with_triage(mut self, triage: Arc<MailTriage>) -> Self {
+        self.triage = Some(triage);
+        self
     }
 }
 
@@ -186,6 +196,24 @@ impl ImapHandler for ReceiptHandler {
     async fn handle(&self, message: &ImapMessage) -> Result<Vec<NewEvent>, ImportError> {
         let parsed = parse_eml(&message.body)
             .map_err(|e| ImportError::Parse(format!("receipt mime: {e}")))?;
+
+        // Before anything that can fail, so every message gets a verdict to score.
+        let triage = match &self.triage {
+            Some(t) => {
+                let verdict = t
+                    .screen(&message.from, &parsed.subject, &parsed.body_text)
+                    .await;
+                tracing::info!(
+                    handler = self.name(),
+                    uid = message.uid,
+                    model = t.model_name(),
+                    verdict = verdict.as_str(),
+                    "receipt: triage verdict (shadow, not acted on)"
+                );
+                Some(verdict)
+            }
+            None => None,
+        };
 
         // Start with the text body; append text from any non-encrypted PDF
         // attachments. Image-only PDFs (pdftotext returns empty) contribute
@@ -375,6 +403,9 @@ impl ImapHandler for ReceiptHandler {
             // a new one about the same order.
             ORDER_GROUP_KEY: order_group,
             GROUP_MEMBER_KEY: format!("uid-{}", message.uid),
+            // Shadow triage, kept beside the proposal so his decision on it scores
+            // the seat: a committed batch triage called `none` is a miss.
+            "triage": triage,
         });
         let event = to_proposed_event(
             self.name(),

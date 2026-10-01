@@ -33,6 +33,7 @@ pub mod rest;
 pub mod sender_auth;
 pub mod setup;
 pub mod subprocess;
+pub mod triage;
 
 /// What a record-oriented parse produced, including what it could **not**
 /// parse.

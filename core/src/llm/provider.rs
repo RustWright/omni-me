@@ -208,6 +208,7 @@ fn default_sampling(role: LlmRole) -> Sampling {
         | LlmRole::Reader
         | LlmRole::Transcriber
         | LlmRole::Structurer
+        | LlmRole::Triage
         | LlmRole::Batch => Sampling::deterministic(),
         LlmRole::Interactive => Sampling::provider_default(),
     }
@@ -739,6 +740,7 @@ mod tests {
             LlmRole::Reader,
             LlmRole::Transcriber,
             LlmRole::Structurer,
+            LlmRole::Triage,
             LlmRole::Batch,
         ] {
             assert_eq!(

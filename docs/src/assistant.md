@@ -552,6 +552,7 @@ each of these roles earns its own, benchmarked rather than argued:
 | **Batch reasoner** | the scheduled check-in | quality; it can afford to be slow | **unmeasured** |
 | **Quarantined extractor** | the document extractor; the reader has no caller yet | reads images, and **never holds tools** | **unmeasured** |
 | **High-volume structurer** | `POST /notes/{id}/process` | cost per call, and knowing when to abstain | **unmeasured** |
+| **Mail triage** | every fetched email, before the extractor | never missing a receipt, then cost | **measured** on one month of mail; shadow mode only |
 | **Local** | search | never leaves your machine at all | **reranker measured**; the embedder is inherited, not compared |
 
 Most seats now have a caller, which was not true when this table was written — the archive
@@ -615,6 +616,7 @@ money in the wrong direction. So the seats are split:
 |---|---|---|
 | Quarantined extractor, document reader, transcriber | `temperature: 0` | One right answer. Reproducibility is worth more than variety. |
 | High-volume structurer | `temperature: 0` | Turning a note into records is the same kind of question, and it is judged on knowing when to abstain. |
+| Mail triage | `temperature: 0` | One word with one right answer. |
 | Batch reasoner | `temperature: 0` | It answers one scheduled question a day and is told not to draw new conclusions. Variety buys it nothing, and determinism is what lets its benchmark separate candidates at all. |
 | Interactive reasoner | whatever the endpoint defaults to | The one seat being conversed with. Temperature 0 costs phrasing that varies, and that is a product decision rather than a correctness one. |
 
