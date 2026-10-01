@@ -251,7 +251,11 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
         spawn(async move {
             // Images open on the server's small preview: on a slow link the
             // original took 10-24s, and the full-screen view fetches it anyway.
-            let fetched = if matches!(render_for_fetch, AttachmentRender::Image) {
+            // A PDF's preview is the server's decrypted copy when it is locked.
+            let fetched = if matches!(
+                render_for_fetch,
+                AttachmentRender::Image | AttachmentRender::Pdf
+            ) {
                 bridge::invoke_fetch_attachment_preview(&sha).await
             } else {
                 bridge::invoke_fetch_attachment(&sha).await
@@ -567,7 +571,15 @@ async fn render_pdf(container_id: &str, url: &str) -> Result<(u32, u32), String>
 
     let result = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(promise))
         .await
-        .map_err(|e| format!("could not render this PDF: {e:?}"))?;
+        .map_err(|e| {
+            let e = format!("{e:?}");
+            if e.contains("PasswordException") || e.contains("No password given") {
+                "This PDF is encrypted, and none of the server's configured passwords opens it."
+                    .to_string()
+            } else {
+                format!("could not render this PDF: {e}")
+            }
+        })?;
 
     let read = |key: &str| -> u32 {
         js_sys::Reflect::get(&result, &JsValue::from_str(key))

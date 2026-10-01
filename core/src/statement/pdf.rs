@@ -230,6 +230,101 @@ pub async fn extract_layout_text_from_path(
     String::from_utf8(text).map_err(|e| PdfTextError::NotUtf8(e.to_string()))
 }
 
+/// Wall-clock bound on one `pdfinfo` or `pdftocairo` run. Re-rendering every
+/// page costs more than reading the text off them.
+const DECRYPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+#[derive(Debug, thiserror::Error)]
+pub enum DecryptError {
+    #[error("the pdf is encrypted and none of the {tried} configured password(s) opened it")]
+    Encrypted { tried: usize },
+    #[error("{0}")]
+    Failed(String),
+}
+
+/// An unencrypted copy of an encrypted PDF, so a device that holds no password
+/// can still show it. `None` when the file opens without one.
+///
+/// `pdftocairo -pdf` re-renders rather than strips the encryption (poppler has
+/// no lossless decrypt; `qpdf` would add a dependency), and keeps the text
+/// layer. The password goes on argv, as in [`extract_layout_text_from_path`].
+pub async fn decrypted_copy_with_any(
+    pdf_bytes: &[u8],
+    passwords: &[&str],
+) -> Result<Option<Vec<u8>>, DecryptError> {
+    if pdf_bytes.len() > MAX_PDF_BYTES {
+        return Err(DecryptError::Failed(format!(
+            "pdf is {} bytes, over the {MAX_PDF_BYTES}-byte limit",
+            pdf_bytes.len()
+        )));
+    }
+    let dir = tempfile::tempdir().map_err(|e| DecryptError::Failed(format!("temp dir: {e}")))?;
+    let input = dir.path().join("in.pdf");
+    let output = dir.path().join("out.pdf");
+    tokio::fs::write(&input, pdf_bytes)
+        .await
+        .map_err(|e| DecryptError::Failed(format!("write temp: {e}")))?;
+
+    // `pdfinfo` is the cheap check: an unencrypted file is never re-rendered.
+    match run_poppler("pdfinfo", &["-upw", "", path_arg(&input)?]).await {
+        Ok(()) => return Ok(None),
+        Err(stderr) if is_wrong_password(&stderr) => {}
+        Err(stderr) => return Err(DecryptError::Failed(stderr)),
+    }
+    for password in passwords {
+        let args = [
+            "-pdf",
+            "-upw",
+            password,
+            path_arg(&input)?,
+            path_arg(&output)?,
+        ];
+        match run_poppler("pdftocairo", &args).await {
+            Ok(()) => {
+                let bytes = tokio::fs::read(&output)
+                    .await
+                    .map_err(|e| DecryptError::Failed(format!("read decrypted copy: {e}")))?;
+                return Ok(Some(bytes));
+            }
+            Err(stderr) if is_wrong_password(&stderr) => continue,
+            Err(stderr) => return Err(DecryptError::Failed(stderr)),
+        }
+    }
+    Err(DecryptError::Encrypted {
+        tried: passwords.len(),
+    })
+}
+
+fn path_arg(path: &Path) -> Result<&str, DecryptError> {
+    path.to_str()
+        .ok_or_else(|| DecryptError::Failed("temp path is not utf-8".into()))
+}
+
+/// Run a poppler tool to completion; `Err` carries its stderr, which is where
+/// the wrong-password case is told apart from a damaged file.
+async fn run_poppler(tool: &str, args: &[&str]) -> Result<(), String> {
+    let child = Command::new(tool)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("{tool} could not be run ({e}) — is poppler-utils installed?"))?;
+    match tokio::time::timeout(DECRYPT_TIMEOUT, child.wait_with_output()).await {
+        Ok(Ok(out)) if out.status.success() => Ok(()),
+        Ok(Ok(out)) => Err(format!(
+            "{tool} exited with status {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        )),
+        Ok(Err(e)) => Err(format!("{tool}: {e}")),
+        Err(_) => Err(format!(
+            "{tool} timed out after {}s",
+            DECRYPT_TIMEOUT.as_secs()
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +366,26 @@ mod tests {
         assert!(opened.text.contains("1284.00"), "{}", opened.text);
         // The index, so a caller can log the secret's NAME and never its value.
         assert_eq!(opened.opened_by, Some(1));
+    }
+
+    #[tokio::test]
+    async fn a_decrypted_copy_opens_with_no_password() {
+        let copy = decrypted_copy_with_any(ENCRYPTED, &["wrong", "letmein"])
+            .await
+            .unwrap()
+            .expect("the file is encrypted, so a copy is made");
+        let text = extract_layout_text(&copy, "").await.unwrap();
+        assert!(text.contains("1284.00"), "{text}");
+        // An unencrypted file is never re-rendered.
+        assert!(decrypted_copy_with_any(&copy, &[]).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn no_decrypted_copy_without_the_password() {
+        let err = decrypted_copy_with_any(ENCRYPTED, &["wrong"])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DecryptError::Encrypted { tried: 1 }), "{err}");
     }
 
     #[tokio::test]

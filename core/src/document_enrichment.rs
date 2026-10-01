@@ -350,6 +350,7 @@ pub async fn enrich_text_once(
                     text,
                     model: transcriber.name().to_string(),
                     transcribed_at: Utc::now().to_rfc3339(),
+                    text_source: None,
                 };
                 writer
                     .append_new(NewEvent::document_text_transcribed(
@@ -383,6 +384,75 @@ pub async fn enrich_text_once(
 ///
 /// A missing blob is an ordinary outcome rather than an error: it is what a
 /// document archived on another host looks like from here.
+/// What one re-read of the textless PDFs found.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RereadSummary {
+    pub candidates: usize,
+    /// Gained text from their own text layer.
+    pub read: usize,
+    /// Encrypted, and still no configured password opens them.
+    pub still_locked: usize,
+    /// Opened, or never locked, and carry no text layer: scans, left to transcription.
+    pub no_text: usize,
+    pub no_bytes: usize,
+}
+
+/// Every textless PDF tried once more against the configured passwords.
+///
+/// The password set only changes when the process starts, so this runs once per
+/// boot rather than per tick, and it is free: no model is asked. A scan with no
+/// text layer stays a candidate for [`enrich_text_once`].
+pub async fn reread_textless_pdfs(
+    db: &Database,
+    writer: &EventWriter,
+    blob_dir: &Path,
+    passwords: &crate::credentials::PdfPasswords,
+) -> Result<RereadSummary, EnrichError> {
+    const PDF: &str = "application/pdf";
+    let candidates = queries::documents_awaiting_text(db, &[PDF], u32::MAX, &[]).await?;
+    let mut summary = RereadSummary {
+        candidates: candidates.len(),
+        ..Default::default()
+    };
+    for row in candidates {
+        let Some(bytes) = read_blob(blob_dir, row.sha256.as_deref()).await else {
+            summary.no_bytes += 1;
+            continue;
+        };
+        match crate::archive::derive_text(&bytes, PDF, passwords).await {
+            (Some(text), crate::archive::TextSource::Extracted) => {
+                let payload = DocumentTextTranscribedPayload {
+                    document_id: row.document_id.clone(),
+                    text,
+                    model: "pdftotext".to_string(),
+                    transcribed_at: Utc::now().to_rfc3339(),
+                    text_source: Some(crate::archive::TextSource::Extracted.as_str().to_string()),
+                };
+                writer
+                    .append_new(NewEvent::document_text_transcribed(
+                        writer.device_id(),
+                        &payload,
+                    )?)
+                    .await?;
+                summary.read += 1;
+            }
+            _ if is_locked(&bytes).await => summary.still_locked += 1,
+            _ => summary.no_text += 1,
+        }
+    }
+    Ok(summary)
+}
+
+/// Whether the file needs a password nobody has supplied. Asked only after a
+/// read came back empty, to tell a locked file from a scan in the summary.
+async fn is_locked(bytes: &[u8]) -> bool {
+    matches!(
+        crate::statement::pdf::extract_layout_text(bytes, "").await,
+        Err(crate::statement::pdf::PdfTextError::Failed { stderr, .. })
+            if crate::statement::pdf::stderr_is_wrong_password(&stderr)
+    )
+}
+
 async fn read_blob(blob_dir: &Path, sha256: Option<&str>) -> Option<Vec<u8>> {
     let path = blob::path_for(blob_dir, sha256?).ok()?;
     tokio::fs::read(path).await.ok()
@@ -937,6 +1007,68 @@ mod tests {
             .unwrap();
         runner.apply_events(&[e]).await.unwrap();
         document_id
+    }
+
+    #[tokio::test]
+    async fn a_locked_pdf_gains_extracted_text_once_its_password_exists() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)]);
+        let writer = EventWriter::new(
+            Arc::new(store.clone()),
+            runner.clone(),
+            ALL_FEATURES.iter().copied().collect(),
+            "d1",
+        );
+        let blob_dir = tempfile::tempdir().unwrap();
+        let encrypted: &[u8] =
+            include_bytes!("../tests/fixtures/encrypted/encrypted-statement.pdf");
+        let sha256 = blob::store(blob_dir.path(), encrypted).await.unwrap();
+        let id = ulid::Ulid::new().to_string();
+        let e = store
+            .append(NewEvent {
+                id: None,
+                event_type: "document_archived".into(),
+                aggregate_id: id.clone(),
+                timestamp: chrono::Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({
+                    "document_id": id,
+                    "sha256": sha256,
+                    "filename": "statement.pdf",
+                    "mime_type": "application/pdf",
+                    "size": encrypted.len(),
+                    "archived_at": "2026-09-15T10:00:00Z",
+                    "source": "email",
+                    "text_source": "none",
+                }),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[e]).await.unwrap();
+
+        let none = crate::credentials::PdfPasswords::default();
+        let locked = reread_textless_pdfs(&db, &writer, blob_dir.path(), &none)
+            .await
+            .unwrap();
+        assert_eq!(
+            (locked.candidates, locked.still_locked, locked.read),
+            (1, 1, 0)
+        );
+
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert("pdf_password_x".to_string(), "letmein".to_string());
+        let configured = crate::credentials::PdfPasswords::from_secrets(&secrets);
+        let opened = reread_textless_pdfs(&db, &writer, blob_dir.path(), &configured)
+            .await
+            .unwrap();
+        assert_eq!(opened.read, 1);
+        assert_eq!(text_source_of(&db, &id).await.as_deref(), Some("extracted"));
+
+        let again = reread_textless_pdfs(&db, &writer, blob_dir.path(), &configured)
+            .await
+            .unwrap();
+        assert_eq!(again.candidates, 0, "a document with text leaves the queue");
     }
 
     #[tokio::test]

@@ -385,6 +385,32 @@ pub async fn run(cfg: RunConfig) {
         omni_me_core::config::ALL_FEATURES.iter().copied().collect(),
         state.device_id.clone(),
     ));
+    // Free and model-less, so it runs whether or not enrichment is enabled.
+    let passwords = omni_me_core::credentials::PdfPasswords::from_secrets(&state.secrets);
+    if !passwords.is_empty() {
+        let (db, writer, blob_dir) = (
+            (*state.db).clone(),
+            enrich_writer.clone(),
+            (*state.blob_dir).clone(),
+        );
+        tokio::spawn(async move {
+            match omni_me_core::document_enrichment::reread_textless_pdfs(
+                &db, &writer, &blob_dir, &passwords,
+            )
+            .await
+            {
+                Ok(s) => tracing::info!(
+                    candidates = s.candidates,
+                    read = s.read,
+                    still_locked = s.still_locked,
+                    no_text = s.no_text,
+                    no_bytes = s.no_bytes,
+                    "textless pdfs re-read against the configured passwords"
+                ),
+                Err(e) => tracing::warn!(error = %e, "re-reading textless pdfs failed"),
+            }
+        });
+    }
     enrichment_scheduler::spawn(
         (*state.db).clone(),
         enrich_writer,

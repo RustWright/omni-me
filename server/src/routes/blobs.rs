@@ -125,25 +125,30 @@ fn preview_dir(blob_dir: &std::path::Path) -> std::path::PathBuf {
     }
 }
 
-/// `GET /blobs/{hash}/preview` — a small upright JPEG for viewing, made once and
-/// cached. Anything that is not an image, or already small, comes back as the
-/// original, so a client can always ask for the preview first.
+/// `GET /blobs/{hash}/preview` — what a device should show first: a small upright
+/// JPEG for a photo, an unencrypted copy of an encrypted PDF, otherwise the
+/// original. Derived copies are made once and cached.
 async fn get_preview_handler(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> Result<Response, BlobError> {
     let hash = validate_hash_format(&hash)?;
     let dir = preview_dir(&state.blob_dir);
-    let cached = dir.join(format!("{hash}.jpg"));
-    if let Ok(bytes) = tokio::fs::read(&cached).await {
-        return Ok(blob_response(bytes));
+    for name in [format!("{hash}.jpg"), format!("{hash}.pdf")] {
+        if let Ok(bytes) = tokio::fs::read(dir.join(name)).await {
+            return Ok(blob_response(bytes));
+        }
     }
     let original = match tokio::fs::read(state.blob_dir.join(&hash)).await {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(BlobError::NotFound),
         Err(e) => return Err(BlobError::Io(e)),
     };
-    if !infer::get(&original).is_some_and(|t| t.mime_type().starts_with("image/")) {
+    let mime = infer::get(&original).map(|t| t.mime_type());
+    if mime == Some("application/pdf") {
+        return Ok(pdf_preview(&state, &hash, original).await);
+    }
+    if !mime.is_some_and(|m| m.starts_with("image/")) {
         return Ok(blob_response(original));
     }
     // Decoding a 12-megapixel photo is seconds of CPU; keep it off the workers.
@@ -155,19 +160,48 @@ async fn get_preview_handler(
     .map_err(|e| BlobError::Io(std::io::Error::other(e)))?;
     match made {
         (Ok(Some(preview)), _) => {
-            // Best effort: a failed cache write costs a re-encode next time.
-            if tokio::fs::create_dir_all(&dir).await.is_ok() {
-                let tmp = dir.join(format!("{hash}.jpg.tmp"));
-                if tokio::fs::write(&tmp, &preview).await.is_ok() {
-                    let _ = tokio::fs::rename(&tmp, &cached).await;
-                }
-            }
+            cache_preview(&dir, &format!("{hash}.jpg"), &preview).await;
             Ok(blob_response(preview))
         }
         (Ok(None), original) => Ok(blob_response(original)),
         (Err(e), original) => {
             tracing::warn!(hash = %hash, error = %e, "preview failed; serving the original");
             Ok(blob_response(original))
+        }
+    }
+}
+
+/// An encrypted PDF decrypted with the configured passwords, so the phone never
+/// holds one. When none opens it, the original goes back marked `no-store`: a
+/// device that cached it would keep showing a locked file after one is added.
+async fn pdf_preview(state: &AppState, hash: &str, original: Vec<u8>) -> Response {
+    let passwords = omni_me_core::credentials::PdfPasswords::from_secrets(&state.secrets);
+    match omni_me_core::statement::pdf::decrypted_copy_with_any(&original, &passwords.values())
+        .await
+    {
+        Ok(Some(copy)) => {
+            cache_preview(&preview_dir(&state.blob_dir), &format!("{hash}.pdf"), &copy).await;
+            blob_response(copy)
+        }
+        Ok(None) => blob_response(original),
+        Err(e) => {
+            tracing::warn!(hash = %hash, error = %e, "pdf preview: serving the original");
+            let mut response = blob_response(original);
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-store"),
+            );
+            response
+        }
+    }
+}
+
+/// Best effort: a failed cache write costs a re-make next time.
+async fn cache_preview(dir: &std::path::Path, name: &str, bytes: &[u8]) {
+    if tokio::fs::create_dir_all(dir).await.is_ok() {
+        let tmp = dir.join(format!("{name}.tmp"));
+        if tokio::fs::write(&tmp, bytes).await.is_ok() {
+            let _ = tokio::fs::rename(&tmp, dir.join(name)).await;
         }
     }
 }

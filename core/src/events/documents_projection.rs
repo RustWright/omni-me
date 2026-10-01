@@ -206,13 +206,11 @@ impl DocumentsProjection {
         // archive event, the row it leaves behind is a text-only stub that
         // `on_archived` completes on arrival, which is exactly what the
         // `option<>` columns exist for.
-        write_text_if_it_outranks(
-            db,
-            &parsed.document_id,
-            Some(parsed.text),
-            TextSource::Transcribed.as_str(),
-        )
-        .await
+        let source = match parsed.text_source.as_deref() {
+            Some("extracted") => TextSource::Extracted,
+            _ => TextSource::Transcribed,
+        };
+        write_text_if_it_outranks(db, &parsed.document_id, Some(parsed.text), source.as_str()).await
     }
 
     /// Tombstone a document: the row stays, marked purged, and its text goes.

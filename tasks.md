@@ -3082,6 +3082,22 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   🔴 DECIDED 2026-10-01 (user): **the server serves a decrypted copy** (the preview mechanism;
   the phone never holds a password), with a re-read of archived textless PDFs, built **after F2**.
   Beat: a password prompt on each view (types a bank password every time; server stays textless).
+  ▶ **Built 2026-10-01, decision log (mine, made while he was away):**
+  - Decryption: `pdftocairo -pdf -upw`, already in `poppler-utils`; tested on the fixture, text
+    survives. Beat: `qpdf --decrypt`, which is lossless but adds a package to two Dockerfiles.
+  - `/blobs/{hash}/preview` serves the decrypted copy (cached as `previews/{hash}.pdf`); an
+    unopenable PDF comes back `no-store`, and the app no longer lets a cached original PDF
+    short-circuit the preview. Otherwise a device that looked once would stay locked forever.
+  - Re-read: `reread_textless_pdfs` runs **once per server boot** (passwords only change at
+    boot), outside enrichment, which is off by default and spends model calls. Beat: a step in
+    `enrich_text_once`, which would never run on an instance with enrichment off.
+  - Recorded as `DocumentTextTranscribed` with a new optional `text_source: "extracted"` and
+    `model: "pdftotext"`. Beat: a new event type, which older builds would not know. An old
+    build folds it as `transcribed`, so the text still arrives at a lower rank.
+  - The viewer says "encrypted, and none of the server's passwords opens it" instead of a raw
+    pdf.js `PasswordException`.
+  - 🔴 **Blocked: deriving his bank's password into dev config.** It needs the account numbers
+    in the LIVE credentials file, and that read was refused as a production read. His call.
 
 **Seen while installing 1.1.12-dev (2026-09-30), not yet diagnosed.** Launch showed Today
 2026-09-30 with the editor on "Loading…" through the documents projection rebuild (~60 s, 27,196

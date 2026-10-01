@@ -234,9 +234,9 @@ fn preview_cache_dir(dir: &Path) -> PathBuf {
     dir.join("previews")
 }
 
-/// Bytes to *view* an attachment: the server's downscaled preview, cached on its
-/// own. An original already on the device wins, and a server without the route
-/// (404) falls back to the original, so this is always safe to call first.
+/// Bytes to *view* an attachment: the server's downscaled photo or decrypted PDF,
+/// cached on its own. An original already on the device wins unless it is a PDF,
+/// which may be the locked copy. A 404 falls back to the original.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn fetch_attachment_preview(
     state: State<'_, AppState>,
@@ -246,7 +246,9 @@ pub async fn fetch_attachment_preview(
     if let Some(bytes) = cache_read(&dir, &sha256).await? {
         return Ok(bytes);
     }
-    if let Some(bytes) = cache_read(&state.attachment_cache_dir, &sha256).await? {
+    if let Some(bytes) = cache_read(&state.attachment_cache_dir, &sha256).await?
+        && !bytes.starts_with(b"%PDF")
+    {
         return Ok(bytes);
     }
     let resp = state
@@ -261,12 +263,20 @@ pub async fn fetch_attachment_preview(
     if !resp.status().is_success() {
         return Err(format!("preview fetch: server returned {}", resp.status()));
     }
+    // The server sends a PDF it could not decrypt as `no-store`, so a password
+    // configured later still reaches a device that has already looked.
+    let no_store = resp
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .is_some_and(|v| v.as_bytes() == b"no-store");
     let bytes = resp
         .bytes()
         .await
         .map_err(|e| format!("preview fetch body: {e}"))?
         .to_vec();
-    cache_write(&dir, &sha256, &bytes).await?;
+    if !no_store {
+        cache_write(&dir, &sha256, &bytes).await?;
+    }
     Ok(bytes)
 }
 

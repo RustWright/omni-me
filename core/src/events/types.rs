@@ -1724,6 +1724,11 @@ pub struct DocumentTextTranscribedPayload {
     pub model: String,
     /// RFC3339, from the transcribing device's clock.
     pub transcribed_at: String,
+    /// `extracted` when the text came off the file's own text layer after ingest
+    /// (an encrypted PDF re-read once a password exists, `model` = `pdftotext`).
+    /// Absent means a model's reading, which is every event before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_source: Option<String>,
 }
 
 /// A document purged on purpose: its row tombstoned and its bytes reclaimed.

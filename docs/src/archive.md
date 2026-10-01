@@ -235,6 +235,21 @@ Both routes into a document's content take the same list, and they have to: the 
 statement whose text cannot be read is to *photograph* it and send the pictures to a model, and
 a renderer that cannot decrypt either leaves an encrypted document with no route at all.
 
+**Re-reading happens once per server start.** The password list is read from the credentials
+file at boot and never changes while the process runs, so that is the only moment a textless
+PDF can become readable. `document_enrichment::reread_textless_pdfs` tries every one of them
+then. It costs no model call, so it runs whether or not enrichment is enabled. Text it recovers
+is recorded as `extracted` because it is what the file states, not a model's reading. A PDF
+that still opens to nothing is left for transcription.
+
+**Viewing goes through the server, so the phone never holds a password.** `GET
+/blobs/{hash}/preview` returns an unencrypted copy of an encrypted PDF, re-rendered by
+`pdftocairo` and cached beside the image previews. When no password opens a PDF, the server
+sends the locked original marked `no-store`, so a device that has already viewed it gets the
+readable copy once a password is configured. The cached copy is plaintext on the server's disk.
+The server already holds both the password and the extracted text, so the copy exposes nothing
+new.
+
 One trade is deliberate and worth stating plainly: **the password is passed to poppler on the
 command line**, where anything able to read the process table can see it. There is no
 alternative in poppler itself — `pdftotext` and `pdftoppm` both take the value inline, with no
