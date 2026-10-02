@@ -3104,8 +3104,16 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
     build folds it as `transcribed`, so the text still arrives at a lower rank.
   - The viewer says "encrypted, and none of the server's passwords opens it" instead of a raw
     pdf.js `PasswordException`.
-  - 🔴 **Blocked: deriving his bank's password into dev config.** It needs the account numbers
-    in the LIVE credentials file, and that read was refused as a production read. His call.
+  - Deriving his bank's password into dev config was refused by the permission classifier as a
+    production read; he ran it himself 2026-10-02 (dev credentials backed up first).
+  ✅ **On dev, image `dev-54c22e1-f9d86fa`, 2026-10-02**: the boot re-read found 3 textless PDFs and
+  read all 3 (`still_locked=0`). The preview route returns an encrypted statement as an
+  unencrypted cairo copy with its text layer, in 1.3 s. Live untouched.
+  ✅ **On the phone, 1.1.19-dev**: an encrypted statement opened from the Archive and rendered
+  (one page, 2700×3818 canvas, 8.9% ink), with no password on the device. The 1.1.18 build had
+  returned its cached locked original, which is the case the client change exists for.
+  ⚠️ A statement a model had already transcribed is not re-read: the queue is "text is empty", so
+  its model reading stays at the lower rank. Only matters if the transcription is poor.
 
 **Seen while installing 1.1.12-dev (2026-09-30), not yet diagnosed.** Launch showed Today
 2026-09-30 with the editor on "Loading…" through the documents projection rebuild (~60 s, 27,196
