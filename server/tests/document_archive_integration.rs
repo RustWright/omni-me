@@ -394,8 +394,13 @@ impl omni_me_core::extraction::DocumentExtractor for KindExtractor {
     }
 }
 
-async fn capture_with_kind(kind: &'static str) -> (serde_json::Value, omni_me_core::db::Database) {
-    let (url, db, _h) =
+/// Capture one scan read as `kind`; return the response and every proposal a
+/// device would pull. The server projects only documents, so the review queue
+/// exists on devices and the event is what reaches them.
+async fn capture_with_kind(
+    kind: &'static str,
+) -> (serde_json::Value, Vec<omni_me_core::events::Event>) {
+    let (url, _db, _h) =
         common::start_full_server_with_extractor(std::sync::Arc::new(KindExtractor(kind))).await;
     let resp = reqwest::Client::new()
         .post(format!(
@@ -408,30 +413,52 @@ async fn capture_with_kind(kind: &'static str) -> (serde_json::Value, omni_me_co
         .await
         .expect("extract failed");
     assert!(resp.status().is_success(), "status {}", resp.status());
-    (resp.json().await.unwrap(), db)
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    let pulled: PullResponse = reqwest::Client::new()
+        .post(format!("{url}/sync/pull"))
+        .json(&PullRequest {
+            device_id: "phone".into(),
+            since: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        })
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let proposals = pulled
+        .events
+        .into_iter()
+        .filter(|e| e.event_type == "auto_import_batch_proposed")
+        .collect();
+    (body, proposals)
 }
 
 #[tokio::test]
 async fn a_receipt_added_from_the_archive_is_proposed_for_review() {
-    let (body, db) = capture_with_kind("receipt").await;
+    let (body, proposals) = capture_with_kind("receipt").await;
     let batch_id = body["proposed_batch_id"]
         .as_str()
         .expect("a receipt capture is proposed");
-    let pending = queries::list_pending_batches(&db).await.unwrap();
-    let batch = pending
+    let proposal = proposals
         .iter()
-        .find(|b| b.batch_id == batch_id)
-        .expect("the proposal is in the review queue");
-    assert_eq!(batch.source, "capture");
+        .find(|e| e.aggregate_id == batch_id)
+        .expect("a device pulls the proposal");
+    assert_eq!(proposal.payload["source"], "capture");
     let document_id = body["attachment"]["document_id"].as_str().unwrap();
-    let meta = batch.source_metadata.clone().unwrap().into_json_value();
-    assert_eq!(meta["document_id"], document_id);
+    assert_eq!(
+        proposal.payload["source_metadata"]["document_id"],
+        document_id
+    );
 }
 
 #[tokio::test]
 async fn any_other_document_added_from_the_archive_is_only_archived() {
-    let (body, db) = capture_with_kind("marketing").await;
+    let (body, proposals) = capture_with_kind("marketing").await;
     assert!(body.get("proposed_batch_id").is_none());
     assert!(body["attachment"]["document_id"].is_string());
-    assert!(queries::list_pending_batches(&db).await.unwrap().is_empty());
+    assert!(proposals.is_empty());
 }
