@@ -1594,7 +1594,7 @@ fn FieldRow(
 ///
 /// ⚠️ Display only. The stored key is what folds and what filters match, so ⛔
 /// nothing may round-trip through this.
-fn humanise(key: &str) -> String {
+pub(crate) fn humanise(key: &str) -> String {
     let spaced = key.replace('_', " ");
     let mut chars = spaced.chars();
     match chars.next() {

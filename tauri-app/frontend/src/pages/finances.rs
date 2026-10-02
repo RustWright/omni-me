@@ -2965,6 +2965,21 @@ struct SupersededProposal {
     drafts: Vec<DraftTransactionView>,
 }
 
+/// What a set of drafts charges: its positive legs other than `Unmatched`.
+/// `None` when nothing in it carries an amount, as in a bare shipping notice.
+fn charge_total(drafts: &[DraftTransactionView]) -> Option<(f64, String)> {
+    let mut total = 0.0;
+    let mut commodity = None;
+    for p in drafts.iter().flat_map(|d| &d.postings) {
+        let amount = p.amount.trim().parse::<f64>().unwrap_or(0.0);
+        if p.account != "Unmatched" && amount > 0.0 {
+            total += amount;
+            commodity.get_or_insert_with(|| p.commodity.clone());
+        }
+    }
+    commodity.map(|c| (total, c))
+}
+
 /// Earlier proposals about this batch's order, oldest first.
 ///
 /// The keys come from `AutoImportProjection::supersession_entry`; nothing but
@@ -3005,6 +3020,7 @@ fn superseded_proposals(batch: &PendingBatchView) -> Vec<SupersededProposal> {
 fn BatchLineagePanel(
     revises_batch_id: Option<String>,
     superseded: Vec<SupersededProposal>,
+    current_total: Option<(f64, String)>,
 ) -> Element {
     if revises_batch_id.is_none() && superseded.is_empty() {
         return rsx! {};
@@ -3030,34 +3046,46 @@ fn BatchLineagePanel(
             } else {
                 p { class: "text-sm font-semibold {heading} mb-1",
                     if replaced == 1 {
-                        "One earlier message about this order was replaced"
+                        "One earlier email about this order"
                     } else {
-                        "{replaced} earlier messages about this order were replaced"
+                        "{replaced} earlier emails about this order"
                     }
                 }
                 p { class: "text-xs text-obsidian-text-muted mb-2",
-                    "The vendor sends several mails per order and the newest won. If the wrong one won, dismiss this and enter it by hand."
+                    "The vendor emails at each stage of an order, and each one was read. Only the newest, below, can be committed; these were never recorded anywhere. If an earlier one is right, use Edit on the row below to match it."
                 }
             }
             if replaced > 0 {
-                details { class: "text-xs text-obsidian-text-muted",
-                    summary { class: "cursor-pointer hover:text-obsidian-text",
-                        "What it replaced"
-                    }
-                    div { class: "mt-2 space-y-2",
-                        for prior in superseded.iter() {
-                            div { class: "p-2 bg-obsidian-bg/40 rounded border border-obsidian-border/5",
-                                div { class: "flex items-baseline gap-2 mb-1",
-                                    span { class: "font-mono text-obsidian-text", "{prior.document_kind}" }
-                                    span { "· {prior.status}" }
+                div { class: "space-y-1 text-xs text-obsidian-text-muted",
+                    for prior in superseded.iter() {
+                        {
+                            let total = charge_total(&prior.drafts);
+                            let date = prior.drafts.first().map(|d| d.date.clone()).unwrap_or_default();
+                            let kind = crate::pages::archive::humanise(&prior.document_kind);
+                            let summary = match (&total, &current_total) {
+                                (None, _) => "no amounts in it".to_string(),
+                                (Some((t, c)), Some((now, _))) if (t - now).abs() < 0.005 => {
+                                    format!("{t:.2} {c} · same total as below")
                                 }
-                                div { class: "truncate mb-1", "{prior.subject}" }
-                                for draft in prior.drafts.iter() {
-                                    for posting in draft.postings.iter() {
-                                        div { class: "flex justify-between gap-3",
-                                            span { class: "font-mono truncate", "{posting.account}" }
-                                            span { class: "font-mono shrink-0",
-                                                "{posting.amount} {posting.commodity}"
+                                (Some((t, c)), Some((now, _))) => {
+                                    format!("{t:.2} {c} · {:+.2} vs below", t - now)
+                                }
+                                (Some((t, c)), None) => format!("{t:.2} {c}"),
+                            };
+                            rsx! {
+                                details { class: "p-2 bg-obsidian-bg/40 rounded border border-obsidian-border/5 min-w-0",
+                                    summary { class: "cursor-pointer hover:text-obsidian-text min-w-0",
+                                        span { class: "text-obsidian-text", "{kind}" }
+                                        " · {date} · {summary}"
+                                        div { class: "truncate", "{prior.subject}" }
+                                    }
+                                    for draft in prior.drafts.iter() {
+                                        for posting in draft.postings.iter() {
+                                            div { class: "flex justify-between gap-3 mt-1",
+                                                span { class: "font-mono truncate", "{posting.account}" }
+                                                span { class: "font-mono shrink-0",
+                                                    "{posting.amount} {posting.commodity}"
+                                                }
                                             }
                                         }
                                     }
@@ -3335,6 +3363,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                 BatchLineagePanel {
                     revises_batch_id: b.revises_batch_id.clone(),
                     superseded: superseded_proposals(&b),
+                    current_total: charge_total(&b.draft_postings),
                 }
 
                 // ⛔ The source, shown — not a JSON dump of its metadata. This
@@ -8139,6 +8168,39 @@ fn SampleTxnRow(txn: crate::types::JournalImportSampleTxn) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn draft(postings: &[(&str, &str)]) -> DraftTransactionView {
+        DraftTransactionView {
+            external_id: String::new(),
+            date: "2026-09-26".into(),
+            description: "Walmart".into(),
+            postings: postings
+                .iter()
+                .map(|(account, amount)| PostingInput {
+                    account: account.to_string(),
+                    commodity: "CAD".into(),
+                    amount: amount.to_string(),
+                    tags: vec![],
+                })
+                .collect(),
+        }
+    }
+
+    /// The shapes of a real Walmart order's emails: a priced confirmation and a
+    /// shipping notice whose only leg is `Unmatched -0`.
+    #[test]
+    fn charge_total_sums_the_charge_side_and_says_none_for_an_empty_email() {
+        let priced = draft(&[
+            ("Expenses:Groceries", "107.93"),
+            ("Expenses:Fees", "12.70"),
+            ("Expenses:Tips", "4.56"),
+            ("Unmatched", "-125.19"),
+        ]);
+        let (total, commodity) = charge_total(&[priced]).unwrap();
+        assert!((total - 125.19).abs() < 1e-9);
+        assert_eq!(commodity, "CAD");
+        assert_eq!(charge_total(&[draft(&[("Unmatched", "-0")])]), None);
+    }
 
     #[test]
     fn classify_share_mime_routes_known_image_subtypes() {
