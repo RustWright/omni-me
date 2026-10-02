@@ -18,7 +18,7 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 - **What comes next** (F4 needs an example from him; the 1.99 upgrade; or something else).
 - **F3's camera path**: take a two-photo receipt on the dev phone; and whether multi-page reading
   should be told pages can repeat (the one test double-counted). `tasks.md` § F3.
-- **Review the re-proposed September receipts** (~70 batches, dev phone on 1.1.19-dev). His first
+- **Review the re-proposed September receipts** (~70 batches, on the dev phone). His first
   commit with a correction is also the first real run of that path.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
