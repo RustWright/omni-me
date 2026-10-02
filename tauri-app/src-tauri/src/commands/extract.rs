@@ -62,6 +62,9 @@ pub struct ExtractedDraft {
     /// with this rather than leaving the user to read the number.
     #[serde(default)]
     pub needs_review: bool,
+    /// Set when the archive's "Add document" filed a receipt for review.
+    #[serde(default)]
+    pub proposed_batch_id: Option<String>,
 }
 
 /// Wire shape returned by `/documents/extract` when `attach=true`. Mirrors
@@ -74,6 +77,8 @@ struct ExtractResponseWire {
     warnings: Vec<String>,
     #[serde(default)]
     needs_review: bool,
+    #[serde(default)]
+    proposed_batch_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,6 +105,7 @@ pub async fn extract_document(
     // email body, which never had one — the server then files it as
     // "attachment" rather than under a name nothing on the device chose.
     filename: Option<String>,
+    propose: Option<bool>,
 ) -> Result<ExtractedDraft, String> {
     // Guarded here rather than at the append tail: this reaches an LLM before any
     // event exists, so it has to refuse before the request goes out.
@@ -107,7 +113,10 @@ pub async fn extract_document(
 
     // Hint values are simple snake_case strings (receipt, bank_statement, ...)
     // so no URL encoding is needed; the server will 400 on anything unknown.
-    let path = format!("/documents/extract?hint={hint}&attach=true");
+    let path = format!(
+        "/documents/extract?hint={hint}&attach=true&propose={}",
+        propose.unwrap_or(false)
+    );
     let url = state.box_url(&path).await;
     tracing::info!(bytes = bytes.len(), mime = %mime, hint = %hint, %url, "extract_document");
 
@@ -154,9 +163,13 @@ pub async fn extract_document_pages(
     state: State<'_, AppState>,
     pages: Vec<CapturePage>,
     hint: String,
+    propose: Option<bool>,
 ) -> Result<ExtractedDraft, String> {
     require_feature(&state, Feature::Llm)?;
-    let path = format!("/documents/extract_pages?hint={hint}&attach=true");
+    let path = format!(
+        "/documents/extract_pages?hint={hint}&attach=true&propose={}",
+        propose.unwrap_or(false)
+    );
     tracing::info!(pages = pages.len(), hint = %hint, "extract_document_pages");
 
     let mut form = reqwest::multipart::Form::new();
@@ -202,6 +215,7 @@ fn draft_from(wire: ExtractResponseWire) -> ExtractedDraft {
         attachment: wire.attachment,
         warnings: wire.warnings,
         needs_review: wire.needs_review,
+        proposed_batch_id: wire.proposed_batch_id,
     }
 }
 

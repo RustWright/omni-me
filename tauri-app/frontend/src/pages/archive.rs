@@ -17,7 +17,8 @@ use dioxus::prelude::*;
 use crate::bridge;
 use crate::components::attachment_viewer::{AttachmentViewer, document_meta};
 use crate::components::tag_editor::TagChipEditor;
-use crate::types::{DocumentField, DocumentItem};
+use crate::pages::finances::{DocumentCapture, DocumentKind};
+use crate::types::{DocumentField, DocumentItem, ExtractedDraft};
 use crate::use_page_back;
 
 /// The MIME type an archived email carries. ⛔ Must match `archive::mime_for`'s
@@ -50,6 +51,8 @@ enum View {
     /// ⛔ The cutoff travels from `RetentionGroup::cutoff` untouched — re-deriving
     /// it here would let the screen and the server disagree about the set.
     Purge(String, Option<String>),
+    /// "Add document": the capture screen, reading any document.
+    Add(DocumentKind),
 }
 
 #[component]
@@ -69,6 +72,7 @@ pub fn ArchivePage() -> Element {
     // other way to tell a counted document from the rest, and past one page they
     // are not on screen at all.
     let mut unverified_only = use_signal(|| false);
+    let mut added_notice: Signal<Option<String>> = use_signal(|| None);
 
     // A reminder row that named this tab asked for its queue, not its root.
     let mut nav_intent = crate::use_nav_intent();
@@ -87,7 +91,7 @@ pub fn ArchivePage() -> Element {
     use_page_back(
         move || match *view.read() {
             View::List => 0,
-            View::Detail(_) | View::Purge(_, _) => 1,
+            View::Detail(_) | View::Purge(_, _) | View::Add(_) => 1,
         },
         move || view.set(View::List),
     );
@@ -154,7 +158,40 @@ pub fn ArchivePage() -> Element {
 
     rsx! {
         div { class: "h-full overflow-y-auto",
+            if let Some(msg) = added_notice.read().clone() {
+                div { class: "mx-4 mt-3 px-3 py-2 rounded-md bg-obsidian-accent/10 border border-obsidian-accent/30 \
+                              text-sm text-obsidian-text flex items-start justify-between gap-2",
+                    span { class: "min-w-0", "{msg}" }
+                    button {
+                        class: "shrink-0 text-xs text-obsidian-text-muted px-2",
+                        onclick: move |_| added_notice.set(None),
+                        "✕"
+                    }
+                }
+            }
             match view.read().clone() {
+                View::Add(capture_kind) => rsx! {
+                    div { class: "p-4 max-w-3xl mx-auto",
+                        DocumentCapture {
+                            kind: capture_kind,
+                            for_archive: true,
+                            on_done: move |_| view.set(View::List),
+                            on_extracted: move |draft: ExtractedDraft| {
+                                reload += 1;
+                                let to_review = draft.proposed_batch_id.is_some();
+                                added_notice.set(Some(if to_review {
+                                    "Filed. It reads as a receipt, so it is also waiting in Finances review.".to_string()
+                                } else {
+                                    "Filed in the archive.".to_string()
+                                }));
+                                match draft.attachment.and_then(|a| a.document_id) {
+                                    Some(id) => view.set(View::Detail(id)),
+                                    None => view.set(View::List),
+                                }
+                            },
+                        }
+                    }
+                },
                 View::Purge(tag, cutoff) => rsx! {
                     PurgeGroup {
                         tag: tag,
@@ -176,7 +213,21 @@ pub fn ArchivePage() -> Element {
                 },
                 View::List => rsx! {
                     div { class: "p-4 space-y-4 max-w-5xl mx-auto",
-                        h1 { class: "text-lg font-semibold text-obsidian-text", "Archive" }
+                        div { class: "flex items-center justify-between gap-2",
+                            h1 { class: "text-lg font-semibold text-obsidian-text", "Archive" }
+                            div { class: "flex gap-1 shrink-0",
+                                button {
+                                    class: "text-sm text-obsidian-accent px-3 py-2",
+                                    onclick: move |_| view.set(View::Add(DocumentKind::Photo)),
+                                    "+ Photo"
+                                }
+                                button {
+                                    class: "text-sm text-obsidian-accent px-3 py-2",
+                                    onclick: move |_| view.set(View::Add(DocumentKind::Pdf)),
+                                    "+ PDF"
+                                }
+                            }
+                        }
 
                         div { class: "flex flex-wrap gap-2",
                             input {

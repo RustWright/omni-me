@@ -2063,6 +2063,7 @@ pub async fn invoke_extract_document(
     mime: &str,
     hint: &str,
     filename: Option<&str>,
+    propose: bool,
 ) -> Result<ExtractedDraft, String> {
     #[cfg(feature = "mock")]
     {
@@ -2108,6 +2109,8 @@ pub async fn invoke_extract_document(
                 Vec::new()
             },
             needs_review: unverified,
+            // The mock reads everything as a receipt.
+            proposed_batch_id: propose.then(|| "01HXMOCKCAPTURE0000000001".into()),
         })
     }
     #[cfg(not(feature = "mock"))]
@@ -2118,6 +2121,7 @@ pub async fn invoke_extract_document(
             mime: &'a str,
             hint: &'a str,
             filename: Option<&'a str>,
+            propose: bool,
         }
         invoke(
             "extract_document",
@@ -2126,6 +2130,7 @@ pub async fn invoke_extract_document(
                 mime,
                 hint,
                 filename,
+                propose,
             },
         )
         .await
@@ -2137,6 +2142,7 @@ pub async fn invoke_extract_document(
 pub async fn invoke_extract_document_pages(
     pages: Vec<CapturePageInput>,
     hint: &str,
+    propose: bool,
 ) -> Result<ExtractedDraft, String> {
     #[cfg(feature = "mock")]
     {
@@ -2146,6 +2152,7 @@ pub async fn invoke_extract_document_pages(
             "application/pdf",
             hint,
             Some("mock-capture.pdf"),
+            propose,
         )
         .await?;
         if let Some(att) = draft.attachment.as_mut() {
@@ -2159,8 +2166,17 @@ pub async fn invoke_extract_document_pages(
         struct Args<'a> {
             pages: Vec<CapturePageInput>,
             hint: &'a str,
+            propose: bool,
         }
-        invoke("extract_document_pages", &Args { pages, hint }).await
+        invoke(
+            "extract_document_pages",
+            &Args {
+                pages,
+                hint,
+                propose,
+            },
+        )
+        .await
     }
 }
 

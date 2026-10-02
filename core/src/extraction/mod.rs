@@ -533,7 +533,14 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
         ExtractionHint::Generic => {
             "Extract any transaction-like information you can find. Set fields \
              when confident and leave them empty when not. Lower confidence \
-             scores reflect partial extraction."
+             scores reflect partial extraction.\n\n\
+             Also set `document_kind` for the DOCUMENT itself, exactly one of: \
+             \"receipt\" (states a charge or payment that was made: a till receipt, \
+             an invoice, a bill or payment confirmation), \"order_confirmation\", \
+             \"order_update\", \"shipping_notice\", \"feedback_request\", \
+             \"marketing\", \"other\" (anything else: a letter, a contract, an ID, \
+             a statement, a form). ⚠️ Judge what the document IS, not what it \
+             mentions: a lease that names a rent amount is still \"other\"."
         }
     };
 
@@ -1127,6 +1134,12 @@ mod tests {
         assert!(
             p.contains("`order_ref`"),
             "lost the order-reference question"
+        );
+        // The archive's "Add document" routes on this answer; unasked, nothing
+        // captured there could ever reach review.
+        assert!(
+            prompt_for(ExtractionHint::Generic).contains("`document_kind`"),
+            "the generic reading lost the kind question"
         );
         // Every label the parser recognises has to be one the prompt offers, or
         // the model can only ever answer with something that maps to `Other`.

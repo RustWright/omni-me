@@ -13,6 +13,7 @@ use std::sync::Arc;
 use axum::{Json, Router, routing::get};
 use omni_me_core::db;
 use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
+use omni_me_core::extraction::DocumentExtractor;
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::NullLlmClient;
 use omni_me_server::{AppState, routes};
@@ -99,15 +100,27 @@ pub async fn start_full_server_with_auth(
     updates_dir: Option<std::path::PathBuf>,
     auth_token: Option<String>,
 ) -> (String, tokio::task::JoinHandle<()>) {
-    let (url, _db, _blobs, handle) = boot_full_server(updates_dir, auth_token, None).await;
+    let (url, _db, _blobs, handle) = boot_full_server(updates_dir, auth_token, None, null()).await;
     (url, handle)
 }
 
 /// As [`start_full_server`], also returning the server's database so a test can
 /// check what the server itself projected.
 pub async fn start_full_server_with_db() -> (String, db::Database, tokio::task::JoinHandle<()>) {
-    let (url, db, _blobs, handle) = boot_full_server(None, None, None).await;
+    let (url, db, _blobs, handle) = boot_full_server(None, None, None, null()).await;
     (url, db, handle)
+}
+
+/// As [`start_full_server_with_db`], reading documents with `extractor`.
+pub async fn start_full_server_with_extractor(
+    extractor: Arc<dyn DocumentExtractor>,
+) -> (String, db::Database, tokio::task::JoinHandle<()>) {
+    let (url, db, _blobs, handle) = boot_full_server(None, None, None, extractor).await;
+    (url, db, handle)
+}
+
+fn null() -> Arc<dyn DocumentExtractor> {
+    Arc::new(NullExtractor)
 }
 
 /// As [`start_full_server_with_db`], also returning the blob directory.
@@ -120,7 +133,7 @@ pub async fn start_full_server_with_blobs() -> (
     std::path::PathBuf,
     tokio::task::JoinHandle<()>,
 ) {
-    boot_full_server(None, None, None).await
+    boot_full_server(None, None, None, null()).await
 }
 
 /// A server that declares itself `dev`.
@@ -130,8 +143,13 @@ pub async fn start_full_server_with_blobs() -> (
 /// cannot be reached through them. This is the opt-in, and `dev` is the only
 /// instance a test should ever claim to be.
 pub async fn start_dev_server() -> (String, db::Database, tokio::task::JoinHandle<()>) {
-    let (url, db, _blobs, handle) =
-        boot_full_server(None, None, Some(omni_me_core::runtime::Instance::Dev)).await;
+    let (url, db, _blobs, handle) = boot_full_server(
+        None,
+        None,
+        Some(omni_me_core::runtime::Instance::Dev),
+        null(),
+    )
+    .await;
     (url, db, handle)
 }
 
@@ -139,6 +157,7 @@ async fn boot_full_server(
     updates_dir: Option<std::path::PathBuf>,
     auth_token: Option<String>,
     instance: Option<omni_me_core::runtime::Instance>,
+    extractor: Arc<dyn DocumentExtractor>,
 ) -> (
     String,
     db::Database,
@@ -163,7 +182,7 @@ async fn boot_full_server(
         db: db_arc.clone(),
         llm_client: Arc::new(NullLlmClient::unconfigured()),
         blob_dir: Arc::new(blob_path),
-        extractor: Arc::new(NullExtractor),
+        extractor,
         auto_import_registry: Default::default(),
         store: event_store,
         projections,

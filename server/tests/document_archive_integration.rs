@@ -348,3 +348,90 @@ async fn a_field_corrected_on_a_phone_reaches_the_servers_documents_table() {
         "a classified document is no longer enrichment work"
     );
 }
+
+/// Reads nothing, as the null extractor does, but names the document's kind.
+struct KindExtractor(&'static str);
+
+impl omni_me_core::extraction::DocumentExtractor for KindExtractor {
+    fn name(&self) -> &str {
+        "kind"
+    }
+
+    fn supports(&self, _mime: &str) -> bool {
+        true
+    }
+
+    // Spelled out rather than `#[async_trait]`, which this crate does not
+    // depend on; a new dev-dependency would move both lockfiles.
+    fn extract<'a, 'b, 'c, 'f>(
+        &'a self,
+        parts: &'b [omni_me_core::extraction::DocumentPart<'c>],
+        hint: omni_me_core::extraction::ExtractionHint,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        omni_me_core::extraction::ExtractionResult,
+                        omni_me_core::extraction::ExtractionError,
+                    >,
+                > + Send
+                + 'f,
+        >,
+    >
+    where
+        'a: 'f,
+        'b: 'f,
+        'c: 'f,
+        Self: 'f,
+    {
+        Box::pin(async move {
+            let mut read = omni_me_core::extraction::null::NullExtractor
+                .extract(parts, hint)
+                .await?;
+            read.document_kind = Some(self.0.to_string());
+            Ok(read)
+        })
+    }
+}
+
+async fn capture_with_kind(kind: &'static str) -> (serde_json::Value, omni_me_core::db::Database) {
+    let (url, db, _h) =
+        common::start_full_server_with_extractor(std::sync::Arc::new(KindExtractor(kind))).await;
+    let resp = reqwest::Client::new()
+        .post(format!(
+            "{url}/documents/extract?hint=generic&attach=true&propose=true"
+        ))
+        .header("content-type", "image/jpeg")
+        .header("x-filename", "scan.jpg")
+        .body(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
+        .send()
+        .await
+        .expect("extract failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+    (resp.json().await.unwrap(), db)
+}
+
+#[tokio::test]
+async fn a_receipt_added_from_the_archive_is_proposed_for_review() {
+    let (body, db) = capture_with_kind("receipt").await;
+    let batch_id = body["proposed_batch_id"]
+        .as_str()
+        .expect("a receipt capture is proposed");
+    let pending = queries::list_pending_batches(&db).await.unwrap();
+    let batch = pending
+        .iter()
+        .find(|b| b.batch_id == batch_id)
+        .expect("the proposal is in the review queue");
+    assert_eq!(batch.source, "capture");
+    let document_id = body["attachment"]["document_id"].as_str().unwrap();
+    let meta = batch.source_metadata.clone().unwrap().into_json_value();
+    assert_eq!(meta["document_id"], document_id);
+}
+
+#[tokio::test]
+async fn any_other_document_added_from_the_archive_is_only_archived() {
+    let (body, db) = capture_with_kind("marketing").await;
+    assert!(body.get("proposed_batch_id").is_none());
+    assert!(body["attachment"]["document_id"].is_string());
+    assert!(queries::list_pending_batches(&db).await.unwrap().is_empty());
+}

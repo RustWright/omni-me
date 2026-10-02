@@ -8,12 +8,14 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use omni_me_core::archive;
+use omni_me_core::auto_import::to_proposed_event;
 use omni_me_core::credentials::PdfPasswords;
 use omni_me_core::events::{AttachmentRef, EventWriter, NewEvent};
 use omni_me_core::extraction::document::{reading_from_extraction, to_fields_payload};
+use omni_me_core::extraction::event_mapper::receipt_extraction_to_drafts;
 use omni_me_core::extraction::{
-    DEFAULT_CONFIDENCE_THRESHOLD, DocumentPart, ExtractionHint, ExtractionResult, TotalCheck,
-    add_counter_legs, verify,
+    DEFAULT_CONFIDENCE_THRESHOLD, DocumentKind, DocumentPart, ExtractionHint, ExtractionResult,
+    TotalCheck, add_counter_legs, verify,
 };
 use omni_me_core::purge;
 
@@ -49,6 +51,10 @@ pub struct ExtractQuery {
     /// `TransactionRecorded` event without a second upload.
     #[serde(default)]
     pub attach: bool,
+    /// Archive's "Add document": when the reading is a receipt, also propose it
+    /// for review, as a mailed receipt would be. Needs `attach`.
+    #[serde(default)]
+    pub propose: bool,
 }
 
 /// Wrapper so the response shape stays stable whether or not `attach=true`.
@@ -63,6 +69,9 @@ pub struct ExtractResponse {
     /// Whether the total cross-check compared anything independent. An empty
     /// `warnings` alone does not mean the arithmetic was verified.
     pub total_check: TotalCheck,
+    /// Set when `propose` filed the capture for review.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposed_batch_id: Option<String>,
 }
 
 pub fn documents_routes() -> Router<AppState> {
@@ -306,6 +315,41 @@ async fn read_and_file(
     // Before the counter leg, which would cancel the line-item sum this compares to the total.
     // It used to run only in the extraction bench, never on a capture.
     let report = verify(&extraction, q.hint, DEFAULT_CONFIDENCE_THRESHOLD);
+
+    // Drafts from the reading as the mail path builds them, before counter legs:
+    // the Unmatched leg is what reconciliation pairs against the bank row.
+    let document_id = attachment.as_ref().and_then(|a| a.document_id.clone());
+    let proposed_batch_id = match document_id {
+        Some(id) if q.propose && extraction.kind() == Some(DocumentKind::Receipt) => {
+            let drafts = receipt_extraction_to_drafts(&extraction, &format!("capture-{id}"));
+            let metadata = serde_json::json!({
+                "document_id": id,
+                "subject": filename,
+                "document_kind": extraction.document_kind,
+                "effective_confidence": report.effective_confidence,
+                "needs_manual_review": report.needs_manual_review,
+                "warnings": report.warnings,
+                "total_check": report.total_check,
+            });
+            let event = to_proposed_event(
+                "capture",
+                format!("capture-{id}"),
+                drafts,
+                Some(metadata),
+                state.device_id.clone(),
+            );
+            let batch_id = event.aggregate_id.clone();
+            let appended = state
+                .store
+                .append_batch(vec![event])
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("append: {e}")))?;
+            state.projections.apply_events_resilient(&appended).await;
+            Some(batch_id)
+        }
+        _ => None,
+    };
+
     extraction.confidence = report.effective_confidence;
     add_counter_legs(&mut extraction, q.hint);
 
@@ -315,6 +359,7 @@ async fn read_and_file(
         warnings: report.warnings,
         needs_review: report.needs_manual_review,
         total_check: report.total_check,
+        proposed_batch_id,
     })
 }
 

@@ -51,7 +51,7 @@ use crate::types::{
 /// `accept` filter, the camera hint, the title, and whether the hint
 /// selector is offered (PDFs require a user pick; photos default to receipt).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DocumentKind {
+pub(crate) enum DocumentKind {
     Photo,
     Pdf,
 }
@@ -1708,7 +1708,7 @@ const PDF_HINTS: &[(&str, &str)] = &[
 ];
 
 #[component]
-fn DocumentCapture(
+pub(crate) fn DocumentCapture(
     kind: DocumentKind,
     /// Bytes + metadata pre-loaded from an Android share-target SEND intent.
     /// When `Some`, the file picker is hidden in favor of a "Use shared file"
@@ -1716,6 +1716,10 @@ fn DocumentCapture(
     /// runs unchanged.
     #[props(default = None)]
     preloaded: Option<PendingShareCapture>,
+    /// The archive's "Add document": any document, read with the generic hint,
+    /// and proposed for review only if the reading says it is a receipt.
+    #[props(default)]
+    for_archive: bool,
     on_done: EventHandler<()>,
     on_extracted: EventHandler<ExtractedDraft>,
 ) -> Element {
@@ -1731,9 +1735,11 @@ fn DocumentCapture(
         },
     }
 
-    let (title, accept, prefer_camera, default_hint, show_hint_picker) = match kind {
-        DocumentKind::Photo => ("Photo capture", "image/*", true, "receipt", false),
-        DocumentKind::Pdf => (
+    let (title, accept, prefer_camera, default_hint, show_hint_picker) = match (kind, for_archive) {
+        (DocumentKind::Photo, true) => ("Add a photo", "image/*", true, "generic", false),
+        (DocumentKind::Pdf, true) => ("Add a PDF", "application/pdf", false, "generic", false),
+        (DocumentKind::Photo, false) => ("Photo capture", "image/*", true, "receipt", false),
+        (DocumentKind::Pdf, false) => (
             "PDF capture",
             "application/pdf",
             false,
@@ -1752,7 +1758,7 @@ fn DocumentCapture(
         let hint_value = hint.read().clone();
         state.set(CaptureState::Working);
         spawn(async move {
-            match extract_capture(taken.clone(), &hint_value).await {
+            match extract_capture(taken.clone(), &hint_value, for_archive).await {
                 Ok(draft) => {
                     // Reset local state so a quick re-open shows the Idle
                     // prompt instead of a stale Working spinner.
@@ -1907,6 +1913,7 @@ fn DocumentCapture(
 
             if !pages.read().is_empty() {
                 CapturePageList {
+                    noun: String::from(if for_archive { "document" } else { "receipt" }),
                     pages: pages.read().clone(),
                     busy: matches!(*state.read(), CaptureState::Working),
                     on_remove: move |i: usize| {
@@ -1953,17 +1960,21 @@ fn DocumentCapture(
 async fn extract_capture(
     mut taken: Vec<CapturePageInput>,
     hint: &str,
+    propose: bool,
 ) -> Result<ExtractedDraft, String> {
     if taken.len() > 1 {
-        return bridge::invoke_extract_document_pages(taken, hint).await;
+        return bridge::invoke_extract_document_pages(taken, hint, propose).await;
     }
     let one = taken.pop().ok_or("nothing to read")?;
-    bridge::invoke_extract_document(one.bytes, &one.mime, hint, one.filename.as_deref()).await
+    let name = one.filename.as_deref();
+    bridge::invoke_extract_document(one.bytes, &one.mime, hint, name, propose).await
 }
 
 /// The pages of a photo capture so far, each removable, and the read button.
 #[component]
 fn CapturePageList(
+    /// What the pages make up, for the read button.
+    noun: String,
     pages: Vec<CapturePageInput>,
     busy: bool,
     on_remove: EventHandler<usize>,
@@ -1994,7 +2005,7 @@ fn CapturePageList(
             Button {
                 disabled: busy,
                 onclick: move |_| on_read.call(()),
-                if count == 1 { "Read receipt" } else { "Read {count} pages as one receipt" }
+                if count == 1 { "Read {noun}" } else { "Read {count} pages as one {noun}" }
             }
         }
     }
@@ -2062,7 +2073,9 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
             let bytes = body_text.clone().into_bytes();
             let retry_body = body_text;
             // No filename: this body was pasted, so nothing on the device named it.
-            match bridge::invoke_extract_document(bytes, "text/plain", "email_body", None).await {
+            match bridge::invoke_extract_document(bytes, "text/plain", "email_body", None, false)
+                .await
+            {
                 Ok(draft) => {
                     state.set(CaptureState::Idle);
                     on_extracted.call(draft);
@@ -2891,6 +2904,49 @@ fn batch_headline(batch: &PendingBatchView) -> (String, Option<String>) {
 /// ⚠️ The key is written by `core::auto_import::imap::EMAIL_DOCUMENT_ID_KEY`.
 /// `source_metadata` is opaque JSON by design, so nothing but agreement on this
 /// spelling connects the two — ⛔ change one and change the other.
+/// The archived document a capture batch was read from (`source = capture`).
+fn captured_document_id(batch: &PendingBatchView) -> Option<String> {
+    batch
+        .source_metadata
+        .as_ref()?
+        .get("document_id")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// The captured document itself, shown where an emailed receipt shows its email.
+#[component]
+fn SourceDocumentPanel(document_id: String) -> Element {
+    let doc = use_resource(move || {
+        let id = document_id.clone();
+        async move { bridge::invoke_get_document(&id).await }
+    });
+    let meta = match doc.read().as_ref() {
+        Some(Ok(Some(item))) => Some(document_meta(item)),
+        _ => None,
+    };
+    rsx! {
+        details { class: "mb-4 min-w-0", open: true,
+            summary { class: "cursor-pointer text-xs text-obsidian-text-muted hover:text-obsidian-text",
+                "Source document"
+            }
+            div { class: "mt-2 min-w-0",
+                match meta {
+                    Some(Some(meta)) => rsx! { AttachmentViewer { meta: meta } },
+                    Some(None) => rsx! {
+                        p { class: "text-[11px] text-obsidian-text-muted",
+                            "This file hasn't arrived on this device yet."
+                        }
+                    },
+                    None => rsx! {
+                        p { class: "text-xs text-obsidian-text-muted", "Loading the document…" }
+                    },
+                }
+            }
+        }
+    }
+}
+
 fn email_document_id(batch: &PendingBatchView) -> Option<String> {
     batch
         .source_metadata
@@ -3178,6 +3234,7 @@ fn pretty_source(source: &str) -> &str {
         "northwind-sync" | "northwind" => "Northwind",
         "meridian-aed" | "imap-meridian-aed" => "Meridian (AED)",
         "imap_receipts" | "imap-receipts" | "receipts" => "Email receipts",
+        "capture" => "Added to the archive",
         other => other,
     }
 }
@@ -3288,6 +3345,8 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                 // from. The raw metadata stays available underneath.
                 if let Some(doc_id) = email_document_id(&b) {
                     SourceEmailPanel { document_id: doc_id }
+                } else if let Some(doc_id) = captured_document_id(&b) {
+                    SourceDocumentPanel { document_id: doc_id }
                 }
 
                 // Same panel the manual confirm-draft form uses. It matters more

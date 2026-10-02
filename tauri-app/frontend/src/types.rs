@@ -797,6 +797,9 @@ pub struct ExtractedDraft {
     /// `confidence` came in under the server's threshold.
     #[serde(default)]
     pub needs_review: bool,
+    /// Set when an archive capture was a receipt and went to Finances review.
+    #[serde(default)]
+    pub proposed_batch_id: Option<String>,
 }
 
 /// Single posting line in a TransactionDraft submission. Mirrors the wire
