@@ -276,6 +276,48 @@ async fn a_capture_is_archived_and_its_attachment_names_the_document() {
 }
 
 #[tokio::test]
+async fn photos_of_one_receipt_are_archived_as_one_pdf() {
+    let (url, db, _h) = common::start_full_server_with_db().await;
+    let client = reqwest::Client::new();
+    let photo = |shade: u8| {
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(64, 96, image::Rgb([shade, shade, shade]))
+            .write_to(&mut out, image::ImageFormat::Jpeg)
+            .unwrap();
+        out.into_inner()
+    };
+    let page = |bytes: Vec<u8>, name: &str| {
+        reqwest::multipart::Part::bytes(bytes)
+            .file_name(name.to_string())
+            .mime_str("image/jpeg")
+            .unwrap()
+    };
+    let form = reqwest::multipart::Form::new()
+        .part("page", page(photo(200), "IMG_1.jpg"))
+        .part("page", page(photo(120), "IMG_2.jpg"));
+
+    let resp = client
+        .post(format!(
+            "{url}/documents/extract_pages?hint=receipt&attach=true"
+        ))
+        .multipart(form)
+        .send()
+        .await
+        .expect("extract_pages failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["attachment"]["mime_type"], "application/pdf");
+    assert_eq!(body["attachment"]["filename"], "IMG_1.pdf");
+
+    let document_id = body["attachment"]["document_id"].as_str().unwrap();
+    let row = queries::get_document(&db, document_id)
+        .await
+        .unwrap()
+        .expect("one document was archived");
+    assert_eq!(row.mime_type.as_deref(), Some("application/pdf"));
+}
+
+#[tokio::test]
 async fn a_field_corrected_on_a_phone_reaches_the_servers_documents_table() {
     // A correction reaches the server only through push. Unprojected there, the
     // enrichment pass would keep reading a document the user already classified.

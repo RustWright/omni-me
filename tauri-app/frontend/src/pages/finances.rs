@@ -38,12 +38,13 @@ use crate::continuity::{CaptureDraft, ContinuityKey, ListState, PostingDraft, us
 use crate::features::feature_on;
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AssistantProposal,
-    AttachmentRef, BalanceCheckView, BudgetProgress, BudgetRow, DashboardSummaryView,
-    DraftCorrectionInput, DraftTransactionView, ExtractedDraft, Feature, ImportStatementResult,
-    JournalImportPlan, JournalImportPreview, JournalImportResult, MatchCandidateView,
-    MonthlyTrendBucketView, NetWorthPointView, NetWorthSeriesView, PendingBatchView,
-    PendingShareCapture, PostingInput, ReconciliationTxnPreview, RecurringObligationView,
-    RecurringPattern, ScanRecurringResult, TransactionFormDraft, TransactionView, TxnFilter,
+    AttachmentRef, BalanceCheckView, BudgetProgress, BudgetRow, CapturePageInput,
+    DashboardSummaryView, DraftCorrectionInput, DraftTransactionView, ExtractedDraft, Feature,
+    ImportStatementResult, JournalImportPlan, JournalImportPreview, JournalImportResult,
+    MatchCandidateView, MonthlyTrendBucketView, NetWorthPointView, NetWorthSeriesView,
+    PendingBatchView, PendingShareCapture, PostingInput, ReconciliationTxnPreview,
+    RecurringObligationView, RecurringPattern, ScanRecurringResult, TransactionFormDraft,
+    TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
@@ -1718,22 +1719,15 @@ fn DocumentCapture(
     on_done: EventHandler<()>,
     on_extracted: EventHandler<ExtractedDraft>,
 ) -> Element {
-    /// Everything a failed extraction needs to go again. The name travels with
-    /// the bytes so a retry cannot ship the name of a different pick.
-    #[derive(Debug, Clone)]
-    struct RetryCapture {
-        bytes: Vec<u8>,
-        mime: String,
-        filename: Option<String>,
-    }
-
+    /// `retry` is everything a failed extraction needs to go again. Each page's
+    /// name travels with its bytes so a retry cannot ship the name of a different pick.
     #[derive(Debug, Clone)]
     enum CaptureState {
         Idle,
         Working,
         Error {
             msg: String,
-            retry: Option<RetryCapture>,
+            retry: Option<Vec<CapturePageInput>>,
         },
     }
 
@@ -1750,53 +1744,66 @@ fn DocumentCapture(
 
     let mut state: Signal<CaptureState> = use_signal(|| CaptureState::Idle);
     let mut hint = use_signal(|| default_hint.to_string());
+    // Photos taken so far. A photo capture gathers pages and is read on demand,
+    // because a receipt may run to several; a PDF is read the moment it is picked.
+    let mut pages: Signal<Vec<CapturePageInput>> = use_signal(Vec::new);
 
-    let on_file_picked = move |evt: Event<FormData>| {
-        let files = evt.files();
-        let Some(file) = files.into_iter().next() else {
-            return;
-        };
-        let mime = file.content_type().unwrap_or_else(|| match kind {
-            DocumentKind::Photo => "image/jpeg".to_string(),
-            DocumentKind::Pdf => "application/pdf".to_string(),
-        });
+    let mut submit = move |taken: Vec<CapturePageInput>| {
         let hint_value = hint.read().clone();
-        // The name the user picked, so the archive files it under that rather
-        // than the server's "attachment" placeholder.
-        let filename = file.name();
-
         state.set(CaptureState::Working);
-
         spawn(async move {
-            let bytes = match file.read_bytes().await {
-                Ok(b) => b.to_vec(),
-                Err(e) => {
-                    state.set(CaptureState::Error {
-                        msg: format!("Couldn't read file: {e}"),
-                        retry: None,
-                    });
-                    return;
-                }
-            };
-
-            let again = RetryCapture {
-                bytes: bytes.clone(),
-                mime: mime.clone(),
-                filename: Some(filename.clone()),
-            };
-
-            match bridge::invoke_extract_document(bytes, &mime, &hint_value, Some(&filename)).await
-            {
+            match extract_capture(taken.clone(), &hint_value).await {
                 Ok(draft) => {
                     // Reset local state so a quick re-open shows the Idle
                     // prompt instead of a stale Working spinner.
                     state.set(CaptureState::Idle);
+                    pages.set(Vec::new());
                     on_extracted.call(draft);
                 }
                 Err(e) => state.set(CaptureState::Error {
                     msg: format!("Couldn't extract: {e}"),
-                    retry: Some(again),
+                    retry: Some(taken),
                 }),
+            }
+        });
+    };
+
+    let on_file_picked = move |evt: Event<FormData>| {
+        let files = evt.files();
+        if files.is_empty() {
+            return;
+        }
+        spawn(async move {
+            let mut picked = Vec::with_capacity(files.len());
+            for file in files {
+                let mime = file.content_type().unwrap_or_else(|| match kind {
+                    DocumentKind::Photo => "image/jpeg".to_string(),
+                    DocumentKind::Pdf => "application/pdf".to_string(),
+                });
+                // The name the user picked, so the archive files it under that rather
+                // than the server's "attachment" placeholder.
+                let filename = Some(file.name());
+                match file.read_bytes().await {
+                    Ok(b) => picked.push(CapturePageInput {
+                        bytes: b.to_vec(),
+                        mime,
+                        filename,
+                    }),
+                    Err(e) => {
+                        state.set(CaptureState::Error {
+                            msg: format!("Couldn't read file: {e}"),
+                            retry: None,
+                        });
+                        return;
+                    }
+                }
+            }
+            match kind {
+                DocumentKind::Photo => {
+                    state.set(CaptureState::Idle);
+                    pages.write().extend(picked);
+                }
+                DocumentKind::Pdf => submit(picked.into_iter().take(1).collect()),
             }
         });
     };
@@ -1855,33 +1862,13 @@ fn DocumentCapture(
                     }
                     Button {
                         disabled: matches!(*state.read(), CaptureState::Working),
-                        onclick: move |_| {
-                            // Mirror on_file_picked's tail: bytes already in
-                            // hand, skip the async read.
-                            let bytes = capture.bytes.clone();
-                            let mime = capture.mime.clone();
-                            let hint_value = hint.read().clone();
-                            // The sending app named this file; the intent carried the name over.
-                            let filename = capture.filename.clone();
-                            let again = RetryCapture {
-                                bytes: bytes.clone(),
-                                mime: mime.clone(),
-                                filename: Some(filename.clone()),
-                            };
-                            state.set(CaptureState::Working);
-                            spawn(async move {
-                                match bridge::invoke_extract_document(bytes, &mime, &hint_value, Some(&filename)).await {
-                                    Ok(draft) => {
-                                        state.set(CaptureState::Idle);
-                                        on_extracted.call(draft);
-                                    }
-                                    Err(e) => state.set(CaptureState::Error {
-                                        msg: format!("Couldn't extract: {e}"),
-                                        retry: Some(again),
-                                    }),
-                                }
-                            });
-                        },
+                        // Bytes already in hand, so straight to the read. The sending
+                        // app named this file; the intent carried the name over.
+                        onclick: move |_| submit(vec![CapturePageInput {
+                            bytes: capture.bytes.clone(),
+                            mime: capture.mime.clone(),
+                            filename: Some(capture.filename.clone()),
+                        }]),
                         "Use shared file"
                     }
                 }
@@ -1890,9 +1877,10 @@ fn DocumentCapture(
                 // flow — it tells mobile browsers to default to the rear camera.
                 label { class: "block",
                     span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
-                        match kind {
-                            DocumentKind::Photo => "Pick a photo or take one",
-                            DocumentKind::Pdf => "Pick a PDF",
+                        match (kind, pages.read().is_empty()) {
+                            (DocumentKind::Photo, true) => "Pick a photo or take one",
+                            (DocumentKind::Photo, false) => "Add another page",
+                            (DocumentKind::Pdf, _) => "Pick a PDF",
                         }
                     }
                     if prefer_camera {
@@ -1900,7 +1888,10 @@ fn DocumentCapture(
                             class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
                             r#type: "file",
                             accept: accept,
+                            multiple: true,
                             "capture": "environment",
+                            // Cleared so taking the same shot twice still fires `onchange`.
+                            value: "",
                             onchange: on_file_picked,
                         }
                     } else {
@@ -1914,39 +1905,36 @@ fn DocumentCapture(
                 }
             }
 
+            if !pages.read().is_empty() {
+                CapturePageList {
+                    pages: pages.read().clone(),
+                    busy: matches!(*state.read(), CaptureState::Working),
+                    on_remove: move |i: usize| {
+                        let mut taken = pages.write();
+                        if i < taken.len() {
+                            taken.remove(i);
+                        }
+                    },
+                    on_read: move |_| submit(pages.read().clone()),
+                }
+            }
+
             // State-dependent body. The Error arm composes render_error with
             // a conditional Retry button that needs `state` in scope.
             div {
                 {
                     match &*state.read() {
+                        CaptureState::Idle if !pages.read().is_empty() => rsx! {},
                         CaptureState::Idle => render_idle(kind),
                         CaptureState::Working => render_working(),
                         CaptureState::Error { msg, retry } => {
                             let retry = retry.clone();
-                            let hint_value = hint.read().clone();
                             rsx! {
                                 {render_error(msg)}
                                 if let Some(again) = retry {
                                     div { class: "mt-3",
                                         Button {
-                                            onclick: move |_| {
-                                                let again = again.clone();
-                                                let hint_value = hint_value.clone();
-                                                state.set(CaptureState::Working);
-                                                spawn(async move {
-                                                    let RetryCapture { bytes, mime, filename } = again.clone();
-                                                    match bridge::invoke_extract_document(bytes, &mime, &hint_value, filename.as_deref()).await {
-                                                        Ok(draft) => {
-                                                            state.set(CaptureState::Idle);
-                                                            on_extracted.call(draft);
-                                                        }
-                                                        Err(e) => state.set(CaptureState::Error {
-                                                            msg: format!("Couldn't extract: {e}"),
-                                                            retry: Some(again),
-                                                        }),
-                                                    }
-                                                });
-                                            },
+                                            onclick: move |_| submit(again.clone()),
                                             "Retry"
                                         }
                                     }
@@ -1955,6 +1943,58 @@ fn DocumentCapture(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// One photo or file goes through the single-document route, unchanged; two or
+/// more photos are read together and archived as one PDF.
+async fn extract_capture(
+    mut taken: Vec<CapturePageInput>,
+    hint: &str,
+) -> Result<ExtractedDraft, String> {
+    if taken.len() > 1 {
+        return bridge::invoke_extract_document_pages(taken, hint).await;
+    }
+    let one = taken.pop().ok_or("nothing to read")?;
+    bridge::invoke_extract_document(one.bytes, &one.mime, hint, one.filename.as_deref()).await
+}
+
+/// The pages of a photo capture so far, each removable, and the read button.
+#[component]
+fn CapturePageList(
+    pages: Vec<CapturePageInput>,
+    busy: bool,
+    on_remove: EventHandler<usize>,
+    on_read: EventHandler<()>,
+) -> Element {
+    let count = pages.len();
+    rsx! {
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
+            div { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                if count == 1 { "1 page" } else { "{count} pages" }
+            }
+            for (i, page) in pages.iter().enumerate() {
+                div { key: "{i}", class: "flex items-center justify-between gap-3 text-sm",
+                    span { class: "text-obsidian-text truncate",
+                        "Page {i + 1}"
+                        span { class: "text-obsidian-text-muted",
+                            " · {page.filename.clone().unwrap_or_default()} · {page.bytes.len() / 1024} KB"
+                        }
+                    }
+                    button {
+                        class: "text-xs px-2.5 py-1 text-obsidian-text-muted hover:text-red-300 disabled:opacity-40 shrink-0",
+                        disabled: busy,
+                        onclick: move |_| on_remove.call(i),
+                        "Remove"
+                    }
+                }
+            }
+            Button {
+                disabled: busy,
+                onclick: move |_| on_read.call(()),
+                if count == 1 { "Read receipt" } else { "Read {count} pages as one receipt" }
             }
         }
     }

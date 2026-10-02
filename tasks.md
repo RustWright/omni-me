@@ -3077,6 +3077,22 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   processing date, not the receipt's. 68 such rows is part of why the queue went unreviewed.
   Belongs with F2, the same review screen.
 - F3. **A multi-image receipt as one document.** Two photos of one bank receipt became two.
+  🔴 DECIDED 2026-10-02 (user): **one combined PDF.** The phone gathers pages, the server reads all
+  photos in one model call and archives one PDF, one photo per page; everything downstream keeps
+  "one document, one blob". Beat: parent + child photos (a parent with no bytes, so every caller
+  must learn it) and several attachments per transaction (schema change, still two documents).
+  He added (2026-10-02): the path is the **camera**; an emailed multi-page receipt is a PDF already.
+  ▶ **Built 2026-10-02, decision log (mine):**
+  - Photo capture gathers pages (camera, or a multi-select gallery pick) and reads on "Read". That
+    is one more tap for a single photo; the screen cannot know whether more pages are coming.
+  - One page keeps the old route and is archived as an image, as before. Two or more go to
+    `POST /documents/extract_pages` (multipart, 40 MB cap, 8 pages, the raster-page cap).
+  - `media::photos_to_pdf` (`pdf-writer`): a camera JPEG is embedded byte-for-byte; its EXIF
+    rotation becomes the page's `/Rotate`. PNG, WebP, mirrored or CMYK input is turned upright
+    and re-encoded at quality 90. The PDF is built before the model call.
+  - Originals upload at full size, as single captures already do. On his slow link 4 photos
+    can take a minute or more; downscaling on the phone would trade archive quality for it.
+  - The overlay's lock gained `pdf-writer` + `multer`, or its `--locked` build would fail.
 - F4. **How a superseded order reads in the email receipt view** "makes no sense". Needs an example
   before it can be designed.
 - F1 ✅ pinch-zoom confirmed on the phone by him, 2026-10-01.

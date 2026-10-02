@@ -68,6 +68,8 @@ pub enum MediaError {
     Failed { status: String, stderr: String },
     #[error("scanned pdf has more than {MAX_RASTER_PAGES} pages — too large to send as images")]
     TooManyPages,
+    #[error("a capture takes 1 to {MAX_RASTER_PAGES} photos, got {0}")]
+    CapturePages(usize),
     #[error("the pdf is encrypted and none of the {tried} configured password(s) opened it")]
     Encrypted { tried: usize },
     #[error(
@@ -185,6 +187,113 @@ pub fn preview_jpeg(bytes: &[u8]) -> Result<Option<Vec<u8>>, MediaError> {
     let small = img.thumbnail(PREVIEW_LONG_EDGE, PREVIEW_LONG_EDGE);
     let out = encode_jpeg(&small, PREVIEW_QUALITY)?;
     Ok((out.len() < bytes.len()).then_some(out))
+}
+
+/// Long edge of a capture page, in PDF points (A4's height). Pixel size is kept;
+/// this only sets how large the page claims to be.
+const CAPTURE_PAGE_LONG_EDGE_PT: f32 = 842.0;
+const CAPTURE_REENCODE_QUALITY: u8 = 90;
+
+/// Several photos of one document as one PDF, a page per photo, in order.
+///
+/// A camera JPEG goes in unchanged (DCTDecode) and its EXIF turn becomes the
+/// page's `/Rotate`, because PDF viewers ignore EXIF. Anything else (PNG, WebP, a
+/// mirrored or CMYK JPEG) is turned upright and re-encoded at high quality.
+pub fn photos_to_pdf(photos: &[&[u8]]) -> Result<Vec<u8>, MediaError> {
+    use image::ImageDecoder;
+    use image::metadata::Orientation;
+    use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref};
+
+    if photos.is_empty() || photos.len() > MAX_RASTER_PAGES {
+        return Err(MediaError::CapturePages(photos.len()));
+    }
+    let decode_err = |source| MediaError::Decode {
+        mime: "capture page".into(),
+        source,
+    };
+
+    let mut pdf = Pdf::new();
+    let catalog_id = Ref::new(1);
+    let tree_id = Ref::new(2);
+    let page_ids: Vec<Ref> = (0..photos.len())
+        .map(|i| Ref::new(3 + 3 * i as i32))
+        .collect();
+    pdf.catalog(catalog_id).pages(tree_id);
+    pdf.pages(tree_id)
+        .kids(page_ids.iter().copied())
+        .count(photos.len() as i32);
+
+    for (i, bytes) in photos.iter().enumerate() {
+        let (page_id, image_id, content_id) = (
+            page_ids[i],
+            Ref::new(4 + 3 * i as i32),
+            Ref::new(5 + 3 * i as i32),
+        );
+        let reader = image::ImageReader::new(Cursor::new(*bytes))
+            .with_guessed_format()
+            .map_err(|e| decode_err(image::ImageError::IoError(e)))?;
+        let is_jpeg = reader.format() == Some(ImageFormat::Jpeg);
+        let mut decoder = reader.into_decoder().map_err(decode_err)?;
+        let orientation = decoder.orientation().map_err(decode_err)?;
+        let (w, h) = decoder.dimensions();
+        let color = decoder.original_color_type();
+        let rotate = match orientation {
+            Orientation::NoTransforms => Some(0),
+            Orientation::Rotate90 => Some(90),
+            Orientation::Rotate180 => Some(180),
+            Orientation::Rotate270 => Some(270),
+            _ => None,
+        };
+        let passthrough = is_jpeg
+            && rotate.is_some()
+            && matches!(color, ExtendedColorType::Rgb8 | ExtendedColorType::L8);
+
+        let (data, w, h, gray, rotate) = if passthrough {
+            (
+                bytes.to_vec(),
+                w,
+                h,
+                color == ExtendedColorType::L8,
+                rotate.unwrap_or(0),
+            )
+        } else {
+            let mut img = image::DynamicImage::from_decoder(decoder).map_err(decode_err)?;
+            img.apply_orientation(orientation);
+            let (w, h) = (img.width(), img.height());
+            (encode_jpeg(&img, CAPTURE_REENCODE_QUALITY)?, w, h, false, 0)
+        };
+
+        let mut image = pdf.image_xobject(image_id, &data);
+        image.filter(Filter::DctDecode);
+        image.width(w as i32);
+        image.height(h as i32);
+        if gray {
+            image.color_space().device_gray();
+        } else {
+            image.color_space().device_rgb();
+        }
+        image.bits_per_component(8);
+        image.finish();
+
+        let scale = CAPTURE_PAGE_LONG_EDGE_PT / w.max(h) as f32;
+        let (pw, ph) = (w as f32 * scale, h as f32 * scale);
+        let name = Name(b"Im1");
+        let mut page = pdf.page(page_id);
+        page.media_box(Rect::new(0.0, 0.0, pw, ph));
+        page.parent(tree_id);
+        page.rotate(rotate);
+        page.contents(content_id);
+        page.resources().x_objects().pair(name, image_id);
+        page.finish();
+
+        let mut content = Content::new();
+        content.save_state();
+        content.transform([pw, 0.0, 0.0, ph, 0.0, 0.0]);
+        content.x_object(name);
+        content.restore_state();
+        pdf.stream(content_id, &content.finish());
+    }
+    Ok(pdf.finish())
 }
 
 /// Prepare a single image for the request: downscale if oversized, otherwise
@@ -486,6 +595,40 @@ async fn run_pdftoppm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn photos_become_one_pdf_with_a_page_each() {
+        let camera = synth(1200, 1600, ImageFormat::Jpeg);
+        let screenshot = synth(800, 600, ImageFormat::Png);
+        let pdf = photos_to_pdf(&[&camera, &screenshot]).unwrap();
+        // The camera's bytes go in unchanged.
+        assert!(pdf.windows(camera.len()).any(|w| w == camera.as_slice()));
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("capture.pdf");
+        std::fs::write(&path, &pdf).unwrap();
+        let info = Command::new("pdfinfo").arg(&path).output().await.unwrap();
+        let info = String::from_utf8_lossy(&info.stdout);
+        assert!(
+            info.lines()
+                .any(|l| l.starts_with("Pages:") && l.ends_with(" 2")),
+            "{info}"
+        );
+    }
+
+    #[test]
+    fn a_capture_needs_one_to_eight_photos() {
+        let one = synth(10, 10, ImageFormat::Jpeg);
+        assert!(matches!(
+            photos_to_pdf(&[]),
+            Err(MediaError::CapturePages(0))
+        ));
+        let nine = vec![one.as_slice(); MAX_RASTER_PAGES + 1];
+        assert!(matches!(
+            photos_to_pdf(&nine),
+            Err(MediaError::CapturePages(9))
+        ));
+    }
 
     /// Build a solid-colour test image of the given size in the given format.
     fn synth(w: u32, h: u32, format: ImageFormat) -> Vec<u8> {

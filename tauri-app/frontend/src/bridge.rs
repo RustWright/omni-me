@@ -50,13 +50,13 @@ pub static OMNI_MOCK_BUILD_SENTINEL: &[u8; 32] = b"OMNI_MOCK_BUILD__DO_NOT_SHIP_
 
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AutoImportSourceView, BalanceCheckView,
-    BudgetProgress, BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView,
-    DocumentItem, DraftCorrectionInput, ExportPreview, ExtractedDraft, GenericNoteItem,
-    ImportStatementResult, JournalDayStat, JournalEntryItem, LlmResult, MatchCandidateView,
-    NetWorthSeriesView, PendingBatchView, PendingShareCapture, PurgePreview, PurgeReport,
-    ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem, ScanRecurringResult,
-    SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo, TransactionFormDraft, TransactionView,
-    TxnFilter,
+    BudgetProgress, BudgetRow, CapturePageInput, CommitBatchResult, CompletionEntry,
+    DashboardSummaryView, DocumentItem, DraftCorrectionInput, ExportPreview, ExtractedDraft,
+    GenericNoteItem, ImportStatementResult, JournalDayStat, JournalEntryItem, LlmResult,
+    MatchCandidateView, NetWorthSeriesView, PendingBatchView, PendingShareCapture, PurgePreview,
+    PurgeReport, ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem,
+    ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
+    TransactionFormDraft, TransactionView, TxnFilter,
 };
 #[cfg(feature = "mock")]
 use crate::types::{
@@ -2111,6 +2111,38 @@ pub async fn invoke_extract_document(
             },
         )
         .await
+    }
+}
+
+/// Several photos of one document: read together, archived by the server as one
+/// PDF. One page goes through [`invoke_extract_document`] unchanged.
+pub async fn invoke_extract_document_pages(
+    pages: Vec<CapturePageInput>,
+    hint: &str,
+) -> Result<ExtractedDraft, String> {
+    #[cfg(feature = "mock")]
+    {
+        let first = pages.first().ok_or("no pages")?;
+        let mut draft = invoke_extract_document(
+            first.bytes.clone(),
+            "application/pdf",
+            hint,
+            Some("mock-capture.pdf"),
+        )
+        .await?;
+        if let Some(att) = draft.attachment.as_mut() {
+            att.size = pages.iter().map(|p| p.bytes.len() as u64).sum();
+        }
+        Ok(draft)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            pages: Vec<CapturePageInput>,
+            hint: &'a str,
+        }
+        invoke("extract_document_pages", &Args { pages, hint }).await
     }
 }
 

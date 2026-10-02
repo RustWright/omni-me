@@ -895,6 +895,7 @@ pub fn run() {
             commands::budget::check_account_balance,
             // Document extraction (forwards to the server-side extractor)
             commands::extract::extract_document,
+            commands::extract::extract_document_pages,
             // Local attachment cache (Phase 3.7)
             commands::attachments::fetch_attachment,
             commands::attachments::fetch_attachment_preview,

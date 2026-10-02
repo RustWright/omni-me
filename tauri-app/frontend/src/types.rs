@@ -889,6 +889,15 @@ pub struct DraftTransactionView {
     pub postings: Vec<PostingInput>,
 }
 
+/// One photo of a capture, in the order taken. Mirrors the Tauri command's
+/// `CapturePage`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapturePageInput {
+    pub bytes: Vec<u8>,
+    pub mime: String,
+    pub filename: Option<String>,
+}
+
 /// A draft the reviewer edited before committing. Mirrors
 /// `core::events::DraftCorrection`; `index` is the row's position in the batch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

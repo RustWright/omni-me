@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Query, State},
     http::{HeaderMap, StatusCode, header},
     routing::post,
 };
@@ -38,6 +38,7 @@ fn ingest_context<'a>(
 }
 
 const MAX_DOCUMENT_BYTES: usize = 15 * 1024 * 1024;
+const MAX_CAPTURE_PAGES_BYTES: usize = 40 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct ExtractQuery {
@@ -67,6 +68,11 @@ pub struct ExtractResponse {
 pub fn documents_routes() -> Router<AppState> {
     Router::new()
         .route("/documents/extract", post(extract_handler))
+        // Eight phone photos outgrow the router's cap; the PDF they become does not.
+        .route(
+            "/documents/extract_pages",
+            post(extract_pages_handler).layer(DefaultBodyLimit::max(MAX_CAPTURE_PAGES_BYTES)),
+        )
         .route("/documents/archive", post(archive_handler))
         // ⛔ Two routes, never one. The preview is what the user reads; the
         // confirm may only act on what that preview returned.
@@ -220,16 +226,79 @@ async fn extract_handler(
         "extract_document"
     );
 
+    read_and_file(
+        &state,
+        &q,
+        &[DocumentPart::new(&body, mime)],
+        (&body, mime, filename),
+    )
+    .await
+    .map(Json)
+}
+
+/// `POST /documents/extract_pages?hint=…&attach=true` — several photos of one
+/// document as multipart fields, in page order. Read in one model call and
+/// archived as one PDF, a page per photo (`media::photos_to_pdf`).
+async fn extract_pages_handler(
+    State(state): State<AppState>,
+    Query(q): Query<ExtractQuery>,
+    mut multipart: Multipart,
+) -> Result<Json<ExtractResponse>, (StatusCode, String)> {
+    let bad = |e: String| (StatusCode::BAD_REQUEST, e);
+    let mut pages: Vec<(Bytes, String)> = Vec::new();
+    let mut first_name = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| bad(e.to_string()))?
+    {
+        if first_name.is_none() {
+            first_name = field.file_name().map(str::to_string);
+        }
+        let mime = field.content_type().unwrap_or("image/jpeg").to_string();
+        pages.push((field.bytes().await.map_err(|e| bad(e.to_string()))?, mime));
+    }
+    tracing::info!(pages = pages.len(), hint = ?q.hint, attach = q.attach, "extract_pages");
+
+    // Built before the model call, so a bad page costs no reading.
+    let owned: Vec<Bytes> = pages.iter().map(|(b, _)| b.clone()).collect();
+    let pdf = tokio::task::spawn_blocking(move || {
+        let photos: Vec<&[u8]> = owned.iter().map(|b| b.as_ref()).collect();
+        omni_me_core::extraction::media::photos_to_pdf(&photos)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| bad(e.to_string()))?;
+
+    let stem = first_name
+        .as_deref()
+        .and_then(|n| std::path::Path::new(n).file_stem()?.to_str())
+        .unwrap_or("capture");
+    let filename = format!("{stem}.pdf");
+    let parts: Vec<DocumentPart<'_>> = pages.iter().map(|(b, m)| DocumentPart::new(b, m)).collect();
+    read_and_file(&state, &q, &parts, (&pdf, "application/pdf", &filename))
+        .await
+        .map(Json)
+}
+
+/// Read `parts` with the model, file `filed` in the archive when `attach` is set,
+/// and run the receipt cross-check. Shared by the one-file and many-photo routes.
+async fn read_and_file(
+    state: &AppState,
+    q: &ExtractQuery,
+    parts: &[DocumentPart<'_>],
+    (bytes, mime, filename): (&[u8], &str, &str),
+) -> Result<ExtractResponse, (StatusCode, String)> {
     let mut extraction = state
         .extractor
-        .extract(&[DocumentPart::new(&body, mime)], q.hint)
+        .extract(parts, q.hint)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Archived only after extraction succeeds, as the bare blob store was: a failed read is
     // retried by the device with the same bytes, and archiving first would file each retry.
     let attachment = if q.attach {
-        Some(archive_capture(&state, &body, mime, filename, &extraction, q.hint).await?)
+        Some(archive_capture(state, bytes, mime, filename, &extraction, q.hint).await?)
     } else {
         None
     };
@@ -240,13 +309,13 @@ async fn extract_handler(
     extraction.confidence = report.effective_confidence;
     add_counter_legs(&mut extraction, q.hint);
 
-    Ok(Json(ExtractResponse {
+    Ok(ExtractResponse {
         extraction,
         attachment,
         warnings: report.warnings,
         needs_review: report.needs_manual_review,
         total_check: report.total_check,
-    }))
+    })
 }
 
 /// File a capture in the archive and return the attachment that links a transaction to it.

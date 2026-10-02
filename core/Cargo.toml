@@ -60,6 +60,9 @@ image = { version = "0.25", default-features = false, features = [
     "png",
     "webp",
 ] }
+# Writes the PDF a multi-photo capture is archived as. Pure Rust; it embeds a JPEG
+# as-is (DCTDecode), so a page keeps the camera's bytes.
+pdf-writer = "0.15"
 toml = "0.8"
 tracing = "0.1"
 mail-parser = "0.10"
