@@ -3093,6 +3093,18 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   - Originals upload at full size, as single captures already do. On his slow link 4 photos
     can take a minute or more; downscaling on the phone would trade archive quality for it.
   - The overlay's lock gained `pdf-writer` + `multer`, or its `--locked` build would fail.
+  ✅ **On dev + the phone, 1.1.20-dev, 2026-10-02**: the two archived photos of one bank receipt
+  (the case F3 was filed for) went through the phone's backend as one capture: one PDF document,
+  2 pages, both JPEGs embedded unchanged, each page `/Rotate 90` from EXIF and rendering upright,
+  20 s including the 7.4 MB upload. The capture screen lists pages, Remove works, and the button
+  follows the count. It filed one test document in the dev archive. The camera itself is unverified
+  (needs his hands); files were fed to the input over CDP.
+  ⚠️ **The reading double-counted**: line items summed to exactly twice the total; the receipt's
+  second page repeats lines from the first. The cross-check caught it and flagged review. Whether
+  the multi-page prompt should say "pages may repeat" is a model-quality call, not filed as a fix.
+  ⚠️ The file input keeps showing "2 files" after a pick; `value: ""` does not clear it. Cosmetic.
+  ⚠️ One `fetch_attachment` of a 3.7 MB original failed mid-body ("error decoding response
+  body") and succeeded on retry: the slow link (B4), not F3.
 - F4. **How a superseded order reads in the email receipt view** "makes no sense". Needs an example
   before it can be designed.
 - F1 ✅ pinch-zoom confirmed on the phone by him, 2026-10-01.

@@ -4,10 +4,10 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — his choice; F1, F2, F2a and F5 are done and verified on the dev phone
-His 2026-09-30 order (bugs, F1, F2) and the F5 go-ahead are complete; `tasks.md` § Design calls holds
-each one's decision log and what stayed unverified. Nothing is queued without his priority.
-Open feature items in `tasks.md`: F3 (multi-image receipt as one document), F4 (needs an example).
+## ▶ NEXT ACTION — his choice; F1, F2, F2a, F3 and F5 are done and verified on the dev phone
+Dev phone on 1.1.20-dev, dev server on the matching image. `tasks.md` § Design calls holds each
+item's decision log and what stayed unverified (F3: the camera itself, and a double-counting
+reading of a receipt whose second page repeats the first). Nothing is queued without his priority.
 Owed and not blocking: the Rust 1.99 upgrade (CI is pinned to 1.98.1), and the triage scoring
 query once batches carrying a verdict have been reviewed.
 
@@ -15,7 +15,9 @@ query once batches carrying a verdict have been reviewed.
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **What comes next** (F3, F4, the 1.99 upgrade, or something else).
+- **What comes next** (F4 needs an example from him; the 1.99 upgrade; or something else).
+- **F3's camera path**: take a two-photo receipt on the dev phone; and whether multi-page reading
+  should be told pages can repeat (the one test double-counted). `tasks.md` § F3.
 - **Review the re-proposed September receipts** (~70 batches, dev phone on 1.1.19-dev). His first
   commit with a correction is also the first real run of that path.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
