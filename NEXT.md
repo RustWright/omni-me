@@ -4,20 +4,18 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — build his 2026-10-02 on-device pass, G1–G10 + F4
-`tasks.md` § On-device pass on 1.1.20-dev holds each cause and the four decisions he took.
-Order is MY proposal, following his earlier "bugs first": the six bugs (G1 zoom, G2 keyboard,
-G3 thread read, G4 settings overflow, G8 preheader filler, G9 camera provider), then the built
-decisions (G6, G7, G9 archive add, G3 archive/delete), then G5 feeds on dev, then F4.
+## ▶ NEXT ACTION — his on-device pass of G1–G4, G6–G9 and F4 on 1.1.21-dev
+All built 2026-10-02 (`48e992b`..`58d4ffa`); `tasks.md` § On-device pass on 1.1.20-dev holds the
+causes, his four rulings and the decision log, including what was only verified in a browser.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **G9 confirmation**: one tap on "take photo" once he is done committing, so logcat can confirm
-  the FileProvider cause before the fix ships.
-- **G5**: a bank-feed OTP when the dev feeds are switched on.
+- **G5, the bank feeds on dev**: copying live's two disabled sections into dev's credentials is
+  refused to me by the permission classifier (secret-store write). His to run, or to authorise.
+- **On the phone**: the camera (G9), the keyboard (G2) and a real pinch (G1) need his hands.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.

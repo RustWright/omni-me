@@ -3178,6 +3178,30 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   - G3: **chats get Archive (an "Archived" list, still openable) and Delete = permanent hide**,
     a tombstone event honoured on every device; the log keeps the transcript. A pending proposal
     from a deleted chat stays decidable in the inbox. Beat: erase for real (per-node purge).
+- ▶ **Built 2026-10-02** (`48e992b`..`58d4ffa`), decision log (mine):
+  - G1: a PDF's zoom box is `min-h-full`, not `h-full`. ⚠️ Plain auto height opened at
+    `scale(8)`: panzoom attaches before pdf.js draws, and a 0px box under "outside" containment
+    jumps to max zoom. Measured in the browser: page 2 reachable at 1× and 2.46×.
+  - G2: `keyboard.rs`, on `omni:keyboardinset` and `focusin`, centers a focused input that sits
+    under the keyboard; skips CodeMirror. Simulated in the browser (715 → 269px); not on Android.
+  - G3: `read_thread` serializes `DbValue` as plain JSON; the old test asserted on a manual
+    conversion, so now it asserts on the serialized view. Chats: `assistant_thread_archived`
+    (LWW by timestamp) + `assistant_thread_deleted` (sticky), in their own
+    `assistant_thread_state` table so an early-arriving event is not lost; assistant projection 4→5.
+  - G4: value span truncates at 50% width; the expanded row shows free text in full. The mock now
+    carries the real check-in prompt, so the sweep can see it.
+  - G6: an empty batch reaches review only for `receipt`. ⚠️ This reverses a test written from the
+    2026-09-24 Instacart confirmation ("an unpriced confirmation must be reviewable"); his ruling
+    supersedes it. Hand entry commits as `added` rows (`manual-{batch}-{i}` ids, stable on repeat).
+  - G7: `DraftCorrection.tags`, normalized with `Tag::normalize`; refused tags fail the commit.
+  - G8: `mime::strip_invisible_padding` at parse time and on `document_text` read, so mail
+    archived before the fix displays clean too. ZWJ kept (emoji).
+  - G9 camera: `external-files-path Pictures/` added to `file_paths.xml`; still no shared-storage
+    root. G9 archive add: `?propose=true` on both extract routes; the server proposes a `capture`
+    batch when the reading is `receipt`. ⚠️ Only the email prompt ever asked for `document_kind`,
+    so the `generic` prompt (used by nothing else) now asks too. Model behaviour on it unmeasured.
+  - F4: one line per superseded email (kind, receipt date, total, delta vs the shown proposal),
+    lines folded; says they were never recorded and points at Edit, not at dismissal.
 - G6. **Zero-transaction batches** (shipping notices, an order confirmation) reach review.
   ⚠️ One is a KDP royalty payment with nothing extracted: a real miss, so "hide empty" loses it.
 - G7. **Tags cannot be edited in a correction.** F2's scope was the saved-txn editor's fields,
