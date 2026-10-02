@@ -208,8 +208,8 @@ pub struct ThreadSummary {
 ///
 /// `usage` and `records_read` stay [`DbValue`] rather than typed structs: they
 /// are stored shapes owned by the event payload, and re-declaring them here
-/// would be a second definition to keep in step with the first. The client
-/// reads them as JSON either way.
+/// would be a second definition to keep in step with the first. They serialize
+/// through [`db_value_as_json`]; `DbValue`'s own serde form is enum-tagged.
 ///
 /// ⚠️ **`records_read` carries no title** — see
 /// [`crate::assistant::answer::records_read`] for why, and resolve the display
@@ -231,11 +231,18 @@ pub struct ConversationMessage {
     pub model: Option<String>,
     pub elapsed_ms: Option<i64>,
     pub verbs: Option<Vec<String>>,
+    #[serde(serialize_with = "db_value_as_json")]
     pub records_read: Option<DbValue>,
+    #[serde(serialize_with = "db_value_as_json")]
     pub usage: Option<DbValue>,
     /// True when the agent raised this question on a schedule. `None` on answers
     /// and on every question authored before the field existed.
     pub scheduled: Option<bool>,
+}
+
+/// Plain JSON for a stored value, rather than `DbValue`'s `{"Array": …}` form.
+fn db_value_as_json<S: serde::Serializer>(v: &Option<DbValue>, s: S) -> Result<S::Ok, S::Error> {
+    v.clone().map(DbValue::into_json_value).serialize(s)
 }
 
 /// One thread, plus whether it is still waiting on an answer.
@@ -795,14 +802,16 @@ mod tests {
         )
         .await;
 
+        // Asserted on the serialized view, which is what the client receives. A
+        // manual `into_json_value()` here once passed while the app got
+        // `{"Array": [...]}` and could not open any thread.
         let view = read_thread(&db, "t1").await.unwrap();
-        let cited = view.messages[1]
-            .records_read
-            .clone()
-            .expect("the citation should survive the round trip");
-        let json = cited.into_json_value();
-        assert_eq!(json[0]["kind"], "note");
-        assert_eq!(json[0]["id"], "note-1");
+        let json = serde_json::to_value(&view).unwrap();
+        let cited = &json["messages"][1]["records_read"];
+        assert_eq!(cited[0]["kind"], "note");
+        assert_eq!(cited[0]["id"], "note-1");
+        assert!(json["messages"][1]["usage"].is_object());
+        assert!(json["messages"][1]["usage"].get("Object").is_none());
     }
 
     #[tokio::test]

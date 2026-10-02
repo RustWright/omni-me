@@ -457,7 +457,13 @@ fn DocumentLightbox(
                 }
             }
             div { class: "flex-1 overflow-hidden",
-                div { id: "{zoom_id}", class: "w-full h-full flex items-start justify-center",
+                // A PDF's target grows with its pages: panzoom bounds pans by this
+                // box, so a screen-sized one left page 2 unreachable. min-h-full,
+                // because it attaches before pdf.js draws, and at 0px tall
+                // "outside" containment jumps straight to the maximum zoom.
+                div {
+                    id: "{zoom_id}",
+                    class: if is_image { "w-full h-full flex items-start justify-center" } else { "w-full min-h-full" },
                     if is_image {
                         img { src: "{shown}", alt: "{meta.filename}", class: "max-w-full max-h-full object-contain" }
                     } else {

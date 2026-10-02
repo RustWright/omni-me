@@ -1072,6 +1072,10 @@ pub struct AutoImportBatchCommittedPayload {
     /// the model's version, so original and correction are both on record.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub corrections: Vec<DraftCorrection>,
+    /// Rows the reviewer entered by hand, typically for a receipt the reader
+    /// got nothing from. `index` is the position within this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<DraftCorrection>,
 }
 
 /// One proposed row as the reviewer committed it, replacing the draft at
@@ -1082,6 +1086,9 @@ pub struct DraftCorrection {
     pub date: chrono::NaiveDate,
     pub description: String,
     pub postings: Vec<Posting>,
+    /// Transaction tags, normalized; the committed transaction carries them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// User dismisses the batch — no transactions recorded. Reason is free-form
@@ -2126,6 +2133,7 @@ mod tests {
             fx_rate: Some(Decimal::new(84, 5)), // 0.00084
             fx_commodity: Some("AED".into()),
             corrections: vec![],
+            added: vec![],
         };
         let json = serde_json::to_value(&payload).unwrap();
         validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
@@ -2144,6 +2152,7 @@ mod tests {
             fx_rate: None,
             fx_commodity: None,
             corrections: vec![],
+            added: vec![],
         };
         let json = serde_json::to_value(&payload).unwrap();
         validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();

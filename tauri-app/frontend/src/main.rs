@@ -7,6 +7,7 @@ mod diagnostics;
 mod duration;
 mod features;
 mod journal_template;
+mod keyboard;
 mod note_frontmatter;
 mod pages;
 mod reorder;
@@ -635,6 +636,8 @@ fn App() -> Element {
             }
         });
     });
+
+    use_hook(keyboard::install);
 
     // Hardware/gesture-back handler (#372). The Android `MainActivity`
     // dispatches an `omni:back` DOM event on a back press; we drain it here (same

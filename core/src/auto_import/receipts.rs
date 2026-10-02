@@ -338,12 +338,10 @@ impl ImapHandler for ReceiptHandler {
 
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
         let drafts = receipt_extraction_to_drafts(&result, &source_prefix);
-        // A message the model called a charge still reaches review when it
-        // produced no drafts at all. Silence here is indistinguishable from "no
-        // purchase happened", and the batch still carries the source email and
-        // the warnings, which is what a person needs to price it by hand.
-        let charge_bearing = result.kind().is_some_and(|kind| kind.records_a_charge());
-        if drafts.is_empty() && !charge_bearing {
+        // With no drafts, only a receipt still reaches review, where it can be
+        // entered by hand (a KDP royalty notice did this). Order and shipping
+        // mail with nothing in it stays archive-only (his ruling, 2026-10-02).
+        if drafts.is_empty() && result.kind() != Some(DocumentKind::Receipt) {
             return Ok(vec![]);
         }
         // Only a charge-bearing kind may group. `order_ref` on other mail is
@@ -778,28 +776,32 @@ mod tests {
         assert_eq!(events_for(Some("receipt"), "0.00").await, 1);
     }
 
-    /// ⚠️ Built from the artifact, not the stub. A real Instacart order
-    /// confirmation (2026-09-24) extracted **zero postings**, not a zero
-    /// *amount* — and the zero-amount fixture above made that look covered
-    /// while the message was silently dropped.
+    /// Zero postings, not a zero amount: the shape a real KDP royalty notice and
+    /// a real Instacart confirmation both had. Only the receipt reaches review,
+    /// to be entered by hand; the confirmation stays archive-only (2026-10-02).
     #[tokio::test]
-    async fn a_charge_with_no_postings_at_all_still_reaches_review() {
-        let mut result = stub_result(Some("order_confirmation"), "0.00");
-        result.postings.clear();
-        let extractor = Arc::new(StubExtractor(result));
-        let handler = ReceiptHandler::new("shop", "device-test", extractor);
+    async fn with_no_postings_only_a_receipt_reaches_review() {
+        let empty = |kind: &str| {
+            let mut result = stub_result(Some(kind), "0.00");
+            result.postings.clear();
+            let extractor = Arc::new(StubExtractor(result));
+            ReceiptHandler::new("shop", "device-test", extractor)
+        };
         let msg = imap_msg_from("shop@northwind.example", plain_eml());
-        let events = handler.handle(&msg).await.expect("handler ok");
-        assert_eq!(
-            events.len(),
-            1,
-            "an unpriced confirmation must be reviewable"
-        );
+
+        let events = empty("receipt").handle(&msg).await.expect("handler ok");
+        assert_eq!(events.len(), 1, "an unpriced receipt must be reviewable");
         assert_eq!(
             events[0].payload["draft_postings"].as_array().map(Vec::len),
-            Some(0),
-            "it carries no drafts — the source email and warnings are the point"
+            Some(0)
         );
+        for kind in ["order_confirmation", "order_update", "shipping_notice"] {
+            let events = empty(kind).handle(&msg).await.expect("handler ok");
+            assert!(
+                events.is_empty(),
+                "{kind} with nothing in it proposed a batch"
+            );
+        }
     }
 
     /// The other half: with no charge-bearing label, no drafts still means no

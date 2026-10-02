@@ -537,9 +537,11 @@ fn ConfigRow(
                 r#type: "button",
                 class: "w-full flex items-center justify-between gap-3 text-left",
                 onclick: move |_| on_toggle.call(()),
-                span { class: "text-sm font-medium text-obsidian-text", "{entry.label}" }
-                span { class: "flex items-center gap-2 shrink-0",
-                    span { class: "text-sm text-obsidian-text-muted",
+                span { class: "text-sm font-medium text-obsidian-text min-w-0", "{entry.label}" }
+                // A text value can be a whole prompt; unshrinkable, it once made
+                // the page three screens wide. The expanded row shows it in full.
+                span { class: "flex items-center gap-2 min-w-0 max-w-[50%]",
+                    span { class: "text-sm text-obsidian-text-muted truncate",
                         "{entry.effective.display()}"
                         if let Some(origin) = origin {
                             span { class: "text-obsidian-accent", " · {origin}" }
@@ -547,8 +549,13 @@ fn ConfigRow(
                     }
                     Icon {
                         name: IconName::ChevronRight,
-                        class: if expanded { "w-4 h-4 text-obsidian-text-muted rotate-90 transition-transform" } else { "w-4 h-4 text-obsidian-text-muted transition-transform" },
+                        class: if expanded { "w-4 h-4 shrink-0 text-obsidian-text-muted rotate-90 transition-transform" } else { "w-4 h-4 shrink-0 text-obsidian-text-muted transition-transform" },
                     }
+                }
+            }
+            if expanded && entry.choices.is_none() && matches!(entry.effective, ConfigValue::Text(_)) {
+                p { class: "mt-2 pl-1 text-xs text-obsidian-text-muted whitespace-pre-wrap break-words",
+                    "{entry.effective.display()}"
                 }
             }
 

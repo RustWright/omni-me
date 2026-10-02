@@ -423,11 +423,13 @@ pub async fn commit_batch(
     fx_rate: Option<String>,
     fx_commodity: Option<String>,
     corrections: Option<Vec<DraftCorrection>>,
+    added: Option<Vec<DraftCorrection>>,
 ) -> Result<CommitBatchResult, String> {
     tracing::info!(
         batch_id = %batch_id,
         accepted = accepted_indices.len(),
         corrected = corrections.as_ref().map_or(0, Vec::len),
+        added = added.as_ref().map_or(0, Vec::len),
         "commit_batch"
     );
 
@@ -475,9 +477,14 @@ pub async fn commit_batch(
 
     let mut corrections = corrections.unwrap_or_default();
     let effective = apply_corrections(&drafts, &indices, &mut corrections)?;
+    let mut added = added.unwrap_or_default();
+    check_added(&mut added)?;
+    if indices.is_empty() && added.is_empty() {
+        return Err("nothing to commit: no row selected and none added".into());
+    }
 
-    let mut new_events: Vec<NewEvent> = Vec::with_capacity(indices.len() + 2);
-    let mut accepted_dates: Vec<NaiveDate> = Vec::with_capacity(indices.len());
+    let mut new_events: Vec<NewEvent> = Vec::with_capacity(indices.len() + added.len() + 2);
+    let mut accepted_dates: Vec<NaiveDate> = Vec::with_capacity(indices.len() + added.len());
 
     for (&idx, row) in indices.iter().zip(&effective) {
         let draft = &drafts[idx];
@@ -485,18 +492,39 @@ pub async fn commit_batch(
         // Keyed on the draft as proposed, so a re-proposal of the same upstream
         // row collapses onto the corrected transaction instead of duplicating it.
         let txn_id = commit_txn_id(draft);
-        let mut payload = TransactionRecordedPayload::new(
+        let mut tags = corrections
+            .iter()
+            .find(|c| c.index == idx)
+            .map(|c| parse_tags(&c.tags))
+            .unwrap_or_default();
+        if !draft.external_id.trim().is_empty() {
+            tags.push(Tag::KeyValue {
+                key: AUTOIMPORT_TAG_KEY.to_string(),
+                value: draft.external_id.trim().to_string(),
+            });
+        }
+        let payload = TransactionRecordedPayload::new(
             txn_id,
             row.date,
             row.description.clone(),
             row.postings.clone(),
+        )
+        .with_tags(tags);
+        new_events.push(
+            NewEvent::transaction_recorded(state.device_id.clone(), &payload)
+                .map_err(|e| e.to_string())?,
         );
-        if !draft.external_id.trim().is_empty() {
-            payload = payload.with_tags(vec![Tag::KeyValue {
-                key: AUTOIMPORT_TAG_KEY.to_string(),
-                value: draft.external_id.trim().to_string(),
-            }]);
-        }
+    }
+    for row in &added {
+        accepted_dates.push(row.date);
+        // Stable per batch and position, so a repeated commit collapses.
+        let payload = TransactionRecordedPayload::new(
+            format!("manual-{batch_id}-{}", row.index),
+            row.date,
+            row.description.clone(),
+            row.postings.clone(),
+        )
+        .with_tags(parse_tags(&row.tags));
         new_events.push(
             NewEvent::transaction_recorded(state.device_id.clone(), &payload)
                 .map_err(|e| e.to_string())?,
@@ -536,6 +564,7 @@ pub async fn commit_batch(
         fx_rate: fx_pair.map(|(r, _)| Decimal::from_str(r).unwrap()),
         fx_commodity: fx_pair.map(|(_, c)| c.to_string()),
         corrections,
+        added,
     };
     new_events.push(NewEvent {
         id: None,
@@ -551,7 +580,7 @@ pub async fn commit_batch(
 
     Ok(CommitBatchResult {
         events_appended,
-        txns_recorded: indices.len(),
+        txns_recorded: indices.len() + committed_payload.added.len(),
         fx_recorded,
     })
 }
@@ -636,6 +665,7 @@ fn apply_corrections(
         }
         super::budget::refuse_imbalance(&c.postings)
             .map_err(|e| format!("row {}: {e}", c.index + 1))?;
+        c.tags = normalize_tags(&c.tags).map_err(|e| format!("row {}: {e}", c.index + 1))?;
     }
 
     Ok(indices
@@ -650,6 +680,42 @@ fn apply_corrections(
             None => drafts[idx].clone(),
         })
         .collect())
+}
+
+/// Hand-entered rows get the checks a correction gets; `index` is renumbered to
+/// the row's position so the stored audit and the txn ids agree.
+fn check_added(added: &mut [DraftCorrection]) -> Result<(), String> {
+    for (i, row) in added.iter_mut().enumerate() {
+        row.index = i;
+        if row.description.trim().is_empty() {
+            return Err(format!("added row {} needs a description", i + 1));
+        }
+        row.description = row.description.trim().to_string();
+        if row.postings.len() < 2 {
+            return Err(format!("added row {} needs at least two postings", i + 1));
+        }
+        super::budget::refuse_imbalance(&row.postings)
+            .map_err(|e| format!("added row {}: {e}", i + 1))?;
+        row.tags = normalize_tags(&row.tags).map_err(|e| format!("added row {}: {e}", i + 1))?;
+    }
+    Ok(())
+}
+
+/// Trimmed, lowercased, deduplicated; the strict form `Tag::normalize` defines.
+fn normalize_tags(raw: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::with_capacity(raw.len());
+    for t in raw {
+        let tag = Tag::normalize(t)?.to_string();
+        if !out.contains(&tag) {
+            out.push(tag);
+        }
+    }
+    Ok(out)
+}
+
+/// Tags already normalized by [`normalize_tags`], so parsing cannot fail.
+fn parse_tags(tags: &[String]) -> Vec<Tag> {
+    tags.iter().filter_map(|t| Tag::normalize(t).ok()).collect()
 }
 
 /// Pick the date to stamp on the single batch-level `ExchangeRateRecorded`
@@ -781,7 +847,44 @@ mod tests {
             date: d.date,
             description: "Pharmacy, corrected".into(),
             postings: d.postings,
+            tags: vec![],
         }
+    }
+
+    #[test]
+    fn correction_tags_are_normalized_and_bad_ones_refused() {
+        let drafts = vec![balanced("a", "Expenses:Groceries")];
+        let mut fixes = vec![DraftCorrection {
+            tags: vec![" Sister ".into(), "sister".into(), "trip:Ottawa".into()],
+            ..correction(0, "Expenses:Gifts")
+        }];
+        apply_corrections(&drafts, &[0], &mut fixes).unwrap();
+        assert_eq!(fixes[0].tags, vec!["sister", "trip:ottawa"]);
+
+        let mut bad = vec![DraftCorrection {
+            tags: vec!["a,b".into()],
+            ..correction(0, "Expenses:Gifts")
+        }];
+        assert!(apply_corrections(&drafts, &[0], &mut bad).is_err());
+    }
+
+    #[test]
+    fn added_rows_are_renumbered_and_checked() {
+        let mut rows = vec![
+            DraftCorrection {
+                index: 7,
+                description: "  KDP royalty ".into(),
+                ..correction(0, "Income:Royalties")
+            },
+            correction(3, "Expenses:Health"),
+        ];
+        check_added(&mut rows).unwrap();
+        assert_eq!((rows[0].index, rows[1].index), (0, 1));
+        assert_eq!(rows[0].description, "KDP royalty");
+
+        let mut lopsided = vec![correction(0, "Expenses:Health")];
+        lopsided[0].postings.pop();
+        assert!(check_added(&mut lopsided).is_err());
     }
 
     #[test]

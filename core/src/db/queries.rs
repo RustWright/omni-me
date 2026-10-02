@@ -1156,7 +1156,11 @@ pub async fn document_text(db: &Database, id: &str) -> Result<Option<String>, Db
         .await?;
 
     let rows: Vec<Option<String>> = resp.take(0)?;
-    Ok(rows.into_iter().flatten().next())
+    Ok(rows
+        .into_iter()
+        .flatten()
+        .next()
+        .map(|t| crate::mime::strip_invisible_padding(&t)))
 }
 
 /// Every distinct `kind` present, for the filter control.

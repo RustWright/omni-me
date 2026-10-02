@@ -1771,6 +1771,9 @@ pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
     #[cfg(feature = "mock")]
     {
         use crate::types::{ConfigGroup, ConfigLayer};
+        const CHECK_IN_PROMPT: &str = "Review anything you concluded about me that is now due \
+            for re-examination, and tell me what still holds and what does not. Do not draw \
+            new conclusions.";
         // Every key at its built-in default — the state a fresh install is in,
         // which is also the state the headless UI checks should render.
         // `on` is a parameter rather than a constant so a browser session can
@@ -1833,6 +1836,21 @@ pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
                         .map(|s| (*s).to_string())
                         .collect(),
                 ),
+                int_range: None,
+            },
+            // A long free-text value, so the viewport sweep can see a row that
+            // once made Settings three screens wide on the phone.
+            ConfigEntry {
+                key: "assistant.check_in_prompt".to_string(),
+                label: "Check-in prompt".to_string(),
+                group: ConfigGroup::Assistant,
+                effective: ConfigValue::Text(CHECK_IN_PROMPT.to_string()),
+                layer: ConfigLayer::Default,
+                global: None,
+                device: None,
+                default: ConfigValue::Text(CHECK_IN_PROMPT.to_string()),
+                applies_immediately: true,
+                choices: None,
                 int_range: None,
             },
         ])

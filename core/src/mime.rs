@@ -102,6 +102,7 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
             msg.body_html(0).map(|html| strip_html_tags(&html))
         })
         .unwrap_or_default();
+    let body_text = strip_invisible_padding(&body_text);
 
     let mut attachments = Vec::new();
     for att in msg.attachments() {
@@ -153,6 +154,44 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
         attachments,
         authentication_results,
     })
+}
+
+/// Invisible characters senders repeat to pad an inbox preview.
+///
+/// ZWJ (U+200D) is left alone: it joins emoji sequences and is never padding.
+const PREHEADER_PADDING: [char; 6] = [
+    '\u{034F}', '\u{200B}', '\u{200C}', '\u{2060}', '\u{FEFF}', '\u{00AD}',
+];
+
+/// Drop preheader padding and collapse the blank lines it leaves behind.
+///
+/// A bank's bill-payment notices open with ~4,000 such characters, which filled
+/// the review panel so the payment looked absent. Also applied on read, so mail
+/// archived before this existed displays clean too.
+pub fn strip_invisible_padding(text: &str) -> String {
+    if !text.contains(PREHEADER_PADDING) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut blank_run = 0;
+    for line in text.lines() {
+        let line: String = line
+            .chars()
+            .filter(|c| !PREHEADER_PADDING.contains(c))
+            .collect();
+        if line.trim().is_empty() {
+            blank_run += 1;
+            if blank_run > 1 {
+                continue;
+            }
+            out.push('\n');
+        } else {
+            blank_run = 0;
+            out.push_str(line.trim_end());
+            out.push('\n');
+        }
+    }
+    out.trim().to_string()
 }
 
 /// Minimal tag-stripper for fallback when text/plain is absent. Keeps text
@@ -341,6 +380,27 @@ mod tests {
             parsed.from
         );
         assert!(!parsed.body_text.is_empty());
+    }
+
+    #[test]
+    fn preheader_padding_goes_and_the_payment_stays() {
+        // The shape of a real bank bill-payment notice's text/plain part.
+        let pad = "\u{034F} ".repeat(33);
+        let text = format!(
+            "<body></body>{pad}\n{pad}\n{pad}\n\n\n \n\n----\nYour payment is complete\n\
+             Amount: $48.79\nFrom: General Checking \nTo: MANITOBA HYDRO\n\n\n\n \n\n----"
+        );
+        let clean = strip_invisible_padding(&text);
+        assert!(!clean.contains('\u{034F}'));
+        assert!(clean.len() < 200, "padding survived: {} bytes", clean.len());
+        assert!(clean.contains("Amount: $48.79\nFrom: General Checking\nTo: MANITOBA HYDRO"));
+        assert!(!clean.contains("\n\n\n"));
+    }
+
+    #[test]
+    fn text_without_padding_is_untouched() {
+        let text = "Line one\n\n\n\nLine two  \n\u{1F468}\u{200D}\u{1F469}";
+        assert_eq!(strip_invisible_padding(text), text);
     }
 
     #[test]

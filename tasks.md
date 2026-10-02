@@ -3143,6 +3143,55 @@ accepted that as designed. 16 archive reviews cleared; the ~70 finance batches s
   ⚠️ A statement a model had already transcribed is not re-read: the queue is "text is empty", so
   its model reading stays at the lower rank. Only matters if the transcription is poor.
 
+### On-device pass on 1.1.20-dev — his, 2026-10-02
+
+He is mass-committing the ~70 batches to clear the queue. ⛔ A commit from this stretch is not a
+quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and the phone:
+- G1. **Lightbox zoom shows only page 1.** The zoom target is `w-full h-full` inside
+  `overflow-hidden`; panzoom bounds pans by that box, not the pages in it. Mine to fix.
+- G2. **Keyboard covers archive inputs.** Edge-to-edge ignores `adjustResize`; `InsetBridge` emits
+  `omni:keyboardinset` and only `editor.js` listens. Plain inputs need a global listener. Mine.
+- G3. **Assistant threads error on open.** Verified on the phone: `read_assistant_thread` returns
+  `records_read`/`usage` in SurrealDB's tagged form (`{"Array":[]}`, `{"Object":…}`). Mine.
+  Also asked for: delete, and archive (hide). Design open.
+- G4. **Settings › Check-in prompt overflows ~3×.** `ConfigRow` shows the value in a `shrink-0`
+  span. The mock config has no long text value, so the sweep could not see it. Mine.
+- G5. **Reconcile is all one-sided.** Not a bug: both bank feeds are OFF (2026-09-07), and
+  dev's statement re-import (10,582 txns) ends 2026-08-28. No September bank side exists.
+  🔴 DECIDED 2026-10-02 (user): **turn both bank feeds on, on DEV**, to test the
+  steady state. Feeds are the long-term source; statement imports are a reconciliation/closing
+  step only, except the statement-only institutions, which are low-volume. Beat:
+  importing September statements into dev. Needs: Wise's CAD/USD account map, a WS OTP from him.
+- F4 example (his, 2026-10-02): an uncommitted **Walmart** batch carrying ~4 superseded proposals.
+  He cannot tell where they came from, why they exist, or whether they live anywhere else, and
+  he is asked to compare four lists.
+- 🔴 DECIDED 2026-10-02 (user), all four on my recommendation:
+  - G6: **split empty batches by kind.** Non-financial kinds (shipping, order confirmation) stay
+    archive-only and never reach review. A receipt/payment with nothing extracted (KDP) still
+    reaches review, offering "Add transaction": the correction form, empty. Beat: drop every empty
+    batch (loses KDP silently); leave as is.
+  - G7: **tags in the correction form**, reusing `EditableTagList`; an optional field on
+    `DraftCorrection`, so old payloads read unchanged. Beat: tag after commit (already works).
+  - G9: **Archive "Add document" routes by kind**: camera (multi-page) or file, through the same
+    reader as Finances capture; a receipt also becomes a review proposal, anything else is
+    archived only. Mirrors email. Beat: archive-only (a second entry that drops receipts).
+  - G3: **chats get Archive (an "Archived" list, still openable) and Delete = permanent hide**,
+    a tombstone event honoured on every device; the log keeps the transcript. A pending proposal
+    from a deleted chat stays decidable in the inbox. Beat: erase for real (per-node purge).
+- G6. **Zero-transaction batches** (shipping notices, an order confirmation) reach review.
+  ⚠️ One is a KDP royalty payment with nothing extracted: a real miss, so "hide empty" loses it.
+- G7. **Tags cannot be edited in a correction.** F2's scope was the saved-txn editor's fields,
+  which has no tags. A scope extension, not a bug.
+- G8. **A bank's "Your bill has been paid" notice looks empty.** The text is complete; ~4,000 U+034F
+  preheader filler chars fill the 256px panel. Strip at extraction. ⚠️ The three committed
+  drafts are wrong: dated 2026-09-30 (sent Sept 1–3), and rent read as 1175.00 USD to
+  `Expenses:Financial:Fees`.
+- G9. **Camera never opens.** Inferred, not yet confirmed in logcat: wry writes the capture to
+  `getExternalFilesDir(Pictures)`, `file_paths.xml` declares only `cache-path`, so
+  `getUriForFile` throws and wry falls back to the picker. Archive has no add-document entry.
+- G10. His complaint, no fix proposed: cross-currency reimbursements (CAD Interac out, USD Wise
+  in, net of a fee) cannot be matched and the receipt alone cannot say which account.
+
 **Seen while installing 1.1.12-dev (2026-09-30), not yet diagnosed.** Launch showed Today
 2026-09-30 with the editor on "Loading…" through the documents projection rebuild (~60 s, 27,196
 events, 0 failed). When the rebuild finished, the view was **Entry 2026-09-24** with "Back to
