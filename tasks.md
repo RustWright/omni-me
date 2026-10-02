@@ -3219,6 +3219,9 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   "originals upload at full size". Side effect: captured photos reach the model upright, which
   closes the F1 EXIF finding for captures (mail attachments still unrotated). Already-archived
   photos are untouched: whether to shrink them is his call.
+- ⚠️ **Flake, seen once 2026-10-02**: `events::projection::tests::a_paged_replay_folds_exactly_
+  what_an_unbounded_one_would` hung ~40 min until the CI job was cancelled (run 37026309818),
+  having passed in 27 s on the previous run with the same code under test. Re-run, not chased.
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
   2026-10-02 with a backup. The credentials copy is his (classifier); one-line command given.
 - G6. **Zero-transaction batches** (shipping notices, an order confirmation) reach review.
