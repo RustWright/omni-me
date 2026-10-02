@@ -4415,6 +4415,25 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                 }])),
                 revises_batch_id: None,
             },
+            // A receipt the reader got nothing from: no drafts, so the only way
+            // to commit is to enter it by hand.
+            PendingBatchView {
+                batch_id: "01HXMOCKRCPT000000000003".into(),
+                source: "receipts".into(),
+                dedup_key: "receipts-uid-9001".into(),
+                fetched_at: (now - chrono::Duration::minutes(2)).to_rfc3339(),
+                draft_postings: vec![],
+                source_metadata: Some(serde_json::json!({
+                    "from": "royalties@northwind.example",
+                    "subject": "Royalty payment notification",
+                    "document_kind": "receipt",
+                    "effective_confidence": 0.3,
+                    "needs_manual_review": true,
+                    "warnings": ["no postings extracted"],
+                })),
+                superseded: None,
+                revises_batch_id: None,
+            },
             // A message about an order whose earlier batch is already committed.
             // Nothing amends committed books, so it arrives as its own review
             // item — the fixture that makes that banner reachable in mock.
@@ -4491,14 +4510,15 @@ pub async fn invoke_commit_batch(
     fx_rate: Option<String>,
     fx_commodity: Option<String>,
     corrections: Vec<DraftCorrectionInput>,
+    added: Vec<DraftCorrectionInput>,
 ) -> Result<CommitBatchResult, String> {
     #[cfg(feature = "mock")]
     {
         let _ = (batch_id, fx_rate, fx_commodity, corrections);
         crate::timer::sleep_ms(450).await;
         Ok(CommitBatchResult {
-            events_appended: accepted_indices.len() + 1,
-            txns_recorded: accepted_indices.len(),
+            events_appended: accepted_indices.len() + added.len() + 1,
+            txns_recorded: accepted_indices.len() + added.len(),
             fx_recorded: false,
         })
     }
@@ -4514,6 +4534,8 @@ pub async fn invoke_commit_batch(
             fx_commodity: Option<String>,
             #[serde(skip_serializing_if = "Vec::is_empty")]
             corrections: Vec<DraftCorrectionInput>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            added: Vec<DraftCorrectionInput>,
         }
         invoke(
             "commit_batch",
@@ -4523,6 +4545,7 @@ pub async fn invoke_commit_batch(
                 fx_rate,
                 fx_commodity,
                 corrections,
+                added,
             },
         )
         .await

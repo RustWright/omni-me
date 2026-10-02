@@ -906,6 +906,8 @@ pub struct DraftCorrectionInput {
     pub date: String,
     pub description: String,
     pub postings: Vec<PostingInput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

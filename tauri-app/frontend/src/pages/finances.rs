@@ -3191,6 +3191,9 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
     // the proposal itself is never rewritten.
     let mut corrections: Signal<BTreeMap<usize, TxnFields>> = use_signal(BTreeMap::new);
     let mut editing_row: Signal<Option<usize>> = use_signal(|| None);
+    // Rows typed in by hand, for a receipt the reader got nothing from.
+    let mut added: Signal<Vec<TxnFields>> = use_signal(Vec::new);
+    let mut adding: Signal<bool> = use_signal(|| false);
     let account_suggestions = use_context::<AccountSuggestions>();
     let mut fx_rate_input: Signal<String> = use_signal(String::new);
     let mut busy: Signal<bool> = use_signal(|| false);
@@ -3245,6 +3248,8 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
             let source_label = pretty_source(&b.source).to_string();
             let row_count = b.draft_postings.len();
             let accepted_count = accepted.read().iter().filter(|x| **x).count();
+            let added_count = added.read().len();
+            let blank = blank_fields(&b.fetched_at);
             let metadata_pretty = b
                 .source_metadata
                 .as_ref()
@@ -3358,6 +3363,52 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                     }
                 }
 
+                if row_count == 0 {
+                    div { class: "space-y-2 mb-6",
+                        p { class: "text-xs text-obsidian-text-muted",
+                            "The reader found no transactions in this message. Enter it from the source above, or dismiss it."
+                        }
+                        for (i, f) in added.read().iter().cloned().enumerate() {
+                            div {
+                                key: "added-{i}",
+                                class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg flex items-center justify-between gap-2 min-w-0",
+                                div { class: "min-w-0",
+                                    div { class: "text-sm text-obsidian-text truncate", "{f.description}" }
+                                    div { class: "text-xs text-obsidian-text-muted", "{f.date} · added by hand" }
+                                }
+                                button {
+                                    class: "text-xs text-obsidian-text-muted hover:text-red-300 shrink-0 px-2 py-2",
+                                    onclick: move |_| {
+                                        added.write().remove(i);
+                                    },
+                                    "Remove"
+                                }
+                            }
+                        }
+                        if *adding.read() {
+                            div { class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-accent/40 rounded-lg",
+                                TxnFieldsForm {
+                                    seed: blank.clone(),
+                                    submit_label: "Add",
+                                    busy: false,
+                                    submit_error: None,
+                                    on_submit: move |f: TxnFields| {
+                                        added.write().push(f);
+                                        adding.set(false);
+                                    },
+                                    on_cancel: move |_| adding.set(false),
+                                }
+                            }
+                        } else {
+                            button {
+                                class: "text-sm text-obsidian-accent hover:opacity-80 py-2",
+                                onclick: move |_| adding.set(true),
+                                "+ Add transaction"
+                            }
+                        }
+                    }
+                }
+
                 if let Some(commodity) = manual_fx_commodity.clone() {
                     div { class: "mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg",
                         label { class: "block text-sm font-semibold text-amber-200 mb-2",
@@ -3380,8 +3431,8 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                 div { class: "flex gap-3 items-center",
                     button {
                         class: "flex-1 px-4 py-3 bg-obsidian-accent text-black font-semibold rounded-lg hover:bg-obsidian-accent/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-                        disabled: *busy.read() || accepted_count == 0
-                            || editing_row.read().is_some()
+                        disabled: *busy.read() || accepted_count + added_count == 0
+                            || editing_row.read().is_some() || *adding.read()
                             || (manual_fx_commodity.is_some() && fx_rate_input.read().trim().is_empty()),
                         onclick: {
                             let batch_id = b.batch_id.clone();
@@ -3405,6 +3456,19 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                         date: f.date.clone(),
                                         description: f.description.clone(),
                                         postings: fields_postings(f),
+                                        tags: f.tags.clone().unwrap_or_default(),
+                                    })
+                                    .collect();
+                                let typed: Vec<DraftCorrectionInput> = added
+                                    .read()
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(index, f)| DraftCorrectionInput {
+                                        index,
+                                        date: f.date.clone(),
+                                        description: f.description.clone(),
+                                        postings: fields_postings(f),
+                                        tags: f.tags.clone().unwrap_or_default(),
                                     })
                                     .collect();
                                 let rate = fx_rate_input.read().trim().to_string();
@@ -3421,6 +3485,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                         fx_rate,
                                         fx_commodity,
                                         fixes,
+                                        typed,
                                     )
                                     .await;
                                     busy.set(false);
@@ -3440,6 +3505,8 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                         },
                         if *busy.read() {
                             "Committing…"
+                        } else if row_count == 0 {
+                            "Commit {added_count} added"
                         } else if accepted_count == row_count {
                             "Commit all {accepted_count}"
                         } else {
@@ -3554,6 +3621,7 @@ fn draft_fields(draft: &DraftTransactionView) -> TxnFields {
             .iter()
             .filter_map(|p| serde_json::to_value(p).ok())
             .collect(),
+        tags: Some(Vec::new()),
     }
 }
 
@@ -3563,6 +3631,17 @@ fn fields_postings(fields: &TxnFields) -> Vec<PostingInput> {
         .iter()
         .filter_map(|p| serde_json::from_value(p.clone()).ok())
         .collect()
+}
+
+/// An empty row to enter by hand, dated the day the message was fetched.
+fn blank_fields(fetched_at: &str) -> TxnFields {
+    let empty = serde_json::json!({ "account": "", "amount": "", "commodity": DEFAULT_COMMODITY });
+    TxnFields {
+        date: fetched_at.get(..10).unwrap_or_default().to_string(),
+        description: String::new(),
+        postings: vec![empty.clone(), empty],
+        tags: Some(Vec::new()),
+    }
 }
 
 /// The row as it will be committed, for display in the review list.
@@ -4964,6 +5043,7 @@ fn TransactionEditForm(
         date: txn.date.clone(),
         description: txn.description.clone(),
         postings: txn.postings.as_array().cloned().unwrap_or_default(),
+        tags: None,
     };
 
     let on_submit = move |fields: TxnFields| {
@@ -5018,6 +5098,8 @@ struct TxnFields {
     date: String,
     description: String,
     postings: Vec<serde_json::Value>,
+    /// `None` hides the tag row: the saved-transaction editor tags elsewhere.
+    tags: Option<Vec<String>>,
 }
 
 /// Date, description and postings (account / amount / commodity), shared by the
@@ -5035,6 +5117,7 @@ fn TxnFieldsForm(
 ) -> Element {
     let mut date = use_signal(|| seed.date.clone());
     let mut description = use_signal(|| seed.description.clone());
+    let mut tags = use_signal(|| seed.tags.clone());
     let mut postings =
         use_signal(|| seed_edit_postings(&serde_json::Value::Array(seed.postings.clone())));
     let mut error = use_signal(|| None::<String>);
@@ -5090,6 +5173,7 @@ fn TxnFieldsForm(
             date: date_v,
             description: desc_v,
             postings: postings_out,
+            tags: tags.read().clone(),
         });
     };
 
@@ -5197,6 +5281,18 @@ fn TxnFieldsForm(
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            if let Some(current) = tags.read().clone() {
+                div {
+                    label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                        "Tags"
+                    }
+                    EditableTagList {
+                        current,
+                        on_save: move |next: Vec<String>| tags.set(Some(next)),
                     }
                 }
             }
