@@ -3202,6 +3202,25 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
     so the `generic` prompt (used by nothing else) now asks too. Model behaviour on it unmeasured.
   - F4: one line per superseded email (kind, receipt date, total, delta vs the shown proposal),
     lines folded; says they were never recorded and points at Edit, not at dismissal.
+- ✅ **On the phone, 1.1.21-dev + `dev-1056255-58d4ffa`, 2026-10-02** (over CDP, him away):
+  G3 all three threads read as plain JSON; G4 Settings pane 360/360; G1 the two-page capture
+  opens at `scale(1)`, box 992px, and a synthetic drag at 2.46× brings page 2 on screen (a real
+  pinch is still his); G8 the Hydro notice has 0 filler chars, but "Amount" sits on line 16
+  behind a wrapped tracking link, so the 256px panel may still need a short scroll.
+  G9 archive add ran end to end in 13 s: `generic` read it as `receipt`, a `capture` batch
+  reached the phone's queue. 🔴 **But its postings were `food`, `tax` and `payment -25.74`**:
+  the generic prompt had no posting rules, so no `Unmatched` leg. Fixed `60fe816` (full paths,
+  charge side only), not yet re-run. Test artefacts: document `01M3YK214CC7KJ3PV2YJP04HT7`
+  (duplicate of receipt-4.jpg) stays in the dev archive; its batch `01M3YK215HH2WRT2HSRHWBHABA`
+  was dismissed by me so his commit spree cannot double-count it.
+- 🔴 **Photos shrink on the device before upload** (his request 2026-10-02, "easy fix, go ahead"):
+  ≤2400px long edge, JPEG 85%, EXIF rotation applied, original kept if not smaller. Measured on
+  the S9: 3.94 MB → 588 KB, 1800×2400, 4.4 s, receipt fine print legible. This supersedes F3's
+  "originals upload at full size". Side effect: captured photos reach the model upright, which
+  closes the F1 EXIF finding for captures (mail attachments still unrotated). Already-archived
+  photos are untouched: whether to shrink them is his call.
+- ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
+  2026-10-02 with a backup. The credentials copy is his (classifier); one-line command given.
 - G6. **Zero-transaction batches** (shipping notices, an order confirmation) reach review.
   ⚠️ One is a KDP royalty payment with nothing extracted: a real miss, so "hide empty" loses it.
 - G7. **Tags cannot be edited in a correction.** F2's scope was the saved-txn editor's fields,
