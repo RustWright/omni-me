@@ -104,6 +104,8 @@ fn ThreadList(
     let mut waiting = use_signal(Vec::<AssistantProposal>::new);
     let mut error_msg = use_signal(|| None::<String>);
     let mut loaded = use_signal(|| false);
+    let mut refresh = use_signal(|| 0u32);
+    let mut show_archived = use_signal(|| false);
 
     // ⚠️ Refetched on entry and on every inbound sync, never fetched once at
     // boot. A thread answered on another device — or a whole backfill — arrives
@@ -113,6 +115,7 @@ fn ThreadList(
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
         let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
+        let _ = refresh.read(); // and after an archive or delete here
         spawn(async move {
             match bridge::invoke_list_assistant_threads().await {
                 Ok(list) => {
@@ -131,6 +134,24 @@ fn ThreadList(
     });
 
     let waiting_count = waiting.read().len();
+    let (archived, active): (Vec<AssistantThread>, Vec<AssistantThread>) =
+        threads.read().iter().cloned().partition(|t| t.archived);
+    let archive = move |id: String, on: bool| {
+        spawn(async move {
+            match bridge::invoke_archive_assistant_thread(&id, on).await {
+                Ok(()) => refresh += 1,
+                Err(e) => error_msg.set(Some(e)),
+            }
+        });
+    };
+    let delete = move |id: String| {
+        spawn(async move {
+            match bridge::invoke_delete_assistant_thread(&id).await {
+                Ok(()) => refresh += 1,
+                Err(e) => error_msg.set(Some(e)),
+            }
+        });
+    };
 
     rsx! {
         div { class: "flex flex-col h-full",
@@ -180,11 +201,31 @@ fn ThreadList(
                         }
                     }
                 }
-                for thread in threads.read().iter().cloned() {
+                for thread in active {
                     ThreadRow {
                         key: "{thread.thread_id}",
                         thread: thread.clone(),
                         on_open: move |_| on_open.call(thread.thread_id.clone()),
+                        on_archive: move |(id, on)| archive(id, on),
+                        on_delete: delete,
+                    }
+                }
+                if !archived.is_empty() {
+                    button {
+                        class: "w-full text-left text-obsidian-text-muted text-xs py-3",
+                        onclick: move |_| show_archived.toggle(),
+                        if *show_archived.read() { "Hide archived" } else { "Archived ({archived.len()})" }
+                    }
+                    if *show_archived.read() {
+                        for thread in archived {
+                            ThreadRow {
+                                key: "{thread.thread_id}",
+                                thread: thread.clone(),
+                                on_open: move |_| on_open.call(thread.thread_id.clone()),
+                                on_archive: move |(id, on)| archive(id, on),
+                                on_delete: delete,
+                            }
+                        }
                     }
                 }
             }
@@ -278,19 +319,47 @@ fn ApprovalsElsewhere() -> Element {
 }
 
 #[component]
-fn ThreadRow(thread: AssistantThread, on_open: EventHandler<()>) -> Element {
+fn ThreadRow(
+    thread: AssistantThread,
+    on_open: EventHandler<()>,
+    on_archive: EventHandler<(String, bool)>,
+    on_delete: EventHandler<String>,
+) -> Element {
+    let mut confirm_delete = use_signal(|| false);
     let title = thread
         .title
         .clone()
         .unwrap_or_else(|| "Untitled conversation".to_string());
+    let (id_a, id_d) = (thread.thread_id.clone(), thread.thread_id.clone());
+    let archived = thread.archived;
+    let action = "shrink-0 text-xs px-2 py-3 text-obsidian-text-muted hover:text-obsidian-text";
     rsx! {
-        div {
-            class: "px-3 py-3 border-b border-obsidian-border/10 cursor-pointer hover:bg-obsidian-border/5",
-            onclick: move |_| on_open.call(()),
-            div { class: "text-obsidian-text text-sm font-medium truncate", "{title}" }
-            div { class: "text-obsidian-text-muted text-xs mt-1",
-                "{thread.message_count} message"
-                if thread.message_count != 1 { "s" }
+        div { class: "flex items-center gap-1 border-b border-obsidian-border/10 min-w-0",
+            div {
+                class: "flex-1 min-w-0 px-3 py-3 cursor-pointer hover:bg-obsidian-border/5",
+                onclick: move |_| on_open.call(()),
+                div { class: "text-obsidian-text text-sm font-medium truncate", "{title}" }
+                div { class: "text-obsidian-text-muted text-xs mt-1",
+                    "{thread.message_count} message"
+                    if thread.message_count != 1 { "s" }
+                }
+            }
+            button {
+                class: action,
+                onclick: move |_| on_archive.call((id_a.clone(), !archived)),
+                if archived { "Restore" } else { "Archive" }
+            }
+            // Two taps: a delete is permanent and the row is easy to brush.
+            button {
+                class: if *confirm_delete.read() { "shrink-0 text-xs px-2 py-3 text-red-300 font-medium" } else { action },
+                onclick: move |_| {
+                    if *confirm_delete.read() {
+                        on_delete.call(id_d.clone());
+                    } else {
+                        confirm_delete.set(true);
+                    }
+                },
+                if *confirm_delete.read() { "Delete?" } else { "Delete" }
             }
         }
     }

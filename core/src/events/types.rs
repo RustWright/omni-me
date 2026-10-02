@@ -73,6 +73,9 @@ pub enum EventType {
     // § "It proposes; you dispose".
     AssistantProposalMade,
     AssistantProposalDecided,
+    // Housekeeping on a conversation: hide it, or remove it from every view.
+    AssistantThreadArchived,
+    AssistantThreadDeleted,
     // Beliefs — what the assistant has concluded about the user, with the
     // evidence behind it. Arrive only through a proposal the user accepted.
     BeliefRecorded,
@@ -148,6 +151,8 @@ impl fmt::Display for EventType {
             EventType::AssistantAnswerGiven => "assistant_answer_given",
             EventType::AssistantProposalMade => "assistant_proposal_made",
             EventType::AssistantProposalDecided => "assistant_proposal_decided",
+            EventType::AssistantThreadArchived => "assistant_thread_archived",
+            EventType::AssistantThreadDeleted => "assistant_thread_deleted",
             EventType::BeliefRecorded => "belief_recorded",
             EventType::BeliefSuperseded => "belief_superseded",
             EventType::AutonomyGranted => "autonomy_granted",
@@ -212,6 +217,8 @@ impl FromStr for EventType {
             "assistant_answer_given" => Ok(EventType::AssistantAnswerGiven),
             "assistant_proposal_made" => Ok(EventType::AssistantProposalMade),
             "assistant_proposal_decided" => Ok(EventType::AssistantProposalDecided),
+            "assistant_thread_archived" => Ok(EventType::AssistantThreadArchived),
+            "assistant_thread_deleted" => Ok(EventType::AssistantThreadDeleted),
             "belief_recorded" => Ok(EventType::BeliefRecorded),
             "belief_superseded" => Ok(EventType::BeliefSuperseded),
             "autonomy_granted" => Ok(EventType::AutonomyGranted),
@@ -278,6 +285,8 @@ impl EventType {
         EventType::AssistantAnswerGiven,
         EventType::AssistantProposalMade,
         EventType::AssistantProposalDecided,
+        EventType::AssistantThreadArchived,
+        EventType::AssistantThreadDeleted,
         EventType::BeliefRecorded,
         EventType::BeliefSuperseded,
         EventType::AutonomyGranted,
@@ -402,6 +411,11 @@ impl EventType {
             // Making a proposal is the assistant acting, so it is gated like the
             // rest of the conversation.
             EventType::AssistantProposalMade => &[Feature::Llm],
+
+            // Tidying the conversation list; with the assistant off there is no list.
+            EventType::AssistantThreadArchived | EventType::AssistantThreadDeleted => {
+                &[Feature::Llm]
+            }
 
             // A belief exists only because the assistant concluded it, so it is
             // the assistant's feature that owns it — even though the user is the
@@ -1416,6 +1430,21 @@ pub struct AssistantProposalMadePayload {
     pub reversible: bool,
 }
 
+/// A conversation hidden from the list, or brought back.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantThreadArchivedPayload {
+    pub thread_id: String,
+    /// `false` brings it back. Last write wins, by event timestamp.
+    pub archived: bool,
+}
+
+/// A conversation removed from every view, permanently. The log keeps its
+/// messages; proposals made in it stay decidable in the inbox.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantThreadDeletedPayload {
+    pub thread_id: String,
+}
+
 /// What the user decided about one proposal.
 ///
 /// ⚠️ **One event covers every ending**, and the reasoning is
@@ -1950,6 +1979,12 @@ pub fn validate_payload(
         EventType::AssistantProposalDecided => {
             serde_json::from_value::<AssistantProposalDecidedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::AssistantThreadArchived => {
+            serde_json::from_value::<AssistantThreadArchivedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AssistantThreadDeleted => {
+            serde_json::from_value::<AssistantThreadDeletedPayload>(payload.clone()).map(|_| ())
+        }
         EventType::AssistantAnswerGiven => {
             serde_json::from_value::<AssistantAnswerGivenPayload>(payload.clone()).map(|_| ())
         }
@@ -2079,6 +2114,8 @@ mod tests {
                 | EventType::AssistantAnswerGiven
                 | EventType::AssistantProposalMade
                 | EventType::AssistantProposalDecided
+                | EventType::AssistantThreadArchived
+                | EventType::AssistantThreadDeleted
                 | EventType::BeliefRecorded
                 | EventType::BeliefSuperseded
                 | EventType::AutonomyGranted
@@ -2090,7 +2127,7 @@ mod tests {
                 | EventType::DocumentRetentionSet => counted += 1,
             }
         }
-        assert_eq!(counted, 54, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 56, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();

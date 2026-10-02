@@ -202,6 +202,16 @@ pub struct ThreadSummary {
     pub created_at: String,
     pub last_message_at: String,
     pub message_count: i64,
+    /// Hidden into the "Archived" list. Filled from `assistant_thread_state`.
+    pub archived: bool,
+}
+
+/// One row of `assistant_thread_state`.
+#[derive(Debug, Clone, SurrealValue)]
+struct ThreadState {
+    thread_id: String,
+    archived: Option<bool>,
+    deleted: Option<bool>,
 }
 
 /// One message, with everything the client needs to render it.
@@ -261,8 +271,23 @@ pub struct ThreadView {
     pub pending_since: Option<String>,
 }
 
-/// Every thread, most recently active first.
+/// Every thread not deleted, most recently active first, archived ones marked.
 pub async fn list_threads(db: &Database) -> Result<Vec<ThreadSummary>, EventError> {
+    let mut threads = all_threads(db).await?;
+    let mut resp = db
+        .query("SELECT thread_id, archived, deleted FROM assistant_thread_state")
+        .await?
+        .check()?;
+    let states: Vec<ThreadState> = resp.take(0)?;
+    let state = |id: &str| states.iter().find(|s| s.thread_id == id);
+    threads.retain(|t| !state(&t.thread_id).is_some_and(|s| s.deleted == Some(true)));
+    for t in &mut threads {
+        t.archived = state(&t.thread_id).is_some_and(|s| s.archived == Some(true));
+    }
+    Ok(threads)
+}
+
+async fn all_threads(db: &Database) -> Result<Vec<ThreadSummary>, EventError> {
     // ⚠️ `last_message_at` is selected as well as ordered on — SurrealDB v3
     // rejects `ORDER BY` over a field the projection does not return, and names
     // it a "missing order idiom", which does not read as the cause. Ordering on
@@ -270,7 +295,7 @@ pub async fn list_threads(db: &Database) -> Result<Vec<ThreadSummary>, EventErro
     // in a fixed RFC 3339 form, so lexical order matches.
     let mut resp = db
         .query(
-            "SELECT thread_id, title, message_count,
+            "SELECT thread_id, title, message_count, false AS archived,
                     <string> created_at AS created_at,
                     <string> last_message_at AS last_message_at
              FROM assistant_threads ORDER BY last_message_at DESC",
@@ -812,6 +837,71 @@ mod tests {
         assert_eq!(cited[0]["id"], "note-1");
         assert!(json["messages"][1]["usage"].is_object());
         assert!(json["messages"][1]["usage"].get("Object").is_none());
+    }
+
+    async fn housekeep(
+        db: &Database,
+        ts: DateTime<Utc>,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) {
+        let ev = Event {
+            id: ulid::Ulid::new().to_string(),
+            event_type: event_type.into(),
+            aggregate_id: payload["thread_id"].as_str().unwrap().into(),
+            timestamp: ts,
+            device_id: "phone".into(),
+            payload,
+            received_at: None,
+        };
+        AssistantProjection.apply(&ev, db).await.unwrap();
+    }
+
+    async fn archive(db: &Database, ts: DateTime<Utc>, thread: &str, on: bool) {
+        let payload = serde_json::json!({ "thread_id": thread, "archived": on });
+        housekeep(db, ts, "assistant_thread_archived", payload).await;
+    }
+
+    #[tokio::test]
+    async fn archived_threads_are_marked_and_deleted_ones_are_gone() {
+        let db = test_db().await;
+        let now = Utc::now();
+        ask(&db, now, "t1", "m1", "keep").await;
+        ask(&db, now, "t2", "m2", "archive").await;
+        ask(&db, now, "t3", "m3", "delete").await;
+        archive(&db, now + Duration::seconds(1), "t2", true).await;
+        let deleted = serde_json::json!({ "thread_id": "t3" });
+        housekeep(
+            &db,
+            now + Duration::seconds(1),
+            "assistant_thread_deleted",
+            deleted,
+        )
+        .await;
+
+        let threads = list_threads(&db).await.unwrap();
+        let ids: Vec<(&str, bool)> = threads
+            .iter()
+            .map(|t| (t.thread_id.as_str(), t.archived))
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&("t1", false)));
+        assert!(ids.contains(&("t2", true)));
+    }
+
+    /// Sync delivers in arrival order: an archive can land before the thread,
+    /// and an older un-archive can land after a newer archive.
+    #[tokio::test]
+    async fn archive_survives_arrival_order() {
+        let db = test_db().await;
+        let now = Utc::now();
+        archive(&db, now + Duration::seconds(5), "t1", true).await;
+        ask(&db, now, "t1", "m1", "early").await;
+        archive(&db, now + Duration::seconds(2), "t1", false).await;
+        assert!(list_threads(&db).await.unwrap()[0].archived);
+
+        archive(&db, now + Duration::seconds(9), "t1", false).await;
+        assert!(!list_threads(&db).await.unwrap()[0].archived);
     }
 
     #[tokio::test]

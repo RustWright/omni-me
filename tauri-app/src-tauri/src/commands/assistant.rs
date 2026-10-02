@@ -22,7 +22,10 @@ use omni_me_core::assistant::conversation::{ThreadSummary, ThreadView};
 use omni_me_core::assistant::promotion::{self, ActionRecord};
 use omni_me_core::assistant::{Belief, Proposal, inbox, list_threads, memory, read_thread};
 use omni_me_core::config::Feature;
-use omni_me_core::events::{AssistantQuestionAskedPayload, NewEvent, ProposalDecision};
+use omni_me_core::events::{
+    AssistantQuestionAskedPayload, AssistantThreadArchivedPayload, AssistantThreadDeletedPayload,
+    EventType, NewEvent, ProposalDecision,
+};
 
 use super::shared::{append_new_and_apply, require_feature};
 use crate::AppState;
@@ -204,6 +207,67 @@ pub async fn decide_assistant_proposal(
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Hide a conversation into the "Archived" list, or bring it back.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn archive_assistant_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+    archived: bool,
+) -> Result<(), String> {
+    require_feature(&state, Feature::Llm)?;
+    tracing::info!(thread_id = %thread_id, archived, "archive_assistant_thread");
+    let payload = AssistantThreadArchivedPayload {
+        thread_id: thread_id.clone(),
+        archived,
+    };
+    append_thread_event(
+        &state,
+        EventType::AssistantThreadArchived,
+        thread_id,
+        &payload,
+    )
+    .await
+}
+
+/// Remove a conversation from every view, permanently. Its proposals stay in
+/// the inbox, so deleting a chat never silently cancels an action.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn delete_assistant_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<(), String> {
+    require_feature(&state, Feature::Llm)?;
+    tracing::info!(thread_id = %thread_id, "delete_assistant_thread");
+    let payload = AssistantThreadDeletedPayload {
+        thread_id: thread_id.clone(),
+    };
+    append_thread_event(
+        &state,
+        EventType::AssistantThreadDeleted,
+        thread_id,
+        &payload,
+    )
+    .await
+}
+
+async fn append_thread_event(
+    state: &State<'_, AppState>,
+    event_type: EventType,
+    thread_id: String,
+    payload: &impl serde::Serialize,
+) -> Result<(), String> {
+    let event = NewEvent {
+        id: None,
+        event_type: event_type.to_string(),
+        aggregate_id: thread_id,
+        timestamp: chrono::Utc::now(),
+        device_id: state.device_id.clone(),
+        payload: serde_json::to_value(payload).map_err(|e| e.to_string())?,
+    };
+    append_new_and_apply(state, event).await?;
+    Ok(())
 }
 
 /// What the assistant currently believes about the user.

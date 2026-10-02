@@ -1281,6 +1281,8 @@ pub struct AssistantThread {
     pub created_at: String,
     pub last_message_at: String,
     pub message_count: i64,
+    #[serde(default)]
+    pub archived: bool,
 }
 
 /// A record an answer actually opened, for the citation links under it.

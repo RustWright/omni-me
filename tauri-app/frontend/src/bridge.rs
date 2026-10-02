@@ -4868,6 +4868,51 @@ pub async fn invoke_list_assistant_threads() -> Result<Vec<crate::types::Assista
     }
 }
 
+/// Hide a conversation into the archived list, or bring it back.
+pub async fn invoke_archive_assistant_thread(
+    thread_id: &str,
+    archived: bool,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        mock_assistant::set_archived(thread_id, archived);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            thread_id: &'a str,
+            archived: bool,
+        }
+        invoke_unit(
+            "archive_assistant_thread",
+            &Args {
+                thread_id,
+                archived,
+            },
+        )
+        .await
+    }
+}
+
+/// Remove a conversation from every view, permanently.
+pub async fn invoke_delete_assistant_thread(thread_id: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        mock_assistant::delete(thread_id);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            thread_id: &'a str,
+        }
+        invoke_unit("delete_assistant_thread", &Args { thread_id }).await
+    }
+}
+
 /// One conversation, oldest first, with its pending question resolved.
 pub async fn invoke_read_assistant_thread(
     thread_id: &str,
@@ -5086,6 +5131,8 @@ mod mock_assistant {
     thread_local! {
         static STORE: RefCell<Vec<AssistantMessage>> = const { RefCell::new(Vec::new()) };
         static PROPOSALS: RefCell<Vec<AssistantProposal>> = const { RefCell::new(Vec::new()) };
+        static ARCHIVED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        static DELETED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
         static SEQ: RefCell<u32> = const { RefCell::new(0) };
     }
 
@@ -5405,13 +5452,29 @@ mod mock_assistant {
                             .map(|m| m.created_at.clone())
                             .unwrap_or_default(),
                         message_count: msgs.len() as i64,
+                        archived: ARCHIVED.with(|a| a.borrow().contains(&id)),
                         thread_id: id,
                     }
                 })
+                .filter(|t| !DELETED.with(|d| d.borrow().contains(&t.thread_id)))
                 .collect();
             threads.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
             threads
         })
+    }
+
+    pub fn set_archived(thread_id: &str, on: bool) {
+        ARCHIVED.with(|a| {
+            let mut a = a.borrow_mut();
+            a.retain(|t| t != thread_id);
+            if on {
+                a.push(thread_id.to_string());
+            }
+        });
+    }
+
+    pub fn delete(thread_id: &str) {
+        DELETED.with(|d| d.borrow_mut().push(thread_id.to_string()));
     }
 
     pub fn read(thread_id: &str) -> AssistantThreadView {
