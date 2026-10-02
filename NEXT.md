@@ -4,18 +4,20 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — his on-device pass of G1–G4, G6–G9 and F4 on 1.1.21-dev
-All built 2026-10-02 (`48e992b`..`58d4ffa`); `tasks.md` § On-device pass on 1.1.20-dev holds the
-causes, his four rulings and the decision log, including what was only verified in a browser.
+## ▶ NEXT ACTION — G5: bank feeds on dev, a live walkthrough with him
+Dev phone on 1.1.22-dev, dev server on `dev-1056255-60fe816` with `/opt/omni-ws` now mounted.
+Step 2 (copy live's two disabled sections into dev's credentials) is his: the one-line base64
+command was given 2026-10-02 and the classifier refuses it to me. Then: restart dev, check
+`/auto_import/status` lists both bank sources, and walk him through the bank OTP.
+`tasks.md` § On-device pass on 1.1.20-dev holds every G-item, his rulings and what was verified.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **G5, the bank feeds on dev**: copying live's two disabled sections into dev's credentials is
-  refused to me by the permission classifier (secret-store write). His to run, or to authorise.
-- **On the phone**: the camera (G9), the keyboard (G2) and a real pinch (G1) need his hands.
+- **His hands on the phone**: the camera (G9), the keyboard (G2), a real pinch (G1).
+- **Shrink the already-archived photos too?** New captures shrink on the device; old ones are untouched.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
