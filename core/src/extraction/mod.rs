@@ -534,6 +534,13 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
             "Extract any transaction-like information you can find. Set fields \
              when confident and leave them empty when not. Lower confidence \
              scores reflect partial extraction.\n\n\
+             If it records a purchase or payment: set `description` to the merchant \
+             or payee, emit one posting per line item (or one for a single amount) \
+             with a FULL account path in `account_hint` (e.g. \"Expenses:Groceries\", \
+             never a bare \"food\") and a positive `amount`, and each DISTINCT tax \
+             line. Set `total` to the grand total actually paid. ⚠️ Emit the charge \
+             side only: never the card, the cash tendered, a payment line or any \
+             balancing negative posting. The app adds that side itself.\n\n\
              Also set `document_kind` for the DOCUMENT itself, exactly one of: \
              \"receipt\" (states a charge or payment that was made: a till receipt, \
              an invoice, a bill or payment confirmation), \"order_confirmation\", \
@@ -1141,6 +1148,11 @@ mod tests {
             prompt_for(ExtractionHint::Generic).contains("`document_kind`"),
             "the generic reading lost the kind question"
         );
+        // A real capture (2026-10-02) came back as `food`, `tax` and a
+        // `payment -25.74` leg, which leaves reconciliation nothing to pair.
+        let generic = prompt_for(ExtractionHint::Generic);
+        assert!(generic.contains("FULL account path"));
+        assert!(generic.contains("charge side only"));
         // Every label the parser recognises has to be one the prompt offers, or
         // the model can only ever answer with something that maps to `Other`.
         for label in [

@@ -138,3 +138,25 @@ window.detachZoom = function (elementId) {
     zooms.delete(elementId);
   }
 };
+
+// Shrink a captured photo before upload: upright (EXIF applied), long edge at
+// most `maxEdge`, JPEG at `quality`. Resolves to null when it cannot, or when
+// the result is no smaller, so the caller keeps the original.
+window.shrinkPhoto = async function (bytes, mime, maxEdge = 2400, quality = 0.85) {
+  try {
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: mime }), {
+      imageOrientation: "from-image",
+    });
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", quality));
+    if (!blob || blob.size >= bytes.length) return null;
+    return new Uint8Array(await blob.arrayBuffer());
+  } catch (_) {
+    return null;
+  }
+};

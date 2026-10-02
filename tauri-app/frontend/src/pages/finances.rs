@@ -1962,6 +1962,21 @@ async fn extract_capture(
     hint: &str,
     propose: bool,
 ) -> Result<ExtractedDraft, String> {
+    // Before upload, so the slow link carries the small copy and the archive
+    // keeps it. A page that cannot be shrunk goes as taken.
+    for page in taken.iter_mut().filter(|p| p.mime.starts_with("image/")) {
+        if let Some(small) =
+            crate::components::attachment_viewer::shrink_photo(&page.bytes, &page.mime).await
+        {
+            page.bytes = small;
+            page.mime = "image/jpeg".to_string();
+            if let Some(name) = page.filename.as_mut()
+                && let Some(stem) = std::path::Path::new(name.as_str()).file_stem()
+            {
+                *name = format!("{}.jpg", stem.to_string_lossy());
+            }
+        }
+    }
     if taken.len() > 1 {
         return bridge::invoke_extract_document_pages(taken, hint, propose).await;
     }

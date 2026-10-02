@@ -560,6 +560,30 @@ fn PdfView(url: String, #[props(default)] full: bool) -> Element {
 /// bundle is loaded on demand, so the global is genuinely absent until it lands
 /// and a direct extern binding would trap instead of returning an error we can
 /// show.
+/// A captured photo made upright, at most 2400px long edge, JPEG 85%: a 3.9 MB
+/// receipt became 588 KB and stayed legible. `None` keeps the original (no
+/// bundle, undecodable, or no smaller).
+pub async fn shrink_photo(bytes: &[u8], mime: &str) -> Option<Vec<u8>> {
+    if !bridge::ensure_js_bundle(PDF_BUNDLE_SRC, "shrinkPhoto", 100).await {
+        return None;
+    }
+    let window = web_sys::window()?;
+    let func = js_sys::Reflect::get(&window, &JsValue::from_str("shrinkPhoto"))
+        .ok()?
+        .dyn_into::<js_sys::Function>()
+        .ok()?;
+    let input = js_sys::Uint8Array::from(bytes);
+    let promise = func
+        .call2(&JsValue::NULL, &input, &JsValue::from_str(mime))
+        .ok()?;
+    let out = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(promise))
+        .await
+        .ok()?;
+    out.dyn_into::<js_sys::Uint8Array>()
+        .ok()
+        .map(|a| a.to_vec())
+}
+
 async fn render_pdf(container_id: &str, url: &str) -> Result<(u32, u32), String> {
     let window = web_sys::window().ok_or("no window")?;
     let func = js_sys::Reflect::get(&window, &JsValue::from_str("renderPdf"))
