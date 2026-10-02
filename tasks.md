@@ -3210,7 +3210,10 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   G9 archive add ran end to end in 13 s: `generic` read it as `receipt`, a `capture` batch
   reached the phone's queue. 🔴 **But its postings were `food`, `tax` and `payment -25.74`**:
   the generic prompt had no posting rules, so no `Unmatched` leg. Fixed `60fe816` (full paths,
-  charge side only), not yet re-run. Test artefacts: document `01M3YK214CC7KJ3PV2YJP04HT7`
+  charge side only). ✅ Re-run on 1.1.22-dev + `dev-1056255-60fe816`: archived at 587,503 B
+  (shrunk on the phone, was 3,936,690), postings `Expenses:Dining` ×4, `Expenses:Tax:HST`,
+  `Unmatched -25.74`. Second test document `01M3YPH0VH8VT036FH0ZJYR04Z` stays; its batch
+  `01M3YPH0WSG2YZJ0QSRC4W18DY` dismissed by me. Test artefacts: document `01M3YK214CC7KJ3PV2YJP04HT7`
   (duplicate of receipt-4.jpg) stays in the dev archive; its batch `01M3YK215HH2WRT2HSRHWBHABA`
   was dismissed by me so his commit spree cannot double-count it.
 - 🔴 **Photos shrink on the device before upload** (his request 2026-10-02, "easy fix, go ahead"):
