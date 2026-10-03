@@ -3253,17 +3253,21 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
     gave two 102-row batches (101 shared ids), both committed. Ledger unharmed (deterministic
     `txn_id` + UPSERT: 103 rows), but review doubled. Subprocess sources had no prior-proposal
     filter (Wise did) and fell back to a clock key. Now both, plus a test. CI owed; not deployed.
-  - 🔴 **Internal transfers flood Reconcile: 294 of 319 candidates are bank × bank.** Each side of
+  - ✅ BUILT `7b29684`+overlay `208e689`, on dev `dev-208e689-8c2b2ab`; end-to-end check owed (the
+    feed needs his OTP). **Internal transfers flood Reconcile: 294 of 319 candidates are bank × bank.** Each side of
     a move between his own accounts arrives as its own half with an `Unmatched` leg; daily $1/$5
     recurring moves pair combinatorially in the 7-day window. Both halves share the upstream
     funding id, which the helper has and the matcher never sees. Proposal: the helper joins the
     halves into one balanced txn. Not built; his call.
   - 🔴 **Recurring buys are the cash leg only** (known) and pair spuriously with transfers.
-  - 🔴 **Same purchase, two emails** (Uber 9.49/28.92/19.97/6.94, Instacart 50.40 ×3): different
-    UIDs → different dedup keys → two batches. Not checked yet whether Message-ID is shared.
-  - 🔴 **No-total receipts become one txn per line** (Instacart 09-06: 12 rows each, twice). They
+  - ✅ FLAGGED `ede8927` (on dev). **Same purchase, two emails** (Uber 9.49/28.92/19.97/6.94,
+    Instacart 50.40 ×3). Checked: NOT one email twice. Uber sends a "charge summary, not a payment
+    receipt" and then the trip receipt, so Message-ID cannot help. A mail source now warns "looks
+    like a duplicate of …" on same sender + day + `Unmatched` legs (`auto_import/duplicates.rs`).
+  - ✅ FIXED `9cdcc60` (on dev). **No-total receipts become one txn per line** (Instacart 09-06: 12 rows each, twice). They
     can never match a card charge. `receipt_extraction_to_drafts`'s documented fallback.
-  - 🔴 **Refund read as a charge**: "Refund from oxio" is `Unmatched -57.46`, the bank deposit is
+  - ✅ FIXED `9cdcc60` (on dev): new `refund` extraction field; the mapper runs the txn backwards.
+    **Refund read as a charge**: "Refund from oxio" is `Unmatched -57.46`, the bank deposit is
     also `-57.46`; same sign, cannot pair.
   - ⚠️ **Ghost batches after the 09-28 wipe.** 13 batches whose proposals the server wipe removed
     were still pending on the phone (a wipe is per node); 9 were committed → 185 txns re-entered
@@ -3280,6 +3284,10 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   emails: drop only on a shared Message-ID, otherwise FLAG "looks like a duplicate", never drop.
   ⛔ He wants every setup-specific optimization tracked in an overlay register (where it lives,
   whether it touches the general engine) for a later review that the engine stays general.
+- ✅ **Agent on the box, 2026-10-03**: overlay workflow `build-agent-image.yml` (public image,
+  `-agent` package), the image moved to trixie (bundled onnxruntime needs glibc 2.38+), dev compose
+  service `omni-me-agent-dev` capped at 0.75 CPU / 1.5 GB. Cold start: pull 80 s, replay 13 min,
+  then the index build (memory ~1.36 GB at the cap). Backups `*.bak.20261003T*` in `~/omni-dev`.
 - ⚠️ **Chat "timeout" = no agent running anywhere** (no process, no compose service). Asked
   2026-10-03 12:36, deleted at 12:38; no answer event. Beliefs untestable until an agent runs.
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
