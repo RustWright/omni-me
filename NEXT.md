@@ -5,10 +5,12 @@ findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
 ## ▶ NEXT ACTION — his approvals, then what he sets next
-The dev agent answers (chat and the belief proposal both verified 2026-10-03; `tasks.md` § On-device
-pass → "Agent on the box"). Dev server on `dev-208e689-8c2b2ab` with all four Reconcile rulings.
-Building now: server wipes snapshot first, then devices follow (`tasks.md` § "Ghost batches", ruled).
-Then, his priority: the agent's index-build memory growth, or the check-in's due-belief review.
+Dev runs everything ruled 2026-10-03 (`tasks.md` § On-device pass → "First real matching test",
+"Agent on the box", "Ghost batches"): server `dev-208e689-2dc97a4`, agent `dev-2dc97a4`, APK
+1.1.24-dev. The agent answers; the belief proposal awaits him.
+🔴 CI hangs on the fixture leak in most runs now (`tasks.md` § "test fixture leaks", a release
+gate; it says do the fix on its own branch). Proposed as the next workstream, his call.
+Then: the agent's index-build memory growth; the check-in's due-belief review.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
