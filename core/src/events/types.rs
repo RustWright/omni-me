@@ -1122,6 +1122,26 @@ pub struct AutoImportBatchDismissedPayload {
 pub struct DataWipedPayload {
     pub initiated_at: chrono::DateTime<chrono::Utc>,
     pub device_id: String,
+    /// The features a server wipe took, spelled as their config key's suffix.
+    /// Empty for a device's local wipe of everything, which peers ignore.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
+}
+
+impl DataWipedPayload {
+    /// The named features this build knows. An unknown name is skipped, so a
+    /// newer server's feature cannot make an older device purge anything else.
+    pub fn known_features(&self) -> Vec<crate::config::Feature> {
+        crate::config::ALL_FEATURES
+            .iter()
+            .copied()
+            .filter(|f| {
+                let key = f.key().to_string();
+                let name = key.strip_prefix("feature.").unwrap_or(&key);
+                self.features.iter().any(|n| n.trim() == name)
+            })
+            .collect()
+    }
 }
 
 // Feedback

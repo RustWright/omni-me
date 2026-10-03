@@ -988,7 +988,12 @@ async fn run(args: Args) -> Result<(), String> {
         match sync_client.pull_only(&db).await {
             Ok(outcome) => {
                 tracing::info!(pulled = outcome.pulled, "pull before diagnostics");
-                if let Err(e) = projections.init_all().await {
+                let caught_up = if outcome.wiped > 0 {
+                    projections.rebuild().await
+                } else {
+                    projections.init_all().await
+                };
+                if let Err(e) = caught_up {
                     tracing::warn!(error = %e, "could not project the pulled events");
                 }
             }

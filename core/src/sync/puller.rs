@@ -197,8 +197,20 @@ async fn apply_in_chunks(
 async fn pull_once(inner: &Arc<Inner>) {
     match inner.client.pull_only(&inner.db).await {
         Ok(outcome) if outcome.pulled > 0 => {
-            let failed =
-                apply_in_chunks(&inner.projections, &outcome.pulled_events, &inner.outcomes).await;
+            // A server wipe removed local events, which only a rebuild takes back
+            // out of the read models.
+            let failed = if outcome.wiped > 0 {
+                tracing::warn!(removed = outcome.wiped, "applied a server wipe; rebuilding");
+                match inner.projections.rebuild().await {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "rebuild after a server wipe failed");
+                        outcome.pulled
+                    }
+                }
+            } else {
+                apply_in_chunks(&inner.projections, &outcome.pulled_events, &inner.outcomes).await
+            };
             if failed > 0 {
                 tracing::warn!(
                     failed,

@@ -12,6 +12,8 @@ tauri-app/src-tauri/gen/schemas/
 *.db
 *.db-*
 surreal_data/
+# Pre-wipe database exports (`routes/wipe.rs`); tests write them too.
+wipe-snapshots/
 blobs/
 .reference/
 .tmp/

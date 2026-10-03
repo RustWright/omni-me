@@ -490,13 +490,21 @@ pub trait EventStore: Send + Sync {
     /// what it removed cannot be checked against what was there, which is the same
     /// reason the server backup is verified by size rather than by exit code.
     ///
-    /// ⛔ **Local, like [`EventStore::purge_all`]: peers are unaffected.** A push
-    /// watermark is the device's own clock, so a wiped event is behind every peer's
-    /// cursor and will not come back — but every other node still holds its copy
-    /// and still projects it. A wipe is therefore per node, and a ledger wiped on
-    /// the server alone diverges from the phone rather than being cleared.
+    /// Local to this node. Peers clear their own copies when they pull the
+    /// `DataWiped` record, through [`EventStore::purge_features_before`].
     /// `docs/src/features.md` § Wiping one feature's data.
-    async fn purge_features(&self, features: &[Feature]) -> Result<usize, EventError>;
+    async fn purge_features(&self, features: &[Feature]) -> Result<usize, EventError> {
+        self.purge_features_before(features, None).await
+    }
+
+    /// [`EventStore::purge_features`], limited to events authored before `before`
+    /// when given. A device applying a server's wipe uses the cutoff so its own
+    /// work from after the wipe survives.
+    async fn purge_features_before(
+        &self,
+        features: &[Feature],
+        before: Option<DateTime<Utc>>,
+    ) -> Result<usize, EventError>;
 }
 
 /// SurrealDB-backed event store implementation.
@@ -820,7 +828,11 @@ impl EventStore for SurrealEventStore {
         Ok(rows.into_iter().map(|r| (r.event_type, r.n)).collect())
     }
 
-    async fn purge_features(&self, features: &[Feature]) -> Result<usize, EventError> {
+    async fn purge_features_before(
+        &self,
+        features: &[Feature],
+        before: Option<DateTime<Utc>>,
+    ) -> Result<usize, EventError> {
         // ⛔ Refused rather than documented-as-unwise. A document event names a blob
         // by hash, and the only thing that knows whether other events still point at
         // that hash is the purge path's refcount. Deleting the events here would
@@ -843,18 +855,27 @@ impl EventStore for SurrealEventStore {
         // Counted before the delete rather than from the delete's own result: a
         // `DELETE` returns the rows it removed, and reading a length off that
         // means holding every removed event in memory to learn a number.
+        let cutoff = match before {
+            Some(_) => " AND timestamp < type::datetime($before)",
+            None => "",
+        };
+        let before = before.map(|b| b.to_rfc3339()).unwrap_or_default();
         let mut counted = self
             .db
-            .query("SELECT count() AS n FROM events WHERE event_type IN $types GROUP ALL")
+            .query(format!(
+                "SELECT count() AS n FROM events WHERE event_type IN $types{cutoff} GROUP ALL"
+            ))
             .bind(("types", types.clone()))
+            .bind(("before", before.clone()))
             .await?
             .check()?;
         let n: Option<CountRow> = counted.take(0)?;
         let doomed = n.map(|r| r.n).unwrap_or(0);
 
         self.db
-            .query("DELETE events WHERE event_type IN $types")
+            .query(format!("DELETE events WHERE event_type IN $types{cutoff}"))
             .bind(("types", types))
+            .bind(("before", before))
             .await?
             .check()?;
 

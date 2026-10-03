@@ -70,7 +70,7 @@ fn listen_addr() -> String {
 /// The deployment marker goes here rather than beside the database file: the
 /// container mounts its whole stateful volume at this path, so the marker
 /// travels with a clone of the data instead of with the config that read it.
-fn data_root() -> PathBuf {
+pub(crate) fn data_root() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 

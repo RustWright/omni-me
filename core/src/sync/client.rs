@@ -44,6 +44,8 @@ pub struct SyncResult {
     pub pulled: usize,
     pub pushed: usize,
     pub pulled_events: Vec<Event>,
+    /// See [`PullOutcome::wiped`].
+    pub wiped: usize,
 }
 
 /// Request body for POST /sync/push
@@ -80,6 +82,9 @@ pub struct PullOutcome {
     pub pulled: usize,
     pub pulled_events: Vec<Event>,
     pub new_timestamp: DateTime<Utc>,
+    /// Local events a pulled server wipe removed. When non-zero the projections
+    /// still show them, so the caller must rebuild rather than apply.
+    pub wiped: usize,
 }
 
 /// Outcome of a push-only call.
@@ -198,6 +203,7 @@ impl SyncClient {
             pulled: pull.pulled,
             pushed: push.pushed,
             pulled_events: pull.pulled_events,
+            wiped: pull.wiped,
         })
     }
 
@@ -215,6 +221,7 @@ impl SyncClient {
         let store = SurrealEventStore::new(db.clone());
         let mut cursor = self.last_sync_timestamp(db).await?;
         let mut pulled_events: Vec<Event> = Vec::new();
+        let mut wiped = 0;
 
         for _ in 0..MAX_PULL_PAGES {
             let page = self.pull_events(&cursor).await?;
@@ -227,6 +234,14 @@ impl SyncClient {
                     .append(NewEvent::from(event))
                     .await
                     .map_err(|e| SyncError::Local(e.to_string()))?;
+                // Applied in log order: what precedes the wipe record is what the
+                // server destroyed, and what follows it (a re-import) must stay.
+                if let Some(wipe) = self.remote_wipe(event) {
+                    wiped += store
+                        .purge_features_before(&wipe.known_features(), Some(wipe.initiated_at))
+                        .await
+                        .map_err(|e| SyncError::Local(e.to_string()))?;
+                }
             }
 
             // Advance after appending, per page rather than per call: a
@@ -251,7 +266,21 @@ impl SyncClient {
             pulled: pulled_events.len(),
             pulled_events,
             new_timestamp: cursor,
+            wiped,
         })
+    }
+
+    /// A feature wipe another node performed, which this device follows (user,
+    /// 2026-10-03). Its own wipes and a local wipe-everything are not.
+    fn remote_wipe(&self, event: &Event) -> Option<crate::events::DataWipedPayload> {
+        if event.event_type != crate::events::EventType::DataWiped.to_string()
+            || event.device_id == self.device_id
+        {
+            return None;
+        }
+        let wipe: crate::events::DataWipedPayload =
+            serde_json::from_value(event.payload.clone()).ok()?;
+        (!wipe.known_features().is_empty()).then_some(wipe)
     }
 
     /// Push local events this device has authored but not yet pushed.

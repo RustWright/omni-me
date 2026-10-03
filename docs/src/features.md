@@ -115,12 +115,19 @@ that records which features are on, a filed problem report, a declared record ty
 the audit record of a wipe itself. A wipe that could take the config would be a wipe that
 turns off the feature it just emptied.
 
-**A wipe is per node, not global.** Every device keeps a complete log, and each one pushes
-what it authored using its own watermark. A wiped event is behind every peer's cursor, so
-it does not come back — but the other nodes still hold their copies and still project
-them. Wiping the server alone leaves the phone showing the old ledger: not a stale cache,
-a genuinely different answer. Clearing a feature everywhere means clearing it on every
-node, and the count each one reports is how you check that it happened.
+**A server wipe reaches every device.** Every device keeps a complete log, so wiping the
+server alone used to leave the phone showing the old ledger, and worse: a review batch the
+server had deleted stayed committable on the phone, and committing it sent its transactions
+straight back (185 of them, once). So the wipe record names the features it took, and a
+device that pulls it deletes its own events of those features dated before the wipe, then
+rebuilds what it shows. Events after the record in the log, such as a re-import, and work
+the device authored after the wipe both survive. A device's own wipe-everything names no
+features and stays local to it.
+
+**Every wipe snapshots the database first.** Before anything is deleted the server exports
+its whole database to `wipe-snapshots/` beside the data, and refuses the wipe if the export
+fails or is too small to hold the events about to go. That file is how a mistaken wipe is
+undone; it is restored with SurrealDB's import.
 
 That count is the other half of the design. The operation reports how many events it
 removed rather than simply succeeding, for the same reason a backup is verified by size

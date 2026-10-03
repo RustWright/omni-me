@@ -1,7 +1,7 @@
 //! Wiping one feature's data, so it can be re-imported cleanly.
 //!
-//! Why a ledger is ever wiped, what a feature owns, and the two traps in it —
-//! shared event types and the per-node consequence: `docs/src/features.md`
+//! Why a ledger is ever wiped, what a feature owns, shared event types, the
+//! pre-wipe snapshot and how devices follow: `docs/src/features.md`
 //! § Wiping one feature's data.
 
 use axum::{
@@ -79,8 +79,11 @@ pub struct WipeReport {
     pub events_removed: usize,
     /// Projections were rebuilt, so the read models no longer carry the wiped rows.
     pub projections_rebuilt: bool,
-    /// ⚠️ Every other node still holds its own copy. `docs/src/features.md`.
+    /// Devices clear their own copies when they pull the `DataWiped` record.
     pub scope: &'static str,
+    /// The whole database as it was just before the wipe, restorable with
+    /// SurrealDB's import.
+    pub snapshot: String,
 }
 
 /// Which features a wipe can name, and what each one owns.
@@ -212,13 +215,19 @@ async fn confirm_handler(
         ));
     }
 
+    // ⛔ Before anything is deleted, and a failure here refuses the wipe: the
+    // snapshot is the recovery path for a mistaken one (user, 2026-10-03).
+    let snapshot = snapshot(&state, ticket.counted).await?;
+
     // Its own task, so the three steps finish together. Awaited inline, a client
     // that hung up after the delete would cancel the audit record and the rebuild.
     let task_state = state.clone();
     let features = confirmed.clone();
-    let removed = tokio::spawn(async move { destroy(&task_state, &features).await })
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("wipe task: {e}")))??;
+    let snapshot_name = snapshot.display().to_string();
+    let removed =
+        tokio::spawn(async move { destroy(&task_state, &features, &snapshot_name).await })
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("wipe task: {e}")))??;
 
     tracing::warn!(
         instance = declared.as_str(),
@@ -232,12 +241,72 @@ async fn confirm_handler(
         features: confirmed.iter().map(|f| feature_name(*f)).collect(),
         events_removed: removed,
         projections_rebuilt: true,
-        scope: "this node only — every other device still holds its own copy",
+        scope: "this node now; each device clears its copy when it next syncs",
+        snapshot: snapshot.display().to_string(),
     }))
 }
 
+/// Bytes the snapshot must hold per event about to be removed. An event's id,
+/// type, aggregate, timestamp and device alone exceed it, so a smaller file
+/// cannot contain what the wipe is about to destroy.
+const MIN_SNAPSHOT_BYTES_PER_EVENT: u64 = 100;
+
+fn snapshot_dir() -> std::path::PathBuf {
+    match std::env::var("OMNI_SNAPSHOT_DIR") {
+        Ok(dir) if !dir.trim().is_empty() => dir.into(),
+        _ => crate::data_root().join("wipe-snapshots"),
+    }
+}
+
+/// Export the whole database, then check the file by size, never by the export's
+/// success alone (the backup rule: verify by size, not exit code).
+async fn snapshot(
+    state: &AppState,
+    about_to_remove: usize,
+) -> Result<std::path::PathBuf, (StatusCode, String)> {
+    let refuse = |what: String| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{what}; nothing was wiped"),
+        )
+    };
+    let dir = snapshot_dir();
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| refuse(format!("could not create {}: {e}", dir.display())))?;
+    let path = dir.join(format!(
+        "{}.surql",
+        chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
+    ));
+    state
+        .db
+        .export(&path)
+        .await
+        .map_err(|e| refuse(format!("snapshot export failed: {e}")))?;
+    let bytes = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| refuse(format!("snapshot unreadable: {e}")))?
+        .len();
+    check_snapshot_size(bytes, about_to_remove).map_err(refuse)?;
+    Ok(path)
+}
+
+fn check_snapshot_size(bytes: u64, about_to_remove: usize) -> Result<(), String> {
+    let floor = about_to_remove as u64 * MIN_SNAPSHOT_BYTES_PER_EVENT;
+    if bytes < floor {
+        return Err(format!(
+            "snapshot is {bytes} bytes, under the {floor} that {about_to_remove} events need"
+        ));
+    }
+    Ok(())
+}
+
 /// Delete, record, rebuild: the part of a confirm that cannot be half done.
-async fn destroy(state: &AppState, confirmed: &[Feature]) -> Result<usize, (StatusCode, String)> {
+async fn destroy(
+    state: &AppState,
+    confirmed: &[Feature],
+    snapshot: &str,
+) -> Result<usize, (StatusCode, String)> {
     let removed = state
         .store
         .purge_features(confirmed)
@@ -259,6 +328,7 @@ async fn destroy(state: &AppState, confirmed: &[Feature]) -> Result<usize, (Stat
         "device_id": state.device_id,
         "features": confirmed.iter().map(|f| feature_name(*f)).collect::<Vec<_>>(),
         "events_removed": removed,
+        "snapshot": snapshot,
     });
     writer
         .append_new(NewEvent {
@@ -321,6 +391,13 @@ fn parse_features(names: &[String]) -> Result<Vec<Feature>, (StatusCode, String)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_snapshot_too_small_for_the_events_it_must_hold_is_refused() {
+        assert!(check_snapshot_size(99, 1).is_err());
+        assert!(check_snapshot_size(100, 1).is_ok());
+        assert!(check_snapshot_size(10_000_000, 0).is_ok());
+    }
 
     #[test]
     fn a_feature_is_named_as_its_config_key_spells_it() {
