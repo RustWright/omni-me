@@ -17,7 +17,6 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 
 ## ⛔ Waiting on him
 - **His hands on the phone**: the camera (G9), the keyboard (G2), a real pinch (G1).
-- **Shrink the already-archived photos too?** New captures shrink on the device; old ones are untouched.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
