@@ -3288,7 +3288,12 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
 - ✅ **Agent on the box, 2026-10-03**: overlay workflow `build-agent-image.yml` (public image,
   `-agent` package), the image moved to trixie (bundled onnxruntime needs glibc 2.38+), dev compose
   service `omni-me-agent-dev` capped at 0.75 CPU / 1.5 GB. Cold start: pull 80 s, replay 13 min,
-  then the index build (memory ~1.36 GB at the cap). Backups `*.bak.20261003T*` in `~/omni-dev`.
+  then the index build. Backups `*.bak.20261003T*` in `~/omni-dev`.
+  🔴 **The index build's memory grows without bound**: OOM-killed (its own cgroup; live untouched)
+  at 1.5 GB, then at 2 GB after 35 min of steady climb. Not one big record (largest doc 28 KB,
+  corpus a few MB). DB grows across kills (383 → 386 MB/min) and restarts begin at ~220 MB, so
+  progress is kept and the HNSW index is not eagerly loaded. Suspect SurrealDB's in-memory HNSW
+  build. Unmeasured: the steady-state memory once built, i.e. whether a 4 GB box can host it.
 - ⚠️ **Chat "timeout" = no agent running anywhere** (no process, no compose service). Asked
   2026-10-03 12:36, deleted at 12:38; no answer event. Beliefs untestable until an agent runs.
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
