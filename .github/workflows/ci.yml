@@ -176,6 +176,9 @@ jobs:
         run: cargo clippy -p omni-me-core -p omni-me-server -p omni-me-agent --all-targets -- -D warnings
 
       - name: Run tests
+        # Normally ~4 min. SurrealDB-backed tests have hung twice (2026-10-02/03,
+        # different tests), and without this a hang holds the job for 45 min.
+        timeout-minutes: 15
         run: cargo test -p omni-me-core -p omni-me-server -p omni-me-agent
 
       - name: Build release
