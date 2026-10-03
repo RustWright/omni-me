@@ -3229,7 +3229,9 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   event_arriving_last_does_not_win` hung 28 min (run 37131034602). Two SurrealDB-backed projection
   tests, unrelated code: a class, not one test. Most likely the known fixture leak (one SurrealKV
   instance per test until the suite deadlocks; memory `project_known_bugs`, with its reproduction
-  method). The test step now has a 15-min cap (`fb5a3ba`) so it fails fast.
+  method). The test step now has a 15-min cap (`fb5a3ba`) so it fails fast. A third hang the same
+  day (`2dc97a4`, paged replay again): 3 of ~8 runs. It is the § "test fixture leaks" release gate,
+  and its frequency is rising with the test count, as that entry predicted.
 - ✅ **G5 done on dev, 2026-10-03.** He ran both credential edits himself (classifier), via temp
   scripts since deleted; backups `credentials-dev.toml.bak.20261003T*`. Wise: 8 fetched, 8 proposed,
   re-tick dedups. Bank OTP reconnect worked from the phone. The second feed then failed "none are
