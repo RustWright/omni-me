@@ -16,7 +16,6 @@
 //! companion (for non-Rust plugin authors) is `SUBPROCESS_SOURCE_CONTRACT.md`.
 
 use async_trait::async_trait;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -25,10 +24,11 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use crate::auto_import::to_proposed_event;
+use crate::auto_import::{content_dedup_key, to_proposed_event};
 use crate::auto_import_scheduler::{
     AutoImportSource, DropReason, ImportError, ImportSummary, ImportTally, ReauthOutcome,
 };
+use crate::db::queries;
 use crate::events::{DraftTransaction, EventStore, ProjectionRunner};
 
 /// How long a helper may run before it is killed.
@@ -127,8 +127,8 @@ pub struct HelperResponse {
     /// wraps these verbatim — it never reasons about banks or balancing.
     #[serde(default)]
     pub drafts: Vec<DraftTransaction>,
-    /// Per-batch idempotency token. When `None`, the engine falls back to
-    /// `"{source-name}-{unix_millis}"`.
+    /// Per-batch idempotency token. When `None`, the engine derives one from
+    /// the drafts' `external_id`s.
     #[serde(default)]
     pub dedup_key: Option<String>,
     /// Opaque JSON the review screen can render; engine stores but never reads.
@@ -384,25 +384,43 @@ impl SubprocessSource {
             tally.failed(f.id.clone(), f.reason.clone());
         }
 
-        if response.drafts.is_empty() {
+        // A row already offered for review is not offered again. Without this a
+        // second tick while the first batch was pending re-proposed all 101 of
+        // its rows as a new batch, and both were committed.
+        let mut drafts = response.drafts;
+        match queries::proposed_external_ids(self.projections.db(), &self.name).await {
+            Ok(known) => drafts.retain(|d| {
+                let keep = !known.contains(d.external_id.trim());
+                if !keep {
+                    tally.dropped(d.external_id.clone(), DropReason::Deduped);
+                }
+                keep
+            }),
+            Err(e) => tracing::warn!(
+                source = %self.name,
+                error = %e,
+                "could not read prior proposals; proposing without that filter",
+            ),
+        }
+
+        if drafts.is_empty() {
             // Still finishes the tally: "no drafts" must prove it accounted for
             // the fetched rows. A helper that fetched 295 and produced zero
             // drafts now fails here instead of returning a tidy zero.
             return tally.finish();
         }
-        let draft_count = response.drafts.len();
+        let draft_count = drafts.len();
 
-        // Helper-supplied dedup_key wins; else a per-tick timestamp (matches the
-        // old WS polling behavior — row-level dedup still rides each draft's
-        // stable external_id).
+        // Helper-supplied dedup_key wins; else one derived from the drafts, never
+        // the clock (see `content_dedup_key`).
         let dedup_key = response
             .dedup_key
-            .unwrap_or_else(|| format!("{}-{}", self.name, Utc::now().timestamp_millis()));
+            .unwrap_or_else(|| content_dedup_key(&self.name, &drafts));
 
         let proposed = to_proposed_event(
             &self.name,
             dedup_key,
-            response.drafts,
+            drafts,
             response.source_metadata,
             self.device_id.clone(),
         );
@@ -638,6 +656,26 @@ mod tests {
         let summary = source.pull().await.unwrap();
         assert_eq!(summary.fetched, 0);
         assert_eq!(summary.appended, 0);
+        assert_eq!(summary.lost(), 0);
+    }
+
+    /// A second tick while the first batch is still pending re-sends the same
+    /// window. Only the new row may reach review, and the repeat counts as
+    /// deduped rather than vanishing.
+    #[tokio::test]
+    async fn a_row_already_proposed_is_not_proposed_again() {
+        let (_db, store, projections) = test_db_and_runner().await;
+        let (_d1, first) = emit_helper(ONE_DRAFT_OK);
+        let source = source_with(first, vec![], store.clone(), projections.clone());
+        assert_eq!(source.pull().await.unwrap().appended, 1);
+
+        let two = r#"{"status":"ok","disposition":{"fetched":2},"drafts":[{"external_id":"ws-t1","date":"2026-06-15","description":"Loblaws","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42"},{"account":"Unmatched","commodity":"CAD","amount":"87.42"}]},{"external_id":"ws-t2","date":"2026-06-16","description":"Metro","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-12.00"},{"account":"Unmatched","commodity":"CAD","amount":"12.00"}]}]}"#;
+        let (_d2, second) = emit_helper(two);
+        let source = source_with(second, vec![], store, projections);
+        let summary = source.pull().await.unwrap();
+        assert_eq!(summary.fetched, 2);
+        assert_eq!(summary.appended, 1);
+        assert_eq!(summary.deduped, 1);
         assert_eq!(summary.lost(), 0);
     }
 

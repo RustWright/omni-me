@@ -158,10 +158,9 @@ across runs so re-pulling the same upstream row doesn't double-record.
 ## `dedup_key` — idempotency token
 
 The per-tick idempotency key for the whole batch. **Optional**: if the helper omits it, the engine
-generates `"{source-name}-{unix_millis}"` (fine for a polling source that re-proposes a fresh batch each
-tick; row-level dedup still happens via each draft's stable `external_id`). A watermark-style source
-(e.g. "everything after transfer-id N") should supply its own key so an unchanged upstream produces an
-identical key the engine can skip.
+derives one from the drafts' `external_id`s, so an unchanged window collapses onto the batch it already
+produced. Independently of the key, the engine drops any draft whose `external_id` this source has
+already proposed (counted as `deduped`), so a helper may re-send its whole lookback window every tick.
 
 ## `source_metadata` — opaque context
 
