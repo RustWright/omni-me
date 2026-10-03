@@ -20,6 +20,7 @@ use serde_json::Value;
 
 pub mod config;
 pub mod csv;
+pub mod duplicates;
 pub mod imap;
 pub mod imap_real;
 pub mod imap_source;

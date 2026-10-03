@@ -213,7 +213,7 @@ impl AutoImportSource for ImapSource {
             device_id: &a.device_id,
             passwords: &a.pdf_passwords,
         });
-        let outcome = poll_once(
+        let mut outcome = poll_once(
             self.fetcher.as_ref(),
             &self.handlers,
             &cursor_snapshot,
@@ -238,6 +238,8 @@ impl AutoImportSource for ImapSource {
         tally.appended(outcome.messages_seen - outcome.unrouted.len() - outcome.failed.len());
 
         if !outcome.events.is_empty() {
+            super::duplicates::flag_likely_duplicates(self.projections.db(), &mut outcome.events)
+                .await;
             let appended = self
                 .store
                 .append_batch(outcome.events)

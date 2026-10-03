@@ -545,6 +545,23 @@ pub async fn known_top_tag_values(db: &Database, key: &str) -> Result<HashSet<St
 ///
 /// Deliberately counts dismissed batches as proposed. Dismissing means "not
 /// wanted"; bringing the row back on the next tick is the behaviour being fixed.
+/// Every batch this source has proposed, as raw payload JSON.
+pub async fn proposed_payloads(
+    db: &Database,
+    source: &str,
+) -> Result<Vec<serde_json::Value>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT VALUE payload FROM events
+             WHERE event_type = 'auto_import_batch_proposed'
+               AND payload.source = $source",
+        )
+        .bind(("source", source.to_string()))
+        .await?;
+    let rows: Vec<DbValue> = resp.take(0)?;
+    Ok(rows.into_iter().map(DbValue::into_json_value).collect())
+}
+
 pub async fn proposed_external_ids(
     db: &Database,
     source: &str,
