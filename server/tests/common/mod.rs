@@ -12,10 +12,19 @@ use std::sync::Arc;
 
 use axum::{Json, Router, routing::get};
 use omni_me_core::db;
-use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
+use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
+use omni_me_core::extraction::DocumentExtractor;
 use omni_me_core::extraction::null::NullExtractor;
 use omni_me_core::llm::NullLlmClient;
 use omni_me_server::{AppState, routes};
+
+/// The production server's projection set, schema initialised. Built by hand as an
+/// empty list, the harness once hid that the server could not run document enrichment.
+pub async fn server_projections(db: &db::Database) -> ProjectionRunner {
+    let runner = ProjectionRunner::new(db.clone(), registry::build_projections_server());
+    runner.init_all().await.expect("init server projections");
+    runner
+}
 
 /// Spin up a real Axum server on a random port with its own temp SurrealDB.
 /// Returns (server_url, join_handle). The tempdir is leaked intentionally —
@@ -32,7 +41,7 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
 
     let db_arc = Arc::new(server_db);
     let event_store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new((*db_arc).clone()));
-    let projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+    let projections = server_projections(&db_arc).await;
 
     let state = AppState {
         db: db_arc.clone(),
@@ -48,6 +57,8 @@ pub async fn start_server() -> (String, tokio::task::JoinHandle<()>) {
         // Tests are non-production by construction. `None` reports `unknown`,
         // which every destructive tool refuses.
         instance: None,
+        purge_ticket: Default::default(),
+        wipe_ticket: Default::default(),
     };
 
     let app = Router::new()
@@ -89,6 +100,70 @@ pub async fn start_full_server_with_auth(
     updates_dir: Option<std::path::PathBuf>,
     auth_token: Option<String>,
 ) -> (String, tokio::task::JoinHandle<()>) {
+    let (url, _db, _blobs, handle) = boot_full_server(updates_dir, auth_token, None, null()).await;
+    (url, handle)
+}
+
+/// As [`start_full_server`], also returning the server's database so a test can
+/// check what the server itself projected.
+pub async fn start_full_server_with_db() -> (String, db::Database, tokio::task::JoinHandle<()>) {
+    let (url, db, _blobs, handle) = boot_full_server(None, None, None, null()).await;
+    (url, db, handle)
+}
+
+/// As [`start_full_server_with_db`], reading documents with `extractor`.
+pub async fn start_full_server_with_extractor(
+    extractor: Arc<dyn DocumentExtractor>,
+) -> (String, db::Database, tokio::task::JoinHandle<()>) {
+    let (url, db, _blobs, handle) = boot_full_server(None, None, None, extractor).await;
+    (url, db, handle)
+}
+
+fn null() -> Arc<dyn DocumentExtractor> {
+    Arc::new(NullExtractor)
+}
+
+/// As [`start_full_server_with_db`], also returning the blob directory.
+///
+/// For tests about bytes rather than rows: a purge that reports reclaimed space
+/// is only honest if the file left the disk the server serves from.
+pub async fn start_full_server_with_blobs() -> (
+    String,
+    db::Database,
+    std::path::PathBuf,
+    tokio::task::JoinHandle<()>,
+) {
+    boot_full_server(None, None, None, null()).await
+}
+
+/// A server that declares itself `dev`.
+///
+/// ⛔ Every other harness here declares no instance on purpose, because that is
+/// what a destructive route must refuse — which also means the happy path of one
+/// cannot be reached through them. This is the opt-in, and `dev` is the only
+/// instance a test should ever claim to be.
+pub async fn start_dev_server() -> (String, db::Database, tokio::task::JoinHandle<()>) {
+    let (url, db, _blobs, handle) = boot_full_server(
+        None,
+        None,
+        Some(omni_me_core::runtime::Instance::Dev),
+        null(),
+    )
+    .await;
+    (url, db, handle)
+}
+
+async fn boot_full_server(
+    updates_dir: Option<std::path::PathBuf>,
+    auth_token: Option<String>,
+    instance: Option<omni_me_core::runtime::Instance>,
+    extractor: Arc<dyn DocumentExtractor>,
+) -> (
+    String,
+    db::Database,
+    std::path::PathBuf,
+    tokio::task::JoinHandle<()>,
+) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("server.db");
     let server_db = db::connect(path.to_str().unwrap()).await.unwrap();
@@ -96,26 +171,30 @@ pub async fn start_full_server_with_auth(
 
     let blob_dir = tempfile::tempdir().unwrap();
     let blob_path = blob_dir.path().to_path_buf();
+    let blob_path_for_tests = blob_path.clone();
     std::mem::forget(blob_dir);
 
     let db_arc = Arc::new(server_db);
     let event_store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new((*db_arc).clone()));
-    let projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+    let projections = server_projections(&db_arc).await;
 
     let state = AppState {
         db: db_arc.clone(),
         llm_client: Arc::new(NullLlmClient::unconfigured()),
         blob_dir: Arc::new(blob_path),
-        extractor: Arc::new(NullExtractor),
+        extractor,
         auto_import_registry: Default::default(),
         store: event_store,
         projections,
         device_id: "test-device".to_string(),
         default_interval: std::time::Duration::from_secs(1800),
         secrets: Default::default(),
-        // Tests are non-production by construction. `None` reports `unknown`,
-        // which every destructive tool refuses.
-        instance: None,
+        // `None` by default, and that default is load-bearing: an undeclared
+        // deployment is what every destructive tool refuses, so the happy path of
+        // one cannot be reached by accident. `start_dev_server` opts in.
+        instance,
+        purge_ticket: Default::default(),
+        wipe_ticket: Default::default(),
     };
 
     let app = omni_me_server::build_app(state, updates_dir, auth_token);
@@ -130,7 +209,7 @@ pub async fn start_full_server_with_auth(
         axum::serve(listener, app).await.unwrap();
     });
 
-    (url, handle)
+    (url, (*db_arc).clone(), blob_path_for_tests, handle)
 }
 
 /// Create a temp SurrealDB instance — simulates a device's local DB.

@@ -43,20 +43,12 @@ pub struct PausedSources {
 }
 
 /// Default location for `paused_sources.toml` — alongside `sources.toml` under
-/// the XDG config dir (mirrors [`super::config::default_path`]).
+/// the XDG *state* dir (mirrors [`super::config::default_path`]). State, not
+/// config: the app writes this itself, and `crate::paths` explains why that
+/// cannot share a root with the mounted credentials file.
 pub fn default_path() -> Result<PathBuf, PausedError> {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".config"))
-        })
-        .ok_or_else(|| {
-            PausedError::ConfigDir("neither XDG_CONFIG_HOME nor HOME set".to_string())
-        })?;
-    Ok(base.join("omni-me").join("paused_sources.toml"))
+    crate::paths::state_file_for_read("paused_sources.toml")
+        .ok_or_else(|| PausedError::ConfigDir("neither XDG_STATE_HOME nor HOME set".to_string()))
 }
 
 /// Load the paused set. A missing file → empty set (a zero-config install has

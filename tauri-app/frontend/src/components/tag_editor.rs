@@ -4,8 +4,16 @@
 //! `on_add` / `on_remove` handlers, so this component stays stateless except for
 //! the in-progress draft.
 //!
-//! Tags are run through [`sanitize_tag`] here, so every emitted tag is safe for
-//! the inline `tags: [...]` serialization (never needs quoting).
+//! Tags are run through [`sanitize_tag`] here by default, so every emitted tag is
+//! safe for the inline `tags: [...]` serialization (never needs quoting).
+//!
+//! ⚠️ **The archive opts out of that sanitizer, and must.** `sanitize_tag` filters
+//! to alphanumerics plus `-_/`, which strips the `:` an archive `key:value` tag is
+//! built on — `institution:rbc` would arrive as `institutionrbc`. So the archive
+//! passes `sanitize: false` and the backend's `Tag::normalize` is the only
+//! authority. ⛔ Do not add a second normalizer here to compensate: a tag stored
+//! in a form the query does not expect is invisible rather than wrong, and two
+//! normalizers is how the two forms come apart.
 
 use dioxus::prelude::*;
 
@@ -14,12 +22,16 @@ use crate::note_frontmatter::sanitize_tag;
 /// A chip editor for a list of tags.
 ///
 /// - `tags` — the current tags (owned by the parent; re-passed each render).
-/// - `on_add` — fired with an already-sanitized, non-empty, non-duplicate tag.
+/// - `on_add` — fired with a non-empty, non-duplicate tag, sanitized unless
+///   `sanitize` is false.
 /// - `on_remove` — fired with the index of the chip to remove.
+/// - `sanitize` — defaults true, which is the frontmatter-safe behaviour every
+///   caller but the archive wants.
 #[component]
 pub fn TagChipEditor(
     tags: Vec<String>,
     #[props(default = false)] read_only: bool,
+    #[props(default = true)] sanitize: bool,
     on_add: EventHandler<String>,
     on_remove: EventHandler<usize>,
 ) -> Element {
@@ -55,7 +67,12 @@ pub fn TagChipEditor(
                     onkeydown: move |e| {
                         if e.key().to_string() == "Enter" {
                             e.prevent_default();
-                            let t = sanitize_tag(&tag_draft.peek());
+                            let raw = tag_draft.peek().clone();
+                            let t = if sanitize {
+                                sanitize_tag(&raw)
+                            } else {
+                                raw.trim().to_lowercase()
+                            };
                             if !t.is_empty() && !existing.contains(&t) {
                                 on_add.call(t);
                             }

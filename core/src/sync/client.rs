@@ -15,6 +15,12 @@ use crate::events::{Event, EventStore, NewEvent, SurrealEventStore};
 const MAX_EVENTS_PER_PUSH: usize = 100;
 const MAX_PUSH_BYTES: usize = 200 * 1024;
 
+/// Pages one `pull_only` will drain before returning. At the server's 500 per
+/// page this is 100k events, far past any real backlog; it exists so a server
+/// handing back a cursor that never settles cannot loop forever. Hitting it
+/// leaves the cursor persisted, so the next poll resumes rather than restarts.
+const MAX_PULL_PAGES: usize = 200;
+
 /// Error type for sync operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
@@ -38,6 +44,8 @@ pub struct SyncResult {
     pub pulled: usize,
     pub pushed: usize,
     pub pulled_events: Vec<Event>,
+    /// See [`PullOutcome::wiped`].
+    pub wiped: usize,
 }
 
 /// Request body for POST /sync/push
@@ -74,6 +82,9 @@ pub struct PullOutcome {
     pub pulled: usize,
     pub pulled_events: Vec<Event>,
     pub new_timestamp: DateTime<Utc>,
+    /// Local events a pulled server wipe removed. When non-zero the projections
+    /// still show them, so the caller must rebuild rather than apply.
+    pub wiped: usize,
 }
 
 /// Outcome of a push-only call.
@@ -192,39 +203,84 @@ impl SyncClient {
             pulled: pull.pulled,
             pushed: push.pushed,
             pulled_events: pull.pulled_events,
+            wiped: pull.wiped,
         })
     }
 
     /// Pull remote events since our last sync, append them locally (preserving
     /// server-assigned IDs), and advance `sync_state.last_sync_timestamp`.
     ///
+    /// Pulls in a loop, because the server returns a bounded page and hands
+    /// back the cursor to continue from. A device joining an established
+    /// history needs many pages; one call drains as many as it can.
+    ///
     /// Does NOT push. Callers wanting a full sync should follow with
     /// `push_only`, or use `sync()`.
     pub async fn pull_only(&self, db: &Database) -> Result<PullOutcome, SyncError> {
         let _in_flight = self.pull_lock.lock().await;
         let store = SurrealEventStore::new(db.clone());
-        let last_sync = self.last_sync_timestamp(db).await?;
+        let mut cursor = self.last_sync_timestamp(db).await?;
+        let mut pulled_events: Vec<Event> = Vec::new();
+        let mut wiped = 0;
 
-        let pull_resp = self.pull_events(&last_sync).await?;
-        let pulled = pull_resp.events.len();
+        for _ in 0..MAX_PULL_PAGES {
+            let page = self.pull_events(&cursor).await?;
+            if page.events.is_empty() {
+                break;
+            }
 
-        for event in &pull_resp.events {
-            store
-                .append(NewEvent::from(event))
-                .await
-                .map_err(|e| SyncError::Local(e.to_string()))?;
+            for event in &page.events {
+                store
+                    .append(NewEvent::from(event))
+                    .await
+                    .map_err(|e| SyncError::Local(e.to_string()))?;
+                // Applied in log order: what precedes the wipe record is what the
+                // server destroyed, and what follows it (a re-import) must stay.
+                if let Some(wipe) = self.remote_wipe(event) {
+                    wiped += store
+                        .purge_features_before(&wipe.known_features(), Some(wipe.initiated_at))
+                        .await
+                        .map_err(|e| SyncError::Local(e.to_string()))?;
+                }
+            }
+
+            // Advance after appending, per page rather than per call: a
+            // catch-up interrupted on page 20 keeps the 19 pages it already
+            // took instead of starting over. Projections are not lost by this —
+            // they carry their own watermark and replay on catch-up.
+            self.update_last_sync_timestamp(db, &page.sync_timestamp)
+                .await?;
+
+            let advanced = page.sync_timestamp > cursor;
+            cursor = page.sync_timestamp;
+            pulled_events.extend(page.events);
+
+            // A cursor that did not move means the next request would be the
+            // request just made. Stop rather than spin on it.
+            if !advanced {
+                break;
+            }
         }
 
-        // Advance sync_state timestamp AFTER successful pull so a push-only
-        // failure later doesn't cause us to re-pull the same events.
-        let new_timestamp = pull_resp.sync_timestamp;
-        self.update_last_sync_timestamp(db, &new_timestamp).await?;
-
         Ok(PullOutcome {
-            pulled,
-            pulled_events: pull_resp.events,
-            new_timestamp,
+            pulled: pulled_events.len(),
+            pulled_events,
+            new_timestamp: cursor,
+            wiped,
         })
+    }
+
+    /// A feature wipe another node performed, which this device follows (user,
+    /// 2026-10-03). Its own wipes and a local wipe-everything are not.
+    fn remote_wipe(&self, event: &Event) -> Option<crate::events::DataWipedPayload> {
+        if event.event_type != crate::events::EventType::DataWiped.to_string()
+            || event.device_id == self.device_id
+        {
+            return None;
+        }
+        let wipe: crate::events::DataWipedPayload =
+            serde_json::from_value(event.payload.clone()).ok()?;
+        (!wipe.known_features().is_empty()).then_some(wipe)
     }
 
     /// Push local events this device has authored but not yet pushed.
@@ -308,15 +364,19 @@ impl SyncClient {
     ) -> Result<(), SyncError> {
         let device_id = self.device_id.clone();
         let ts = timestamp.to_rfc3339();
+        // The pull cursor is a required field, and an empty first pull never writes it. Without
+        // the epoch fallback a push-created row fails the schema, and the watermark is lost.
         db.query(
             "UPSERT sync_state SET
                 device_id = $device_id,
+                last_sync_timestamp = last_sync_timestamp ?? type::datetime('1970-01-01T00:00:00Z'),
                 last_push_received_at = type::datetime($ts)
              WHERE device_id = $device_id",
         )
         .bind(("device_id", device_id))
         .bind(("ts", ts))
         .await
+        .and_then(|resp| resp.check())
         .map_err(|e| SyncError::Local(e.to_string()))?;
 
         Ok(())
@@ -372,6 +432,7 @@ impl SyncClient {
         .bind(("device_id", device_id))
         .bind(("ts", ts))
         .await
+        .and_then(|resp| resp.check())
         .map_err(|e| SyncError::Local(e.to_string()))?;
 
         Ok(())

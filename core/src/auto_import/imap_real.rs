@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::NaiveDate;
 use futures_util::StreamExt;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
@@ -20,12 +21,23 @@ use tokio_rustls::TlsConnector;
 use crate::auto_import_scheduler::ImportError;
 use crate::credentials::ImapCredentials;
 
-use super::imap::{FetchCursor, ImapFetcher, ImapMessage};
+use super::imap::{DateAnchor, FetchCursor, FetchOutcome, ImapFetcher, ImapMessage};
 
 /// Most message BODIES one tick will fetch. The UID enumeration stays
 /// open-ended, so the cursor always advances and a backlog drains across
 /// successive ticks rather than being skipped.
 const MAX_UIDS_PER_TICK: usize = 200;
+
+/// What one message body fetch asks for.
+///
+/// ⚠️ **`BODY.PEEK[]`, never `RFC822` or a bare `BODY[]`.** Those two implicitly
+/// set `\Seen` on the server, so a background poll would mark the user's own mail
+/// read in their email client. PEEK returns the same bytes without touching flags.
+///
+/// `Fetch::body()` accepts either shape — it matches `BodySection { section: None }`
+/// as well as `Rfc822` — so the response side does not care, which is exactly why
+/// a regression here would import mail correctly and be invisible.
+const BODY_QUERY: &str = "(UID INTERNALDATE BODY.PEEK[])";
 
 /// Largest single message body accepted. Anything above this is skipped
 /// (and stepped over) rather than buffered.
@@ -51,11 +63,12 @@ impl ImapFetcher for AsyncImapFetcher {
         &self.name
     }
 
-    async fn fetch_new(
-        &self,
-        cursor: &FetchCursor,
-    ) -> Result<(Vec<ImapMessage>, Option<u32>), ImportError> {
+    async fn fetch_new(&self, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError> {
         fetch(&self.creds, cursor).await
+    }
+
+    async fn first_uid_since(&self, since: NaiveDate) -> Result<DateAnchor, ImportError> {
+        anchor_since(&self.creds, since).await
     }
 }
 
@@ -80,10 +93,45 @@ fn tls_config() -> Result<ClientConfig, ImportError> {
         .map_err(|e| ImportError::Io(format!("tls config: {e}")))
 }
 
-async fn fetch(
+/// Whether the stored cursor belongs to a numbering the mailbox no longer uses.
+///
+/// The IMAP UID range one tick enumerates.
+///
+/// ⛔ Absent and zero are opposite instructions, and the difference is the whole
+/// reason a rewind stores `Some(0)` rather than deleting the row. `None` means
+/// "never polled", which resolves to `*` — the single highest UID — so a new
+/// account anchors to now instead of back-importing years of mail. `Some(0)`
+/// asks for `1:*`, which is every message the mailbox holds.
+fn uid_range(cursor: &FetchCursor) -> String {
+    match cursor.last_seen_uid {
+        Some(uid) => format!("{}:*", uid + 1),
+        None => "*".to_string(),
+    }
+}
+
+/// A UID means nothing without the `UIDVALIDITY` it was issued under, so a change
+/// voids the cursor: left in place, `{last+1}:*` matches nothing and the mailbox
+/// never polls again. ⛔ Only a *known* disagreement counts. An unknown on either
+/// side — a cursor stored before this was recorded, or a server that answered
+/// without one — is not evidence of renumbering, and treating it as such would
+/// reset every mailbox on the first tick after an upgrade.
+///
+/// ⛔ The reset deliberately does not backfill. Re-reading the mailbox would
+/// re-propose every historical receipt, because a proposal with no order reference
+/// keys on `uid` and renumbering gives every message a new one — so the
+/// alternative to losing whatever arrived during the gap is a review queue holding
+/// the entire mail history. It matches the first-run rule, and it is my call
+/// rather than a decision anyone signed off.
+fn mailbox_was_renumbered(stored: Option<u32>, observed: Option<u32>) -> bool {
+    matches!((stored, observed), (Some(a), Some(b)) if a != b)
+}
+
+type ImapSession = async_imap::Session<tokio_rustls::client::TlsStream<TcpStream>>;
+
+/// Connect, log in and open the watched label read-only.
+async fn open(
     creds: &ImapCredentials,
-    cursor: &FetchCursor,
-) -> Result<(Vec<ImapMessage>, Option<u32>), ImportError> {
+) -> Result<(ImapSession, async_imap::types::Mailbox), ImportError> {
     let tcp = TcpStream::connect((creds.host.as_str(), creds.port))
         .await
         .map_err(|e| ImportError::Io(format!("connect {}:{}: {e}", creds.host, creds.port)))?;
@@ -100,13 +148,67 @@ async fn fetch(
         .await
         .map_err(|(e, _client)| ImportError::Upstream(format!("login: {e}")))?;
 
-    // Use the watched label as the mailbox name. Gmail labels appear as
-    // folders ("omni-me", "[Gmail]/All Mail", etc.) — INBOX works too if
-    // no filter is set up.
-    let _mailbox = session
-        .select(&creds.watched_label)
+    // EXAMINE, never SELECT: it opens the mailbox read-only, so the server itself
+    // refuses any state change. That makes polling a real mailbox safe rather than
+    // merely careful, and it backstops the BODY.PEEK[] discipline below.
+    // Gmail labels appear as folders here; INBOX works when no filter is set up.
+    let mailbox = session
+        .examine(&creds.watched_label)
         .await
-        .map_err(|e| ImportError::Upstream(format!("select {}: {e}", creds.watched_label)))?;
+        .map_err(|e| ImportError::Upstream(format!("examine {}: {e}", creds.watched_label)))?;
+    Ok((session, mailbox))
+}
+
+/// `UID SEARCH` criteria for mail received on or after `since`. RFC 3501 dates
+/// are `d-Mon-yyyy` with an English month; SINCE compares the INTERNALDATE,
+/// ignoring time and timezone.
+fn search_since(since: NaiveDate) -> String {
+    format!("SINCE {}", since.format("%-d-%b-%Y"))
+}
+
+async fn anchor_since(
+    creds: &ImapCredentials,
+    since: NaiveDate,
+) -> Result<DateAnchor, ImportError> {
+    let (mut session, mailbox) = open(creds).await?;
+    let matches = session
+        .uid_search(search_since(since))
+        .await
+        .map_err(|e| ImportError::Upstream(format!("uid_search since {since}: {e}")))?;
+    let _ = session.logout().await;
+    Ok(DateAnchor {
+        first_uid: matches.into_iter().min(),
+        // UIDNEXT is one past the highest UID ever assigned, which is at least the
+        // highest present — enough for "nothing since, resume from the newest".
+        highest_uid: mailbox.uid_next.map(|next| next.saturating_sub(1)),
+        uid_validity: mailbox.uid_validity,
+    })
+}
+
+async fn fetch(creds: &ImapCredentials, cursor: &FetchCursor) -> Result<FetchOutcome, ImportError> {
+    let (mut session, mailbox) = open(creds).await?;
+    let uid_validity = mailbox.uid_validity;
+
+    let renumbered = mailbox_was_renumbered(cursor.uid_validity, uid_validity);
+    if renumbered {
+        tracing::error!(
+            account = %creds.account,
+            label = %creds.watched_label,
+            stored_validity = ?cursor.uid_validity,
+            observed_validity = ?uid_validity,
+            dropped_cursor = ?cursor.last_seen_uid,
+            "imap: UIDVALIDITY changed — the mailbox was renumbered, so the cursor is void. \
+             Restarting from the newest message; anything that arrived in the gap is not imported.",
+        );
+    }
+    let cursor = &FetchCursor {
+        last_seen_uid: if renumbered {
+            None
+        } else {
+            cursor.last_seen_uid
+        },
+        uid_validity,
+    };
 
     // Build UID range. On first run (no cursor), only fetch latest message
     // so we don't backfill the entire mailbox accidentally.
@@ -119,10 +221,7 @@ async fn fetch(
     // every later tick re-requests the same empty window forever. Enumerating first
     // keeps the range open — only the *body* fetch is bounded — so the cursor always
     // advances and a backlog simply drains over several ticks.
-    let range = match cursor.last_seen_uid {
-        Some(uid) => format!("{}:*", uid + 1),
-        None => "*".to_string(),
-    };
+    let range = uid_range(cursor);
 
     // ⚠️ Each `uid_fetch` stream borrows the session mutably and must be driven to
     // completion before the next command: a stream dropped early leaves an unread
@@ -145,12 +244,38 @@ async fn fetch(
     };
 
     pending.sort_unstable();
+    // `{last+1}:*` still matches the highest existing UID when nothing is newer, because `*`
+    // resolves to it and IMAP ranges are order-independent. Dropping those here costs an idle
+    // mailbox one enumerate round trip instead of re-fetching a body it already has.
+    let highest_enumerated = pending.last().copied();
+    if let Some(last) = cursor.last_seen_uid {
+        pending.retain(|uid| *uid > last);
+    }
     let total_pending = pending.len();
     pending.truncate(MAX_UIDS_PER_TICK);
 
     if pending.is_empty() {
+        // Every UID below the cursor while the validity held. Renumbering used to
+        // be the other explanation and is now handled above, so what is left is a
+        // mailbox that lost its newest mail — and the cursor must not walk back to
+        // meet it, or everything between would be imported twice.
+        if let (Some(highest), Some(last)) = (highest_enumerated, cursor.last_seen_uid)
+            && highest < last
+        {
+            tracing::warn!(
+                highest_uid = highest,
+                cursor_uid = last,
+                uid_validity = ?uid_validity,
+                "imap: every uid sits below the cursor and the mailbox was not renumbered — \
+                 polling cannot advance from here",
+            );
+        }
         let _ = session.logout().await;
-        return Ok((Vec::new(), cursor.last_seen_uid));
+        return Ok(FetchOutcome {
+            messages: Vec::new(),
+            highest_uid: cursor.last_seen_uid,
+            uid_validity,
+        });
     }
     if total_pending > pending.len() {
         tracing::info!(
@@ -171,7 +296,7 @@ async fn fetch(
 
     {
         let mut fetches = session
-            .uid_fetch(&body_range, "(UID INTERNALDATE RFC822)")
+            .uid_fetch(&body_range, BODY_QUERY)
             .await
             .map_err(|e| ImportError::Upstream(format!("uid_fetch: {e}")))?;
 
@@ -214,7 +339,11 @@ async fn fetch(
 
     let _ = session.logout().await;
 
-    Ok((messages, max_uid))
+    Ok(FetchOutcome {
+        messages,
+        highest_uid: max_uid,
+        uid_validity,
+    })
 }
 
 fn parse_headers(body: &[u8]) -> (String, String, chrono::DateTime<chrono::Utc>) {
@@ -248,6 +377,59 @@ fn parse_headers(body: &[u8]) -> (String, String, chrono::DateTime<chrono::Utc>)
 mod tests {
     use super::*;
 
+    /// The case the guard exists for: the server issued a new numbering, so the
+    fn at(last_seen_uid: Option<u32>) -> FetchCursor {
+        FetchCursor {
+            last_seen_uid,
+            uid_validity: None,
+        }
+    }
+
+    /// ⛔ The invariant the cursor-reset route depends on, and it is not obvious:
+    /// a rewind stores `Some(0)` precisely because deleting the row would mean
+    /// `None`, and `None` fetches only the newest message. Storing zero is what
+    /// asks for the whole mailbox.
+    /// RFC 3501's grammar allows only `d-Mon-yyyy`; an ISO date is outside it.
+    #[test]
+    fn a_date_search_uses_the_imap_date_form() {
+        let d = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        assert_eq!(search_since(d(2026, 8, 28)), "SINCE 28-Aug-2026");
+        assert_eq!(search_since(d(2026, 9, 1)), "SINCE 1-Sep-2026");
+    }
+
+    #[test]
+    fn a_rewound_cursor_asks_for_every_message_and_an_absent_one_does_not() {
+        assert_eq!(uid_range(&at(Some(0))), "1:*", "a rewind must ask for all");
+        assert_eq!(
+            uid_range(&at(None)),
+            "*",
+            "never polled must stay anchored to the newest message, not backfill"
+        );
+        assert_eq!(uid_range(&at(Some(41))), "42:*", "resume is exclusive");
+    }
+
+    /// stored UID is meaningless and keeping it stalls the mailbox forever.
+    #[test]
+    fn a_changed_validity_voids_the_cursor() {
+        assert!(mailbox_was_renumbered(Some(7), Some(8)));
+        assert!(mailbox_was_renumbered(Some(8), Some(7)));
+    }
+
+    #[test]
+    fn an_unchanged_validity_keeps_the_cursor() {
+        assert!(!mailbox_was_renumbered(Some(7), Some(7)));
+    }
+
+    /// ⛔ The half that matters on upgrade day. A cursor stored before the
+    /// validity was recorded reads as unknown, and unknown is not a mismatch — the
+    /// alternative resets every mailbox on the first tick after deploying this.
+    #[test]
+    fn an_unknown_validity_on_either_side_is_never_a_reset() {
+        assert!(!mailbox_was_renumbered(None, Some(7)));
+        assert!(!mailbox_was_renumbered(Some(7), None));
+        assert!(!mailbox_was_renumbered(None, None));
+    }
+
     fn gmail_personal_creds_from_env() -> Option<ImapCredentials> {
         let user = std::env::var("GMAIL_PERSONAL_USER").ok()?;
         let pass = std::env::var("GMAIL_PERSONAL_PASSWORD").ok()?;
@@ -274,6 +456,24 @@ mod tests {
         );
     }
 
+    /// The poll must not mark the user's mail read.
+    ///
+    /// ⛔ Do not delete as "trivial". `RFC822` and `BODY[]` implicitly set `\Seen`;
+    /// `BODY.PEEK[]` does not. A regression imports mail perfectly and shows up
+    /// only as the user's inbox quietly going read behind them, which no other
+    /// test in this suite would catch.
+    #[test]
+    fn the_body_fetch_peeks_and_never_sets_seen() {
+        assert!(
+            BODY_QUERY.contains("BODY.PEEK["),
+            "body fetch must PEEK, got: {BODY_QUERY}"
+        );
+        assert!(
+            !BODY_QUERY.contains("RFC822"),
+            "RFC822 implicitly sets \\Seen, got: {BODY_QUERY}"
+        );
+    }
+
     #[tokio::test]
     #[ignore = "hits real Gmail IMAP; needs GMAIL_PERSONAL_USER + GMAIL_PERSONAL_PASSWORD"]
     async fn live_gmail_personal_inbox_fetch_latest_one() {
@@ -288,15 +488,21 @@ mod tests {
         // First run: no cursor → fetcher should fetch the latest message only.
         let cursor = FetchCursor {
             last_seen_uid: None,
+            ..Default::default()
         };
-        let (messages, max_uid) = fetcher
+        let FetchOutcome {
+            messages,
+            highest_uid,
+            uid_validity,
+        } = fetcher
             .fetch_new(&cursor)
             .await
             .expect("live fetch should succeed");
         eprintln!(
-            "Live fetch: {} messages, max_uid={:?}",
+            "Live fetch: {} messages, highest_uid={:?}, uid_validity={:?}",
             messages.len(),
-            max_uid
+            highest_uid,
+            uid_validity,
         );
         if let Some(m) = messages.first() {
             eprintln!(
@@ -306,6 +512,13 @@ mod tests {
         }
         // Loose assertion — INBOX should have something; if it doesn't, that's
         // still valid (test passes with 0 messages).
-        assert!(max_uid.is_some() || messages.is_empty());
+        assert!(highest_uid.is_some() || messages.is_empty());
+        // A real server always answers EXAMINE with a UIDVALIDITY, and without one
+        // the reset guard can never fire — so its absence is worth failing on here,
+        // where a live mailbox is actually on the other end.
+        assert!(
+            uid_validity.is_some(),
+            "a live mailbox should report UIDVALIDITY"
+        );
     }
 }

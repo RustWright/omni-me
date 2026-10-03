@@ -34,7 +34,7 @@ use omni_me_core::auto_import::setup::{DEFAULT_INTERVAL, spawn_sources};
 use omni_me_core::auto_import_scheduler::{AutoImportSource, SourceRegistry};
 use omni_me_core::credentials::{self, LlmRole};
 use omni_me_core::db::Database;
-use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore};
+use omni_me_core::events::{EventStore, ProjectionRunner, SurrealEventStore, registry};
 use omni_me_core::extraction::DocumentExtractor;
 use omni_me_core::llm::{
     ClientOptions, LlmClient, build_extractor, build_llm_client, build_reader, build_transcriber,
@@ -70,7 +70,7 @@ fn listen_addr() -> String {
 /// The deployment marker goes here rather than beside the database file: the
 /// container mounts its whole stateful volume at this path, so the marker
 /// travels with a clone of the data instead of with the config that read it.
-fn data_root() -> PathBuf {
+pub(crate) fn data_root() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
@@ -122,6 +122,18 @@ pub struct AppState {
     /// a destructive tool can ask before it acts. `None` means nothing declared
     /// one, which every such tool must treat as a refusal.
     pub instance: Option<Instance>,
+    /// The one feature-wipe preview a confirm may act on. See
+    /// [`routes::WipeTicket`]. Separate slot from the document purge's: the two
+    /// destroy different things, and one ticket covering both would let a
+    /// document-purge confirm redeem a token issued for a ledger wipe.
+    pub wipe_ticket: Arc<tokio::sync::Mutex<Option<routes::WipeTicket>>>,
+    /// The one purge preview a confirm may act on. See
+    /// [`routes::PurgeTicket`].
+    ///
+    /// ⚠️ In memory, not persisted, and that is correct: a restart should void an
+    /// unconfirmed preview rather than let one be redeemed against an archive that
+    /// has moved on.
+    pub purge_ticket: Arc<tokio::sync::Mutex<Option<routes::PurgeTicket>>>,
 }
 
 /// The shared runtime handles [`run`] hands a [`SourceBuilder`] so it can
@@ -191,10 +203,33 @@ pub async fn run(cfg: RunConfig) {
     // Load server credentials once (graceful: missing/unreadable → default-empty,
     // so a zero-config public engine still boots — 3.4). Reused for the text-LLM
     // client and the document extractor.
-    let creds = credentials::default_path()
-        .ok()
-        .and_then(|p| credentials::load(&p).ok())
-        .unwrap_or_default();
+    //
+    // A file that is PRESENT but unparseable is shouted about rather than
+    // silently degraded. `load` already maps a missing file to default-empty, so
+    // anything reaching the error arm is a real file this node could not read.
+    // Why it earns an ERROR: the failure is whole-file, and every section goes
+    // with it. Removing one required key from `[server]` — leaving the table
+    // present but empty — took out `[llm]` and all three `[imap.*]` accounts too;
+    // the box booted `{"status":"ok"}`, auto-import stopped dead, and the only
+    // clues were warnings about the sections that had not been touched.
+    let creds = match credentials::default_path() {
+        Ok(path) => match credentials::load(&path) {
+            Ok(creds) => creds,
+            Err(e) => {
+                tracing::error!(
+                    path = %path.display(),
+                    error = %e,
+                    "credentials file could not be parsed — CONTINUING WITH NONE OF IT: no LLM \
+                     provider, no auto-import sources, no server token. Fix the file and restart.",
+                );
+                credentials::Credentials::default()
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, "no credentials path — continuing with defaults");
+            credentials::Credentials::default()
+        }
+    };
 
     // HTTP bearer token. Deliberately FAILS OPEN when `[server]` is absent:
     // upgrading the box must not start rejecting devices that haven't been
@@ -241,7 +276,10 @@ pub async fn run(cfg: RunConfig) {
     // rather than panicking — part of the zero-config boot guarantee (3.4). Its
     // provider-swap (OpenAI-compatible vision) is a deferred fast-follow that
     // will read the same `[llm]` section.
-    let extractor: Arc<dyn DocumentExtractor> = build_extractor(&creds);
+    // `ClientOptions::default()` on purpose: production goes direct to the
+    // committed provider, so there is no gateway to pin and nothing per-request to
+    // add. The sampling role C runs at comes from the config, not from here.
+    let extractor: Arc<dyn DocumentExtractor> = build_extractor(&creds, ClientOptions::default());
 
     // Shared registry — populated below by spawn_sources, read by the
     // /auto_import/status + /auto_import/tick route handlers via AppState.
@@ -250,11 +288,12 @@ pub async fn run(cfg: RunConfig) {
     // Auto-import build handles. Built before AppState so the state can carry
     // *clones* (the in-app add-source endpoint constructs + spawns a source live
     // from them) while the boot-time `SourceCtx` builder consumes the originals.
-    // Projections vec is empty: the server stores events + syncs them to clients,
-    // which run their own projections locally.
+    // Devices run their own projections; the server keeps only the tables its own
+    // background work queries. First boot on an existing log replays it.
     let device_id =
         std::env::var("OMNI_SERVER_DEVICE_ID").unwrap_or_else(|_| "server-auto-import".to_string());
-    let server_projections = ProjectionRunner::new((*db_arc).clone(), Vec::new());
+    let server_projections =
+        ProjectionRunner::new((*db_arc).clone(), registry::build_projections_server());
     if let Err(e) = server_projections.init_all().await {
         tracing::warn!(error = %e, "server projection_versions init failed");
     }
@@ -283,6 +322,8 @@ pub async fn run(cfg: RunConfig) {
         default_interval: interval,
         secrets: Arc::new(creds.secrets.clone()),
         instance,
+        purge_ticket: Arc::new(tokio::sync::Mutex::new(None)),
+        wipe_ticket: Arc::new(tokio::sync::Mutex::new(None)),
     };
 
     // Auto-import: the engine owns the store/projections/device_id but not the
@@ -301,6 +342,16 @@ pub async fn run(cfg: RunConfig) {
     // spawned (not even one boot tick). Applies uniformly to compiled overlay
     // sources too: everything the builder returns flows through here. A load
     // failure degrades to "nothing paused" rather than failing startup.
+    // Said at boot because the alternative is learning it from a pause that
+    // reports an error, long after the deployment that broke it.
+    if let Some(why) = omni_me_core::paths::state_dir_write_error() {
+        tracing::error!(
+            reason = %why,
+            "auto-import config cannot be saved — pause/resume and source changes will not \
+             survive a restart. The app's state dir must not contain a bind mount."
+        );
+    }
+
     let paused_names = match omni_me_core::auto_import::paused::default_path() {
         Ok(p) => omni_me_core::auto_import::paused::load(&p).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "failed to load persisted paused sources — treating none as paused");
@@ -334,12 +385,38 @@ pub async fn run(cfg: RunConfig) {
         omni_me_core::config::ALL_FEATURES.iter().copied().collect(),
         state.device_id.clone(),
     ));
+    // Free and model-less, so it runs whether or not enrichment is enabled.
+    let passwords = omni_me_core::credentials::PdfPasswords::from_secrets(&state.secrets);
+    if !passwords.is_empty() {
+        let (db, writer, blob_dir) = (
+            (*state.db).clone(),
+            enrich_writer.clone(),
+            (*state.blob_dir).clone(),
+        );
+        tokio::spawn(async move {
+            match omni_me_core::document_enrichment::reread_textless_pdfs(
+                &db, &writer, &blob_dir, &passwords,
+            )
+            .await
+            {
+                Ok(s) => tracing::info!(
+                    candidates = s.candidates,
+                    read = s.read,
+                    still_locked = s.still_locked,
+                    no_text = s.no_text,
+                    no_bytes = s.no_bytes,
+                    "textless pdfs re-read against the configured passwords"
+                ),
+                Err(e) => tracing::warn!(error = %e, "re-reading textless pdfs failed"),
+            }
+        });
+    }
     enrichment_scheduler::spawn(
         (*state.db).clone(),
         enrich_writer,
         (*state.blob_dir).clone(),
-        build_reader(&creds),
-        build_transcriber(&creds),
+        build_reader(&creds, ClientOptions::default()),
+        build_transcriber(&creds, ClientOptions::default()),
         enrichment_scheduler::config_from_env(),
     );
 
@@ -395,7 +472,10 @@ pub fn build_app(
         .merge(routes::statement_routes())
         .merge(routes::auto_import_routes())
         .merge(routes::feedback_routes())
-        .merge(routes::llm_routes());
+        .merge(routes::llm_routes())
+        // Behind the bearer gate like the rest, and with two gates of its own on
+        // top: a preview ticket and a named instance. See `routes::wipe`.
+        .merge(routes::wipe_routes());
 
     if let Some(token) = auth_token {
         // `route_layer`, NOT `layer`: a plain `layer` also wraps the fallback,
@@ -599,6 +679,9 @@ mod tests {
             build_llm_client(&creds, ClientOptions::default(), LlmRole::Structurer).model_name(),
             "llava"
         );
-        assert_eq!(build_extractor(&creds).name(), "null");
+        assert_eq!(
+            build_extractor(&creds, ClientOptions::default()).name(),
+            "null"
+        );
     }
 }

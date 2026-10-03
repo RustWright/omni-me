@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use omni_me_core::auto_import::config::{self, SourceDef};
 use omni_me_core::auto_import::paused;
 use omni_me_core::auto_import_scheduler::{
-    ReauthOutcome, SourceHealth, SourceStatus, classify_source_health,
+    CursorResetOutcome, ReauthOutcome, SourceHealth, SourceStatus, classify_source_health,
 };
 
 use crate::AppState;
@@ -52,6 +52,12 @@ pub fn auto_import_routes() -> Router<AppState> {
         .route(
             "/auto_import/sources/{name}/resume",
             post(resume_source_handler),
+        )
+        // Rewinding is its own route rather than part of a wipe, because what it
+        // costs only shows up when you run it. `docs/src/features.md`.
+        .route(
+            "/auto_import/sources/{name}/cursor/reset",
+            post(reset_cursor_handler),
         )
 }
 
@@ -150,6 +156,64 @@ async fn reauth_handler(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CursorResetRequest {
+    /// The instance the caller believes it is talking to, as `/health` reports
+    /// it. Same gate as the wipe's confirm, for the same reason: a shell with
+    /// the wrong host should not be able to aim this at the live mailbox.
+    pub instance: String,
+    /// Re-fetch from the first message received on or after this date instead of
+    /// from the beginning. `YYYY-MM-DD`.
+    #[serde(default)]
+    pub since: Option<chrono::NaiveDate>,
+}
+
+/// `POST /auto_import/sources/{name}/cursor/reset` — rewind one source so its
+/// next pull re-fetches from the beginning, or from `since`.
+///
+/// ⚠️ Not a restore. Re-fetched mail is archived again, so every message this
+/// rewinds past gains a second document record — one blob each, since blobs are
+/// addressed by content. That is the price of getting the batches back, and it
+/// is why this is not folded into the wipe.
+async fn reset_cursor_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<CursorResetRequest>,
+) -> Result<Json<CursorResetOutcome>, (StatusCode, String)> {
+    // ⛔ An undeclared deployment refuses, exactly as it does for a wipe: a
+    // half-provisioned box must not be mistakable for the dev one.
+    let Some(declared) = state.instance else {
+        return Err((
+            StatusCode::CONFLICT,
+            "this server declares no instance, so a re-fetch cannot be addressed to it. \
+             Set OMNI_INSTANCE."
+                .to_string(),
+        ));
+    };
+    if req.instance.trim() != declared.as_str() {
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "this server is `{}`, not `{}` — refusing a re-fetch addressed elsewhere",
+                declared.as_str(),
+                req.instance.trim()
+            ),
+        ));
+    }
+
+    match state
+        .auto_import_registry
+        .reset_cursor(&name, req.since)
+        .await
+    {
+        Ok(outcome) => Ok(Json(outcome)),
+        Err(omni_me_core::auto_import_scheduler::ImportError::NotConfigured(msg)) => {
+            Err((StatusCode::NOT_FOUND, msg))
+        }
+        Err(e) => Err(upstream_err("reset_cursor", &name, e)),
+    }
+}
+
 // =============================================================================
 // Source-definition CRUD (3.7) — persist + apply live
 // =============================================================================
@@ -163,6 +227,25 @@ async fn reauth_handler(
 
 /// Same reasoning as [`upstream_err`]: config-layer failures are `io::Error`
 /// strings naming absolute paths on the box. Logged in full, returned generic.
+/// The live change succeeded and the durable one did not, so the two stores
+/// disagree until the next restart. Said explicitly because `/auto_import/status`
+/// reads the registry rather than disk and will show the change as applied.
+fn diverged_err<E: std::fmt::Display>(name: &str, action: &str, e: E) -> (StatusCode, String) {
+    tracing::error!(
+        source = %name,
+        action = %action,
+        error = %e,
+        "auto-import state changed live but could not be persisted"
+    );
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!(
+            "'{name}' was {action} live but the change could not be saved, \
+             so a restart will undo it — see server logs"
+        ),
+    )
+}
+
 fn internal_err<E: std::fmt::Display>(e: E) -> (StatusCode, String) {
     tracing::warn!(error = %e, "auto-import config operation failed");
     (
@@ -267,7 +350,9 @@ fn clear_persisted_pause(name: &str) {
 /// name is running/registered. The persist is a hard requirement, not
 /// best-effort: a pause that silently didn't survive a restart is exactly the
 /// runaway-source failure mode #367 exists to prevent, so a persistence failure
-/// is surfaced as a 500 (the in-memory abort is harmless on its own).
+/// is surfaced as a 500 (the in-memory abort is harmless on its own). That 500
+/// says the two stores diverged, because `/auto_import/status` reads the live
+/// registry and will show the pause regardless.
 async fn pause_source_handler(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -278,8 +363,8 @@ async fn pause_source_handler(
             format!("no running source named '{name}'"),
         ));
     }
-    let path = paused::default_path().map_err(internal_err)?;
-    paused::set_paused(&path, &name, true).map_err(internal_err)?;
+    let path = paused::default_path().map_err(|e| diverged_err(&name, "paused", e))?;
+    paused::set_paused(&path, &name, true).map_err(|e| diverged_err(&name, "paused", e))?;
     Ok(Json(
         serde_json::json!({ "status": "paused", "applies": "live" }),
     ))
@@ -298,8 +383,8 @@ async fn resume_source_handler(
             format!("no running source named '{name}'"),
         ));
     }
-    let path = paused::default_path().map_err(internal_err)?;
-    paused::set_paused(&path, &name, false).map_err(internal_err)?;
+    let path = paused::default_path().map_err(|e| diverged_err(&name, "resumed", e))?;
+    paused::set_paused(&path, &name, false).map_err(|e| diverged_err(&name, "resumed", e))?;
     Ok(Json(
         serde_json::json!({ "status": "resumed", "applies": "live" }),
     ))

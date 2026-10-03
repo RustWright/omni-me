@@ -20,7 +20,7 @@ use super::projection::Projection;
 use super::store::{Event, EventError};
 use super::types::{
     AssistantAnswerGivenPayload, AssistantProposalDecidedPayload, AssistantProposalMadePayload,
-    AssistantQuestionAskedPayload,
+    AssistantQuestionAskedPayload, AssistantThreadArchivedPayload, AssistantThreadDeletedPayload,
 };
 
 pub struct AssistantProjection;
@@ -36,12 +36,12 @@ impl Projection for AssistantProjection {
     }
 
     /// 2 added `assistant_proposals`; 3 added `assistant_messages.scheduled`;
-    /// 4 adds `assistant_autonomy`.
+    /// 4 adds `assistant_autonomy`; 5 adds `assistant_thread_state`.
     /// The bump is what replays the log into the new shape — see
     /// `ProjectionRunner::init_all`, where a changed version rebuilds rather than
     /// merely recording a number.
     fn version(&self) -> u32 {
-        4
+        5
     }
 
     async fn init_schema(&self, db: &Database) -> Result<(), EventError> {
@@ -145,7 +145,17 @@ impl Projection for AssistantProjection {
              DEFINE FIELD IF NOT EXISTS reversible ON assistant_autonomy TYPE option<bool>;
              DEFINE FIELD IF NOT EXISTS decided_at ON assistant_autonomy TYPE datetime;
              DEFINE FIELD IF NOT EXISTS revoked_reason ON assistant_autonomy
-                 TYPE option<string>;",
+                 TYPE option<string>;
+
+             -- Apart from assistant_threads on purpose: an archive or delete can
+             -- arrive before the thread's messages, and touch_thread's UPSERT
+             -- would otherwise have to carry these columns through.
+             DEFINE TABLE IF NOT EXISTS assistant_thread_state SCHEMAFULL;
+             DEFINE FIELD IF NOT EXISTS thread_id ON assistant_thread_state TYPE string;
+             DEFINE FIELD IF NOT EXISTS archived ON assistant_thread_state TYPE option<bool>;
+             DEFINE FIELD IF NOT EXISTS archived_at ON assistant_thread_state
+                 TYPE option<datetime>;
+             DEFINE FIELD IF NOT EXISTS deleted ON assistant_thread_state TYPE option<bool>;",
         )
         .await?
         .check()?;
@@ -157,7 +167,8 @@ impl Projection for AssistantProjection {
             "DELETE FROM assistant_messages;
              DELETE FROM assistant_threads;
              DELETE FROM assistant_proposals;
-             DELETE FROM assistant_autonomy",
+             DELETE FROM assistant_autonomy;
+             DELETE FROM assistant_thread_state",
         )
         .await?
         .check()?;
@@ -172,12 +183,66 @@ impl Projection for AssistantProjection {
             "assistant_proposal_decided" => self.on_proposal_decided(event, db).await,
             "autonomy_granted" => self.on_autonomy(event, db, true).await,
             "autonomy_revoked" => self.on_autonomy(event, db, false).await,
+            "assistant_thread_archived" => self.on_thread_archived(event, db).await,
+            "assistant_thread_deleted" => self.on_thread_deleted(event, db).await,
             _ => Ok(()),
         }
     }
 }
 
 impl AssistantProjection {
+    /// Last write wins by event timestamp, since sync delivers in arrival order.
+    async fn on_thread_archived(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+        let Ok(parsed) =
+            serde_json::from_value::<AssistantThreadArchivedPayload>(event.payload.clone())
+        else {
+            tracing::warn!(event_id = %event.id, "skipping an unreadable thread archive");
+            return Ok(());
+        };
+        let mut stored = db
+            .query(
+                "SELECT <string> archived_at AS archived_at
+                 FROM type::record('assistant_thread_state', $t) WHERE archived_at != NONE",
+            )
+            .bind(("t", parsed.thread_id.clone()))
+            .await?
+            .check()?;
+        let at: Option<String> = stored.take("archived_at").unwrap_or(None);
+        let newer_on_record = at
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .is_some_and(|t| t > event.timestamp);
+        if newer_on_record {
+            return Ok(());
+        }
+        db.query(
+            "UPSERT type::record('assistant_thread_state', $t) SET
+                thread_id = $t, archived = $a, archived_at = type::datetime($at)",
+        )
+        .bind(("t", parsed.thread_id))
+        .bind(("a", parsed.archived))
+        .bind(("at", event.timestamp.to_rfc3339()))
+        .await?
+        .check()?;
+        Ok(())
+    }
+
+    /// Permanent: nothing un-deletes, so arrival order does not matter.
+    async fn on_thread_deleted(&self, event: &Event, db: &Database) -> Result<(), EventError> {
+        let Ok(parsed) =
+            serde_json::from_value::<AssistantThreadDeletedPayload>(event.payload.clone())
+        else {
+            tracing::warn!(event_id = %event.id, "skipping an unreadable thread delete");
+            return Ok(());
+        };
+        db.query(
+            "UPSERT type::record('assistant_thread_state', $t) SET thread_id = $t, deleted = true",
+        )
+        .bind(("t", parsed.thread_id))
+        .await?
+        .check()?;
+        Ok(())
+    }
+
     async fn on_question(&self, event: &Event, db: &Database) -> Result<(), EventError> {
         // Skip, never error — the `ConfigProjection::on_set` reasoning. A message
         // this build cannot read was written by a different one, and failing the

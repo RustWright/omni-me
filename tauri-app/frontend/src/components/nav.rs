@@ -141,6 +141,11 @@ pub fn NavDrawer(
                         button {
                             key: "{label}",
                             class: "{row_class(tab)}",
+                            // ⛔ The nav's only stable handle. The automated
+                            // viewport sweep drives every tab through here, and
+                            // matching on the visible label instead would make a
+                            // copy edit look like a nav regression.
+                            "data-tab": "{tab.as_key()}",
                             onclick: move |_| {
                                 on_switch.call(tab);
                                 on_close.call(());

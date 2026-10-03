@@ -552,6 +552,7 @@ each of these roles earns its own, benchmarked rather than argued:
 | **Batch reasoner** | the scheduled check-in | quality; it can afford to be slow | **unmeasured** |
 | **Quarantined extractor** | the document extractor; the reader has no caller yet | reads images, and **never holds tools** | **unmeasured** |
 | **High-volume structurer** | `POST /notes/{id}/process` | cost per call, and knowing when to abstain | **unmeasured** |
+| **Mail triage** | every fetched email, before the extractor | never missing a receipt, then cost | **measured** on one month of mail; shadow mode only |
 | **Local** | search | never leaves your machine at all | **reranker measured**; the embedder is inherited, not compared |
 
 Most seats now have a caller, which was not true when this table was written — the archive
@@ -598,6 +599,56 @@ The quarantined extractor is a trust boundary rather than a performance tier —
 The structurer is judged on **abstention**: a categorizer that is right 85% of the time and
 says so when unsure beats one that is right 95% of the time and confidently wrong for the
 rest, because an unsorted item is easy to fix and a wrongly-sorted one hides.
+
+## How each seat is sampled
+
+A request can ask a model to sample deterministically — always take the most likely next
+token — or to sample with some randomness. omni-me did neither for its first year: it sent
+no `temperature`, no `top_p` and no `seed`, so every request ran at whatever the endpoint
+defaulted to, a value we neither set nor recorded.
+
+That is fine for a conversation and not fine for a document. Reading a statement has one
+right answer, and the same model on the same 39-row statement returned 29 of 39 figures with
+13 of them sign-flipped on one run, and all 39 with none flipped on the next. A sign flip is
+money in the wrong direction. So the seats are split:
+
+| Seat | Sampling | Why |
+|---|---|---|
+| Quarantined extractor, document reader, transcriber | `temperature: 0` | One right answer. Reproducibility is worth more than variety. |
+| High-volume structurer | `temperature: 0` | Turning a note into records is the same kind of question, and it is judged on knowing when to abstain. |
+| Mail triage | `temperature: 0` | One word with one right answer. |
+| Batch reasoner | `temperature: 0` | It answers one scheduled question a day and is told not to draw new conclusions. Variety buys it nothing, and determinism is what lets its benchmark separate candidates at all. |
+| Interactive reasoner | whatever the endpoint defaults to | The one seat being conversed with. Temperature 0 costs phrasing that varies, and that is a product decision rather than a correctness one. |
+
+The line is not between document work and conversation — it is between a question that has one
+right answer and a voice somebody hears.
+
+Any of it can be set per seat in `credentials.toml`, beside the model that seat uses:
+
+```toml
+[llm]
+temperature = 0.2          # applies to every role that does not override it
+
+[llm.reader]
+model = "..."
+seed = 7                   # this seat only; it keeps the temperature above
+```
+
+Sampling lives with the model rather than in an environment variable because it is part of
+what a seat *is*, where a request-rate cap describes the deployment an endpoint happens to be.
+
+**Two things this does not promise.** `temperature: 0` narrows a model's choices but does not
+make a serving stack deterministic — batching, quantization and routing all move the answer,
+and a request that reaches a different upstream is a different measurement whatever it asked
+for. And `seed` is a *request*: some stacks honour it, some ignore it, and none of them say so
+in the reply. omni-me therefore sends no seed by default, for a sharper reason too — a gateway
+told to route only to endpoints supporting every parameter in the request will refuse the ones
+without `seed`, so asking for reproducibility can turn into a routing failure on some requests
+and not others.
+
+What omni-me does guarantee is that the sampling is **recorded**: the value each seat resolved
+to is logged when its client is built, and every benchmark prints it in its own header, so a
+scorecard can be compared against the next one.
 
 ## What it will not do
 

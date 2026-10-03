@@ -11,7 +11,8 @@
 # for a pinned git rev and builds its own binary + ships its subprocess helper.
 
 # ---- builder ----
-FROM rust:1-bookworm AS builder
+# Pinned, never the rolling `rust:1`: CI is on 1.98.1 and 1.99 breaks the build.
+FROM rust:1.98.1-bookworm AS builder
 
 # No apt build deps. This stage used to install `pkg-config libssl-dev` for
 # native-tls; the IMAP swap to async-imap + tokio-rustls removed the last
@@ -60,8 +61,13 @@ WORKDIR /data
 
 # DB lands at /data/surreal_data/server.db (relative to WORKDIR); blobs + the
 # credentials secret are pointed at fixed paths the compose file mounts.
+#
+# XDG_STATE_HOME must stay off /config. Docker creates the parents of the
+# credentials bind mount as root, so anything the app writes under /config
+# fails with EACCES; /data is the app-owned volume.
 ENV BLOB_DIR=/data/blobs \
-    XDG_CONFIG_HOME=/config
+    XDG_CONFIG_HOME=/config \
+    XDG_STATE_HOME=/data/state
 
 EXPOSE 3000
 

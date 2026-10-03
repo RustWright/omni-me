@@ -150,14 +150,16 @@ trigger, because otherwise these rows are unreachable from a browser.
 - [x] 0 console errors across the whole flow; no horizontal overflow at 390px
 - [ ] An irreversible proposal shows "This one cannot be undone" — **no action declares
       itself irreversible yet**, so this is unreachable, not untested
-- [ ] A `note.revise` card shows **both** halves, labelled "Replacing:" and "With:", and a
-      revision with no replacement reads "Deleting:" — covered by unit tests; the mock has no
-      trigger for it, so this needs a real proposal
-- [D] A revise whose anchor the user edited away shows the refusal on the card — the mock
-      records decisions without resolving anything, so only a real backend can refuse
+- [x] A `note.revise` card shows **both** halves, labelled "Replacing:" and "With:", and a
+      revision with no replacement reads "Deleting:" — CONFIRMED on the phone 2026-09-26
+      against the dev server; `replace` must be *absent*, not empty, for the "Deleting:" branch
+- [x] A revise whose anchor the user edited away shows the refusal on the card — CONFIRMED
+      2026-09-26: "The text this would have replaced is no longer in the note." The card stays
+      decidable and the badge stays up, because a refusal is not a decision and writes nothing
 - [ ] A proposal from a newer build (unknown action) renders a decidable card —
       covered by a unit test, never seen on screen
-- [D] Accepting actually creates the record — the mock cannot author events
+- [x] Accepting actually creates the record — CONFIRMED 2026-09-26; the accepted revise's
+      event diff was one line, frontmatter and the other paragraphs byte-identical
 - [D] A proposal made by the agent on the box appears here after a pull
 - [D] A proposal decided on one device shows as decided on the other
 
@@ -198,11 +200,27 @@ unreachable from a browser.
 
 ## Cross-cutting
 
-- [ ] Layout holds at 360px, 390px and 1280px with no horizontal overflow
+- [ ] Layout holds at 360px, 390px and 1280px with no horizontal overflow — ⚠️ **do not
+      eyeball this**; it shipped broken once. `node tests/viewport-check.mjs` measures it,
+      and the archive *detail* view is the one that failed, not the list
 - [ ] Native `<select>` controls are legible — **verify on the desktop app, not
       Playwright**; Chromium and webkit2gtk disagree here and a screenshot has lied before
 - [ ] Destructive actions all require confirmation
 - [ ] Long-press / touch targets usable at mobile width
+
+## Every count leads somewhere
+
+⛔ Added 2026-09-29, after a badge counted a queue the UI could not open. For **each** badge
+or "N waiting" row: does tapping it reach the counted items, and is there an action there?
+A count whose destination is a tab root is the defect, not a rough edge.
+
+- [ ] Nav badge on Archive → the list, narrowed by "Unchecked only", showing those documents
+- [ ] Assistant's "N items waiting in Archive" row → same, filter already applied
+- [ ] Assistant's "N items waiting in Finances" → Overview with the review inbox scrolled
+      to and ringed (⚠️ not a jump into one queue — the count merges batches and proposals)
+- [ ] Archive list past 100 rows offers "Load more" and states how many are shown
+- [ ] Finance review shows a receipt's attachments and opens one inline, without leaving
+      the review
 - [D] Share-intent hand-off from the Android share sheet
 - [D] OTA update check, download, sha256 verify, install prompt
 

@@ -104,6 +104,8 @@ fn ThreadList(
     let mut waiting = use_signal(Vec::<AssistantProposal>::new);
     let mut error_msg = use_signal(|| None::<String>);
     let mut loaded = use_signal(|| false);
+    let mut refresh = use_signal(|| 0u32);
+    let mut show_archived = use_signal(|| false);
 
     // ⚠️ Refetched on entry and on every inbound sync, never fetched once at
     // boot. A thread answered on another device — or a whole backfill — arrives
@@ -113,6 +115,7 @@ fn ThreadList(
     let sync_epoch = crate::sync_refresh::use_sync_epoch();
     use_effect(move || {
         let _ = sync_epoch.read(); // subscribe: re-run on inbound sync
+        let _ = refresh.read(); // and after an archive or delete here
         spawn(async move {
             match bridge::invoke_list_assistant_threads().await {
                 Ok(list) => {
@@ -131,6 +134,24 @@ fn ThreadList(
     });
 
     let waiting_count = waiting.read().len();
+    let (archived, active): (Vec<AssistantThread>, Vec<AssistantThread>) =
+        threads.read().iter().cloned().partition(|t| t.archived);
+    let archive = move |id: String, on: bool| {
+        spawn(async move {
+            match bridge::invoke_archive_assistant_thread(&id, on).await {
+                Ok(()) => refresh += 1,
+                Err(e) => error_msg.set(Some(e)),
+            }
+        });
+    };
+    let delete = move |id: String| {
+        spawn(async move {
+            match bridge::invoke_delete_assistant_thread(&id).await {
+                Ok(()) => refresh += 1,
+                Err(e) => error_msg.set(Some(e)),
+            }
+        });
+    };
 
     rsx! {
         div { class: "flex flex-col h-full",
@@ -180,11 +201,31 @@ fn ThreadList(
                         }
                     }
                 }
-                for thread in threads.read().iter().cloned() {
+                for thread in active {
                     ThreadRow {
                         key: "{thread.thread_id}",
                         thread: thread.clone(),
                         on_open: move |_| on_open.call(thread.thread_id.clone()),
+                        on_archive: move |(id, on)| archive(id, on),
+                        on_delete: delete,
+                    }
+                }
+                if !archived.is_empty() {
+                    button {
+                        class: "w-full text-left text-obsidian-text-muted text-xs py-3",
+                        onclick: move |_| show_archived.toggle(),
+                        if *show_archived.read() { "Hide archived" } else { "Archived ({archived.len()})" }
+                    }
+                    if *show_archived.read() {
+                        for thread in archived {
+                            ThreadRow {
+                                key: "{thread.thread_id}",
+                                thread: thread.clone(),
+                                on_open: move |_| on_open.call(thread.thread_id.clone()),
+                                on_archive: move |(id, on)| archive(id, on),
+                                on_delete: delete,
+                            }
+                        }
                     }
                 }
             }
@@ -220,6 +261,20 @@ fn ThreadList(
 /// ⚠️ Renders nothing when there is nothing waiting, rather than an
 /// all-clear line: a permanent row on the assistant's landing screen costs
 /// attention every visit and pays it back only occasionally.
+/// Where a "N items waiting" row should land inside the tab it names.
+///
+/// ⛔ `None` is a landing at the tab root, which for a queue row is the bug this
+/// exists to fix — so a tab that grows a review queue must be added here. There
+/// is no warning if it is not: the row still navigates, it just arrives nowhere
+/// useful.
+fn intent_for(tab: Tab) -> Option<crate::NavIntent> {
+    match tab {
+        Tab::Finances => Some(crate::NavIntent::FinancesReview),
+        Tab::Archive => Some(crate::NavIntent::ArchiveUnverified),
+        _ => None,
+    }
+}
+
 #[component]
 fn ApprovalsElsewhere() -> Element {
     let approvals = crate::approvals::use_pending_approvals();
@@ -246,7 +301,9 @@ fn ApprovalsElsewhere() -> Element {
                     key: "{tab_label(tab)}",
                     class: "px-3 py-2 rounded-md bg-obsidian-border/5 border border-obsidian-border/10 \
                             cursor-pointer hover:bg-obsidian-border/10 flex items-center justify-between gap-2",
-                    onclick: move |_| crate::request_tab(tab),
+                    onclick: move |_| {
+                        crate::request_nav(crate::NavTarget { tab, intent: intent_for(tab) })
+                    },
                     div { class: "text-obsidian-text text-sm",
                         if count == 1 {
                             "1 item waiting in {tab_label(tab)}"
@@ -262,19 +319,47 @@ fn ApprovalsElsewhere() -> Element {
 }
 
 #[component]
-fn ThreadRow(thread: AssistantThread, on_open: EventHandler<()>) -> Element {
+fn ThreadRow(
+    thread: AssistantThread,
+    on_open: EventHandler<()>,
+    on_archive: EventHandler<(String, bool)>,
+    on_delete: EventHandler<String>,
+) -> Element {
+    let mut confirm_delete = use_signal(|| false);
     let title = thread
         .title
         .clone()
         .unwrap_or_else(|| "Untitled conversation".to_string());
+    let (id_a, id_d) = (thread.thread_id.clone(), thread.thread_id.clone());
+    let archived = thread.archived;
+    let action = "shrink-0 text-xs px-2 py-3 text-obsidian-text-muted hover:text-obsidian-text";
     rsx! {
-        div {
-            class: "px-3 py-3 border-b border-obsidian-border/10 cursor-pointer hover:bg-obsidian-border/5",
-            onclick: move |_| on_open.call(()),
-            div { class: "text-obsidian-text text-sm font-medium truncate", "{title}" }
-            div { class: "text-obsidian-text-muted text-xs mt-1",
-                "{thread.message_count} message"
-                if thread.message_count != 1 { "s" }
+        div { class: "flex items-center gap-1 border-b border-obsidian-border/10 min-w-0",
+            div {
+                class: "flex-1 min-w-0 px-3 py-3 cursor-pointer hover:bg-obsidian-border/5",
+                onclick: move |_| on_open.call(()),
+                div { class: "text-obsidian-text text-sm font-medium truncate", "{title}" }
+                div { class: "text-obsidian-text-muted text-xs mt-1",
+                    "{thread.message_count} message"
+                    if thread.message_count != 1 { "s" }
+                }
+            }
+            button {
+                class: action,
+                onclick: move |_| on_archive.call((id_a.clone(), !archived)),
+                if archived { "Restore" } else { "Archive" }
+            }
+            // Two taps: a delete is permanent and the row is easy to brush.
+            button {
+                class: if *confirm_delete.read() { "shrink-0 text-xs px-2 py-3 text-red-300 font-medium" } else { action },
+                onclick: move |_| {
+                    if *confirm_delete.read() {
+                        on_delete.call(id_d.clone());
+                    } else {
+                        confirm_delete.set(true);
+                    }
+                },
+                if *confirm_delete.read() { "Delete?" } else { "Delete" }
             }
         }
     }
@@ -867,5 +952,41 @@ fn Composer(placeholder: String, on_send: EventHandler<String>) -> Element {
                 "Ask"
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::NavIntent;
+
+    /// ⛔ Every tab that can appear in a reminder row needs a destination inside
+    /// it. Without one the row switches tabs and stops, which is what it did
+    /// before: "12 items waiting in Archive" landed on an unfiltered list of the
+    /// newest hundred documents, with no way to tell which twelve it meant.
+    ///
+    /// ⚠️ Not asserted over `ALL_TABS` — Journal and Notes have no review queue
+    /// and correctly map to `None`. The list below is the set `core::approvals::
+    /// summary` can actually produce a count for.
+    #[test]
+    fn every_tab_with_a_review_queue_names_where_to_land() {
+        assert_eq!(
+            intent_for(Tab::Finances),
+            Some(NavIntent::FinancesReview),
+            "the finances count merges batches and proposals; the card shows the split"
+        );
+        assert_eq!(
+            intent_for(Tab::Archive),
+            Some(NavIntent::ArchiveUnverified),
+            "the archive count is documents with unchecked fields"
+        );
+    }
+
+    /// A tab with nothing to review lands at its root, which is correct — the
+    /// row is never drawn for one.
+    #[test]
+    fn a_tab_without_a_queue_has_no_destination() {
+        assert_eq!(intent_for(Tab::Journal), None);
+        assert_eq!(intent_for(Tab::Settings), None);
     }
 }

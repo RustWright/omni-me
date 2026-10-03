@@ -101,3 +101,62 @@ window.destroyPdf = function (containerId) {
     container.replaceChildren();
   }
 };
+
+// Pinch, pan and wheel zoom for the full-screen document viewer.
+//
+// ⚠️ In this bundle rather than its own: the bundle copy lists (package.json,
+// the CI copy step) are what once shipped a page aborting on a missing file,
+// and a new name is one more place to forget it.
+import Panzoom from "@panzoom/panzoom";
+
+const zooms = new Map();
+
+/** Make `elementId` pinch-zoomable. Pans within its parent; 1x to 8x. */
+window.attachZoom = function (elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) {
+    throw new Error(`zoom target #${elementId} not found`);
+  }
+  const pz = Panzoom(el, { minScale: 1, maxScale: 8, contain: "outside" });
+  el.parentElement.addEventListener("wheel", pz.zoomWithWheel);
+  zooms.set(elementId, pz);
+};
+
+/** `"in"`, `"out"` or `"reset"`, for the viewer's buttons. */
+window.stepZoom = function (elementId, how) {
+  const pz = zooms.get(elementId);
+  if (!pz) return;
+  if (how === "in") pz.zoomIn();
+  else if (how === "out") pz.zoomOut();
+  else pz.reset();
+};
+
+window.detachZoom = function (elementId) {
+  const pz = zooms.get(elementId);
+  if (pz) {
+    pz.destroy();
+    zooms.delete(elementId);
+  }
+};
+
+// Shrink a captured photo before upload: upright (EXIF applied), long edge at
+// most `maxEdge`, JPEG at `quality`. Resolves to null when it cannot, or when
+// the result is no smaller, so the caller keeps the original.
+window.shrinkPhoto = async function (bytes, mime, maxEdge = 2400, quality = 0.85) {
+  try {
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: mime }), {
+      imageOrientation: "from-image",
+    });
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", quality));
+    if (!blob || blob.size >= bytes.length) return null;
+    return new Uint8Array(await blob.arrayBuffer());
+  } catch (_) {
+    return null;
+  }
+};

@@ -12,7 +12,10 @@
 mod common;
 
 use chrono::{DateTime, Utc};
-use omni_me_core::sync::{PullRequest, PullResponse};
+use omni_me_core::db::queries;
+use omni_me_core::document_fields;
+use omni_me_core::events::NewEvent;
+use omni_me_core::sync::{PullRequest, PullResponse, PushRequest};
 
 #[tokio::test]
 async fn a_csv_is_archived_and_its_bytes_are_retrievable_under_the_returned_hash() {
@@ -194,4 +197,268 @@ async fn a_statement_is_filed_with_its_parsed_fields_in_the_same_request() {
             .starts_with("parser:"),
         "⛔ parser-sourced, so a later model pass cannot overwrite it"
     );
+}
+
+/// Archive one unreadable JPEG through the route and return its document id.
+async fn archive_a_scan(client: &reqwest::Client, url: &str) -> String {
+    let resp = client
+        .post(format!("{url}/documents/archive?source=scan"))
+        .header("content-type", "image/jpeg")
+        .header("x-filename", "receipt.jpg")
+        .body(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
+        .send()
+        .await
+        .expect("archive failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+    let body: serde_json::Value = resp.json().await.unwrap();
+    body["document_id"].as_str().unwrap().to_string()
+}
+
+async fn awaiting_ids(db: &omni_me_core::db::Database) -> Vec<String> {
+    queries::documents_awaiting_fields(db, &["image/jpeg"], 10, &[])
+        .await
+        .expect("the enrichment work queue must be queryable on the server")
+        .into_iter()
+        .map(|row| row.document_id)
+        .collect()
+}
+
+#[tokio::test]
+async fn an_archived_scan_is_waiting_in_the_servers_enrichment_queue() {
+    // On the first dev deploy this query failed every tick: the server registered no
+    // projections, so the `documents` table it reads did not exist.
+    let (url, db, _h) = common::start_full_server_with_db().await;
+    let client = reqwest::Client::new();
+
+    let document_id = archive_a_scan(&client, &url).await;
+
+    assert_eq!(awaiting_ids(&db).await, vec![document_id]);
+}
+
+#[tokio::test]
+async fn a_capture_is_archived_and_its_attachment_names_the_document() {
+    // Capture used to store the photo as a bare attachment, so no receipt ever reached the
+    // archive. The null extractor reads nothing, so the reader is left to catalogue it.
+    let (url, db, _h) = common::start_full_server_with_db().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{url}/documents/extract?hint=receipt&attach=true"))
+        .header("content-type", "image/jpeg")
+        .header("x-filename", "receipt.jpg")
+        .body(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
+        .send()
+        .await
+        .expect("extract failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    let document_id = body["attachment"]["document_id"]
+        .as_str()
+        .expect("the attachment links to the archived document")
+        .to_string();
+    assert_eq!(awaiting_ids(&db).await, vec![document_id]);
+    assert!(
+        body["extraction"]["postings"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "nothing read, so no counter leg is invented"
+    );
+    assert!(
+        body["warnings"]
+            .to_string()
+            .contains("no postings extracted"),
+        "the cross-check runs on captures, not only in the bench: {}",
+        body["warnings"]
+    );
+    assert_eq!(body["needs_review"], true);
+}
+
+#[tokio::test]
+async fn photos_of_one_receipt_are_archived_as_one_pdf() {
+    let (url, db, _h) = common::start_full_server_with_db().await;
+    let client = reqwest::Client::new();
+    let photo = |shade: u8| {
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(64, 96, image::Rgb([shade, shade, shade]))
+            .write_to(&mut out, image::ImageFormat::Jpeg)
+            .unwrap();
+        out.into_inner()
+    };
+    let page = |bytes: Vec<u8>, name: &str| {
+        reqwest::multipart::Part::bytes(bytes)
+            .file_name(name.to_string())
+            .mime_str("image/jpeg")
+            .unwrap()
+    };
+    let form = reqwest::multipart::Form::new()
+        .part("page", page(photo(200), "IMG_1.jpg"))
+        .part("page", page(photo(120), "IMG_2.jpg"));
+
+    let resp = client
+        .post(format!(
+            "{url}/documents/extract_pages?hint=receipt&attach=true"
+        ))
+        .multipart(form)
+        .send()
+        .await
+        .expect("extract_pages failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["attachment"]["mime_type"], "application/pdf");
+    assert_eq!(body["attachment"]["filename"], "IMG_1.pdf");
+
+    let document_id = body["attachment"]["document_id"].as_str().unwrap();
+    let row = queries::get_document(&db, document_id)
+        .await
+        .unwrap()
+        .expect("one document was archived");
+    assert_eq!(row.mime_type.as_deref(), Some("application/pdf"));
+}
+
+#[tokio::test]
+async fn a_field_corrected_on_a_phone_reaches_the_servers_documents_table() {
+    // A correction reaches the server only through push. Unprojected there, the
+    // enrichment pass would keep reading a document the user already classified.
+    let (url, db, _h) = common::start_full_server_with_db().await;
+    let client = reqwest::Client::new();
+    let document_id = archive_a_scan(&client, &url).await;
+
+    let correction = document_fields::human_correction(&document_id, "kind", "receipt");
+    let event = NewEvent::document_fields_extracted("phone-1", &correction).unwrap();
+    let resp = client
+        .post(format!("{url}/sync/push"))
+        .json(&PushRequest {
+            device_id: "phone-1".into(),
+            events: vec![event],
+        })
+        .send()
+        .await
+        .expect("push failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+
+    let row = queries::get_document(&db, &document_id)
+        .await
+        .unwrap()
+        .expect("the archived document has a server-side row");
+    assert_eq!(row.kind.as_deref(), Some("receipt"));
+    assert!(
+        awaiting_ids(&db).await.is_empty(),
+        "a classified document is no longer enrichment work"
+    );
+}
+
+/// Reads nothing, as the null extractor does, but names the document's kind.
+struct KindExtractor(&'static str);
+
+impl omni_me_core::extraction::DocumentExtractor for KindExtractor {
+    fn name(&self) -> &str {
+        "kind"
+    }
+
+    fn supports(&self, _mime: &str) -> bool {
+        true
+    }
+
+    // Spelled out rather than `#[async_trait]`, which this crate does not
+    // depend on; a new dev-dependency would move both lockfiles.
+    fn extract<'a, 'b, 'c, 'f>(
+        &'a self,
+        parts: &'b [omni_me_core::extraction::DocumentPart<'c>],
+        hint: omni_me_core::extraction::ExtractionHint,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        omni_me_core::extraction::ExtractionResult,
+                        omni_me_core::extraction::ExtractionError,
+                    >,
+                > + Send
+                + 'f,
+        >,
+    >
+    where
+        'a: 'f,
+        'b: 'f,
+        'c: 'f,
+        Self: 'f,
+    {
+        Box::pin(async move {
+            let mut read = omni_me_core::extraction::null::NullExtractor
+                .extract(parts, hint)
+                .await?;
+            read.document_kind = Some(self.0.to_string());
+            Ok(read)
+        })
+    }
+}
+
+/// Capture one scan read as `kind`; return the response and every proposal a
+/// device would pull. The server projects only documents, so the review queue
+/// exists on devices and the event is what reaches them.
+async fn capture_with_kind(
+    kind: &'static str,
+) -> (serde_json::Value, Vec<omni_me_core::events::Event>) {
+    let (url, _db, _h) =
+        common::start_full_server_with_extractor(std::sync::Arc::new(KindExtractor(kind))).await;
+    let resp = reqwest::Client::new()
+        .post(format!(
+            "{url}/documents/extract?hint=generic&attach=true&propose=true"
+        ))
+        .header("content-type", "image/jpeg")
+        .header("x-filename", "scan.jpg")
+        .body(vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
+        .send()
+        .await
+        .expect("extract failed");
+    assert!(resp.status().is_success(), "status {}", resp.status());
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    let pulled: PullResponse = reqwest::Client::new()
+        .post(format!("{url}/sync/pull"))
+        .json(&PullRequest {
+            device_id: "phone".into(),
+            since: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        })
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let proposals = pulled
+        .events
+        .into_iter()
+        .filter(|e| e.event_type == "auto_import_batch_proposed")
+        .collect();
+    (body, proposals)
+}
+
+#[tokio::test]
+async fn a_receipt_added_from_the_archive_is_proposed_for_review() {
+    let (body, proposals) = capture_with_kind("receipt").await;
+    let batch_id = body["proposed_batch_id"]
+        .as_str()
+        .expect("a receipt capture is proposed");
+    let proposal = proposals
+        .iter()
+        .find(|e| e.aggregate_id == batch_id)
+        .expect("a device pulls the proposal");
+    assert_eq!(proposal.payload["source"], "capture");
+    let document_id = body["attachment"]["document_id"].as_str().unwrap();
+    assert_eq!(
+        proposal.payload["source_metadata"]["document_id"],
+        document_id
+    );
+}
+
+#[tokio::test]
+async fn any_other_document_added_from_the_archive_is_only_archived() {
+    let (body, proposals) = capture_with_kind("marketing").await;
+    assert!(body.get("proposed_batch_id").is_none());
+    assert!(body["attachment"]["document_id"].is_string());
+    assert!(proposals.is_empty());
 }

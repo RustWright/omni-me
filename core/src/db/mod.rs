@@ -77,6 +77,8 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
         ",
     )
     .await
+    .map_err(DbError::Schema)?
+    .check()
     .map_err(DbError::Schema)?;
 
     // One-time backfill for events stored before `received_at` existed. The
@@ -87,6 +89,8 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
     // local events could never push again).
     db.query("UPDATE events SET received_at = timestamp WHERE received_at IS NONE")
         .await
+        .map_err(DbError::Schema)?
+        .check()
         .map_err(DbError::Schema)?;
 
     Ok(())
@@ -130,5 +134,42 @@ mod tests {
             .unwrap();
 
         assert_eq!(count, Some(1));
+    }
+
+    /// The trap every write in this crate has to know about: a statement the
+    /// database *rejects* still comes back as `Ok`.
+    ///
+    /// `await?` only forwards transport and parse failures. A statement error
+    /// travels inside the `Response` and reaches the caller solely through
+    /// `.check()` or `.take()`. A write that discards the response therefore
+    /// cannot fail, which reads in the source exactly like a write that
+    /// succeeded — the projections were built on that misreading.
+    #[tokio::test]
+    async fn a_rejected_statement_still_returns_ok_until_it_is_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let db = connect(path.to_str().unwrap()).await.unwrap();
+
+        // `sync_state.device_id` carries a UNIQUE index, so the second write of
+        // the same device is refused. Chosen over a SCHEMAFULL type violation
+        // because an index conflict is a statement error in every version, where
+        // what SCHEMAFULL does with an undeclared field has moved between them.
+        let insert = "CREATE sync_state CONTENT \
+                      { device_id: 'dup', last_sync_timestamp: d'2026-01-01T00:00:00Z' }";
+        db.query(insert)
+            .await
+            .unwrap()
+            .check()
+            .expect("the first write is legal");
+
+        let response = db
+            .query(insert)
+            .await
+            .expect("the transport succeeded, which is all `await?` can report");
+
+        assert!(
+            response.check().is_err(),
+            "the write was refused, and `check` is the only thing that says so"
+        );
     }
 }

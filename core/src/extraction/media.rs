@@ -68,6 +68,10 @@ pub enum MediaError {
     Failed { status: String, stderr: String },
     #[error("scanned pdf has more than {MAX_RASTER_PAGES} pages — too large to send as images")]
     TooManyPages,
+    #[error("a capture takes 1 to {MAX_RASTER_PAGES} photos, got {0}")]
+    CapturePages(usize),
+    #[error("the pdf is encrypted and none of the {tried} configured password(s) opened it")]
+    Encrypted { tried: usize },
     #[error(
         "document is {encoded} base64 bytes after downscaling, over the \
          {MAX_ENCODED_BYTES}-byte request limit"
@@ -152,6 +156,146 @@ fn shrink(img: &image::DynamicImage) -> Option<image::DynamicImage> {
     })
 }
 
+/// Long edge of a viewing preview: sharp on a phone screen, a few hundred KB.
+pub const PREVIEW_LONG_EDGE: u32 = 1600;
+const PREVIEW_QUALITY: u8 = 80;
+
+/// A smaller, upright JPEG for viewing, or `None` when the original already fits
+/// or would not shrink, in which case the original is the preview. Fitting
+/// images are left alone: re-encoding a screenshot as JPEG blurs its text.
+///
+/// EXIF orientation is applied first: the browser turns the original upright by
+/// reading the tag, and a re-encode drops it, so a phone photo would lie sideways.
+pub fn preview_jpeg(bytes: &[u8]) -> Result<Option<Vec<u8>>, MediaError> {
+    use image::ImageDecoder;
+    let decode_err = |source| MediaError::Decode {
+        mime: "preview".into(),
+        source,
+    };
+    let reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| decode_err(image::ImageError::IoError(e)))?;
+    let mut decoder = reader.into_decoder().map_err(decode_err)?;
+    let orientation = decoder.orientation().map_err(decode_err)?;
+    let mut img = image::DynamicImage::from_decoder(decoder).map_err(decode_err)?;
+    if img.width().max(img.height()) <= PREVIEW_LONG_EDGE {
+        return Ok(None);
+    }
+    img.apply_orientation(orientation);
+    // `thumbnail`, not `resize`: a 12-megapixel photo through Lanczos3 costs
+    // seconds on the box's shared CPU, and a preview does not need it.
+    let small = img.thumbnail(PREVIEW_LONG_EDGE, PREVIEW_LONG_EDGE);
+    let out = encode_jpeg(&small, PREVIEW_QUALITY)?;
+    Ok((out.len() < bytes.len()).then_some(out))
+}
+
+/// Long edge of a capture page, in PDF points (A4's height). Pixel size is kept;
+/// this only sets how large the page claims to be.
+const CAPTURE_PAGE_LONG_EDGE_PT: f32 = 842.0;
+const CAPTURE_REENCODE_QUALITY: u8 = 90;
+
+/// Several photos of one document as one PDF, a page per photo, in order.
+///
+/// A camera JPEG goes in unchanged (DCTDecode) and its EXIF turn becomes the
+/// page's `/Rotate`, because PDF viewers ignore EXIF. Anything else (PNG, WebP, a
+/// mirrored or CMYK JPEG) is turned upright and re-encoded at high quality.
+pub fn photos_to_pdf(photos: &[&[u8]]) -> Result<Vec<u8>, MediaError> {
+    use image::ImageDecoder;
+    use image::metadata::Orientation;
+    use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref};
+
+    if photos.is_empty() || photos.len() > MAX_RASTER_PAGES {
+        return Err(MediaError::CapturePages(photos.len()));
+    }
+    let decode_err = |source| MediaError::Decode {
+        mime: "capture page".into(),
+        source,
+    };
+
+    let mut pdf = Pdf::new();
+    let catalog_id = Ref::new(1);
+    let tree_id = Ref::new(2);
+    let page_ids: Vec<Ref> = (0..photos.len())
+        .map(|i| Ref::new(3 + 3 * i as i32))
+        .collect();
+    pdf.catalog(catalog_id).pages(tree_id);
+    pdf.pages(tree_id)
+        .kids(page_ids.iter().copied())
+        .count(photos.len() as i32);
+
+    for (i, bytes) in photos.iter().enumerate() {
+        let (page_id, image_id, content_id) = (
+            page_ids[i],
+            Ref::new(4 + 3 * i as i32),
+            Ref::new(5 + 3 * i as i32),
+        );
+        let reader = image::ImageReader::new(Cursor::new(*bytes))
+            .with_guessed_format()
+            .map_err(|e| decode_err(image::ImageError::IoError(e)))?;
+        let is_jpeg = reader.format() == Some(ImageFormat::Jpeg);
+        let mut decoder = reader.into_decoder().map_err(decode_err)?;
+        let orientation = decoder.orientation().map_err(decode_err)?;
+        let (w, h) = decoder.dimensions();
+        let color = decoder.original_color_type();
+        let rotate = match orientation {
+            Orientation::NoTransforms => Some(0),
+            Orientation::Rotate90 => Some(90),
+            Orientation::Rotate180 => Some(180),
+            Orientation::Rotate270 => Some(270),
+            _ => None,
+        };
+        let passthrough = is_jpeg
+            && rotate.is_some()
+            && matches!(color, ExtendedColorType::Rgb8 | ExtendedColorType::L8);
+
+        let (data, w, h, gray, rotate) = if passthrough {
+            (
+                bytes.to_vec(),
+                w,
+                h,
+                color == ExtendedColorType::L8,
+                rotate.unwrap_or(0),
+            )
+        } else {
+            let mut img = image::DynamicImage::from_decoder(decoder).map_err(decode_err)?;
+            img.apply_orientation(orientation);
+            let (w, h) = (img.width(), img.height());
+            (encode_jpeg(&img, CAPTURE_REENCODE_QUALITY)?, w, h, false, 0)
+        };
+
+        let mut image = pdf.image_xobject(image_id, &data);
+        image.filter(Filter::DctDecode);
+        image.width(w as i32);
+        image.height(h as i32);
+        if gray {
+            image.color_space().device_gray();
+        } else {
+            image.color_space().device_rgb();
+        }
+        image.bits_per_component(8);
+        image.finish();
+
+        let scale = CAPTURE_PAGE_LONG_EDGE_PT / w.max(h) as f32;
+        let (pw, ph) = (w as f32 * scale, h as f32 * scale);
+        let name = Name(b"Im1");
+        let mut page = pdf.page(page_id);
+        page.media_box(Rect::new(0.0, 0.0, pw, ph));
+        page.parent(tree_id);
+        page.rotate(rotate);
+        page.contents(content_id);
+        page.resources().x_objects().pair(name, image_id);
+        page.finish();
+
+        let mut content = Content::new();
+        content.save_state();
+        content.transform([pw, 0.0, 0.0, ph, 0.0, 0.0]);
+        content.x_object(name);
+        content.restore_state();
+        pdf.stream(content_id, &content.finish());
+    }
+    Ok(pdf.finish())
+}
+
 /// Prepare a single image for the request: downscale if oversized, otherwise
 /// pass the original bytes through untouched.
 ///
@@ -222,7 +366,10 @@ fn check_budget(images: &[PreparedImage]) -> Result<(), MediaError> {
 /// Only reached when `pdftotext` came back empty — a generated PDF still goes
 /// the text route, which is both cheaper and more accurate than asking a model
 /// to read a picture of text it could have had verbatim.
-pub async fn rasterize_pdf(pdf_bytes: &[u8]) -> Result<Vec<PreparedImage>, MediaError> {
+pub async fn rasterize_pdf(
+    pdf_bytes: &[u8],
+    passwords: &[&str],
+) -> Result<Vec<PreparedImage>, MediaError> {
     if pdf_bytes.len() > MAX_PDF_BYTES {
         return Err(MediaError::PdfTooLarge {
             size: pdf_bytes.len(),
@@ -239,7 +386,7 @@ pub async fn rasterize_pdf(pdf_bytes: &[u8]) -> Result<Vec<PreparedImage>, Media
 
     let out_dir =
         tempfile::tempdir().map_err(|e| MediaError::Spawn(format!("create temp dir: {e}")))?;
-    let pages = run_pdftoppm(temp.path(), out_dir.path()).await?;
+    let pages = rasterize_with_any(temp.path(), out_dir.path(), passwords).await?;
 
     // `-l` clamps silently to the document's own page count, so asking for one
     // page past the cap is how "there are more" is distinguished from "that is
@@ -340,11 +487,51 @@ pub fn fits_request(images: &[PreparedImage]) -> Result<(), MediaError> {
 }
 
 /// Spawn `pdftoppm` into `out_dir` and read the page images back in page order.
-async fn run_pdftoppm(pdf: &Path, out_dir: &Path) -> Result<Vec<Vec<u8>>, MediaError> {
+/// Try each candidate password until one renders, on the terms
+/// [`crate::statement::pdf::extract_layout_text_with_any`] explains — including
+/// the empty password first, so an unencrypted document costs one `pdftoppm` run
+/// however many passwords are configured.
+///
+/// ⚠️ Without this the vision fallback could not open an encrypted statement that
+/// the text path had just failed on, so the 18.3% of the corpus that is encrypted
+/// had no route at all: no text layer, and no picture of one either.
+async fn rasterize_with_any(
+    pdf: &Path,
+    out_dir: &Path,
+    passwords: &[&str],
+) -> Result<Vec<Vec<u8>>, MediaError> {
+    match run_pdftoppm(pdf, out_dir, "").await {
+        Ok(pages) => return Ok(pages),
+        Err(MediaError::Failed { stderr, .. })
+            if crate::statement::pdf::stderr_is_wrong_password(&stderr) => {}
+        Err(e) => return Err(e),
+    }
+    for password in passwords {
+        match run_pdftoppm(pdf, out_dir, password).await {
+            Ok(pages) => return Ok(pages),
+            Err(MediaError::Failed { stderr, .. })
+                if crate::statement::pdf::stderr_is_wrong_password(&stderr) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(MediaError::Encrypted {
+        tried: passwords.len(),
+    })
+}
+
+async fn run_pdftoppm(
+    pdf: &Path,
+    out_dir: &Path,
+    password: &str,
+) -> Result<Vec<Vec<u8>>, MediaError> {
     let prefix = out_dir.join("page");
     // `kill_on_drop` pairs with the timeout: without it a poppler stuck on a
     // malformed page outlives its own deadline and keeps the CPU.
     let child = Command::new("pdftoppm")
+        // Same argv exposure as `pdftotext`: poppler offers no password file or
+        // stdin variant. The trade is recorded on `statement::pdf`.
+        .arg("-upw")
+        .arg(password)
         .arg("-jpeg")
         .arg("-r")
         .arg(RASTER_DPI.to_string())
@@ -409,6 +596,40 @@ async fn run_pdftoppm(pdf: &Path, out_dir: &Path) -> Result<Vec<Vec<u8>>, MediaE
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn photos_become_one_pdf_with_a_page_each() {
+        let camera = synth(1200, 1600, ImageFormat::Jpeg);
+        let screenshot = synth(800, 600, ImageFormat::Png);
+        let pdf = photos_to_pdf(&[&camera, &screenshot]).unwrap();
+        // The camera's bytes go in unchanged.
+        assert!(pdf.windows(camera.len()).any(|w| w == camera.as_slice()));
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("capture.pdf");
+        std::fs::write(&path, &pdf).unwrap();
+        let info = Command::new("pdfinfo").arg(&path).output().await.unwrap();
+        let info = String::from_utf8_lossy(&info.stdout);
+        assert!(
+            info.lines()
+                .any(|l| l.starts_with("Pages:") && l.ends_with(" 2")),
+            "{info}"
+        );
+    }
+
+    #[test]
+    fn a_capture_needs_one_to_eight_photos() {
+        let one = synth(10, 10, ImageFormat::Jpeg);
+        assert!(matches!(
+            photos_to_pdf(&[]),
+            Err(MediaError::CapturePages(0))
+        ));
+        let nine = vec![one.as_slice(); MAX_RASTER_PAGES + 1];
+        assert!(matches!(
+            photos_to_pdf(&nine),
+            Err(MediaError::CapturePages(9))
+        ));
+    }
+
     /// Build a solid-colour test image of the given size in the given format.
     fn synth(w: u32, h: u32, format: ImageFormat) -> Vec<u8> {
         // Noise, not a flat fill: a solid image compresses to almost nothing,
@@ -440,6 +661,29 @@ mod tests {
         use image::GenericImageView;
         let (w, h) = img.dimensions();
         assert_eq!(w.max(h), MAX_LONG_EDGE, "long edge not clamped: {w}x{h}");
+    }
+
+    /// A phone photo previews at the viewing size and smaller than it started.
+    #[test]
+    fn a_phone_photo_previews_small() {
+        let photo = synth(4032, 3024, ImageFormat::Jpeg);
+        let preview = preview_jpeg(&photo)
+            .unwrap()
+            .expect("a 12 MP photo needs a preview");
+        assert!(preview.len() < photo.len());
+        let img = image::load_from_memory_with_format(&preview, ImageFormat::Jpeg).unwrap();
+        use image::GenericImageView;
+        let (w, h) = img.dimensions();
+        assert_eq!(w.max(h), PREVIEW_LONG_EDGE, "long edge {w}x{h}");
+        assert!(w > h, "landscape stays landscape when there is no EXIF tag");
+    }
+
+    /// Nothing to gain from re-encoding something already small: the original is
+    /// the preview.
+    #[test]
+    fn a_small_image_has_no_separate_preview() {
+        let small = synth(400, 300, ImageFormat::Png);
+        assert!(preview_jpeg(&small).unwrap().is_none());
     }
 
     /// An image already inside both limits must be forwarded byte-identical —
@@ -512,10 +756,31 @@ mod tests {
     }
 
     /// The size gate must reject before poppler is spawned.
+    /// The half that had no route at all before 2026-09-27: an encrypted PDF whose
+    /// text layer cannot be read also could not be rendered, because `rasterize_pdf`
+    /// took no password.
+    #[tokio::test]
+    async fn an_encrypted_pdf_rasterizes_once_a_password_matches() {
+        let encrypted: &[u8] =
+            include_bytes!("../../tests/fixtures/encrypted/encrypted-statement.pdf");
+
+        let pages = rasterize_pdf(encrypted, &["wrong", "letmein"])
+            .await
+            .expect("one candidate opens it");
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].mime, "image/jpeg");
+
+        let err = rasterize_pdf(encrypted, &["wrong"]).await.unwrap_err();
+        assert!(
+            matches!(err, MediaError::Encrypted { tried: 1 }),
+            "must name encryption rather than reporting poppler's exit 1: {err}"
+        );
+    }
+
     #[tokio::test]
     async fn an_oversized_pdf_is_refused_before_poppler_sees_it() {
         let huge = vec![0u8; MAX_PDF_BYTES + 1];
-        let err = rasterize_pdf(&huge).await.unwrap_err();
+        let err = rasterize_pdf(&huge, &[]).await.unwrap_err();
         assert!(matches!(err, MediaError::PdfTooLarge { .. }), "{err}");
     }
 
@@ -523,7 +788,7 @@ mod tests {
     /// that would read as an empty but valid document.
     #[tokio::test]
     async fn a_non_pdf_fails_rather_than_returning_no_pages() {
-        let err = rasterize_pdf(b"this is not a pdf").await.unwrap_err();
+        let err = rasterize_pdf(b"this is not a pdf", &[]).await.unwrap_err();
         // Absent poppler this is a Spawn error; the assertion is that no path
         // reaches `Ok` with an empty page list.
         assert!(

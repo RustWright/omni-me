@@ -178,14 +178,37 @@ impl IngestReport {
 /// succeeds on a scanned page and hands back a run of newlines, and storing that
 /// as a text layer would make the document look searchable while matching
 /// nothing.
-pub async fn derive_text(bytes: &[u8], mime: &str) -> (Option<String>, TextSource) {
+pub async fn derive_text(
+    bytes: &[u8],
+    mime: &str,
+    passwords: &crate::credentials::PdfPasswords,
+) -> (Option<String>, TextSource) {
     let text = if is_pdf(mime) {
-        match pdf::extract_layout_text(bytes, "").await {
-            Ok(t) => Some(t),
+        match pdf::extract_layout_text_with_any(bytes, &passwords.values()).await {
+            Ok(opened) => {
+                // The secret's NAME, never its value, and only when one was needed
+                // — which password opened a document is the first thing to check
+                // when one still arrives blank.
+                if let Some(name) = opened.opened_by.and_then(|i| passwords.name_of(i)) {
+                    tracing::info!(secret = name, "an encrypted pdf opened");
+                }
+                Some(opened.text)
+            }
             Err(e) => {
                 // Not an ingest failure. An encrypted or oversized PDF is still a
                 // document worth keeping; it simply arrives without text.
-                tracing::debug!(error = %e, "no text layer could be read from a pdf");
+                //
+                // ⚠️ At `warn` when it is the password, because that one is fixable
+                // and used to be invisible: 140 of 765 corpus statements landed here
+                // and read as empty-but-fine.
+                match &e {
+                    pdf::PdfTextError::Encrypted { tried } => tracing::warn!(
+                        tried,
+                        configured = passwords.len(),
+                        "an encrypted pdf stays textless — no configured password opened it"
+                    ),
+                    _ => tracing::debug!(error = %e, "no text layer could be read from a pdf"),
+                }
                 None
             }
         }
@@ -273,6 +296,20 @@ pub struct Ingested {
     pub parsed_fields: bool,
 }
 
+/// Where a document is being filed, as whom, and with what to open it.
+///
+/// One struct because the three travel together through every ingest entry point,
+/// and `ingest_one` crossed clippy's argument threshold the moment the passwords
+/// joined them. ⚠️ It replaces `auto_import::imap::ArchiveTarget`, which was the
+/// same triple built for one caller — two names for one idea is how the email path
+/// and the upload path end up disagreeing about what ingest needs.
+pub struct IngestContext<'a> {
+    pub blob_dir: &'a Path,
+    pub device_id: &'a str,
+    /// Tried in turn on an encrypted PDF. See [`crate::credentials::PdfPasswords`].
+    pub passwords: &'a crate::credentials::PdfPasswords,
+}
+
 /// Store one document's bytes and build the events that record it.
 ///
 /// ⛔ Returns them rather than appending them — see the module note.
@@ -286,16 +323,15 @@ pub struct Ingested {
 /// ⚠️ If a large file ever makes [`document_fields::parser_fields`] block long
 /// enough to matter, move the call off this await — never back into the callers.
 pub async fn ingest_one(
-    blob_dir: &Path,
+    ctx: &IngestContext<'_>,
     bytes: &[u8],
     filename: &str,
     mime: &str,
     source: IngestSource,
-    device_id: &str,
     parent_document_id: Option<&str>,
 ) -> Result<Ingested, IngestError> {
-    let sha256 = blob::store(blob_dir, bytes).await?;
-    let (text, text_source) = derive_text(bytes, mime).await;
+    let sha256 = blob::store(ctx.blob_dir, bytes).await?;
+    let (text, text_source) = derive_text(bytes, mime, ctx.passwords).await;
 
     let payload = DocumentArchivedPayload {
         // ⚠️ A fresh id per ingest, deliberately not the hash. The same file
@@ -314,10 +350,10 @@ pub async fn ingest_one(
     };
     let document_id = payload.document_id.clone();
 
-    let mut events = vec![NewEvent::document_archived(device_id, &payload)?];
+    let mut events = vec![NewEvent::document_archived(ctx.device_id, &payload)?];
     let parsed_fields = match document_fields::parser_fields(&document_id, bytes) {
         Some(fields) => {
-            events.push(NewEvent::document_fields_extracted(device_id, &fields)?);
+            events.push(NewEvent::document_fields_extracted(ctx.device_id, &fields)?);
             true
         }
         None => false,
@@ -370,10 +406,9 @@ pub struct IngestedEmail {
 ///
 /// ⛔ Returns events rather than appending them, like every other ingest here.
 pub async fn ingest_email(
-    blob_dir: &Path,
+    ctx: &IngestContext<'_>,
     raw: &[u8],
     parsed: &crate::mime::ParsedMessage,
-    device_id: &str,
 ) -> Result<IngestedEmail, IngestError> {
     // A subject is the only name a person would recognise, but it is
     // sender-controlled and may be empty or absurd. `.eml` keeps it openable.
@@ -385,12 +420,11 @@ pub async fn ingest_email(
     };
 
     let email = ingest_one(
-        blob_dir,
+        ctx,
         raw,
         &filename,
         "message/rfc822",
         IngestSource::Email,
-        device_id,
         None,
     )
     .await?;
@@ -401,12 +435,11 @@ pub async fn ingest_email(
 
     for att in parsed.real_attachments() {
         let child = ingest_one(
-            blob_dir,
+            ctx,
             &att.bytes,
             &att.filename,
             &att.content_type,
             IngestSource::Email,
-            device_id,
             Some(&email_document_id),
         )
         .await?;
@@ -454,10 +487,9 @@ fn sanitize_filename(subject: &str) -> String {
 /// documents that aborts on the first permission error has done nothing and says
 /// nothing about the other six hundred.
 pub async fn ingest_paths(
-    blob_dir: &Path,
+    ctx: &IngestContext<'_>,
     paths: &[std::path::PathBuf],
     source: IngestSource,
-    device_id: &str,
 ) -> IngestReport {
     let mut report = IngestReport {
         seen: paths.len(),
@@ -479,7 +511,7 @@ pub async fn ingest_paths(
             .unwrap_or_else(|| "document".to_string());
         let mime = mime_for(path, &bytes);
 
-        match ingest_one(blob_dir, &bytes, &filename, &mime, source, device_id, None).await {
+        match ingest_one(ctx, &bytes, &filename, &mime, source, None).await {
             Ok(ingested) => {
                 if ingested.text_source == TextSource::None {
                     report.without_text += 1;
@@ -577,6 +609,27 @@ fn mime_for(path: &Path, bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// No passwords configured, which is every test here: the encrypted path has
+    /// its own coverage in `statement::pdf` and `extraction::media`, both against a
+    /// real encrypted fixture.
+    fn no_passwords() -> crate::credentials::PdfPasswords {
+        crate::credentials::PdfPasswords::default()
+    }
+
+    /// The context these tests ingest into: a temp blob dir, device `dev`, and no
+    /// passwords. Borrowed rather than returned by value so the `PdfPasswords` it
+    /// points at outlives the call.
+    fn ctx<'a>(
+        blob_dir: &'a Path,
+        passwords: &'a crate::credentials::PdfPasswords,
+    ) -> IngestContext<'a> {
+        IngestContext {
+            blob_dir,
+            device_id: "dev",
+            passwords,
+        }
+    }
+
     use super::*;
 
     fn dir() -> tempfile::TempDir {
@@ -594,12 +647,11 @@ mod tests {
         let d = dir();
         let csv = b"date,description,amount\n2026-03-01,RENT,-1450.00\n";
         let ingested = ingest_one(
-            d.path(),
+            &ctx(d.path(), &no_passwords()),
             csv,
             "chequing.csv",
             "text/csv",
             IngestSource::Bulk,
-            "dev",
             None,
         )
         .await
@@ -618,12 +670,11 @@ mod tests {
         // hold a photograph of a document.
         let d = dir();
         let ingested = ingest_one(
-            d.path(),
+            &ctx(d.path(), &no_passwords()),
             &[0xFF, 0xD8, 0xFF, 0xE0, 0x00],
             "receipt.jpg",
             "image/jpeg",
             IngestSource::Scan,
-            "dev",
             None,
         )
         .await
@@ -636,11 +687,54 @@ mod tests {
         assert_eq!(payload.text_source, "none");
     }
 
+    /// The gate itself, end to end: 140 of 765 corpus statements are encrypted and
+    /// every one of them was archived with no text and no complaint.
+    #[tokio::test]
+    async fn an_encrypted_pdf_is_archived_with_its_text_once_a_password_is_configured() {
+        let encrypted: &[u8] =
+            include_bytes!("../tests/fixtures/encrypted/encrypted-statement.pdf");
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert("pdf_password_wrong".to_string(), "nope".to_string());
+        secrets.insert("pdf_password_right".to_string(), "letmein".to_string());
+        let configured = crate::credentials::PdfPasswords::from_secrets(&secrets);
+
+        let d = dir();
+        let ingested = ingest_one(
+            &ctx(d.path(), &configured),
+            encrypted,
+            "statement.pdf",
+            "application/pdf",
+            IngestSource::Bulk,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(ingested.text_source, TextSource::Extracted);
+        let text = archived_payload(&ingested).text.expect("text was read");
+        assert!(text.contains("1284.00"), "{text}");
+
+        // And the other half of the gate: with nothing configured the document is
+        // still archived, just textless — never refused, never silently dropped.
+        let bare = ingest_one(
+            &ctx(d.path(), &no_passwords()),
+            encrypted,
+            "statement.pdf",
+            "application/pdf",
+            IngestSource::Bulk,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(bare.text_source, TextSource::None);
+        assert!(archived_payload(&bare).text.is_none());
+    }
+
     #[tokio::test]
     async fn whitespace_only_text_counts_as_no_text() {
         // `pdftotext` on a scanned page succeeds and returns newlines. Stored as
         // a text layer, that document would look searchable and match nothing.
-        let (text, source) = derive_text(b"   \n\n\t  \n", "text/plain").await;
+        let (text, source) = derive_text(b"   \n\n\t  \n", "text/plain", &no_passwords()).await;
         assert!(text.is_none());
         assert_eq!(source, TextSource::None);
     }
@@ -650,23 +744,21 @@ mod tests {
         let d = dir();
         let bytes = b"date,amount\n2026-03-01,-10.00\n";
         let a = ingest_one(
-            d.path(),
+            &ctx(d.path(), &no_passwords()),
             bytes,
             "s.csv",
             "text/csv",
             IngestSource::Email,
-            "dev",
             None,
         )
         .await
         .unwrap();
         let b = ingest_one(
-            d.path(),
+            &ctx(d.path(), &no_passwords()),
             bytes,
             "s.csv",
             "text/csv",
             IngestSource::Scan,
-            "dev",
             None,
         )
         .await
@@ -692,10 +784,9 @@ mod tests {
         let missing = src.path().join("not-here.pdf");
 
         let report = ingest_paths(
-            d.path(),
+            &ctx(d.path(), &no_passwords()),
             &[good, missing.clone()],
             IngestSource::Bulk,
-            "dev",
         )
         .await;
 
@@ -717,7 +808,12 @@ mod tests {
         let opaque = src.path().join("b.bin");
         std::fs::write(&opaque, [0u8, 1, 2, 3]).unwrap();
 
-        let report = ingest_paths(d.path(), &[readable, opaque], IngestSource::Bulk, "dev").await;
+        let report = ingest_paths(
+            &ctx(d.path(), &no_passwords()),
+            &[readable, opaque],
+            IngestSource::Bulk,
+        )
+        .await;
 
         assert_eq!(report.archived, 2);
         assert_eq!(report.without_text, 1);
@@ -741,7 +837,9 @@ mod tests {
         let parsed = crate::mime::parse_eml(&raw).expect("fixture parses");
 
         let d = dir();
-        let out = ingest_email(d.path(), &raw, &parsed, "dev").await.unwrap();
+        let out = ingest_email(&ctx(d.path(), &no_passwords()), &raw, &parsed)
+            .await
+            .unwrap();
 
         assert_eq!(out.attachment_document_ids.len(), 1, "one real attachment");
         assert_eq!(
@@ -795,7 +893,9 @@ mod tests {
         let parsed = crate::mime::parse_eml(raw).expect("parses");
 
         let d = dir();
-        let out = ingest_email(d.path(), raw, &parsed, "dev").await.unwrap();
+        let out = ingest_email(&ctx(d.path(), &no_passwords()), raw, &parsed)
+            .await
+            .unwrap();
 
         assert!(out.attachment_document_ids.is_empty());
         assert_eq!(out.events.len(), 1, "one document, no children");
@@ -818,7 +918,7 @@ mod tests {
                     Date: Sat, 14 Feb 2026 09:31:00 +0000\r\n\
                     Content-Type: text/plain\r\n\r\n\
                     Amount due 142.65.\r\n";
-        let (text, source) = derive_text(raw, "message/rfc822").await;
+        let (text, source) = derive_text(raw, "message/rfc822", &no_passwords()).await;
 
         let text = text.expect("an email with a body has text");
         assert!(text.contains("Date: 2026-02-14"), "got: {text}");
@@ -832,7 +932,7 @@ mod tests {
         // wrong month and nothing downstream can tell it was invented — the same
         // rule `document_prompt` states for `document_date`.
         let raw = b"From: a@b.test\r\nSubject: no date here\r\n\r\nBody.\r\n";
-        let (text, _) = derive_text(raw, "message/rfc822").await;
+        let (text, _) = derive_text(raw, "message/rfc822", &no_passwords()).await;
 
         let text = text.expect("still has a body");
         assert!(!text.contains("Date:"), "got: {text}");
@@ -856,12 +956,11 @@ mod tests {
         let d = dir();
         let csv = b"Date,Amount,Balance\n2026-01-05,-20.00,980.00\n2026-01-09,-30.00,950.00\n";
         let ingested = ingest_one(
-            d.path(),
+            &ctx(d.path(), &no_passwords()),
             csv,
             "brokerage.csv",
             "text/csv",
             IngestSource::Bulk,
-            "dev",
             None,
         )
         .await
@@ -902,7 +1001,12 @@ mod tests {
         let plain = src.path().join("letter.txt");
         std::fs::write(&plain, b"a letter no parser claims\n").unwrap();
 
-        let report = ingest_paths(d.path(), &[parsed, plain], IngestSource::Bulk, "dev").await;
+        let report = ingest_paths(
+            &ctx(d.path(), &no_passwords()),
+            &[parsed, plain],
+            IngestSource::Bulk,
+        )
+        .await;
 
         report.check_accounting().expect("two files, two documents");
         assert_eq!(report.archived, 2);

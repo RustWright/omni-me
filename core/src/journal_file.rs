@@ -808,6 +808,7 @@ mod tests {
                 filename: "receipt.jpg".into(),
                 mime_type: "image/jpeg".into(),
                 size: 1024,
+                document_id: None,
             }),
             statement_source: None,
         };

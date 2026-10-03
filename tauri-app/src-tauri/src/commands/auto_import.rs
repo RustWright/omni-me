@@ -23,7 +23,7 @@ use tauri::State;
 use omni_me_core::db::queries;
 use omni_me_core::events::{
     AUTOIMPORT_TAG_KEY, AutoImportBatchCommittedPayload, AutoImportBatchDismissedPayload,
-    DraftTransaction, EventType, ExchangeRateRecordedPayload, NewEvent, Tag,
+    DraftCorrection, DraftTransaction, EventType, ExchangeRateRecordedPayload, NewEvent, Tag,
     TransactionRecordedPayload,
 };
 
@@ -365,6 +365,12 @@ pub struct PendingBatchView {
     pub draft_postings: Vec<DraftTransaction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_metadata: Option<serde_json::Value>,
+    /// What a later message about the same order displaced, and whether this
+    /// batch arrived after one was already committed or dismissed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revises_batch_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -391,6 +397,10 @@ pub async fn list_pending_batches(
                 .source_metadata
                 .map(|v| v.into_json_value())
                 .filter(|v| !v.is_null());
+            let superseded_json = row
+                .superseded
+                .map(|v| v.into_json_value())
+                .filter(|v| !v.is_null());
             Ok(PendingBatchView {
                 batch_id: row.batch_id,
                 source: row.source,
@@ -398,6 +408,8 @@ pub async fn list_pending_batches(
                 fetched_at: row.fetched_at,
                 draft_postings: drafts,
                 source_metadata: metadata_json,
+                superseded: superseded_json,
+                revises_batch_id: row.revises_batch_id,
             })
         })
         .collect()
@@ -410,8 +422,16 @@ pub async fn commit_batch(
     accepted_indices: Vec<usize>,
     fx_rate: Option<String>,
     fx_commodity: Option<String>,
+    corrections: Option<Vec<DraftCorrection>>,
+    added: Option<Vec<DraftCorrection>>,
 ) -> Result<CommitBatchResult, String> {
-    tracing::info!(batch_id = %batch_id, accepted = accepted_indices.len(), "commit_batch");
+    tracing::info!(
+        batch_id = %batch_id,
+        accepted = accepted_indices.len(),
+        corrected = corrections.as_ref().map_or(0, Vec::len),
+        added = added.as_ref().map_or(0, Vec::len),
+        "commit_batch"
+    );
 
     let row = queries::get_pending_batch_by_id(&state.db, &batch_id)
         .await
@@ -455,25 +475,56 @@ pub async fn commit_batch(
         ));
     }
 
-    let mut new_events: Vec<NewEvent> = Vec::with_capacity(indices.len() + 2);
-    let mut accepted_dates: Vec<NaiveDate> = Vec::with_capacity(indices.len());
+    let mut corrections = corrections.unwrap_or_default();
+    let effective = apply_corrections(&drafts, &indices, &mut corrections)?;
+    let mut added = added.unwrap_or_default();
+    check_added(&mut added)?;
+    if indices.is_empty() && added.is_empty() {
+        return Err("nothing to commit: no row selected and none added".into());
+    }
 
-    for &idx in &indices {
+    let mut new_events: Vec<NewEvent> = Vec::with_capacity(indices.len() + added.len() + 2);
+    let mut accepted_dates: Vec<NaiveDate> = Vec::with_capacity(indices.len() + added.len());
+
+    for (&idx, row) in indices.iter().zip(&effective) {
         let draft = &drafts[idx];
-        accepted_dates.push(draft.date);
+        accepted_dates.push(row.date);
+        // Keyed on the draft as proposed, so a re-proposal of the same upstream
+        // row collapses onto the corrected transaction instead of duplicating it.
         let txn_id = commit_txn_id(draft);
-        let mut payload = TransactionRecordedPayload::new(
-            txn_id,
-            draft.date,
-            draft.description.clone(),
-            draft.postings.clone(),
-        );
+        let mut tags = corrections
+            .iter()
+            .find(|c| c.index == idx)
+            .map(|c| parse_tags(&c.tags))
+            .unwrap_or_default();
         if !draft.external_id.trim().is_empty() {
-            payload = payload.with_tags(vec![Tag::KeyValue {
+            tags.push(Tag::KeyValue {
                 key: AUTOIMPORT_TAG_KEY.to_string(),
                 value: draft.external_id.trim().to_string(),
-            }]);
+            });
         }
+        let payload = TransactionRecordedPayload::new(
+            txn_id,
+            row.date,
+            row.description.clone(),
+            row.postings.clone(),
+        )
+        .with_tags(tags);
+        new_events.push(
+            NewEvent::transaction_recorded(state.device_id.clone(), &payload)
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    for row in &added {
+        accepted_dates.push(row.date);
+        // Stable per batch and position, so a repeated commit collapses.
+        let payload = TransactionRecordedPayload::new(
+            format!("manual-{batch_id}-{}", row.index),
+            row.date,
+            row.description.clone(),
+            row.postings.clone(),
+        )
+        .with_tags(parse_tags(&row.tags));
         new_events.push(
             NewEvent::transaction_recorded(state.device_id.clone(), &payload)
                 .map_err(|e| e.to_string())?,
@@ -512,6 +563,8 @@ pub async fn commit_batch(
         accepted_indices: indices.clone(),
         fx_rate: fx_pair.map(|(r, _)| Decimal::from_str(r).unwrap()),
         fx_commodity: fx_pair.map(|(_, c)| c.to_string()),
+        corrections,
+        added,
     };
     new_events.push(NewEvent {
         id: None,
@@ -527,7 +580,7 @@ pub async fn commit_batch(
 
     Ok(CommitBatchResult {
         events_appended,
-        txns_recorded: indices.len(),
+        txns_recorded: indices.len() + committed_payload.added.len(),
         fx_recorded,
     })
 }
@@ -570,6 +623,99 @@ pub async fn dismiss_batch(
     .await?;
 
     Ok(())
+}
+
+/// The row each accepted index commits, in `indices` order: the reviewer's
+/// correction where there is one, the draft as proposed otherwise.
+///
+/// A correction posting carries no `fx_rate` (the review form does not show
+/// one), so it inherits the proposed posting's at the same position when the
+/// commodity is unchanged rather than dropping it.
+fn apply_corrections(
+    drafts: &[DraftTransaction],
+    indices: &[usize],
+    corrections: &mut [DraftCorrection],
+) -> Result<Vec<DraftTransaction>, String> {
+    corrections.sort_by_key(|c| c.index);
+    for pair in corrections.windows(2) {
+        if pair[0].index == pair[1].index {
+            return Err(format!("row {} is corrected twice", pair[0].index + 1));
+        }
+    }
+    for c in corrections.iter_mut() {
+        if !indices.contains(&c.index) {
+            return Err(format!(
+                "row {} is corrected but not selected to commit",
+                c.index + 1
+            ));
+        }
+        if c.description.trim().is_empty() {
+            return Err(format!("row {} needs a description", c.index + 1));
+        }
+        if c.postings.len() < 2 {
+            return Err(format!("row {} needs at least two postings", c.index + 1));
+        }
+        let proposed = &drafts[c.index].postings;
+        for (i, posting) in c.postings.iter_mut().enumerate() {
+            if posting.fx_rate.is_none()
+                && let Some(p) = proposed.get(i).filter(|p| p.commodity == posting.commodity)
+            {
+                posting.fx_rate = p.fx_rate.clone();
+            }
+        }
+        super::budget::refuse_imbalance(&c.postings)
+            .map_err(|e| format!("row {}: {e}", c.index + 1))?;
+        c.tags = normalize_tags(&c.tags).map_err(|e| format!("row {}: {e}", c.index + 1))?;
+    }
+
+    Ok(indices
+        .iter()
+        .map(|&idx| match corrections.iter().find(|c| c.index == idx) {
+            Some(c) => DraftTransaction {
+                external_id: drafts[idx].external_id.clone(),
+                date: c.date,
+                description: c.description.trim().to_string(),
+                postings: c.postings.clone(),
+            },
+            None => drafts[idx].clone(),
+        })
+        .collect())
+}
+
+/// Hand-entered rows get the checks a correction gets; `index` is renumbered to
+/// the row's position so the stored audit and the txn ids agree.
+fn check_added(added: &mut [DraftCorrection]) -> Result<(), String> {
+    for (i, row) in added.iter_mut().enumerate() {
+        row.index = i;
+        if row.description.trim().is_empty() {
+            return Err(format!("added row {} needs a description", i + 1));
+        }
+        row.description = row.description.trim().to_string();
+        if row.postings.len() < 2 {
+            return Err(format!("added row {} needs at least two postings", i + 1));
+        }
+        super::budget::refuse_imbalance(&row.postings)
+            .map_err(|e| format!("added row {}: {e}", i + 1))?;
+        row.tags = normalize_tags(&row.tags).map_err(|e| format!("added row {}: {e}", i + 1))?;
+    }
+    Ok(())
+}
+
+/// Trimmed, lowercased, deduplicated; the strict form `Tag::normalize` defines.
+fn normalize_tags(raw: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::with_capacity(raw.len());
+    for t in raw {
+        let tag = Tag::normalize(t)?.to_string();
+        if !out.contains(&tag) {
+            out.push(tag);
+        }
+    }
+    Ok(out)
+}
+
+/// Tags already normalized by [`normalize_tags`], so parsing cannot fail.
+fn parse_tags(tags: &[String]) -> Vec<Tag> {
+    tags.iter().filter_map(|t| Tag::normalize(t).ok()).collect()
 }
 
 /// Pick the date to stamp on the single batch-level `ExchangeRateRecorded`
@@ -675,6 +821,118 @@ mod tests {
         let b = commit_txn_id(&draft("   ", "CAD", "-1.00"));
         assert_ne!(a, b);
         assert!(!a.starts_with("auto-"));
+    }
+
+    fn balanced(external_id: &str, account: &str) -> DraftTransaction {
+        use omni_me_core::events::Posting;
+        let leg = |account: &str, amount: &str| Posting {
+            account: account.into(),
+            commodity: "CAD".into(),
+            amount: Decimal::from_str(amount).unwrap(),
+            fx_rate: None,
+            tags: vec![],
+        };
+        DraftTransaction {
+            external_id: external_id.into(),
+            date: NaiveDate::from_ymd_opt(2026, 9, 14).unwrap(),
+            description: "Pharmacy".into(),
+            postings: vec![leg(account, "12.40"), leg("Liabilities:Visa", "-12.40")],
+        }
+    }
+
+    fn correction(index: usize, account: &str) -> DraftCorrection {
+        let d = balanced("x", account);
+        DraftCorrection {
+            index,
+            date: d.date,
+            description: "Pharmacy, corrected".into(),
+            postings: d.postings,
+            tags: vec![],
+        }
+    }
+
+    #[test]
+    fn correction_tags_are_normalized_and_bad_ones_refused() {
+        let drafts = vec![balanced("a", "Expenses:Groceries")];
+        let mut fixes = vec![DraftCorrection {
+            tags: vec![" Sister ".into(), "sister".into(), "trip:Ottawa".into()],
+            ..correction(0, "Expenses:Gifts")
+        }];
+        apply_corrections(&drafts, &[0], &mut fixes).unwrap();
+        assert_eq!(fixes[0].tags, vec!["sister", "trip:ottawa"]);
+
+        let mut bad = vec![DraftCorrection {
+            tags: vec!["a,b".into()],
+            ..correction(0, "Expenses:Gifts")
+        }];
+        assert!(apply_corrections(&drafts, &[0], &mut bad).is_err());
+    }
+
+    #[test]
+    fn added_rows_are_renumbered_and_checked() {
+        let mut rows = vec![
+            DraftCorrection {
+                index: 7,
+                description: "  KDP royalty ".into(),
+                ..correction(0, "Income:Royalties")
+            },
+            correction(3, "Expenses:Health"),
+        ];
+        check_added(&mut rows).unwrap();
+        assert_eq!((rows[0].index, rows[1].index), (0, 1));
+        assert_eq!(rows[0].description, "KDP royalty");
+
+        let mut lopsided = vec![correction(0, "Expenses:Health")];
+        lopsided[0].postings.pop();
+        assert!(check_added(&mut lopsided).is_err());
+    }
+
+    #[test]
+    fn corrections_replace_only_their_row() {
+        let drafts = vec![
+            balanced("a", "Expenses:Groceries"),
+            balanced("b", "Expenses:Groceries"),
+        ];
+        let mut fixes = vec![correction(1, "Expenses:Health")];
+        let rows = apply_corrections(&drafts, &[0, 1], &mut fixes).unwrap();
+        assert_eq!(rows[0].postings[0].account, "Expenses:Groceries");
+        assert_eq!(rows[1].postings[0].account, "Expenses:Health");
+        assert_eq!(rows[1].description, "Pharmacy, corrected");
+        assert_eq!(rows[1].external_id, "b", "keeps the upstream id");
+    }
+
+    #[test]
+    fn corrections_are_refused_when_they_do_not_add_up() {
+        let drafts = vec![balanced("a", "Expenses:Groceries")];
+        let unselected = apply_corrections(&drafts, &[], &mut [correction(0, "E:H")]);
+        assert!(unselected.unwrap_err().contains("not selected"));
+
+        let twice = apply_corrections(
+            &drafts,
+            &[0],
+            &mut [correction(0, "E:H"), correction(0, "E:I")],
+        );
+        assert!(twice.unwrap_err().contains("twice"));
+
+        let mut off = correction(0, "E:H");
+        off.postings[0].amount = Decimal::from_str("12.00").unwrap();
+        let unbalanced = apply_corrections(&drafts, &[0], &mut [off]);
+        assert!(unbalanced.unwrap_err().contains("don't balance"));
+    }
+
+    #[test]
+    fn a_correction_inherits_the_proposed_fx_rate() {
+        use omni_me_core::events::FxRate;
+        let mut drafts = vec![balanced("a", "Expenses:Groceries")];
+        let fx = FxRate {
+            quote_commodity: "CAD".into(),
+            rate: Decimal::ONE,
+        };
+        drafts[0].postings[0].fx_rate = Some(fx);
+        let mut fixes = vec![correction(0, "Expenses:Health")];
+        apply_corrections(&drafts, &[0], &mut fixes).unwrap();
+        assert!(fixes[0].postings[0].fx_rate.is_some());
+        assert!(fixes[0].postings[1].fx_rate.is_none());
     }
 
     #[test]

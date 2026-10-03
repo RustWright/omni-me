@@ -25,6 +25,12 @@ pub struct ParsedMessage {
     /// to text/html (HTML-stripped) automatically.
     pub body_text: String,
     pub attachments: Vec<MimeAttachment>,
+    /// The topmost `Authentication-Results` header, raw, or `None` if absent.
+    ///
+    /// Only the topmost. Headers are prepended as mail travels, so the first is
+    /// the one your own provider wrote; a crafted message can carry as many
+    /// forged ones below it as it likes. See `auto_import::sender_auth`.
+    pub authentication_results: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +102,7 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
             msg.body_html(0).map(|html| strip_html_tags(&html))
         })
         .unwrap_or_default();
+    let body_text = strip_invisible_padding(&body_text);
 
     let mut attachments = Vec::new();
     for att in msg.attachments() {
@@ -132,13 +139,59 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
         });
     }
 
+    // `ARC-Authentication-Results` is deliberately not matched: it is a relayed
+    // claim from an earlier hop, not this provider's own verdict.
+    let authentication_results = msg
+        .headers_raw()
+        .find(|(name, _)| name.eq_ignore_ascii_case("authentication-results"))
+        .map(|(_, value)| value.trim().to_string());
+
     Ok(ParsedMessage {
         from,
         subject,
         date,
         body_text,
         attachments,
+        authentication_results,
     })
+}
+
+/// Invisible characters senders repeat to pad an inbox preview.
+///
+/// ZWJ (U+200D) is left alone: it joins emoji sequences and is never padding.
+const PREHEADER_PADDING: [char; 6] = [
+    '\u{034F}', '\u{200B}', '\u{200C}', '\u{2060}', '\u{FEFF}', '\u{00AD}',
+];
+
+/// Drop preheader padding and collapse the blank lines it leaves behind.
+///
+/// A bank's bill-payment notices open with ~4,000 such characters, which filled
+/// the review panel so the payment looked absent. Also applied on read, so mail
+/// archived before this existed displays clean too.
+pub fn strip_invisible_padding(text: &str) -> String {
+    if !text.contains(PREHEADER_PADDING) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut blank_run = 0;
+    for line in text.lines() {
+        let line: String = line
+            .chars()
+            .filter(|c| !PREHEADER_PADDING.contains(c))
+            .collect();
+        if line.trim().is_empty() {
+            blank_run += 1;
+            if blank_run > 1 {
+                continue;
+            }
+            out.push('\n');
+        } else {
+            blank_run = 0;
+            out.push_str(line.trim_end());
+            out.push('\n');
+        }
+    }
+    out.trim().to_string()
 }
 
 /// Minimal tag-stripper for fallback when text/plain is absent. Keeps text
@@ -330,6 +383,27 @@ mod tests {
     }
 
     #[test]
+    fn preheader_padding_goes_and_the_payment_stays() {
+        // The shape of a real bank bill-payment notice's text/plain part.
+        let pad = "\u{034F} ".repeat(33);
+        let text = format!(
+            "<body></body>{pad}\n{pad}\n{pad}\n\n\n \n\n----\nYour payment is complete\n\
+             Amount: $48.79\nFrom: General Checking \nTo: MANITOBA HYDRO\n\n\n\n \n\n----"
+        );
+        let clean = strip_invisible_padding(&text);
+        assert!(!clean.contains('\u{034F}'));
+        assert!(clean.len() < 200, "padding survived: {} bytes", clean.len());
+        assert!(clean.contains("Amount: $48.79\nFrom: General Checking\nTo: MANITOBA HYDRO"));
+        assert!(!clean.contains("\n\n\n"));
+    }
+
+    #[test]
+    fn text_without_padding_is_untouched() {
+        let text = "Line one\n\n\n\nLine two  \n\u{1F468}\u{200D}\u{1F469}";
+        assert_eq!(strip_invisible_padding(text), text);
+    }
+
+    #[test]
     fn strip_html_keeps_text_drops_tags() {
         let html = "<html><body><p>Hello <b>world</b></p></body></html>";
         let stripped = strip_html_tags(html);
@@ -337,6 +411,32 @@ mod tests {
         assert!(stripped.contains("world"));
         assert!(!stripped.contains('<'));
         assert!(!stripped.contains('>'));
+    }
+
+    /// Only the topmost is read. The lower one here is what a crafted message
+    /// would carry to claim a pass it was never given.
+    #[test]
+    fn only_the_topmost_authentication_results_header_is_read() {
+        let raw =
+            b"Authentication-Results: mx.google.com; dmarc=fail header.from=spoofed.example\r\n\
+                    Authentication-Results: attacker-supplied; dmarc=pass\r\n\
+                    From: someone@spoofed.example\r\n\
+                    Subject: hello\r\n\r\nbody\r\n";
+        let parsed = parse_eml(raw).expect("parses");
+        let header = parsed.authentication_results.expect("header present");
+        assert!(header.contains("mx.google.com"), "got {header:?}");
+        assert!(!header.contains("attacker-supplied"), "got {header:?}");
+    }
+
+    /// A relayed ARC claim is a different header and must not be mistaken for
+    /// this provider's own verdict.
+    #[test]
+    fn an_arc_header_alone_is_not_a_verdict() {
+        let raw = b"ARC-Authentication-Results: i=1; mx.google.com; dmarc=pass\r\n\
+                    From: someone@vendor.example\r\n\
+                    Subject: hello\r\n\r\nbody\r\n";
+        let parsed = parse_eml(raw).expect("parses");
+        assert_eq!(parsed.authentication_results, None);
     }
 
     #[test]
@@ -352,6 +452,7 @@ mod tests {
                 bytes: vec![],
                 is_inline: false,
             }],
+            authentication_results: None,
         };
         assert!(parsed.find_attachment("application/pdf").is_some());
     }
@@ -373,6 +474,7 @@ mod tests {
                 bytes: vec![],
                 is_inline: true,
             }],
+            authentication_results: None,
         };
         assert!(
             parsed.find_attachment("application/pdf").is_some(),

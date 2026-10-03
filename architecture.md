@@ -249,8 +249,13 @@ feature is on, because a mock build shipped in an APK once.
 ## Server and deployment
 
 axum, seven route modules: `sync`, `notes`, `documents`, `blobs`, `llm`, `auto_import`,
-plus health/updates. It holds its own `ProjectionRunner`, so the server is not a dumb
-relay — it folds the same events into its own read models.
+plus health/updates. Devices run the projections; the server stores and relays events and
+keeps **only the read models its own background work queries**, which today is `documents`
+for the enrichment pass (`registry::build_projections_server`). The rule behind that: a table
+lives wherever the work that reads it runs. Enrichment runs where every blob is, which is the
+server while the agent is co-located with it. If the agent moves to its own machine, the
+table moves with it. `/sync/push` folds what it stores through the same list, or a correction
+made on a phone would never reach the server's copy (decided 2026-09-17).
 
 Runs on a Hetzner box (the plan's DigitalOcean choice was dropped — payment was
 rejected). Reachable over Tailscale rather than the public internet.

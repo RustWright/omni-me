@@ -22,7 +22,7 @@
 //! for tests + as a placeholder when a real source isn't yet configured.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -340,6 +340,32 @@ pub enum ReauthOutcome {
     Error { message: String },
 }
 
+/// Outcome of rewinding a source's read position. Serialized verbatim as the
+/// `POST /auto_import/sources/{name}/cursor/reset` body, tagged like
+/// [`ReauthOutcome`].
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CursorResetOutcome {
+    /// Where the source was before the rewind. Reported rather than discarded,
+    /// for the reason a wipe reports its count: "it worked" cannot be checked
+    /// against what was there, and a uid can be.
+    Rewound { from_uid: u32 },
+    /// It was already at the start, so the next pull re-reads everything either
+    /// way. Not an error — rewinding twice is rewinding once.
+    ///
+    /// ⚠️ Also the answer for a source that had never polled. That one was not at
+    /// the start in the same sense — an absent cursor anchors to the newest
+    /// message — but the rewind has put it at the start now regardless.
+    AlreadyAtStart,
+    /// Moved to the first message received on or after the requested date. Either
+    /// direction: from the start, this skips forward past the older mail.
+    MovedToDate { from_uid: Option<u32>, to_uid: u32 },
+    /// This source keeps no read position (the trait default), so there is
+    /// nothing to rewind. A caller reaching this hit the route for a source
+    /// that is handed its material rather than reading a stream.
+    NotSupported,
+}
+
 /// Object-safe — sources can be held as `Arc<dyn AutoImportSource>`.
 #[async_trait]
 pub trait AutoImportSource: Send + Sync {
@@ -375,6 +401,21 @@ pub trait AutoImportSource: Send + Sync {
     /// credential themselves (server-side); the engine only relays the code.
     async fn reauth(&self, _otp: &str) -> ReauthOutcome {
         ReauthOutcome::NotSupported
+    }
+
+    /// Forget how far this source has read, so its next pull starts from the
+    /// beginning, or from the first message on or after `since`. Default
+    /// `NotSupported`: most sources are handed their material and keep no place
+    /// in a stream.
+    ///
+    /// ⚠️ This is not the inverse of a wipe. What returns is re-fetched, not
+    /// restored, so whatever the source archives on the way past it archives a
+    /// second time. `docs/src/features.md` § Three things this does not cover.
+    async fn reset_cursor(
+        &self,
+        _since: Option<NaiveDate>,
+    ) -> Result<CursorResetOutcome, ImportError> {
+        Ok(CursorResetOutcome::NotSupported)
     }
 }
 
@@ -643,9 +684,45 @@ impl SourceRegistry {
                 .map(|r| r.source.clone())
                 .ok_or_else(|| ImportError::NotConfigured(format!("unknown source: {name}")))?
         };
-        let outcome = source.pull().await;
-        self.record_tick(name, &outcome).await;
-        outcome
+        // Its own task, so the pull outlives the caller. Awaited inline, a client
+        // that hung up dropped the tick mid-message, and a pull stores nothing
+        // until its end: every model call made so far was lost.
+        let registry = self.clone();
+        let name = name.to_string();
+        tokio::spawn(async move {
+            let outcome = source.pull().await;
+            registry.record_tick(&name, &outcome).await;
+            outcome
+        })
+        .await
+        .map_err(|e| ImportError::Upstream(format!("manual tick task: {e}")))?
+    }
+
+    /// Rewind `name`'s read position so its next tick re-fetches from the
+    /// beginning. Clones the source under the read lock, like `trigger_manual`.
+    ///
+    /// ⛔ Does not tick. Rewinding and re-fetching are separate so the position
+    /// can be cleared while the source is paused — a reset that immediately
+    /// re-pulled would give no chance to stop between them.
+    pub async fn reset_cursor(
+        &self,
+        name: &str,
+        since: Option<NaiveDate>,
+    ) -> Result<CursorResetOutcome, ImportError> {
+        let source = {
+            let guard = self.inner.read().await;
+            guard
+                .get(name)
+                .map(|r| r.source.clone())
+                .ok_or_else(|| ImportError::NotConfigured(format!("unknown source: {name}")))?
+        };
+        let outcome = source.reset_cursor(since).await?;
+        tracing::warn!(
+            source = name,
+            ?outcome,
+            "rewound a source's read position — the next pull re-fetches"
+        );
+        Ok(outcome)
     }
 
     /// Drive interactive re-auth for `name` with a single-use `otp`. Clones the
@@ -889,6 +966,8 @@ pub mod null {
         /// `None` keeps the trait default so a plain `NullSource` inherits the
         /// global interval; `.with_poll_interval(...)` exercises the override.
         poll_interval: Option<Duration>,
+        /// How long each `pull()` takes before answering.
+        pull_delay: Duration,
     }
 
     impl NullSource {
@@ -899,7 +978,14 @@ pub mod null {
                 call_count: Mutex::new(0),
                 scripted_reauth: Mutex::new(None),
                 poll_interval: None,
+                pull_delay: Duration::ZERO,
             }
+        }
+
+        /// Make every `pull()` take `delay`, so a caller can give up mid-tick.
+        pub fn with_pull_delay(mut self, delay: Duration) -> Self {
+            self.pull_delay = delay;
+            self
         }
 
         /// Declare a per-source poll interval (overrides the global default in
@@ -934,6 +1020,7 @@ pub mod null {
 
         async fn pull(&self) -> Result<ImportSummary, ImportError> {
             *self.call_count.lock().unwrap() += 1;
+            tokio::time::sleep(self.pull_delay).await;
             let next = self.scripted.lock().unwrap().pop_front();
             next.unwrap_or(Ok(ImportSummary::empty()))
         }
@@ -1219,6 +1306,37 @@ mod tests {
         assert_eq!(snap[0].name, "snap-src");
         assert!(matches!(snap[0].last_outcome, TickOutcome::NotYetRun));
         assert_eq!(snap[0].interval_secs, 60);
+    }
+
+    /// Found on dev 2026-09-30: a curl that gave up cancelled a tick 140 messages
+    /// in, and nothing it had extracted was stored.
+    #[tokio::test]
+    async fn a_manual_tick_finishes_after_its_caller_hangs_up() {
+        let registry = SourceRegistry::new();
+        let src = Arc::new(
+            null::NullSource::new("slow-src")
+                .with_pull_delay(Duration::from_millis(200))
+                .with_script(vec![Ok(ImportSummary::all_appended(3))]),
+        );
+        registry
+            .register(src.clone(), Duration::from_secs(60))
+            .await;
+
+        let gave_up = tokio::time::timeout(
+            Duration::from_millis(20),
+            registry.trigger_manual("slow-src"),
+        )
+        .await;
+        assert!(gave_up.is_err(), "the caller should have stopped waiting");
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(
+            registry.snapshot().await[0].last_outcome,
+            TickOutcome::Success {
+                summary: ImportSummary::all_appended(3),
+            },
+            "the tick must complete and be recorded without anyone waiting on it"
+        );
     }
 
     #[tokio::test]

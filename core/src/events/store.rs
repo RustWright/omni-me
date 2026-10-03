@@ -6,9 +6,11 @@ use surrealdb::types::{SurrealValue, Value as DbValue};
 use super::types::{
     AssistantAnswerGivenPayload, AssistantProposalMadePayload, AssistantQuestionAskedPayload,
     BeliefRecordedPayload, BeliefSupersededPayload, ConfigSetPayload, DocumentArchivedPayload,
-    DocumentFieldsExtractedPayload, DocumentTextTranscribedPayload, EventType,
-    FeedbackCapturedPayload, RecordTypeDeclaredPayload, TransactionRecordedPayload,
+    DocumentFieldsExtractedPayload, DocumentPurgedPayload, DocumentRetentionSetPayload,
+    DocumentTextTranscribedPayload, EventType, FeedbackCapturedPayload, RecordTypeDeclaredPayload,
+    TransactionRecordedPayload,
 };
+use crate::config::Feature;
 use crate::db::Database;
 
 /// Error type for event store and projection operations.
@@ -18,6 +20,11 @@ pub enum EventError {
     Db(#[from] surrealdb::Error),
     #[error("event validation error: {0}")]
     Validation(String),
+    #[error(
+        "a scoped wipe cannot take {feature:?}: its events name blob files, and deleting them \
+         orphans the bytes. Use the document purge, which refcounts them."
+    )]
+    WipeRefused { feature: Feature },
 }
 
 /// A persisted event with a generated ID.
@@ -348,6 +355,42 @@ impl NewEvent {
         })
     }
 
+    /// Envelope for a `DocumentPurged` event. Same aggregate again, so the
+    /// tombstone folds onto the row it retires no matter which device wrote it.
+    ///
+    /// ⚠️ It can legitimately fold **before** the archive event it purges — the
+    /// pull filter runs on the authoring device's clock — which is why the
+    /// projection materializes a purged stub rather than updating in place.
+    pub fn document_purged(
+        device_id: impl Into<String>,
+        payload: &DocumentPurgedPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::DocumentPurged.to_string(),
+            aggregate_id: payload.document_id.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
+    /// Envelope for a `DocumentRetentionSet` event. The **tag** is the aggregate,
+    /// not a document, so one tag's rule history reads back on its own.
+    pub fn document_retention_set(
+        device_id: impl Into<String>,
+        payload: &DocumentRetentionSetPayload,
+    ) -> Result<NewEvent, serde_json::Error> {
+        Ok(NewEvent {
+            id: None,
+            event_type: EventType::DocumentRetentionSet.to_string(),
+            aggregate_id: payload.tag.clone(),
+            timestamp: Utc::now(),
+            device_id: device_id.into(),
+            payload: serde_json::to_value(payload)?,
+        })
+    }
+
     /// Envelope for a `BeliefSuperseded` event. Same aggregate as the belief it
     /// retires, per [`NewEvent::belief_recorded`].
     pub fn belief_superseded(
@@ -381,6 +424,32 @@ pub trait EventStore: Send + Sync {
         exclude_device: Option<&str>,
     ) -> Result<Vec<Event>, EventError>;
 
+    /// As [`EventStore::get_since`], but returning at most `limit` events.
+    ///
+    /// Only sync's pull handler wants this. A projection rebuild and the
+    /// orphan audit want the whole window and would be wrong with a page of
+    /// it, which is why the limit is a separate method rather than a parameter
+    /// added to `get_since`.
+    async fn get_since_limited(
+        &self,
+        since: DateTime<Utc>,
+        exclude_device: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError>;
+
+    /// One ordered page of the whole log, resuming strictly after `after`.
+    ///
+    /// Keyset paging, not offset: `after` is the previous page's last event as
+    /// `(received_at, id)`. Both halves are load-bearing. `received_at` is a
+    /// clock reading and two events can carry the same one, so a cursor made of
+    /// the timestamp alone would skip whatever else shares it across a page
+    /// boundary — silently, and only under a tie. See `page_events`.
+    async fn get_page_after(
+        &self,
+        after: Option<(DateTime<Utc>, &str)>,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError>;
+
     /// Get events from a specific device since a given timestamp.
     async fn get_since_by_device(
         &self,
@@ -407,6 +476,35 @@ pub trait EventStore: Send + Sync {
     /// Delete every event from the store. Used by the local data-wipe flow.
     /// Peers are unaffected; this only clears the current device's event log.
     async fn purge_all(&self) -> Result<(), EventError>;
+
+    /// How many events of each of `types` the log holds, omitting the absent ones.
+    ///
+    /// For the preview half of a wipe. Per type rather than one total because a
+    /// ledger wipe is checked against what the ledger holds, and "1,284 events"
+    /// cannot be compared with anything a person can count.
+    async fn count_by_type(&self, types: &[String]) -> Result<Vec<(String, usize)>, EventError>;
+
+    /// Delete only the events the given features own, and report how many went.
+    ///
+    /// ⚠️ **The count is the point.** A wipe that reports success without saying
+    /// what it removed cannot be checked against what was there, which is the same
+    /// reason the server backup is verified by size rather than by exit code.
+    ///
+    /// Local to this node. Peers clear their own copies when they pull the
+    /// `DataWiped` record, through [`EventStore::purge_features_before`].
+    /// `docs/src/features.md` § Wiping one feature's data.
+    async fn purge_features(&self, features: &[Feature]) -> Result<usize, EventError> {
+        self.purge_features_before(features, None).await
+    }
+
+    /// [`EventStore::purge_features`], limited to events authored before `before`
+    /// when given. A device applying a server's wipe uses the cutoff so its own
+    /// work from after the wipe survives.
+    async fn purge_features_before(
+        &self,
+        features: &[Feature],
+        before: Option<DateTime<Utc>>,
+    ) -> Result<usize, EventError>;
 }
 
 /// SurrealDB-backed event store implementation.
@@ -418,6 +516,55 @@ pub struct SurrealEventStore {
 impl SurrealEventStore {
     pub fn new(db: Database) -> Self {
         Self { db }
+    }
+
+    /// Shared body for `get_since` and `get_since_limited`.
+    ///
+    /// Only the two clauses that are structure — the device filter and the
+    /// limit — are assembled; every value stays bound.
+    async fn get_since_inner(
+        &self,
+        since: DateTime<Utc>,
+        exclude_device: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Event>, EventError> {
+        let since_str = since.to_rfc3339();
+        let exclude = exclude_device.unwrap_or("").to_string();
+
+        let device_clause = match exclude_device {
+            Some(_) => " AND device_id != $exclude_device",
+            None => "",
+        };
+        let limit_clause = match limit {
+            Some(_) => " LIMIT $limit",
+            None => "",
+        };
+
+        // `received_at ASC, eid ASC` is a total order, which is what makes a
+        // page resumable: the caller's next `since` is the last returned
+        // `received_at` and the filter is strictly greater.
+        let query = format!(
+            "SELECT meta::id(id) AS eid, event_type, aggregate_id,
+                    <string> timestamp AS ts, timestamp,
+                    <string> received_at AS rcv, received_at,
+                    device_id, payload
+             FROM events
+             WHERE received_at > type::datetime($since){device_clause}
+             ORDER BY received_at ASC, eid ASC{limit_clause}"
+        );
+
+        let mut pending = self
+            .db
+            .query(query)
+            .bind(("since", since_str))
+            .bind(("exclude_device", exclude));
+        if let Some(limit) = limit {
+            pending = pending.bind(("limit", limit));
+        }
+
+        let rows: Vec<EventRow> = pending.await?.take(0)?;
+
+        rows.into_iter().map(Event::try_from).collect()
     }
 }
 
@@ -449,7 +596,8 @@ impl EventStore for SurrealEventStore {
             .bind(("timestamp", ts_str))
             .bind(("device_id", event.device_id.clone()))
             .bind(("payload", event.payload.clone()))
-            .await?;
+            .await?
+            .check()?;
 
         Ok(Event {
             id,
@@ -528,39 +676,52 @@ impl EventStore for SurrealEventStore {
         since: DateTime<Utc>,
         exclude_device: Option<&str>,
     ) -> Result<Vec<Event>, EventError> {
-        let since_str = since.to_rfc3339();
-        let exclude = exclude_device.unwrap_or("").to_string();
+        self.get_since_inner(since, exclude_device, None).await
+    }
 
-        let query = match exclude_device {
+    async fn get_since_limited(
+        &self,
+        since: DateTime<Utc>,
+        exclude_device: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError> {
+        self.get_since_inner(since, exclude_device, Some(limit))
+            .await
+    }
+
+    async fn get_page_after(
+        &self,
+        after: Option<(DateTime<Utc>, &str)>,
+        limit: u32,
+    ) -> Result<Vec<Event>, EventError> {
+        // The tie arm is the whole reason this is not `get_since_limited`:
+        // `received_at >` alone drops the rest of a shared timestamp.
+        let where_clause = match after {
             Some(_) => {
-                "SELECT meta::id(id) AS eid, event_type, aggregate_id,
-                        <string> timestamp AS ts, timestamp,
-                        <string> received_at AS rcv, received_at,
-                        device_id, payload
-                 FROM events
-                 WHERE received_at > type::datetime($since) AND device_id != $exclude_device
-                 ORDER BY received_at ASC, eid ASC"
+                "WHERE received_at > type::datetime($since)
+                    OR (received_at = type::datetime($since) AND meta::id(id) > $eid)"
             }
-            None => {
-                "SELECT meta::id(id) AS eid, event_type, aggregate_id,
-                        <string> timestamp AS ts, timestamp,
-                        <string> received_at AS rcv, received_at,
-                        device_id, payload
-                 FROM events
-                 WHERE received_at > type::datetime($since)
-                 ORDER BY received_at ASC, eid ASC"
-            }
+            None => "",
         };
+        let query = format!(
+            "SELECT meta::id(id) AS eid, event_type, aggregate_id,
+                    <string> timestamp AS ts, timestamp,
+                    <string> received_at AS rcv, received_at,
+                    device_id, payload
+             FROM events
+             {where_clause}
+             ORDER BY received_at ASC, eid ASC
+             LIMIT $limit"
+        );
 
-        let mut response = self
-            .db
-            .query(query)
-            .bind(("since", since_str))
-            .bind(("exclude_device", exclude))
-            .await?;
+        let mut pending = self.db.query(query.as_str()).bind(("limit", limit));
+        if let Some((since, eid)) = after {
+            pending = pending
+                .bind(("since", since.to_rfc3339()))
+                .bind(("eid", eid.to_string()));
+        }
 
-        let rows: Vec<EventRow> = response.take(0)?;
-
+        let rows: Vec<EventRow> = pending.await?.take(0)?;
         rows.into_iter().map(Event::try_from).collect()
     }
 
@@ -646,9 +807,100 @@ impl EventStore for SurrealEventStore {
     }
 
     async fn purge_all(&self) -> Result<(), EventError> {
-        self.db.query("DELETE events").await?;
+        self.db.query("DELETE events").await?.check()?;
         Ok(())
     }
+
+    async fn count_by_type(&self, types: &[String]) -> Result<Vec<(String, usize)>, EventError> {
+        if types.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut result = self
+            .db
+            .query(
+                "SELECT event_type, count() AS n FROM events
+                 WHERE event_type IN $types GROUP BY event_type",
+            )
+            .bind(("types", types.to_vec()))
+            .await?
+            .check()?;
+        let rows: Vec<TypeCountRow> = result.take(0)?;
+        Ok(rows.into_iter().map(|r| (r.event_type, r.n)).collect())
+    }
+
+    async fn purge_features_before(
+        &self,
+        features: &[Feature],
+        before: Option<DateTime<Utc>>,
+    ) -> Result<usize, EventError> {
+        // ⛔ Refused rather than documented-as-unwise. A document event names a blob
+        // by hash, and the only thing that knows whether other events still point at
+        // that hash is the purge path's refcount. Deleting the events here would
+        // leave the files on disk with nothing referring to them — invisible, and
+        // exactly the "lose track of bytes" failure the purge design exists to stop.
+        if features.contains(&Feature::Documents) {
+            return Err(EventError::WipeRefused {
+                feature: Feature::Documents,
+            });
+        }
+
+        let types: Vec<String> = EventType::owned_by(features)
+            .into_iter()
+            .map(|t| t.to_string())
+            .collect();
+        if types.is_empty() {
+            return Ok(0);
+        }
+
+        // Counted before the delete rather than from the delete's own result: a
+        // `DELETE` returns the rows it removed, and reading a length off that
+        // means holding every removed event in memory to learn a number.
+        let cutoff = match before {
+            Some(_) => " AND timestamp < type::datetime($before)",
+            None => "",
+        };
+        let before = before.map(|b| b.to_rfc3339()).unwrap_or_default();
+        let mut counted = self
+            .db
+            .query(format!(
+                "SELECT count() AS n FROM events WHERE event_type IN $types{cutoff} GROUP ALL"
+            ))
+            .bind(("types", types.clone()))
+            .bind(("before", before.clone()))
+            .await?
+            .check()?;
+        let n: Option<CountRow> = counted.take(0)?;
+        let doomed = n.map(|r| r.n).unwrap_or(0);
+
+        self.db
+            .query(format!("DELETE events WHERE event_type IN $types{cutoff}"))
+            .bind(("types", types))
+            .bind(("before", before))
+            .await?
+            .check()?;
+
+        // Loud, and with the feature named: this is the one operation here that
+        // destroys a person's records on purpose.
+        tracing::warn!(
+            ?features,
+            events = doomed,
+            "purged the events owned by these features"
+        );
+        Ok(doomed)
+    }
+}
+
+/// `SELECT count()` comes back as a row, not a scalar.
+#[derive(Debug, SurrealValue)]
+struct CountRow {
+    n: usize,
+}
+
+/// One row per event type, from the grouped count.
+#[derive(Debug, SurrealValue)]
+struct TypeCountRow {
+    event_type: String,
+    n: usize,
 }
 
 /// Internal row struct for SurrealQL query deserialization.
@@ -783,6 +1035,167 @@ mod tests {
         // Newest first: notes 4, 3, 2 — not 0, 1, 2.
         assert_eq!(recent[0].aggregate_id, "note-4");
         assert_eq!(recent[2].aggregate_id, "note-2");
+    }
+
+    /// Drain the log with `get_page_after`, the way a rebuild does.
+    async fn drain_pages(store: &SurrealEventStore, page: u32) -> Vec<String> {
+        let mut cursor: Option<(DateTime<Utc>, String)> = None;
+        let mut drained = Vec::new();
+        loop {
+            let borrowed = cursor.as_ref().map(|(at, id)| (*at, id.as_str()));
+            let events = store.get_page_after(borrowed, page).await.unwrap();
+            let Some(last) = events.last() else { break };
+            cursor = Some((
+                last.received_at.expect("received_at is stamped at append"),
+                last.id.clone(),
+            ));
+            drained.extend(events.into_iter().map(|e| e.aggregate_id));
+        }
+        drained
+    }
+
+    /// The property a projection rebuild depends on: walking the log in pages
+    /// sees exactly what one unbounded read sees, in the same order.
+    #[tokio::test]
+    async fn a_page_walk_sees_every_event_exactly_once() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+
+        let base = Utc::now();
+        for i in 0..25 {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("note-{i:02}"),
+                    timestamp: base + chrono::Duration::seconds(i),
+                    device_id: "device-a".into(),
+                    payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                })
+                .await
+                .unwrap();
+        }
+
+        let expected: Vec<String> = (0..25).map(|i| format!("note-{i:02}")).collect();
+        assert_eq!(drain_pages(&store, 4).await, expected, "pages of 4");
+        assert_eq!(drain_pages(&store, 1).await, expected, "pages of 1");
+        assert_eq!(drain_pages(&store, 1000).await, expected, "one big page");
+    }
+
+    /// ⚠️ The case a timestamp-only cursor loses, written against rows forced to
+    /// share a `received_at` rather than against whatever the clock happens to
+    /// produce. `append_batch` currently spreads its stamps by a few
+    /// milliseconds, so a test that trusted the clock would pass either way and
+    /// prove nothing.
+    #[tokio::test]
+    async fn a_page_boundary_inside_one_timestamp_loses_nothing() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+
+        let base = Utc::now();
+        for i in 0..6 {
+            store
+                .append(NewEvent {
+                    id: Some(format!("tied-{i:02}")),
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("tied-{i:02}"),
+                    timestamp: base,
+                    device_id: "device-a".into(),
+                    payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                })
+                .await
+                .unwrap();
+        }
+        // Collapse every stamp onto one value, which is what a coarse clock
+        // would have produced on its own.
+        db.query("UPDATE events SET received_at = type::datetime($at)")
+            .bind(("at", base.to_rfc3339()))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+
+        let expected: Vec<String> = (0..6).map(|i| format!("tied-{i:02}")).collect();
+        // Every page size straddles the tie differently; all must agree.
+        for page in [1, 2, 3, 5, 6] {
+            assert_eq!(
+                drain_pages(&store, page).await,
+                expected,
+                "page size {page} dropped part of a shared timestamp"
+            );
+        }
+
+        // And the cursor the old timestamp-only walk would have used loses the
+        // tie, which is what stops `get_page_after` being "simplified" back to
+        // `get_since_limited`.
+        let mut cursor = chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut by_timestamp: Vec<String> = Vec::new();
+        for _ in 0..10 {
+            let page = store.get_since_limited(cursor, None, 2).await.unwrap();
+            let Some(next) = page.iter().filter_map(|e| e.received_at).max() else {
+                break;
+            };
+            cursor = next;
+            by_timestamp.extend(page.into_iter().map(|e| e.aggregate_id));
+        }
+        assert_eq!(
+            by_timestamp.len(),
+            2,
+            "a timestamp-only cursor is expected to lose the rest of the tie"
+        );
+    }
+
+    /// Paging must be lossless: draining page by page with the cursor the
+    /// server hands back has to yield every event exactly once, in order.
+    /// A page boundary that skipped or repeated a row would be invisible in
+    /// normal use — the client just quietly never sees some history.
+    #[tokio::test]
+    async fn draining_in_pages_yields_every_event_exactly_once() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+
+        let base = Utc::now();
+        for i in 0..25 {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("note-{i:02}"),
+                    timestamp: base + chrono::Duration::seconds(i),
+                    device_id: "device-a".into(),
+                    payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                })
+                .await
+                .unwrap();
+        }
+
+        let epoch = chrono::DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let mut cursor = epoch;
+        let mut drained: Vec<String> = Vec::new();
+        for _ in 0..20 {
+            let page = store.get_since_limited(cursor, None, 4).await.unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.len() <= 4, "the limit is respected");
+            cursor = page.iter().filter_map(|e| e.received_at).max().unwrap();
+            drained.extend(page.into_iter().map(|e| e.aggregate_id));
+        }
+
+        let expected: Vec<String> = (0..25).map(|i| format!("note-{i:02}")).collect();
+        assert_eq!(drained, expected, "no gaps, no repeats, original order");
+
+        let unpaged = store.get_since(epoch, None).await.unwrap();
+        assert_eq!(
+            unpaged.len(),
+            drained.len(),
+            "paging returns as much as one unbounded read"
+        );
     }
 
     #[tokio::test]
@@ -947,6 +1360,177 @@ mod tests {
 
         store.purge_all().await.unwrap();
 
+        assert_eq!(store.get_since(before, None).await.unwrap().len(), 0);
+    }
+
+    /// The separation itself, which is what the user asked to see before a real
+    /// ledger wipe: finance events go, everything else stays. ⛔ Not a summary
+    /// claim — each survivor is named, because "it should only affect finances" is
+    /// a belief until something counts the rest.
+    #[tokio::test]
+    async fn a_finances_purge_takes_the_ledger_and_nothing_else() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+        let ts = Utc::now();
+
+        // One event per neighbouring concern, plus the two finance shapes.
+        let planted = [
+            ("transaction_recorded", "t1"),
+            ("transaction_categorized", "t1"),
+            ("budget_set", "b1"),
+            ("journal_entry_created", "j1"),
+            ("note_created", "n1"),
+            ("routine_group_created", "r1"),
+            ("document_archived", "d1"),
+            ("config_set", "c1"),
+            ("feedback_captured", "f1"),
+        ];
+        for (event_type, aggregate) in planted {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: event_type.into(),
+                    aggregate_id: aggregate.into(),
+                    timestamp: ts,
+                    device_id: "d1".into(),
+                    payload: serde_json::json!({}),
+                })
+                .await
+                .unwrap();
+        }
+
+        let before = ts - chrono::Duration::seconds(10);
+        assert_eq!(
+            store.get_since(before, None).await.unwrap().len(),
+            planted.len()
+        );
+
+        let removed = store.purge_features(&[Feature::Finances]).await.unwrap();
+        assert_eq!(removed, 3, "the two transaction events and the budget");
+
+        let left: Vec<String> = store
+            .get_since(before, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.event_type)
+            .collect();
+        assert_eq!(left.len(), 6);
+        for survivor in [
+            "journal_entry_created",
+            "note_created",
+            "routine_group_created",
+            "document_archived",
+            // ⛔ The two that must never be reachable by a feature wipe: the config
+            // says which features are on, and the audit trail records the wipe.
+            "config_set",
+            "feedback_captured",
+        ] {
+            assert!(left.contains(&survivor.to_string()), "lost {survivor}");
+        }
+    }
+
+    /// ⛔ The generality has one hole, and it is closed here rather than in a
+    /// comment: a document event names a blob, and only the purge path's refcount
+    /// knows whether anything else still points at it.
+    #[tokio::test]
+    async fn a_scoped_wipe_refuses_to_take_documents() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+        let ts = Utc::now();
+        store
+            .append(NewEvent {
+                id: None,
+                event_type: "document_archived".into(),
+                aggregate_id: "d1".into(),
+                timestamp: ts,
+                device_id: "d1".into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        let err = store
+            .purge_features(&[Feature::Documents])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, EventError::WipeRefused { .. }), "{err}");
+        // And refused as a set member, not only alone — a finances wipe must not
+        // become a document wipe by having one added to the list.
+        assert!(
+            store
+                .purge_features(&[Feature::Finances, Feature::Documents])
+                .await
+                .is_err()
+        );
+        // Nothing was taken on the way to refusing.
+        let before = ts - chrono::Duration::seconds(10);
+        assert_eq!(store.get_since(before, None).await.unwrap().len(), 1);
+    }
+
+    /// A wipe that reports nothing cannot be checked against what was there.
+    #[tokio::test]
+    async fn a_purge_of_a_feature_with_no_events_reports_zero_rather_than_failing() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+        store
+            .append(NewEvent {
+                id: None,
+                event_type: "note_created".into(),
+                aggregate_id: "n1".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({"raw_text": "x", "date": "2026-04-20"}),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(store.purge_features(&[Feature::Finances]).await.unwrap(), 0);
+        assert_eq!(store.purge_features(&[]).await.unwrap(), 0);
+    }
+
+    /// ⚠️ The boundary the ledger wipe actually has to reckon with. A committed
+    /// auto-import batch is the *second author* of a transaction, so a finances
+    /// wipe claims the transaction and leaves the batch — and the batch is what
+    /// carries the dedup key that would suppress re-importing the same statement.
+    #[tokio::test]
+    async fn a_finances_purge_leaves_the_auto_import_batch_that_proposed_it() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db);
+        let ts = Utc::now();
+        for event_type in ["transaction_recorded", "auto_import_batch_committed"] {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: event_type.into(),
+                    aggregate_id: "a1".into(),
+                    timestamp: ts,
+                    device_id: "d1".into(),
+                    payload: serde_json::json!({}),
+                })
+                .await
+                .unwrap();
+        }
+        let before = ts - chrono::Duration::seconds(10);
+
+        assert_eq!(
+            store.purge_features(&[Feature::Finances]).await.unwrap(),
+            1,
+            "the transaction is claimed by finances even though auto-import wrote it"
+        );
+        let left = store.get_since(before, None).await.unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].event_type, "auto_import_batch_committed");
+
+        // Which is why a re-import needs both features named, and the API makes
+        // that the caller's explicit choice rather than a hidden widening.
+        assert_eq!(
+            store
+                .purge_features(&[Feature::Finances, Feature::AutoImport])
+                .await
+                .unwrap(),
+            1
+        );
         assert_eq!(store.get_since(before, None).await.unwrap().len(), 0);
     }
 

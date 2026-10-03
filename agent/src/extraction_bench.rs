@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use omni_me_core::extraction::{
     DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, DocumentPart, ExtractionHint, verify,
 };
+use omni_me_core::llm::Sampling;
 use omni_me_core::statement::StatementParse;
 use omni_me_core::statement::parse::parse_brokerage_statement;
 use rust_decimal::Decimal;
@@ -25,6 +26,16 @@ const DEFAULT_CORPUS: &str = ".reference/paisa-ledger";
 /// this is a spend control rather than a statistical one.
 const DEFAULT_SAMPLE: usize = 12;
 const SAMPLE_ENV: &str = "OMNI_BENCH_SAMPLE";
+
+/// How many times each document is read.
+///
+/// Three, matching `--bench-reading`, because one is not enough to rank this seat:
+/// the same model on the same 39-row statement returned 13 sign-flips on one run
+/// and 0 on the next (`MODEL_BENCH.md` R26). It multiplies the spend, which is why
+/// it is overridable — but a single-shot run now says its stability is unmeasured
+/// rather than printing a number that looks like a ranking.
+const REPEATS_ENV: &str = "OMNI_BENCH_EXTRACT_REPEATS";
+const DEFAULT_REPEATS: usize = 3;
 
 /// A directory of documents that are not transaction statements — the abstention
 /// arm, whose honest answer is no postings at all.
@@ -58,11 +69,8 @@ struct Case {
     documents: Vec<(String, PathBuf)>,
 }
 
-/// How one document scored against the labels its own period generated.
-struct Scored {
-    label: String,
-    document: String,
-    labelled: usize,
+/// One call's numbers, before they are pooled across the repeats.
+struct Run {
     returned: usize,
     /// Labelled amounts the model also returned, as a multiset intersection.
     matched: usize,
@@ -75,15 +83,92 @@ struct Scored {
     error: Option<String>,
 }
 
+/// How one document scored across every run of it.
+struct Scored {
+    label: String,
+    document: String,
+    /// Labels this document has, per run. Not pooled: the column reads as the
+    /// statement's own row count, which `repeats` must not multiply.
+    labelled: usize,
+    runs: usize,
+    errors: usize,
+    /// Summed over the runs that answered.
+    returned: usize,
+    matched: usize,
+    sign_flipped: usize,
+    fabricated: usize,
+    /// Whether every run that answered scored identically.
+    ///
+    /// The column this arm was missing. The same model on the same 39-row
+    /// statement returned 13 sign-flips on one run and 0 on the next, and a
+    /// single-shot arm reports whichever it drew as the seat's number.
+    agreed: bool,
+    /// Median over the runs that answered. An errored run's latency is left out:
+    /// a refused request is often fast, and would drag the median toward a
+    /// number no successful call ever took.
+    latency: Duration,
+    first_error: Option<String>,
+}
+
 impl Scored {
+    /// Runs that produced a score at all.
+    fn answered(&self) -> usize {
+        self.runs.saturating_sub(self.errors)
+    }
+
     fn recall(&self) -> f64 {
-        if self.labelled == 0 {
-            // An empty statement period. Recall is undefined; fabrication is the
-            // whole measurement, and `report` handles these separately.
+        let asked = self.labelled * self.answered();
+        if asked == 0 {
+            // An empty statement period, or a document every run refused. Recall
+            // is undefined either way; `report` handles both separately.
             return 1.0;
         }
-        self.matched as f64 / self.labelled as f64
+        self.matched as f64 / asked as f64
     }
+}
+
+/// Pool one document's runs into the row that gets printed.
+fn summarise(label: &str, document: &str, labelled: usize, runs: Vec<Run>) -> Scored {
+    let mut s = Scored {
+        label: label.to_string(),
+        document: document.to_string(),
+        labelled,
+        runs: runs.len(),
+        errors: 0,
+        returned: 0,
+        matched: 0,
+        sign_flipped: 0,
+        fabricated: 0,
+        agreed: true,
+        latency: Duration::ZERO,
+        first_error: None,
+    };
+    let mut latencies = Vec::new();
+    let mut scores = Vec::new();
+
+    for run in &runs {
+        if let Some(e) = &run.error {
+            s.errors += 1;
+            if s.first_error.is_none() {
+                s.first_error = Some(e.clone());
+            }
+            continue;
+        }
+        latencies.push(run.latency);
+        s.returned += run.returned;
+        s.matched += run.matched;
+        s.sign_flipped += run.sign_flipped;
+        s.fabricated += run.fabricated;
+        scores.push((run.returned, run.matched, run.sign_flipped, run.fabricated));
+    }
+
+    s.agreed = scores.windows(2).all(|w| w[0] == w[1]);
+    latencies.sort_unstable();
+    s.latency = latencies
+        .get(latencies.len() / 2)
+        .copied()
+        .unwrap_or(Duration::ZERO);
+    s
 }
 
 /// Stable short tag for a name that must not be printed.
@@ -293,17 +378,8 @@ fn score_amounts(labels: &[Decimal], returned: &[Decimal]) -> (usize, usize, usi
     (matched, sign_flipped, fabricated)
 }
 
-async fn score_one(
-    extractor: &dyn DocumentExtractor,
-    case: &Case,
-    document: &str,
-    path: &Path,
-) -> Scored {
-    let labels: Vec<Decimal> = case.truth.rows.iter().map(|r| r.amount).collect();
-    let mut scored = Scored {
-        label: case.label.clone(),
-        document: document.to_string(),
-        labelled: labels.len(),
+async fn score_one(extractor: &dyn DocumentExtractor, labels: &[Decimal], path: &Path) -> Run {
+    let mut scored = Run {
         returned: 0,
         matched: 0,
         sign_flipped: 0,
@@ -333,7 +409,7 @@ async fn score_one(
         Ok(extraction) => {
             let returned: Vec<Decimal> = extraction.postings.iter().map(|p| p.amount).collect();
             scored.returned = returned.len();
-            let (matched, sign_flipped, fabricated) = score_amounts(&labels, &returned);
+            let (matched, sign_flipped, fabricated) = score_amounts(labels, &returned);
             scored.matched = matched;
             scored.sign_flipped = sign_flipped;
             scored.fabricated = fabricated;
@@ -343,30 +419,48 @@ async fn score_one(
     scored
 }
 
-fn report(rows: &[Scored]) {
-    println!();
+fn report(rows: &[Scored], model: &str, repeats: usize, sampling: Sampling) {
     println!(
-        "{:<18} {:<6} {:>5} {:>5} {:>6} {:>5} {:>5} {:>8}",
-        "CASE", "DOC", "LBL", "RET", "MATCH", "SIGN", "FAB", "LATENCY"
+        "\nrole C1 — statement extraction · model {model} · {repeats} runs per document · \
+         sampling {}\n",
+        sampling.describe()
+    );
+    println!(
+        "{:<18} {:<6} {:>5} {:>5} {:>6} {:>5} {:>5} {:>4} {:>6} {:>8}",
+        "CASE", "DOC", "LBL", "RET", "MATCH", "SIGN", "FAB", "ERR", "AGREE", "MEDIAN"
     );
     for row in rows {
         let latency = format!("{:.1}s", row.latency.as_secs_f64());
+        // Two runs is the least that can disagree, so one is "not asked" rather
+        // than agreement — the distinction a bare `yes` would erase.
+        let agree = match (row.answered(), row.agreed) {
+            (0 | 1, _) => "n/a",
+            (_, true) => "yes",
+            (_, false) => "NO",
+        };
         println!(
-            "{:<18} {:<6} {:>5} {:>5} {:>5.0}% {:>5} {:>5} {:>8}  {}",
+            "{:<18} {:<6} {:>5} {:>5} {:>5.0}% {:>5} {:>5} {:>4} {:>6} {:>8}  {}",
             row.label,
             row.document,
             row.labelled,
-            row.returned,
+            // Per run, so it compares against LBL rather than against LBL x runs.
+            mean_per_run(row.returned, row.answered()),
             row.recall() * 100.0,
             row.sign_flipped,
             row.fabricated,
+            row.errors,
+            agree,
             latency,
-            row.error.as_deref().unwrap_or(""),
+            row.first_error.as_deref().unwrap_or(""),
         );
     }
+    println!(
+        "  LBL and RET are per run; MATCH is pooled; SIGN, FAB and ERR are summed \
+         over {repeats} runs."
+    );
 
-    let errored = rows.iter().filter(|r| r.error.is_some()).count();
-    let scored: Vec<&Scored> = rows.iter().filter(|r| r.error.is_none()).collect();
+    let errored = rows.iter().filter(|r| r.answered() == 0).count();
+    let scored: Vec<&Scored> = rows.iter().filter(|r| r.answered() > 0).collect();
     if scored.is_empty() {
         println!("\nevery case errored — nothing was measured");
         return;
@@ -384,10 +478,25 @@ fn report(rows: &[Scored]) {
         let labelled: usize = populated.iter().map(|r| r.labelled).sum();
         println!(
             "{} populated periods: mean recall {:.0}% · {flipped} sign-flipped · \
-             {fabricated} fabricated against {labelled} labelled",
+             {fabricated} fabricated against {labelled} labelled rows per run",
             populated.len(),
             recall * 100.0,
         );
+        // The R26 column, said in words: a seat cannot be ranked on keys that
+        // move between runs of the same document.
+        let unstable = populated.iter().filter(|r| !r.agreed).count();
+        let comparable = populated.iter().filter(|r| r.answered() > 1).count();
+        if comparable == 0 {
+            println!(
+                "  stability UNMEASURED — one run per document. Set {REPEATS_ENV} to at \
+                 least 2 before ranking anything on these numbers."
+            );
+        } else {
+            println!(
+                "  {unstable} of {comparable} documents scored differently between runs \
+                 of the same work"
+            );
+        }
     }
     // Reported apart from recall, which is undefined with nothing to recall.
     // A period with no transactions measures one thing only: whether the model
@@ -395,7 +504,8 @@ fn report(rows: &[Scored]) {
     if !empty.is_empty() {
         let clean = empty.iter().filter(|r| r.returned == 0).count();
         println!(
-            "{} empty periods (abstention): {clean} answered with no postings, {} invented some",
+            "{} empty periods (abstention): {clean} answered with no postings on every run, \
+             {} invented some",
             empty.len(),
             empty.len() - clean,
         );
@@ -405,19 +515,41 @@ fn report(rows: &[Scored]) {
         times.sort();
         times[times.len() / 2]
     };
+    let errored_runs: usize = rows.iter().map(|r| r.errors).sum();
     println!(
-        "median latency {:.1}s · {errored} errored",
+        "median latency {:.1}s · {errored} documents errored on every run · \
+         {errored_runs} errored runs in total",
         median.as_secs_f64()
     );
 }
 
-pub async fn run(extractor: &dyn DocumentExtractor) {
+/// A pooled count back to per-run, for a column that sits beside a per-run one.
+fn mean_per_run(total: usize, runs: usize) -> String {
+    if runs == 0 {
+        return "—".to_string();
+    }
+    let mean = total as f64 / runs as f64;
+    // One decimal only when the runs actually disagreed, so a stable row stays
+    // as readable as it was before repeats existed.
+    if (mean - mean.round()).abs() < f64::EPSILON {
+        format!("{}", mean.round() as usize)
+    } else {
+        format!("{mean:.1}")
+    }
+}
+
+pub async fn run(extractor: &dyn DocumentExtractor, sampling: Sampling) {
     let corpus =
         PathBuf::from(std::env::var(CORPUS_ENV).unwrap_or_else(|_| DEFAULT_CORPUS.to_string()));
     let sample: usize = std::env::var(SAMPLE_ENV)
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_SAMPLE);
+    let repeats: usize = std::env::var(REPEATS_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_REPEATS);
 
     // Discovery first, so a run with no endpoint configured is a usable dry run:
     // it proves the corpus parses into labels without spending a token.
@@ -447,12 +579,15 @@ pub async fn run(extractor: &dyn DocumentExtractor) {
     }
     chosen.extend(absent.iter());
 
-    let requests: usize = chosen.iter().map(|c| c.documents.len()).sum();
+    let documents: usize = chosen.iter().map(|c| c.documents.len()).sum();
     let labelled: usize = chosen.iter().map(|c| c.truth.rows.len()).sum();
     println!(
-        "plan: {} cases · {requests} requests · {labelled} labelled rows · model {}",
+        "plan: {} cases · {documents} documents x {repeats} runs = {} requests · \
+         {labelled} labelled rows · model {} · sampling {}",
         chosen.len(),
+        documents * repeats,
         extractor.name(),
+        sampling.describe(),
     );
     for case in &chosen {
         println!(
@@ -479,17 +614,31 @@ pub async fn run(extractor: &dyn DocumentExtractor) {
 
     let mut rows = Vec::new();
     for case in chosen {
+        let labels: Vec<Decimal> = case.truth.rows.iter().map(|r| r.amount).collect();
         for (document, path) in &case.documents {
-            rows.push(score_one(extractor, case, document, path).await);
+            let mut runs = Vec::new();
+            for _ in 0..repeats {
+                runs.push(score_one(extractor, &labels, path).await);
+            }
+            rows.push(summarise(&case.label, document, labels.len(), runs));
         }
     }
-    report(&rows);
+    report(&rows, extractor.name(), repeats, sampling);
 
     let mut checked = Vec::new();
     for (pages, hint) in &arithmetic {
-        checked.push(check_one(extractor, pages, *hint).await);
+        let mut runs = Vec::new();
+        for _ in 0..repeats {
+            runs.push(check_one(extractor, pages, *hint).await);
+        }
+        checked.push(summarise_arithmetic(
+            tag(&file_name(&pages[0])),
+            hint_name(*hint),
+            pages.len(),
+            runs,
+        ));
     }
-    report_arithmetic(&checked);
+    report_arithmetic(&checked, repeats);
 }
 
 // --- Arithmetic arm ---------------------------------------------------------
@@ -550,12 +699,8 @@ fn group_pages(files: Vec<PathBuf>) -> Vec<Vec<PathBuf>> {
 }
 
 /// One document scored with no label set behind it.
-struct Checked {
-    document: String,
-    hint: &'static str,
-    /// Files this document arrived as. More than one exercises the multi-part
-    /// request path, which is the half a single-image signature could not reach.
-    pages: usize,
+/// One call in the arithmetic arm.
+struct ArithRun {
     postings: usize,
     /// Whether the model returned the reference total its hint asks for.
     total: bool,
@@ -568,6 +713,97 @@ struct Checked {
     review: bool,
     latency: Duration,
     error: Option<String>,
+}
+
+/// One document across every run of it.
+struct Checked {
+    document: String,
+    hint: &'static str,
+    /// Files this document arrived as. More than one exercises the multi-part
+    /// request path, which is the half a single-image signature could not reach.
+    pages: usize,
+    runs: usize,
+    errors: usize,
+    /// Summed over the runs that answered.
+    postings: usize,
+    /// Runs that returned a total, that were arithmetically sound, and that the
+    /// confirm screen would flag. Counts rather than booleans: the 2-invented-vs-3
+    /// margin this arm was ranked on was already called noise, and a boolean
+    /// cannot say whether a run-to-run difference is what produced it.
+    totals: usize,
+    sound: usize,
+    flagged: usize,
+    ungrounded: Option<usize>,
+    agreed: bool,
+    latency: Duration,
+    first_error: Option<String>,
+}
+
+impl Checked {
+    fn answered(&self) -> usize {
+        self.runs.saturating_sub(self.errors)
+    }
+}
+
+/// Pool one document's arithmetic runs into the row that gets printed.
+fn summarise_arithmetic(
+    document: String,
+    hint: &'static str,
+    pages: usize,
+    runs: Vec<ArithRun>,
+) -> Checked {
+    let mut c = Checked {
+        document,
+        hint,
+        pages,
+        runs: runs.len(),
+        errors: 0,
+        postings: 0,
+        totals: 0,
+        sound: 0,
+        flagged: 0,
+        ungrounded: None,
+        agreed: true,
+        latency: Duration::ZERO,
+        first_error: None,
+    };
+    let mut latencies = Vec::new();
+    let mut shapes = Vec::new();
+
+    for run in &runs {
+        if let Some(e) = &run.error {
+            c.errors += 1;
+            if c.first_error.is_none() {
+                c.first_error = Some(e.clone());
+            }
+            continue;
+        }
+        latencies.push(run.latency);
+        c.postings += run.postings;
+        c.totals += usize::from(run.total);
+        c.sound += usize::from(run.arithmetic_ok);
+        c.flagged += usize::from(run.review);
+        // `None` means no text layer, which is a property of the document rather
+        // than of the run, so summing only ever adds numbers to numbers.
+        if let Some(n) = run.ungrounded {
+            c.ungrounded = Some(c.ungrounded.unwrap_or(0) + n);
+        }
+        shapes.push((
+            run.postings,
+            run.total,
+            run.arithmetic_ok,
+            run.ungrounded,
+            run.review,
+        ));
+    }
+
+    c.agreed = shapes.windows(2).all(|w| w[0] == w[1]);
+    latencies.sort_unstable();
+    c.latency = latencies
+        .get(latencies.len() / 2)
+        .copied()
+        .unwrap_or(Duration::ZERO);
+    c
 }
 
 fn hint_name(hint: ExtractionHint) -> &'static str {
@@ -651,11 +887,8 @@ async fn check_one(
     extractor: &dyn DocumentExtractor,
     pages: &[PathBuf],
     hint: ExtractionHint,
-) -> Checked {
-    let mut checked = Checked {
-        document: tag(&file_name(&pages[0])),
-        hint: hint_name(hint),
-        pages: pages.len(),
+) -> ArithRun {
+    let mut checked = ArithRun {
         postings: 0,
         total: false,
         arithmetic_ok: false,
@@ -768,43 +1001,77 @@ fn plan_arithmetic() -> Vec<(Vec<PathBuf>, ExtractionHint)> {
     planned
 }
 
-fn report_arithmetic(rows: &[Checked]) {
+fn report_arithmetic(rows: &[Checked], repeats: usize) {
     if rows.is_empty() {
         return;
     }
     println!();
     println!(
-        "{:<6} {:<10} {:>5} {:>5} {:>6} {:>6} {:>7} {:>7} {:>8}",
-        "DOC", "HINT", "PAGES", "POST", "TOTAL", "ARITH", "UNGRND", "REVIEW", "LATENCY"
+        "{:<6} {:<10} {:>5} {:>5} {:>6} {:>7} {:>7} {:>7} {:>4} {:>6} {:>8}",
+        "DOC",
+        "HINT",
+        "PAGES",
+        "POST",
+        "TOTAL",
+        "SOUND",
+        "UNGRND",
+        "FLAG",
+        "ERR",
+        "AGREE",
+        "MEDIAN"
     );
     for row in rows {
+        let answered = row.answered();
+        let agree = match (answered, row.agreed) {
+            (0 | 1, _) => "n/a",
+            (_, true) => "yes",
+            (_, false) => "NO",
+        };
+        let out_of = |n: usize| {
+            if answered == 0 {
+                "—".to_string()
+            } else {
+                format!("{n}/{answered}")
+            }
+        };
         println!(
-            "{:<6} {:<10} {:>5} {:>5} {:>6} {:>6} {:>7} {:>7} {:>7.1}s  {}",
+            "{:<6} {:<10} {:>5} {:>5} {:>6} {:>7} {:>7} {:>7} {:>4} {:>6} {:>7.1}s  {}",
             row.document,
             row.hint,
             row.pages,
-            row.postings,
-            if row.total { "yes" } else { "no" },
-            if row.arithmetic_ok { "ok" } else { "MISMATCH" },
+            mean_per_run(row.postings, answered),
+            out_of(row.totals),
+            out_of(row.sound),
             row.ungrounded
                 .map_or_else(|| "n/a".to_string(), |n| n.to_string()),
-            if row.review { "FLAG" } else { "auto" },
+            out_of(row.flagged),
+            row.errors,
+            agree,
             row.latency.as_secs_f64(),
-            row.error.as_deref().unwrap_or(""),
+            row.first_error.as_deref().unwrap_or(""),
         );
     }
+    println!(
+        "  POST is per run; TOTAL, SOUND and FLAG are runs out of those that \
+         answered; UNGRND is summed over {repeats} runs."
+    );
 
-    let scored: Vec<&Checked> = rows.iter().filter(|r| r.error.is_none()).collect();
+    let scored: Vec<&Checked> = rows.iter().filter(|r| r.answered() > 0).collect();
     if scored.is_empty() {
         println!("every document errored — nothing was measured");
         return;
     }
-    let sound = scored.iter().filter(|r| r.arithmetic_ok).count();
-    let with_total = scored.iter().filter(|r| r.total).count();
-    let flagged = scored.iter().filter(|r| r.review).count();
+    // Every run, not any: a document that was sound twice and wrong once is not a
+    // document this seat read soundly, and rounding it up is how a margin of two
+    // fabrications becomes a ranking.
+    let sound = scored.iter().filter(|r| r.sound == r.answered()).count();
+    let with_total = scored.iter().filter(|r| r.totals == r.answered()).count();
+    let flagged = scored.iter().filter(|r| r.flagged > 0).count();
+    let unstable = scored.iter().filter(|r| !r.agreed).count();
     println!(
-        "{} documents: {sound} arithmetically sound · {with_total} returned a total · \
-         {flagged} would be flagged for manual review",
+        "{} documents: {sound} arithmetically sound on every run · {with_total} returned a \
+         total on every run · {flagged} would be flagged at least once · {unstable} answered \
+         differently between runs",
         scored.len()
     );
     // Reported apart, because it is the only column with ground truth behind it.
@@ -818,7 +1085,11 @@ fn report_arithmetic(rows: &[Checked]) {
             checkable.len()
         );
     }
-    println!("{} errored", rows.len() - scored.len());
+    let errored_runs: usize = rows.iter().map(|r| r.errors).sum();
+    println!(
+        "{} documents errored on every run · {errored_runs} errored runs in total",
+        rows.len() - scored.len()
+    );
 }
 
 #[cfg(test)]
@@ -828,6 +1099,85 @@ mod tests {
 
     fn dec(v: &str) -> Decimal {
         Decimal::from_str(v).unwrap()
+    }
+
+    fn run_of(matched: usize, sign_flipped: usize, fabricated: usize) -> Run {
+        Run {
+            returned: matched + fabricated,
+            matched,
+            sign_flipped,
+            fabricated,
+            latency: Duration::from_millis(100),
+            error: None,
+        }
+    }
+
+    /// The whole reason this arm gained repeats: 13 sign-flips on one run of a
+    /// statement and 0 on the next, from the same model on the same work.
+    #[test]
+    fn a_document_scored_differently_between_runs_is_flagged() {
+        let row = summarise(
+            "case",
+            "doc",
+            3,
+            vec![run_of(3, 0, 0), run_of(3, 0, 0), run_of(1, 2, 0)],
+        );
+        assert!(!row.agreed);
+        assert_eq!(row.sign_flipped, 2, "summed, not averaged away");
+        // Pooled against three runs of three labels each, so 7 of 9.
+        assert_eq!(row.matched, 7);
+        assert!((row.recall() - 7.0 / 9.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn identical_runs_agree_and_recall_is_unchanged_by_repeating_them() {
+        let row = summarise(
+            "case",
+            "doc",
+            4,
+            vec![run_of(4, 0, 0), run_of(4, 0, 0), run_of(4, 0, 0)],
+        );
+        assert!(row.agreed);
+        assert!((row.recall() - 1.0).abs() < f64::EPSILON);
+    }
+
+    /// An errored run is not a score of zero — that would report an endpoint
+    /// outage as a model that recalled nothing.
+    #[test]
+    fn an_errored_run_is_excluded_from_the_score_and_the_median() {
+        let mut errored = run_of(0, 0, 0);
+        errored.error = Some("upstream".into());
+        errored.latency = Duration::from_millis(5);
+        let row = summarise("case", "doc", 2, vec![run_of(2, 0, 0), errored]);
+
+        assert_eq!(row.errors, 1);
+        assert_eq!(row.answered(), 1);
+        assert!((row.recall() - 1.0).abs() < f64::EPSILON);
+        assert_eq!(row.latency, Duration::from_millis(100));
+        assert_eq!(row.first_error.as_deref(), Some("upstream"));
+        // One answer cannot disagree with anything, and the report prints n/a.
+        assert!(row.agreed);
+    }
+
+    #[test]
+    fn a_document_every_run_refused_reports_no_recall_rather_than_zero() {
+        let errored = || {
+            let mut r = run_of(0, 0, 0);
+            r.error = Some("429".into());
+            r
+        };
+        let row = summarise("case", "doc", 5, vec![errored(), errored()]);
+        assert_eq!(row.answered(), 0);
+        // `report` filters these out before the aggregate; recall must not drag
+        // the mean toward zero if one ever reaches it.
+        assert!((row.recall() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_pooled_count_prints_per_run_and_only_decimalises_when_runs_differ() {
+        assert_eq!(mean_per_run(9, 3), "3");
+        assert_eq!(mean_per_run(10, 3), "3.3");
+        assert_eq!(mean_per_run(4, 0), "—");
     }
 
     #[test]
@@ -893,6 +1243,7 @@ mod tests {
     fn extraction(postings: &[&str], total: Option<&str>) -> ExtractionResult {
         ExtractionResult {
             date: None,
+            date_as_printed: None,
             description: None,
             postings: postings
                 .iter()
@@ -906,7 +1257,13 @@ mod tests {
             total: total.map(dec),
             confidence: 0.9,
             model: "test".into(),
+            dropped_postings: 0,
+            total_as_printed: None,
+            total_discarded: false,
+            document_kind: None,
+            order_ref: None,
             raw_response: serde_json::Value::Null,
+            refund: None,
         }
     }
 

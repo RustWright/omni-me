@@ -155,13 +155,20 @@ a source that emits already-balanced transfers between known accounts may not. T
 helper's, and the engine preserves it.) `amount` is a decimal **string**; `external_id` must be stable
 across runs so re-pulling the same upstream row doesn't double-record.
 
+## `joined` — one transaction from several rows (optional)
+
+`[{"draft": <draft>, "parts": [<draft>, …]}]`. Use it when the helper knows several upstream rows are
+one transaction, e.g. both halves of a transfer between two of the user's accounts: `draft` is the
+balanced whole with its own `external_id`, `parts` are the rows as standalone drafts. The engine
+proposes `draft` only when neither it nor any part was proposed before; otherwise it proposes just the
+unseen parts, so a row is never booked twice or lost. Each part counts as one fetched row.
+
 ## `dedup_key` — idempotency token
 
 The per-tick idempotency key for the whole batch. **Optional**: if the helper omits it, the engine
-generates `"{source-name}-{unix_millis}"` (fine for a polling source that re-proposes a fresh batch each
-tick; row-level dedup still happens via each draft's stable `external_id`). A watermark-style source
-(e.g. "everything after transfer-id N") should supply its own key so an unchanged upstream produces an
-identical key the engine can skip.
+derives one from the drafts' `external_id`s, so an unchanged window collapses onto the batch it already
+produced. Independently of the key, the engine drops any draft whose `external_id` this source has
+already proposed (counted as `deduped`), so a helper may re-send its whole lookback window every tick.
 
 ## `source_metadata` — opaque context
 

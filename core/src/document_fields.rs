@@ -15,7 +15,8 @@
 use chrono::Utc;
 
 use crate::events::{
-    DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DocumentField, DocumentFieldsExtractedPayload,
+    DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DOCUMENT_TAGS_KEY, DocumentField,
+    DocumentFieldsExtractedPayload, Tag, encode_tag_set,
 };
 use crate::extraction::DocumentPart;
 use crate::extraction::document::{self, DocumentReader};
@@ -189,6 +190,30 @@ pub fn human_correction(
         fields: vec![DocumentField {
             key: key.to_string(),
             value: value.to_string(),
+            source: HUMAN_SOURCE.to_string(),
+            verified: true,
+        }],
+    }
+}
+
+/// A person's tag set for a document, as the one folded `tags` field.
+///
+/// ⚠️ **The whole set, every time.** The fold overwrites a key and can never
+/// remove one, so a partial write would leave a tag the person took off still on
+/// the row — which is why the tag set is one field rather than one field per tag,
+/// and why the caller sends what the set should become.
+///
+/// ✅ `verified: true` for a narrower reason than [`human_correction`]'s. There
+/// the flag is honest because the person could see the document the value came
+/// from; here the tag *is* their own label, so there is no reading to check. ⛔ Do
+/// not carry that argument to any other key.
+pub fn human_tag_set(document_id: &str, tags: &[Tag]) -> DocumentFieldsExtractedPayload {
+    DocumentFieldsExtractedPayload {
+        document_id: document_id.to_string(),
+        extracted_at: Utc::now().to_rfc3339(),
+        fields: vec![DocumentField {
+            key: DOCUMENT_TAGS_KEY.to_string(),
+            value: encode_tag_set(tags),
             source: HUMAN_SOURCE.to_string(),
             verified: true,
         }],

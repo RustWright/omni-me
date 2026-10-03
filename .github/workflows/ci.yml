@@ -39,10 +39,12 @@ jobs:
   # closed, which is what unblocked this check.
   fmt:
     name: Formatting
-    runs-on: ubuntu-latest
+    # Pinned on purpose: a rolling ubuntu-latest broke the release path once, with no
+    # workflow change of ours. Raise it deliberately, never by alias.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt
 
@@ -61,7 +63,7 @@ jobs:
   # so the expensive build jobs only run when their sources moved.
   changes:
     name: Detect changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       app: ${{ steps.filter.outputs.app }}
@@ -95,7 +97,11 @@ jobs:
     name: Build & Test (core + server)
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # A hung test otherwise runs to GitHub's 6-hour default, which looks identical
+    # to a slow queue. `cargo test` has taken 1m50s and the whole job 7-9min across
+    # 20 runs, with cold-cache outliers to 21min, so 45 cannot fail a healthy run.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -112,7 +118,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends poppler-utils
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy
 
@@ -170,6 +176,9 @@ jobs:
         run: cargo clippy -p omni-me-core -p omni-me-server -p omni-me-agent --all-targets -- -D warnings
 
       - name: Run tests
+        # Normally ~4 min. SurrealDB-backed tests have hung twice (2026-10-02/03,
+        # different tests), and without this a hang holds the job for 45 min.
+        timeout-minutes: 15
         run: cargo test -p omni-me-core -p omni-me-server -p omni-me-agent
 
       - name: Build release
@@ -179,7 +188,8 @@ jobs:
     name: Build & Test (Tauri app)
     needs: changes
     if: ${{ needs.changes.outputs.app == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -212,7 +222,7 @@ jobs:
             libgtk-3-dev
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy
 
@@ -258,13 +268,14 @@ jobs:
     name: Build & Test (Frontend)
     needs: changes
     if: ${{ needs.changes.outputs.frontend == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
         with:
           targets: wasm32-unknown-unknown
           components: clippy
@@ -320,3 +331,65 @@ jobs:
       - name: Clippy (non-mock)
         working-directory: tauri-app/frontend
         run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
+      # Phone-width layout sweep. The archive detail view shipped overflowing the
+      # screen and review never saw it, because the defect is a measurement — a
+      # grid item at `min-width: auto` refusing to shrink — and not something a
+      # diff shows. `tests/viewport-check.mjs` drives every tab at 360px and
+      # 390px and fails if the page can be panned sideways.
+      #
+      # ⚠️ `continue-on-error` until it has proven itself on a few real runs. It
+      # has never executed: the box this was written on cannot link a wasm build,
+      # so CI is its first run. Drop the flag once it has passed and caught at
+      # least one deliberate regression — a gate nobody trusts gets disabled, and
+      # a flaky one nobody trusts gets ignored, which is worse.
+      #
+      # ⛔ The mock build lands in the DEBUG output dir, which is what
+      # `tauri.conf.json` pins `frontendDist` to. Harmless on a CI runner and
+      # dangerous on a dev machine: that is exactly how a mock-data APK once
+      # shipped. Never copy this step into a job that also bundles the app.
+      - name: Install Playwright
+        continue-on-error: true
+        working-directory: tauri-app/frontend
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Build frontend (mock, for the layout sweep)
+        continue-on-error: true
+        working-directory: tauri-app/frontend
+        run: dx build --platform web --features mock
+
+      # ⛔ Load-bearing, and its absence does NOT look like a missing file. Without
+      # `editor.bundle.js` the first tab switch calls the undefined `destroyEditor`
+      # through a wasm-bindgen import that is not marked `catch`, which ABORTS the
+      # wasm — the app then ignores every click and presents as broken navigation.
+      # That is exactly how the sweep failed on its first run. All three bundles are
+      # tracked, so this is a copy and needs no npm install.
+      - name: Copy the JS bundles the app aborts without
+        continue-on-error: true
+        working-directory: tauri-app
+        run: npm run copy:editor:dev
+
+      - name: Layout sweep at phone widths
+        continue-on-error: true
+        working-directory: tauri-app/frontend
+        run: |
+          dist=target/dx/frontend/debug/web/public
+          test -f "$dist/index.html" || { echo "no mock build at $dist"; exit 1; }
+          test -f "$dist/assets/js/editor.bundle.js" || {
+            echo "editor.bundle.js missing — the wasm will abort on the first tab switch"
+            exit 1
+          }
+          python3 -m http.server 8080 --directory "$dist" &
+          server=$!
+          # Fail fast with a clear message rather than letting Playwright time
+          # out against a port nothing is listening on.
+          for _ in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8080/ >/dev/null && break
+            sleep 0.5
+          done
+          node tests/viewport-check.mjs http://127.0.0.1:8080
+          status=$?
+          kill $server
+          exit $status

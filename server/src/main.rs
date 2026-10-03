@@ -29,10 +29,17 @@ fn config_sources(ctx: SourceCtx) -> SourceFuture {
     })
 }
 
-#[tokio::main]
-async fn main() {
-    run(RunConfig {
+/// Built by hand rather than with `#[tokio::main]`: the database engine needs a
+/// worker stack larger than tokio's default. See `omni_me_core::async_runtime`.
+fn main() {
+    let runtime = match omni_me_core::async_runtime::build() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("could not start the async runtime: {e}");
+            std::process::exit(1);
+        }
+    };
+    runtime.block_on(run(RunConfig {
         source_builder: Box::new(config_sources),
-    })
-    .await;
+    }));
 }

@@ -20,8 +20,13 @@ use crate::bridge;
 /// `copy:editor:{dev,release}` do that.
 const PDF_BUNDLE_SRC: &str = "/assets/js/pdfview.bundle.js";
 
-/// DOM id the PDF canvases are rendered into.
-const PDF_CONTAINER_ID: &str = "pdf-container";
+/// A DOM id unique to this page, so a PDF shown inline and again full screen
+/// render into two containers instead of fighting over one.
+fn unique_id(prefix: &str) -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    format!("{prefix}-{}", NEXT.fetch_add(1, Ordering::Relaxed))
+}
 
 /// Owns a `blob:` URL and revokes it on Drop so the WebView does not accumulate
 /// orphaned object URLs across navigations. Held inside a signal, the URL's
@@ -135,6 +140,27 @@ pub struct AttachmentMeta {
     pub size: u64,
 }
 
+/// The same four fields off an archived document.
+///
+/// ⚠️ `None` when the row has no `sha256` — a fields event can fold before the
+/// archive event that carries the hash, so a document can legitimately exist
+/// with nothing to render yet.
+///
+/// Lives here rather than beside either caller: the archive detail view and the
+/// finances review panel both draw archived documents, and a second copy is how
+/// the two drift on what a missing hash means.
+pub fn document_meta(doc: &crate::types::DocumentItem) -> Option<AttachmentMeta> {
+    Some(AttachmentMeta {
+        sha256: doc.sha256.clone()?,
+        filename: doc.filename.clone().unwrap_or_else(|| doc.display_name()),
+        mime_type: doc
+            .mime_type
+            .clone()
+            .unwrap_or_else(|| "application/octet-stream".to_string()),
+        size: doc.size.unwrap_or(0).max(0) as u64,
+    })
+}
+
 /// Pull the four `AttachmentRef` fields out of the `serde_json::Value` the
 /// backend ships. `None` when the field is null or a required key is missing —
 /// defensive only; `record_transaction` validates upstream.
@@ -211,6 +237,8 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
     let sha256 = meta.sha256.clone();
     let mime = meta.mime_type.clone();
     let wants_text = matches!(render, AttachmentRender::Csv | AttachmentRender::Text);
+    let render_for_fetch = render.clone();
+    let mut full_screen = use_signal(|| false);
     let needs_bytes = !matches!(render, AttachmentRender::Unpreviewable(_));
 
     use_effect(move || {
@@ -219,8 +247,20 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
         }
         let sha = sha256.clone();
         let mime = mime.clone();
+        let render_for_fetch = render_for_fetch.clone();
         spawn(async move {
-            match bridge::invoke_fetch_attachment(&sha).await {
+            // Images open on the server's small preview: on a slow link the
+            // original took 10-24s, and the full-screen view fetches it anyway.
+            // A PDF's preview is the server's decrypted copy when it is locked.
+            let fetched = if matches!(
+                render_for_fetch,
+                AttachmentRender::Image | AttachmentRender::Pdf
+            ) {
+                bridge::invoke_fetch_attachment_preview(&sha).await
+            } else {
+                bridge::invoke_fetch_attachment(&sha).await
+            };
+            match fetched {
                 Ok(bytes) => {
                     if wants_text {
                         // Lossy on purpose, matching ingest: one bad byte in a
@@ -248,15 +288,19 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
                 "Attachment"
             }
             div { class: "p-3 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg space-y-3",
-                div { class: "flex items-center gap-2 text-xs text-obsidian-text-muted",
-                    svg { class: "w-3.5 h-3.5 text-obsidian-accent",
+                // An unbreakable filename once pushed this row 80px past a phone screen,
+                // so the name truncates and the size and type never shrink.
+                div { class: "flex items-center gap-2 text-xs text-obsidian-text-muted min-w-0",
+                    svg { class: "w-3.5 h-3.5 text-obsidian-accent shrink-0",
                         fill: "none", stroke: "currentColor", view_box: "0 0 24 24",
                         path { stroke_linecap: "round", stroke_linejoin: "round", stroke_width: "2",
                             d: "M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
                         }
                     }
-                    span { class: "font-mono text-obsidian-text", "{meta.filename}" }
-                    span { " · {size_kb} KB · {meta.mime_type}" }
+                    span { class: "font-mono text-obsidian-text truncate min-w-0", title: "{meta.filename}",
+                        "{meta.filename}"
+                    }
+                    span { class: "shrink-0", " · {size_kb} KB · {meta.mime_type}" }
                 }
 
                 if let Some(msg) = error.read().clone() {
@@ -272,21 +316,38 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
                         },
                         Some(Loaded::Url(guard)) => {
                             let url = guard.url().to_string();
-                            match render {
-                                AttachmentRender::Pdf => rsx! { PdfView { url: url.clone() } },
-                                _ => rsx! {
-                                    img {
-                                        src: "{url}",
-                                        alt: "{meta.filename}",
-                                        class: "max-w-full max-h-[600px] rounded border border-obsidian-border/10",
+                            rsx! {
+                                button {
+                                    class: "text-xs text-obsidian-accent hover:underline",
+                                    onclick: move |_| full_screen.set(true),
+                                    "⤢ Full screen and zoom"
+                                }
+                                match render {
+                                    AttachmentRender::Pdf => rsx! { PdfView { url: url.clone() } },
+                                    _ => rsx! {
+                                        img {
+                                            src: "{url}",
+                                            alt: "{meta.filename}",
+                                            class: "max-w-full max-h-[600px] rounded border border-obsidian-border/10 cursor-zoom-in",
+                                            onclick: move |_| full_screen.set(true),
+                                        }
+                                    },
+                                }
+                                if *full_screen.read() {
+                                    DocumentLightbox {
+                                        meta: meta.clone(),
+                                        render: render.clone(),
+                                        url: url.clone(),
+                                        on_close: move |_| full_screen.set(false),
                                     }
-                                },
+                                }
                             }
                         }
                         Some(Loaded::Text(text)) => match render {
                             AttachmentRender::Csv => rsx! { CsvTable { text: text.clone() } },
                             _ => rsx! {
                                 pre {
+                                    "data-scroll-x": "true",
                                     class: "max-h-[600px] overflow-auto p-3 rounded border border-obsidian-border/10 \
                                             bg-obsidian-bg text-[11px] font-mono text-obsidian-text whitespace-pre-wrap",
                                     "{text}"
@@ -300,6 +361,136 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
     }
 }
 
+/// Full screen with pinch zoom and pan, for reading fine print.
+///
+/// Opens on what the inline view already holds; an image then swaps to its
+/// original once that arrives, since the inline one may be a preview. Back,
+/// the close button and Escape all close it.
+#[component]
+fn DocumentLightbox(
+    meta: AttachmentMeta,
+    render: AttachmentRender,
+    url: String,
+    on_close: EventHandler<()>,
+) -> Element {
+    let zoom_id = use_hook(|| unique_id("zoom"));
+    let mut overlay = crate::use_overlay_back();
+    let mut original: Signal<Option<ObjectUrlGuard>> = use_signal(|| None);
+    let is_image = matches!(render, AttachmentRender::Image);
+
+    // Up while mounted. The root clears it on back, which closes this.
+    use_hook(move || overlay.set(true));
+    use_effect(move || {
+        if !*overlay.read() {
+            on_close.call(());
+        }
+    });
+    use_drop(move || overlay.set(false));
+
+    let id_for_zoom = zoom_id.clone();
+    use_effect(move || {
+        let id = id_for_zoom.clone();
+        spawn(async move {
+            if bridge::ensure_js_bundle(PDF_BUNDLE_SRC, "attachZoom", 100).await {
+                let _ = call_global("attachZoom", &[&id]);
+            }
+        });
+    });
+    let id_for_drop = zoom_id.clone();
+    use_drop(move || {
+        let _ = call_global("detachZoom", &[&id_for_drop]);
+    });
+
+    let sha = meta.sha256.clone();
+    let mime = meta.mime_type.clone();
+    use_effect(move || {
+        if !is_image {
+            return;
+        }
+        let (sha, mime) = (sha.clone(), mime.clone());
+        spawn(async move {
+            if let Ok(bytes) = bridge::invoke_fetch_attachment(&sha).await
+                && let Ok(guard) = ObjectUrlGuard::from_bytes(&bytes, &mime)
+            {
+                original.set(Some(guard));
+            }
+        });
+    });
+
+    let shown = original
+        .read()
+        .as_ref()
+        .map(|g| g.url().to_string())
+        .unwrap_or(url.clone());
+    let id_for_step = zoom_id.clone();
+    let step = move |how: &'static str| {
+        let id = id_for_step.clone();
+        move |_| {
+            let _ = call_global("stepZoom", &[&id, how]);
+        }
+    };
+    let control = "w-11 h-11 rounded-full bg-white/10 text-white text-lg";
+
+    rsx! {
+        div {
+            // Opaque: at 95% the page underneath read through on the phone.
+            class: "fixed inset-0 z-50 bg-black flex flex-col",
+            tabindex: "0",
+            onkeydown: move |e| {
+                if e.key() == Key::Escape {
+                    overlay.set(false);
+                }
+            },
+            div { class: "flex items-center gap-2 p-3 min-w-0",
+                span { class: "text-xs text-white/80 font-mono truncate min-w-0 flex-1", "{meta.filename}" }
+                if is_image && original.read().is_none() {
+                    span { class: "text-[10px] text-white/50 shrink-0", "Loading full resolution…" }
+                }
+                button { class: "{control} shrink-0", onclick: step("out"), "−" }
+                button { class: "{control} shrink-0", onclick: step("in"), "+" }
+                button { class: "{control} shrink-0 text-sm", onclick: step("reset"), "1×" }
+                button {
+                    class: "{control} shrink-0",
+                    "aria-label": "Close",
+                    onclick: move |_| overlay.set(false),
+                    "✕"
+                }
+            }
+            div { class: "flex-1 overflow-hidden",
+                // A PDF's target grows with its pages: panzoom bounds pans by this
+                // box, so a screen-sized one left page 2 unreachable. min-h-full,
+                // because it attaches before pdf.js draws, and at 0px tall
+                // "outside" containment jumps straight to the maximum zoom.
+                div {
+                    id: "{zoom_id}",
+                    class: if is_image { "w-full h-full flex items-start justify-center" } else { "w-full min-h-full" },
+                    if is_image {
+                        img { src: "{shown}", alt: "{meta.filename}", class: "max-w-full max-h-full object-contain" }
+                    } else {
+                        div { class: "w-full", PdfView { url: url.clone(), full: true } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Call `window.<name>(...args)` from a bundle loaded on demand. Through
+/// `Reflect` for the reason `render_pdf` gives.
+fn call_global(name: &str, args: &[&str]) -> Result<JsValue, String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let func = js_sys::Reflect::get(&window, &JsValue::from_str(name))
+        .ok()
+        .and_then(|v| v.dyn_into::<js_sys::Function>().ok())
+        .ok_or_else(|| format!("{name} is not available"))?;
+    let list = js_sys::Array::new();
+    for a in args {
+        list.push(&JsValue::from_str(a));
+    }
+    func.apply(&JsValue::NULL, &list)
+        .map_err(|e| format!("{name}: {e:?}"))
+}
+
 /// A PDF, rendered page by page onto canvases by pdf.js.
 ///
 /// ⛔ **Not an `<iframe>`, and that is the whole point.** An iframe pointed at a
@@ -308,11 +499,14 @@ pub fn AttachmentViewer(meta: AttachmentMeta) -> Element {
 /// type failed silently on the device most likely to read it. Canvases render
 /// identically everywhere.
 #[component]
-fn PdfView(url: String) -> Element {
+fn PdfView(url: String, #[props(default)] full: bool) -> Element {
     let mut status: Signal<Option<Result<(u32, u32), String>>> = use_signal(|| None);
+    let container_id = use_hook(|| unique_id("pdf"));
+    let id_for_render = container_id.clone();
 
     use_effect(move || {
         let url = url.clone();
+        let id = id_for_render.clone();
         spawn(async move {
             // ~10s: this bundle is loaded on demand rather than warmed at app
             // mount, so it is fetched while the page is already interactive.
@@ -320,7 +514,7 @@ fn PdfView(url: String) -> Element {
                 status.set(Some(Err("the PDF viewer could not be loaded".into())));
                 return;
             }
-            match render_pdf(&url).await {
+            match render_pdf(&id, &url).await {
                 Ok(counts) => status.set(Some(Ok(counts))),
                 Err(e) => status.set(Some(Err(e))),
             }
@@ -333,8 +527,8 @@ fn PdfView(url: String) -> Element {
             // container by id, so a conditionally-rendered node would not exist
             // yet when the render call goes looking for it.
             div {
-                id: PDF_CONTAINER_ID,
-                class: "max-h-[600px] overflow-auto rounded border border-obsidian-border/10 bg-white/95",
+                id: "{container_id}",
+                class: if full { "bg-white/95" } else { "max-h-[600px] overflow-auto rounded border border-obsidian-border/10 bg-white/95" },
             }
             match status.read().as_ref() {
                 None => rsx! {
@@ -351,7 +545,9 @@ fn PdfView(url: String) -> Element {
                     }
                 },
                 Some(Ok((pages, _))) => rsx! {
-                    p { class: "text-[10px] text-obsidian-text-muted", "{pages} pages" }
+                    p { class: "text-[10px] text-obsidian-text-muted",
+                        if *pages == 1 { "1 page" } else { "{pages} pages" }
+                    }
                 },
             }
         }
@@ -364,7 +560,31 @@ fn PdfView(url: String) -> Element {
 /// bundle is loaded on demand, so the global is genuinely absent until it lands
 /// and a direct extern binding would trap instead of returning an error we can
 /// show.
-async fn render_pdf(url: &str) -> Result<(u32, u32), String> {
+/// A captured photo made upright, at most 2400px long edge, JPEG 85%: a 3.9 MB
+/// receipt became 588 KB and stayed legible. `None` keeps the original (no
+/// bundle, undecodable, or no smaller).
+pub async fn shrink_photo(bytes: &[u8], mime: &str) -> Option<Vec<u8>> {
+    if !bridge::ensure_js_bundle(PDF_BUNDLE_SRC, "shrinkPhoto", 100).await {
+        return None;
+    }
+    let window = web_sys::window()?;
+    let func = js_sys::Reflect::get(&window, &JsValue::from_str("shrinkPhoto"))
+        .ok()?
+        .dyn_into::<js_sys::Function>()
+        .ok()?;
+    let input = js_sys::Uint8Array::from(bytes);
+    let promise = func
+        .call2(&JsValue::NULL, &input, &JsValue::from_str(mime))
+        .ok()?;
+    let out = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(promise))
+        .await
+        .ok()?;
+    out.dyn_into::<js_sys::Uint8Array>()
+        .ok()
+        .map(|a| a.to_vec())
+}
+
+async fn render_pdf(container_id: &str, url: &str) -> Result<(u32, u32), String> {
     let window = web_sys::window().ok_or("no window")?;
     let func = js_sys::Reflect::get(&window, &JsValue::from_str("renderPdf"))
         .ok()
@@ -374,14 +594,22 @@ async fn render_pdf(url: &str) -> Result<(u32, u32), String> {
     let promise = func
         .call2(
             &JsValue::NULL,
-            &JsValue::from_str(PDF_CONTAINER_ID),
+            &JsValue::from_str(container_id),
             &JsValue::from_str(url),
         )
         .map_err(|e| format!("could not render this PDF: {e:?}"))?;
 
     let result = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(promise))
         .await
-        .map_err(|e| format!("could not render this PDF: {e:?}"))?;
+        .map_err(|e| {
+            let e = format!("{e:?}");
+            if e.contains("PasswordException") || e.contains("No password given") {
+                "This PDF is encrypted, and none of the server's configured passwords opens it."
+                    .to_string()
+            } else {
+                format!("could not render this PDF: {e}")
+            }
+        })?;
 
     let read = |key: &str| -> u32 {
         js_sys::Reflect::get(&result, &JsValue::from_str(key))
@@ -405,7 +633,9 @@ fn CsvTable(text: String) -> Element {
 
     rsx! {
         div { class: "space-y-2",
-            div { class: "max-h-[600px] overflow-auto rounded border border-obsidian-border/10",
+            div {
+                "data-scroll-x": "true",
+                class: "max-h-[600px] overflow-auto rounded border border-obsidian-border/10",
                 table { class: "w-full text-[11px] font-mono border-collapse",
                     tbody {
                         for (i, row) in rows.iter().enumerate() {

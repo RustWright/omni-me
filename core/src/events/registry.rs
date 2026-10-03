@@ -19,7 +19,7 @@ use crate::journal_file::JournalFile;
 use super::{
     AssistantProjection, AutoImportProjection, BeliefsProjection, BudgetProjection,
     ConfigProjection, DocumentsProjection, NotesProjection, Projection, RecordTypeProjection,
-    RoutinesProjection,
+    RetentionProjection, RoutinesProjection,
 };
 
 /// Projections that are never feature-gated.
@@ -46,6 +46,7 @@ pub const ALL_PROJECTIONS: &[&str] = &[
     AssistantProjection::NAME,
     BeliefsProjection::NAME,
     DocumentsProjection::NAME,
+    RetentionProjection::NAME,
 ];
 
 /// The projections a feature owns.
@@ -79,7 +80,7 @@ pub fn owned_projections(feature: Feature) -> &'static [&'static str] {
         Feature::Routines => &[RoutinesProjection::NAME],
         Feature::Finances => &[BudgetProjection::NAME, JournalFile::NAME],
         Feature::AutoImport => &[BudgetProjection::NAME, AutoImportProjection::NAME],
-        Feature::Documents => &[DocumentsProjection::NAME],
+        Feature::Documents => &[DocumentsProjection::NAME, RetentionProjection::NAME],
     }
 }
 
@@ -122,11 +123,13 @@ fn all_projections(journal_path: PathBuf) -> Vec<Box<dyn Projection>> {
         Box::new(BudgetProjection),
         Box::new(AutoImportProjection),
         Box::new(JournalFile::new(journal_path)),
-        // Last, and order-independent: neither reads anything another projection
-        // writes, and nothing reads their tables but the client and the agent.
+        // Last, and order-independent: none reads anything another projection
+        // writes. Their tables are read by the client, the agent, and (for
+        // `documents` only) the server's enrichment pass.
         Box::new(AssistantProjection),
         Box::new(BeliefsProjection),
         Box::new(DocumentsProjection),
+        Box::new(RetentionProjection),
     ]
 }
 
@@ -170,6 +173,19 @@ pub fn build_projections_headless(config: &ResolvedConfig) -> Vec<Box<dyn Projec
         .into_iter()
         .filter(|p| enabled.contains(p.name()) && !FILESYSTEM_PROJECTIONS.contains(&p.name()))
         .collect()
+}
+
+/// The projections the sync server maintains: only what its own background work reads.
+///
+/// Devices project everything else themselves. Not feature-gated, because the server
+/// resolves no config. Why `documents` is here: `docs/src/archive.md`.
+pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
+    // ⚠️ `document_retention` is deliberately absent: retention is evaluated on a
+    // device, because the group it forms is confirmed by the person sitting at it.
+    // The rules still reach the server as events and fold on any device that
+    // rebuilds — ⛔ this is the line to change if evaluation ever moves here, and
+    // the server would then also need the config read it does not do today.
+    vec![Box::new(DocumentsProjection)]
 }
 
 #[cfg(test)]
@@ -248,6 +264,7 @@ mod tests {
             AssistantProjection.name(),
             BeliefsProjection.name(),
             DocumentsProjection.name(),
+            RetentionProjection.name(),
         ];
         let listed: BTreeSet<&str> = ALL_PROJECTIONS.iter().copied().collect();
         let actual: BTreeSet<&str> = live.iter().copied().collect();

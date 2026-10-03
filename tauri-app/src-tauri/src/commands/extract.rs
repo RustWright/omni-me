@@ -53,6 +53,18 @@ pub struct ExtractedDraft {
     /// this onto the `TransactionRecorded` event.
     #[serde(default)]
     pub attachment: Option<AttachmentRef>,
+    /// What `core::extraction::verify` found — line items not summing to the
+    /// total, an ambiguous date, salvaged postings. The server already folded
+    /// the penalty into `confidence`; these say what caused it.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// `confidence` fell under the server's threshold. The draft form leads
+    /// with this rather than leaving the user to read the number.
+    #[serde(default)]
+    pub needs_review: bool,
+    /// Set when the archive's "Add document" filed a receipt for review.
+    #[serde(default)]
+    pub proposed_batch_id: Option<String>,
 }
 
 /// Wire shape returned by `/documents/extract` when `attach=true`. Mirrors
@@ -61,6 +73,12 @@ pub struct ExtractedDraft {
 struct ExtractResponseWire {
     extraction: ExtractionWire,
     attachment: Option<AttachmentRef>,
+    #[serde(default)]
+    warnings: Vec<String>,
+    #[serde(default)]
+    needs_review: bool,
+    #[serde(default)]
+    proposed_batch_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,6 +101,11 @@ pub async fn extract_document(
     bytes: Vec<u8>,
     mime: String,
     hint: String,
+    // The name the picker or the share intent reported. `None` for a pasted
+    // email body, which never had one — the server then files it as
+    // "attachment" rather than under a name nothing on the device chose.
+    filename: Option<String>,
+    propose: Option<bool>,
 ) -> Result<ExtractedDraft, String> {
     // Guarded here rather than at the append tail: this reaches an LLM before any
     // event exists, so it has to refuse before the request goes out.
@@ -90,31 +113,24 @@ pub async fn extract_document(
 
     // Hint values are simple snake_case strings (receipt, bank_statement, ...)
     // so no URL encoding is needed; the server will 400 on anything unknown.
-    let path = format!("/documents/extract?hint={hint}&attach=true");
+    let path = format!(
+        "/documents/extract?hint={hint}&attach=true&propose={}",
+        propose.unwrap_or(false)
+    );
     let url = state.box_url(&path).await;
     tracing::info!(bytes = bytes.len(), mime = %mime, hint = %hint, %url, "extract_document");
 
     let body_for_cache = bytes.clone();
 
-    let resp = state
+    let mut req = state
         .box_request(reqwest::Method::POST, &path)
         .await
-        .header(reqwest::header::CONTENT_TYPE, &mime)
-        .body(bytes)
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("server returned {status}: {body}"));
+        .header(reqwest::header::CONTENT_TYPE, &mime);
+    if let Some(name) = filename.as_deref().and_then(header_safe_filename) {
+        req = req.header("x-filename", name);
     }
 
-    let wire: ExtractResponseWire = resp
-        .json()
-        .await
-        .map_err(|e| format!("parse response: {e}"))?;
+    let wire = read_extract_response(req.body(bytes).send().await).await?;
 
     // Mirror bytes into the local LRU cache so the Phase 4 transaction detail
     // view can render the receipt offline. Failure is non-fatal — extraction
@@ -128,7 +144,68 @@ pub async fn extract_document(
         tracing::warn!(error = %e, sha256 = %att.sha256, "attachment cache write failed");
     }
 
-    Ok(ExtractedDraft {
+    Ok(draft_from(wire))
+}
+
+/// One photo of a multi-page capture, in the order it was taken.
+#[derive(Debug, Deserialize)]
+pub struct CapturePage {
+    bytes: Vec<u8>,
+    mime: String,
+    filename: Option<String>,
+}
+
+/// Several photos of one document, read together and archived by the server as
+/// one PDF. The PDF is made there, so nothing is cached here; the viewer fetches
+/// it on first open.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn extract_document_pages(
+    state: State<'_, AppState>,
+    pages: Vec<CapturePage>,
+    hint: String,
+    propose: Option<bool>,
+) -> Result<ExtractedDraft, String> {
+    require_feature(&state, Feature::Llm)?;
+    let path = format!(
+        "/documents/extract_pages?hint={hint}&attach=true&propose={}",
+        propose.unwrap_or(false)
+    );
+    tracing::info!(pages = pages.len(), hint = %hint, "extract_document_pages");
+
+    let mut form = reqwest::multipart::Form::new();
+    for (i, page) in pages.into_iter().enumerate() {
+        let name = page
+            .filename
+            .as_deref()
+            .and_then(header_safe_filename)
+            .unwrap_or_else(|| format!("page-{}.jpg", i + 1));
+        let part = reqwest::multipart::Part::bytes(page.bytes)
+            .file_name(name)
+            .mime_str(&page.mime)
+            .map_err(|e| format!("page {}: {e}", i + 1))?;
+        form = form.part("page", part);
+    }
+    let req = state.box_request(reqwest::Method::POST, &path).await;
+    let wire = read_extract_response(req.multipart(form).send().await).await?;
+    Ok(draft_from(wire))
+}
+
+async fn read_extract_response(
+    sent: Result<reqwest::Response, reqwest::Error>,
+) -> Result<ExtractResponseWire, String> {
+    let resp = sent.map_err(|e| format!("request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("server returned {status}: {body}"));
+    }
+    resp.json()
+        .await
+        .map_err(|e| format!("parse response: {e}"))
+}
+
+fn draft_from(wire: ExtractResponseWire) -> ExtractedDraft {
+    ExtractedDraft {
         date: wire.extraction.date,
         description: wire.extraction.description,
         postings: wire.extraction.postings,
@@ -136,5 +213,46 @@ pub async fn extract_document(
         confidence: wire.extraction.confidence,
         model: wire.extraction.model,
         attachment: wire.attachment,
-    })
+        warnings: wire.warnings,
+        needs_review: wire.needs_review,
+        proposed_batch_id: wire.proposed_batch_id,
+    }
+}
+
+/// Take the basename if it can ride in a header as-is: printable ASCII, no
+/// path separators, under the length bound. Anything else returns `None` and
+/// the server falls back to "attachment" — its behaviour before this header
+/// existed, so rejecting is never a regression, where a half-transliterated
+/// name would file a document under something nobody chose.
+fn header_safe_filename(raw: &str) -> Option<String> {
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    let safe = !base.is_empty()
+        && base.len() <= 120
+        && base.chars().all(|c| c.is_ascii_graphic() || c == ' ');
+    safe.then(|| base.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::header_safe_filename;
+
+    #[test]
+    fn takes_the_basename() {
+        let d = |s| header_safe_filename(s).unwrap();
+        assert_eq!(d("/sdcard/Download/rent.pdf"), "rent.pdf");
+        assert_eq!(d(r"C:\scans\a b.png"), "a b.png");
+        assert_eq!(d("receipt.jpg"), "receipt.jpg");
+    }
+
+    #[test]
+    fn rejects_rather_than_repairs() {
+        // A newline would split the request; non-ASCII cannot ride in the header.
+        assert_eq!(header_safe_filename("re\r\nceipt.jpg"), None);
+        assert_eq!(header_safe_filename("収據.jpg"), None);
+        assert_eq!(header_safe_filename("  "), None);
+        assert_eq!(
+            header_safe_filename(&format!("{}.pdf", "a".repeat(300))),
+            None
+        );
+    }
 }

@@ -96,12 +96,129 @@ pub struct DocumentItem {
     pub kind: Option<String>,
     pub title: Option<String>,
     pub document_date: Option<String>,
+    /// The tag set, hoisted from the `tags` field into its own column.
+    ///
+    /// ⚠️ `None` and `Some(vec![])` are different states and the distinction is
+    /// carried deliberately: absent means nothing has ever tagged this document,
+    /// empty means a person cleared its tags.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    /// Whether this document was purged on purpose.
+    ///
+    /// ⚠️ Load-bearing in the detail view: a purged row still carries its
+    /// `sha256`, so without this the viewer fetches, gets a 404 and renders
+    /// "couldn't load attachment" — which is what a broken archive looks like.
+    #[serde(default)]
+    pub purged: Option<bool>,
     #[serde(default)]
     pub fields: Option<Vec<DocumentField>>,
     /// The document this one arrived inside. ⛔ A link, not ownership — an
     /// attachment stays independently listed and searchable.
     #[serde(default)]
     pub parent_document_id: Option<String>,
+}
+
+/// One document a purge would remove. Mirrors `purge::PurgeItem`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PurgeItem {
+    pub document_id: String,
+    pub label: String,
+    pub archived_at: Option<String>,
+    pub ingest_source: Option<String>,
+    pub size: Option<i64>,
+    /// These bytes stay regardless — something else references the same blob.
+    pub bytes_shared: bool,
+}
+
+/// What a purge would remove. Mirrors `purge::PurgePreview` plus the token.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PurgePreview {
+    pub group: String,
+    pub items: Vec<PurgeItem>,
+    /// Every match, listed or not. ⚠️ `items.len()` can be smaller.
+    pub total: usize,
+    pub bytes_reclaimable: u64,
+    pub bytes_shared: u64,
+    /// Hand back with the confirm; the server checks it.
+    pub token: String,
+    pub listed: usize,
+}
+
+impl PurgePreview {
+    /// Whether the group is larger than one preview page.
+    ///
+    /// ⛔ Matters because the ruling is that every item going is *listed*. When
+    /// this is true the confirm covers the listed rows only, and the surface has
+    /// to say so rather than implying the whole group went.
+    pub fn is_truncated(&self) -> bool {
+        self.total > self.listed
+    }
+}
+
+/// One tag's retention rule. Mirrors `commands::documents::RetentionRule`.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct RetentionRule {
+    pub tag: String,
+    pub keep_days: u32,
+}
+
+/// Documents past their retention, grouped by the tag whose rule decided them.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct RetentionGroup {
+    pub tag: String,
+    pub keep_days: u32,
+    pub count: usize,
+    pub oldest_archived_at: Option<String>,
+    /// ⛔ Goes to the purge preview unchanged.
+    pub cutoff: String,
+}
+
+/// What a purge did. Mirrors `purge::PurgeReport`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PurgeReport {
+    pub selected: usize,
+    pub purged: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub blobs_deleted: usize,
+    pub blobs_retained_shared: usize,
+    pub bytes_deleted: u64,
+}
+
+/// `word` or `word`s, by count.
+///
+/// ⚠️ Exists because the purge confirm is the last thing read before something
+/// irreversible, and "Purge 1 documents" reads as a screen nobody proofread —
+/// which is not the impression that button should leave.
+pub fn plural(n: usize, word: &str) -> String {
+    if n == 1 {
+        word.to_string()
+    } else {
+        format!("{word}s")
+    }
+}
+
+/// The date half of an RFC3339 timestamp, or the whole string if it has no `T`.
+///
+/// ⚠️ Lenient on purpose: `archived_at` is written by whichever device filed the
+/// document, and a row that renders nothing because its timestamp was shaped
+/// unexpectedly is worse than one showing a slightly odd string.
+pub fn day_of(timestamp: &str) -> &str {
+    timestamp.split_once('T').map_or(timestamp, |(day, _)| day)
+}
+
+/// Bytes as a person reads them.
+pub fn human_bytes(n: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    match n {
+        0 => "nothing".to_string(),
+        n if n < KB => format!("{n} B"),
+        n if n < MB => format!("{:.0} KB", n as f64 / KB as f64),
+        n if n < GB => format!("{:.1} MB", n as f64 / MB as f64),
+        n => format!("{:.2} GB", n as f64 / GB as f64),
+    }
 }
 
 impl DocumentItem {
@@ -648,6 +765,10 @@ pub struct AttachmentRef {
     pub filename: String,
     pub mime_type: String,
     pub size: u64,
+    /// Must stay in step with core's: serde drops an unknown field, so leaving it out here
+    /// silently unlinks every captured transaction from its archive document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
 }
 
 /// Frontend view of `core::extraction::ExtractionResult` — fields normalised
@@ -668,6 +789,17 @@ pub struct ExtractedDraft {
     pub model: String,
     #[serde(default)]
     pub attachment: Option<AttachmentRef>,
+    /// What `core::extraction::verify` found wrong with this draft. Shown on
+    /// the confirm form: `confidence` already carries the penalty, but a bare
+    /// number does not tell the user which field to look at.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// `confidence` came in under the server's threshold.
+    #[serde(default)]
+    pub needs_review: bool,
+    /// Set when an archive capture was a receipt and went to Finances review.
+    #[serde(default)]
+    pub proposed_batch_id: Option<String>,
 }
 
 /// Single posting line in a TransactionDraft submission. Mirrors the wire
@@ -760,6 +892,27 @@ pub struct DraftTransactionView {
     pub postings: Vec<PostingInput>,
 }
 
+/// One photo of a capture, in the order taken. Mirrors the Tauri command's
+/// `CapturePage`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapturePageInput {
+    pub bytes: Vec<u8>,
+    pub mime: String,
+    pub filename: Option<String>,
+}
+
+/// A draft the reviewer edited before committing. Mirrors
+/// `core::events::DraftCorrection`; `index` is the row's position in the batch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DraftCorrectionInput {
+    pub index: usize,
+    pub date: String,
+    pub description: String,
+    pub postings: Vec<PostingInput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingBatchView {
     pub batch_id: String,
@@ -769,6 +922,14 @@ pub struct PendingBatchView {
     pub draft_postings: Vec<DraftTransactionView>,
     #[serde(default)]
     pub source_metadata: Option<serde_json::Value>,
+    /// Earlier proposals about the same order that this one displaced.
+    #[serde(default)]
+    pub superseded: Option<serde_json::Value>,
+    /// Set when the order this describes already has a committed or dismissed
+    /// batch. Committing this one adds transactions; it changes nothing already
+    /// in the books.
+    #[serde(default)]
+    pub revises_batch_id: Option<String>,
 }
 
 /// Frontend mirror of `core::db::queries::TxnFilter`. All fields optional;
@@ -1123,6 +1284,8 @@ pub struct AssistantThread {
     pub created_at: String,
     pub last_message_at: String,
     pub message_count: i64,
+    #[serde(default)]
+    pub archived: bool,
 }
 
 /// A record an answer actually opened, for the citation links under it.
@@ -2146,5 +2309,55 @@ mod feature_tests {
             entry("feature.notes", false),
         ]);
         assert!(!neither.any(&[Feature::Journal, Feature::Notes]));
+    }
+}
+
+#[cfg(test)]
+mod purge_display_tests {
+    use super::*;
+
+    /// The purge confirm is the last thing read before something irreversible.
+    /// "Purge 1 documents" reads as a screen nobody proofread.
+    #[test]
+    fn counts_read_as_english() {
+        assert_eq!(plural(1, "document"), "document");
+        assert_eq!(plural(0, "document"), "documents");
+        assert_eq!(plural(412, "document"), "documents");
+    }
+
+    /// ⚠️ `0` is "nothing", not "0 B". A group whose files are all shared frees
+    /// nothing, and that is a sentence rather than a quantity.
+    #[test]
+    fn bytes_read_as_english() {
+        assert_eq!(human_bytes(0), "nothing");
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(18_402), "18 KB");
+        assert_eq!(human_bytes(31 * 1024 * 1024), "31.0 MB");
+    }
+
+    #[test]
+    fn a_timestamp_renders_as_its_date() {
+        assert_eq!(day_of("2026-02-01T09:00:00Z"), "2026-02-01");
+        // Lenient: an unexpected shape still renders something.
+        assert_eq!(day_of("2026-02-01"), "2026-02-01");
+        assert_eq!(day_of(""), "");
+    }
+
+    /// ⛔ A group larger than one preview page must be reported as truncated, or
+    /// the confirm implies it covered rows the user never saw.
+    #[test]
+    fn a_group_bigger_than_its_page_reports_itself_truncated() {
+        let mut p = PurgePreview {
+            group: "newsletter".into(),
+            items: vec![],
+            total: 412,
+            bytes_reclaimable: 0,
+            bytes_shared: 0,
+            token: "t".into(),
+            listed: 200,
+        };
+        assert!(p.is_truncated());
+        p.total = 200;
+        assert!(!p.is_truncated());
     }
 }

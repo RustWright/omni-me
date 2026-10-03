@@ -19,11 +19,15 @@
 //! according to `surface_of`, but physically sit down among the Analyze code.
 //! Group by surface, not by the order things happened to get written.
 
+use std::collections::BTreeMap;
+
 use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::account_input::{AccountInput, AccountMode, AccountSuggestions};
-use crate::components::attachment_viewer::{AttachmentViewer, extract_attachment_meta};
+use crate::components::attachment_viewer::{
+    AttachmentViewer, document_meta, extract_attachment_meta,
+};
 use crate::components::date_field::DateField;
 use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{
@@ -34,19 +38,20 @@ use crate::continuity::{CaptureDraft, ContinuityKey, ListState, PostingDraft, us
 use crate::features::feature_on;
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AccountTagGroupView, AssistantProposal,
-    AttachmentRef, BalanceCheckView, BudgetProgress, BudgetRow, DashboardSummaryView,
-    DraftTransactionView, ExtractedDraft, Feature, ImportStatementResult, JournalImportPlan,
-    JournalImportPreview, JournalImportResult, MatchCandidateView, MonthlyTrendBucketView,
-    NetWorthPointView, NetWorthSeriesView, PendingBatchView, PendingShareCapture, PostingInput,
-    ReconciliationTxnPreview, RecurringObligationView, RecurringPattern, ScanRecurringResult,
-    TransactionFormDraft, TransactionView, TxnFilter,
+    AttachmentRef, BalanceCheckView, BudgetProgress, BudgetRow, CapturePageInput,
+    DashboardSummaryView, DraftCorrectionInput, DraftTransactionView, ExtractedDraft, Feature,
+    ImportStatementResult, JournalImportPlan, JournalImportPreview, JournalImportResult,
+    MatchCandidateView, MonthlyTrendBucketView, NetWorthPointView, NetWorthSeriesView,
+    PendingBatchView, PendingShareCapture, PostingInput, ReconciliationTxnPreview,
+    RecurringObligationView, RecurringPattern, ScanRecurringResult, TransactionFormDraft,
+    TransactionView, TxnFilter,
 };
 
 /// Which kind of file-based capture the user opened. Drives the picker
 /// `accept` filter, the camera hint, the title, and whether the hint
 /// selector is offered (PDFs require a user pick; photos default to receipt).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DocumentKind {
+pub(crate) enum DocumentKind {
     Photo,
     Pdf,
 }
@@ -263,6 +268,26 @@ pub fn FinancesPage() -> Element {
     // hardware-back handler needs to clear it too.
     let mut pending_share: Signal<Option<PendingShareCapture>> = use_context();
 
+    // A reminder row that named this tab asked for its review queue.
+    //
+    // ⛔ Lands on the review inbox card, not inside one queue. The count that
+    // produced the row merges auto-import batches with assistant proposals, so
+    // there is no single queue it can mean — the card is where that split is
+    // visible, and it is one tap from either half. Before this the row switched
+    // tabs and nothing else, leaving the user at the top of Overview above a
+    // net-worth hero and a chart, with the thing they tapped for off-screen.
+    let mut highlight_review = use_signal(|| false);
+    let mut nav_intent = crate::use_nav_intent();
+    use_effect(move || {
+        // Snapshot before writing — a held read guard across a set deadlocks.
+        let intent = *nav_intent.read();
+        if intent == Some(crate::NavIntent::FinancesReview) {
+            nav_intent.set(None);
+            view.set(FinancesView::Overview);
+            highlight_review.set(true);
+        }
+    });
+
     // Hardware/gesture-back (#372): pop one Finances drill-down per back press,
     // routed through the same `finances_back_target` map the on-screen Back
     // buttons use, and clearing the same per-view selection state those handlers
@@ -467,6 +492,8 @@ pub fn FinancesPage() -> Element {
                     OverviewView {
                         pending_count: *pending_batch_count.read(),
                         suggestion_count: *pending_suggestion_count.read(),
+                        highlight_review: *highlight_review.read(),
+                        on_review_seen: move |_| highlight_review.set(false),
                         has_pending_capture: pending_capture.is_some(),
                         pending_capture_label: pending_capture_label.clone(),
                         on_resume_capture: move |_| view.set(FinancesView::TransactionForm),
@@ -1058,6 +1085,12 @@ fn ReviewInboxCard(
     suggestion_count: u64,
     unmatched: Option<String>,
     base_currency: String,
+    /// Arrived here by a reminder row naming this queue: bring the card into
+    /// view and mark it. ⚠️ On a phone it sits below the net-worth hero and the
+    /// history chart, so without the scroll the destination is off-screen and
+    /// the tap reads as having gone nowhere.
+    highlight: bool,
+    on_shown: EventHandler<()>,
     on_open_batches: EventHandler<()>,
     on_open_suggestions: EventHandler<()>,
     on_open_reconciliation: EventHandler<()>,
@@ -1087,39 +1120,59 @@ fn ReviewInboxCard(
     };
 
     rsx! {
-        Card {
-            div { class: "flex items-center gap-2 mb-3",
-                Icon { name: IconName::Inbox, class: "w-4 h-4 text-obsidian-text-muted" }
-                h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Review inbox" }
-            }
-            div { class: "space-y-1",
-                // Batches are auto-import's; reconciling Unmatched is finances'
-                // own, and stays whichever way auto-import is set.
-                if feature_on(Feature::AutoImport) {
+        div {
+            // ⚠️ A wrapper rather than a prop on `Card`: `onmounted` is a DOM
+            // attribute and `Card` is a component, so there is no element on it
+            // to hang this from.
+            onmounted: move |e| async move {
+                if !highlight {
+                    return;
+                }
+                // Failure is not worth surfacing — the card is on screen either
+                // way, just not scrolled to. Reporting it would put an error in
+                // front of someone whose navigation actually worked.
+                let _ = e.scroll_to(ScrollBehavior::Smooth).await;
+                on_shown.call(());
+            },
+            class: if highlight {
+                "rounded-xl ring-2 ring-obsidian-accent/70 transition-shadow"
+            } else {
+                ""
+            },
+            Card {
+                div { class: "flex items-center gap-2 mb-3",
+                    Icon { name: IconName::Inbox, class: "w-4 h-4 text-obsidian-text-muted" }
+                    h3 { class: "text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted", "Review inbox" }
+                }
+                div { class: "space-y-1",
+                    // Batches are auto-import's; reconciling Unmatched is finances'
+                    // own, and stays whichever way auto-import is set.
+                    if feature_on(Feature::AutoImport) {
+                        button {
+                            class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
+                            onclick: move |_| on_open_batches.call(()),
+                            span { class: "text-obsidian-text", "Auto-imported batches" }
+                            span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
+                        }
+                    }
+                    // ⛔ A row here rather than a queue of its own. One entry point
+                    // means one number to watch — "things waiting for you in
+                    // finances" — and the sections stay separate one tap in, where
+                    // an import batch and an assistant proposal genuinely differ.
+                    // ⚠️ Shown even at zero, unlike a badge: the row is how the user
+                    // learns the assistant can offer ledger changes at all.
                     button {
                         class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
-                        onclick: move |_| on_open_batches.call(()),
-                        span { class: "text-obsidian-text", "Auto-imported batches" }
-                        span { class: "tabular-nums font-semibold {batch_tone}", "{pending_count}" }
+                        onclick: move |_| on_open_suggestions.call(()),
+                        span { class: "text-obsidian-text", "Assistant suggestions" }
+                        span { class: "tabular-nums font-semibold {suggestion_tone}", "{suggestion_count}" }
                     }
-                }
-                // ⛔ A row here rather than a queue of its own. One entry point
-                // means one number to watch — "things waiting for you in
-                // finances" — and the sections stay separate one tap in, where
-                // an import batch and an assistant proposal genuinely differ.
-                // ⚠️ Shown even at zero, unlike a badge: the row is how the user
-                // learns the assistant can offer ledger changes at all.
-                button {
-                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
-                    onclick: move |_| on_open_suggestions.call(()),
-                    span { class: "text-obsidian-text", "Assistant suggestions" }
-                    span { class: "tabular-nums font-semibold {suggestion_tone}", "{suggestion_count}" }
-                }
-                button {
-                    class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
-                    onclick: move |_| on_open_reconciliation.call(()),
-                    span { class: "text-obsidian-text", "Unmatched to reconcile" }
-                    span { class: "tabular-nums font-semibold text-xs {unmatched_tone}", "{unmatched_str}" }
+                    button {
+                        class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
+                        onclick: move |_| on_open_reconciliation.call(()),
+                        span { class: "text-obsidian-text", "Unmatched to reconcile" }
+                        span { class: "tabular-nums font-semibold text-xs {unmatched_tone}", "{unmatched_str}" }
+                    }
                 }
             }
         }
@@ -1222,6 +1275,12 @@ fn OverviewView(
     suggestion_count: u64,
     has_pending_capture: bool,
     pending_capture_label: Option<String>,
+    /// Scroll the review inbox into view and mark it, for an arrival that asked
+    /// for it by name. See `NavIntent::FinancesReview`.
+    highlight_review: bool,
+    /// Fired once the review inbox has been brought into view, so the mark does
+    /// not persist into an ordinary later visit.
+    on_review_seen: EventHandler<()>,
     on_resume_capture: EventHandler<()>,
     on_open_batches: EventHandler<()>,
     on_open_suggestions: EventHandler<()>,
@@ -1376,6 +1435,8 @@ fn OverviewView(
                     suggestion_count,
                     unmatched,
                     base_currency: base_currency.clone(),
+                    highlight: highlight_review,
+                    on_shown: move |_| on_review_seen.call(()),
                     on_open_batches: move |_| on_open_batches.call(()),
                     on_open_suggestions: move |_| on_open_suggestions.call(()),
                     on_open_reconciliation: move |_| on_open_reconciliation.call(()),
@@ -1647,7 +1708,7 @@ const PDF_HINTS: &[(&str, &str)] = &[
 ];
 
 #[component]
-fn DocumentCapture(
+pub(crate) fn DocumentCapture(
     kind: DocumentKind,
     /// Bytes + metadata pre-loaded from an Android share-target SEND intent.
     /// When `Some`, the file picker is hidden in favor of a "Use shared file"
@@ -1655,22 +1716,30 @@ fn DocumentCapture(
     /// runs unchanged.
     #[props(default = None)]
     preloaded: Option<PendingShareCapture>,
+    /// The archive's "Add document": any document, read with the generic hint,
+    /// and proposed for review only if the reading says it is a receipt.
+    #[props(default)]
+    for_archive: bool,
     on_done: EventHandler<()>,
     on_extracted: EventHandler<ExtractedDraft>,
 ) -> Element {
+    /// `retry` is everything a failed extraction needs to go again. Each page's
+    /// name travels with its bytes so a retry cannot ship the name of a different pick.
     #[derive(Debug, Clone)]
     enum CaptureState {
         Idle,
         Working,
         Error {
             msg: String,
-            retry_bytes: Option<(Vec<u8>, String)>,
+            retry: Option<Vec<CapturePageInput>>,
         },
     }
 
-    let (title, accept, prefer_camera, default_hint, show_hint_picker) = match kind {
-        DocumentKind::Photo => ("Photo capture", "image/*", true, "receipt", false),
-        DocumentKind::Pdf => (
+    let (title, accept, prefer_camera, default_hint, show_hint_picker) = match (kind, for_archive) {
+        (DocumentKind::Photo, true) => ("Add a photo", "image/*", true, "generic", false),
+        (DocumentKind::Pdf, true) => ("Add a PDF", "application/pdf", false, "generic", false),
+        (DocumentKind::Photo, false) => ("Photo capture", "image/*", true, "receipt", false),
+        (DocumentKind::Pdf, false) => (
             "PDF capture",
             "application/pdf",
             false,
@@ -1681,46 +1750,66 @@ fn DocumentCapture(
 
     let mut state: Signal<CaptureState> = use_signal(|| CaptureState::Idle);
     let mut hint = use_signal(|| default_hint.to_string());
+    // Photos taken so far. A photo capture gathers pages and is read on demand,
+    // because a receipt may run to several; a PDF is read the moment it is picked.
+    let mut pages: Signal<Vec<CapturePageInput>> = use_signal(Vec::new);
 
-    let on_file_picked = move |evt: Event<FormData>| {
-        let files = evt.files();
-        let Some(file) = files.into_iter().next() else {
-            return;
-        };
-        let mime = file.content_type().unwrap_or_else(|| match kind {
-            DocumentKind::Photo => "image/jpeg".to_string(),
-            DocumentKind::Pdf => "application/pdf".to_string(),
-        });
+    let mut submit = move |taken: Vec<CapturePageInput>| {
         let hint_value = hint.read().clone();
-
         state.set(CaptureState::Working);
-
         spawn(async move {
-            let bytes = match file.read_bytes().await {
-                Ok(b) => b.to_vec(),
-                Err(e) => {
-                    state.set(CaptureState::Error {
-                        msg: format!("Couldn't read file: {e}"),
-                        retry_bytes: None,
-                    });
-                    return;
-                }
-            };
-
-            let retry_bytes = bytes.clone();
-            let retry_mime = mime.clone();
-
-            match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
+            match extract_capture(taken.clone(), &hint_value, for_archive).await {
                 Ok(draft) => {
                     // Reset local state so a quick re-open shows the Idle
                     // prompt instead of a stale Working spinner.
                     state.set(CaptureState::Idle);
+                    pages.set(Vec::new());
                     on_extracted.call(draft);
                 }
                 Err(e) => state.set(CaptureState::Error {
                     msg: format!("Couldn't extract: {e}"),
-                    retry_bytes: Some((retry_bytes, retry_mime)),
+                    retry: Some(taken),
                 }),
+            }
+        });
+    };
+
+    let on_file_picked = move |evt: Event<FormData>| {
+        let files = evt.files();
+        if files.is_empty() {
+            return;
+        }
+        spawn(async move {
+            let mut picked = Vec::with_capacity(files.len());
+            for file in files {
+                let mime = file.content_type().unwrap_or_else(|| match kind {
+                    DocumentKind::Photo => "image/jpeg".to_string(),
+                    DocumentKind::Pdf => "application/pdf".to_string(),
+                });
+                // The name the user picked, so the archive files it under that rather
+                // than the server's "attachment" placeholder.
+                let filename = Some(file.name());
+                match file.read_bytes().await {
+                    Ok(b) => picked.push(CapturePageInput {
+                        bytes: b.to_vec(),
+                        mime,
+                        filename,
+                    }),
+                    Err(e) => {
+                        state.set(CaptureState::Error {
+                            msg: format!("Couldn't read file: {e}"),
+                            retry: None,
+                        });
+                        return;
+                    }
+                }
+            }
+            match kind {
+                DocumentKind::Photo => {
+                    state.set(CaptureState::Idle);
+                    pages.write().extend(picked);
+                }
+                DocumentKind::Pdf => submit(picked.into_iter().take(1).collect()),
             }
         });
     };
@@ -1779,50 +1868,55 @@ fn DocumentCapture(
                     }
                     Button {
                         disabled: matches!(*state.read(), CaptureState::Working),
-                        onclick: move |_| {
-                            // Mirror on_file_picked's tail: bytes already in
-                            // hand, skip the async read.
-                            let bytes = capture.bytes.clone();
-                            let mime = capture.mime.clone();
-                            let hint_value = hint.read().clone();
-                            let retry_bytes = bytes.clone();
-                            let retry_mime = mime.clone();
-                            state.set(CaptureState::Working);
-                            spawn(async move {
-                                match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
-                                    Ok(draft) => {
-                                        state.set(CaptureState::Idle);
-                                        on_extracted.call(draft);
-                                    }
-                                    Err(e) => state.set(CaptureState::Error {
-                                        msg: format!("Couldn't extract: {e}"),
-                                        retry_bytes: Some((retry_bytes, retry_mime)),
-                                    }),
-                                }
-                            });
-                        },
+                        // Bytes already in hand, so straight to the read. The sending
+                        // app named this file; the intent carried the name over.
+                        onclick: move |_| submit(vec![CapturePageInput {
+                            bytes: capture.bytes.clone(),
+                            mime: capture.mime.clone(),
+                            filename: Some(capture.filename.clone()),
+                        }]),
                         "Use shared file"
                     }
                 }
             } else {
-                // File picker. `capture="environment"` only applies to the photo
-                // flow — it tells mobile browsers to default to the rear camera.
-                label { class: "block",
-                    span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
-                        match kind {
-                            DocumentKind::Photo => "Pick a photo or take one",
-                            DocumentKind::Pdf => "Pick a PDF",
+                // Two inputs for photos: with `capture`, Android opens only the
+                // camera, so photos already taken need an input without it.
+                if prefer_camera {
+                    div {
+                        span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                            if pages.read().is_empty() { "Take a photo or choose one" } else { "Add another page" }
+                        }
+                        div { class: "flex gap-2",
+                            label { class: "flex-1 text-center px-4 py-3 rounded-md bg-obsidian-accent text-white text-sm font-medium cursor-pointer",
+                                "Take a photo"
+                                input {
+                                    class: "sr-only",
+                                    r#type: "file",
+                                    accept: accept,
+                                    "capture": "environment",
+                                    // Cleared so taking the same shot twice still fires `onchange`.
+                                    value: "",
+                                    onchange: on_file_picked,
+                                }
+                            }
+                            label { class: "flex-1 text-center px-4 py-3 rounded-md border border-obsidian-accent/60 text-obsidian-accent text-sm font-medium cursor-pointer",
+                                "Choose photos"
+                                input {
+                                    class: "sr-only",
+                                    r#type: "file",
+                                    accept: accept,
+                                    multiple: true,
+                                    value: "",
+                                    onchange: on_file_picked,
+                                }
+                            }
                         }
                     }
-                    if prefer_camera {
-                        input {
-                            class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
-                            r#type: "file",
-                            accept: accept,
-                            "capture": "environment",
-                            onchange: on_file_picked,
+                } else {
+                    label { class: "block",
+                        span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                            "Pick a PDF"
                         }
-                    } else {
                         input {
                             class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
                             r#type: "file",
@@ -1833,41 +1927,37 @@ fn DocumentCapture(
                 }
             }
 
+            if !pages.read().is_empty() {
+                CapturePageList {
+                    noun: String::from(if for_archive { "document" } else { "receipt" }),
+                    pages: pages.read().clone(),
+                    busy: matches!(*state.read(), CaptureState::Working),
+                    on_remove: move |i: usize| {
+                        let mut taken = pages.write();
+                        if i < taken.len() {
+                            taken.remove(i);
+                        }
+                    },
+                    on_read: move |_| submit(pages.read().clone()),
+                }
+            }
+
             // State-dependent body. The Error arm composes render_error with
             // a conditional Retry button that needs `state` in scope.
             div {
                 {
                     match &*state.read() {
+                        CaptureState::Idle if !pages.read().is_empty() => rsx! {},
                         CaptureState::Idle => render_idle(kind),
                         CaptureState::Working => render_working(),
-                        CaptureState::Error { msg, retry_bytes } => {
-                            let retry = retry_bytes.clone();
-                            let hint_value = hint.read().clone();
+                        CaptureState::Error { msg, retry } => {
+                            let retry = retry.clone();
                             rsx! {
                                 {render_error(msg)}
-                                if let Some((bytes, mime)) = retry {
+                                if let Some(again) = retry {
                                     div { class: "mt-3",
                                         Button {
-                                            onclick: move |_| {
-                                                let bytes = bytes.clone();
-                                                let mime = mime.clone();
-                                                let hint_value = hint_value.clone();
-                                                state.set(CaptureState::Working);
-                                                spawn(async move {
-                                                    let retry_bytes = bytes.clone();
-                                                    let retry_mime = mime.clone();
-                                                    match bridge::invoke_extract_document(bytes, &mime, &hint_value).await {
-                                                        Ok(draft) => {
-                                                            state.set(CaptureState::Idle);
-                                                            on_extracted.call(draft);
-                                                        }
-                                                        Err(e) => state.set(CaptureState::Error {
-                                                            msg: format!("Couldn't extract: {e}"),
-                                                            retry_bytes: Some((retry_bytes, retry_mime)),
-                                                        }),
-                                                    }
-                                                });
-                                            },
+                                            onclick: move |_| submit(again.clone()),
                                             "Retry"
                                         }
                                     }
@@ -1876,6 +1966,77 @@ fn DocumentCapture(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// One photo or file goes through the single-document route, unchanged; two or
+/// more photos are read together and archived as one PDF.
+async fn extract_capture(
+    mut taken: Vec<CapturePageInput>,
+    hint: &str,
+    propose: bool,
+) -> Result<ExtractedDraft, String> {
+    // Before upload, so the slow link carries the small copy and the archive
+    // keeps it. A page that cannot be shrunk goes as taken.
+    for page in taken.iter_mut().filter(|p| p.mime.starts_with("image/")) {
+        if let Some(small) =
+            crate::components::attachment_viewer::shrink_photo(&page.bytes, &page.mime).await
+        {
+            page.bytes = small;
+            page.mime = "image/jpeg".to_string();
+            if let Some(name) = page.filename.as_mut()
+                && let Some(stem) = std::path::Path::new(name.as_str()).file_stem()
+            {
+                *name = format!("{}.jpg", stem.to_string_lossy());
+            }
+        }
+    }
+    if taken.len() > 1 {
+        return bridge::invoke_extract_document_pages(taken, hint, propose).await;
+    }
+    let one = taken.pop().ok_or("nothing to read")?;
+    let name = one.filename.as_deref();
+    bridge::invoke_extract_document(one.bytes, &one.mime, hint, name, propose).await
+}
+
+/// The pages of a photo capture so far, each removable, and the read button.
+#[component]
+fn CapturePageList(
+    /// What the pages make up, for the read button.
+    noun: String,
+    pages: Vec<CapturePageInput>,
+    busy: bool,
+    on_remove: EventHandler<usize>,
+    on_read: EventHandler<()>,
+) -> Element {
+    let count = pages.len();
+    rsx! {
+        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
+            div { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                if count == 1 { "1 page" } else { "{count} pages" }
+            }
+            for (i, page) in pages.iter().enumerate() {
+                div { key: "{i}", class: "flex items-center justify-between gap-3 text-sm",
+                    span { class: "text-obsidian-text truncate",
+                        "Page {i + 1}"
+                        span { class: "text-obsidian-text-muted",
+                            " · {page.filename.clone().unwrap_or_default()} · {page.bytes.len() / 1024} KB"
+                        }
+                    }
+                    button {
+                        class: "text-xs px-2.5 py-1 text-obsidian-text-muted hover:text-red-300 disabled:opacity-40 shrink-0",
+                        disabled: busy,
+                        onclick: move |_| on_remove.call(i),
+                        "Remove"
+                    }
+                }
+            }
+            Button {
+                disabled: busy,
+                onclick: move |_| on_read.call(()),
+                if count == 1 { "Read {noun}" } else { "Read {count} pages as one {noun}" }
             }
         }
     }
@@ -1942,7 +2103,10 @@ fn EmailCapture(on_done: EventHandler<()>, on_extracted: EventHandler<ExtractedD
         spawn(async move {
             let bytes = body_text.clone().into_bytes();
             let retry_body = body_text;
-            match bridge::invoke_extract_document(bytes, "text/plain", "email_body").await {
+            // No filename: this body was pasted, so nothing on the device named it.
+            match bridge::invoke_extract_document(bytes, "text/plain", "email_body", None, false)
+                .await
+            {
                 Ok(draft) => {
                     state.set(CaptureState::Idle);
                     on_extracted.call(draft);
@@ -2069,6 +2233,77 @@ fn active_capture_key() -> ContinuityKey {
     ContinuityKey::Capture("active".to_string())
 }
 
+/// What `verify` concluded about a fresh extraction, in the shape the panel
+/// below needs. Split out from `ExtractedDraft` so the form can hold onto the
+/// verdict after the draft itself has been decomposed into editable fields.
+#[derive(Debug, Clone, PartialEq)]
+struct ExtractionVerdict {
+    confidence: f64,
+    needs_review: bool,
+    warnings: Vec<String>,
+}
+
+/// Surfaces the verification result above the draft fields.
+///
+/// Warnings render verbatim rather than being reworded for the UI. They name
+/// amounts and fields ("line items sum to 42.18, but the total is 51.02"),
+/// which is what sends the user to the right row; a friendlier paraphrase
+/// layer here would be one more thing to drift out of step with `verify.rs`.
+#[component]
+fn ExtractionVerdictPanel(
+    verdict: ExtractionVerdict,
+    /// What the reader can actually do about it *here*. The confirm form has
+    /// editable fields and a Save; the batch review has Commit all / Dismiss and
+    /// no fields, so the default sentence would name a control that is not on
+    /// screen.
+    #[props(default = "Nothing is saved until you press Save — edit any field that looks wrong."
+        .to_string())]
+    hint: String,
+) -> Element {
+    // A clean extraction says nothing: the confidence number on its own gives
+    // the user no action, and a banner on every capture stops being read.
+    if !verdict.needs_review && verdict.warnings.is_empty() {
+        return rsx! {};
+    }
+
+    let pct = (verdict.confidence * 100.0).round() as i64;
+    let (tone, title_tone, headline) = if verdict.needs_review {
+        (
+            "bg-amber-500/10 border-amber-500/30",
+            "text-amber-200",
+            // Action-neutral on purpose: this panel renders on the confirm form
+            // (Save) and on the batch review (Commit all). `hint` names the
+            // control; the headline only states the verdict.
+            "Check this draft first",
+        )
+    } else {
+        (
+            "bg-obsidian-sidebar/60 border-obsidian-border/10",
+            "text-obsidian-text",
+            "Extracted, with something to confirm",
+        )
+    };
+
+    rsx! {
+        div { class: "p-4 border rounded-lg space-y-2 {tone}",
+            div { class: "flex items-baseline justify-between gap-3",
+                span { class: "text-sm font-semibold {title_tone}", "{headline}" }
+                // Never wrap: at 390px the headline takes two lines, and letting
+                // the number break with it leaves a ragged two-column header.
+                span { class: "text-xs text-obsidian-text-muted shrink-0 whitespace-nowrap",
+                    "confidence {pct}%"
+                }
+            }
+            ul { class: "list-disc pl-5 space-y-1",
+                for w in verdict.warnings.iter() {
+                    li { class: "text-xs text-obsidian-text-muted", "{w}" }
+                }
+            }
+            p { class: "text-xs text-obsidian-text-muted/80", "{hint}" }
+        }
+    }
+}
+
 #[component]
 fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -> Element {
     let store = use_continuity();
@@ -2083,6 +2318,15 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
     //      path clears the slot before navigating here, so reaching this arm
     //      with a draft is always a deliberate resume);
     //   3. otherwise a blank manual form.
+    //
+    // Only arm 1 carries a verification verdict. A resumed draft is the user's
+    // own edits by then, so replaying the model's doubts about the original
+    // extraction would be stale advice about fields they have already fixed.
+    let verdict = initial.as_ref().map(|d| ExtractionVerdict {
+        confidence: d.confidence,
+        needs_review: d.needs_review,
+        warnings: d.warnings.clone(),
+    });
     let (init_date, init_desc, init_rows, init_attachment) = if let Some(d) = initial {
         let rows: Vec<PostingRow> = if d.postings.is_empty() {
             vec![
@@ -2271,6 +2515,12 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
                 h1 { class: "text-xl font-bold text-obsidian-accent", "Transaction" }
             }
 
+            // Above the fields, not beside them: the point is to be read before
+            // the draft is skimmed and saved.
+            if let Some(v) = verdict.clone() {
+                ExtractionVerdictPanel { verdict: v }
+            }
+
             // Date
             div {
                 label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
@@ -2437,7 +2687,8 @@ fn render_working() -> Element {
 fn render_error(message: &str) -> Element {
     rsx! {
         div { class: "p-4 bg-red-950/30 border border-red-500/30 rounded-lg space-y-2",
-            p { class: "text-sm text-red-300", "Couldn't extract: {message}" }
+            // Callers already prefix "Couldn't extract:"; repeating it here doubled the message.
+            p { class: "text-sm text-red-300", "{message}" }
             p { class: "text-xs text-obsidian-text-muted", "Pick another file above to retry." }
         }
     }
@@ -2598,12 +2849,8 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
     let row_count = batch.draft_postings.len();
     let fx_hint = batch_needs_manual_fx(&batch);
     let source_label = pretty_source(&batch.source);
-    let fetched_short = batch
-        .fetched_at
-        .split('T')
-        .next()
-        .unwrap_or(&batch.fetched_at)
-        .to_string();
+    let when = batch_date_label(&batch);
+    let (headline, sender) = batch_headline(&batch);
 
     rsx! {
         button {
@@ -2611,16 +2858,24 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
             onclick: move |_| on_open.call(()),
             div { class: "flex-1 min-w-0",
                 div { class: "flex items-baseline gap-2 mb-1",
-                    span { class: "text-sm font-semibold text-obsidian-text", "{source_label}" }
-                    span { class: "text-xs text-obsidian-text-muted", "· {fetched_short}" }
+                    span { class: "text-sm font-semibold text-obsidian-text truncate", "{headline}" }
                     if let Some(c) = fx_hint {
                         span { class: "text-xs px-2 py-0.5 bg-amber-500/15 text-amber-300 rounded-full",
                             "needs {c} rate"
                         }
                     }
                 }
-                div { class: "text-xs text-obsidian-text-muted truncate",
-                    if row_count == 1 { "1 transaction" } else { "{row_count} transactions" }
+                div { class: "flex items-baseline gap-2",
+                    div { class: "text-xs text-obsidian-text-muted truncate",
+                        "{when} · "
+                        if let Some(from) = sender { "{from} · " } else { "{source_label} · " }
+                        if row_count == 1 { "1 transaction" } else { "{row_count} transactions" }
+                    }
+                    if batch.revises_batch_id.is_some() {
+                        span { class: "text-xs px-2 py-0.5 bg-amber-500/15 text-amber-300 rounded-full shrink-0",
+                            "revises a resolved batch"
+                        }
+                    }
                 }
             }
             svg { class: "w-5 h-5 text-obsidian-text-muted shrink-0",
@@ -2633,11 +2888,96 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
     }
 }
 
+/// The dates the batch's transactions carry, which for a receipt is when the
+/// purchase happened. The fetch date is only a fallback: it is when the server
+/// read the mail, and a backlog gives every row the same one.
+fn batch_date_label(batch: &PendingBatchView) -> String {
+    let dates = batch.draft_postings.iter().map(|d| d.date.as_str());
+    match (dates.clone().min(), dates.max()) {
+        (Some(first), Some(last)) if first == last => first.to_string(),
+        (Some(first), Some(last)) => format!("{first} – {last}"),
+        _ => batch
+            .fetched_at
+            .split('T')
+            .next()
+            .unwrap_or(&batch.fetched_at)
+            .to_string(),
+    }
+}
+
+/// What the row is about, and who sent it: the email subject when there is
+/// one, else the first transaction's description, else the source name.
+fn batch_headline(batch: &PendingBatchView) -> (String, Option<String>) {
+    let meta = |key: &str| {
+        batch
+            .source_metadata
+            .as_ref()
+            .and_then(|m| m.get(key))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let headline = meta("subject")
+        .or_else(|| {
+            batch
+                .draft_postings
+                .first()
+                .map(|d| d.description.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| pretty_source(&batch.source).to_string());
+    (headline, meta("from"))
+}
+
 /// The archived email a batch came from, when it came from one.
 ///
 /// ⚠️ The key is written by `core::auto_import::imap::EMAIL_DOCUMENT_ID_KEY`.
 /// `source_metadata` is opaque JSON by design, so nothing but agreement on this
 /// spelling connects the two — ⛔ change one and change the other.
+/// The archived document a capture batch was read from (`source = capture`).
+fn captured_document_id(batch: &PendingBatchView) -> Option<String> {
+    batch
+        .source_metadata
+        .as_ref()?
+        .get("document_id")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// The captured document itself, shown where an emailed receipt shows its email.
+#[component]
+fn SourceDocumentPanel(document_id: String) -> Element {
+    let doc = use_resource(move || {
+        let id = document_id.clone();
+        async move { bridge::invoke_get_document(&id).await }
+    });
+    let meta = match doc.read().as_ref() {
+        Some(Ok(Some(item))) => Some(document_meta(item)),
+        _ => None,
+    };
+    rsx! {
+        details { class: "mb-4 min-w-0", open: true,
+            summary { class: "cursor-pointer text-xs text-obsidian-text-muted hover:text-obsidian-text",
+                "Source document"
+            }
+            div { class: "mt-2 min-w-0",
+                match meta {
+                    Some(Some(meta)) => rsx! { AttachmentViewer { meta: meta } },
+                    Some(None) => rsx! {
+                        p { class: "text-[11px] text-obsidian-text-muted",
+                            "This file hasn't arrived on this device yet."
+                        }
+                    },
+                    None => rsx! {
+                        p { class: "text-xs text-obsidian-text-muted", "Loading the document…" }
+                    },
+                }
+            }
+        }
+    }
+}
+
 fn email_document_id(batch: &PendingBatchView) -> Option<String> {
     batch
         .source_metadata
@@ -2647,13 +2987,191 @@ fn email_document_id(batch: &PendingBatchView) -> Option<String> {
         .map(str::to_string)
 }
 
+/// An earlier proposal about this order that a later message displaced.
+#[derive(Debug, Clone, PartialEq)]
+struct SupersededProposal {
+    status: String,
+    subject: String,
+    document_kind: String,
+    drafts: Vec<DraftTransactionView>,
+}
+
+/// What a set of drafts charges: its positive legs other than `Unmatched`.
+/// `None` when nothing in it carries an amount, as in a bare shipping notice.
+fn charge_total(drafts: &[DraftTransactionView]) -> Option<(f64, String)> {
+    let mut total = 0.0;
+    let mut commodity = None;
+    for p in drafts.iter().flat_map(|d| &d.postings) {
+        let amount = p.amount.trim().parse::<f64>().unwrap_or(0.0);
+        if p.account != "Unmatched" && amount > 0.0 {
+            total += amount;
+            commodity.get_or_insert_with(|| p.commodity.clone());
+        }
+    }
+    commodity.map(|c| (total, c))
+}
+
+/// Earlier proposals about this batch's order, oldest first.
+///
+/// The keys come from `AutoImportProjection::supersession_entry`; nothing but
+/// agreement on the spelling connects the two ends.
+fn superseded_proposals(batch: &PendingBatchView) -> Vec<SupersededProposal> {
+    let Some(entries) = batch.superseded.as_ref().and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .map(|e| {
+            let text = |key: &str| {
+                e.get(key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("—")
+                    .to_string()
+            };
+            SupersededProposal {
+                status: text("status"),
+                subject: text("subject"),
+                document_kind: text("document_kind"),
+                drafts: e
+                    .get("draft_postings")
+                    .cloned()
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+/// What else the vendor sent about this order, and what committing this batch
+/// will and will not do.
+///
+/// A merge keyed on a vendor reference the model read off an email is only safe
+/// while the reviewer can see what it merged; this panel is that visibility.
+#[component]
+fn BatchLineagePanel(
+    revises_batch_id: Option<String>,
+    superseded: Vec<SupersededProposal>,
+    current_total: Option<(f64, String)>,
+) -> Element {
+    if revises_batch_id.is_none() && superseded.is_empty() {
+        return rsx! {};
+    }
+    let replaced = superseded.len();
+    // Amber is reserved for the case that can double-book. A merge of pending
+    // mail is information, and two warning-coloured panels in a row teach the
+    // reader to skip both.
+    let (border, heading) = if revises_batch_id.is_some() {
+        ("border-amber-500/30", "text-amber-200")
+    } else {
+        ("border-obsidian-border/10", "text-obsidian-text")
+    };
+    rsx! {
+        div { class: "mb-4 p-4 bg-obsidian-sidebar/60 border {border} rounded-lg",
+            if revises_batch_id.is_some() {
+                p { class: "text-sm font-semibold {heading} mb-1",
+                    "This order already has a batch you committed or dismissed"
+                }
+                p { class: "text-xs text-obsidian-text-muted mb-2",
+                    "Committing this one adds new transactions. Nothing already in your books is changed or removed, so check it against what is there before accepting rows."
+                }
+            } else {
+                p { class: "text-sm font-semibold {heading} mb-1",
+                    if replaced == 1 {
+                        "One earlier email about this order"
+                    } else {
+                        "{replaced} earlier emails about this order"
+                    }
+                }
+                p { class: "text-xs text-obsidian-text-muted mb-2",
+                    "The vendor emails at each stage of an order, and each one was read. Only the newest, below, can be committed; these were never recorded anywhere. If an earlier one is right, use Edit on the row below to match it."
+                }
+            }
+            if replaced > 0 {
+                div { class: "space-y-1 text-xs text-obsidian-text-muted",
+                    for prior in superseded.iter() {
+                        {
+                            let total = charge_total(&prior.drafts);
+                            let date = prior.drafts.first().map(|d| d.date.clone()).unwrap_or_default();
+                            let kind = crate::pages::archive::humanise(&prior.document_kind);
+                            let summary = match (&total, &current_total) {
+                                (None, _) => "no amounts in it".to_string(),
+                                (Some((t, c)), Some((now, _))) if (t - now).abs() < 0.005 => {
+                                    format!("{t:.2} {c} · same total as below")
+                                }
+                                (Some((t, c)), Some((now, _))) => {
+                                    format!("{t:.2} {c} · {:+.2} vs below", t - now)
+                                }
+                                (Some((t, c)), None) => format!("{t:.2} {c}"),
+                            };
+                            rsx! {
+                                details { class: "p-2 bg-obsidian-bg/40 rounded border border-obsidian-border/5 min-w-0",
+                                    summary { class: "cursor-pointer hover:text-obsidian-text min-w-0",
+                                        span { class: "text-obsidian-text", "{kind}" }
+                                        " · {date} · {summary}"
+                                        div { class: "truncate", "{prior.subject}" }
+                                    }
+                                    for draft in prior.drafts.iter() {
+                                        for posting in draft.postings.iter() {
+                                            div { class: "flex justify-between gap-3 mt-1",
+                                                span { class: "font-mono truncate", "{posting.account}" }
+                                                span { class: "font-mono shrink-0",
+                                                    "{posting.amount} {posting.commodity}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// What `verify` concluded about the extraction behind a batch.
+///
+/// ⚠️ These keys are written by `core::auto_import::receipts`, which spells them
+/// `effective_confidence` and `needs_manual_review` — not the `confidence` /
+/// `needs_review` of the capture route's JSON. `source_metadata` is opaque by
+/// design, so only agreement on these spellings connects the two.
+///
+/// Returning `None` when the keys are absent is deliberate: a batch from a
+/// source that runs no verification must show no verdict rather than a
+/// confident-looking zero.
+fn batch_verdict(batch: &PendingBatchView) -> Option<ExtractionVerdict> {
+    let meta = batch.source_metadata.as_ref()?;
+    Some(ExtractionVerdict {
+        confidence: meta.get("effective_confidence")?.as_f64()?,
+        needs_review: meta
+            .get("needs_manual_review")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        warnings: meta
+            .get("warnings")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|w| w.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
 /// The message a batch was derived from, shown beside its drafts.
 ///
 /// ⚠️ Renders the archive's **extracted** text (headers + body), not the raw
 /// `.eml`: the raw form is mostly MIME scaffolding and base64 attachment
 /// payloads, so showing it would technically display the source while hiding
-/// what it says. Attachments are documents of their own in the archive — this
-/// panel links there rather than duplicating a viewer.
+/// what it says.
+///
+/// ⛔ **Attachments render here, not by a link to the Archive.** The figures on
+/// a receipt often live in a PDF while the covering mail states none of them, so
+/// a reviewer sent to another tab to check provenance is a reviewer approving a
+/// number they never saw. One viewer at a time, opened on tap — rendering every
+/// attachment eagerly would parse several PDFs to show one.
 #[component]
 fn SourceEmailPanel(document_id: String) -> Element {
     let id_for_text = document_id.clone();
@@ -2661,6 +3179,12 @@ fn SourceEmailPanel(document_id: String) -> Element {
         let id = id_for_text.clone();
         async move { bridge::invoke_get_document_text(&id).await }
     });
+    let id_for_children = document_id.clone();
+    let children = use_resource(move || {
+        let id = id_for_children.clone();
+        async move { bridge::invoke_document_children(&id).await }
+    });
+    let mut open_attachment: Signal<Option<String>> = use_signal(|| None);
 
     rsx! {
         details { class: "mb-4", open: true,
@@ -2685,14 +3209,78 @@ fn SourceEmailPanel(document_id: String) -> Element {
                     },
                     Some(Ok(Some(body))) => rsx! {
                         pre {
+                            "data-scroll-x": "true",
                             class: "max-h-64 overflow-auto p-3 rounded border border-obsidian-border/10 \
                                     bg-obsidian-bg text-[11px] font-mono text-obsidian-text whitespace-pre-wrap",
                             "{body}"
                         }
                     },
                 }
+                // ⚠️ Silent when the message had none. "No attachments" on every
+                // body-only receipt is a line the reviewer learns to skip, and
+                // the absence is already legible from the body being the receipt.
+                match children.read().as_ref() {
+                    Some(Ok(kids)) if !kids.is_empty() => {
+                        let kids = kids.clone();
+                        rsx! {
+                            div { class: "mt-3 space-y-1",
+                                p { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                                    "Arrived with this message"
+                                }
+                                for kid in kids {
+                                    {
+                                        let kid_id = kid.document_id.clone();
+                                        let is_open = open_attachment
+                                            .read()
+                                            .as_deref()
+                                            == Some(kid_id.as_str());
+                                        let meta = document_meta(&kid);
+                                        rsx! {
+                                            div { key: "{kid.document_id}", class: "min-w-0",
+                                                button {
+                                                    onclick: move |_| {
+                                                        let next = if is_open { None } else { Some(kid_id.clone()) };
+                                                        open_attachment.set(next);
+                                                    },
+                                                    class: "w-full text-left px-3 py-2 rounded border \
+                                                            border-obsidian-border/10 hover:border-obsidian-accent/40 \
+                                                            text-xs text-obsidian-text flex items-center gap-2",
+                                                    span { class: "text-obsidian-text-muted shrink-0",
+                                                        if is_open { "▾" } else { "▸" }
+                                                    }
+                                                    span { class: "truncate", "{kid.display_name()}" }
+                                                }
+                                                if is_open {
+                                                    div { class: "mt-1 min-w-0",
+                                                        match meta {
+                                                            Some(meta) => rsx! { AttachmentViewer { meta: meta } },
+                                                            // The document is catalogued but its bytes
+                                                            // have not reached this device — distinct
+                                                            // from a viewer that failed.
+                                                            None => rsx! {
+                                                                p { class: "text-[11px] text-obsidian-text-muted",
+                                                                    "This file hasn't arrived on this device yet."
+                                                                }
+                                                            },
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(Err(e)) => rsx! {
+                        p { class: "mt-2 text-[11px] text-amber-400/80",
+                            "Couldn't check this message for attachments: {e}"
+                        }
+                    },
+                    _ => rsx! {},
+                }
                 p { class: "mt-1 text-[10px] text-obsidian-text-muted/70",
-                    "Archived as {document_id} — attachments are separate entries in the Archive."
+                    "Archived as {document_id}"
                 }
             }
         }
@@ -2705,6 +3293,7 @@ fn pretty_source(source: &str) -> &str {
         "northwind-sync" | "northwind" => "Northwind",
         "meridian-aed" | "imap-meridian-aed" => "Meridian (AED)",
         "imap_receipts" | "imap-receipts" | "receipts" => "Email receipts",
+        "capture" => "Added to the archive",
         other => other,
     }
 }
@@ -2714,6 +3303,14 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
     let batch_id_for_resource = batch_id.clone();
     let mut batch: Signal<Option<Result<PendingBatchView, String>>> = use_signal(|| None);
     let mut accepted: Signal<Vec<bool>> = use_signal(Vec::new);
+    // Rows the reviewer corrected, by position. Committed alongside the indices;
+    // the proposal itself is never rewritten.
+    let mut corrections: Signal<BTreeMap<usize, TxnFields>> = use_signal(BTreeMap::new);
+    let mut editing_row: Signal<Option<usize>> = use_signal(|| None);
+    // Rows typed in by hand, for a receipt the reader got nothing from.
+    let mut added: Signal<Vec<TxnFields>> = use_signal(Vec::new);
+    let mut adding: Signal<bool> = use_signal(|| false);
+    let account_suggestions = use_context::<AccountSuggestions>();
     let mut fx_rate_input: Signal<String> = use_signal(String::new);
     let mut busy: Signal<bool> = use_signal(|| false);
     let mut feedback: Signal<Option<String>> = use_signal(|| None);
@@ -2767,6 +3364,8 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
             let source_label = pretty_source(&b.source).to_string();
             let row_count = b.draft_postings.len();
             let accepted_count = accepted.read().iter().filter(|x| **x).count();
+            let added_count = added.read().len();
+            let blank = blank_fields(&b.fetched_at);
             let metadata_pretty = b
                 .source_metadata
                 .as_ref()
@@ -2789,6 +3388,15 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                     }
                 }
 
+                // Above the source, because it changes what the decision is:
+                // the other panels describe this message, this one describes
+                // what committing it does to transactions already booked.
+                BatchLineagePanel {
+                    revises_batch_id: b.revises_batch_id.clone(),
+                    superseded: superseded_proposals(&b),
+                    current_total: charge_total(&b.draft_postings),
+                }
+
                 // ⛔ The source, shown — not a JSON dump of its metadata. This
                 // review step is the only control between a crafted email and a
                 // fabricated ledger entry (`receipts.rs` says so explicitly, and
@@ -2797,12 +3405,30 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                 // from. The raw metadata stays available underneath.
                 if let Some(doc_id) = email_document_id(&b) {
                     SourceEmailPanel { document_id: doc_id }
+                } else if let Some(doc_id) = captured_document_id(&b) {
+                    SourceDocumentPanel { document_id: doc_id }
+                }
+
+                // Same panel the manual confirm-draft form uses. It matters more
+                // here: on this path no human has looked at the model's work at
+                // all, and `needs_manual_review` was previously readable only by
+                // expanding the JSON below it.
+                if let Some(v) = batch_verdict(&b) {
+                    div { class: "mb-4",
+                        ExtractionVerdictPanel {
+                            verdict: v,
+                            hint: "Check these figures against the source before committing — dismissing costs nothing."
+                                .to_string(),
+                        }
+                    }
                 }
 
                 if let Some(meta_str) = metadata_pretty {
                     details { class: "mb-4 text-xs text-obsidian-text-muted",
                         summary { class: "cursor-pointer hover:text-obsidian-text", "Source metadata" }
-                        pre { class: "mt-2 p-3 bg-obsidian-sidebar/60 rounded border border-obsidian-border/5 overflow-x-auto",
+                        pre {
+                            "data-scroll-x": "true",
+                            class: "mt-2 p-3 bg-obsidian-sidebar/60 rounded border border-obsidian-border/5 overflow-x-auto",
                             "{meta_str}"
                         }
                     }
@@ -2810,17 +3436,94 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
 
                 div { class: "space-y-2 mb-6",
                     for (idx, draft) in b.draft_postings.iter().enumerate() {
-                        DraftRow {
-                            key: "{draft.external_id}",
-                            idx: idx,
-                            draft: draft.clone(),
-                            accepted: accepted.read().get(idx).copied().unwrap_or(true),
-                            on_toggle: move |_| {
-                                let mut current_accepted = accepted.write();
-                                if let Some(slot) = current_accepted.get_mut(idx) {
-                                    *slot = !*slot;
+                        if *editing_row.read() == Some(idx) {
+                            div {
+                                key: "{idx}-edit",
+                                class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-accent/40 rounded-lg",
+                                TxnFieldsForm {
+                                    seed: corrections
+                                        .read()
+                                        .get(&idx)
+                                        .cloned()
+                                        .unwrap_or_else(|| draft_fields(draft)),
+                                    submit_label: "Use these values",
+                                    busy: false,
+                                    submit_error: None,
+                                    on_submit: move |fields: TxnFields| {
+                                        corrections.write().insert(idx, fields);
+                                        editing_row.set(None);
+                                    },
+                                    on_cancel: move |_| editing_row.set(None),
                                 }
-                            },
+                            }
+                        } else {
+                            DraftRow {
+                                key: "{idx}-{draft.external_id}",
+                                idx: idx,
+                                draft: corrections
+                                    .read()
+                                    .get(&idx)
+                                    .map(|f| corrected_draft(draft, f))
+                                    .unwrap_or_else(|| draft.clone()),
+                                corrected: corrections.read().contains_key(&idx),
+                                accepted: accepted.read().get(idx).copied().unwrap_or(true),
+                                on_toggle: move |_| {
+                                    let mut current_accepted = accepted.write();
+                                    if let Some(slot) = current_accepted.get_mut(idx) {
+                                        *slot = !*slot;
+                                    }
+                                },
+                                on_edit: move |_| editing_row.set(Some(idx)),
+                                on_revert: move |_| {
+                                    corrections.write().remove(&idx);
+                                },
+                            }
+                        }
+                    }
+                }
+
+                if row_count == 0 {
+                    div { class: "space-y-2 mb-6",
+                        p { class: "text-xs text-obsidian-text-muted",
+                            "The reader found no transactions in this message. Enter it from the source above, or dismiss it."
+                        }
+                        for (i, f) in added.read().iter().cloned().enumerate() {
+                            div {
+                                key: "added-{i}",
+                                class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg flex items-center justify-between gap-2 min-w-0",
+                                div { class: "min-w-0",
+                                    div { class: "text-sm text-obsidian-text truncate", "{f.description}" }
+                                    div { class: "text-xs text-obsidian-text-muted", "{f.date} · added by hand" }
+                                }
+                                button {
+                                    class: "text-xs text-obsidian-text-muted hover:text-red-300 shrink-0 px-2 py-2",
+                                    onclick: move |_| {
+                                        added.write().remove(i);
+                                    },
+                                    "Remove"
+                                }
+                            }
+                        }
+                        if *adding.read() {
+                            div { class: "p-3 bg-obsidian-sidebar/60 border border-obsidian-accent/40 rounded-lg",
+                                TxnFieldsForm {
+                                    seed: blank.clone(),
+                                    submit_label: "Add",
+                                    busy: false,
+                                    submit_error: None,
+                                    on_submit: move |f: TxnFields| {
+                                        added.write().push(f);
+                                        adding.set(false);
+                                    },
+                                    on_cancel: move |_| adding.set(false),
+                                }
+                            }
+                        } else {
+                            button {
+                                class: "text-sm text-obsidian-accent hover:opacity-80 py-2",
+                                onclick: move |_| adding.set(true),
+                                "+ Add transaction"
+                            }
                         }
                     }
                 }
@@ -2847,7 +3550,8 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                 div { class: "flex gap-3 items-center",
                     button {
                         class: "flex-1 px-4 py-3 bg-obsidian-accent text-black font-semibold rounded-lg hover:bg-obsidian-accent/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-                        disabled: *busy.read() || accepted_count == 0
+                        disabled: *busy.read() || accepted_count + added_count == 0
+                            || editing_row.read().is_some() || *adding.read()
                             || (manual_fx_commodity.is_some() && fx_rate_input.read().trim().is_empty()),
                         onclick: {
                             let batch_id = b.batch_id.clone();
@@ -2860,6 +3564,31 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                     .iter()
                                     .enumerate()
                                     .filter_map(|(i, on)| if *on { Some(i) } else { None })
+                                    .collect();
+                                // A correction to a row left unticked is not committed.
+                                let fixes: Vec<DraftCorrectionInput> = corrections
+                                    .read()
+                                    .iter()
+                                    .filter(|(i, _)| accepted_indices.contains(*i))
+                                    .map(|(&index, f)| DraftCorrectionInput {
+                                        index,
+                                        date: f.date.clone(),
+                                        description: f.description.clone(),
+                                        postings: fields_postings(f),
+                                        tags: f.tags.clone().unwrap_or_default(),
+                                    })
+                                    .collect();
+                                let typed: Vec<DraftCorrectionInput> = added
+                                    .read()
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(index, f)| DraftCorrectionInput {
+                                        index,
+                                        date: f.date.clone(),
+                                        description: f.description.clone(),
+                                        postings: fields_postings(f),
+                                        tags: f.tags.clone().unwrap_or_default(),
+                                    })
                                     .collect();
                                 let rate = fx_rate_input.read().trim().to_string();
                                 spawn(async move {
@@ -2874,11 +3603,14 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                                         accepted_indices,
                                         fx_rate,
                                         fx_commodity,
+                                        fixes,
+                                        typed,
                                     )
                                     .await;
                                     busy.set(false);
                                     match res {
                                         Ok(_) => {
+                                            account_suggestions.refresh();
                                             // Before `on_done`, which unmounts this view:
                                             // tell every subscribed read view that the
                                             // ledger changed underneath it.
@@ -2892,6 +3624,8 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                         },
                         if *busy.read() {
                             "Committing…"
+                        } else if row_count == 0 {
+                            "Commit {added_count} added"
                         } else if accepted_count == row_count {
                             "Commit all {accepted_count}"
                         } else {
@@ -2935,8 +3669,11 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
 fn DraftRow(
     idx: usize,
     draft: DraftTransactionView,
+    corrected: bool,
     accepted: bool,
     on_toggle: EventHandler<()>,
+    on_edit: EventHandler<()>,
+    on_revert: EventHandler<()>,
 ) -> Element {
     let border = if accepted {
         "border-obsidian-accent/40"
@@ -2953,9 +3690,28 @@ fn DraftRow(
                     onchange: move |_| on_toggle.call(()),
                 }
                 div { class: "flex-1 min-w-0",
-                    div { class: "flex items-baseline gap-2 mb-1",
+                    div { class: "flex flex-wrap items-baseline gap-2 mb-1",
                         span { class: "text-xs text-obsidian-text-muted font-mono", "#{idx + 1}" }
-                        span { class: "text-sm font-medium text-obsidian-text", "{draft.date}" }
+                        span { class: "text-sm font-medium text-obsidian-text whitespace-nowrap", "{draft.date}" }
+                        if corrected {
+                            span { class: "text-xs px-2 py-0.5 bg-obsidian-accent/15 text-obsidian-accent rounded-full whitespace-nowrap",
+                                "corrected"
+                            }
+                        }
+                        div { class: "ml-auto flex items-baseline gap-1",
+                            if corrected {
+                                button {
+                                    class: "text-xs px-2.5 py-1 text-obsidian-text-muted hover:text-obsidian-text",
+                                    onclick: move |_| on_revert.call(()),
+                                    "Undo"
+                                }
+                            }
+                            button {
+                                class: "text-xs px-2.5 py-1 rounded-md border border-obsidian-border/10 text-obsidian-text-muted hover:text-obsidian-text hover:border-obsidian-border/20",
+                                onclick: move |_| on_edit.call(()),
+                                "Edit"
+                            }
+                        }
                     }
                     div { class: "text-sm text-obsidian-text truncate mb-2", "{draft.description}" }
                     div { class: "space-y-1",
@@ -2971,6 +3727,49 @@ fn DraftRow(
                 }
             }
         }
+    }
+}
+
+/// A proposed row as the starting values of the correction form.
+fn draft_fields(draft: &DraftTransactionView) -> TxnFields {
+    TxnFields {
+        date: draft.date.clone(),
+        description: draft.description.clone(),
+        postings: draft
+            .postings
+            .iter()
+            .filter_map(|p| serde_json::to_value(p).ok())
+            .collect(),
+        tags: Some(Vec::new()),
+    }
+}
+
+fn fields_postings(fields: &TxnFields) -> Vec<PostingInput> {
+    fields
+        .postings
+        .iter()
+        .filter_map(|p| serde_json::from_value(p.clone()).ok())
+        .collect()
+}
+
+/// An empty row to enter by hand, dated the day the message was fetched.
+fn blank_fields(fetched_at: &str) -> TxnFields {
+    let empty = serde_json::json!({ "account": "", "amount": "", "commodity": DEFAULT_COMMODITY });
+    TxnFields {
+        date: fetched_at.get(..10).unwrap_or_default().to_string(),
+        description: String::new(),
+        postings: vec![empty.clone(), empty],
+        tags: Some(Vec::new()),
+    }
+}
+
+/// The row as it will be committed, for display in the review list.
+fn corrected_draft(draft: &DraftTransactionView, fields: &TxnFields) -> DraftTransactionView {
+    DraftTransactionView {
+        external_id: draft.external_id.clone(),
+        date: fields.date.clone(),
+        description: fields.description.clone(),
+        postings: fields_postings(fields),
     }
 }
 
@@ -4346,12 +5145,10 @@ fn TransactionDetailBody(
     }
 }
 
-/// Edit form for a committed transaction — date, description, and postings
-/// (account / amount / commodity), reachable from the detail view's Edit button.
-/// Save emits `TransactionUpdated` via `update_transaction`; the backend
+/// Edit form for a committed transaction, reachable from the detail view's Edit
+/// button. Save emits `TransactionUpdated` via `update_transaction`; the backend
 /// re-renders the entry in `budget.journal` in place so journal-derived balances
-/// stay correct. Each posting carries its original JSON so an edit to
-/// account/amount/commodity doesn't drop fx-rate or posting-tag metadata.
+/// stay correct.
 #[component]
 fn TransactionEditForm(
     txn: TransactionView,
@@ -4359,16 +5156,93 @@ fn TransactionEditForm(
     on_cancel: EventHandler<()>,
 ) -> Element {
     let account_suggestions = use_context::<AccountSuggestions>();
-    let txn_id = txn.id.clone();
-
-    let mut date = use_signal(|| txn.date.clone());
-    let mut description = use_signal(|| txn.description.clone());
-    let mut postings = use_signal(|| seed_edit_postings(&txn.postings));
     let mut saving = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let seed = TxnFields {
+        date: txn.date.clone(),
+        description: txn.description.clone(),
+        postings: txn.postings.as_array().cloned().unwrap_or_default(),
+        tags: None,
+    };
+
+    let on_submit = move |fields: TxnFields| {
+        if *saving.read() {
+            return;
+        }
+        error.set(None);
+        saving.set(true);
+        let postings = serde_json::Value::Array(fields.postings);
+        let changes = serde_json::json!({
+            "date": fields.date,
+            "description": fields.description,
+            "postings": postings,
+        });
+        // Optimistic view for the detail body: same fields the backend applied.
+        let mut updated = txn.clone();
+        updated.date = fields.date;
+        updated.description = fields.description;
+        updated.postings = postings;
+
+        let id = txn.id.clone();
+        spawn(async move {
+            match bridge::invoke_update_transaction(&id, changes).await {
+                Ok(()) => {
+                    saving.set(false);
+                    account_suggestions.refresh();
+                    on_saved.call(updated);
+                }
+                Err(e) => {
+                    saving.set(false);
+                    error.set(Some(format!("Save failed: {e}")));
+                }
+            }
+        });
+    };
+
+    rsx! {
+        TxnFieldsForm {
+            seed,
+            submit_label: "Save changes",
+            busy: *saving.read(),
+            submit_error: error.read().clone(),
+            on_submit,
+            on_cancel,
+        }
+    }
+}
+
+/// What [`TxnFieldsForm`] hands back once its rows pass the form's checks.
+#[derive(Clone, PartialEq)]
+struct TxnFields {
+    date: String,
+    description: String,
+    postings: Vec<serde_json::Value>,
+    /// `None` hides the tag row: the saved-transaction editor tags elsewhere.
+    tags: Option<Vec<String>>,
+}
+
+/// Date, description and postings (account / amount / commodity), shared by the
+/// saved-transaction editor and the correction of a proposed row in batch review.
+/// Each posting carries its original JSON so an edit to account/amount/commodity
+/// doesn't drop fx-rate or posting-tag metadata. The caller owns what Save does.
+#[component]
+fn TxnFieldsForm(
+    seed: TxnFields,
+    submit_label: String,
+    busy: bool,
+    submit_error: Option<String>,
+    on_submit: EventHandler<TxnFields>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    let mut date = use_signal(|| seed.date.clone());
+    let mut description = use_signal(|| seed.description.clone());
+    let mut tags = use_signal(|| seed.tags.clone());
+    let mut postings =
+        use_signal(|| seed_edit_postings(&serde_json::Value::Array(seed.postings.clone())));
     let mut error = use_signal(|| None::<String>);
 
     let on_save = move |_| {
-        if *saving.read() {
+        if busy {
             return;
         }
         let date_v = date.read().trim().to_string();
@@ -4414,31 +5288,11 @@ fn TransactionEditForm(
         }
 
         error.set(None);
-        saving.set(true);
-        let changes = serde_json::json!({
-            "date": date_v,
-            "description": desc_v,
-            "postings": postings_out,
-        });
-        // Optimistic view for the detail body: same fields the backend applied.
-        let mut updated = txn.clone();
-        updated.date = date_v;
-        updated.description = desc_v;
-        updated.postings = serde_json::Value::Array(postings_out);
-
-        let id = txn_id.clone();
-        spawn(async move {
-            match bridge::invoke_update_transaction(&id, changes).await {
-                Ok(()) => {
-                    saving.set(false);
-                    account_suggestions.refresh();
-                    on_saved.call(updated);
-                }
-                Err(e) => {
-                    saving.set(false);
-                    error.set(Some(format!("Save failed: {e}")));
-                }
-            }
+        on_submit.call(TxnFields {
+            date: date_v,
+            description: desc_v,
+            postings: postings_out,
+            tags: tags.read().clone(),
         });
     };
 
@@ -4550,8 +5404,20 @@ fn TransactionEditForm(
                 }
             }
 
+            if let Some(current) = tags.read().clone() {
+                div {
+                    label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                        "Tags"
+                    }
+                    EditableTagList {
+                        current,
+                        on_save: move |next: Vec<String>| tags.set(Some(next)),
+                    }
+                }
+            }
+
             // Error
-            if let Some(msg) = error.read().clone() {
+            if let Some(msg) = error.read().clone().or(submit_error) {
                 div { class: "p-3 bg-red-950/30 border border-red-500/30 rounded-md text-sm text-red-300",
                     "{msg}"
                 }
@@ -4561,21 +5427,21 @@ fn TransactionEditForm(
             div { class: "flex justify-end gap-2",
                 Button {
                     variant: ButtonVariant::Ghost,
-                    disabled: *saving.read(),
+                    disabled: busy,
                     onclick: move |_| on_cancel.call(()),
                     "Cancel"
                 }
                 Button {
-                    disabled: *saving.read(),
+                    disabled: busy,
                     onclick: on_save,
-                    if *saving.read() { "Saving…" } else { "Save changes" }
+                    if busy { "Saving…" } else { "{submit_label}" }
                 }
             }
         }
     }
 }
 
-/// One editable posting in [`TransactionEditForm`]. `original` preserves the
+/// One editable posting in [`TxnFieldsForm`]. `original` preserves the
 /// row's source JSON (fx-rate, posting tags) so editing account/amount/commodity
 /// doesn't silently drop metadata the form doesn't surface; added rows start empty.
 #[derive(Clone, PartialEq)]
@@ -6479,7 +7345,9 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
                                 "Imported despite failing these checks:"
                             }
                         }
-                        div { class: "overflow-x-auto",
+                        div {
+                            "data-scroll-x": "true",
+                            class: "overflow-x-auto",
                             for blocker in result.blockers.iter() {
                                 div { class: "text-xs font-mono whitespace-pre-wrap bg-obsidian-bg border border-red-500/20 rounded px-2 py-1 mb-1 text-obsidian-text",
                                     "• {blocker}"
@@ -7331,6 +8199,39 @@ fn SampleTxnRow(txn: crate::types::JournalImportSampleTxn) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn draft(postings: &[(&str, &str)]) -> DraftTransactionView {
+        DraftTransactionView {
+            external_id: String::new(),
+            date: "2026-09-26".into(),
+            description: "Walmart".into(),
+            postings: postings
+                .iter()
+                .map(|(account, amount)| PostingInput {
+                    account: account.to_string(),
+                    commodity: "CAD".into(),
+                    amount: amount.to_string(),
+                    tags: vec![],
+                })
+                .collect(),
+        }
+    }
+
+    /// The shapes of a real Walmart order's emails: a priced confirmation and a
+    /// shipping notice whose only leg is `Unmatched -0`.
+    #[test]
+    fn charge_total_sums_the_charge_side_and_says_none_for_an_empty_email() {
+        let priced = draft(&[
+            ("Expenses:Groceries", "107.93"),
+            ("Expenses:Fees", "12.70"),
+            ("Expenses:Tips", "4.56"),
+            ("Unmatched", "-125.19"),
+        ]);
+        let (total, commodity) = charge_total(&[priced]).unwrap();
+        assert!((total - 125.19).abs() < 1e-9);
+        assert_eq!(commodity, "CAD");
+        assert_eq!(charge_total(&[draft(&[("Unmatched", "-0")])]), None);
+    }
 
     #[test]
     fn classify_share_mime_routes_known_image_subtypes() {

@@ -155,8 +155,13 @@ fn add(out: &mut Vec<PendingApprovals>, reviewed_at: ReviewedAt, count: usize) {
 async fn count_documents_with_unverified_fields(db: &Database) -> Result<usize, EventError> {
     let mut resp = db
         .query(
+            // ⛔ `purged != true`, and it lives outside `queries.rs` — which is
+            // exactly why it was the easy one to miss. A purged document keeps its
+            // fields, so without this the nav badge would keep counting documents
+            // the user can no longer open to correct, and the count would never
+            // reach zero.
             "SELECT count() AS c FROM documents
-             WHERE fields[WHERE verified = false] != [] GROUP ALL",
+             WHERE fields[WHERE verified = false] != [] AND purged != true GROUP ALL",
         )
         .await?;
     let counts: Vec<i64> = resp.take("c").unwrap_or_default();

@@ -7,6 +7,7 @@ mod diagnostics;
 mod duration;
 mod features;
 mod journal_template;
+mod keyboard;
 mod note_frontmatter;
 mod pages;
 mod reorder;
@@ -121,12 +122,61 @@ pub fn home_tab(features: &types::Features) -> Tab {
 /// not rendering, the same way the share intent already does — a page can be
 /// holding a destination that a feature toggle removed.
 #[derive(Clone, Copy)]
-pub struct NavRequest(pub Signal<Option<Tab>>);
+pub struct NavRequest(pub Signal<Option<NavTarget>>);
+
+/// Where inside a tab a caller wants to land.
+///
+/// ⛔ **A tab alone is not a destination.** Switching to Finances mounts its
+/// Overview and switching to Archive mounts an unfiltered list, so a reminder
+/// row saying "12 items waiting" used to leave the user on a screen that shows
+/// neither the 12 items nor a way to find them. Typed rather than a string key:
+/// a mistyped key would route to the tab root and look exactly like the bug it
+/// replaced.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NavIntent {
+    /// Finances: draw attention to the review inbox card.
+    ///
+    /// ⚠️ Not a jump to one queue. The count behind it merges auto-import
+    /// batches with assistant proposals (`core::approvals::summary` adds both
+    /// under `Feature::Finances`), so the honest landing is the one card where
+    /// the split is visible and each half is one tap away.
+    FinancesReview,
+    /// Archive: open the list already narrowed to unchecked fields.
+    ArchiveUnverified,
+}
+
+/// A tab plus where in it to land.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct NavTarget {
+    pub tab: Tab,
+    pub intent: Option<NavIntent>,
+}
+
+/// The intent from the last honoured [`NavRequest`], for the page it named.
+///
+/// ⚠️ **The page clears it once acted on.** Left set, returning to that tab by
+/// hand would re-apply a filter the user had just cleared.
+#[derive(Clone, Copy)]
+pub struct PendingNavIntent(pub Signal<Option<NavIntent>>);
+
+/// Read the pending intent, for a page deciding where to open. `None` outside
+/// the app root, so a page rendered in isolation opens at its own root.
+pub fn use_nav_intent() -> Signal<Option<NavIntent>> {
+    match try_use_context::<PendingNavIntent>() {
+        Some(PendingNavIntent(intent)) => intent,
+        None => use_signal(|| None),
+    }
+}
 
 /// Ask the shell to switch tabs. No-op outside the app root.
 pub fn request_tab(tab: Tab) {
+    request_nav(NavTarget { tab, intent: None });
+}
+
+/// Ask the shell to switch tabs and land somewhere specific inside.
+pub fn request_nav(target: NavTarget) {
     if let Some(NavRequest(mut req)) = try_use_context::<NavRequest>() {
-        req.set(Some(tab));
+        req.set(Some(target));
     }
 }
 
@@ -149,6 +199,14 @@ pub struct BackNav {
     /// page reacts in its own scope (see [`use_page_back`]), so all view-signal
     /// writes stay where they belong — the root never touches page internals.
     pop_seq: Signal<u32>,
+    /// A full-screen overlay (the document viewer) is up. Back closes it before
+    /// anything else on the page, and the root clears this to do so.
+    overlay_open: Signal<bool>,
+}
+
+/// The overlay flag, for a full-screen view that back should close.
+pub fn use_overlay_back() -> Signal<bool> {
+    use_context::<BackNav>().overlay_open
 }
 
 /// Wire a page's in-app nav into hardware/gesture-back handling (#372).
@@ -315,6 +373,21 @@ const HEADER_TOGGLE_COOLDOWN_MS: i64 = 400;
 /// while a deliberate scroll clears it easily.
 const HEADER_TOGGLE_DELTA_PX: f64 = 12.0;
 
+/// Appends one boot step to `window.__omniBoot`, readable over WebView DevTools.
+/// Tab restore fails on the phone and nowhere else, and this is how it is watched.
+fn record_boot(step: &str) {
+    if let Some(win) = web_sys::window() {
+        let key = wasm_bindgen::JsValue::from_str("__omniBoot");
+        let log = js_sys::Reflect::get(&win, &key)
+            .ok()
+            .filter(|v| v.is_array())
+            .map(|v| js_sys::Array::from(&v))
+            .unwrap_or_default();
+        log.push(&wasm_bindgen::JsValue::from_str(step));
+        let _ = js_sys::Reflect::set(&win, &key, &log);
+    }
+}
+
 fn main() {
     // Before `launch`, so a failure during the app's own first render is
     // already being recorded. Installing from inside a component would miss
@@ -330,7 +403,10 @@ fn App() -> Element {
     // this component makes. Seeded to `Tab::Journal` and corrected once the set
     // resolves — the render gate below holds the nav until then, so a hidden tab
     // is never briefly drawn.
-    let feature_set = features::use_features_provider();
+    // The only provider. A second call further down once shadowed this one: the
+    // config read filled the second, the tab restore and share intake waited on
+    // this one forever, and every launch opened on Journal for 3½ weeks.
+    let mut feature_set = features::use_features_provider();
     // Not a hook, so it is safe to call inside an effect or an event closure.
     // Reading the signal is what makes those callers reactive.
     let home_of = move || home_tab(&feature_set.read().clone().unwrap_or_default());
@@ -341,23 +417,34 @@ fn App() -> Element {
     // so the same destination can be requested twice in a row — a user who
     // navigates away and taps the reminder again expects it to work the second
     // time.
-    let mut nav_request = use_signal(|| None::<Tab>);
+    let mut nav_request = use_signal(|| None::<NavTarget>);
     use_context_provider(|| NavRequest(nav_request));
+    // The destination inside the tab, handed to the page that is about to mount.
+    // Provided here so a page can read it with `use_nav_intent`; the page clears
+    // it once it has acted.
+    let mut pending_nav_intent = use_signal(|| None::<NavIntent>);
+    use_context_provider(|| PendingNavIntent(pending_nav_intent));
     use_effect(move || {
-        let Some(tab) = *nav_request.read() else {
+        let Some(target) = *nav_request.read() else {
             return;
         };
         nav_request.set(None);
         // Refused rather than obeyed when the tab is not rendered this launch —
         // the same check the share intent makes, for the same reason: switching
         // to a hidden tab shows an empty shell with no way back to it.
-        if !tab.visible(&feature_set.peek().clone().unwrap_or_default()) {
+        if !target
+            .tab
+            .visible(&feature_set.peek().clone().unwrap_or_default())
+        {
             web_sys::console::warn_1(
                 &"nav request for a tab this launch does not render; ignoring".into(),
             );
             return;
         }
-        active_tab.set(tab);
+        // ⛔ Set before the tab switch: the page reads this as it mounts, and a
+        // write landing after that mount arrives too late to place it.
+        pending_nav_intent.set(target.intent);
+        active_tab.set(target.tab);
     });
 
     // Mobile nav drawer open/close (1.11). Desktop uses the persistent SideNav,
@@ -466,6 +553,11 @@ fn App() -> Element {
             waited += POLL_MS;
         }
 
+        record_boot(&format!(
+            "splash lifts: tab={:?} loaded={} waited={waited}ms",
+            *active_tab.peek(),
+            continuity_store.loaded_peek()
+        ));
         // Disarm before fading: releases every outstanding hold, stops new ones
         // being taken, and opens the render gate on the failure path.
         boot_armed.set(false);
@@ -479,9 +571,11 @@ fn App() -> Element {
     // bumps; the root orchestrates below. Provided as `BackNav` context.
     let mut page_depth = use_signal(|| 0u32);
     let mut pop_seq = use_signal(|| 0u32);
+    let mut overlay_open = use_signal(|| false);
     use_context_provider(|| BackNav {
         page_depth,
         pop_seq,
+        overlay_open,
     });
 
     // Live-refresh on inbound sync (see `sync_refresh`). The backend applies
@@ -543,6 +637,8 @@ fn App() -> Element {
         });
     });
 
+    use_hook(keyboard::install);
+
     // Hardware/gesture-back handler (#372). The Android `MainActivity`
     // dispatches an `omni:back` DOM event on a back press; we drain it here (same
     // channel→spawn pattern as `sync:applied` above — the JS callback fires
@@ -561,6 +657,8 @@ fn App() -> Element {
             while rx.next().await.is_some() {
                 if *drawer_open.peek() {
                     drawer_open.set(false);
+                } else if *overlay_open.peek() {
+                    overlay_open.set(false);
                 } else if *page_depth.peek() > 0 {
                     // Ask the active page to pop one level (it reacts in its own
                     // scope via `use_page_back`).
@@ -584,7 +682,10 @@ fn App() -> Element {
     // synchronously (#372). Reactive on drawer / page-depth / tab, so the flag
     // is always current when a back press arrives.
     use_effect(move || {
-        let can = *drawer_open.read() || *page_depth.read() > 0 || *active_tab.read() != home_of();
+        let can = *drawer_open.read()
+            || *overlay_open.read()
+            || *page_depth.read() > 0
+            || *active_tab.read() != home_of();
         bridge::set_can_go_back(can);
     });
 
@@ -644,7 +745,9 @@ fn App() -> Element {
         while !continuity_store.loaded_peek() {
             timer::sleep_ms(20).await;
         }
+        record_boot("restore: store loaded");
         if *share_claimed_tab.peek() {
+            record_boot("restore: yielded to a share intent");
             return;
         }
         // Wait for the feature set too: restoring onto a tab that turns out to be
@@ -661,12 +764,17 @@ fn App() -> Element {
         // An unknown key already fell through to the seed; a *known* key whose
         // feature has since been switched off has to fall through the same way,
         // and to the first visible tab rather than to Journal.
+        record_boot(&format!(
+            "restore: stored={:?} parsed={stored:?}",
+            continuity_store.nav_peek().tab
+        ));
         match stored {
             Some(tab) if tab.visible(&feature_set.peek().clone().unwrap_or_default()) => {
                 active_tab.set(tab);
             }
             _ => active_tab.set(home_of()),
         }
+        record_boot(&format!("restore: set {:?}", *active_tab.peek()));
     });
 
     // Appearance. Both keys are held as the *chosen* value, not the resolved one,
@@ -682,7 +790,6 @@ fn App() -> Element {
     use_context_provider(|| AccentPref(accent_signal));
     // One `get_config` serves both appearance and the feature set — the two are
     // in the same response, and this sits on the pre-paint path.
-    let mut feature_set = features::use_features_provider();
     use_future(move || async move {
         // Bounded retry, mirroring the workspace boot read in `continuity.rs`.
         // An invoke fired before the native IPC handler is ready is *dropped* —

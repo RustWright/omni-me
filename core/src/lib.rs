@@ -2,6 +2,7 @@ pub mod accounts;
 pub mod approvals;
 pub mod archive;
 pub mod assistant;
+pub mod async_runtime;
 pub mod auto_close;
 #[cfg(feature = "auto-import")]
 pub mod auto_import;
@@ -33,11 +34,14 @@ pub mod llm;
 /// ingest it — the archive would be searchable on the server and not on a
 /// client, with nothing reporting the difference.
 pub mod mime;
+pub mod paths;
 pub mod preprocess;
+pub mod purge;
 pub mod query;
 pub mod reconciliation;
 pub mod record_type;
 pub mod recurring;
+pub mod retention;
 pub mod routines;
 pub mod runtime;
 pub mod statement;
