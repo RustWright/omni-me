@@ -17,8 +17,8 @@
 //!   balancing leg absorbs whatever they leave unaccounted; we do not yet know
 //!   which card paid, so the credit side stays on `Unmatched` for review.
 //!   Two fallbacks: postings that already settle to zero are used as given (the
-//!   model supplied both legs), and a document stating no total keeps the older
-//!   one-draft-per-line-item shape, which ⚠️ cannot reconcile 1:1.
+//!   model supplied both legs), and a document stating no total is anchored on
+//!   the sum of its lines instead.
 //!
 //! Both flavors emit deterministic external ids derived from a caller-provided
 //! prefix (e.g. `"meridian-aed-uid-14272"`) so re-processing the same source event
@@ -91,8 +91,7 @@ pub fn statement_extraction_to_drafts(
 }
 
 /// Receipt-flavored draft mapping: one draft per purchase, anchored on the
-/// document's stated total. Falls back to one draft per line item only when the
-/// document states no total — see the module header for why that cannot reconcile.
+/// document's stated total, or on the sum of its lines when it states none.
 ///
 /// Deliberately takes **no** counter-leg resolver. The receipt's `Unmatched`
 /// leg is not a gap waiting to be filled — it is the thing that *cancels*
@@ -103,6 +102,18 @@ pub fn receipt_extraction_to_drafts(
     result: &ExtractionResult,
     source_prefix: &str,
 ) -> Vec<DraftTransaction> {
+    let mut drafts = charge_drafts(result, source_prefix);
+    // A refund is the same transaction run backwards, so its `Unmatched` leg can
+    // cancel the bank's deposit. Model-signed legs already say which way.
+    if result.refund == Some(true) && !super::verify::already_balanced(&result.postings) {
+        for p in drafts.iter_mut().flat_map(|d| d.postings.iter_mut()) {
+            p.amount = -p.amount;
+        }
+    }
+    drafts
+}
+
+fn charge_drafts(result: &ExtractionResult, source_prefix: &str) -> Vec<DraftTransaction> {
     let date = result.date.unwrap_or_else(fallback_date);
     let default_description = result
         .description
@@ -135,9 +146,26 @@ pub fn receipt_extraction_to_drafts(
         )];
     }
 
-    // No stated total, so there is nothing authoritative to anchor on and the
-    // line items are all we have. ⚠️ These drafts do not reconcile against a
-    // single bank charge; see docs/src/extraction.md.
+    // No stated total: the lines' sum stands in for it, so one purchase is still
+    // one transaction (user, 2026-10-03). Twelve per-line drafts could never match
+    // the one card charge; a sum from a partial list at least fails the same way.
+    let one_currency = result
+        .postings
+        .windows(2)
+        .all(|w| w[0].commodity == w[1].commodity);
+    if !result.postings.is_empty() && one_currency {
+        let sum = result.postings.iter().map(|p| p.amount.abs()).sum();
+        return vec![total_anchored_draft(
+            result,
+            source_prefix,
+            date,
+            default_description,
+            sum,
+        )];
+    }
+
+    // Lines in several currencies have no meaningful sum, so each stays its own
+    // draft. ⚠️ These do not reconcile against a single bank charge.
     let mut drafts = Vec::with_capacity(result.postings.len());
     for (i, p) in result.postings.iter().enumerate() {
         let external_id = format!("{source_prefix}-{i}");
@@ -310,6 +338,7 @@ mod tests {
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,
+            refund: None,
         }
     }
 
@@ -442,10 +471,10 @@ mod tests {
         );
     }
 
-    /// Without a total there is nothing authoritative to anchor on, so the old
-    /// per-line-item shape stands. ⚠️ Those drafts do not reconcile 1:1.
+    /// Without a total the lines' sum anchors one draft, so it can still match
+    /// the single card charge.
     #[test]
-    fn no_total_keeps_the_per_line_item_shape() {
+    fn no_total_becomes_one_draft_on_the_lines_sum() {
         let result = result_with(
             NaiveDate::from_ymd_opt(2026, 9, 26),
             None,
@@ -456,7 +485,14 @@ mod tests {
         );
         assert!(result.total.is_none());
         let drafts = receipt_extraction_to_drafts(&result, "src");
-        assert_eq!(drafts.len(), 2, "one draft per line item, as before");
+        assert_eq!(drafts.len(), 1);
+        let unmatched: Vec<_> = drafts[0]
+            .postings
+            .iter()
+            .filter(|p| p.account == UNMATCHED_ACCOUNT)
+            .collect();
+        assert_eq!(unmatched.len(), 1);
+        assert_eq!(unmatched[0].amount, dec("-20.90"));
     }
 
     #[test]
@@ -644,6 +680,23 @@ mod tests {
 
     /// Two currencies that happen to cancel numerically are not one balanced
     /// transaction. `already_balanced` is per-commodity, and this pins it.
+    /// The oxio refund of 2026-09-29 was booked as a 57.46 charge, the same
+    /// sign as the bank's deposit, so the two could never pair.
+    #[test]
+    fn a_refund_runs_backwards() {
+        let mut result = result_with(
+            NaiveDate::from_ymd_opt(2026, 9, 29),
+            Some("Refund from oxio"),
+            vec![posting(Some("Expenses:Utilities:Internet"), "CAD", "57.46")],
+        );
+        result.refund = Some(true);
+        let drafts = receipt_extraction_to_drafts(&result, "src");
+        let p = &drafts[0].postings;
+        assert_eq!(p[0].amount, dec("-57.46"));
+        assert_eq!(p[1].account, UNMATCHED_ACCOUNT);
+        assert_eq!(p[1].amount, dec("57.46"));
+    }
+
     #[test]
     fn two_commodities_do_not_collapse_into_one_draft() {
         let result = result_with(

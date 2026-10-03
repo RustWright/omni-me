@@ -298,6 +298,7 @@ mod tests {
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,
+            refund: None,
         }
     }
 

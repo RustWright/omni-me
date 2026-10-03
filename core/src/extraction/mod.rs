@@ -120,6 +120,10 @@ pub struct ExtractionResult {
     /// Recorded now; grouping on it is a separate decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_ref: Option<String>,
+    /// The document returns money to the payer. Amounts are still extracted
+    /// positive; the mapper runs the transaction backwards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refund: Option<bool>,
     #[serde(default)]
     pub raw_response: serde_json::Value,
 }
@@ -516,7 +520,7 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
              ⚠️ In BOTH cases emit the charge side only. Never add the paying \
              account, the card, or a balancing negative posting — the app adds that \
              side itself, and a second side here is counted as another line item.\n\n\
-             Also set two fields describing the EMAIL itself, not the purchase.\n\n\
+             Also set three fields describing the EMAIL itself, not the purchase.\n\n\
              `document_kind`, exactly one of: \"receipt\" (states a charge that was \
              made), \"order_confirmation\" (an order was placed), \"order_update\" (an \
              order already placed has changed — item substituted, refunded, \
@@ -531,7 +535,9 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
              invoice number). One vendor sends several emails about one order and \
              this is what ties them together. ⚠️ Leave it null if the email does not \
              print one. Never invent it, never use a tracking number, and never use \
-             an identifier for something other than this order."
+             an identifier for something other than this order.\n\n\
+             `refund` — true only when the email returns money to the payer (a \
+             refund or credit), otherwise false. Amounts stay positive either way."
         }
         ExtractionHint::Generic => {
             "Extract any transaction-like information you can find. Set fields \
@@ -552,7 +558,9 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
              \"order_update\", \"shipping_notice\", \"feedback_request\", \
              \"marketing\", \"other\" (anything else: a letter, a contract, an ID, \
              a statement, a form). ⚠️ Judge what the document IS, not what it \
-             mentions: a lease that names a rent amount is still \"other\"."
+             mentions: a lease that names a rent amount is still \"other\".\n\n\
+             Set `refund` to true only when the document returns money to the \
+             payer (a refund or credit), otherwise false. Amounts stay positive."
         }
     };
 
@@ -593,6 +601,7 @@ pub(crate) fn response_schema() -> serde_json::Value {
             "total_as_printed": { "type": "string", "nullable": true },
             "document_kind": { "type": "string", "nullable": true },
             "order_ref": { "type": "string", "nullable": true },
+            "refund": { "type": "boolean", "nullable": true },
             "confidence": { "type": "number" }
         },
         "required": ["postings", "confidence"]
@@ -958,6 +967,7 @@ mod reconcile_tests {
             document_kind: Some("receipt".into()),
             order_ref: Some("ORD-1".into()),
             raw_response: serde_json::Value::Null,
+            refund: None,
         }
     }
 
@@ -1270,6 +1280,7 @@ mod tests {
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,
+            refund: None,
         };
         add_counter_legs(&mut receipt, ExtractionHint::Receipt);
         let last = receipt.postings.last().unwrap();
@@ -1305,6 +1316,7 @@ mod tests {
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,
+            refund: None,
         };
         add_counter_legs(&mut receipt, ExtractionHint::Receipt);
         assert_eq!(

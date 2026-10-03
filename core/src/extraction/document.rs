@@ -347,6 +347,7 @@ mod tests {
             document_kind: None,
             order_ref: None,
             raw_response: serde_json::Value::Null,
+            refund: None,
         };
         let reading =
             reading_from_extraction(&result, super::super::ExtractionHint::Receipt).unwrap();
