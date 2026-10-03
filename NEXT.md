@@ -7,7 +7,7 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 ## ▶ NEXT ACTION — get an assistant agent running on dev
 The chat timeout and the untested belief workflow have one cause: no agent runs anywhere.
 `tasks.md` § On-device pass → "First real matching test" and the `omni-me-agent` item (§ Open).
-Asked him 2026-10-03 where it should run; act on his answer.
+Ruled 2026-10-03: the box, CPU-capped. Then the four Reconcile rulings in that entry.
 Then, in his order: the Reconcile noise findings in that same entry (transfer halves first by size).
 `5a986eb` (bank helper re-proposal) needs CI green, then a dev deploy.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
@@ -16,7 +16,7 @@ Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage s
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **Where the agent runs** (asked 2026-10-03).
+
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.

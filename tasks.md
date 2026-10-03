@@ -3266,6 +3266,12 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
     dev (the 150 Aug bank rows, the Instacart per-line pairs, an old Walmart "Payment method" leg).
     Why the phone kept the batches but not the transactions is NOT verified.
   - Inherent: Walmart's order total (105.43) ≠ final charge (99.93); pre-window receipts (2024–25).
+  ✅ **RULINGS 2026-10-03 (user):** (1) the agent runs on the BOX beside dev, CPU-capped;
+  (2) the helper JOINS both halves of an own-account transfer into one balanced txn (a lone half
+  stays `Unmatched`); (3) a no-total receipt becomes ONE txn summing its lines; (4) duplicate
+  emails: drop only on a shared Message-ID, otherwise FLAG "looks like a duplicate", never drop.
+  ⛔ He wants every setup-specific optimization tracked in an overlay register (where it lives,
+  whether it touches the general engine) for a later review that the engine stays general.
 - ⚠️ **Chat "timeout" = no agent running anywhere** (no process, no compose service). Asked
   2026-10-03 12:36, deleted at 12:38; no answer event. Beliefs untestable until an agent runs.
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
