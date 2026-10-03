@@ -16,7 +16,8 @@
 # sidecar.
 
 # ---- builder ----
-FROM rust:1-bookworm AS builder
+# Pinned, never the rolling `rust:1`: CI is on 1.98.1 and 1.99 breaks the build.
+FROM rust:1.98.1-bookworm AS builder
 
 # No apt build deps, same as server/Dockerfile: the workspace is rustls
 # throughout and surrealdb is kv-surrealkv. `ort` ships a prebuilt onnxruntime

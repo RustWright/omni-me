@@ -11,7 +11,8 @@
 # for a pinned git rev and builds its own binary + ships its subprocess helper.
 
 # ---- builder ----
-FROM rust:1-bookworm AS builder
+# Pinned, never the rolling `rust:1`: CI is on 1.98.1 and 1.99 breaks the build.
+FROM rust:1.98.1-bookworm AS builder
 
 # No apt build deps. This stage used to install `pkg-config libssl-dev` for
 # native-tls; the IMAP swap to async-imap + tokio-rustls removed the last
