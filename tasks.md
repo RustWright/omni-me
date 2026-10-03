@@ -3283,7 +3283,15 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
     device applying a synced `DataWiped` purges its own events of those features from before
     `initiated_at`. He leaned toward a per-device prompt (anxiety about a mistaken wipe); the prompt
     re-confirms a decision already made through preview + confirm + instance match, and its pending
-    window is what resurrected the 185 txns. The snapshot is the recovery path. Not yet built.
+    window is what resurrected the 185 txns. The snapshot is the recovery path.
+    ✅ BUILT `2dc97a4`: `/wipe/confirm` exports the DB to `wipe-snapshots/<ts>.surql` (override
+    `OMNI_SNAPSHOT_DIR`) and refuses under 100 bytes per event to remove; `DataWiped` carries
+    `features` + the snapshot path; `pull_only` purges this device's events of those features
+    authored before `initiated_at`, at the record's position in the log, and every caller rebuilds
+    when `wiped > 0`. End-to-end test in `feature_wipe_integration.rs`. ⏳ Not pruned: snapshots
+    accumulate (box 20 GB free, dev DB 193 MB). ⏳ Restore is by hand (SurrealDB import), untried.
+    ⚠️ Edges kept on purpose: a device's unpushed pre-wipe events of those features are deleted
+    too (the wipe's intent); a ghost batch committed BEFORE the device pulls the wipe still leaks.
   - Inherent: Walmart's order total (105.43) ≠ final charge (99.93); pre-window receipts (2024–25).
   ✅ **RULINGS 2026-10-03 (user):** (1) the agent runs on the BOX beside dev, CPU-capped;
   (2) the helper JOINS both halves of an own-account transfer into one balanced txn (a lone half
