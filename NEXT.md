@@ -7,6 +7,7 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 ## ▶ NEXT ACTION — his approvals, then what he sets next
 The dev agent answers (chat and the belief proposal both verified 2026-10-03; `tasks.md` § On-device
 pass → "Agent on the box"). Dev server on `dev-208e689-8c2b2ab` with all four Reconcile rulings.
+Building now: server wipes snapshot first, then devices follow (`tasks.md` § "Ghost batches", ruled).
 Then, his priority: the agent's index-build memory growth, or the check-in's due-belief review.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
@@ -17,7 +18,6 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 - **Approve or reject the belief proposal** in the phone's inbox (first live `belief.record`).
 - **Bank feed OTP**: the second feed's session expired; reconnect from the phone, which also gives
   the transfer-join its first real run.
-- **Should a server wipe clear devices too?** `tasks.md` § "Ghost batches" — not built, his call.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
