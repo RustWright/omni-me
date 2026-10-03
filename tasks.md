@@ -3225,6 +3225,19 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
 - ⚠️ **Flake, seen once 2026-10-02**: `events::projection::tests::a_paged_replay_folds_exactly_
   what_an_unbounded_one_would` hung ~40 min until the CI job was cancelled (run 37026309818),
   having passed in 27 s on the previous run with the same code under test. Re-run, not chased.
+- ✅ **G5 done on dev, 2026-10-03.** He ran both credential edits himself (classifier), via temp
+  scripts since deleted; backups `credentials-dev.toml.bak.20261003T*`. Wise: 8 fetched, 8 proposed,
+  re-tick dedups. Bank OTP reconnect worked from the phone. The second feed then failed "none are
+  mapped": the overlay's `ACCOUNT_MAPPING.md` map was validated 2026-09-04 and deliberately left
+  out of live (150 unreviewable drafts, no statement reconciliation yet); his G5 ruling covers dev,
+  so it went in with `import_since = 2026-09-05` (statement import ends 07-31; 150 `auto-` rows
+  from that dry run cover 08-01..09-04; a late-09-04 row could be missing, no dedup key exists).
+  Result: 286 fetched, 102 proposed as ONE batch, 184 out of window, 0 unmapped. ⚠️ Known: crypto
+  and security trades arrive as the cash leg only.
+- 🔴 **His multi-page capture (Kam Yin, 2026-10-02)**: page 2 is a card slip with a 3.63 tip
+  (charged 27.86); the reading used page 1's 24.23, so it could never match the bank. Both receipt
+  prompts now carry a tip rule (`3b87a5b`). And the camera fix had removed gallery access (one
+  `capture` input); photo capture now offers "Take a photo" and "Choose photos".
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
   2026-10-02 with a backup. The credentials copy is his (classifier); one-line command given.
 - G6. **Zero-transaction batches** (shipping notices, an order confirmation) reach review.

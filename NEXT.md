@@ -4,19 +4,18 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — G5: bank feeds on dev, a live walkthrough with him
-Dev phone on 1.1.22-dev, dev server on `dev-1056255-60fe816` with `/opt/omni-ws` now mounted.
-Step 2 (copy live's two disabled sections into dev's credentials) is his: the one-line base64
-command was given 2026-10-02 and the classifier refuses it to me. Then: restart dev, check
-`/auto_import/status` lists both bank sources, and walk him through the bank OTP.
-`tasks.md` § On-device pass on 1.1.20-dev holds every G-item, his rulings and what was verified.
+## ▶ NEXT ACTION — first real test of matching, on dev
+Both bank feeds run on dev (G5 done; `tasks.md` § On-device pass on 1.1.20-dev). The second feed's
+September rows are ONE pending batch of 102; committing it puts the bank side in the ledger so
+Reconcile can pair it with his committed receipts. Then: what matched, what did not, and why.
+Shipping: 1.1.23-dev (gallery pick + tip rule) and its dev image; re-read the Kam Yin PDF after.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **His hands on the phone**: the camera (G9), the keyboard (G2), a real pinch (G1).
+- **His hands on the phone**: the camera's own shutter (G9); keyboard and pinch confirmed by him.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
