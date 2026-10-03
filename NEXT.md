@@ -4,19 +4,19 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — first real test of matching, on dev
-Both bank feeds run on dev (G5 done; `tasks.md` § On-device pass on 1.1.20-dev). The second feed's
-September rows are ONE pending batch of 102; committing it puts the bank side in the ledger so
-Reconcile can pair it with his committed receipts. Then: what matched, what did not, and why.
-Dev server on `dev-1056255-3b87a5b` (tip rule verified); APK 1.1.23-dev (gallery pick) built, install
-when he is not mid-review.
+## ▶ NEXT ACTION — get an assistant agent running on dev
+The chat timeout and the untested belief workflow have one cause: no agent runs anywhere.
+`tasks.md` § On-device pass → "First real matching test" and the `omni-me-agent` item (§ Open).
+Asked him 2026-10-03 where it should run; act on his answer.
+Then, in his order: the Reconcile noise findings in that same entry (transfer halves first by size).
+`5a986eb` (bank helper re-proposal) needs CI green, then a dev deploy.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **His hands on the phone**: the camera's own shutter (G9); keyboard and pinch confirmed by him.
+- **Where the agent runs** (asked 2026-10-03).
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.

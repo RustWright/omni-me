@@ -3240,6 +3240,34 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   nothing filed): total 27.86, `Expenses:Tips 3.63`, `Unmatched -27.86`. His pending Kam Yin batch
   still says 24.23: it predates the fix. And the camera fix had removed gallery access (one
   `capture` input); photo capture now offers "Take a photo" and "Choose photos".
+- ✅ **First real matching test, 2026-10-03** (he mass-committed everything; quality not a signal).
+  Server log replayed with the app's own rule (same currency, cancelling amounts, ≤7 days); the
+  phone agrees (301 candidates, 211 with none). **The matcher works**: ~17 distinct receipts pair
+  with their bank charge, incl. Kam Yin 27.86 with the tip, Walmart 99.93/99.83/58.75, Uber/Lyft,
+  storage, Canada Post, e-transfers. What buries them, by cause:
+  - ✅ FIXED `5a986eb`: **the bank helper re-proposed a pending window.** Two ticks 13 min apart
+    gave two 102-row batches (101 shared ids), both committed. Ledger unharmed (deterministic
+    `txn_id` + UPSERT: 103 rows), but review doubled. Subprocess sources had no prior-proposal
+    filter (Wise did) and fell back to a clock key. Now both, plus a test. CI owed; not deployed.
+  - 🔴 **Internal transfers flood Reconcile: 294 of 319 candidates are bank × bank.** Each side of
+    a move between his own accounts arrives as its own half with an `Unmatched` leg; daily $1/$5
+    recurring moves pair combinatorially in the 7-day window. Both halves share the upstream
+    funding id, which the helper has and the matcher never sees. Proposal: the helper joins the
+    halves into one balanced txn. Not built; his call.
+  - 🔴 **Recurring buys are the cash leg only** (known) and pair spuriously with transfers.
+  - 🔴 **Same purchase, two emails** (Uber 9.49/28.92/19.97/6.94, Instacart 50.40 ×3): different
+    UIDs → different dedup keys → two batches. Not checked yet whether Message-ID is shared.
+  - 🔴 **No-total receipts become one txn per line** (Instacart 09-06: 12 rows each, twice). They
+    can never match a card charge. `receipt_extraction_to_drafts`'s documented fallback.
+  - 🔴 **Refund read as a charge**: "Refund from oxio" is `Unmatched -57.46`, the bank deposit is
+    also `-57.46`; same sign, cannot pair.
+  - ⚠️ **Ghost batches after the 09-28 wipe.** 13 batches whose proposals the server wipe removed
+    were still pending on the phone (a wipe is per node); 9 were committed → 185 txns re-entered
+    dev (the 150 Aug bank rows, the Instacart per-line pairs, an old Walmart "Payment method" leg).
+    Why the phone kept the batches but not the transactions is NOT verified.
+  - Inherent: Walmart's order total (105.43) ≠ final charge (99.93); pre-window receipts (2024–25).
+- ⚠️ **Chat "timeout" = no agent running anywhere** (no process, no compose service). Asked
+  2026-10-03 12:36, deleted at 12:38; no answer event. Beliefs untestable until an agent runs.
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
   2026-10-02 with a backup. The credentials copy is his (classifier); one-line command given.
 - G6. **Zero-transaction batches** (shipping notices, an order confirmation) reach review.
