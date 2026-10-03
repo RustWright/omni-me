@@ -3294,6 +3294,13 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   corpus a few MB). DB grows across kills (383 → 386 MB/min) and restarts begin at ~220 MB, so
   progress is kept and the HNSW index is not eagerly loaded. Suspect SurrealDB's in-memory HNSW
   build. Unmeasured: the steady-state memory once built, i.e. whether a 4 GB box can host it.
+  ✅ **Index built 16:36** after two in-cgroup OOM kills (scanned 13,394, embedded 10,922, failed
+  0); steady state ~700 MB under the 2 GB cap. ✅ **Chat answered** his timed-out grocery question
+  in 23 s (Walmart 10-03: receipt 150.73 vs bank 168.64, and it flagged the mismatch itself).
+  ✅ **Belief workflow, first live run**: asked for a conclusion about waking → 13 reads →
+  `belief.record` proposal `01M41A84HZMMF7776BYY9V4CYD` (early riser 4:30–5:45, fragmented sleep;
+  high; review 2027-03-19; 12 journal ids as system-filled evidence). ⏳ His approval on the
+  phone. ⚠️ The check-in's REVIEW of a due belief stays untested: nothing is due before 2027.
 - ⚠️ **Chat "timeout" = no agent running anywhere** (no process, no compose service). Asked
   2026-10-03 12:36, deleted at 12:38; no answer event. Beliefs untestable until an agent runs.
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added

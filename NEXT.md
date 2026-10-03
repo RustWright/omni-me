@@ -4,17 +4,17 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — first answers from the dev agent, then the belief workflow
-The agent runs on the box (`omni-me-agent-dev`); its cold-start index build must finish before it
-answers. Then: ask through the probe (scratchpad `ask.py`), then a belief request whose proposal he
-approves on the phone. `tasks.md` § On-device pass → "First real matching test" and "Agent on the box".
-Dev server on `dev-208e689-8c2b2ab` (all four Reconcile rulings + the re-proposal fix).
+## ▶ NEXT ACTION — his approvals, then what he sets next
+The dev agent answers (chat and the belief proposal both verified 2026-10-03; `tasks.md` § On-device
+pass → "Agent on the box"). Dev server on `dev-208e689-8c2b2ab` with all four Reconcile rulings.
+Then, his priority: the agent's index-build memory growth, or the check-in's due-belief review.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
+- **Approve or reject the belief proposal** in the phone's inbox (first live `belief.record`).
 - **Bank feed OTP**: the second feed's session expired; reconnect from the phone, which also gives
   the transfer-join its first real run.
 - **Should a server wipe clear devices too?** `tasks.md` § "Ghost batches" — not built, his call.
