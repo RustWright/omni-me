@@ -17,7 +17,9 @@
 
 # ---- builder ----
 # Pinned, never the rolling `rust:1`: CI is on 1.98.1 and 1.99 breaks the build.
-FROM rust:1.98.1-bookworm AS builder
+# Trixie, not bookworm: the prebuilt onnxruntime `ort` links needs glibc 2.38+ and
+# a GCC 13+ libstdc++ (`__isoc23_strtoll`), and bookworm's fail at link time.
+FROM rust:1.98.1-trixie AS builder
 
 # No apt build deps, same as server/Dockerfile: the workspace is rustls
 # throughout and surrealdb is kv-surrealkv. `ort` ships a prebuilt onnxruntime
@@ -33,7 +35,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cp target/release/omni-me-agent /omni-me-agent
 
 # ---- runtime ----
-FROM debian:bookworm-slim AS runtime
+# Must match the builder's distro, for the same glibc reason.
+FROM debian:trixie-slim AS runtime
 
 ARG GIT_SHA=dev
 LABEL org.opencontainers.image.title="omni-me-agent" \
