@@ -469,7 +469,10 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
              they are sums of other postings, not items. ⚠️ Never emit the same \
              amount twice unless the receipt genuinely lists that item twice. If \
              the postings still do not sum to the grand total, say so by lowering \
-             your confidence rather than by adjusting either side."
+             your confidence rather than by adjusting either side. \
+             If a card slip shows a TIP, the amount charged includes it: emit the tip \
+             as its own posting (`account_hint` \"Expenses:Tips\") and set `total` to \
+             the amount charged."
         }
         ExtractionHint::BankStatement => {
             "This is a bank statement covering a range of dates. Emit one posting \
@@ -538,7 +541,9 @@ pub(crate) fn prompt_for(hint: ExtractionHint) -> String {
              or payee, emit one posting per line item (or one for a single amount) \
              with a FULL account path in `account_hint` (e.g. \"Expenses:Groceries\", \
              never a bare \"food\") and a positive `amount`, and each DISTINCT tax \
-             line. Set `total` to the grand total actually paid. ⚠️ Emit the charge \
+             line. Set `total` to the grand total actually paid. If a card slip \
+             shows a TIP, emit it as its own posting (`account_hint` \"Expenses:Tips\") \
+             and set `total` to the amount charged. ⚠️ Emit the charge \
              side only: never the card, the cash tendered, a payment line or any \
              balancing negative posting. The app adds that side itself.\n\n\
              Also set `document_kind` for the DOCUMENT itself, exactly one of: \
@@ -1153,6 +1158,14 @@ mod tests {
         let generic = prompt_for(ExtractionHint::Generic);
         assert!(generic.contains("FULL account path"));
         assert!(generic.contains("charge side only"));
+        // A two-page capture (2026-10-02): itemised 24.23 on page 1, a slip with a
+        // 3.63 tip charging 27.86 on page 2. Reading 24.23 can never match the bank.
+        for hint in [ExtractionHint::Receipt, ExtractionHint::Generic] {
+            assert!(
+                prompt_for(hint).contains("TIP"),
+                "{hint:?} lost the tip rule"
+            );
+        }
         // Every label the parser recognises has to be one the prompt offers, or
         // the model can only ever answer with something that maps to `Other`.
         for label in [

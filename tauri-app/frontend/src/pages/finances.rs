@@ -1879,28 +1879,44 @@ pub(crate) fn DocumentCapture(
                     }
                 }
             } else {
-                // File picker. `capture="environment"` only applies to the photo
-                // flow — it tells mobile browsers to default to the rear camera.
-                label { class: "block",
-                    span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
-                        match (kind, pages.read().is_empty()) {
-                            (DocumentKind::Photo, true) => "Pick a photo or take one",
-                            (DocumentKind::Photo, false) => "Add another page",
-                            (DocumentKind::Pdf, _) => "Pick a PDF",
+                // Two inputs for photos: with `capture`, Android opens only the
+                // camera, so photos already taken need an input without it.
+                if prefer_camera {
+                    div {
+                        span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                            if pages.read().is_empty() { "Take a photo or choose one" } else { "Add another page" }
+                        }
+                        div { class: "flex gap-2",
+                            label { class: "flex-1 text-center px-4 py-3 rounded-md bg-obsidian-accent text-white text-sm font-medium cursor-pointer",
+                                "Take a photo"
+                                input {
+                                    class: "sr-only",
+                                    r#type: "file",
+                                    accept: accept,
+                                    "capture": "environment",
+                                    // Cleared so taking the same shot twice still fires `onchange`.
+                                    value: "",
+                                    onchange: on_file_picked,
+                                }
+                            }
+                            label { class: "flex-1 text-center px-4 py-3 rounded-md border border-obsidian-accent/60 text-obsidian-accent text-sm font-medium cursor-pointer",
+                                "Choose photos"
+                                input {
+                                    class: "sr-only",
+                                    r#type: "file",
+                                    accept: accept,
+                                    multiple: true,
+                                    value: "",
+                                    onchange: on_file_picked,
+                                }
+                            }
                         }
                     }
-                    if prefer_camera {
-                        input {
-                            class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
-                            r#type: "file",
-                            accept: accept,
-                            multiple: true,
-                            "capture": "environment",
-                            // Cleared so taking the same shot twice still fires `onchange`.
-                            value: "",
-                            onchange: on_file_picked,
+                } else {
+                    label { class: "block",
+                        span { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block",
+                            "Pick a PDF"
                         }
-                    } else {
                         input {
                             class: "block w-full text-sm text-obsidian-text file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-obsidian-accent file:text-white file:font-medium hover:file:opacity-90 cursor-pointer",
                             r#type: "file",
