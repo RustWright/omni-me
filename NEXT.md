@@ -8,7 +8,8 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 Both bank feeds run on dev (G5 done; `tasks.md` § On-device pass on 1.1.20-dev). The second feed's
 September rows are ONE pending batch of 102; committing it puts the bank side in the ledger so
 Reconcile can pair it with his committed receipts. Then: what matched, what did not, and why.
-Shipping: 1.1.23-dev (gallery pick + tip rule) and its dev image; re-read the Kam Yin PDF after.
+Dev server on `dev-1056255-3b87a5b` (tip rule verified); APK 1.1.23-dev (gallery pick) built, install
+when he is not mid-review.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links

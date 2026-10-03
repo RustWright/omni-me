@@ -3236,7 +3236,9 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   and security trades arrive as the cash leg only.
 - 🔴 **His multi-page capture (Kam Yin, 2026-10-02)**: page 2 is a card slip with a 3.63 tip
   (charged 27.86); the reading used page 1's 24.23, so it could never match the bank. Both receipt
-  prompts now carry a tip rule (`3b87a5b`). And the camera fix had removed gallery access (one
+  prompts now carry a tip rule (`3b87a5b`). ✅ Re-read on `dev-1056255-3b87a5b` (read only,
+  nothing filed): total 27.86, `Expenses:Tips 3.63`, `Unmatched -27.86`. His pending Kam Yin batch
+  still says 24.23: it predates the fix. And the camera fix had removed gallery access (one
   `capture` input); photo capture now offers "Take a photo" and "Choose photos".
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
   2026-10-02 with a backup. The credentials copy is his (classifier); one-line command given.
