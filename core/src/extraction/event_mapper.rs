@@ -624,7 +624,7 @@ mod tests {
     }
 
     /// The guard that keeps the change narrow: a normal itemized receipt does
-    /// not balance, so it must keep the one-draft-per-line shape.
+    /// not balance, so it keeps its lines and gains one `Unmatched` leg.
     #[test]
     fn ordinary_line_items_are_unaffected_by_the_balanced_path() {
         let result = result_with(
@@ -637,11 +637,11 @@ mod tests {
             ],
         );
         let drafts = receipt_extraction_to_drafts(&result, "receipts-uid-3458");
-        assert_eq!(drafts.len(), 3);
-        for d in &drafts {
-            assert_eq!(d.postings.len(), 2);
-            assert_eq!(d.postings[1].account, UNMATCHED_ACCOUNT);
-        }
+        assert_eq!(drafts.len(), 1);
+        let p = &drafts[0].postings;
+        assert_eq!(p.len(), 4);
+        assert_eq!(p[3].account, UNMATCHED_ACCOUNT);
+        assert_eq!(p[3].amount, dec("-13.39"));
     }
 
     #[test]

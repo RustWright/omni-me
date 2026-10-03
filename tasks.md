@@ -3264,7 +3264,11 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   - ⚠️ **Ghost batches after the 09-28 wipe.** 13 batches whose proposals the server wipe removed
     were still pending on the phone (a wipe is per node); 9 were committed → 185 txns re-entered
     dev (the 150 Aug bank rows, the Instacart per-line pairs, an old Walmart "Payment method" leg).
-    Why the phone kept the batches but not the transactions is NOT verified.
+    It kept BOTH (inferred, strong): the phone holds 10,936 txns, the same as the
+    server after the 09-28 wipe and re-import, because the re-import reused the same
+    txn ids; the ghost proposals prove its log still held pre-wipe events. ⛔ Fixing
+    the class means a server wipe propagating to devices (`DataWiped` is audit-only
+    today), which deletes data on every node: a question for him, not built.
   - Inherent: Walmart's order total (105.43) ≠ final charge (99.93); pre-window receipts (2024–25).
   ✅ **RULINGS 2026-10-03 (user):** (1) the agent runs on the BOX beside dev, CPU-capped;
   (2) the helper JOINS both halves of an own-account transfer into one balanced txn (a lone half
