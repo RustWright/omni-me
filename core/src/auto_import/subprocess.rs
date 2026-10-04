@@ -547,6 +547,15 @@ impl AutoImportSource for SubprocessSource {
                 };
             }
         };
+        // The helper's reason is the only record of why a login was refused.
+        if response.status != HelperStatus::ReauthOk {
+            tracing::warn!(
+                source = %self.name,
+                status = ?response.status,
+                message = ?response.message,
+                "reauth did not succeed",
+            );
+        }
         match response.status {
             HelperStatus::ReauthOk => ReauthOutcome::Active,
             HelperStatus::InvalidOtp => ReauthOutcome::InvalidOtp,
