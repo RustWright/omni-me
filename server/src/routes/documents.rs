@@ -7,9 +7,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use omni_me_core::archive;
+use omni_me_core::archive::{self, IngestSource};
 use omni_me_core::auto_import::to_proposed_event;
 use omni_me_core::credentials::PdfPasswords;
+use omni_me_core::db::queries;
 use omni_me_core::events::{AttachmentRef, EventWriter, NewEvent};
 use omni_me_core::extraction::document::{reading_from_extraction, to_fields_payload};
 use omni_me_core::extraction::event_mapper::receipt_extraction_to_drafts;
@@ -111,6 +112,9 @@ pub struct ArchiveResponse {
     /// find by content and one it can only find by name, and the caller is the
     /// only party in a position to tell the user which they just filed.
     pub text_source: String,
+    /// True when a bulk upload's bytes were already archived and nothing new was
+    /// filed. Only `source=bulk` checks.
+    pub already_archived: bool,
 }
 
 /// `POST /documents/archive?source=<scan|upload|email|bulk>`
@@ -144,6 +148,27 @@ async fn archive_handler(
             format!("unknown source: {}", q.source),
         )
     })?;
+
+    // Only a bulk upload skips bytes already archived: a backfill is re-run after
+    // an interruption, and without this every re-run files each document again.
+    if source == IngestSource::Bulk {
+        let sha256 = omni_me_core::blob::hash(&body);
+        let existing = queries::archived_document_with_sha(&state.db, &sha256)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if let Some((document_id, text_source)) = existing {
+            return Ok(Json(ArchiveResponse {
+                document_id,
+                sha256,
+                text_source: if text_source.is_empty() {
+                    "none".into()
+                } else {
+                    text_source
+                },
+                already_archived: true,
+            }));
+        }
+    }
 
     let passwords = PdfPasswords::from_secrets(&state.secrets);
     let ingested = archive::ingest_one(
@@ -194,6 +219,7 @@ async fn archive_handler(
         document_id: ingested.document_id,
         sha256: ingested.sha256,
         text_source: ingested.text_source.as_str().to_string(),
+        already_archived: false,
     }))
 }
 

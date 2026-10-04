@@ -1304,6 +1304,26 @@ pub async fn document_tags(db: &Database) -> Result<Vec<String>, DbError> {
 ///
 /// ⛔ Purged documents do not count — that is what makes a blob become
 /// reclaimable once every document naming it has gone.
+/// The id and `text_source` of an unpurged document holding exactly these
+/// bytes, if any. What lets a bulk upload be re-run without filing every
+/// document twice.
+pub async fn archived_document_with_sha(
+    db: &Database,
+    sha256: &str,
+) -> Result<Option<(String, String)>, DbError> {
+    let sql = format!(
+        "SELECT document_id, text_source FROM documents
+         WHERE sha256 = $h AND {NOT_PURGED} LIMIT 1"
+    );
+    let mut resp = db.query(sql).bind(("h", sha256.to_string())).await?;
+    let rows: Vec<DbValue> = resp.take(0)?;
+    Ok(rows.into_iter().next().map(|row| {
+        let row = row.into_json_value();
+        let text = |key: &str| row[key].as_str().unwrap_or_default().to_string();
+        (text("document_id"), text("text_source"))
+    }))
+}
+
 pub async fn blob_reference_count(db: &Database, sha256: &str) -> Result<usize, DbError> {
     let docs_sql = format!(
         "SELECT VALUE count() FROM documents

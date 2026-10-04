@@ -51,6 +51,34 @@ async fn a_csv_is_archived_and_its_bytes_are_retrievable_under_the_returned_hash
     assert_eq!(fetched.bytes().await.unwrap().as_ref(), csv);
 }
 
+/// A backfill re-run after an interruption must not file every document twice;
+/// any other upload of the same bytes still files a new document, as before.
+#[tokio::test]
+async fn a_bulk_upload_of_bytes_already_archived_files_nothing_new() {
+    let (url, _h) = common::start_full_server(None).await;
+    let client = reqwest::Client::new();
+    let csv = b"date,description,amount\n2026-04-01,RENT,-1450.00\n";
+    let post = |source: &'static str| {
+        client
+            .post(format!("{url}/documents/archive?source={source}"))
+            .header("content-type", "text/csv")
+            .header("x-filename", "chequing-april.csv")
+            .body(csv.to_vec())
+            .send()
+    };
+
+    let first: serde_json::Value = post("bulk").await.unwrap().json().await.unwrap();
+    let again: serde_json::Value = post("bulk").await.unwrap().json().await.unwrap();
+    let upload: serde_json::Value = post("upload").await.unwrap().json().await.unwrap();
+
+    assert_eq!(first["already_archived"], false);
+    assert_eq!(again["already_archived"], true);
+    assert_eq!(again["document_id"], first["document_id"]);
+    assert_eq!(again["text_source"], "extracted");
+    assert_eq!(upload["already_archived"], false);
+    assert_ne!(upload["document_id"], first["document_id"]);
+}
+
 #[tokio::test]
 async fn a_document_with_no_readable_text_is_still_archived() {
     // The reason ingest and extraction are separate events at all. If this
