@@ -9,14 +9,15 @@ The fixture fix merged into `dev/role-split-model-seats` on 2026-10-04 (`tasks.m
 leaks…"). ⚠️ Watch the next several CI runs before calling the hang gone: it was intermittent.
 Ask him what comes next. Queued, not prioritised: the Rust 1.99 upgrade (CI pinned to 1.98.1), the
 triage scoring query, and the agent's index-build memory growth.
-Dev now: server `dev-4e5a3b9-3fab90d` (bank-reconnect diagnostics), agent `dev-2dc97a4`, APK 1.1.24-dev.
+Dev now: server `dev-4e5a3b9-3fab90d` + ws-api 0.39.3 driver from `/opt/omni-ws-dev`, agent `dev-2dc97a4`, APK 1.1.24-dev.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **One more bank-feed reconnect try**: the diagnostics build is on dev, so the server log now
-  shows the bank's refusal reason (`tasks.md` § "Bank feed reconnect fails").
+- **Live's bank feed, halted since 09-06**: dev's fix (library upgrade + driver) is verified on dev;
+  applying it to live is his call (`tasks.md` § "Bank feed reconnect fails"). The push-challenge
+  code and the app's 150 s reauth wait (`d549552`) are in no built image or APK yet.
 - **Belief recency** (he rejected the first belief: old entries outvoted a recent change): his call.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
