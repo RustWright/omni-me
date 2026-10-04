@@ -6,19 +6,21 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 
 ## ▶ NEXT ACTION — the CI test-fixture fix, on its own branch (ruled 2026-10-03)
 `tasks.md` § "The test fixture leaks a SurrealKV instance per test": one shared instance, a namespace
-per test. ⛔ First prove isolation holds across namespaces (`init_schema`, the projection version
-table); then consolidate the ~27 `fn test_db` copies into one. Plan before building, fresh session.
-Dev runs everything else ruled 2026-10-03: server `dev-208e689-2dc97a4`, agent `dev-2dc97a4`, APK
-1.1.24-dev. After the fix: the agent's index-build memory growth; the due-belief review.
+per test. ⛔ First MEASURE that isolation holds across namespaces (`init_schema`, the projection
+version table); then consolidate the ~27 `fn test_db` copies into one. Plan before building.
+Branch from `dev/role-split-model-seats` and merge back into it (main lacks this branch's tests).
+Pending from 2026-10-04: a dev image with the bank-reconnect diagnostics (`3fab90d`, overlay
+`4e5a3b9`) was building; deploy it to dev if not already there (`docker ps` on the box).
+Dev otherwise: agent `dev-2dc97a4`, APK 1.1.24-dev.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **Approve or reject the belief proposal** in the phone's inbox (first live `belief.record`).
-- **Bank feed OTP**: the second feed's session expired; reconnect from the phone, which also gives
-  the transfer-join its first real run.
+- **Belief recency** (he rejected the first belief: old entries outvoted a recent change): his call.
+- **One more bank-feed reconnect try** once the diagnostics build is on dev; the server log then
+  shows the bank's refusal reason (`tasks.md` § "Bank feed reconnect fails").
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
