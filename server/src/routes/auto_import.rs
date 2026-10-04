@@ -29,6 +29,7 @@ use crate::AppState;
 pub fn auto_import_routes() -> Router<AppState> {
     Router::new()
         .route("/auto_import/status", get(status_handler))
+        .route("/auto_import/triage", get(triage_handler))
         .route("/auto_import/tick", post(tick_handler))
         .route("/auto_import/reauth", post(reauth_handler))
         // Source-definition CRUD (3.7 + live fast-follow). These persist to the
@@ -68,6 +69,16 @@ struct SourceStatusView {
     /// `classify_source_health` result computed server-side so all clients
     /// see the same colour without re-deriving the policy.
     health: SourceHealth,
+}
+
+/// `GET /auto_import/triage`: the triage seat's shadow-mode scorecard.
+async fn triage_handler(
+    State(state): State<AppState>,
+) -> Result<Json<omni_me_core::db::queries::TriageScore>, (StatusCode, String)> {
+    omni_me_core::db::queries::triage_score(&state.db)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 async fn status_handler(State(state): State<AppState>) -> Json<Vec<SourceStatusView>> {

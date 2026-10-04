@@ -533,18 +533,59 @@ pub async fn known_top_tag_values(db: &Database, key: &str) -> Result<HashSet<St
         .collect())
 }
 
-/// Every `external_id` this source has already offered for review, read from
-/// the `auto_import_batch_proposed` events in the log.
-///
-/// Complements [`known_top_tag_values`], which only sees rows that made it into
-/// the journal. Some upstream rows can never match a journal tag — the ledger
-/// records reference numbers for transfers and balance moves but not for card
-/// charges — so without this a polling source keeps re-offering them each time
-/// its lookback window shifts. Together the two give the semantic the review
-/// queue actually wants: **each upstream row is proposed at most once**.
-///
-/// Deliberately counts dismissed batches as proposed. Dismissing means "not
-/// wanted"; bringing the row back on the next tick is the behaviour being fixed.
+/// How the triage seat's verdicts compare with what the user did with each
+/// proposal. Its shadow-mode scorecard: a `none` verdict on a batch the user
+/// committed is a purchase the seat would have skipped had it been gating.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct TriageScore {
+    /// `"<verdict> <status>"` → batches, e.g. `"none committed"`.
+    pub counts: std::collections::BTreeMap<String, usize>,
+    /// Batches with no verdict: proposed before the seat existed, or with it off.
+    pub unscored: usize,
+    /// The `none` verdicts the user committed, to be read one by one.
+    pub misses: Vec<TriageMiss>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct TriageMiss {
+    pub batch_id: String,
+    pub sender: Option<String>,
+    pub subject: Option<String>,
+}
+
+pub async fn triage_score(db: &Database) -> Result<TriageScore, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT batch_id, status,
+                    source_metadata.triage AS verdict,
+                    source_metadata.subject AS subject,
+                    source_metadata.from AS sender
+             FROM pending_auto_import_batches",
+        )
+        .await?;
+    let rows: Vec<DbValue> = resp.take(0)?;
+    let mut score = TriageScore::default();
+    for row in rows.into_iter().map(DbValue::into_json_value) {
+        let text = |key: &str| row[key].as_str().map(str::to_owned);
+        let (Some(verdict), Some(status)) = (text("verdict"), text("status")) else {
+            score.unscored += 1;
+            continue;
+        };
+        if verdict == "none" && status == "committed" {
+            score.misses.push(TriageMiss {
+                batch_id: text("batch_id").unwrap_or_default(),
+                sender: text("sender"),
+                subject: text("subject"),
+            });
+        }
+        *score
+            .counts
+            .entry(format!("{verdict} {status}"))
+            .or_default() += 1;
+    }
+    Ok(score)
+}
+
 /// Every batch this source has proposed, as raw payload JSON.
 pub async fn proposed_payloads(
     db: &Database,
@@ -562,6 +603,18 @@ pub async fn proposed_payloads(
     Ok(rows.into_iter().map(DbValue::into_json_value).collect())
 }
 
+/// Every `external_id` this source has already offered for review, read from
+/// the `auto_import_batch_proposed` events in the log.
+///
+/// Complements [`known_top_tag_values`], which only sees rows that made it into
+/// the journal. Some upstream rows can never match a journal tag — the ledger
+/// records reference numbers for transfers and balance moves but not for card
+/// charges — so without this a polling source keeps re-offering them each time
+/// its lookback window shifts. Together the two give the semantic the review
+/// queue actually wants: **each upstream row is proposed at most once**.
+///
+/// Deliberately counts dismissed batches as proposed. Dismissing means "not
+/// wanted"; bringing the row back on the next tick is the behaviour being fixed.
 pub async fn proposed_external_ids(
     db: &Database,
     source: &str,
@@ -1499,6 +1552,51 @@ pub async fn documents_awaiting_text(
 mod tests {
     use super::*;
     use crate::events::{BudgetProjection, Projection};
+
+    #[tokio::test]
+    async fn triage_score_counts_verdicts_against_decisions_and_lists_misses() {
+        let db = crate::db::test_db().await;
+        crate::events::AutoImportProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        for (id, verdict, status) in [
+            ("b1", Some("money"), "committed"),
+            ("b2", Some("none"), "dismissed"),
+            ("b3", Some("none"), "committed"),
+            ("b4", None, "committed"),
+        ] {
+            let meta = match verdict {
+                Some(v) => serde_json::json!({ "triage": v, "from": "shop@x.com", "subject": id }),
+                None => serde_json::json!({ "from": "shop@x.com", "subject": id }),
+            };
+            db.query(
+                "CREATE pending_auto_import_batches CONTENT {
+                    batch_id: $id, source: 'mail', dedup_key: $id, fetched_at: '2026-10-01',
+                    draft_postings: [], source_metadata: $meta, status: $status }",
+            )
+            .bind(("id", id))
+            .bind(("meta", meta))
+            .bind(("status", status))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        }
+
+        let score = triage_score(&db).await.unwrap();
+
+        assert_eq!(score.counts["money committed"], 1);
+        assert_eq!(score.counts["none dismissed"], 1);
+        assert_eq!(score.counts["none committed"], 1);
+        assert_eq!(
+            score.unscored, 1,
+            "a batch from before the seat is not scored"
+        );
+        assert_eq!(score.misses.len(), 1);
+        assert_eq!(score.misses[0].batch_id, "b3");
+        assert_eq!(score.misses[0].subject.as_deref(), Some("b3"));
+    }
 
     /// Temp DB with the `transactions` table defined. Uses the real projection
     /// schema rather than a hand-written DEFINE, so a schema change that breaks
