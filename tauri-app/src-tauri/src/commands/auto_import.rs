@@ -203,6 +203,8 @@ pub async fn trigger_auto_import_tick(
 /// `{ "status": "error", "message": "..." }` — all of which are *normal*
 /// outcomes (HTTP 200) the UI dispatches on, not transport errors. Only an
 /// unknown source (404) or a server fault surfaces as `Err`.
+const REAUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn reauth_source(
     state: State<'_, AppState>,
@@ -214,6 +216,9 @@ pub async fn reauth_source(
     let resp = state
         .box_request(reqwest::Method::POST, "/auto_import/reauth")
         .await
+        // A source may hold the request open while the user approves the
+        // sign-in on their phone; the default 30 s cuts that off mid-tap.
+        .timeout(REAUTH_TIMEOUT)
         .json(&serde_json::json!({ "source": source, "otp": otp }))
         .send()
         .await

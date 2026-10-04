@@ -1915,7 +1915,7 @@ fn AutoImportRow(
                                                         Some("invalid_otp") => {
                                                             msg.set(Some((
                                                                 true,
-                                                                "Authenticator code rejected — try again.".into(),
+                                                                "Sign-in refused — check the code and try again.".into(),
                                                             )));
                                                             otp.set(String::new());
                                                         }
@@ -1953,6 +1953,11 @@ fn AutoImportRow(
                                         msg.set(None);
                                     },
                                     "Cancel"
+                                }
+                            }
+                            if *submitting.read() {
+                                div { class: "text-[11px] text-obsidian-text-muted",
+                                    "If your provider asks you to approve this sign-in on your phone, approve it now."
                                 }
                             }
                         }
