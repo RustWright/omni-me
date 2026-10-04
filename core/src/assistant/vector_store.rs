@@ -38,9 +38,15 @@ pub enum VectorError {
 /// identical otherwise.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct SweepReport {
+    /// Every record looked at; equal to `embedded + skipped + hidden + empty`.
     pub scanned: usize,
     pub embedded: usize,
     pub skipped: usize,
+    /// Hidden records, whose chunks are deleted rather than kept current.
+    pub hidden: usize,
+    /// Records with no text to embed.
+    pub empty: usize,
+    /// Chunks deleted, counted per chunk rather than per record.
     pub removed: usize,
     /// Types that could not be swept at all, counted rather than swallowed.
     pub failed: usize,
@@ -188,6 +194,7 @@ async fn sweep_one(
         // `is_current` would report it up to date and skip it — leaving the chunks
         // in place. Hiding has to win over freshness.
         if row.hidden {
+            report.hidden += 1;
             report.removed += delete_chunks(db, entry.name, &record_id).await?;
             continue;
         }
@@ -206,6 +213,7 @@ async fn sweep_one(
 
         let chunks = chunk::chunk(&text);
         if chunks.is_empty() {
+            report.empty += 1;
             continue;
         }
         let vectors = embedder.embed_passages(chunks.clone()).await?;
@@ -560,6 +568,11 @@ mod tests {
 
         let report = sweep(&db, &config(), embedder).await.unwrap();
         assert_eq!(report.embedded, 2, "{report:?}");
+        assert_eq!(
+            report.scanned,
+            report.embedded + report.skipped + report.hidden + report.empty,
+            "every scanned record lands in exactly one count: {report:?}"
+        );
 
         let hits = knn_search(&db, &config(), embedder, "rent increase", 2)
             .await
