@@ -465,17 +465,10 @@ fn completion_key(item_id: &str, date: &str, skipped: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::projection::ProjectionRunner;
     use crate::events::store::{EventStore, NewEvent, SurrealEventStore};
     use chrono::Utc;
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
 
     /// Helper: append + apply one routines event.
     async fn emit(

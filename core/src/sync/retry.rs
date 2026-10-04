@@ -255,6 +255,7 @@ async fn reset_attempt(inner: &Inner) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
 
     #[test]
     fn backoff_follows_exponential_curve_within_jitter() {
@@ -287,14 +288,6 @@ mod tests {
 
     use crate::events::{EventStore, NewEvent, SurrealEventStore};
     use chrono::Utc;
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("retry.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
 
     fn sample_event(device_id: &str, aggregate_id: &str) -> NewEvent {
         NewEvent {

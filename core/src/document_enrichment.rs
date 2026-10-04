@@ -548,10 +548,7 @@ mod tests {
     use std::sync::Arc;
 
     async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("enrich.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         // Through the runner rather than `DocumentsProjection.init_schema` alone,
         // which is what this used to do: that leaves `projection_versions`
         // undefined, so every `apply_events` here failed at its bookmark write.

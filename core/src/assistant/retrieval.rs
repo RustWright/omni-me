@@ -311,13 +311,9 @@ mod tests {
     use crate::events::{NotesProjection, Projection, RoutinesProjection};
 
     async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::connect(dir.path().join("r.db").to_str().unwrap())
-            .await
-            .unwrap();
+        let db = crate::db::test_db().await;
         NotesProjection.init_schema(&db).await.unwrap();
         RoutinesProjection.init_schema(&db).await.unwrap();
-        std::mem::forget(dir);
         db
     }
 

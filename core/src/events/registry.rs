@@ -383,9 +383,7 @@ mod tests {
         use crate::events::{EventStore, NewEvent, ProjectionRunner, SurrealEventStore};
 
         let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::connect(dir.path().join("t.db").to_str().unwrap())
-            .await
-            .unwrap();
+        let db = crate::db::test_db().await;
         let journal = dir.path().join("budget.journal");
 
         // Launch 1: nothing configured, so everything registers.

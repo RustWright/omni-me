@@ -445,10 +445,7 @@ mod tests {
     use crate::events::types::{EventType, validate_payload};
 
     async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("documents.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         DocumentsProjection.init_schema(&db).await.unwrap();
         db
     }

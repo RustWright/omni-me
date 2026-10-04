@@ -610,10 +610,7 @@ mod tests {
     }
 
     async fn test_db_and_runner() -> (crate::db::Database, Arc<dyn EventStore>, ProjectionRunner) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         let store: Arc<dyn EventStore> =
             Arc::new(crate::events::SurrealEventStore::new(db.clone()));
         let runner = ProjectionRunner::new(

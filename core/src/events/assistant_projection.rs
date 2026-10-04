@@ -612,19 +612,12 @@ impl AssistantProjection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::store::{EventStore, NewEvent, SurrealEventStore};
     use crate::events::types::{
         AnswerStop, AnswerUsage, AssistantAnswerGivenPayload, AssistantQuestionAskedPayload,
     };
     use chrono::{Duration, Utc};
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
 
     fn question_at(
         ts: chrono::DateTime<Utc>,

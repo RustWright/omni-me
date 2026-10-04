@@ -154,7 +154,6 @@ pub async fn candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db;
     use crate::events::DocumentsProjection;
     use crate::events::{
         DocumentRetentionSetPayload, EventStore, NewEvent, ProjectionRunner, RetentionProjection,
@@ -162,10 +161,7 @@ mod tests {
     };
 
     async fn harness() -> (Database, SurrealEventStore, ProjectionRunner) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.db");
-        let db = db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         let store = SurrealEventStore::new(db.clone());
         let runner = ProjectionRunner::new(
             db.clone(),

@@ -168,16 +168,9 @@ pub async fn load_persisted(db: &Database) -> Result<crate::config::ConfigMap, E
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::store::{EventStore, NewEvent, SurrealEventStore};
     use chrono::{Duration, Utc};
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
 
     fn event_at(ts: chrono::DateTime<Utc>, key: ConfigKey, value: Option<ConfigValue>) -> Event {
         let new = NewEvent::config_set("d1", key, value).unwrap();

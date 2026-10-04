@@ -546,6 +546,7 @@ fn is_complete(raw_text: &str, required: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::projection::ProjectionRunner;
     use crate::events::store::{EventStore, NewEvent, SurrealEventStore};
     use crate::record_type::RecordType;
@@ -560,14 +561,6 @@ mod tests {
     /// old hardcoded array on any of these shapes, one of these tests fails.
     fn reflective() -> RecordType {
         RecordType::journal_reflective()
-    }
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
     }
 
     #[test]

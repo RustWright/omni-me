@@ -372,10 +372,7 @@ mod tests {
     use chrono::Duration;
 
     async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         AssistantProjection.init_schema(&db).await.unwrap();
         db
     }

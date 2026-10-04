@@ -183,10 +183,7 @@ mod tests {
     /// from `EventWriter`, so the tests exercise the set production uses rather
     /// than one assembled to suit them.
     async fn harness(features_off: &[Feature]) -> (Database, BTreeSet<Feature>, EventWriter) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("approvals.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
 
         let mut global = ConfigMap::new();
         for f in features_off {

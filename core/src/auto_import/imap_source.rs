@@ -364,10 +364,7 @@ mod tests {
     }
 
     async fn test_db_runner() -> (Database, Arc<dyn EventStore>, ProjectionRunner) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         let store: Arc<dyn EventStore> =
             Arc::new(crate::events::SurrealEventStore::new(db.clone()));
         let runner =
@@ -602,10 +599,7 @@ mod tests {
 
     #[tokio::test]
     async fn surreal_cursor_store_round_trips_uid() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         let cs = SurrealCursorStore::new(db);
         cs.init_schema().await.unwrap();
         let first = StoredCursor {
@@ -629,10 +623,7 @@ mod tests {
     /// first tick after an upgrade reads as a renumbering and resets the mailbox.
     #[tokio::test]
     async fn a_cursor_stored_without_a_validity_loads_as_unknown() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         let cs = SurrealCursorStore::new(db);
         cs.init_schema().await.unwrap();
         cs.save(

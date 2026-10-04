@@ -470,6 +470,7 @@ impl ProjectionRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::store::{EventStore, NewEvent};
     use chrono::Utc;
     use std::sync::Arc;
@@ -531,14 +532,6 @@ mod tests {
         async fn clear_tables(&self, _db: &Database) -> Result<(), EventError> {
             Ok(())
         }
-    }
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
     }
 
     fn ev(id: &str, event_type: &str) -> Event {

@@ -414,10 +414,7 @@ mod tests {
     use chrono::Utc;
 
     async fn test_db_and_runner() -> (Database, SurrealEventStore, ProjectionRunner) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         let store = SurrealEventStore::new(db.clone());
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(AutoImportProjection)]);
         runner.init_all().await.unwrap();

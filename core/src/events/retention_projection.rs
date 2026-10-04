@@ -119,17 +119,9 @@ impl RetentionProjection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db;
+    use crate::db::test_db;
     use crate::events::{EventStore, types::DocumentRetentionSetPayload};
     use crate::events::{NewEvent, ProjectionRunner, SurrealEventStore};
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.db");
-        let db = db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
 
     use surrealdb::types::SurrealValue;
 

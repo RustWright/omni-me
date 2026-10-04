@@ -501,14 +501,11 @@ mod tests {
     }
 
     async fn test_db(dim: usize) -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("vec.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+        let db = crate::db::test_db().await;
         NotesProjection.init_schema(&db).await.unwrap();
         RoutinesProjection.init_schema(&db).await.unwrap();
         DocumentsProjection.init_schema(&db).await.unwrap();
         init_schema(&db, dim).await.unwrap();
-        std::mem::forget(dir);
         db
     }
 
@@ -667,10 +664,7 @@ mod tests {
         let embedder = shared_embedder();
         // Deliberately only the tables `NotesProjection` defines; every other
         // visible type's table is absent.
-        let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::connect(dir.path().join("v.db").to_str().unwrap())
-            .await
-            .unwrap();
+        let db = crate::db::test_db().await;
         NotesProjection.init_schema(&db).await.unwrap();
         init_schema(&db, embedder.dim()).await.unwrap();
         seed_note(&db, "01JKVEC0000000000000000005", "A", "a quiet day").await;

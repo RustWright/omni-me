@@ -344,10 +344,7 @@ mod tests {
     }
 
     async fn harness() -> Harness {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("purge.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         let store = SurrealEventStore::new(db.clone());
         let runner = ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)]);
         runner.init_all().await.unwrap();

@@ -165,10 +165,7 @@ mod tests {
     use crate::events::{Event, NewEvent, Projection, RecordRef};
 
     async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("memory.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         BeliefsProjection.init_schema(&db).await.unwrap();
         db
     }

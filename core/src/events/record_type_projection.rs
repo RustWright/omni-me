@@ -228,6 +228,7 @@ pub async fn seed_journal_record_type(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::notes_projection::NotesProjection;
     use crate::events::projection::ProjectionRunner;
     use crate::events::store::{EventStore, NewEvent, SurrealEventStore};
@@ -245,14 +246,6 @@ mod tests {
             crate::config::ALL_FEATURES.iter().copied().collect(),
             "d1",
         )
-    }
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
     }
 
     /// Every journal frontmatter shape the pre-record-type scanner was tested

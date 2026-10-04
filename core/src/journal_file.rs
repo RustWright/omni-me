@@ -742,6 +742,7 @@ fn line_has_txn_id(line: &str, txn_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::{AttachmentRef, BudgetProjection, EventType};
     use chrono::NaiveDate;
     use rust_decimal::Decimal;
@@ -966,7 +967,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn re_added_account_collapses_to_a_single_block_latest_wins() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         for name in ["Old Name", "New Name"] {
             let event = make_event(
                 EventType::AccountAdded,
@@ -994,7 +995,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn re_adding_account_leaves_interleaved_transactions_intact() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         proj.apply(
             &make_event(
                 EventType::AccountAdded,
@@ -1151,14 +1152,6 @@ account Assets:Bank  ; commodity:CAD
         (JournalFile::new(path), dir)
     }
 
-    async fn fake_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
-
     fn make_event(event_type: EventType, payload: serde_json::Value) -> Event {
         Event {
             id: "evt".into(),
@@ -1174,7 +1167,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn apply_transaction_recorded_writes_to_file() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         let event = make_event(
             EventType::TransactionRecorded,
             serde_json::json!({
@@ -1207,7 +1200,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn re_applying_a_transaction_does_not_duplicate_it() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         let event = make_event(
             EventType::TransactionRecorded,
             serde_json::json!({
@@ -1251,7 +1244,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn anchors_are_recovered_from_an_existing_file() {
         let (proj, dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         let event = make_event(
             EventType::TransactionRecorded,
             serde_json::json!({
@@ -1285,7 +1278,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn exchange_rates_dedupe_identical_lines_but_allow_corrections() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         let rate = |r: &str| {
             make_event(
                 EventType::ExchangeRateRecorded,
@@ -1314,7 +1307,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn apply_appends_multiple_transactions_in_order() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         for (id, desc, amt) in [("t1", "First", "-1.00"), ("t2", "Second", "-2.00")] {
             let event = make_event(
                 EventType::TransactionRecorded,
@@ -1342,7 +1335,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn transaction_updated_rewrites_entry_in_place() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         let bud = BudgetProjection;
         bud.init_schema(&db).await.unwrap();
 
@@ -1399,7 +1392,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn transaction_deleted_removes_entry() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         let bud = BudgetProjection;
         bud.init_schema(&db).await.unwrap();
 
@@ -1483,7 +1476,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn apply_exchange_rate_recorded_writes_p_directive() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         let event = make_event(
             EventType::ExchangeRateRecorded,
             serde_json::json!({
@@ -1502,7 +1495,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn unknown_event_is_a_noop() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         let event = make_event(
             EventType::JournalEntryCreated,
             serde_json::json!({
@@ -1519,7 +1512,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn clear_tables_removes_file() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         let event = make_event(
             EventType::TransactionRecorded,
             serde_json::json!({
@@ -1541,7 +1534,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn clear_tables_on_missing_file_is_ok() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
         // Never wrote anything; clearing should still be fine.
         proj.clear_tables(&db).await.unwrap();
     }
@@ -1553,7 +1546,7 @@ account Assets:Bank  ; commodity:CAD
     #[tokio::test]
     async fn replay_after_clear_produces_identical_file() {
         let (proj, _dir) = make_projection().await;
-        let db = fake_db().await;
+        let db = test_db().await;
 
         let events = vec![
             make_event(

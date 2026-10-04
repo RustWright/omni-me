@@ -947,14 +947,7 @@ impl TryFrom<EventRow> for Event {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
+    use crate::db::test_db;
 
     #[tokio::test]
     async fn append_and_retrieve_by_aggregate() {

@@ -1503,12 +1503,10 @@ mod tests {
     /// Temp DB with the `transactions` table defined. Uses the real projection
     /// schema rather than a hand-written DEFINE, so a schema change that breaks
     /// a row shape shows up here instead of only in production.
-    async fn txn_db() -> (tempfile::TempDir, Database) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+    async fn txn_db() -> Database {
+        let db = crate::db::test_db().await;
         BudgetProjection.init_schema(&db).await.unwrap();
-        (dir, db)
+        db
     }
 
     async fn insert_txn(db: &Database, id: &str, account: &str) {
@@ -1538,15 +1536,13 @@ mod tests {
 
     // --- Documents (the archive) ---
 
-    async fn doc_db() -> (tempfile::TempDir, Database) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("documents.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+    async fn doc_db() -> Database {
+        let db = crate::db::test_db().await;
         crate::events::DocumentsProjection
             .init_schema(&db)
             .await
             .unwrap();
-        (dir, db)
+        db
     }
 
     /// Fold one document in through the real projection, so a schema or fold
@@ -1612,7 +1608,7 @@ mod tests {
 
     #[tokio::test]
     async fn documents_come_back_newest_first() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_doc(&db, "old", "a.pdf", "", "2024-01-01T00:00:00Z", None).await;
         fold_doc(&db, "new", "b.pdf", "", "2026-09-01T00:00:00Z", None).await;
 
@@ -1628,7 +1624,7 @@ mod tests {
     async fn a_search_reaches_inside_the_document_not_only_its_name() {
         // ⚠️ The point of storing text on the event. A bank names its export
         // `stmt_0041.pdf`; the only way to find it is by what it says.
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_doc(
             &db,
             "stmt",
@@ -1690,7 +1686,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_kind_filter_narrows_and_kinds_come_from_the_data() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_doc(
             &db,
             "s1",
@@ -1765,7 +1761,7 @@ mod tests {
     /// filter would return an empty list and read as an empty archive.
     #[tokio::test]
     async fn the_mime_filter_scopes_the_archive_to_mail() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_part(&db, "mail", "statement.eml", "message/rfc822", None).await;
         fold_part(&db, "pdf", "statement.pdf", "application/pdf", Some("mail")).await;
 
@@ -1902,7 +1898,7 @@ mod tests {
     /// drift, the badge names a queue the archive cannot open.
     #[tokio::test]
     async fn the_unverified_filter_returns_exactly_what_the_badge_counts() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_doc_with_verified_field(&db, "unchecked", false).await;
         fold_doc_with_verified_field(&db, "checked", true).await;
 
@@ -1937,7 +1933,7 @@ mod tests {
     #[tokio::test]
     async fn a_partly_checked_document_still_needs_review() {
         use crate::events::{Event, EventType, Projection, validate_payload};
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
 
         let payloads = vec![
             (
@@ -2003,7 +1999,7 @@ mod tests {
     /// whole element.
     #[tokio::test]
     async fn the_tag_field_is_hoisted_into_an_array_and_filters_on_it() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_doc_with_tags(&db, "groceries", "receipt,groceries").await;
         fold_doc_with_tags(&db, "lease", "lease").await;
 
@@ -2065,7 +2061,7 @@ mod tests {
     /// column exists to prevent.
     #[tokio::test]
     async fn a_tag_filter_never_matches_a_prefix_of_another_tag() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_doc_with_tags(&db, "plural", "receipts-2026").await;
 
         let hits = list_documents(
@@ -2090,7 +2086,7 @@ mod tests {
     /// *is* a hard error, so the behaviour here is not the one you would guess.
     #[tokio::test]
     async fn an_untagged_document_does_not_break_the_tag_filter() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_doc(&db, "bare", "bare.pdf", "", "2026-01-01T00:00:00Z", None).await;
         fold_doc_with_tags(&db, "tagged", "receipt").await;
 
@@ -2128,7 +2124,7 @@ mod tests {
     /// reads exactly like an archive with no tags.
     #[tokio::test]
     async fn every_tag_in_use_comes_back_once_sorted() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_doc_with_tags(&db, "a", "receipt,groceries").await;
         fold_doc_with_tags(&db, "b", "receipt,institution:rbc").await;
         fold_doc(&db, "c", "c.pdf", "", "2026-01-01T00:00:00Z", None).await;
@@ -2179,7 +2175,7 @@ mod tests {
     /// while production counted nothing.
     #[tokio::test]
     async fn a_transaction_attachment_keeps_a_blob_alive_without_the_budget_table() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         let sha = "c".repeat(64);
         seed_doc_with_hash(&db, "doc", &sha, true).await; // the only document, purged
         seed_event(
@@ -2205,7 +2201,7 @@ mod tests {
     /// reconciled receipt.
     #[tokio::test]
     async fn a_merged_transactions_attachment_counts_too() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         let sha = "f".repeat(64);
         seed_event(
             &db,
@@ -2225,7 +2221,7 @@ mod tests {
     /// Bytes shared by two documents survive purging one of them.
     #[tokio::test]
     async fn a_blob_two_documents_share_is_not_reclaimable_until_both_go() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         let sha = "d".repeat(64);
         seed_doc_with_hash(&db, "emailed", &sha, false).await;
         seed_doc_with_hash(&db, "scanned", &sha, false).await;
@@ -2249,7 +2245,7 @@ mod tests {
     /// The email view's second half: what arrived inside the message.
     #[tokio::test]
     async fn an_emails_children_are_the_documents_that_arrived_inside_it() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_part(&db, "mail", "statement.eml", "message/rfc822", None).await;
         fold_part(&db, "b-att", "b.pdf", "application/pdf", Some("mail")).await;
         fold_part(&db, "a-att", "a.pdf", "application/pdf", Some("mail")).await;
@@ -2277,7 +2273,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_document_carries_its_fields_and_their_provenance() {
-        let (_d, db) = doc_db().await;
+        let db = doc_db().await;
         fold_doc(
             &db,
             "s1",
@@ -2314,7 +2310,7 @@ mod tests {
     /// "does it return a row" assertion would pass with the raw id and miss it.
     #[tokio::test]
     async fn list_unmatched_transactions_returns_bare_ids() {
-        let (_dir, db) = txn_db().await;
+        let db = txn_db().await;
         insert_txn(&db, "u1", "Unmatched").await;
 
         let rows = list_unmatched_transactions(&db).await.unwrap();
@@ -2341,7 +2337,7 @@ mod tests {
     /// reconciliation screen would propose pairs for already-matched rows.
     #[tokio::test]
     async fn list_unmatched_transactions_skips_matched_rows() {
-        let (_dir, db) = txn_db().await;
+        let db = txn_db().await;
         insert_txn(&db, "matched", "Assets:Chequing").await;
         insert_txn(&db, "unmatched", "Unmatched").await;
 
@@ -2360,12 +2356,10 @@ mod tests {
     /// so nothing short of a live query could have found it: the write path was
     /// fine, the payloads were fine, and the endpoint answered `200` with an
     /// empty body for two months.
-    async fn feedback_db(rows: &[(&str, &str, &str)]) -> (tempfile::TempDir, Database) {
+    async fn feedback_db(rows: &[(&str, &str, &str)]) -> Database {
         use crate::events::{EventStore, FeedbackCapturedPayload, NewEvent, SurrealEventStore};
 
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("feedback.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+        let db = crate::db::test_db().await;
         let store = SurrealEventStore::new(db.clone());
 
         for (id, body, ts) in rows {
@@ -2378,7 +2372,7 @@ mod tests {
             event.timestamp = ts.parse::<chrono::DateTime<chrono::Utc>>().unwrap();
             store.append(event).await.unwrap();
         }
-        (dir, db)
+        db
     }
 
     fn ids(reports: &[FeedbackReport]) -> Vec<&str> {
@@ -2399,7 +2393,7 @@ mod tests {
     /// would diverge from chronological.
     #[tokio::test]
     async fn list_feedback_returns_reports_newest_first() {
-        let (_dir, db) = feedback_db(&[
+        let db = feedback_db(&[
             ("fb-old", "oldest", "2026-09-01T10:00:00Z"),
             ("fb-new", "newest", "2026-09-03T10:00:00Z"),
             ("fb-mid", "middle", "2026-09-02T10:00:00Z"),
@@ -2421,7 +2415,7 @@ mod tests {
     /// to get the ordering wrong — and it was broken identically.
     #[tokio::test]
     async fn list_feedback_since_excludes_older_and_keeps_the_order() {
-        let (_dir, db) = feedback_db(&[
+        let db = feedback_db(&[
             ("fb-old", "oldest", "2026-09-01T10:00:00Z"),
             ("fb-new", "newest", "2026-09-03T10:00:00Z"),
             ("fb-mid", "middle", "2026-09-02T10:00:00Z"),
@@ -2441,7 +2435,7 @@ mod tests {
     /// above and still hand a puller an arbitrary slice.
     #[tokio::test]
     async fn list_feedback_limit_keeps_the_newest() {
-        let (_dir, db) = feedback_db(&[
+        let db = feedback_db(&[
             ("fb-old", "oldest", "2026-09-01T10:00:00Z"),
             ("fb-new", "newest", "2026-09-03T10:00:00Z"),
             ("fb-mid", "middle", "2026-09-02T10:00:00Z"),

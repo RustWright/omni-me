@@ -268,16 +268,9 @@ async fn network_forward_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::{EventStore, NewEvent, NotesProjection, SurrealEventStore};
     use chrono::Utc;
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("pull.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
 
     /// A pull against an unreachable server reports `Failed` (not a panic) and
     /// the loop keeps ticking. Also proves warm-up is honored.

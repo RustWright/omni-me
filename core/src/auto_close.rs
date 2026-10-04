@@ -84,6 +84,7 @@ pub enum AutoCloseError {
 mod tests {
     use super::*;
     use crate::config::ALL_FEATURES;
+    use crate::db::test_db;
     use crate::events::{EventStore, NotesProjection, ProjectionRunner, SurrealEventStore};
     use std::sync::Arc;
 
@@ -96,14 +97,6 @@ mod tests {
             ALL_FEATURES.iter().copied().collect(),
             "d1",
         )
-    }
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
     }
 
     fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
