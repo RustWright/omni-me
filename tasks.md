@@ -3336,6 +3336,17 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   only sends a code in a header; no push-approval support upstream, no upstream issue. ⚠️ Cause NOT
   verified: the driver's exit 4 means any refused login, and its stderr (the bank's reason) was
   discarded. Surfaced now (`3fab90d`, overlay `4e5a3b9`): the next try shows it in the server log.
+  ✅ **ROOT CAUSE FOUND AND FIXED ON DEV 2026-10-04.** Two separate faults:
+  (1) **Sessions died after ~2 days** (live: saved 09-04, halted 09-06) because ws-api 0.35 recognises
+  an expired token only by the message `Not Authorized.`; the bank dropped the period, so a routine
+  refresh became a full login. Fixed upstream in 0.38 (PR #73). ✅ Verified: dev on 0.39.3 refreshed
+  the "dead" session with no login at all and pulled 286 rows. The refresh token was valid throughout.
+  (2) **A full login now needs push approval**: a correct code is answered `login_challenge_required`.
+  The flow was mapped from his browser login (overlay `tasks.md`) and built into the driver (overlay
+  `7f7920b`). The app now waits 150 s and says to approve on the phone (`d549552`). ⚠️ The challenge
+  path is UNEXERCISED: it runs only at the next real full login.
+  Dev runs its own library copy (`/opt/omni-ws-dev`, compose backed up); ⛔ live's `/opt/omni-ws` is
+  untouched at 0.35.0, and **live's bank feed has been halted since 09-06** — his call.
 - ⚠️ **Chat "timeout" = no agent running anywhere** (no process, no compose service). Asked
   2026-10-03 12:36, deleted at 12:38; no answer event. Beliefs untestable until an agent runs.
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
