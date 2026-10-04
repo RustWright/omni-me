@@ -3317,6 +3317,15 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   `belief.record` proposal `01M41A84HZMMF7776BYY9V4CYD` (early riser 4:30–5:45, fragmented sleep;
   high; review 2027-03-19; 12 journal ids as system-filled evidence). ⏳ His approval on the
   phone. ⚠️ The check-in's REVIEW of a due belief stays untested: nothing is due before 2027.
+  ❌ **He REJECTED it (2026-10-04): true for four years, no longer true recently.** The evidence
+  spanned 2022–2026 and weighed every year the same, so a recent change lost to the older
+  majority. A real finding about belief formation, not a dev artefact: nothing in the action or
+  prompt asks whether the pattern still holds in the most recent entries. Not fixed; his call.
+- 🔴 **Bank feed reconnect fails (2026-10-04, his 3 tries)**: his code is "rejected", then the bank's
+  app asks him to approve a sign-in, and approving does not help. ws-api (0.35 here, 0.39.3 upstream)
+  only sends a code in a header; no push-approval support upstream, no upstream issue. ⚠️ Cause NOT
+  verified: the driver's exit 4 means any refused login, and its stderr (the bank's reason) was
+  discarded. Surfaced now (`3fab90d`, overlay `4e5a3b9`): the next try shows it in the server log.
 - ⚠️ **Chat "timeout" = no agent running anywhere** (no process, no compose service). Asked
   2026-10-03 12:36, deleted at 12:38; no answer event. Beliefs untestable until an agent runs.
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
