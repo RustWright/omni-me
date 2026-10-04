@@ -73,7 +73,12 @@ impl Reranker {
                 .lock()
                 .map_err(|_| RerankError::Rerank("reranking model lock poisoned".into()))?;
             let scored = guard
-                .rerank(query, documents, false, None)
+                .rerank(
+                    query,
+                    documents,
+                    false,
+                    Some(crate::assistant::embedding::BATCH_SIZE),
+                )
                 .map_err(|e| RerankError::Rerank(e.to_string()))?;
             Ok(scored.into_iter().map(|r| (r.index, r.score)).collect())
         })
