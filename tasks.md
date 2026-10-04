@@ -1002,6 +1002,34 @@ catalogue, and nothing connects them but the comment at each end. Keep both.
 
 ---
 
+## ▶ THE RELEASE PROCESS — 🔴 RULED 2026-10-04 (user)
+
+Four stages, in this order. ⛔ Each stage finishes before the next starts.
+1. **Clear the list.** Every open item below, in the order I recommend; all of them need doing.
+2. **Phone test loop.** He tests dev on the phone against a short checklist I write. Annoyances he
+   thinks are worth fixing get fixed, and the loop repeats until he is satisfied.
+3. **Code review gate.** The codebase reviewed for security, logic, performance and bloat, to find
+   what we both missed. Fixes worth making get made.
+4. **Merge dev to live**, then a go-live sequence still to be worked out. His examples of its
+   ordering: the finances tab goes on only after both server and app are updated; the official
+   import needs the updated live server AND a wipe first.
+
+**Stage 1, the list (my order).** Decisions first, while he is present to answer them; then code;
+then spends, so the phone test runs on the chosen models.
+1. Belief recency: investigate, then his decision, then build. Old entries outvoted a recent change.
+2. Whether a wipe clears the vector index synchronously: his decision (DoR item 1, fourth finding).
+3. Reconciliation: pair a tentative charge with the charge that replaces it (§ On-device pass).
+4. The triage scoring query (§ Mail triage seat), then whether triage gates anything: his.
+5. A caller for `archive::ingest_paths` (the ~700 historical PDFs).
+6. The agent's memory growth while indexing (OOM-killed twice at 2 GB).
+7. Cross-currency reimbursements (G10): design, then his call.
+8. The three spends: C2 slate re-run, the C1/C2/C3/D re-rank on the R27-fixed stack, gate 9's
+   90-call injection re-run. Then seat B's case family (bench + spend).
+9. Finance propose actions on hardware; folds into the phone checklist.
+10. Rust 1.99 upgrade (CI pinned to 1.98.1).
+Moved to the go-live sequence, not stage 1: gate 1 (live backup), the official import, the agent on
+live, the tab going on. ⏳ The go-live sequence is drafted at stage 4, not before.
+
 ## ▶ DEFINITION OF READY — what "finances tab back on" actually requires
 
 **Written 2026-09-16 at the user's insistence**, before testing starts: *"make sure we have a
@@ -3890,6 +3918,8 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
   component, so this needs the describer to reach it or the child to publish. [S]
 
 ### Release engineering
+- [x] ✅ **Stale as of 2026-10-04: `deploy` pulled from GHCR twice that day**, so the token was
+      renewed. Recheck before the live deploy anyway. The original entry:
 - [ ] 🔴 **[USER] The box's GHCR token expired 2026-09-26, and it breaks LIVE deploys too.**
       Pulls succeeded at ~13:20 and ~14:09Z and were `denied` by ~16:35Z, including the
       **known-good tag that had pulled two hours earlier** — so it is the box's credential, not a
@@ -3957,6 +3987,8 @@ Playwright, and Chromium is not the renderer that was broken. It rides the on-de
       ⚠️ **Still unknown:** whether the abort also happened with `semantic=true`. The embedder-on run
       never reached the loop (see the sweep finding below), so the answer loop has only ever been
       observed in keyword-only mode.
+- [ ] ✅ **Stale as of 2026-10-04: the agent image is built and RUNS beside dev** (`dev-2dc97a4`,
+      CPU-capped; § On-device pass). Left: live, in the go-live sequence. The original entry:
 - [ ] 🔴 **`omni-me-agent` — ⏳ THE IMAGE AND THE RUN SHAPE NOW EXIST (2026-09-27); nothing has built
       or deployed them.** `agent/Dockerfile` plus an `agent` service in the public
       `docker-compose.yml`: its own volume at `/data` (SurrealDB **and** the `models` cache, which
