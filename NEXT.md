@@ -15,9 +15,8 @@ Dev now: server `dev-4e5a3b9-3fab90d` + ws-api 0.39.3 driver from `/opt/omni-ws-
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **Live's bank feed, halted since 09-06**: dev's fix (library upgrade + driver) is verified on dev;
-  applying it to live is his call (`tasks.md` § "Bank feed reconnect fails"). The push-challenge
-  code and the app's 150 s reauth wait (`d549552`) are in no built image or APK yet.
+- Nothing on the bank feed: fixed on dev; live waits for the finances tab, by his ruling
+  (`tasks.md` § "Bank feed reconnect fails"). The app's 150 s reauth wait (`d549552`) is in no APK yet.
 - **Belief recency** (he rejected the first belief: old entries outvoted a recent change): his call.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.

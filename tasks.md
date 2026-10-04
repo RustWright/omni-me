@@ -3343,10 +3343,11 @@ quality signal (his words). Diagnosed 2026-10-02, causes read off dev data and t
   the "dead" session with no login at all and pulled 286 rows. The refresh token was valid throughout.
   (2) **A full login now needs push approval**: a correct code is answered `login_challenge_required`.
   The flow was mapped from his browser login (overlay `tasks.md`) and built into the driver (overlay
-  `7f7920b`). The app now waits 150 s and says to approve on the phone (`d549552`). ⚠️ The challenge
-  path is UNEXERCISED: it runs only at the next real full login.
+  `7f7920b`). The app now waits 150 s and says to approve on the phone (`d549552`). ✅ Exercised on
+  dev 2026-10-04: a forced full login with his code and push approval saved a session and fetched.
   Dev runs its own library copy (`/opt/omni-ws-dev`, compose backed up); ⛔ live's `/opt/omni-ws` is
-  untouched at 0.35.0, and **live's bank feed has been halted since 09-06** — his call.
+  untouched at 0.35.0. ⛔ Live's sources are off DELIBERATELY, with the whole finances tab (his
+  correction, 2026-10-04): the fix goes to live only when finances does, not on its own.
 - ⚠️ **Chat "timeout" = no agent running anywhere** (no process, no compose service). Asked
   2026-10-03 12:36, deleted at 12:38; no answer event. Beliefs untestable until an agent runs.
 - ⚠️ G5: dev's compose never mounted `/opt/omni-ws` (the WS Python layer live mounts); added
