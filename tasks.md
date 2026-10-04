@@ -1870,7 +1870,17 @@ This was needed because **pausing does not survive a restart**, which had gone u
 - [x] **Warn at boot when the state dir is not writable.** The remaining half of the entry above:
   the failure is still only visible at the moment someone tries to pause. A startup preflight
   turns it into a loud boot line. [XS] — done 2026-09-23, `paths::state_dir_write_error`.
-- [ ] **The test fixture leaks a SurrealKV instance per test, and the suite deadlocks on it.**
+- [x] **The test fixture leaks a SurrealKV instance per test, and the suite deadlocks on it.**
+  ✅ **BUILT 2026-10-04 (`1c8a559`, merged into `dev/role-split-model-seats`).** `core/src` now has
+  one fixture, `db::test_db()`: one shared instance, a namespace per test, and no `connect` left
+  outside `db/mod.rs`'s own tests. The 38 call sites are migrated and 16 wrapper copies deleted. The
+  isolation question below was settled from source, plus a new test
+  (`test_databases_do_not_see_each_others_rows`). ⚠️ What the 09-24 probe could not have shown: the
+  engine spawns its router on the connecting runtime, and each `#[tokio::test]` runtime dies with
+  its test, so the shared instance runs on a process-lived `async_runtime::build()` runtime.
+  Rationale: `docs/src/testing.md`. CI is green, with the core suite unchanged at 55 s.
+  ⚠️ One green run cannot prove an intermittent hang is gone, so watch the next several runs.
+  `server/` tests still connect once per test; they are separate binaries with 6 sites, untouched.
   🔴 **Reproduced locally 2026-09-23** (run 5 of 6 consecutive full-suite runs), which closes the
   "nobody has reproduced it locally" note on the intermittent
   `assistant_projection::tests::arrival_order_does_not_change_a_threads_clocks` hang.

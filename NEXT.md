@@ -4,23 +4,20 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — the CI test-fixture fix, on its own branch (ruled 2026-10-03)
-`tasks.md` § "The test fixture leaks a SurrealKV instance per test": one shared instance, a namespace
-per test. ⛔ First MEASURE that isolation holds across namespaces (`init_schema`, the projection
-version table); then consolidate the ~27 `fn test_db` copies into one. Plan before building.
-Branch from `dev/role-split-model-seats` and merge back into it (main lacks this branch's tests).
-Pending from 2026-10-04: a dev image with the bank-reconnect diagnostics (`3fab90d`, overlay
-`4e5a3b9`) was building; deploy it to dev if not already there (`docker ps` on the box).
-Dev otherwise: agent `dev-2dc97a4`, APK 1.1.24-dev.
-Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
+## ▶ NEXT ACTION — his to name (the ruled one, the CI fixture fix, is done)
+The fixture fix merged into `dev/role-split-model-seats` on 2026-10-04 (`tasks.md` § "The test fixture
+leaks…"). ⚠️ Watch the next several CI runs before calling the hang gone: it was intermittent.
+Ask him what comes next. Queued, not prioritised: the Rust 1.99 upgrade (CI pinned to 1.98.1), the
+triage scoring query, and the agent's index-build memory growth.
+Dev now: server `dev-4e5a3b9-3fab90d` (bank-reconnect diagnostics), agent `dev-2dc97a4`, APK 1.1.24-dev.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **Belief recency** (he rejected the first belief: old entries outvoted a recent change): his call.
-- **One more bank-feed reconnect try** once the diagnostics build is on dev; the server log then
+- **One more bank-feed reconnect try**: the diagnostics build is on dev, so the server log now
   shows the bank's refusal reason (`tasks.md` § "Bank feed reconnect fails").
+- **Belief recency** (he rejected the first belief: old entries outvoted a recent change): his call.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
