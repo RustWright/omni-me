@@ -1027,9 +1027,22 @@ then spends, so the phone test runs on the chosen models.
    restart. 🔴 His ruling: re-sweep after pulls that land changes, at most every 15 min (beat: also
    clearing on wipe; wipe-only). `agent/src/index_refresh.rs`; `docs/src/retrieval.md`.
    ⚠️ Unmeasured: memory of a repeated sweep at 13k records, which is item 6's ground.
-3. Reconciliation: pair a tentative charge with the charge that replaces it (§ On-device pass).
-4. The triage scoring query (§ Mail triage seat), then whether triage gates anything: his.
-5. A caller for `archive::ingest_paths` (the ~700 historical PDFs).
+3. ⛔ DROPPED 2026-10-04 (his ruling, re-confirming 10-02): matching an authorisation plus its
+   adjustment to one receipt. It happens weekly (his grocery orders), and automating it may come
+   later, but "for now it's not worth the effort". He matches those by hand. Do not re-raise it
+   unprompted.
+4. ✅ Triage scorecard BUILT 2026-10-04 (`2a30f18`): `queries::triage_score`, `GET /auto_import/triage`.
+   📊 Dev, computed from the log the same day: money→committed 4, money→pending 5, unscored 96
+   (proposed before the seat), and **0 `none` verdicts reached review at all**. In shadow mode a
+   `none` mail almost never yields a proposal, so the cell that matters is still empty. ⛔ His ruling
+   (shadow until scored on real weeks) is unmet; nothing to decide yet. ⚠️ Dev decisions are weak
+   truth anyway: he mass-committed without checking.
+5. ✅ Bulk archive upload BUILT 2026-10-04 (`7d56cc8`). `ingest_paths` could never be the caller:
+   it reads the server's own disk, and the corpus is on this laptop. Instead `scripts/archive-
+   upload.py` POSTs each file as `source=bulk`, gated on `--instance` matching `/health`; a bulk
+   upload of bytes already archived files nothing (so a re-run is safe). Dry run: 1,041 documents
+   (765 PDF + 276 CSV). ⏳ A 20-file dev trial after the next dev image; the full run is the
+   go-live corpus import. ⚠️ `archive::ingest_paths`/`walk_dir` are now dead code: review gate.
 6. The agent's memory growth while indexing (OOM-killed twice at 2 GB).
 7. Cross-currency reimbursements (G10): design, then his call.
 8. The three spends: C2 slate re-run, the C1/C2/C3/D re-rank on the R27-fixed stack, gate 9's
@@ -3413,8 +3426,8 @@ today", and nobody had touched the phone. It could be restored navigation state 
   his own 2026-09-26 ruling. The real gap is the Walmart/Instacart shape: `reconciliation.rs`
   pairs *iff* amounts cancel exactly, strictly pairwise, so an auth + adjustment against one
   receipt has no match. ⛔ Left alone at his instruction ("don't chase those too far").
-  Narrower sibling: a receipt with no stated total still emits one draft per line item,
-  documented as unreconcilable.
+  Narrower sibling ✅ fixed 2026-10-03: a receipt with no stated total is now one draft on the
+  sum of its lines, so it reconciles like any other.
 - **Tap targets.** 14 buttons at `px-2 py-1` with 10–11px text land near 26px against
   Android's 48dp. Several are the destructive two-step confirms in `routines.rs`. ⚠️ Not
   fixed: raising them is a visual redesign across several screens, not a bug fix, and it is
