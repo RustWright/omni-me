@@ -4,13 +4,12 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — his approvals, then what he sets next
-Dev runs everything ruled 2026-10-03 (`tasks.md` § On-device pass → "First real matching test",
-"Agent on the box", "Ghost batches"): server `dev-208e689-2dc97a4`, agent `dev-2dc97a4`, APK
-1.1.24-dev. The agent answers; the belief proposal awaits him.
-🔴 CI hangs on the fixture leak in most runs now (`tasks.md` § "test fixture leaks", a release
-gate; it says do the fix on its own branch). Proposed as the next workstream, his call.
-Then: the agent's index-build memory growth; the check-in's due-belief review.
+## ▶ NEXT ACTION — the CI test-fixture fix, on its own branch (ruled 2026-10-03)
+`tasks.md` § "The test fixture leaks a SurrealKV instance per test": one shared instance, a namespace
+per test. ⛔ First prove isolation holds across namespaces (`init_schema`, the projection version
+table); then consolidate the ~27 `fn test_db` copies into one. Plan before building, fresh session.
+Dev runs everything else ruled 2026-10-03: server `dev-208e689-2dc97a4`, agent `dev-2dc97a4`, APK
+1.1.24-dev. After the fix: the agent's index-build memory growth; the due-belief review.
 Owed and not blocking: the Rust 1.99 upgrade (CI pinned to 1.98.1); the triage scoring query.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
