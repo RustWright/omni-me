@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use super::actions::{self, ActionKind};
+use super::recency;
 use super::retrieval::{Rerank, Retrievers, SemanticSearch};
 use super::verbs::{self, SYSTEM_PROMPT};
 use crate::config::{Feature, ResolvedConfig};
@@ -143,6 +145,9 @@ pub struct TurnRecord {
     pub arguments: Value,
     /// True when this call had already been made with identical arguments.
     pub repeated: bool,
+    /// True when the loop refused the call before it ran: a refused `propose`
+    /// is not a proposal, though it is in the trace like one.
+    pub refused: bool,
     pub usage: Usage,
     pub latency: Duration,
 }
@@ -446,6 +451,7 @@ impl<'a> Session<'a> {
                     verb: None,
                     arguments: Value::Null,
                     repeated: false,
+                    refused: false,
                     usage: reply.usage,
                     latency: reply.latency,
                 });
@@ -473,6 +479,11 @@ impl<'a> Session<'a> {
                     serde_json::to_string(&call.arguments).unwrap_or_default()
                 );
                 let repeated = seen.contains(&signature);
+                let refusal = (!repeated && self.records_a_belief(&call.name, &call.arguments))
+                    .then(|| {
+                        recency::belief_needs_a_recent_look(&trace, chrono::Utc::now().date_naive())
+                    })
+                    .flatten();
 
                 let result = if repeated {
                     // Said plainly rather than silently re-serving identical rows.
@@ -482,6 +493,10 @@ impl<'a> Session<'a> {
                         "error": "you already made this exact call and got this exact result. \
                                   Change the arguments, or answer with what you have."
                     })
+                } else if let Some(why) = &refusal {
+                    // Not added to `seen`: the same proposal after looking is the
+                    // retry this asks for, not a repeat.
+                    json!({ "error": why })
                 } else {
                     seen.push(signature);
                     verbs::dispatch_with(
@@ -498,6 +513,7 @@ impl<'a> Session<'a> {
                     verb: Some(call.name.clone()),
                     arguments: call.arguments.clone(),
                     repeated,
+                    refused: refusal.is_some(),
                     usage: reply.usage,
                     latency: reply.latency,
                 });
@@ -535,6 +551,16 @@ impl<'a> Session<'a> {
             StopReason::TurnBudget,
             off_schema,
         )
+    }
+
+    /// Whether this call proposes a `belief.record`, which waits on
+    /// [`recency::belief_needs_a_recent_look`].
+    fn records_a_belief(&self, verb: &str, arguments: &Value) -> bool {
+        verb == verbs::PROPOSE
+            && arguments["action"]
+                .as_str()
+                .and_then(|name| actions::lookup(self.config, name))
+                .is_some_and(|action| action.kind == ActionKind::BeliefRecord)
     }
 
     fn finish(
@@ -1025,6 +1051,54 @@ mod tests {
         assert_eq!(out.stopped, StopReason::Answered, "{:?}", out.stopped);
         assert_eq!(out.answer.as_deref(), Some("I've proposed all three."));
         assert_eq!(out.verbs().iter().filter(|v| *v == &"propose").count(), 3);
+    }
+
+    /// The rejected sleep belief of 2026-10-03, replayed: proposed without a look
+    /// at the last month, it is refused; after one, the same proposal stands, and
+    /// is not mistaken for a repeat.
+    #[tokio::test]
+    async fn a_belief_waits_until_the_run_has_looked_at_the_last_month() {
+        let db = test_db().await;
+        let belief = || {
+            tool_turn(
+                "b",
+                "propose",
+                json!({
+                    "action": "belief.record",
+                    "rationale": "you asked for a conclusion",
+                    "args": { "statement": "You wake early.", "confidence": "high" }
+                }),
+            )
+        };
+        let today = chrono::Utc::now().date_naive();
+        let llm = ScriptedLlm::new(vec![
+            belief(),
+            tool_turn(
+                "l",
+                "list",
+                json!({
+                    "type": "journal",
+                    "filters": { "date": { "from": (today - chrono::Duration::days(30)).to_string() } }
+                }),
+            ),
+            belief(),
+            prose_turn("Recorded."),
+        ]);
+        let cfg = config();
+
+        let out = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .ask("when do I wake?")
+            .await;
+
+        let refused: Vec<bool> = out.trace.iter().map(|t| t.refused).collect();
+        assert_eq!(refused, [true, false, false, false]);
+        assert!(
+            !out.trace[2].repeated,
+            "the retry after looking is not a repeat"
+        );
+        let proposed = crate::assistant::answer::proposals(&cfg, &out);
+        assert_eq!(proposed.len(), 1, "the refused attempt is not a proposal");
     }
 
     /// ⚠️ Exempt is not unbounded. The loop has no terminal verb, so without a

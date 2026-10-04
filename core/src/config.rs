@@ -294,7 +294,8 @@ impl ConfigKey {
             ConfigKey::AssistantCheckInPrompt => ConfigValue::Text(
                 "Review anything you concluded about me that is now due for \
                  re-examination, and tell me what still holds and what does not. \
-                 Do not draw new conclusions."
+                 Judge each against what I have written since you concluded it, \
+                 most recent first. Do not draw new conclusions."
                     .to_string(),
             ),
             // 07:00 in the agent's local time. Early enough to be waiting when the

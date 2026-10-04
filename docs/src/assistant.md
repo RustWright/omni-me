@@ -440,6 +440,27 @@ other way:
   you can only see the current state of can be inspected but not audited — you
   could never ask what it used to think, or why that changed.
 
+### A belief looks at the last month **(today)**
+
+The first belief proposed on real data was wrong in an instructive way. Asked when its user
+wakes, the assistant searched the journal by relevance, opened twelve entries, and concluded a
+pattern that had held for four years. It had stopped holding recently, and the newest entry it
+opened was eleven weeks old. Relevance ranking has no sense of time, so a recent change loses to
+the older majority without ever being read.
+
+So a `belief.record` proposal is refused until the run has listed records with a date range
+reaching into the last 30 days, counted from the day it runs. The refusal tells the model to
+check whether the belief still holds now: propose it again if the recent records support it,
+say what changed and since when if they contradict it, and propose it unchanged if they say
+nothing about it.
+
+**What it requires is looking, not citing.** A rule that demanded recent evidence would push a
+model to find relevance in entries that have none. Two limits: `list` shows the opening of each
+record, so a mention deep in a long entry needs a `read`, and every record the run opens is cited
+as evidence, including recent ones that turned out not to bear on the belief. The scheduled
+re-review of due beliefs proposes nothing when a belief still holds, so this check never reaches
+it; its default prompt asks it to judge each belief against what was written since instead.
+
 ## Capture: who authored the content, not who pressed the shutter **(planned)**
 
 Dictating an entry or photographing something is how content gets in. Whether it is trusted

@@ -30,6 +30,8 @@ pub mod memory;
 /// Autonomy: the evidence for granting it, and the grant itself.
 pub mod promotion;
 pub mod query_text;
+/// A belief is proposed only after the run has looked at the last month.
+pub mod recency;
 /// Cross-encoder reranking. Gated with [`embedding`] — same ONNX Runtime.
 #[cfg(feature = "embeddings")]
 pub mod rerank;
