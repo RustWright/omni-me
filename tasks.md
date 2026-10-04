@@ -1043,7 +1043,19 @@ then spends, so the phone test runs on the chosen models.
    upload of bytes already archived files nothing (so a re-run is safe). Dry run: 1,041 documents
    (765 PDF + 276 CSV). ⏳ A 20-file dev trial after the next dev image; the full run is the
    go-live corpus import. ⚠️ `archive::ingest_paths`/`walk_dir` are now dead code: review gate.
-6. The agent's memory growth while indexing (OOM-killed twice at 2 GB).
+5b. 🔴 **SurrealDB 3.0.4 → 3.3.0, RULED 2026-10-04 (his pick), both repos in lockstep.** Found when CI
+   failed `budget_projection::tests::list_transactions_filter_by_tag_membership` (`d137abf`) with
+   `Session not found`: a race in 3.0.4's embedded router (upstream #7220, open). It registers a
+   cloned handle's session on one channel and takes queries on another; its `biased` select polls
+   the session channel, finds it empty, and a clone plus its first query can both land before it
+   polls the query channel. The shared test engine (`1c8a559`) made it likelier: senders are now
+   other threads. ⛔ Real in production: live failed one `/sync/push` with it on 2026-09-18.
+   ✅ 3.3.0 fixes it by design, read in `surrealdb/engine-local/src/session.rs`: a request now
+   waits for its session to be registered. ⚠️ Release notes for 3.1–3.3 are empty, so storage
+   compatibility is untested: prove it on a COPY of dev's volume first (backup, verify by size).
+   ⚠️ The overlay's earlier 3.1 attempt failed to compile (`diskann`); MSRV may force Rust 1.99, so
+   item 10 rides with this one.
+6. The agent's memory growth while indexing (OOM-killed twice at 2 GB). After 5b: measure on 3.3.
 7. Cross-currency reimbursements (G10): design, then his call.
 8. The three spends: C2 slate re-run, the C1/C2/C3/D re-rank on the R27-fixed stack, gate 9's
    90-call injection re-run. Then seat B's case family (bench + spend).
