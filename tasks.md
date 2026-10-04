@@ -1056,7 +1056,12 @@ then spends, so the phone test runs on the chosen models.
    ⚠️ The overlay's earlier 3.1 attempt failed to compile (`diskann`); MSRV may force Rust 1.99, so
    item 10 rides with this one.
 6. The agent's memory growth while indexing (OOM-killed twice at 2 GB). After 5b: measure on 3.3.
-7. Cross-currency reimbursements (G10): design, then his call.
+7. ⛔ DROPPED 2026-10-04 (his ruling): cross-currency reimbursements (G10). Matched by hand for now;
+   the fix is already backlog ("FX-spanning matches", "balancing posting for hidden fees"), after
+   release. Returns only as a phone-loop finding.
+   ⚠️ Not on the original list, found re-reading G10's neighbour: the **unexplained jump to Entry
+   2026-09-24 after a rebuild** (1.1.12-dev install) is still undiagnosed. It goes on the phone
+   checklist as something to watch for.
 8. The three spends: C2 slate re-run, the C1/C2/C3/D re-rank on the R27-fixed stack, gate 9's
    90-call injection re-run. Then seat B's case family (bench + spend).
 9. Finance propose actions on hardware; folds into the phone checklist.
