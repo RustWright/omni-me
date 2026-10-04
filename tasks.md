@@ -1055,6 +1055,18 @@ then spends, so the phone test runs on the chosen models.
    compatibility is untested: prove it on a COPY of dev's volume first (backup, verify by size).
    ⚠️ The overlay's earlier 3.1 attempt failed to compile (`diskann`); MSRV may force Rust 1.99, so
    item 10 rides with this one.
+   ✅ **DONE 2026-10-04, dev on it** (public `84a0cd8`, overlay `b7f9397`, image
+   `dev-b7f9397-84a0cd8`). Needed `serde-saphyr` 0.0.24 → 0.0.29 (its parser pinned `thiserror` below
+   what 3.3 needs). Compiles clean on Rust 1.98.1 in both repos, `diskann` included: no MSRV push.
+   `surrealkv` moves only 0.21.0 → 0.21.4. `lindera` (CJK tokenizer) now compiles into every build,
+   phone too, but with `mmap` only: no embedded dictionaries.
+   📊 Proved on a COPY of dev's volume first (backup `~/omni-dev-backups/omni-dev-20261004T160629-
+   pre-surrealdb33.tar.gz`, 128,325,722 bytes, 755 entries = 755 files): 17,561 events, every type
+   identical to 3.0.4, wipe preview 11,210 = 11,210, 40/40 blobs served, a bulk upload wrote and a
+   re-upload was recognised. Then dev itself: identical again, every source ticking.
+   🔴 **3.3 MIGRATES THE DATA ON FIRST OPEN** ("rebuild forward doc-ID mappings under an injective
+   key", migration id 3). Rollback is restoring the backup, not switching the image back. ⛔ For
+   live this makes gate 1 (backup, verified by size) non-negotiable before the deploy.
 6. The agent's memory growth while indexing (OOM-killed twice at 2 GB). After 5b: measure on 3.3.
 7. ⛔ DROPPED 2026-10-04 (his ruling): cross-currency reimbursements (G10). Matched by hand for now;
    the fix is already backlog ("FX-spanning matches", "balancing posting for hidden fees"), after
@@ -4345,7 +4357,7 @@ they are backlog rather than threads from the current stretch):**
 - [ ] PaddleOCR sidecar (escape hatch from Cycle-3 7.11).
 - [ ] C1 email auto-fetch (vs paste); R3 self-employment dashboards; R4 tax-form validation.
 - [ ] Generic IMAP config source — wire the existing public `ImapSource` into the config builder. Indefinitely deferred 2026-06-20 (needs `build_one` to thread `db`+`extractor`+async into both call sites, *and* a handler-policy design call — a config IMAP source = receipt importer by sender-pattern?). Not personally needed: the user's email sources (statements + receipts) run through the private overlay's `build_imap_sources`.
-- [ ] SurrealDB bump past 3.0.4 — **lockstep across both repos** (public + private overlay each pin their own lock; out-of-sync re-floats the overlay to 3.1 + `diskann`, which fails to compile on the current toolchain, rust#100013). No vector-search usage today, so no pull; revisit when vector search is wanted or the toolchain resolves #100013. Patch 3.0.x bumps are safe meanwhile. [S]
+- [x] ✅ DONE 2026-10-04 (3.3.0, § THE RELEASE PROCESS item 5b; `diskann` compiled fine). Was: SurrealDB bump past 3.0.4 — **lockstep across both repos** (public + private overlay each pin their own lock; out-of-sync re-floats the overlay to 3.1 + `diskann`, which fails to compile on the current toolchain, rust#100013). No vector-search usage today, so no pull; revisit when vector search is wanted or the toolchain resolves #100013. Patch 3.0.x bumps are safe meanwhile. [S]
 
 ---
 
