@@ -1016,8 +1016,17 @@ Four stages, in this order. ⛔ Each stage finishes before the next starts.
 
 **Stage 1, the list (my order).** Decisions first, while he is present to answer them; then code;
 then spends, so the phone test runs on the chosen models.
-1. Belief recency: investigate, then his decision, then build. Old entries outvoted a recent change.
-2. Whether a wipe clears the vector index synchronously: his decision (DoR item 1, fourth finding).
+1. ✅ Belief recency, BUILT 2026-10-04 (`d137abf`). Measured: the rejected belief read 12 of ~1,370
+   entries by relevance, the newest July 15, while the journal mentions sleep almost daily to Sep 16.
+   🔴 His ruling: refuse `belief.record` until the run has listed a date range reaching the last 30
+   days from today, and the check is that it LOOKED, never that it cites recent records ("a double
+   check rather than a you need to form your belief on these and hallucinate"). The re-review prompt
+   got the matching wording. `docs/src/assistant.md` § A belief looks at the last month.
+2. ✅ Vector index refresh, BUILT 2026-10-04. The question grew: the index was swept ONLY at agent
+   startup, so new records never reached meaning-based search and wiped ones lingered until a
+   restart. 🔴 His ruling: re-sweep after pulls that land changes, at most every 15 min (beat: also
+   clearing on wipe; wipe-only). `agent/src/index_refresh.rs`; `docs/src/retrieval.md`.
+   ⚠️ Unmeasured: memory of a repeated sweep at 13k records, which is item 6's ground.
 3. Reconciliation: pair a tentative charge with the charge that replaces it (§ On-device pass).
 4. The triage scoring query (§ Mail triage seat), then whether triage gates anything: his.
 5. A caller for `archive::ingest_paths` (the ~700 historical PDFs).
@@ -1263,9 +1272,8 @@ critical path, not the tail.
    ⛔ **Read from the code, not observed running** — `record_embeddings` is populated on whichever
    node hosts the assistant, and the agent is deployed nowhere yet, so dev's index is empty and the
    leak is latent. It stops being latent the moment the assistant runs, which is the next push.
-   🔴 **Still his call, and I did not decide it:** whether a wipe should clear the index
-   *synchronously* rather than leaving it to the next sweep. The fix above closes the window at the
-   next sweep; it does not make the wipe itself complete.
+   ✅ **ANSWERED 2026-10-04 (his ruling): no synchronous clear; the agent re-sweeps after pulls**
+   (§ THE RELEASE PROCESS, stage-1 item 2). "The next sweep" had meant the next agent restart.
    ⚠️ **Mass document ingestion is built but unreachable.** `archive::ingest_paths` +
    `walk_dir` exist — `walk_dir`'s own doc names this corpus ("the finance corpus carries 785
    generated `.ledger` files") — but **nothing calls either**. Same shape as the LLM surface that

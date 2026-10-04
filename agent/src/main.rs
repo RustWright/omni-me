@@ -22,6 +22,7 @@
 mod ask;
 mod bench;
 mod extraction_bench;
+mod index_refresh;
 mod reading_bench;
 mod responder;
 mod retrieval_bench;
@@ -1128,8 +1129,19 @@ async fn run(args: Args) -> Result<(), String> {
         retrievers,
         horizon,
     };
-    match responder.run(&pull_scheduler).await {
-        responder::Stopped::Interrupted => Ok(()),
+    // Beside the responder rather than spawned: both borrow the embedder, which
+    // lives in this scope. Only the responder ends the agent.
+    let refresh = async {
+        match embedder.as_ref() {
+            Some(e) => index_refresh::run(&db, &config, e, &pull_scheduler).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        stopped = responder.run(&pull_scheduler) => match stopped {
+            responder::Stopped::Interrupted => Ok(()),
+        },
+        () = refresh => Ok(()),
     }
 }
 
