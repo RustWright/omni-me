@@ -56,9 +56,10 @@ futures = "0.3"
 [profile.release]
 opt-level = "s"
 lto = true
-# Not `true`: dx then runs `objcopy --strip-all` before wasm-bindgen, and from
-# LLVM 23 (Rust 1.99) that deletes the custom section wasm-bindgen reads.
-strip = "debuginfo"
+# Off: any strip makes dx shell out to `rust-objcopy`, which on 1.99 cannot load
+# libLLVM outside rustup's proxy, and `--strip-all` there (LLVM 23) also deletes the
+# section wasm-bindgen reads. The DWARF is stripped at link time instead (.cargo/config.toml).
+strip = false
 panic = "abort"
 codegen-units = 1
 

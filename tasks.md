@@ -1103,7 +1103,36 @@ then spends, so the phone test runs on the chosen models.
    sync run unattended, and check logcat. ⚠️ The conversion is one-way: rollback = clean reinstall
    + full re-sync from dev.
 9. Finance propose actions on hardware; folds into the phone checklist.
-10. Rust 1.99 upgrade (CI pinned to 1.98.1).
+10. Rust 1.99 upgrade (CI pinned to 1.98.1). ▶ BUILT 2026-10-05 (public `899b7d1`, overlay `bbf48fa`),
+   ⏳ CI. Both 1.99 breaks were ours to absorb, neither needed a newer dx (0.7.10 strips the same):
+   `async-trait` 0.1.89 → 0.1.92 (stopped emitting the `#[must_use]` clippy's `double_must_use`
+   hits), and the frontend's `strip = true` → `"debuginfo"`: dx runs `objcopy --strip-all` before
+   wasm-bindgen, and LLVM 23's now deletes every custom section, `__wasm_bindgen_unstable` included
+   (that was September's "adapter" error). wasm-bindgen 0.2.114 → 0.2.129 in both locks. Local:
+   web release build passes on 1.99, clippy clean on core/server/agent and frontend (both modes).
+   Also pinned the two remaining floats, same class: public CI's `dioxus-cli` (→ 0.7.2) and the
+   overlay's `tauri-cli` (→ 2.12.1, what the last good APK resolved). ⚠️ Locally, dx's strip needs
+   `LD_LIBRARY_PATH=$(rustc --print sysroot)/lib` or `rust-objcopy` cannot load libLLVM.
+   ⚠️ Flake 2026-10-04 (`551d35c`, passed on the next three commits): `vector_store::a_deleted_
+   record_does_not_stay_searchable`, second sweep `scanned 0, failed 3`, cause unrecorded because
+   tests had no subscriber. `fb706eb` gives `test_db()` one, so the next one prints its warning.
+**Stage 2, his phone checklist (DRAFT 2026-10-05; finalised when the APK is installed).** Each line
+says what to do and what "right" looks like:
+1. Open the app once and let it sync. Right: no error, journal/notes/finances look as before (it
+   converted its local database to SurrealDB 3.3 on first open; this is the one-way step).
+2. Ask the assistant again for a sleep belief (the one rejected 2026-10-04). Right: its statement
+   reflects entries from September, or says what changed and since when.
+3. Write a new note, wait 15+ min, then ask the assistant something only that note answers by
+   meaning (not exact words). Right: it finds it.
+4. Settings › bank reconnect: enter a code, approve the push on the other phone. Right: the form
+   waits and succeeds; a wrong code says "Sign-in refused — check the code and try again."
+5. Finances: propose/approve actions on a real batch (item 9). Right: what you approve lands.
+6. Re-check the G fixes on hardware: two-page receipt zoom reaches page 2 by pinch (G1), keyboard
+   never hides the field you're typing in (G2), assistant chats open/archive/delete (G3), camera
+   opens from Archive › Add document (G9).
+7. Watch for: the app jumping to Entry 2026-09-24 on its own after the update (undiagnosed).
+Anything annoying beyond these is fair game; say whether it's worth fixing before release.
+
 Moved to the go-live sequence, not stage 1: gate 1 (live backup), the official import, the agent on
 live, the tab going on. ⏳ The go-live sequence is drafted at stage 4, not before.
 
