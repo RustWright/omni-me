@@ -1155,8 +1155,19 @@ then spends, so the phone test runs on the chosen models.
    gemma-4-31B tie on both deciding keys, which the pre-registration publishes as unmeasured.
    ✅ **Corpus copy DELETED 2026-10-05 12:10Z** after the last run that read it: 243,208,947 B
    removed, `~deploy/omni-bench/corpus` gone, no `paisa-ledger` directory left anywhere on the box.
-   ⏳ D (structuring) re-run, direct to DeepInfra since dev holds no gateway key (`bench-c-slate.sh`
-   now takes `structuring`): `~deploy/omni-bench/runs/20261005-121000-d-structuring`, 7 models.
+   📊 **D structuring DONE 2026-10-05**, direct to DeepInfra since dev holds no gateway key
+   (`bench-c-slate.sh` now takes `structuring`; `~deploy/omni-bench/runs/20261005-121000-d-
+   structuring`, 11 probes × 3). fab · recall · abstain · agree: **Qwen3.6-35B-A3B 0 · 27/27 · 66/66
+   · 28/33** · V4-Flash (seated) 1 · 27/27 · 65/66 · 25/33 (+1 prose) · Qwen3.5-397B 1 · 27/27 · 65/66
+   · 30/33 · GLM-5.3 3 · 23/23 · 58/61 (4 errors) · V4-Pro 4 · 27/27 · 62/66 · gpt-oss-120b 0 · 1/27
+   and Turbo 0 · 0/27 (winning by silence, as on 09-16).
+   ⚖️ **By the letter, Qwen3.6-35B-A3B wins**: seat D pre-registers no noise floor, so 0 vs 1 is not
+   a tie, and recall then removes the gpt-oss rows. ⚠️ Caveat for him: the same model had 3
+   fabrications + 1 error on 2026-09-16 (gateway), so a one-fabrication margin is the size of its
+   own run-to-run swing. Per the item 8 ruling the dev switch goes ahead, but the edit is to the dev
+   credentials file, which the classifier blocks me from: a temp script for him is ready
+   (`switch-dev-structurer.sh`, backs up, touches only `[llm.structurer] model`, restarts dev).
+   ⏳ Switch pending his run. Live untouched.
    ⚠️ No photo arm: `~/omni-spike-images` is not on this laptop (searched the whole disk).
 9b. 🔴 DEV APK RULED 2026-10-04: when stage 1's code is done, build the dev APK and INSTALL it on
    the dev phone (galaxy-s9:5555) myself, open it once so the SurrealDB 3.3 conversion and first

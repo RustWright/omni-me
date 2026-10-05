@@ -4,19 +4,20 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — close the last of stage 1, then hand him the phone checklist
-`tasks.md` § "THE RELEASE PROCESS". Done 2026-10-05: items 5, 9b, 10, gate 9, the C2 slate.
-Still in flight on the box (check each, never assume):
-- **Agent memory re-trial** (item 6): container `omni-agenttrial`, volume `omni-dev_agenttrial`.
-  Read cgroup `memory.peak`; on exit record it, remove both, then deploy agent `dev-5c2f3ac` to dev.
-- **Transcription slate**: `~deploy/omni-bench/runs/20261005-043836-c-transcription`. Then extraction
-  on its survivors, apply per the item 8 ruling, ⛔ delete `~deploy/omni-bench/corpus` and confirm.
-Then stage 2: finalise the checklist drafted in `tasks.md` § Stage 2 and give it to him.
+## ▶ NEXT ACTION — close item 6 (agent memory), then stage 2
+`tasks.md` § "THE RELEASE PROCESS". Stage 1 is done except item 6. Done 2026-10-05: items 5, 8
+(all four seats re-ranked, corpus deleted), 9b, 10, gate 9, and seat B's bench (built, not run).
+- **Item 6, in flight**: trial B (`omni-agenttrial`, image `dev-c79f823`, ONNX Runtime arena off)
+  vs trial A (`dev-bcb6688`). Samplers: `~deploy/omni-bench/runs/agenttrial-{A,B}-*.tsv` (B has an
+  anon column). On B's exit: compare per phase, record, remove container and `omni-dev_agenttrial`
+  volume; if B holds, deploy `dev-c79f823` as dev's agent.
+- Then stage 2: finalise the checklist in `tasks.md` § Stage 2 and give it to him.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
+- **Seat D switch on dev**: run `switch-dev-structurer.sh` (session scratchpad; credentials file).
 - **Seat B's bench keys** (`MODEL_THRESHOLDS.md` § Seat B): proposed, not his; the run waits.
 - **C2 reader**: unmeasured by the rules, but gemma-4-26B beats the seated model outside the noise
   floor. Switch or not is his (`tasks.md` item 8).
