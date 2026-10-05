@@ -4,26 +4,23 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — finish stage 1 of the release process, then build and install the dev APK
-`tasks.md` § "THE RELEASE PROCESS" (ruled 2026-10-04): clear the list → phone test loop → code
-review gate → merge to live. Every open stage-1 item there carries its ruling; work them in order.
-In flight on the box when this was written (2026-10-05 ~03:50Z), check each, never assume:
-- **Agent memory re-trial** (item 6): container `omni-agenttrial` on volume `omni-dev_agenttrial`,
-  image `dev-551d35c` (batch 16). Read its cgroup `memory.peak`; on finish record, then remove both.
-- **Reading slate** (item 8): `~deploy/omni-bench/runs/20261005-034414-c-reading`. Then
-  transcription and extraction slates against `~deploy/omni-bench/corpus` (copy was in progress;
-  verify size and file count against `~/paisa-ledger-restore/extracted/paisa-ledger` first).
-  ⛔ Delete the corpus copy after, and confirm. Apply results per the item 8 ruling.
-- Then: 20-file bulk-upload trial (item 5), Rust 1.99 (item 10), dev images (server + agent from
-  the dev branch tips), dev APK installed on the phone (item 9b), then the phone checklist.
-Dev now: server `dev-b7f9397-84a0cd8` (SurrealDB 3.3), agent `dev-84a0cd8`, APK 1.1.24-dev.
-⚠️ CI hang fix: one flake since, and it was the SurrealDB race (fixed by 3.3). Keep watching.
+## ▶ NEXT ACTION — close the last of stage 1, then hand him the phone checklist
+`tasks.md` § "THE RELEASE PROCESS". Done 2026-10-05: items 5, 9b, 10, gate 9, the C2 slate.
+Still in flight on the box (check each, never assume):
+- **Agent memory re-trial** (item 6): container `omni-agenttrial`, volume `omni-dev_agenttrial`.
+  Read cgroup `memory.peak`; on exit record it, remove both, then deploy agent `dev-5c2f3ac` to dev.
+- **Transcription slate**: `~deploy/omni-bench/runs/20261005-043836-c-transcription`. Then extraction
+  on its survivors, apply per the item 8 ruling, ⛔ delete `~deploy/omni-bench/corpus` and confirm.
+Then stage 2: finalise the checklist drafted in `tasks.md` § Stage 2 and give it to him.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 
 ## ⛔ Waiting on him
-- **The phone test** (stage 2), once the APK is on the dev phone and the checklist is written.
+- **Seat B's bench keys** (`MODEL_THRESHOLDS.md` § Seat B): proposed, not his; the run waits.
+- **C2 reader**: unmeasured by the rules, but gemma-4-26B beats the seated model outside the noise
+  floor. Switch or not is his (`tasks.md` item 8).
+- **The phone test** (stage 2), once the checklist is final.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.
