@@ -1068,6 +1068,15 @@ then spends, so the phone test runs on the chosen models.
    key", migration id 3). Rollback is restoring the backup, not switching the image back. ⛔ For
    live this makes gate 1 (backup, verified by size) non-negotiable before the deploy.
 6. The agent's memory growth while indexing (OOM-killed twice at 2 GB). After 5b: measure on 3.3.
+   📊 2026-10-04, agent `dev-84a0cd8` (3.3): steady state 294 MB (was 350–700 on 3.0.4); startup
+   sweep 13,411 scanned, 0 embedded. Full `--reindex` on a volume COPY (2000m, 0.75 CPU, `--network
+   none`): plateau ~1.4 GB, then **OOM-killed at ~85 min with no sample over 1,485 MiB**: a spike
+   inside 30 s, not growth. ⚠️ Cause INFERRED, not observed: fastembed's default batch is 256, and
+   one record's chunks went through in one call (the largest record is a 74 KB note, ~70 chunks).
+   Fixed in `551d35c` (embed and rerank in batches of 16). ⏳ Re-trial running, peak read from the
+   cgroup's `memory.peak` this time, since sampling missed the spike.
+   Also fixed on the way (`fa901ff`): 3 records the sweep scanned and counted nowhere (hidden rows,
+   empty text). The report now has `hidden`/`empty`, and a test pins scanned = sum of the parts.
 7. ⛔ DROPPED 2026-10-04 (his ruling): cross-currency reimbursements (G10). Matched by hand for now;
    the fix is already backlog ("FX-spanning matches", "balancing posting for hidden fees"), after
    release. Returns only as a phone-loop finding.
@@ -1076,6 +1085,10 @@ then spends, so the phone test runs on the chosen models.
    checklist as something to watch for.
 8. The three spends: C2 slate re-run, the C1/C2/C3/D re-rank on the R27-fixed stack, gate 9's
    90-call injection re-run. Then seat B's case family (bench + spend).
+   🔴 RUNNER RULED 2026-10-04 (his pick): **on the box**, with the agent image's `--bench-*` flags
+   and dev's model keys. Only the sampled documents are copied, into a root-only folder, deleted
+   after. Why not here: this laptop has no Docker, no keys, and cannot build. Past runs cost cents
+   to ~$3 each.
 9. Finance propose actions on hardware; folds into the phone checklist.
 10. Rust 1.99 upgrade (CI pinned to 1.98.1).
 Moved to the go-live sequence, not stage 1: gate 1 (live backup), the official import, the agent on
