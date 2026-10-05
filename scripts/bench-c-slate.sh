@@ -41,8 +41,11 @@ case "$bench" in
   # below is what `for_role(Structurer)` falls back to. Name the models; the
   # default slate is the vision one. `bench-d-slate.sh` is the gateway route.
   structuring) ;;
+  # Role B on its own job. Needs a hub seeded `--with-beliefs`; with an image,
+  # reach it through OMNI_BENCH_DOCKER_ARGS (`--network`, `-e OMNI_AGENT_SERVER_URL`).
+  review) ;;
   *)
-    echo "usage: $0 <transcription|extraction|reading|structuring> [out-dir] [model ...]" >&2
+    echo "usage: $0 <transcription|extraction|reading|structuring|review> [out-dir] [model ...]" >&2
     exit 2
     ;;
 esac
@@ -113,7 +116,7 @@ run_bench() {
     while IFS='=' read -r name _; do envs+=(-e "$name"); done < <(env | grep '^OMNI_BENCH_' | grep -v '^OMNI_BENCH_IMAGE=')
     docker run --rm --user "$(id -u):$(id -g)" --tmpfs /work \
       -v "$tmpcreds:/creds.toml:ro" -e OMNI_AGENT_CREDENTIALS=/creds.toml \
-      -e OMNI_AGENT_DATA=/work ${OMNI_BENCH_MOUNTS:-} "${envs[@]}" \
+      -e OMNI_AGENT_DATA=/work ${OMNI_BENCH_MOUNTS:-} ${OMNI_BENCH_DOCKER_ARGS:-} "${envs[@]}" \
       "$OMNI_BENCH_IMAGE" "--bench-$bench"
   else
     OMNI_AGENT_CREDENTIALS="$tmpcreds" \
