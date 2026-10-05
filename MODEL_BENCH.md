@@ -2342,3 +2342,38 @@ statement date does not survive into the tag.
 identifying field can leave a quieter one behind, and the quiet one looks like a harmless
 document id right up until someone reads it as a date. The sibling instrument had solved this
 already; the defect was writing a second one without crossing back to check.
+
+## Part 10 — Belief review (role B) · `--bench-review`
+
+**▶ BUILT 2026-10-05, ⛔ NOT RUN.** Seat B was decided on seat A's retrieval cases (Part 2); its
+own job had never been measured. This runs that job: the configured check-in prompt, once per run,
+against six beliefs seeded by `scripts/seed-bench-hub.py --with-beliefs`, with the production
+retrievers wired the way `Responder` wires them, on the batch client and its sampling.
+
+**The fixture, by verdict.** Five are due (`review_after` 2026-03-10) and one is not (2027-06-01);
+all were recorded 2026-03-01, before every journal entry in the corpus.
+
+| verdict | count | what decides it |
+|---|---|---|
+| retire | 3 | due, and entries written since contradict it (baking, dentist, exercise) |
+| keep | 2 | due; one supported by the 03-14 entry, one that nothing written addresses |
+| leave alone | 1 | contradicted by the 03-18 entry, but not due |
+
+The silent "keep" is the abstention case: no evidence against a belief is not evidence against it.
+The not-due one is the scope case: the prompt asks about what is due, and nothing else.
+
+**What a run is scored on.** Retirements count only if they would reach the inbox
+(`assistant::proposals`). `belief.record` counts every attempt, refused ones included: the prompt
+forbids new conclusions, and the recency gate refusing one does not make the attempt compliant.
+
+**Proposed ranking, ⛔ awaiting his ruling** (`MODEL_THRESHOLDS.md` § Seat B, pre-registration):
+1. wrongful acts, ascending: wrong retirements + out-of-scope retirements + new-conclusion attempts
+   + any other write + supersessions naming a belief that does not exist;
+2. correct retirements, descending (so a model cannot win by doing nothing);
+3. tokens.
+
+Noise floor: 3 runs × 3 retirements. A gap of one wrongful act is not a difference.
+
+**How to run it:** a throwaway hub (`OMNI_INSTANCE=dev`), `seed-bench-hub.py --with-beliefs`, then
+`omni-me-agent --bench-review` with that hub as its server. ⚠️ Run against a hub seeded WITHOUT
+the flag, it scores nothing: no belief is due, and every model ties at zero.

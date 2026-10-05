@@ -26,6 +26,7 @@ mod index_refresh;
 mod reading_bench;
 mod responder;
 mod retrieval_bench;
+mod review_bench;
 mod structuring_bench;
 mod transcription_bench;
 
@@ -258,6 +259,12 @@ struct Args {
     /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
     bench_transcription: bool,
 
+    /// Score role B on its own job: the scheduled belief review, against beliefs
+    /// seeded with `scripts/seed-bench-hub.py --with-beliefs`.
+    ///
+    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    bench_review: bool,
+
     /// Author a question event, then exit — a stand-in for the client.
     ///
     /// Distinct from [`Args::ask`] in the thing that matters: that one calls the
@@ -288,6 +295,7 @@ fn parse_args() -> Result<Args, String> {
         bench_structuring: false,
         bench_reading: false,
         bench_transcription: false,
+        bench_review: false,
         ask_event: None,
         thread: None,
     };
@@ -302,6 +310,7 @@ fn parse_args() -> Result<Args, String> {
             "--bench-structuring" => args.bench_structuring = true,
             "--bench-reading" => args.bench_reading = true,
             "--bench-transcription" => args.bench_transcription = true,
+            "--bench-review" => args.bench_review = true,
             "--constrained" => args.constrained = true,
             "--reindex" => args.reindex = true,
             "--ask" => {
@@ -371,6 +380,17 @@ fn parse_args() -> Result<Args, String> {
     {
         return Err("--bench-transcription is its own run; pick one".to_string());
     }
+    if args.bench_review
+        && (args.bench
+            || args.bench_retrieval
+            || args.bench_extraction
+            || args.bench_structuring
+            || args.bench_reading
+            || args.bench_transcription
+            || args.ask.is_some())
+    {
+        return Err("--bench-review is its own run; pick one".to_string());
+    }
     // With `--bench` this means **bench the constrained arm only**, and it is
     // deliberate rather than a mistake: some endpoints offer `response_format`
     // and no `tools` parameter at all, so the free-form arm cannot be run there
@@ -400,7 +420,8 @@ fn parse_args() -> Result<Args, String> {
             || args.bench_extraction
             || args.bench_structuring
             || args.bench_reading
-            || args.bench_transcription)
+            || args.bench_transcription
+            || args.bench_review)
     {
         return Err("--ask-event is its own run; pick one".to_string());
     }
@@ -588,6 +609,7 @@ struct AssistantLlms {
     /// header. Carried here rather than re-derived, so the header cannot describe a
     /// different resolution from the client beside it.
     interactive_sampling: omni_me_core::llm::Sampling,
+    batch_sampling: omni_me_core::llm::Sampling,
 }
 
 /// Build both assistant clients from `[llm]` and its per-role overrides.
@@ -600,6 +622,7 @@ fn build_assistant_llms() -> Result<AssistantLlms, String> {
     let options = client_options_from_env()?;
 
     let interactive_sampling = bench_sampling(&creds, &options, LlmRole::Interactive);
+    let batch_sampling = bench_sampling(&creds, &options, LlmRole::Batch);
     Ok(AssistantLlms {
         interactive: omni_me_core::llm::build_llm_client(
             &creds,
@@ -612,6 +635,7 @@ fn build_assistant_llms() -> Result<AssistantLlms, String> {
             omni_me_core::credentials::LlmRole::Batch,
         ),
         interactive_sampling,
+        batch_sampling,
     })
 }
 
@@ -985,7 +1009,7 @@ async fn run(args: Args) -> Result<(), String> {
     // rather than starting the schedulers. They pull once first: asking about
     // records this device has not seen would answer "not there" for data that
     // exists, which looks like a retrieval failure and is not one.
-    if args.ask.is_some() || args.bench {
+    if args.ask.is_some() || args.bench || args.bench_review {
         match sync_client.pull_only(&db).await {
             Ok(outcome) => {
                 tracing::info!(pulled = outcome.pulled, "pull before diagnostics");
@@ -1004,8 +1028,7 @@ async fn run(args: Args) -> Result<(), String> {
             Err(e) => tracing::warn!(error = %e, "pull failed; answering from local data only"),
         }
 
-        // Interactive only: this branch answers one question and exits, so the
-        // batch client would be built and never called.
+        // Interactive, except `--bench-review`, which measures the batch seat.
         let llms = build_assistant_llms()?;
         let sampling = llms.interactive_sampling;
         let llm = llms.interactive;
@@ -1038,6 +1061,15 @@ async fn run(args: Args) -> Result<(), String> {
                 llm.as_ref(),
                 question,
                 args.constrained,
+                retrievers,
+            )
+            .await;
+        } else if args.bench_review {
+            review_bench::run(
+                &db,
+                &config,
+                llms.batch.as_ref(),
+                llms.batch_sampling,
                 retrievers,
             )
             .await;

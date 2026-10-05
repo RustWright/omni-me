@@ -174,6 +174,12 @@ wave through: `check_in.rs` raises one question a day about reviewing beliefs, a
 slate cases resembles it. `MODEL_BENCH.md` Part 2 has the detail. The pick above is the best
 available answer, not a measurement of the job.
 
+⏳ **The job's own instrument exists since 2026-10-05 (`--bench-review`, `MODEL_BENCH.md` Part 10)
+and has NOT run.** ⛔ Its keys below are my proposal, not his ruling, and no run happens until he
+rules: 1. wrongful acts ascending (wrong or out-of-scope retirements, new-conclusion attempts,
+other writes, invented belief ids) · 2. correct retirements descending · 3. tokens. Noise floor:
+a one-act gap is not a difference.
+
 Called by the scheduled check-in. Same instrument as A, **no latency gate at all** — it can
 afford to be slow, which is the entire reason it is a separate seat.
 
