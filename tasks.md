@@ -1148,8 +1148,15 @@ then spends, so the phone test runs on the chosen models.
    not chased: gemma-4-31B, gemma-4-26B and Maverick all "invent" `7631` on the same two documents,
    which more likely means the text-layer oracle is missing a printed figure than that three models
    made up the same number.
-   ⏳ Extraction (C1) on the survivors + gemma-4-31B (C1's kept-on-file): `~deploy/omni-bench/runs/
-   20261005-103208-c-extraction`, image `dev-c79f823`.
+   📊 **C1 extraction DONE 2026-10-05** (`~deploy/omni-bench/runs/20261005-103208-c-extraction`, 12
+   cases / 13 documents × 3, 171 labelled rows, 0 errored runs anywhere). Sign-flips 0 for all four.
+   Misreads: V4.1-Flash (seated) 0 · gemma-4-31B 0 · GLM-5.3-Flash 2 · Qwen3-VL-235B 3. Recall 99 /
+   98 / 98 / 100%; median 6.4 / 59.5 / 16.1 / 41.9 s. ⚖️ **Verdict: seated model stays**: V4.1 and
+   gemma-4-31B tie on both deciding keys, which the pre-registration publishes as unmeasured.
+   ✅ **Corpus copy DELETED 2026-10-05 12:10Z** after the last run that read it: 243,208,947 B
+   removed, `~deploy/omni-bench/corpus` gone, no `paisa-ledger` directory left anywhere on the box.
+   ⏳ D (structuring) re-run, direct to DeepInfra since dev holds no gateway key (`bench-c-slate.sh`
+   now takes `structuring`): `~deploy/omni-bench/runs/20261005-121000-d-structuring`, 7 models.
    ⚠️ No photo arm: `~/omni-spike-images` is not on this laptop (searched the whole disk).
 9b. 🔴 DEV APK RULED 2026-10-04: when stage 1's code is done, build the dev APK and INSTALL it on
    the dev phone (galaxy-s9:5555) myself, open it once so the SurrealDB 3.3 conversion and first

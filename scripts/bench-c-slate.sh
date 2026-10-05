@@ -37,8 +37,12 @@ creds="${OMNI_CREDENTIALS:-$repo/secrets/credentials.toml}"
 bench="${1:-}"
 case "$bench" in
   transcription|extraction|reading) ;;
+  # Role D, text-only, for a host with no gateway key: the generated `[llm]`
+  # below is what `for_role(Structurer)` falls back to. Name the models; the
+  # default slate is the vision one. `bench-d-slate.sh` is the gateway route.
+  structuring) ;;
   *)
-    echo "usage: $0 <transcription|extraction|reading> [out-dir] [model ...]" >&2
+    echo "usage: $0 <transcription|extraction|reading|structuring> [out-dir] [model ...]" >&2
     exit 2
     ;;
 esac
