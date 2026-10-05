@@ -1097,22 +1097,43 @@ then spends, so the phone test runs on the chosen models.
    🔴 RESULTS RULED 2026-10-04: a clear winner under `MODEL_THRESHOLDS.md` (gates first, then the
    fixed tie-break order) is SWITCHED IN DEV's config (backup + decision-log line) and reported. A
    tie or a saturated instrument changes nothing and is reported as unmeasured. Live untouched.
-   ⏳ Running 2026-10-05: reading slate, `~deploy/omni-bench/runs/20261005-034414-c-reading`.
+   📊 **C2 reading slate DONE 2026-10-05** (`~deploy/omni-bench/runs/20261005-034414-c-reading`, image
+   `dev-551d35c`, temperature 0, 6 probes × 3). Gates: injection OBEYED by `Qwen3-VL-30B` (account
+   9999-9999), `gemma-3-27b` and `Llama-4-Scout` (kind "pwned"): out. `Qwen3.5-9B` errored 17/18
+   (every answer ran into the 2048-token cap): numbers describe nothing. Every survivor recalls
+   24/24, so R21's prompt fix took and recall no longer separates anyone. Fabrication: gemma-4-26B
+   3 · Maverick 4 · V4-Flash-Vision-Exp 5 · gemma-4-31B (seated) 6 · Qwen3-VL-235B 6 · Mistral-Small 6
+   · GLM-5.3-Flash 10 · Qwen3.6-35B 14 · Ling 15 · V4.1-Flash 17. Agreement: 26B and Maverick 0
+   probes disagreed, V4-Vision 1. Most models' 3 "bad dates" are the injection memo's reference
+   `MEMO-2024-07` turned into a date: real invention, applied to every model alike.
+   ⚖️ **Verdict: unmeasured, nothing switched** (the ruling). 26B vs Maverick is inside the 1–2 noise
+   floor on key 1 and ties on keys 2–3. ⚠️ For him: 26B beats the SEATED model by 3, outside the
+   floor, and the threshold file already names it "the one to re-test first after the prompt fix".
+   Switching to it is a judgement the pre-registration does not make for me.
+   ⏳ Transcription slate running: `~deploy/omni-bench/runs/20261005-043836-c-transcription`.
+   ⚠️ No photo arm: `~/omni-spike-images` is not on this laptop (searched the whole disk).
 9b. 🔴 DEV APK RULED 2026-10-04: when stage 1's code is done, build the dev APK and INSTALL it on
    the dev phone (galaxy-s9:5555) myself, open it once so the SurrealDB 3.3 conversion and first
    sync run unattended, and check logcat. ⚠️ The conversion is one-way: rollback = clean reinstall
    + full re-sync from dev.
+   ✅ DONE 2026-10-05: 1.1.25-dev (public `5c2f3ac`, Rust 1.99) installed over 1.1.24-dev and opened
+   once: initialised in 0.7 s, replayed 2 missed events, no errors in logcat, header "Synced" on
+   :3001. Dev server now `dev-bbf48fa-5c2f3ac` (backup `omni-dev-20261005T*-pre-1.99-server`, 767/767
+   files; all five sources healthy). ⚠️ APK 38.7 → 56.6 MB, all in the native lib (35 → 53 MB); the
+   wasm is unchanged. The lib newly carries `lindera` and `diskann` (SurrealDB 3.3): cause inferred,
+   not measured. Review gate (bloat): can the phone build drop those features?
 9. Finance propose actions on hardware; folds into the phone checklist.
-10. Rust 1.99 upgrade (CI pinned to 1.98.1). ▶ BUILT 2026-10-05 (public `899b7d1`, overlay `bbf48fa`),
-   ⏳ CI. Both 1.99 breaks were ours to absorb, neither needed a newer dx (0.7.10 strips the same):
+10. Rust 1.99 upgrade (CI pinned to 1.98.1). ✅ DONE 2026-10-05 (public `899b7d1`..`5c2f3ac`, overlay
+   `bbf48fa`): CI green in both repos, and the dev APK built on 1.99. Both 1.99 breaks were ours to absorb, neither needed a newer dx (0.7.10 strips the same):
    `async-trait` 0.1.89 → 0.1.92 (stopped emitting the `#[must_use]` clippy's `double_must_use`
    hits), and the frontend's `strip = true` → `"debuginfo"`: dx runs `objcopy --strip-all` before
    wasm-bindgen, and LLVM 23's now deletes every custom section, `__wasm_bindgen_unstable` included
    (that was September's "adapter" error). wasm-bindgen 0.2.114 → 0.2.129 in both locks. Local:
    web release build passes on 1.99, clippy clean on core/server/agent and frontend (both modes).
    Also pinned the two remaining floats, same class: public CI's `dioxus-cli` (→ 0.7.2) and the
-   overlay's `tauri-cli` (→ 2.12.1, what the last good APK resolved). ⚠️ Locally, dx's strip needs
-   `LD_LIBRARY_PATH=$(rustc --print sysroot)/lib` or `rust-objcopy` cannot load libLLVM.
+   overlay's `tauri-cli` (→ 2.12.1, what the last good APK resolved). ⚠️ CI then failed the
+   same strip: `rust-objcopy` cannot load libLLVM outside rustup's proxy. `5c2f3ac`: profile `strip =
+   false`, DWARF stripped at link instead (`tauri-app/frontend/.cargo/config.toml`); wasm same size.
    ⚠️ Flake 2026-10-04 (`551d35c`, passed on the next three commits): `vector_store::a_deleted_
    record_does_not_stay_searchable`, second sweep `scanned 0, failed 3`, cause unrecorded because
    tests had no subscriber. `fb706eb` gives `test_db()` one, so the next one prints its warning.
