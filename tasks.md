@@ -1041,8 +1041,9 @@ then spends, so the phone test runs on the chosen models.
    it reads the server's own disk, and the corpus is on this laptop. Instead `scripts/archive-
    upload.py` POSTs each file as `source=bulk`, gated on `--instance` matching `/health`; a bulk
    upload of bytes already archived files nothing (so a re-run is safe). Dry run: 1,041 documents
-   (765 PDF + 276 CSV). ⏳ A 20-file dev trial after the next dev image; the full run is the
-   go-live corpus import. ⚠️ `archive::ingest_paths`/`walk_dir` are now dead code: review gate.
+   (765 PDF + 276 CSV). ✅ 20-file dev trial 2026-10-05 (backup `omni-dev-20261005T035833-pre-bulk-
+   trial.tar.gz`, 745/745 files): 20 archived, all text `extracted`; the same 20 again: 20 already
+   archived, 0 new; 745 → 765 blobs on disk; no server errors. The full run is the go-live import. ⚠️ `archive::ingest_paths`/`walk_dir` are now dead code: review gate.
 5b. 🔴 **SurrealDB 3.0.4 → 3.3.0, RULED 2026-10-04 (his pick), both repos in lockstep.** Found when CI
    failed `budget_projection::tests::list_transactions_filter_by_tag_membership` (`d137abf`) with
    `Session not found`: a race in 3.0.4's embedded router (upstream #7220, open). It registers a

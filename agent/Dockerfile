@@ -16,10 +16,10 @@
 # sidecar.
 
 # ---- builder ----
-# Pinned, never the rolling `rust:1`: CI is on 1.98.1 and 1.99 breaks the build.
+# Pinned, never the rolling `rust:1`, and moved in step with CI's toolchain pin.
 # Trixie, not bookworm: the prebuilt onnxruntime `ort` links needs glibc 2.38+ and
 # a GCC 13+ libstdc++ (`__isoc23_strtoll`), and bookworm's fail at link time.
-FROM rust:1.98.1-trixie AS builder
+FROM rust:1.99.0-trixie AS builder
 
 # No apt build deps, same as server/Dockerfile: the workspace is rustls
 # throughout and surrealdb is kv-surrealkv. `ort` ships a prebuilt onnxruntime

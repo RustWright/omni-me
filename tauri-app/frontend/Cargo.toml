@@ -56,7 +56,9 @@ futures = "0.3"
 [profile.release]
 opt-level = "s"
 lto = true
-strip = true
+# Not `true`: dx then runs `objcopy --strip-all` before wasm-bindgen, and from
+# LLVM 23 (Rust 1.99) that deletes the custom section wasm-bindgen reads.
+strip = "debuginfo"
 panic = "abort"
 codegen-units = 1
 
