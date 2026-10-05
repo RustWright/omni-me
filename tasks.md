@@ -1088,9 +1088,14 @@ then spends, so the phone test runs on the chosen models.
    1,134 MB) while inserts continued: shape-bound retention (ONNX Runtime's CPU arena, or glibc
    malloc fragmentation across ORT's threads), not per-vector growth. Not yet separated; the
    memory map cannot, since the kernel merges adjacent anonymous maps (one 1 GB region).
-   Next, in order: let this trial reach its end to see where the final spike lands; then a short
-   A/B on the same volume with `MALLOC_ARENA_MAX=2` (no rebuild); then ORT's arena off
-   (`ep::CPU::with_arena_allocator(false)` through fastembed's execution providers).
+   📊 Later the same trial: notes 1.14 → 1.42 GB, documents 1.42 → 1.82 GB, in STEPS of 80–170 MB
+   within 5 s (08:06, 08:11 ×3), the size of one batch's attention tensors at 512 tokens
+   (16 × 12 heads × 512² × 4 B ≈ 200 MB). Ruled out from source, not guessed: SurrealKV's block cache
+   (sized from the cgroup: 16 MiB floor at 2 GB), the memtable (128 MiB) and the HNSW cache (256 MiB
+   cap) cannot sum to it; and the embedded engine reads NO `SURREAL_*` env (empty ConfigMap), so an
+   env A/B would have tested nothing. ⚠️ Leading hypothesis, still unproven: ONNX Runtime's CPU
+   arena keeping every block across varying shapes. `c79f823` turns it off for embed and rerank
+   (`ep::CPU::with_arena_allocator(false)`). ⏳ A/B: same trial, same volume, new image.
    ⚠️ Live's server shares this box: keep dev's agent restarted while a trial runs (07:04 headroom
    was 477 MB before that, 1.47 GB after).
    Also fixed on the way (`fa901ff`): 3 records the sweep scanned and counted nowhere (hidden rows,
