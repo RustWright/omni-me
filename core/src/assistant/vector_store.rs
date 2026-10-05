@@ -203,7 +203,7 @@ async fn sweep_one(
         // A full sweep runs for hours on a small host; without this its memory
         // cannot be tied to the type or position it was at.
         let done = report.scanned - scanned_before;
-        if done % 500 == 0 {
+        if done.is_multiple_of(500) {
             tracing::info!(
                 record_type = entry.name,
                 done,

@@ -4395,6 +4395,7 @@ dependencies = [
  "ledger-parser",
  "ledger-utils",
  "mail-parser",
+ "ort",
  "pdf-writer",
  "rand 0.8.8",
  "regex",

@@ -41,7 +41,8 @@ impl Reranker {
         let model = parse_model(model_name)?;
         let options = RerankInitOptions::new(model)
             .with_cache_dir(cache_dir)
-            .with_show_download_progress(false);
+            .with_show_download_progress(false)
+            .with_execution_providers(vec![crate::assistant::embedding::cpu_without_arena()]);
         let loaded = TextRerank::try_new(options).map_err(|e| RerankError::Load(e.to_string()))?;
         Ok(Self {
             model: Arc::new(Mutex::new(loaded)),
