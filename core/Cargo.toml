@@ -106,5 +106,6 @@ fastembed = { version = "6", default-features = false, features = [
 
 
 [dev-dependencies]
+tracing-subscriber = "0.3"
 wiremock = "0.6"
 tokio = { workspace = true, features = ["test-util"] }

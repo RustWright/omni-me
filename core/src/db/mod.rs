@@ -112,6 +112,13 @@ pub(crate) async fn test_db() -> Database {
     static SHARED: tokio::sync::OnceCell<Database> = tokio::sync::OnceCell::const_new();
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
+    // Code under test reports swallowed errors as warnings; without a subscriber
+    // a failing test shows only a count of them, never what they said.
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_max_level(tracing::Level::WARN)
+        .try_init();
+
     let shared = SHARED
         .get_or_init(|| async {
             RUNTIME
