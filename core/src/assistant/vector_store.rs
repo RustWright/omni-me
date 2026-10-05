@@ -175,6 +175,18 @@ async fn sweep_one(
     );
     let mut resp = db.query(&sql).await.map_err(DbError::from)?;
     let rows: Vec<SourceRow> = resp.take(0).map_err(DbError::from)?;
+    let text_bytes: usize = rows
+        .iter()
+        .filter_map(|r| r.text.as_ref())
+        .map(String::len)
+        .sum();
+    tracing::info!(
+        record_type = entry.name,
+        rows = rows.len(),
+        text_bytes,
+        "sweeping"
+    );
+    let scanned_before = report.scanned;
 
     // ⚠️ Collected because the scan above is the only thing that knows which
     // records still exist, and the prune below needs exactly that set. Safe only
@@ -188,6 +200,17 @@ async fn sweep_one(
         live.insert(record_id.clone());
         let text = row.text.unwrap_or_default();
         report.scanned += 1;
+        // A full sweep runs for hours on a small host; without this its memory
+        // cannot be tied to the type or position it was at.
+        let done = report.scanned - scanned_before;
+        if done % 500 == 0 {
+            tracing::info!(
+                record_type = entry.name,
+                done,
+                embedded = report.embedded,
+                "sweep progress"
+            );
+        }
 
         // ⛔ Before `is_current`, not after. A hidden row that was indexed while
         // visible still has its original text, so its hash still matches and

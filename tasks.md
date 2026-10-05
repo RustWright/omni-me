@@ -1074,8 +1074,13 @@ then spends, so the phone test runs on the chosen models.
    none`): plateau ~1.4 GB, then **OOM-killed at ~85 min with no sample over 1,485 MiB**: a spike
    inside 30 s, not growth. ⚠️ Cause INFERRED, not observed: fastembed's default batch is 256, and
    one record's chunks went through in one call (the largest record is a 74 KB note, ~70 chunks).
-   Fixed in `551d35c` (embed and rerank in batches of 16). ⏳ Re-trial running, peak read from the
-   cgroup's `memory.peak` this time, since sampling missed the spike.
+   `551d35c` (embed and rerank in batches of 16). 🔴 **Re-trial FAILED 2026-10-05: OOM-killed again**
+   (exit 137) at 2 h 23 min, vs 85 min before. Peak held at exactly 1,366,695,936 B from ~04:00 to at
+   least 05:37 (current 1.12–1.33 GB under it), last 20 s sample 1,505 MB, then killed at the 2 GB cap.
+   So batching was NOT the cause, or not all of it: my inference was wrong. The sweep logs nothing per
+   record, so what was in flight is unknown. ⛔ Not guessing a second cause: next is per-type progress
+   logging in the sweep, then the same trial with 5 s sampling beside the record in hand.
+   🔴 Why it is a go-live matter, not polish: the agent's FIRST start on live is exactly this sweep.
    Also fixed on the way (`fa901ff`): 3 records the sweep scanned and counted nowhere (hidden rows,
    empty text). The report now has `hidden`/`empty`, and a test pins scanned = sum of the parts.
 7. ⛔ DROPPED 2026-10-04 (his ruling): cross-currency reimbursements (G10). Matched by hand for now;
