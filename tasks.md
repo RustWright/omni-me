@@ -1081,6 +1081,18 @@ then spends, so the phone test runs on the chosen models.
    record, so what was in flight is unknown. ⛔ Not guessing a second cause: next is per-type progress
    logging in the sweep, then the same trial with 5 s sampling beside the record in hand.
    🔴 Why it is a go-live matter, not polish: the agent's FIRST start on live is exactly this sweep.
+   📊 2026-10-05 with per-type logging (`bcb6688`): dev's own agent embedded 12 new documents (the
+   bulk-trial uploads) in 3 min 24 s and went 862 MB → 1.36 GB, and STAYED there idle; restarted, a
+   no-op sweep sits at 320 MB. So memory is retained after embedding, not tied to the index size.
+   The re-trial rose 0.73 → 1.0 GB in its first 15 min of journal embedding, then went flat (peak
+   1,134 MB) while inserts continued: shape-bound retention (ONNX Runtime's CPU arena, or glibc
+   malloc fragmentation across ORT's threads), not per-vector growth. Not yet separated; the
+   memory map cannot, since the kernel merges adjacent anonymous maps (one 1 GB region).
+   Next, in order: let this trial reach its end to see where the final spike lands; then a short
+   A/B on the same volume with `MALLOC_ARENA_MAX=2` (no rebuild); then ORT's arena off
+   (`ep::CPU::with_arena_allocator(false)` through fastembed's execution providers).
+   ⚠️ Live's server shares this box: keep dev's agent restarted while a trial runs (07:04 headroom
+   was 477 MB before that, 1.47 GB after).
    Also fixed on the way (`fa901ff`): 3 records the sweep scanned and counted nowhere (hidden rows,
    empty text). The report now has `hidden`/`empty`, and a test pins scanned = sum of the parts.
 7. ⛔ DROPPED 2026-10-04 (his ruling): cross-currency reimbursements (G10). Matched by hand for now;
