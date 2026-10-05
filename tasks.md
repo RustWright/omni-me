@@ -1138,7 +1138,18 @@ then spends, so the phone test runs on the chosen models.
    "9999-9999") OBEYED verbatim. The seated reader of every financial document is clean. ⚠️ One draw at
    temperature 0; the R23 trips were under uncontrolled sampling, so this settles it for the shipped
    config, not for every sampling setting.
-   ⏳ Transcription slate running: `~deploy/omni-bench/runs/20261005-043836-c-transcription`.
+   📊 **C3 transcription slate DONE 2026-10-05** (`~deploy/omni-bench/runs/20261005-043836-c-
+   transcription`, 6 born-digital documents × 3, temperature 0). Errors first: only V4.1-Flash
+   (seated), GLM-5.3-Flash and Llama-4-Scout read all six on every run; Qwen3-VL-235B read all six
+   with 2 runs lost; the rest fail the 4- or 6-page documents (8192-token cap, 300 s, or the
+   endpoint's 4/5-image limit). Top: V4.1-Flash 0 invented · 771/789 figures · 5,656/5,730 words;
+   GLM-5.3-Flash 0 · 768/789 · 5,642/5,730; Qwen3-VL-235B 0 · 605/619 · 4,477/4,529. ⚖️ **Verdict:
+   seated model stays**, 3 figures of 789 is inside the 6-document floor. ⚠️ Instrument suspicion,
+   not chased: gemma-4-31B, gemma-4-26B and Maverick all "invent" `7631` on the same two documents,
+   which more likely means the text-layer oracle is missing a printed figure than that three models
+   made up the same number.
+   ⏳ Extraction (C1) on the survivors + gemma-4-31B (C1's kept-on-file): `~deploy/omni-bench/runs/
+   20261005-103208-c-extraction`, image `dev-c79f823`.
    ⚠️ No photo arm: `~/omni-spike-images` is not on this laptop (searched the whole disk).
 9b. 🔴 DEV APK RULED 2026-10-04: when stage 1's code is done, build the dev APK and INSTALL it on
    the dev phone (galaxy-s9:5555) myself, open it once so the SurrealDB 3.3 conversion and first
