@@ -99,6 +99,25 @@ umask 077
 tmpcreds="$(mktemp)"
 trap 'rm -f "$tmpcreds"' EXIT
 
+# `OMNI_BENCH_IMAGE` runs the published agent image instead of a local build, for
+# a machine that cannot compile (the box). It runs as the calling user so the
+# 0600 credentials stay unreadable to anyone else, and forwards every
+# OMNI_BENCH_* setting; a path-valued one must be a path inside the container.
+run_bench() {
+  if [ -n "${OMNI_BENCH_IMAGE:-}" ]; then
+    local envs=()
+    while IFS='=' read -r name _; do envs+=(-e "$name"); done < <(env | grep '^OMNI_BENCH_' | grep -v '^OMNI_BENCH_IMAGE=')
+    docker run --rm --user "$(id -u):$(id -g)" --tmpfs /work \
+      -v "$tmpcreds:/creds.toml:ro" -e OMNI_AGENT_CREDENTIALS=/creds.toml \
+      -e OMNI_AGENT_DATA=/work ${OMNI_BENCH_MOUNTS:-} "${envs[@]}" \
+      "$OMNI_BENCH_IMAGE" "--bench-$bench"
+  else
+    OMNI_AGENT_CREDENTIALS="$tmpcreds" \
+    OMNI_AGENT_DATA="${OMNI_AGENT_DATA:-${TMPDIR:-/tmp}/omni-agent-c-bench}" \
+      cargo run -p omni-me-agent -- "--bench-$bench"
+  fi
+}
+
 missing=()
 for model in "${SLATE[@]}"; do
   tag="$(echo "$model" | tr '/' '-')"
@@ -119,9 +138,7 @@ TOML
   # One failure must not end the slate. An endpoint can be rate-limited or
   # withdrawn upstream through no fault of ours, and losing the other thirteen
   # scorecards to it is how a sweep gets run twice.
-  if OMNI_AGENT_CREDENTIALS="$tmpcreds" \
-     OMNI_AGENT_DATA="${OMNI_AGENT_DATA:-${TMPDIR:-/tmp}/omni-agent-c-bench}" \
-     cargo run -p omni-me-agent -- "--bench-$bench" > "$log" 2>&1; then
+  if run_bench > "$log" 2>&1; then
     tail -n 12 "$log" >&2
   else
     echo "  FAILED — see $log" >&2
