@@ -1089,6 +1089,18 @@ then spends, so the phone test runs on the chosen models.
    and dev's model keys. Only the sampled documents are copied, into a root-only folder, deleted
    after. Why not here: this laptop has no Docker, no keys, and cannot build. Past runs cost cents
    to ~$3 each.
+   🔴 CORPUS RULED 2026-10-04: the extraction and transcription benches pick their own sample from
+   the whole paisa folder, so the WHOLE folder (239 MB) is copied to `~deploy/omni-bench/corpus`
+   (0700, deploy-owned) and ⛔ DELETED after the runs, deletion confirmed. Reading needs none: its
+   probes are synthetic (R24). `scripts/bench-c-slate.sh` gained `OMNI_BENCH_IMAGE` (`f958ad4`).
+   🔴 RESULTS RULED 2026-10-04: a clear winner under `MODEL_THRESHOLDS.md` (gates first, then the
+   fixed tie-break order) is SWITCHED IN DEV's config (backup + decision-log line) and reported. A
+   tie or a saturated instrument changes nothing and is reported as unmeasured. Live untouched.
+   ⏳ Running 2026-10-05: reading slate, `~deploy/omni-bench/runs/20261005-034414-c-reading`.
+9b. 🔴 DEV APK RULED 2026-10-04: when stage 1's code is done, build the dev APK and INSTALL it on
+   the dev phone (galaxy-s9:5555) myself, open it once so the SurrealDB 3.3 conversion and first
+   sync run unattended, and check logcat. ⚠️ The conversion is one-way: rollback = clean reinstall
+   + full re-sync from dev.
 9. Finance propose actions on hardware; folds into the phone checklist.
 10. Rust 1.99 upgrade (CI pinned to 1.98.1).
 Moved to the go-live sequence, not stage 1: gate 1 (live backup), the official import, the agent on
