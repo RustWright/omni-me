@@ -1177,7 +1177,10 @@ then spends, so the phone test runs on the chosen models.
    fabrications + 1 error on 2026-09-16 (gateway), so a one-fabrication margin is the size of its
    own run-to-run swing. Per the item 8 ruling the dev switch goes ahead, but the edit is to the dev
    credentials file, which the classifier blocks me from: a temp script for him is ready
-   (`switch-dev-structurer.sh`, backs up, touches only `[llm.structurer] model`, restarts dev).
+   (`switch-dev-seats-b-d.sh`, session scratchpad: backs up, touches only the `model` line of
+   `[llm.batch]` and `[llm.structurer]`, adding a section if absent, refuses to write unparseable
+   TOML, restarts dev). It supersedes `switch-dev-structurer.sh`, whose Python would not have
+   parsed (backslash-escaped quotes inside an f-string). Dry-tested on dummy files, both shapes.
    ⏳ Switch pending his run. Live untouched.
    ⚠️ No photo arm: `~/omni-spike-images` is not on this laptop (searched the whole disk).
 9b. 🔴 DEV APK RULED 2026-10-04: when stage 1's code is done, build the dev APK and INSTALL it on
@@ -1205,7 +1208,7 @@ then spends, so the phone test runs on the chosen models.
    ⚠️ Flake 2026-10-04 (`551d35c`, passed on the next three commits): `vector_store::a_deleted_
    record_does_not_stay_searchable`, second sweep `scanned 0, failed 3`, cause unrecorded because
    tests had no subscriber. `fb706eb` gives `test_db()` one, so the next one prints its warning.
-**Stage 2, his phone checklist (DRAFT 2026-10-05; finalised when the APK is installed).** Each line
+**Stage 2, his phone checklist (FINAL 2026-10-06, handed to him; APK 1.1.25-dev installed).** Each line
 says what to do and what "right" looks like:
 1. Open the app once and let it sync. Right: no error, journal/notes/finances look as before (it
    converted its local database to SurrealDB 3.3 on first open; this is the one-way step).
@@ -1221,7 +1224,8 @@ says what to do and what "right" looks like:
    opens from Archive › Add document (G9).
 7. Watch for: the app jumping to Entry 2026-09-24 on its own after the update (undiagnosed).
 8. Optional: Settings › turn the daily check-in on. Right: next morning its answer reviews due
-   beliefs, and any that no longer hold arrive in the inbox as "retire" proposals.
+   beliefs, and any that no longer hold arrive in the inbox as "retire" proposals. (Runs on seat
+   B's model, so Qwen3.6-35B-A3B once `switch-dev-seats-b-d.sh` has run, V4-Pro before.)
 Anything annoying beyond these is fair game; say whether it's worth fixing before release.
 
 Moved to the go-live sequence, not stage 1: gate 1 (live backup), the official import, the agent on
@@ -2842,7 +2846,12 @@ this down — not the volume of work, but scope arriving from decisions made lat
       belief that no longer holds** (`72fafe6`; prompt
       in `config.rs` + the mock in `bridge.rs`; `docs/src/assistant.md`). Beat: tell-only, which
       would have left the bench scoring prose by word-matching. Dev never saved a prompt, so the
-      default reaches it; dev's check-in itself is OFF (default, never enabled). Original entry:
+      default reaches it; dev's check-in itself is OFF (default, never enabled).
+      📊 **SLATE RUN 2026-10-06** (`runs/20261006-040414-b-review/`, 7 × 3): **Qwen3.6-35B-A3B
+      0 wrongful · 9/9** beats V4-Pro (seated) 3 · 9/9 by three acts, outside the noise floor; every
+      wrongful act on the board was retiring the not-due belief. Rows: `MODEL_BENCH.md` Part 10.
+      Item 8 ruling: dev switch, in `switch-dev-seats-b-d.sh` with seat D (⏳ his run). Throwaway
+      hub, its volume and network removed and confirmed absent. Original entry:
 - [ ] 🔴 **Give seat B a case family of its own — it has never been benched on its work**
       (`MODEL_BENCH.md` Part 2; user, 2026-09-16). `client_for` routes to the batch client only
       when `question.scheduled`, and the sole producer is `check_in.rs`: **one question a day**,

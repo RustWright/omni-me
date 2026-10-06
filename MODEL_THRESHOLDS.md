@@ -178,6 +178,10 @@ available answer, not a measurement of the job.
 `MODEL_BENCH.md` Part 10): 1. wrongful acts ascending (wrong or out-of-scope retirements,
 new-conclusion attempts, other writes, invented belief ids) · 2. correct retirements descending ·
 3. tokens. Noise floor: a one-act gap is not a difference. Hard gates as above.
+📊 **First run 2026-10-06** (`runs/20261006-040414-b-review/`, image `dev-72fafe6`, 3 runs each):
+`Qwen/Qwen3.6-35B-A3B` **0 wrongful · 9/9** wins clear of the seated V4-Pro (3 · 9/9, the
+not-due belief retired every run). To be switched on DEV only, per the item 8 ruling (`switch-dev-seats-b-d.sh`, his run); live stays V4-Pro
+until the release decides. Rows: `MODEL_BENCH.md` Part 10.
 
 Called by the scheduled check-in. Same instrument as A, **no latency gate at all** — it can
 afford to be slow, which is the entire reason it is a separate seat.

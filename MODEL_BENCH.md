@@ -2345,7 +2345,7 @@ already; the defect was writing a second one without crossing back to check.
 
 ## Part 10 — Belief review (role B) · `--bench-review`
 
-**▶ BUILT 2026-10-05, ⛔ NOT RUN.** Seat B was decided on seat A's retrieval cases (Part 2); its
+**▶ BUILT 2026-10-05, first run 2026-10-06 (results at the end of this part).** Seat B was decided on seat A's retrieval cases (Part 2); its
 own job had never been measured. This runs that job: the configured check-in prompt, once per run,
 against six beliefs seeded by `scripts/seed-bench-hub.py --with-beliefs`, with the production
 retrievers wired the way `Responder` wires them, on the batch client and its sampling.
@@ -2366,7 +2366,7 @@ The not-due one is the scope case: the prompt asks about what is due, and nothin
 (`assistant::proposals`). `belief.record` counts every attempt, refused ones included: the prompt
 forbids new conclusions, and the recency gate refusing one does not make the attempt compliant.
 
-**Proposed ranking, ⛔ awaiting his ruling** (`MODEL_THRESHOLDS.md` § Seat B, pre-registration):
+**Ranking, RULED by him 2026-10-05 before any run** (`MODEL_THRESHOLDS.md` § Seat B):
 1. wrongful acts, ascending: wrong retirements + out-of-scope retirements + new-conclusion attempts
    + any other write + supersessions naming a belief that does not exist;
 2. correct retirements, descending (so a model cannot win by doing nothing);
@@ -2377,3 +2377,22 @@ Noise floor: 3 runs × 3 retirements. A gap of one wrongful act is not a differe
 **How to run it:** a throwaway hub (`OMNI_INSTANCE=dev`), `seed-bench-hub.py --with-beliefs`, then
 `omni-me-agent --bench-review` with that hub as its server. ⚠️ Run against a hub seeded WITHOUT
 the flag, it scores nothing: no belief is due, and every model ties at zero.
+
+**Run 2026-10-06** (`runs/20261006-040414-b-review/`, image `dev-72fafe6`, 3 runs each, the
+check-in prompt from `72fafe6`, direct to DeepInfra):
+
+| model | wrongful | correct retirements | tokens (prompt / completion) |
+|---|---|---|---|
+| **Qwen/Qwen3.6-35B-A3B** | **0** | **9/9** | 110,420 / 12,055 |
+| zai-org/GLM-5.3 | 0 | 6/9 | 67,723 / 13,609 (9,908 reasoning) |
+| deepseek-ai/DeepSeek-V4-Pro (seated) | 3 | 9/9 | 104,623 / 7,624 |
+| Qwen/Qwen3.5-397B-A17B | 3 | 9/9 | 106,690 / 11,830 |
+| deepseek-ai/DeepSeek-V4-Flash | 1 | 3/9 | ⚠️ 1 run rate-limited, invalid |
+| openai/gpt-oss-120b | 0 | 0/9 | 54,002 / 4,075 |
+| openai/gpt-oss-120b-Turbo | 0 | 0/9 | 48,239 / 4,988 |
+
+Every wrongful act on the board is the same one: retiring the not-due belief, i.e. scope. No model
+attempted a new conclusion or a wrong retirement. The gpt-oss pair reviewed in prose and proposed
+nothing, which is the abstain-by-silence shape key 2 exists to catch. V4-Flash cannot win on a
+re-run: its valid run already carries a wrongful act. **Verdict: Qwen3.6-35B-A3B, clear of the
+noise floor by three acts; to be switched on dev only.**
