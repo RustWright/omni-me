@@ -1209,6 +1209,8 @@ says what to do and what "right" looks like:
    never hides the field you're typing in (G2), assistant chats open/archive/delete (G3), camera
    opens from Archive › Add document (G9).
 7. Watch for: the app jumping to Entry 2026-09-24 on its own after the update (undiagnosed).
+8. Optional: Settings › turn the daily check-in on. Right: next morning its answer reviews due
+   beliefs, and any that no longer hold arrive in the inbox as "retire" proposals.
 Anything annoying beyond these is fair game; say whether it's worth fixing before release.
 
 Moved to the go-live sequence, not stage 1: gate 1 (live backup), the official import, the agent on
@@ -2820,9 +2822,16 @@ this down — not the volume of work, but scope arriving from decisions made lat
       needs its name added. A direct or local endpoint is deliberately not held to it. ⚠️ Expect the next C slate to fail loudly
       where a pinned tag lacks `structured_outputs` — that is `require_parameters` working for
       the first time on this path, not a regression.
-- [ ] ▶ **BUILT 2026-10-05, not run: `--bench-review`** (`agent/src/review_bench.rs`, seed
-      `--with-beliefs`, `MODEL_BENCH.md` Part 10). ⛔ The run waits on his ruling on the proposed
-      keys in `MODEL_THRESHOLDS.md` § Seat B. Original entry:
+- [ ] ▶ **BUILT 2026-10-05: `--bench-review`** (`agent/src/review_bench.rs`, seed `--with-beliefs`,
+      `MODEL_BENCH.md` Part 10). ✅ Keys RULED by him 2026-10-05 (`MODEL_THRESHOLDS.md` § Seat B).
+      📊 Smoke on the seated V4-Pro: 0/3 retired, 0 wrongful, yet its prose review was right on all
+      six (overturned baking + dentist, "weakened" exercise, kept sleep, no evidence on extra work,
+      left the not-due one alone). The instrument scored proposals; the prompt only asked to TELL.
+      🔴 **DECIDED 2026-10-05 (his pick, my recommendation): the check-in PROPOSES retiring each
+      belief that no longer holds** (`72fafe6`; prompt
+      in `config.rs` + the mock in `bridge.rs`; `docs/src/assistant.md`). Beat: tell-only, which
+      would have left the bench scoring prose by word-matching. Dev never saved a prompt, so the
+      default reaches it; dev's check-in itself is OFF (default, never enabled). Original entry:
 - [ ] 🔴 **Give seat B a case family of its own — it has never been benched on its work**
       (`MODEL_BENCH.md` Part 2; user, 2026-09-16). `client_for` routes to the batch client only
       when `question.scheduled`, and the sole producer is `check_in.rs`: **one question a day**,
