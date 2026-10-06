@@ -1773,8 +1773,8 @@ pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
         use crate::types::{ConfigGroup, ConfigLayer};
         const CHECK_IN_PROMPT: &str = "Review anything you concluded about me that is now due \
             for re-examination, and tell me what still holds and what does not. Judge each \
-            against what I have written since you concluded it, most recent first. Do not \
-            draw new conclusions.";
+            against what I have written since you concluded it, most recent first. For each \
+            one that no longer holds, propose retiring it. Do not draw new conclusions.";
         // Every key at its built-in default — the state a fresh install is in,
         // which is also the state the headless UI checks should render.
         // `on` is a parameter rather than a constant so a browser session can

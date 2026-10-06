@@ -310,6 +310,11 @@ conversation list like anything else, marked as asked on your behalf. An answer 
 something you never asked, rendered identically to one you did, is the difference
 between a check-in and the assistant appearing to have opinions from nowhere.
 
+**The default check-in reviews the beliefs now due, and acts on what it finds.** It
+tells you which still hold, and for each one that no longer does it also proposes
+retiring it, so the retirement waits in your inbox instead of waiting for you to
+ask again. Nothing is retired until you approve, and it draws no new conclusions.
+
 **It checks in once a day, by the calendar rather than by a countdown.** Restart
 the agent four times in an afternoon and it does not check in four times. Leave it
 off through the scheduled hour and it still checks in when it comes back, rather

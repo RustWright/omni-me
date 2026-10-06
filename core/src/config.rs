@@ -295,7 +295,8 @@ impl ConfigKey {
                 "Review anything you concluded about me that is now due for \
                  re-examination, and tell me what still holds and what does not. \
                  Judge each against what I have written since you concluded it, \
-                 most recent first. Do not draw new conclusions."
+                 most recent first. For each one that no longer holds, propose \
+                 retiring it. Do not draw new conclusions."
                     .to_string(),
             ),
             // 07:00 in the agent's local time. Early enough to be waiting when the
