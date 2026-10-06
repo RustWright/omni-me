@@ -1095,7 +1095,18 @@ then spends, so the phone test runs on the chosen models.
    cap) cannot sum to it; and the embedded engine reads NO `SURREAL_*` env (empty ConfigMap), so an
    env A/B would have tested nothing. ⚠️ Leading hypothesis, still unproven: ONNX Runtime's CPU
    arena keeping every block across varying shapes. `c79f823` turns it off for embed and rerank
-   (`ep::CPU::with_arena_allocator(false)`). ⏳ A/B: same trial, same volume, new image.
+   (`ep::CPU::with_arena_allocator(false)`).
+   ✅ **CONFIRMED 2026-10-05 by A/B, same volume, same 2 GB / 0.75 CPU / no network:**
+   | | A `bcb6688` (batch 16, arena on) | B `c79f823` (arena off) |
+   |---|---|---|
+   | full reindex | completed, 2 h 49 min | completed, 3 h 16 min (~16% slower) |
+   | peak anon | ~1.9 GB, retained (cap 2 GB) | 1.35 GB, transient |
+   | idle after | 1.89 GB anon | 0.93–0.98 GB anon |
+   In B the same 70–170 MB batch steps appear and are given back; in A they ratcheted. Samplers and
+   logs: `~deploy/omni-bench/runs/agenttrial-{A-batch16-bcb6688,B-arenaoff-c79f823}.{tsv,log}`.
+   Trial container and `omni-dev_agenttrial` volume removed. Dev's agent now `dev-72fafe6` (arena
+   off + logging + check-in prompt), 326 MB after a no-op sweep. ⚠️ For live's first start: the
+   full sweep fits, at ~3 h on 0.75 CPU, with headroom.
    ⚠️ Live's server shares this box: keep dev's agent restarted while a trial runs (07:04 headroom
    was 477 MB before that, 1.47 GB after).
    Also fixed on the way (`fa901ff`): 3 records the sweep scanned and counted nowhere (hidden rows,
