@@ -1309,6 +1309,15 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   assistant. Supersedes the "counter → destination → action inventory" proposal. Clear bugs it
   finds: fix. ⛔ Design changes: list for his ruling, do not apply. Beat: defer past release;
   counter-only inventory.
+  ✅ BUILT `308b307`: `interaction-map/README.md` (screens, a counters table with "does the
+  destination deliver", five walkthroughs on the four cognitive-walkthrough questions with tap
+  counts, findings) + `inventory.md` (467 handlers) from `scripts/interaction-inventory.py`.
+  Found and FIXED (`c804523`): "Unmatched to reconcile" showed the clearing BALANCE (-1.50 CAD
+  over ~380 rows on dev) and the dashboard card said "everything reconciles" whenever rows
+  netted to zero; both now use a row count (`queries::count_unmatched_transactions`).
+  ⏳ For his ruling, not applied: D1 "next unchecked" in document detail · D2 bulk commit in
+  the batch list · D3 reconcile rows on the Finances menu badge · D4 the WS driver's scheduled
+  orders. ⚠️ Walked in code and the mock at 360 px, not on the S9: round 2 is that check.
 - R1-8 🔴 **RULED 2026-10-07: full dev deploy authorised for this stretch** (server + agent images
   to dev, APK built and installed on galaxy-s9:5555, opened once, logcat checked). ⛔ Live untouched.
 
