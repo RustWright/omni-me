@@ -160,8 +160,10 @@ async fn count_documents_with_unverified_fields(db: &Database) -> Result<usize, 
             // fields, so without this the nav badge would keep counting documents
             // the user can no longer open to correct, and the count would never
             // reach zero.
+            // `?? []` too: filtering an absent `fields` gives NONE, and NONE != [],
+            // so every never-extracted document was counted as waiting.
             "SELECT count() AS c FROM documents
-             WHERE fields[WHERE verified = false] != [] AND purged != true GROUP ALL",
+             WHERE (fields[WHERE verified = false] ?? []) != [] AND purged != true GROUP ALL",
         )
         .await?;
     let counts: Vec<i64> = resp.take("c").unwrap_or_default();
@@ -242,6 +244,11 @@ mod tests {
         seed_unverified_document(&db, "01JKDOCAPPROVAL000000001", false).await;
         seed_unverified_document(&db, "01JKDOCAPPROVAL000000002", false).await;
         seed_unverified_document(&db, "01JKDOCAPPROVAL000000003", true).await;
+        // Archived, never extracted: no `fields` at all, so nothing to verify.
+        db.query("UPSERT type::record('documents', $id) SET document_id = $id")
+            .bind(("id", "01JKDOCAPPROVAL000000005"))
+            .await
+            .unwrap();
 
         let summary = summary(&db, &enabled).await.unwrap();
 
