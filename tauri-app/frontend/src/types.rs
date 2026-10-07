@@ -1055,6 +1055,7 @@ pub struct DashboardSummaryView {
     pub base_currency: String,
     pub net_worth_in_base: Option<String>,
     pub unmatched_balance: Option<String>,
+    pub unmatched_count: u64,
     pub monthly_buckets: Vec<MonthlyTrendBucketView>,
     pub recurring: Vec<RecurringObligationView>,
 }
