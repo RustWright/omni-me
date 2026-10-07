@@ -1173,6 +1173,9 @@ pub struct ReconciliationTxnPreview {
     pub unmatched_amount: String,
     pub unmatched_commodity: String,
     pub statement_source: Option<String>,
+    pub origin: String,
+    pub accounts: Vec<String>,
+    pub suggested_category: Option<String>,
 }
 
 /// One reconciliation candidate pair with inline previews. Mirrors

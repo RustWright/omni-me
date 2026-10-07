@@ -242,6 +242,125 @@ pub fn clears_statement(a: Option<&str>, b: Option<&str>) -> bool {
     a.is_some() != b.is_some()
 }
 
+/// Words every bank line carries, which name no merchant.
+const NOT_A_MERCHANT: &[&str] = &[
+    "purchase",
+    "payment",
+    "card",
+    "transaction",
+    "issued",
+    "from",
+    "the",
+    "and",
+    "pre",
+    "authorized",
+    "debit",
+    "credit",
+    "cad",
+    "usd",
+    "eur",
+    "online",
+    "pos",
+    "interac",
+    "refund",
+    "com",
+    "www",
+];
+
+/// The words of a description that can name a merchant: alphabetic runs of
+/// three letters or more, lowercased, minus [`NOT_A_MERCHANT`].
+fn merchant_tokens(description: &str) -> HashSet<String> {
+    description
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|w| w.chars().count() >= 3)
+        .map(str::to_lowercase)
+        .filter(|w| !NOT_A_MERCHANT.contains(&w.as_str()))
+        .collect()
+}
+
+/// What a past transaction was filed under: its one Expenses or Income leg.
+/// `None` when it has several (an itemised receipt) or none (a transfer).
+pub fn category_of(postings: &[Posting]) -> Option<&str> {
+    let mut found = postings
+        .iter()
+        .map(|p| p.account.as_str())
+        .filter(|a| a.starts_with("Expenses:") || a.starts_with("Income:"));
+    let first = found.next()?;
+    found.all(|a| a == first).then_some(first)
+}
+
+/// Whether an `Unmatched` row is the bank's side of a purchase, so the missing
+/// leg is a category. The receipt's side is missing the paying account instead,
+/// which no history of categories can suggest.
+pub fn is_bank_side(postings: &[Posting]) -> bool {
+    let mut rest = postings
+        .iter()
+        .filter(|p| !is_unmatched(&p.account))
+        .peekable();
+    rest.peek().is_some()
+        && rest.all(|p| p.account.starts_with("Assets:") || p.account.starts_with("Liabilities:"))
+}
+
+/// The user's own past filing, indexed by merchant word, for suggesting where
+/// an unpaired bank row belongs.
+pub struct CategoryHistory {
+    entries: Vec<(HashSet<String>, String)>,
+    by_token: std::collections::HashMap<String, Vec<usize>>,
+}
+
+/// Share of the shorter description's merchant words the other must contain.
+/// Overlap rather than Jaccard because feeds append a location: "Vaultly New
+/// York" against a filed "Vaultly" is one word in three by Jaccard.
+const SAME_MERCHANT: f64 = 0.67;
+/// Share of the matching history one category must hold to be suggested.
+const CLEAR_MAJORITY: f64 = 0.6;
+
+impl CategoryHistory {
+    /// From `(description, category)` pairs, typically [`category_of`] over the
+    /// ledger's settled transactions.
+    pub fn new(items: impl IntoIterator<Item = (String, String)>) -> Self {
+        let mut entries = Vec::new();
+        let mut by_token: std::collections::HashMap<String, Vec<usize>> = Default::default();
+        for (description, category) in items {
+            let tokens = merchant_tokens(&description);
+            if tokens.is_empty() {
+                continue;
+            }
+            for t in &tokens {
+                by_token.entry(t.clone()).or_default().push(entries.len());
+            }
+            entries.push((tokens, category));
+        }
+        Self { entries, by_token }
+    }
+
+    /// The category this merchant was filed under before, if the history agrees
+    /// on one. A split history suggests nothing rather than a coin toss.
+    pub fn suggest(&self, description: &str) -> Option<String> {
+        let tokens = merchant_tokens(description);
+        let candidates: HashSet<usize> = tokens
+            .iter()
+            .filter_map(|t| self.by_token.get(t))
+            .flatten()
+            .copied()
+            .collect();
+        let mut votes: std::collections::HashMap<&str, f64> = Default::default();
+        for i in candidates {
+            let (seen, category) = &self.entries[i];
+            let overlap = tokens.intersection(seen).count() as f64;
+            let score = overlap / tokens.len().min(seen.len()) as f64;
+            if score >= SAME_MERCHANT {
+                *votes.entry(category.as_str()).or_default() += score;
+            }
+        }
+        let total: f64 = votes.values().sum();
+        let (best, weight) = votes
+            .into_iter()
+            .max_by(|a, b| a.1.total_cmp(&b.1).then_with(|| b.0.cmp(a.0)))?;
+        (weight / total >= CLEAR_MAJORITY).then(|| best.to_string())
+    }
+}
+
 /// Build the surviving transaction's postings for a merge.
 ///
 /// Both `Unmatched` legs come out and what is left is concatenated. That is
@@ -557,5 +676,82 @@ mod tests {
         let b = [p("Unmatched", "-50.00"), p("Expenses:Food", "50.00")];
         let total: Decimal = combine_for_merge(&a, &b).iter().map(|x| x.amount).sum();
         assert!(total.is_zero(), "combined legs sum to {total}, expected 0");
+    }
+
+    fn history(items: &[(&str, &str)]) -> CategoryHistory {
+        CategoryHistory::new(items.iter().map(|(d, c)| (d.to_string(), c.to_string())))
+    }
+
+    /// Real dev shapes: the feed's line and the old ledger's differ in wording
+    /// but share the merchant.
+    #[test]
+    fn a_merchant_filed_before_is_suggested_its_category() {
+        let h = history(&[
+            ("Vaultly U* Vaultly P", "Expenses:Subscriptions"),
+            ("Northwind.ca", "Expenses:Groceries"),
+        ]);
+        assert_eq!(
+            h.suggest("Purchase: Vaultly U* Vaultly P Springfield")
+                .as_deref(),
+            Some("Expenses:Subscriptions")
+        );
+        assert_eq!(
+            h.suggest("Purchase: Northwind.ca").as_deref(),
+            Some("Expenses:Groceries")
+        );
+        assert_eq!(h.suggest("Purchase: Netflix.com"), None);
+    }
+
+    /// One shared town name is not one merchant.
+    #[test]
+    fn a_shared_place_word_alone_is_not_a_match() {
+        let h = history(&[("Springfield Balance Store", "Expenses:Clothing")]);
+        assert_eq!(h.suggest("Vaultly Springfield"), None);
+    }
+
+    #[test]
+    fn a_split_history_suggests_nothing() {
+        let h = history(&[
+            ("Contoso.ca", "Expenses:Household"),
+            ("Contoso.ca", "Expenses:Electronics"),
+        ]);
+        assert_eq!(h.suggest("Purchase: Contoso.ca"), None);
+    }
+
+    #[test]
+    fn words_every_bank_line_carries_do_not_match_merchants() {
+        let h = history(&[("Card payment purchase", "Expenses:Misc")]);
+        assert_eq!(h.suggest("Purchase: card payment"), None);
+    }
+
+    #[test]
+    fn only_a_single_expense_or_income_leg_is_a_category() {
+        assert_eq!(
+            category_of(&[p("Assets:Chequing", "-5"), p("Expenses:Food", "5")]),
+            Some("Expenses:Food")
+        );
+        let itemised = [
+            p("Expenses:Food", "3"),
+            p("Expenses:Household", "2"),
+            p("Assets:Chequing", "-5"),
+        ];
+        assert_eq!(category_of(&itemised), None);
+        assert_eq!(
+            category_of(&[p("Assets:Chequing", "-5"), p("Assets:Savings", "5")]),
+            None
+        );
+    }
+
+    #[test]
+    fn only_the_bank_side_of_a_purchase_wants_a_category() {
+        assert!(is_bank_side(&[
+            p("Assets:Chequing", "-5"),
+            p("Unmatched", "5")
+        ]));
+        assert!(!is_bank_side(&[
+            p("Expenses:Food", "5"),
+            p("Unmatched", "-5")
+        ]));
+        assert!(!is_bank_side(&[p("Unmatched", "5")]));
     }
 }

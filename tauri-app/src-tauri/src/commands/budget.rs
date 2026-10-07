@@ -1703,6 +1703,12 @@ pub struct ReconciliationTxnPreview {
     pub unmatched_amount: String,
     pub unmatched_commodity: String,
     pub statement_source: Option<String>,
+    /// Where it came from, in words: "Globepay feed", "Receipt email".
+    pub origin: String,
+    /// Its legs other than `Unmatched`, so a pair shows which side is the bank.
+    pub accounts: Vec<String>,
+    /// For an unpaired bank row: where this merchant was filed before.
+    pub suggested_category: Option<String>,
 }
 
 /// Wire shape for one reconciliation candidate (Phase 5.6 + 5.7).
@@ -2070,17 +2076,52 @@ pub async fn list_unmatched_without_candidates(
     let rows = queries::list_unmatched_transactions(&state.db)
         .await
         .map_err(|e| e.to_string())?;
-    let unmatched: Vec<UnmatchedTxn> = rows.iter().filter_map(unmatched_from_row).collect();
-    let cands = reconciliation::find_match_candidates(&unmatched, window);
+    let unmatched: Vec<(UnmatchedTxn, &TransactionRow)> = rows
+        .iter()
+        .filter_map(|r| Some((unmatched_from_row(r)?, r)))
+        .collect();
+    let plain: Vec<UnmatchedTxn> = unmatched.iter().map(|(u, _)| u.clone()).collect();
+    let cands = reconciliation::find_match_candidates(&plain, window);
     let paired_ids: std::collections::HashSet<String> = cands
         .iter()
         .flat_map(|c| [c.primary_id.clone(), c.secondary_id.clone()])
         .collect();
+    let history = category_history(&state).await?;
     Ok(unmatched
         .iter()
-        .filter(|u| !paired_ids.contains(&u.txn_id))
-        .map(txn_preview)
+        .filter(|(u, _)| !paired_ids.contains(&u.txn_id))
+        .map(|(u, row)| {
+            let mut preview = txn_preview(u, row);
+            let postings = postings_of(row);
+            if reconciliation::is_bank_side(&postings) {
+                preview.suggested_category = history.suggest(&u.description);
+            }
+            preview
+        })
         .collect())
+}
+
+/// How many settled transactions category suggestions read. The newest ones,
+/// so a merchant refiled recently outvotes how it was filed years ago.
+const CATEGORY_HISTORY_LIMIT: u32 = 5000;
+
+async fn category_history(state: &AppState) -> Result<reconciliation::CategoryHistory, String> {
+    let settled = queries::list_settled_transactions(&state.db, CATEGORY_HISTORY_LIMIT)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(reconciliation::CategoryHistory::new(
+        settled.iter().filter_map(|row| {
+            let postings = postings_of(row);
+            let category = reconciliation::category_of(&postings)?.to_string();
+            Some((row.description.clone(), category))
+        }),
+    ))
+}
+
+/// A row's postings, typed. A row whose postings do not parse has none here,
+/// which costs it a suggestion and nothing else.
+fn postings_of(row: &TransactionRow) -> Vec<Posting> {
+    serde_json::from_value(row.postings.clone().into_json_value()).unwrap_or_default()
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -2092,13 +2133,17 @@ pub async fn list_match_candidates(
     let rows = queries::list_unmatched_transactions(&state.db)
         .await
         .map_err(|e| e.to_string())?;
-    let unmatched: Vec<UnmatchedTxn> = rows.iter().filter_map(unmatched_from_row).collect();
-    let cands = reconciliation::find_match_candidates(&unmatched, window);
+    let unmatched: Vec<(UnmatchedTxn, &TransactionRow)> = rows
+        .iter()
+        .filter_map(|r| Some((unmatched_from_row(r)?, r)))
+        .collect();
+    let plain: Vec<UnmatchedTxn> = unmatched.iter().map(|(u, _)| u.clone()).collect();
+    let cands = reconciliation::find_match_candidates(&plain, window);
 
     // Build a lookup so each candidate can carry its preview without
     // re-iterating the row list.
-    let by_id: std::collections::HashMap<String, &UnmatchedTxn> =
-        unmatched.iter().map(|u| (u.txn_id.clone(), u)).collect();
+    let by_id: std::collections::HashMap<String, &(UnmatchedTxn, &TransactionRow)> =
+        unmatched.iter().map(|e| (e.0.txn_id.clone(), e)).collect();
 
     let views = cands
         .into_iter()
@@ -2112,15 +2157,16 @@ pub async fn list_match_candidates(
                 days_apart: c.signals.days_apart,
                 description_similarity: c.signals.description_similarity,
                 clears_statement: c.clears_statement,
-                primary: txn_preview(p),
-                secondary: txn_preview(s),
+                primary: txn_preview(&p.0, p.1),
+                secondary: txn_preview(&s.0, s.1),
             })
         })
         .collect();
     Ok(views)
 }
 
-fn txn_preview(u: &UnmatchedTxn) -> ReconciliationTxnPreview {
+fn txn_preview(u: &UnmatchedTxn, row: &TransactionRow) -> ReconciliationTxnPreview {
+    let postings = postings_of(row);
     ReconciliationTxnPreview {
         txn_id: u.txn_id.clone(),
         date: u.date.to_string(),
@@ -2128,6 +2174,32 @@ fn txn_preview(u: &UnmatchedTxn) -> ReconciliationTxnPreview {
         unmatched_amount: u.unmatched_amount.to_string(),
         unmatched_commodity: u.unmatched_commodity.clone(),
         statement_source: u.statement_source.clone(),
+        origin: origin_of(row.statement_source.as_deref(), &row.tags_top, &postings),
+        accounts: postings
+            .iter()
+            .filter(|p| !is_unmatched(&p.account))
+            .map(|p| p.account.clone())
+            .collect(),
+        suggested_category: None,
+    }
+}
+
+/// Where a transaction came from, in words, read off what each importer stamps:
+/// a statement source, an `autoimport-id:` tag, an `institution:` posting tag.
+fn origin_of(statement_source: Option<&str>, tags: &[String], postings: &[Posting]) -> String {
+    if let Some(source) = statement_source {
+        return format!("Statement · {source}");
+    }
+    let import = tags.iter().find_map(|t| t.strip_prefix("autoimport-id:"));
+    let institution = postings.iter().flat_map(|p| &p.tags).find_map(|t| match t {
+        Tag::KeyValue { key, value } if key == "institution" => Some(value.as_str()),
+        _ => None,
+    });
+    match (import, institution) {
+        (Some(id), _) if id.starts_with("receipts-") => "Receipt email".to_string(),
+        (Some(_), Some(institution)) => format!("{institution} feed"),
+        (Some(_), None) => "Auto-import".to_string(),
+        (None, _) => "Entered by hand".to_string(),
     }
 }
 
@@ -2592,5 +2664,32 @@ mod tests {
             payload.balancing_posting.is_none(),
             "a balanced merge must not carry a plug posting"
         );
+    }
+
+    /// The labels the reconcile card shows, from the stamps the real importers
+    /// leave (shapes copied from dev's ledger, 2026-10-07).
+    #[test]
+    fn a_transaction_says_where_it_came_from() {
+        let bank: Vec<Posting> = serde_json::from_value(serde_json::json!([
+            { "account": "Assets:NonRegistered:CAD", "amount": "-58.75", "commodity": "CAD",
+              "tags": ["institution:Globepay"] },
+            { "account": "Unmatched", "amount": "58.75", "commodity": "CAD" },
+        ]))
+        .unwrap();
+        let tags = |t: &str| vec![t.to_string()];
+
+        assert_eq!(
+            origin_of(None, &tags("autoimport-id:gp-851188657"), &bank),
+            "Globepay feed"
+        );
+        assert_eq!(
+            origin_of(None, &tags("autoimport-id:receipts-uid-3468-0"), &[]),
+            "Receipt email"
+        );
+        assert_eq!(
+            origin_of(Some("summit.csv"), &[], &bank),
+            "Statement · summit.csv"
+        );
+        assert_eq!(origin_of(None, &[], &[]), "Entered by hand");
     }
 }
