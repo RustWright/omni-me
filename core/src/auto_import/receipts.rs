@@ -27,15 +27,19 @@
 //! is the sole control between a crafted email and a fabricated ledger entry.
 
 use async_trait::async_trait;
+use regex::Regex;
+use rust_decimal::Decimal;
+use std::collections::HashSet;
 use std::process::Stdio;
-use std::sync::Arc;
+use std::str::FromStr;
+use std::sync::{Arc, LazyLock};
 use tokio::process::Command;
 
 use crate::auto_import_scheduler::ImportError;
 use crate::events::{GROUP_MEMBER_KEY, NewEvent, ORDER_GROUP_KEY};
 use crate::extraction::{
     DEFAULT_CONFIDENCE_THRESHOLD, DocumentExtractor, DocumentKind, DocumentPart, ExtractionHint,
-    RECONCILE_ATTEMPTS, extract_reconciled, receipt_extraction_to_drafts,
+    ExtractionResult, RECONCILE_ATTEMPTS, extract_reconciled, receipt_extraction_to_drafts,
 };
 
 use super::imap::{ImapHandler, ImapMessage};
@@ -105,6 +109,46 @@ fn looks_like_pdf(att: &MimeAttachment) -> bool {
         return true;
     }
     att.filename.to_ascii_lowercase().ends_with(".pdf")
+}
+
+/// A run of digits, with the separators a printed amount may carry.
+static NUMBER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d[\d,]*(?:\.\d+)?").expect("valid number regex"));
+
+/// Every number the text prints. A comma is read both ways where it could be
+/// either: `1,234` as thousands, `12,34` as a decimal point.
+fn printed_numbers(text: &str) -> HashSet<Decimal> {
+    let mut out = HashSet::new();
+    for m in NUMBER.find_iter(text) {
+        let s = m.as_str().trim_end_matches(',');
+        if let Ok(d) = Decimal::from_str(&s.replace(',', "")) {
+            out.insert(d.normalize());
+        }
+        if let Some((whole, frac)) = s.split_once(',')
+            && !frac.contains(',')
+            && !s.contains('.')
+            && frac.len() <= 2
+            && let Ok(d) = Decimal::from_str(&format!("{whole}.{frac}"))
+        {
+            out.insert(d.normalize());
+        }
+    }
+    out
+}
+
+/// The non-zero posting amounts the text does not print anywhere.
+///
+/// The extractor sees only this text, so on this path an amount it does not
+/// contain was made up. Handed an empty promo it returned a whole Amazon order
+/// in placeholder prices (12.34, 5.67), 2026-10-07.
+fn unprinted_amounts(result: &ExtractionResult, text: &str) -> Vec<Decimal> {
+    let printed = printed_numbers(text);
+    result
+        .postings
+        .iter()
+        .map(|p| p.amount.abs().normalize())
+        .filter(|a| !a.is_zero() && !printed.contains(a))
+        .collect()
 }
 
 /// Pdftotext over bytes, no encryption — used to pull text out of plain
@@ -335,6 +379,24 @@ impl ImapHandler for ReceiptHandler {
             );
             return Ok(vec![]);
         }
+        // Every amount invented means the reading is invented, kind included, so
+        // not even the no-draft receipt path below applies. Some missing is only a
+        // warning: a tax line the model computed is absent from the text too.
+        let unprinted = unprinted_amounts(&result, &combined_text);
+        let nonzero = result
+            .postings
+            .iter()
+            .filter(|p| !p.amount.is_zero())
+            .count();
+        if nonzero > 0 && unprinted.len() == nonzero {
+            tracing::info!(
+                handler = self.name(),
+                uid = message.uid,
+                subject = %parsed.subject,
+                "receipt: no extracted amount is printed in the email, proposing nothing"
+            );
+            return Ok(vec![]);
+        }
 
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
         let drafts = receipt_extraction_to_drafts(&result, &source_prefix);
@@ -352,7 +414,8 @@ impl ImapHandler for ReceiptHandler {
         // same message keyed two ways on two polls, which mints two review
         // items for one email. Both are recorded below when they disagree.
         let printed_key = order_ref::from_document(&combined_text);
-        let model_key = order_ref::group_key(result.order_ref.as_deref());
+        let model_key = order_ref::group_key(result.order_ref.as_deref())
+            .filter(|key| order_ref::printed_in(key, &combined_text));
         let order_group = result
             .kind()
             .filter(|kind| kind.records_a_charge())
@@ -371,6 +434,10 @@ impl ImapHandler for ReceiptHandler {
             None => format!("{}-uid-{}", self.name, message.uid),
         };
         let mut warnings = report.warnings.clone();
+        if !unprinted.is_empty() {
+            let list: Vec<String> = unprinted.iter().map(Decimal::to_string).collect();
+            warnings.push(format!("not printed in the email: {}", list.join(", ")));
+        }
         if sender_auth.is_worth_flagging() {
             warnings.push(format!(
                 "the mailbox provider could not authenticate this sender ({})",
@@ -645,7 +712,7 @@ mod tests {
     }
 
     fn plain_eml() -> Vec<u8> {
-        b"From: shop@northwind.example\r\nSubject: about your order\r\nDate: Sat, 16 May 2026 12:00:00 +0000\r\nContent-Type: text/plain\r\n\r\nSomething about your order.\r\n".to_vec()
+        b"From: shop@northwind.example\r\nSubject: about your order\r\nDate: Sat, 16 May 2026 12:00:00 +0000\r\nContent-Type: text/plain\r\n\r\nOrder 118762884: 105.43 charged, 99.93 refunded.\r\n".to_vec()
     }
 
     /// The same message with a provider verdict stamped on it.
@@ -655,7 +722,7 @@ mod tests {
              From: shop@northwind.example\r\n\
              Subject: about your order\r\n\
              Date: Sat, 16 May 2026 12:00:00 +0000\r\n\
-             Content-Type: text/plain\r\n\r\nSomething about your order.\r\n"
+             Content-Type: text/plain\r\n\r\nOrder 118762884: 105.43 charged, 99.93 refunded.\r\n"
         )
         .into_bytes()
     }
@@ -871,7 +938,7 @@ mod tests {
         let handler = ReceiptHandler::new("shop", "device-test", extractor);
         let body = b"From: shop@northwind.example\r\nSubject: about your order\r\n\
                      Date: Sat, 16 May 2026 12:00:00 +0000\r\nContent-Type: text/plain\r\n\r\n\
-                     Order number: 600000113495028\r\n"
+                     Order number: 600000113495028\r\nTotal: $105.43\r\n"
             .to_vec();
         let event = handler
             .handle(&imap_msg_from("shop@northwind.example", body))
@@ -986,6 +1053,69 @@ mod tests {
         match err {
             ImportError::Parse(m) => assert!(m.contains("no extractable text")),
             other => panic!("expected Parse error, got {other:?}"),
+        }
+    }
+
+    // ----- Amounts the email does not print -----
+
+    fn promo_eml() -> Vec<u8> {
+        b"From: reply-to@e.shop.example\r\nSubject: New products. Real solutions.\r\n\
+          Date: Sat, 16 May 2026 12:00:00 +0000\r\nContent-Type: text/plain\r\n\r\n\
+          New products, real solutions. Browse the catalogue.\r\n"
+            .to_vec()
+    }
+
+    /// The 2026-10-07 shape: a promo with no money in it, read as an Amazon order
+    /// in placeholder prices. A receipt label does not save it; the label was
+    /// invented with the rest.
+    #[tokio::test]
+    async fn a_receipt_whose_every_amount_is_invented_proposes_nothing() {
+        let mut result = stub_result(Some("receipt"), "12.34");
+        result.postings.push(result.postings[0].clone());
+        result.postings[1].amount = rust_decimal::Decimal::new(567, 2);
+        result.order_ref = Some("112-3456789-1234567".into());
+        let handler = ReceiptHandler::new("shop", "device-test", Arc::new(StubExtractor(result)));
+        let msg = imap_msg_from("reply-to@e.shop.example", promo_eml());
+        assert!(handler.handle(&msg).await.expect("handler ok").is_empty());
+    }
+
+    /// One printed amount is enough to keep it; the missing one is named in review.
+    #[tokio::test]
+    async fn an_amount_missing_from_the_email_is_a_warning_not_a_drop() {
+        let mut result = stub_result(Some("receipt"), "105.43");
+        result.postings.push(result.postings[0].clone());
+        result.postings[1].amount = rust_decimal::Decimal::new(777, 2);
+        let handler = ReceiptHandler::new("shop", "device-test", Arc::new(StubExtractor(result)));
+        let msg = imap_msg_from("shop@northwind.example", plain_eml());
+        let event = handler
+            .handle(&msg)
+            .await
+            .unwrap()
+            .pop()
+            .expect("still proposed");
+        let warnings = event.payload["source_metadata"]["warnings"].to_string();
+        assert!(
+            warnings.contains("not printed in the email: 7.77"),
+            "{warnings}"
+        );
+    }
+
+    /// A reference the email does not print groups nothing: five promos keyed on
+    /// one invented order number became one review item.
+    #[tokio::test]
+    async fn a_reference_the_email_does_not_print_is_not_a_key() {
+        assert_eq!(
+            dedup_key_for(Some("receipt"), Some("112-3456789-1234567")).await,
+            "shop-uid-7"
+        );
+    }
+
+    #[test]
+    fn printed_numbers_read_separators_both_ways() {
+        let n = printed_numbers("Total $1,234.50, tax 12,34 EUR, qty 3.");
+        for want in ["1234.5", "12.34", "1234", "3"] {
+            let d = rust_decimal::Decimal::from_str(want).unwrap().normalize();
+            assert!(n.contains(&d), "{want} missing from {n:?}");
         }
     }
 }

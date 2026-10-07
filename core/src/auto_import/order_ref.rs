@@ -53,6 +53,20 @@ static LABELLED_REF: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid labelled-reference regex")
 });
 
+/// Whether a group key appears anywhere in the text, punctuation ignored.
+///
+/// The model's reference is only worth keying on if the document prints it.
+/// Given an empty email it returned `112-3456789-1234567`, and five unrelated
+/// promos grouped into one review item on it (2026-10-07).
+pub fn printed_in(key: &str, text: &str) -> bool {
+    let flat: String = text
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    flat.contains(key)
+}
+
 /// The group key the document states about itself, if it states one.
 ///
 /// Prefer this over the model's `order_ref`. Extraction is not deterministic:
@@ -159,5 +173,12 @@ mod tests {
             group_key(Some("118762884"))
         );
         assert_eq!(group_key(Some("AB-1234")), Some("ab1234".into()));
+    }
+
+    #[test]
+    fn a_key_is_printed_however_the_document_punctuates_it() {
+        let key = group_key(Some("112-3456789-1234567")).unwrap();
+        assert!(printed_in(&key, "Your order #112 3456789 1234567 shipped"));
+        assert!(!printed_in(&key, "New products. Real solutions."));
     }
 }
