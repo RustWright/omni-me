@@ -1966,21 +1966,19 @@ mod tests {
     async fn fold_doc_with_verified_field(db: &Database, id: &str, verified: Option<bool>) {
         use crate::events::{Event, EventType, Projection, validate_payload};
 
-        let mut payloads = vec![
-            (
-                EventType::DocumentArchived,
-                serde_json::json!({
-                    "document_id": id,
-                    "sha256": "c".repeat(64),
-                    "filename": format!("{id}.pdf"),
-                    "mime_type": "application/pdf",
-                    "size": 10u64,
-                    "archived_at": "2026-09-01T00:00:00Z",
-                    "source": "bulk",
-                    "text_source": "none",
-                }),
-            ),
-        ];
+        let mut payloads = vec![(
+            EventType::DocumentArchived,
+            serde_json::json!({
+                "document_id": id,
+                "sha256": "c".repeat(64),
+                "filename": format!("{id}.pdf"),
+                "mime_type": "application/pdf",
+                "size": 10u64,
+                "archived_at": "2026-09-01T00:00:00Z",
+                "source": "bulk",
+                "text_source": "none",
+            }),
+        )];
         if let Some(verified) = verified {
             payloads.push((
                 EventType::DocumentFieldsExtracted,
