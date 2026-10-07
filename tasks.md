@@ -1318,7 +1318,15 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   ⏳ For his ruling, not applied: D1 "next unchecked" in document detail · D2 bulk commit in
   the batch list · D3 reconcile rows on the Finances menu badge · D4 the WS driver's scheduled
   orders. ⚠️ Walked in code and the mock at 360 px, not on the S9: round 2 is that check.
-**Stage 2, round 2 checklist (DRAFT 2026-10-07; final once 1.1.26-dev is on the S9).**
+✅ **R1-8 DEPLOYED 2026-10-07** (public `c8ba0bf`, overlay `dev/untested-overlay` @ `bbf48fa`):
+dev server `dev-bbf48fa-c8ba0bf`, agent `dev-c8ba0bf` (backup
+`omni-dev-20261007T170014-pre-round2.tar.gz`, 790/790 files, 135 MB; `.env.bak.20261007T170014`),
+healthy, agent 0 restarts. APK 1.1.26-dev installed on the S9 and opened once: initialised,
+replayed 2 events, Synced, no errors in logcat; the assistant home reads "4 items waiting in
+Archive" on hardware. ⚠️ First dispatch failed: dev workflows must run with `--ref
+dev/untested-overlay` (memory `project-dev-workflows-dispatch-from-overlay-branch`).
+
+**Stage 2, round 2 checklist (FINAL 2026-10-07; 1.1.26-dev on the S9).**
 1. Open the app once. Right: no sync error; the header says Synced.
 2. Assistant home. Right: same margins and card look as the other tabs; Ask is as tall as the
    text box; "items waiting in Archive" is a small number (4 on 10-07) or absent, and tapping it
