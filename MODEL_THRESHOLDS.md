@@ -339,6 +339,10 @@ is why extending it is cheap relative to every other seat in this file.
 
 ## Seat C2 — document reading · ✅ **DECIDED 2026-09-16: `google/gemma-4-31B-it`**
 
+📊 **2026-10-05 slate, ruled by him 2026-10-07:** after R21's prompt fix recall saturates (24/24 for
+every gate survivor), and `gemma-4-26B-A4B-it` (3 fabrications) beats the seated 31B (6) outside
+the floor. Switched on DEV only; live stays 31B until the release decides. `tasks.md` item 8.
+
 **Decided by falling through the tie rather than breaking it** (user, 2026-09-16). The
 pre-registered floor says a one-or-two-fabrication gap **is not a difference** — so
 `gemma-4-26B`'s 3 against `gemma-4-31B`'s 5 is a **tie on key 1**, and the ranking moves to key 2,

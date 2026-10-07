@@ -15,8 +15,6 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 
 ## ⛔ Waiting on him
 - **The phone test** (stage 2).
-- **C2 reader**: unmeasured by the rules, but gemma-4-26B beats the seated model outside the noise
-  floor. Switch or not is his (`tasks.md` item 8).
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The counter → destination → action inventory**: proposed, not agreed.

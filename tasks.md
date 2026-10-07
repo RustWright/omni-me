@@ -1143,6 +1143,10 @@ then spends, so the phone test runs on the chosen models.
    floor on key 1 and ties on keys 2–3. ⚠️ For him: 26B beats the SEATED model by 3, outside the
    floor, and the threshold file already names it "the one to re-test first after the prompt fix".
    Switching to it is a judgement the pre-registration does not make for me.
+   🔴 **HIS RULING 2026-10-07: switch dev to 26B** (my recommendation; beat: keep 31B by the letter,
+   i.e. test and ship the model that measured twice the fabrications). ✅ SWITCHED 2026-10-07:
+   `[llm.reader]` gemma-4-31B-it → `google/gemma-4-26B-A4B-it` on dev, other keys verified unchanged,
+   backup `credentials-dev.toml.bak.20261007T134855-pre-reader-switch`, dev healthy. Live untouched.
    ✅ **Gate 9's re-run is this slate** (all six probes, all 14 models, evidence printed per site).
    Of the five R23 flagged: `DeepSeek-V4.1-Flash` (seated C1 + C3), `Maverick` and `GLM-5.3-Flash`
    neither obeyed nor quoted; `Llama-4-Scout` (kind "pwned") and `Qwen3-VL-30B` (account_number
