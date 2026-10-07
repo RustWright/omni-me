@@ -1152,7 +1152,7 @@ pub async fn list_documents(
            -- reach what it counts, so a drift between them is a queue the user is
            -- told about and cannot open. Both also require NOT_PURGED — a purged
            -- document keeps its fields.
-           AND ($unverified = false OR fields[WHERE verified = false] != [])
+           AND ($unverified = false OR (fields[WHERE verified = false] ?? []) != [])
            AND {NOT_PURGED}
          ORDER BY archived_at DESC
          LIMIT $limit START $offset"
@@ -1961,11 +1961,12 @@ mod tests {
         }
     }
 
-    /// Fold one document carrying a single field with the given `verified` flag.
-    async fn fold_doc_with_verified_field(db: &Database, id: &str, verified: bool) {
+    /// Fold one document carrying a single field with the given `verified` flag,
+    /// or, for `None`, archived and never extracted: no `fields` at all.
+    async fn fold_doc_with_verified_field(db: &Database, id: &str, verified: Option<bool>) {
         use crate::events::{Event, EventType, Projection, validate_payload};
 
-        let payloads = vec![
+        let mut payloads = vec![
             (
                 EventType::DocumentArchived,
                 serde_json::json!({
@@ -1979,7 +1980,9 @@ mod tests {
                     "text_source": "none",
                 }),
             ),
-            (
+        ];
+        if let Some(verified) = verified {
+            payloads.push((
                 EventType::DocumentFieldsExtracted,
                 serde_json::json!({
                     "document_id": id,
@@ -1989,8 +1992,8 @@ mod tests {
                           "source": "model", "verified": verified },
                     ],
                 }),
-            ),
-        ];
+            ));
+        }
 
         for (event_type, payload) in payloads {
             validate_payload(&event_type, &payload).expect("payload must be valid");
@@ -2017,8 +2020,11 @@ mod tests {
     #[tokio::test]
     async fn the_unverified_filter_returns_exactly_what_the_badge_counts() {
         let db = doc_db().await;
-        fold_doc_with_verified_field(&db, "unchecked", false).await;
-        fold_doc_with_verified_field(&db, "checked", true).await;
+        fold_doc_with_verified_field(&db, "unchecked", Some(false)).await;
+        fold_doc_with_verified_field(&db, "checked", Some(true)).await;
+        // Never extracted: nothing to verify. Counted as waiting once, 795 times
+        // over on dev (2026-10-07), because filtering an absent array is NONE.
+        fold_doc_with_verified_field(&db, "unread", None).await;
 
         let narrowed = list_documents(
             &db,
@@ -2043,7 +2049,7 @@ mod tests {
         let all = list_documents(&db, &DocumentFilter::default(), 50, 0)
             .await
             .unwrap();
-        assert_eq!(all.len(), 2, "off, the filter narrows nothing");
+        assert_eq!(all.len(), 3, "off, the filter narrows nothing");
     }
 
     /// A document is counted once however many of its fields are unchecked, and
