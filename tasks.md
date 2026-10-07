@@ -1243,8 +1243,28 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   unverified field, 795 with NO fields; 4+795 = 799. `approvals.rs`
   `fields[WHERE verified = false] != []` is true when `fields` is absent. Check the Archive filter
   (`queries.rs` `unverified_only`) for the twin.
+  ✅ FIXED `aea6767` (+fmt `24837a6`): `(fields[WHERE verified = false] ?? []) != []` in both, and
+  the fixtures now include a never-extracted document (they all carried fields before, which is
+  how the gap passed). ⏳ CI verifies; no SurrealDB here to run it.
 - R1-2 A Digi-Key PROMO email was recorded as an Amazon purchase receipt; he rejected it. Trace and
   fix the cause. ⛔ Not by adding a sender (2026-09-25 ruling).
+  ✅ FIXED `7de7a08`. Cause, from the archived blob: text/plain part = `"\r\n\r\n."`, content all in
+  the 174 KB HTML part, which `parse_eml` read only when no text part existed. Handed nothing, the
+  model returned an "Amazon" order in the prompt's own example prices (12.34, 5.67, 1.23) with
+  order `112-3456789-1234567`, which then GROUPED five unrelated promos into one batch. Fixes: an
+  wordless text part falls through to HTML (via mail-parser's `html_to_text`, which skips `<head>`
+  CSS; the hand-rolled stripper is gone); a reading none of whose amounts the email prints
+  proposes nothing (some missing → a review warning naming them); a model `order_ref` the email
+  does not print is not a group key. `docs/src/auto-import.md`. Decision log: dropping even a
+  "receipt"-labelled reading when every amount is unprinted, against the 10-02 "an unpriced
+  receipt still reaches review" ruling, because here the label was invented with the amounts;
+  an unpriced receipt (no amounts) still reaches review, unchanged.
+  📊 Audit of all dev receipt batches with the same rule: fully invented = Digi-Key ×5 (⚠️ ONE
+  COMMITTED, $60.48 "Amazon.com", batch `01M3SF8Z3FSESZH1S8YTZFE2KQ`: his to delete; 4 superseded
+  copies still pending), Walmart "Your order is on the way" 12.34 (pending), and 7 already
+  dismissed (Facebook, 6 Anthropic login links). Access Storage and Learn French looked invented
+  to the audit but their amounts are in PDF attachments, which the importer reads (checked with
+  pdftotext); the audit did not.
 - R1-3 Assistant home (thread list) cramped, does not match the app's look; Ask button misaligned
   beside a taller text box on the S9. Restyle on the app's primitives; screenshots for him.
 - R1-4 Reconcile cards: too little context, description truncated. Show both sides in full, with
