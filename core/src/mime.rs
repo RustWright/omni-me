@@ -5,6 +5,7 @@
 //! directly. Keeps the rest of `auto_import::` swappable on parser choice.
 
 use chrono::{DateTime, Utc};
+use mail_parser::decoders::html::html_to_text;
 use mail_parser::{MessageParser, MimeHeaders};
 
 #[derive(Debug, thiserror::Error)]
@@ -92,17 +93,20 @@ pub fn parse_eml(bytes: &[u8]) -> Result<ParsedMessage, MimeError> {
             .map(|d| d.with_timezone(&Utc))
     });
 
-    let body_text = msg
+    let readable = |t: &String| t.chars().any(char::is_alphanumeric);
+    let plain = msg
         .body_text(0)
-        .map(|s| s.to_string())
+        .map(|s| strip_invisible_padding(&s))
+        .filter(readable);
+    // The HTML part too when the text part is empty of words: one promo sender
+    // ships a text part of just ".", and the extractor, handed nothing, invented a
+    // whole Amazon order (2026-10-07).
+    let body_text = plain
         .or_else(|| {
-            // Fall back to HTML view with tags stripped — mail-parser produces
-            // a plain-text-ish HTML body via `body_html` → strip via a tiny
-            // ad-hoc strip (avoids pulling in `ammonia` just for this).
-            msg.body_html(0).map(|html| strip_html_tags(&html))
+            msg.body_html(0)
+                .map(|html| strip_invisible_padding(&html_to_text(&html)))
         })
         .unwrap_or_default();
-    let body_text = strip_invisible_padding(&body_text);
 
     let mut attachments = Vec::new();
     for att in msg.attachments() {
@@ -192,23 +196,6 @@ pub fn strip_invisible_padding(text: &str) -> String {
         }
     }
     out.trim().to_string()
-}
-
-/// Minimal tag-stripper for fallback when text/plain is absent. Keeps text
-/// nodes, drops tags. Not a sanitizer — handlers that pass output to LLM
-/// don't care about XSS-safety, and we never render this HTML.
-fn strip_html_tags(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for c in html.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -403,14 +390,22 @@ mod tests {
         assert_eq!(strip_invisible_padding(text), text);
     }
 
+    /// The shape of the 2026-10-07 promo, cut down: a text part of only ".", the
+    /// content in the HTML part, its CSS in `<head>`.
     #[test]
-    fn strip_html_keeps_text_drops_tags() {
-        let html = "<html><body><p>Hello <b>world</b></p></body></html>";
-        let stripped = strip_html_tags(html);
-        assert!(stripped.contains("Hello"));
-        assert!(stripped.contains("world"));
-        assert!(!stripped.contains('<'));
-        assert!(!stripped.contains('>'));
+    fn an_empty_text_part_does_not_hide_the_html_one() {
+        let raw = b"From: promo@shop.example\r\n\
+            Subject: New products\r\n\
+            MIME-Version: 1.0\r\n\
+            Content-Type: multipart/alternative; boundary=\"b\"\r\n\r\n\
+            --b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n\r\n\r\n.\r\n\
+            --b\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+            <html><head><style>p { color: red; }</style></head>\
+            <body><p>New parts &amp; tools</p></body></html>\r\n\
+            --b--\r\n";
+        let body = parse_eml(raw).unwrap().body_text;
+        assert!(body.contains("New parts & tools"), "{body:?}");
+        assert!(!body.contains("color"), "head CSS leaked: {body:?}");
     }
 
     /// Only the topmost is read. The lower one here is what a crafted message

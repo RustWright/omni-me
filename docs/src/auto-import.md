@@ -78,6 +78,19 @@ screen to say so, where letting it through costs one dismissal in a queue that e
 same asymmetry decides the rest of this page: a duplicate is visible and costs a tap, a silently
 missing transaction is neither.
 
+### Unless every amount is invented
+
+The extractor reads only the email's text, so an amount that text does not print came from the
+model, not the vendor. A promotional mail whose plain-text part was a single `.` came back as a
+complete Amazon order priced 12.34, 5.67 and 1.23, labelled a receipt (2026-10-07). When **no**
+amount in a reading is printed in the email, the reading is invented, label included, and nothing
+is proposed; the mail stays in the archive. When only **some** are missing it is proposed with
+the missing ones named, because a tax line the model worked out is legitimately absent too.
+
+The asymmetry above still holds: this drops only a reading with nothing real in it, which a
+person reviewing it could not have checked against anything either. A text part with no words in
+it no longer hides the HTML part, which is where that promo's content actually was.
+
 ## The ones that are the same charge
 
 Most real receipt emails print the vendor's own order number in the body. That is the handle,
@@ -93,7 +106,9 @@ A reference is only used when the message is charge-bearing and the reference it
 four to sixty-four characters, no whitespace, and at least one digit after punctuation and case
 are dropped. Those rules are not decoration. Asked for an order number on a message that has
 none, models return the subject line, a bare `.`, or a UUID. Punctuation is dropped so a vendor
-printing `#118-762-884` in one mail and `118762884` in the next still groups them.
+printing `#118-762-884` in one mail and `118762884` in the next still groups them. And the model's
+reference must appear in the email: an invented `112-3456789-1234567` once grouped five unrelated
+promotions into one review item.
 
 ### When there is no order number, nothing is grouped
 
