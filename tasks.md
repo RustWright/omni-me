@@ -1235,6 +1235,38 @@ says what to do and what "right" looks like:
    B's model: Qwen3.6-35B-A3B on dev since 2026-10-07.)
 Anything annoying beyond these is fair game; say whether it's worth fixing before release.
 
+**Stage 2, round 1 results (his test, 2026-10-07).** ✅ 1 no sync errors · 2 eating belief accepted,
+September checked · 3 meaning search found the colour note · 4 not exercised (banks connected) ·
+5 approved; ONE rejected (below) · 6 G1/G2/G3/G9 all fine · 7 no jump seen · 8 check-in ON (wait).
+**Findings, round 1** (all mine to fix this stretch unless marked):
+- R1-1 **"799 items waiting in Archive" is a counter bug.** Dev data: 817 documents, 4 with an
+  unverified field, 795 with NO fields; 4+795 = 799. `approvals.rs`
+  `fields[WHERE verified = false] != []` is true when `fields` is absent. Check the Archive filter
+  (`queries.rs` `unverified_only`) for the twin.
+- R1-2 A Digi-Key PROMO email was recorded as an Amazon purchase receipt; he rejected it. Trace and
+  fix the cause. ⛔ Not by adding a sender (2026-09-25 ruling).
+- R1-3 Assistant home (thread list) cramped, does not match the app's look; Ask button misaligned
+  beside a taller text box on the S9. Restyle on the app's primitives; screenshots for him.
+- R1-4 Reconcile cards: too little context, description truncated. Show both sides in full, with
+  date, amount, account, origin.
+- R1-5 Reconcile blanks to "Loading candidates…" after every merge (`load_candidates` sets
+  `loading`). Remove the pair in place; refetch silently.
+- R1-6 🔴 **RULED 2026-10-07 (his pick A, my recommendation): reconcile backlog** (~480 Unmatched
+  rows on dev). A merge cannot be undone, so it is irreversible: never automatic. Build (a) one
+  tap that merges every listed high-confidence pair after showing the list, and (b) a category
+  suggestion on each no-pair row from his own past categorisation of that merchant, plus
+  "accept all suggested" over the listed rows. Beat: B (one by one, faster) and C (bulk merges
+  only; most rows have nothing to pair).
+- R1-7 🔴 **RULED 2026-10-07 (his pick, my recommendation): build the interaction map this
+  stretch**, after R1-1..6. A code-derived table of every screen, control, counter and
+  destination, plus cognitive walkthroughs (the four questions per step, tap counts) of the core
+  tasks: reconcile, verify a document, capture a receipt, approve an import batch, ask the
+  assistant. Supersedes the "counter → destination → action inventory" proposal. Clear bugs it
+  finds: fix. ⛔ Design changes: list for his ruling, do not apply. Beat: defer past release;
+  counter-only inventory.
+- R1-8 🔴 **RULED 2026-10-07: full dev deploy authorised for this stretch** (server + agent images
+  to dev, APK built and installed on galaxy-s9:5555, opened once, logcat checked). ⛔ Live untouched.
+
 Moved to the go-live sequence, not stage 1: gate 1 (live backup), the official import, the agent on
 live, the tab going on. ⏳ The go-live sequence is drafted at stage 4, not before.
 
