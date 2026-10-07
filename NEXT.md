@@ -15,8 +15,6 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 
 ## ⛔ Waiting on him
 - **The phone test** (stage 2).
-- **Seats B + D switch on dev**: run `switch-dev-seats-b-d.sh` (session scratchpad; supersedes
-  `switch-dev-structurer.sh`). `tasks.md` item D and the seat B entry.
 - **C2 reader**: unmeasured by the rules, but gemma-4-26B beats the seated model outside the noise
   floor. Switch or not is his (`tasks.md` item 8).
 - **F3's open half**: whether multi-page reading should be told pages can repeat.

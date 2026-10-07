@@ -1181,7 +1181,10 @@ then spends, so the phone test runs on the chosen models.
    `[llm.batch]` and `[llm.structurer]`, adding a section if absent, refuses to write unparseable
    TOML, restarts dev). It supersedes `switch-dev-structurer.sh`, whose Python would not have
    parsed (backslash-escaped quotes inside an f-string). Dry-tested on dummy files, both shapes.
-   ⏳ Switch pending his run. Live untouched.
+   ✅ SWITCHED 2026-10-07 (his run): structurer V4-Flash → Qwen3.6-35B-A3B on dev, backup
+   `credentials-dev.toml.bak.20261007T134350-pre-seat-b-d-switch`; dev healthy, agent up. (First
+   run refused safely: the file's headers didn't match a strict pattern; now matched leniently and
+   verified by parse + read-back.) Live untouched.
    ⚠️ No photo arm: `~/omni-spike-images` is not on this laptop (searched the whole disk).
 9b. 🔴 DEV APK RULED 2026-10-04: when stage 1's code is done, build the dev APK and INSTALL it on
    the dev phone (galaxy-s9:5555) myself, open it once so the SurrealDB 3.3 conversion and first
@@ -1225,7 +1228,7 @@ says what to do and what "right" looks like:
 7. Watch for: the app jumping to Entry 2026-09-24 on its own after the update (undiagnosed).
 8. Optional: Settings › turn the daily check-in on. Right: next morning its answer reviews due
    beliefs, and any that no longer hold arrive in the inbox as "retire" proposals. (Runs on seat
-   B's model, so Qwen3.6-35B-A3B once `switch-dev-seats-b-d.sh` has run, V4-Pro before.)
+   B's model: Qwen3.6-35B-A3B on dev since 2026-10-07.)
 Anything annoying beyond these is fair game; say whether it's worth fixing before release.
 
 Moved to the go-live sequence, not stage 1: gate 1 (live backup), the official import, the agent on
@@ -2850,7 +2853,7 @@ this down — not the volume of work, but scope arriving from decisions made lat
       📊 **SLATE RUN 2026-10-06** (`runs/20261006-040414-b-review/`, 7 × 3): **Qwen3.6-35B-A3B
       0 wrongful · 9/9** beats V4-Pro (seated) 3 · 9/9 by three acts, outside the noise floor; every
       wrongful act on the board was retiring the not-due belief. Rows: `MODEL_BENCH.md` Part 10.
-      Item 8 ruling: dev switch, in `switch-dev-seats-b-d.sh` with seat D (⏳ his run). Throwaway
+      Item 8 ruling: ✅ batch V4-Pro → Qwen3.6-35B-A3B on dev 2026-10-07, with seat D. Throwaway
       hub, its volume and network removed and confirmed absent. Original entry:
 - [ ] 🔴 **Give seat B a case family of its own — it has never been benched on its work**
       (`MODEL_BENCH.md` Part 2; user, 2026-09-16). `client_for` routes to the batch client only
