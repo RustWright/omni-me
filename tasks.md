@@ -1318,6 +1318,26 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   ⏳ For his ruling, not applied: D1 "next unchecked" in document detail · D2 bulk commit in
   the batch list · D3 reconcile rows on the Finances menu badge · D4 the WS driver's scheduled
   orders. ⚠️ Walked in code and the mock at 360 px, not on the S9: round 2 is that check.
+**Stage 2, round 2 checklist (DRAFT 2026-10-07; final once 1.1.26-dev is on the S9).**
+1. Open the app once. Right: no sync error; the header says Synced.
+2. Assistant home. Right: same margins and card look as the other tabs; Ask is as tall as the
+   text box; "items waiting in Archive" is a small number (4 on 10-07) or absent, and tapping it
+   opens Archive with "Unchecked only" on, listing that many.
+3. Finances › Overview › review inbox. Right: "Unmatched to reconcile" is a COUNT (~380), not
+   an amount. Analyze › Dashboard's card says "N transactions waiting".
+4. Reconcile. Right: full descriptions, each side says where it came from and which account;
+   Merge leaves the next pair in place (no "Loading…"). Then "Merge N high-confidence pairs…":
+   read the list, Merge. Then "Accept N suggested categories…": read every suggestion first;
+   Cancel if any is wrong and tell me which (that tunes the matcher).
+5. Leftovers from before the receipt fix, made by the old code: dismiss the 4 pending Digi-Key
+   batches and the Walmart "Your order is on the way" (12.34), and delete the committed $60.48
+   "Amazon.com" dated 2025-09-03 from the ledger. Right: no new promo batches from here on
+   (shows over days, not minutes).
+6. The daily check-in you turned on 10-07: did its answer review due beliefs, and did any
+   arrive in the inbox as "retire" proposals?
+7. Rule on D1–D4 in `interaction-map/README.md` § For his ruling.
+Anything else annoying: say whether it is worth fixing before release.
+
 - R1-8 🔴 **RULED 2026-10-07: full dev deploy authorised for this stretch** (server + agent images
   to dev, APK built and installed on galaxy-s9:5555, opened once, logcat checked). ⛔ Live untouched.
 
