@@ -668,6 +668,9 @@ pub struct DashboardSummaryView {
     /// which case affordability policy falls back to net worth.
     pub liquid_assets_in_base: Option<String>,
     pub unmatched_balance: Option<String>,
+    /// Transactions waiting in Reconcile. The balance above can net to zero
+    /// with hundreds waiting, so it never says whether there is work.
+    pub unmatched_count: u64,
     pub monthly_buckets: Vec<MonthlyTrendBucketView>,
     pub recurring: Vec<RecurringObligationView>,
 }
@@ -690,12 +693,13 @@ fn recurring_to_view(r: RecurringObligation) -> RecurringObligationView {
     }
 }
 
-fn dashboard_to_view(s: DashboardSummary) -> DashboardSummaryView {
+fn dashboard_to_view(s: DashboardSummary, unmatched_count: u64) -> DashboardSummaryView {
     DashboardSummaryView {
         base_currency: s.base_currency,
         net_worth_in_base: s.net_worth_in_base.map(base_money),
         liquid_assets_in_base: s.liquid_assets_in_base.map(base_money),
         unmatched_balance: s.unmatched_balance.map(base_money),
+        unmatched_count,
         monthly_buckets: s.monthly_buckets.into_iter().map(bucket_to_view).collect(),
         recurring: s.recurring.into_iter().map(recurring_to_view).collect(),
     }
@@ -761,7 +765,10 @@ pub async fn dashboard_summary(
         months,
         &roster,
     );
-    Ok(dashboard_to_view(summary))
+    let unmatched_count = queries::count_unmatched_transactions(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(dashboard_to_view(summary, unmatched_count))
 }
 
 /// Wire shape for one net-worth-history point (decimals stringified at the

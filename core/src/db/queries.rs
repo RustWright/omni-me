@@ -911,6 +911,23 @@ pub async fn list_unmatched_transactions(db: &Database) -> Result<Vec<Transactio
     Ok(rows)
 }
 
+/// How many transactions still carry an `Unmatched` leg: the reconcile queue's
+/// size. The clearing account's balance cannot stand in for it, since rows that
+/// net to zero leave hundreds waiting behind a balance of nothing.
+pub async fn count_unmatched_transactions(db: &Database) -> Result<u64, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT count() AS c FROM transactions
+             WHERE removed = false
+               AND superseded_by IS NONE
+               AND array::any(postings, |$p| $p.account = 'Unmatched')
+             GROUP ALL",
+        )
+        .await?;
+    let counts: Vec<i64> = resp.take("c").unwrap_or_default();
+    Ok(counts.first().copied().unwrap_or(0).max(0) as u64)
+}
+
 /// The newest settled transactions (no `Unmatched` leg), the history that
 /// `reconciliation::CategoryHistory` suggests categories from.
 pub async fn list_settled_transactions(
@@ -2503,6 +2520,17 @@ mod tests {
         ids.sort();
         assert_eq!(ids, ["settled1", "settled2"]);
         assert_eq!(list_settled_transactions(&db, 1).await.unwrap().len(), 1);
+    }
+
+    /// The count is the list's length, and zero is zero rather than an error.
+    #[tokio::test]
+    async fn count_unmatched_transactions_counts_the_reconcile_queue() {
+        let db = txn_db().await;
+        assert_eq!(count_unmatched_transactions(&db).await.unwrap(), 0);
+        insert_txn(&db, "settled", "Assets:Chequing").await;
+        insert_txn(&db, "open1", "Unmatched").await;
+        insert_txn(&db, "open2", "Unmatched").await;
+        assert_eq!(count_unmatched_transactions(&db).await.unwrap(), 2);
     }
 
     // --- Feedback ---

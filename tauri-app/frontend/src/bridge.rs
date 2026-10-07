@@ -3862,6 +3862,7 @@ fn mock_dashboard_summary() -> DashboardSummaryView {
         base_currency: "CAD".into(),
         net_worth_in_base: Some("3891.89".into()),
         unmatched_balance: Some("-1.50".into()),
+        unmatched_count: 6,
         monthly_buckets: vec![
             MonthlyTrendBucketView {
                 month: "2025-12".into(),

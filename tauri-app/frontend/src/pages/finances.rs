@@ -1077,14 +1077,15 @@ fn InstitutionsCard(
 }
 
 /// Review inbox (Overview 2×2 grid) — the daily triage surface: auto-imported
-/// batches awaiting review + the Unmatched balance to reconcile, each a tap into
-/// its flow. Accent/warn-tinted counts when there's something to act on.
+/// batches awaiting review + the transactions waiting to reconcile, each a tap
+/// into its flow. Accent/warn-tinted counts when there's something to act on.
 #[component]
 fn ReviewInboxCard(
     pending_count: u64,
     suggestion_count: u64,
-    unmatched: Option<String>,
-    base_currency: String,
+    /// A count like the rows above it, not the clearing balance: rows that net
+    /// to zero showed "-1.50 CAD" over ~380 waiting on dev (2026-10-07).
+    unmatched_count: u64,
     /// Arrived here by a reminder row naming this queue: bring the card into
     /// view and mark it. ⚠️ On a phone it sits below the net-worth hero and the
     /// history chart, so without the scroll the destination is off-screen and
@@ -1095,14 +1096,7 @@ fn ReviewInboxCard(
     on_open_suggestions: EventHandler<()>,
     on_open_reconciliation: EventHandler<()>,
 ) -> Element {
-    let unmatched_pending = unmatched
-        .as_deref()
-        .and_then(|s| s.parse::<f64>().ok())
-        .is_some_and(|v| v.abs() > 0.005);
-    let unmatched_str = unmatched
-        .as_deref()
-        .map(|s| format_money(s, &base_currency))
-        .unwrap_or_else(|| "—".to_string());
+    let unmatched_pending = unmatched_count > 0;
     let batch_tone = if pending_count > 0 {
         "text-obsidian-accent"
     } else {
@@ -1171,7 +1165,7 @@ fn ReviewInboxCard(
                         class: "w-full flex items-center justify-between text-sm rounded-md px-2 py-1.5 -mx-2 hover:bg-obsidian-border/5 transition-colors",
                         onclick: move |_| on_open_reconciliation.call(()),
                         span { class: "text-obsidian-text", "Unmatched to reconcile" }
-                        span { class: "tabular-nums font-semibold text-xs {unmatched_tone}", "{unmatched_str}" }
+                        span { class: "tabular-nums font-semibold {unmatched_tone}", "{unmatched_count}" }
                     }
                 }
             }
@@ -1365,7 +1359,7 @@ fn OverviewView(
     let active_range = range.read().clone();
     let breakdown_snap = breakdown.read().clone();
     let recent_snap = recent.read().clone();
-    let unmatched = snapshot.as_ref().and_then(|s| s.unmatched_balance.clone());
+    let unmatched_count = snapshot.as_ref().map_or(0, |s| s.unmatched_count);
     let base_currency = snapshot
         .as_ref()
         .map(|s| s.base_currency.clone())
@@ -1433,8 +1427,7 @@ fn OverviewView(
                 ReviewInboxCard {
                     pending_count,
                     suggestion_count,
-                    unmatched,
-                    base_currency: base_currency.clone(),
+                    unmatched_count,
                     highlight: highlight_review,
                     on_shown: move |_| on_review_seen.call(()),
                     on_open_batches: move |_| on_open_batches.call(()),
@@ -5938,6 +5931,7 @@ fn DashboardView(on_back: EventHandler<()>, on_open_unmatched: EventHandler<()>)
                 }
                 UnmatchedCard {
                     unmatched: s.unmatched_balance.clone(),
+                    count: s.unmatched_count,
                     base_currency: s.base_currency.clone(),
                     on_click: move |_| on_open_unmatched.call(()),
                 }
@@ -5981,15 +5975,18 @@ fn NetWorthCard(net_worth: Option<String>, base_currency: String) -> Element {
 #[component]
 fn UnmatchedCard(
     unmatched: Option<String>,
+    /// Transactions waiting. Decides "pending", never the balance: rows that net
+    /// to zero would otherwise read as everything reconciled.
+    count: u64,
     base_currency: String,
     on_click: EventHandler<()>,
 ) -> Element {
-    // Treat exactly-zero as nothing to show; non-zero is the
-    // reconciliation-pending signal that earns the orange accent.
-    let is_pending = unmatched
-        .as_deref()
-        .and_then(|s| s.parse::<f64>().ok())
-        .is_some_and(|v| v.abs() > 0.0);
+    let is_pending = count > 0;
+    let waiting = if count == 1 {
+        "1 transaction waiting — tap to reconcile.".to_string()
+    } else {
+        format!("{count} transactions waiting — tap to reconcile.")
+    };
     let border = if is_pending {
         "border-amber-500/40 hover:border-amber-400/60"
     } else {
@@ -6010,17 +6007,13 @@ fn UnmatchedCard(
                         "{format_money(&v, &base_currency)}"
                     }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
-                        if is_pending {
-                            "Reconciliation pending — tap to review unmatched transactions."
-                        } else {
-                            "Steady-state zero. Everything reconciles."
-                        }
+                        if is_pending { "{waiting}" } else { "Nothing waiting. Everything reconciles." }
                     }
                 },
                 None => rsx! {
                     div { class: "text-2xl font-bold text-obsidian-text-muted", "—" }
                     div { class: "text-xs text-obsidian-text-muted mt-1",
-                        "No unmatched activity to clear."
+                        if is_pending { "{waiting}" } else { "No unmatched activity to clear." }
                     }
                 },
             }
