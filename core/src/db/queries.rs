@@ -1646,6 +1646,8 @@ mod tests {
         db
     }
 
+    /// `id` goes into the record id unescaped: plain alphanumerics only. A hyphen
+    /// fails the CREATE, and `unwrap` here does not see a statement's error.
     async fn insert_txn(db: &Database, id: &str, account: &str) {
         db.query(
             format!(
@@ -2492,14 +2494,14 @@ mod tests {
     #[tokio::test]
     async fn list_settled_transactions_is_the_complement_and_honours_its_limit() {
         let db = txn_db().await;
-        insert_txn(&db, "matched-1", "Assets:Chequing").await;
-        insert_txn(&db, "matched-2", "Assets:Chequing").await;
+        insert_txn(&db, "settled1", "Assets:Chequing").await;
+        insert_txn(&db, "settled2", "Assets:Chequing").await;
         insert_txn(&db, "unmatched", "Unmatched").await;
 
         let rows = list_settled_transactions(&db, 10).await.unwrap();
         let mut ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
         ids.sort();
-        assert_eq!(ids, ["matched-1", "matched-2"]);
+        assert_eq!(ids, ["settled1", "settled2"]);
         assert_eq!(list_settled_transactions(&db, 1).await.unwrap().len(), 1);
     }
 
