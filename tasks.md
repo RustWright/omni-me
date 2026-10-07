@@ -1267,16 +1267,41 @@ September checked · 3 meaning search found the colour note · 4 not exercised (
   pdftotext); the audit did not.
 - R1-3 Assistant home (thread list) cramped, does not match the app's look; Ask button misaligned
   beside a taller text box on the S9. Restyle on the app's primitives; screenshots for him.
+  ✅ FIXED `9987b62`. Cause: the shell pads every page `p-4`, and this page added `px-4`/`mx-4`
+  on top, so its content was 32 px narrower than every other tab and misaligned with its own
+  header. Now: no own padding, queue rows and the two links as cards, threads as cards with a
+  two-line title, Ask stretched to the text box (`items-stretch`). Checked at 360 px in the mock
+  build (scratchpad `assistant.png`).
 - R1-4 Reconcile cards: too little context, description truncated. Show both sides in full, with
   date, amount, account, origin.
 - R1-5 Reconcile blanks to "Loading candidates…" after every merge (`load_candidates` sets
   `loading`). Remove the pair in place; refetch silently.
+  ✅ R1-4 + R1-5 FIXED `f4fb517` (+ test fix `591a0cd`): each side shows its full description
+  (wraps, never truncates), date, unsigned amount, origin ("Globepay feed", "Receipt email",
+  "Statement · x", from the importers' own stamps) and its other account(s); sides stack instead
+  of two 150 px columns. Merge/resolve drop the item in place and refresh silently; only the
+  first load shows "Loading candidates…". Checked at 360 px in the mock build.
 - R1-6 🔴 **RULED 2026-10-07 (his pick A, my recommendation): reconcile backlog** (~480 Unmatched
   rows on dev). A merge cannot be undone, so it is irreversible: never automatic. Build (a) one
   tap that merges every listed high-confidence pair after showing the list, and (b) a category
   suggestion on each no-pair row from his own past categorisation of that merchant, plus
   "accept all suggested" over the listed rows. Beat: B (one by one, faster) and C (bulk merges
   only; most rows have nothing to pair).
+  ✅ BUILT `f4fb517`. (a) "Merge N high-confidence pairs…" opens a list of exactly those pairs
+  ("cannot be undone") before anything runs; pairs are chosen disjoint, best score first, so no
+  merge strands another. (b) `reconciliation::CategoryHistory`: from the newest 5000 settled
+  transactions, the single Expenses/Income leg per merchant (alphabetic words ≥3 letters minus
+  bank boilerplate, overlap ≥0.67, one category ≥60% of the votes or no suggestion); only for
+  bank-side rows (a receipt-side row is missing the PAYING account, which no category history
+  can name). Prefilled in each row's input, plus "Accept N suggested categories…" with the same
+  list-first confirm. 📊 Simulated on dev's data: 58 of 297 bank-side rows get a suggestion, and
+  a 15-row sample was all right (Walmart→Groceries, Uber→Dining, rent, interest). The other 239
+  are mostly own-account transfers and crypto buys, which carry no expense category.
+  ⚠️ Finding for him, NOT acted on (it touches live): the WS driver passes through
+  `recurring_investment_policy-*` activities ("Recurring order upcoming: buy TBD", 6 rows on
+  dev) as transactions; they are schedules, not movements. Proposed fix: skip that id prefix
+  in the box's user-managed driver. 27 WS activities were recorded twice (same `txn_id`, 6 s
+  apart, 10-03): projection upserts by `txn_id`, so the ledger holds one each; benign.
 - R1-7 🔴 **RULED 2026-10-07 (his pick, my recommendation): build the interaction map this
   stretch**, after R1-1..6. A code-derived table of every screen, control, counter and
   destination, plus cognitive walkthroughs (the four questions per step, tap counts) of the core
