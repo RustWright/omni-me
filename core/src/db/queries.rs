@@ -911,6 +911,25 @@ pub async fn list_unmatched_transactions(db: &Database) -> Result<Vec<Transactio
     Ok(rows)
 }
 
+/// The newest settled transactions (no `Unmatched` leg), the history that
+/// `reconciliation::CategoryHistory` suggests categories from.
+pub async fn list_settled_transactions(
+    db: &Database,
+    limit: u32,
+) -> Result<Vec<TransactionRow>, DbError> {
+    let q = format!(
+        "SELECT {TXN_FIELDS} FROM transactions
+         WHERE removed = false
+           AND superseded_by IS NONE
+           AND array::any(postings, |$p| $p.account = 'Unmatched') = false
+         ORDER BY date DESC
+         LIMIT $limit"
+    );
+    let mut resp = db.query(q.as_str()).bind(("limit", limit)).await?;
+    let rows: Vec<TransactionRow> = resp.take(0)?;
+    Ok(rows)
+}
+
 // ---------------------------------------------------------------------------
 // Feedback
 // ---------------------------------------------------------------------------
@@ -2467,6 +2486,21 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "unmatched");
+    }
+
+    /// The complement, and bounded: category suggestions read only settled rows.
+    #[tokio::test]
+    async fn list_settled_transactions_is_the_complement_and_honours_its_limit() {
+        let db = txn_db().await;
+        insert_txn(&db, "matched-1", "Assets:Chequing").await;
+        insert_txn(&db, "matched-2", "Assets:Chequing").await;
+        insert_txn(&db, "unmatched", "Unmatched").await;
+
+        let rows = list_settled_transactions(&db, 10).await.unwrap();
+        let mut ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, ["matched-1", "matched-2"]);
+        assert_eq!(list_settled_transactions(&db, 1).await.unwrap().len(), 1);
     }
 
     // --- Feedback ---

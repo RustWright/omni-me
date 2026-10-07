@@ -3509,25 +3509,61 @@ pub async fn invoke_merge_transactions(primary_id: &str, secondary_id: &str) -> 
     }
 }
 
+/// One side as the real command builds it; the long description is there so
+/// the card is seen wrapping, not truncating.
+#[cfg(feature = "mock")]
+fn mock_preview(
+    id: &str,
+    date: &str,
+    description: &str,
+    amount: &str,
+    origin: &str,
+    account: &str,
+    suggested: Option<&str>,
+) -> ReconciliationTxnPreview {
+    ReconciliationTxnPreview {
+        txn_id: id.to_string(),
+        date: date.to_string(),
+        description: description.to_string(),
+        unmatched_amount: amount.to_string(),
+        unmatched_commodity: "CAD".to_string(),
+        statement_source: None,
+        origin: origin.to_string(),
+        accounts: vec![account.to_string()],
+        suggested_category: suggested.map(String::from),
+    }
+}
+
 #[cfg(feature = "mock")]
 fn mock_unmatched_no_candidate() -> Vec<ReconciliationTxnPreview> {
     vec![
-        ReconciliationTxnPreview {
-            txn_id: "01JK099".to_string(),
-            date: "2026-05-12".to_string(),
-            description: "Costco Wholesale".to_string(),
-            unmatched_amount: "-185.42".to_string(),
-            unmatched_commodity: "CAD".to_string(),
-            statement_source: Some("summit-chequing-2026-05".to_string()),
-        },
-        ReconciliationTxnPreview {
-            txn_id: "01JK100".to_string(),
-            date: "2026-05-13".to_string(),
-            description: "Etransfer to Jane".to_string(),
-            unmatched_amount: "-50.00".to_string(),
-            unmatched_commodity: "CAD".to_string(),
-            statement_source: Some("summit-chequing-2026-05".to_string()),
-        },
+        mock_preview(
+            "01JK099",
+            "2026-05-12",
+            "Purchase: Northwind Wholesale #1234 Springfield",
+            "185.42",
+            "Globepay feed",
+            "Assets:NonRegistered:CAD",
+            Some("Expenses:Food:Groceries"),
+        ),
+        mock_preview(
+            "01JK100",
+            "2026-05-13",
+            "Money transfer: to Globepay TFSA (GP-TFSA-01)",
+            "50.00",
+            "Globepay feed",
+            "Assets:NonRegistered:CAD",
+            None,
+        ),
+        mock_preview(
+            "01JK101",
+            "2026-05-14",
+            "Purchase: Vaultly U* Vaultly P Springfield",
+            "0.71",
+            "Globepay feed",
+            "Assets:NonRegistered:CAD",
+            Some("Expenses:Subscriptions"),
+        ),
     ]
 }
 
@@ -3540,47 +3576,77 @@ fn mock_match_candidates() -> Vec<MatchCandidateView> {
             score: 0.95,
             days_apart: 0,
             description_similarity: 1.0,
-            clears_statement: true,
-            primary: ReconciliationTxnPreview {
-                txn_id: "01JK001".to_string(),
-                date: "2026-05-15".to_string(),
-                description: "Loblaws Groceries".to_string(),
-                unmatched_amount: "42.18".to_string(),
-                unmatched_commodity: "CAD".to_string(),
-                statement_source: None,
-            },
-            secondary: ReconciliationTxnPreview {
-                txn_id: "01JK002".to_string(),
-                date: "2026-05-15".to_string(),
-                description: "LOBLAWS".to_string(),
-                unmatched_amount: "-42.18".to_string(),
-                unmatched_commodity: "CAD".to_string(),
-                statement_source: Some("summit-chequing-2026-05".to_string()),
-            },
+            clears_statement: false,
+            primary: mock_preview(
+                "01JK001",
+                "2026-05-15",
+                "Organic Wellness Ginger Shots (4 x 60 ml)",
+                "-9.99",
+                "Receipt email",
+                "Expenses:Groceries:Beverages",
+                None,
+            ),
+            secondary: mock_preview(
+                "01JK002",
+                "2026-05-15",
+                "Purchase: Northwind.ca",
+                "9.99",
+                "Globepay feed",
+                "Assets:NonRegistered:CAD",
+                None,
+            ),
         },
         MatchCandidateView {
             primary_id: "01JK003".to_string(),
             secondary_id: "01JK004".to_string(),
+            score: 0.91,
+            days_apart: 1,
+            description_similarity: 0.5,
+            clears_statement: false,
+            primary: mock_preview(
+                "01JK003",
+                "2026-05-10",
+                "Payment to Contoso Mobile",
+                "-63.84",
+                "Receipt email",
+                "Expenses:Utilities:Internet",
+                None,
+            ),
+            secondary: mock_preview(
+                "01JK004",
+                "2026-05-11",
+                "Pre-authorized debit: to Contoso Mobile",
+                "63.84",
+                "Globepay feed",
+                "Assets:NonRegistered:CAD",
+                None,
+            ),
+        },
+        MatchCandidateView {
+            primary_id: "01JK005".to_string(),
+            secondary_id: "01JK006".to_string(),
             score: 0.72,
             days_apart: 3,
-            description_similarity: 0.5,
-            clears_statement: true,
-            primary: ReconciliationTxnPreview {
-                txn_id: "01JK003".to_string(),
-                date: "2026-05-10".to_string(),
-                description: "Hydro Bill".to_string(),
-                unmatched_amount: "87.50".to_string(),
-                unmatched_commodity: "CAD".to_string(),
-                statement_source: None,
-            },
-            secondary: ReconciliationTxnPreview {
-                txn_id: "01JK004".to_string(),
-                date: "2026-05-13".to_string(),
-                description: "Toronto Hydro".to_string(),
-                unmatched_amount: "-87.50".to_string(),
-                unmatched_commodity: "CAD".to_string(),
-                statement_source: Some("summit-chequing-2026-05".to_string()),
-            },
+            description_similarity: 0.0,
+            clears_statement: false,
+            primary: mock_preview(
+                "01JK005",
+                "2026-05-10",
+                "FABRIKAM POWER",
+                "-87.50",
+                "Receipt email",
+                "Expenses:Utilities",
+                None,
+            ),
+            secondary: mock_preview(
+                "01JK006",
+                "2026-05-13",
+                "Pre-authorized debit: to Fabrikam Power Board",
+                "87.50",
+                "Globepay feed",
+                "Assets:NonRegistered:CAD",
+                None,
+            ),
         },
     ]
 }

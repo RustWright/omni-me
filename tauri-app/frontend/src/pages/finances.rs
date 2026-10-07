@@ -31,7 +31,7 @@ use crate::components::attachment_viewer::{
 use crate::components::date_field::DateField;
 use crate::components::icon::{Icon, IconName};
 use crate::components::primitives::{
-    Button, ButtonSize, ButtonVariant, Card, PageHeader, SegmentedNav,
+    Button, ButtonSize, ButtonVariant, Card, INPUT_CLASS, PageHeader, SegmentedNav,
 };
 use crate::components::proposal_card::ProposalCard;
 use crate::continuity::{CaptureDraft, ContinuityKey, ListState, PostingDraft, use_continuity};
@@ -7389,7 +7389,7 @@ fn StatementImportView(on_back: EventHandler<()>) -> Element {
 
 /// Label for the confidence indicator on a candidate row.
 fn confidence_label(score: f64) -> &'static str {
-    if score >= 0.85 {
+    if score >= CONFIDENT_PAIR {
         "High"
     } else if score >= 0.6 {
         "Medium"
@@ -7415,192 +7415,396 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
     let account_suggestions = use_context::<AccountSuggestions>();
     let mut candidates: Signal<Vec<MatchCandidateView>> = use_signal(Vec::new);
     let mut no_match_rows: Signal<Vec<ReconciliationTxnPreview>> = use_signal(Vec::new);
-    let mut loading: Signal<bool> = use_signal(|| true);
+    // Only the first load blanks the list. Every later refresh runs behind what
+    // is already on screen, so the next pair is tappable the moment one merges.
+    let mut loaded: Signal<bool> = use_signal(|| false);
     let mut load_error: Signal<Option<String>> = use_signal(|| None);
     // Dismissed pairs (by "primary|secondary" key) — local-only, not
     // persisted. A "skip for now" affordance that doesn't pollute the
     // event log. Reload re-surfaces them.
     let mut dismissed: Signal<std::collections::HashSet<String>> =
         use_signal(std::collections::HashSet::new);
-    // Pair currently being merged — disables the row's buttons so a
-    // double-click can't fire two merges.
-    let mut merging_pair: Signal<Option<String>> = use_signal(|| None);
+    // Pair or row currently being acted on — disables its buttons so a
+    // double-tap can't fire two merges.
+    let mut busy: Signal<Option<String>> = use_signal(|| None);
+    let mut bulk: Signal<Option<BulkAction>> = use_signal(|| None);
+    let mut bulk_progress: Signal<Option<(usize, usize)>> = use_signal(|| None);
 
-    let load_candidates = move || {
+    let refresh = move || {
         spawn(async move {
-            loading.set(true);
-            load_error.set(None);
+            let mut errors = Vec::new();
             match bridge::invoke_list_match_candidates(Some(7)).await {
                 Ok(rows) => candidates.set(rows),
-                Err(e) => load_error.set(Some(e)),
+                Err(e) => errors.push(e),
             }
-            // No-match rows are best-effort: a failure here must not blank the
-            // matched-pairs section. But it must not be SILENT either. Both
-            // commands read the same underlying query, so when that query was
-            // returning a deserialize error this arm swallowed it — leaving a
-            // half-empty screen with no explanation of what went wrong.
+            // A failure on either list must show, never leave a half-empty screen
+            // with nothing to explain it. Both read the same query.
             match bridge::invoke_list_unmatched_without_candidates(Some(7)).await {
                 Ok(rows) => no_match_rows.set(rows),
-                Err(e) => {
-                    let msg = match load_error.peek().clone() {
-                        Some(prev) => format!("{prev}\nNo-match rows failed to load: {e}"),
-                        None => format!("No-match rows failed to load: {e}"),
-                    };
-                    load_error.set(Some(msg));
-                }
+                Err(e) => errors.push(format!("No-match rows failed to load: {e}")),
             }
-            loading.set(false);
+            load_error.set((!errors.is_empty()).then(|| errors.join("\n")));
+            loaded.set(true);
         });
     };
 
     use_effect(move || {
-        load_candidates();
+        refresh();
     });
 
+    // Drop a merged pair, and every other pair naming either side, at once.
+    let forget_pair = move |primary_id: &str, secondary_id: &str| {
+        let mut candidates = candidates;
+        candidates.with_mut(|list| {
+            list.retain(|c| {
+                ![&c.primary_id, &c.secondary_id]
+                    .iter()
+                    .any(|id| id.as_str() == primary_id || id.as_str() == secondary_id)
+            })
+        });
+    };
+    let forget_row = move |txn_id: &str| {
+        let mut no_match_rows = no_match_rows;
+        no_match_rows.with_mut(|rows| rows.retain(|r| r.txn_id != txn_id));
+    };
+
     let merge = move |primary_id: String, secondary_id: String| {
-        let key = format!("{primary_id}|{secondary_id}");
         spawn(async move {
-            merging_pair.set(Some(key.clone()));
+            busy.set(Some(format!("{primary_id}|{secondary_id}")));
             match bridge::invoke_merge_transactions(&primary_id, &secondary_id).await {
                 Ok(_) => {
-                    // Refetch — the merged pair drops out, and any other
-                    // candidates that referenced the absorbed secondary
-                    // also drop.
-                    load_candidates();
+                    forget_pair(&primary_id, &secondary_id);
+                    refresh();
                 }
                 Err(e) => load_error.set(Some(format!("Merge failed: {e}"))),
             }
-            merging_pair.set(None);
+            busy.set(None);
         });
     };
 
     let mut dismiss = move |primary_id: String, secondary_id: String| {
-        let key = format!("{primary_id}|{secondary_id}");
-        let mut set = dismissed.read().clone();
-        set.insert(key);
-        dismissed.set(set);
+        dismissed.with_mut(|set| {
+            set.insert(format!("{primary_id}|{secondary_id}"));
+        });
     };
 
     let resolve = move |txn_id: String, category: String| {
         spawn(async move {
-            if let Err(e) = bridge::invoke_resolve_unmatched(&txn_id, &category).await {
-                load_error.set(Some(format!("Resolve failed: {e}")));
-                return;
+            busy.set(Some(txn_id.clone()));
+            match bridge::invoke_resolve_unmatched(&txn_id, &category).await {
+                Ok(()) => {
+                    forget_row(&txn_id);
+                    account_suggestions.refresh();
+                    refresh();
+                }
+                Err(e) => load_error.set(Some(format!("Resolve failed: {e}"))),
             }
-            account_suggestions.refresh();
-            load_candidates();
+            busy.set(None);
         });
     };
 
-    let snapshot = candidates.read().clone();
-    let no_match_snapshot = no_match_rows.read().clone();
     let dismissed_set = dismissed.read().clone();
-    let is_loading = *loading.read();
-    let err_msg = load_error.read().clone();
-    let active_merge = merging_pair.read().clone();
-
-    let visible: Vec<MatchCandidateView> = snapshot
-        .into_iter()
+    let visible: Vec<MatchCandidateView> = candidates
+        .read()
+        .iter()
         .filter(|c| !dismissed_set.contains(&format!("{}|{}", c.primary_id, c.secondary_id)))
+        .cloned()
         .collect();
-    let visible_empty = visible.is_empty();
-    let no_match_empty = no_match_snapshot.is_empty();
+    let no_match_snapshot = no_match_rows.read().clone();
+    let confident = disjoint_confident_pairs(&visible);
+    let suggested: Vec<ReconciliationTxnPreview> = no_match_snapshot
+        .iter()
+        .filter(|r| r.suggested_category.is_some())
+        .cloned()
+        .collect();
+
+    let run_bulk = move |action: BulkAction| {
+        spawn(async move {
+            let mut failures = Vec::new();
+            match &action {
+                BulkAction::Merge(pairs) => {
+                    for (i, c) in pairs.iter().enumerate() {
+                        bulk_progress.set(Some((i + 1, pairs.len())));
+                        match bridge::invoke_merge_transactions(&c.primary_id, &c.secondary_id)
+                            .await
+                        {
+                            Ok(_) => forget_pair(&c.primary_id, &c.secondary_id),
+                            Err(e) => failures.push(format!("{}: {e}", c.primary.description)),
+                        }
+                    }
+                }
+                BulkAction::Resolve(rows) => {
+                    for (i, r) in rows.iter().enumerate() {
+                        bulk_progress.set(Some((i + 1, rows.len())));
+                        let Some(category) = &r.suggested_category else {
+                            continue;
+                        };
+                        match bridge::invoke_resolve_unmatched(&r.txn_id, category).await {
+                            Ok(()) => forget_row(&r.txn_id),
+                            Err(e) => failures.push(format!("{}: {e}", r.description)),
+                        }
+                    }
+                    account_suggestions.refresh();
+                }
+            }
+            bulk_progress.set(None);
+            bulk.set(None);
+            if !failures.is_empty() {
+                load_error.set(Some(format!(
+                    "{} did not go through:\n{}",
+                    failures.len(),
+                    failures.join("\n")
+                )));
+            }
+            refresh();
+        });
+    };
+
+    let err_msg = load_error.read().clone();
+    let active = busy.read().clone();
+    let pending_bulk = bulk.read().clone();
+    let progress = *bulk_progress.read();
+    let pair_count = visible.len();
+    let row_count = no_match_snapshot.len();
 
     rsx! {
-        PageHeader { title: "Reconcile",
-            button {
-                class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
+        PageHeader {
+            title: "Reconcile",
+            subtitle: if *loaded.read() {
+                format!("{pair_count} pairs · {row_count} without a pair")
+            } else {
+                String::new()
+            },
+            Button {
+                variant: ButtonVariant::Ghost,
+                size: ButtonSize::Sm,
                 onclick: move |_| on_back.call(()),
                 "← Back"
             }
         }
 
-        div { class: "mb-4 p-4 bg-obsidian-sidebar/40 border border-obsidian-border/5 rounded-lg text-xs text-obsidian-text-muted",
-            "Pairs of Unmatched-touching transactions whose amounts cancel out. Merge accepts the pair into one transaction (with the statement side automatically cleared); Skip hides the pair until next reload."
+        p { class: "mb-4 text-xs text-obsidian-text-muted",
+            "A pair is the same money recorded twice, usually the bank's line and a receipt. Merge keeps one transaction with both sides' detail, and cannot be undone. A row without a pair needs the category the money went to."
         }
 
         if let Some(msg) = err_msg {
-            div { class: "mb-4 p-4 bg-red-950/30 border border-red-500/30 rounded-lg text-sm text-red-300",
+            div { class: "mb-4 p-3 bg-red-950/30 border border-red-500/30 rounded-md text-sm text-red-300 whitespace-pre-line",
                 "{msg}"
             }
         }
 
-        if is_loading {
-            div { class: "p-6 text-center text-obsidian-text-muted text-sm",
-                "Loading candidates…"
+        if let Some(action) = pending_bulk {
+            BulkConfirm {
+                action: action.clone(),
+                progress,
+                on_cancel: move |_| bulk.set(None),
+                on_confirm: move |_| run_bulk(action.clone()),
             }
-        // No empty state here on purpose. "Nothing to reconcile" is owned by the
-        // block further down, which also knows whether the no-match list is
-        // empty. An empty-state arm here fired at the same time as that one
-        // (`visible.is_empty()` and `visible_empty` are the same value), so the
-        // message printed twice — and it printed wrongly whenever there were
-        // no-match rows to show but no matched pairs.
-        } else if !visible_empty {
-            div { class: "space-y-3",
-                for c in visible {
-                    {
-                        let key = format!("{}|{}", c.primary_id, c.secondary_id);
-                        let is_merging = active_merge.as_deref() == Some(key.as_str());
-                        rsx! {
-                            CandidateCard {
-                                key: "{key}",
-                                cand: c.clone(),
-                                is_merging,
-                                on_merge: {
-                                    let p = c.primary_id.clone();
-                                    let s = c.secondary_id.clone();
-                                    move |_| merge(p.clone(), s.clone())
-                                },
-                                on_dismiss: {
-                                    let p = c.primary_id.clone();
-                                    let s = c.secondary_id.clone();
-                                    move |_| dismiss(p.clone(), s.clone())
-                                },
+        } else if confident.len() > 1 || suggested.len() > 1 {
+            div { class: "mb-4 flex flex-wrap gap-2",
+                if confident.len() > 1 {
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        size: ButtonSize::Sm,
+                        onclick: {
+                            let pairs = confident.clone();
+                            move |_| bulk.set(Some(BulkAction::Merge(pairs.clone())))
+                        },
+                        "Merge {confident.len()} high-confidence pairs…"
+                    }
+                }
+                if suggested.len() > 1 {
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        size: ButtonSize::Sm,
+                        onclick: {
+                            let rows = suggested.clone();
+                            move |_| bulk.set(Some(BulkAction::Resolve(rows.clone())))
+                        },
+                        "Accept {suggested.len()} suggested categories…"
+                    }
+                }
+            }
+        }
+
+        if !*loaded.read() {
+            div { class: "p-6 text-center text-obsidian-text-muted text-sm", "Loading candidates…" }
+        } else if pair_count == 0 && row_count == 0 {
+            Card { class: "text-center text-obsidian-text-muted text-sm",
+                "Nothing to reconcile. New bank lines and receipts land here as they arrive."
+            }
+        } else {
+            if pair_count > 0 {
+                div { class: "space-y-3",
+                    for c in visible {
+                        {
+                            let key = format!("{}|{}", c.primary_id, c.secondary_id);
+                            let is_merging = active.as_deref() == Some(key.as_str());
+                            rsx! {
+                                CandidateCard {
+                                    key: "{key}",
+                                    cand: c.clone(),
+                                    is_merging,
+                                    on_merge: {
+                                        let p = c.primary_id.clone();
+                                        let s = c.secondary_id.clone();
+                                        move |_| merge(p.clone(), s.clone())
+                                    },
+                                    on_dismiss: {
+                                        let p = c.primary_id.clone();
+                                        let s = c.secondary_id.clone();
+                                        move |_| dismiss(p.clone(), s.clone())
+                                    },
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-
-        // --- No-match path (5.7) — Unmatched-touching transactions with
-        // no candidate. User assigns a category to convert the Unmatched
-        // leg into a real category leg; statement-sourced rows auto-clear.
-        if !no_match_empty {
-            div { class: "mt-6 mb-3 border-b border-obsidian-border/5 pb-2",
-                h2 { class: "text-sm font-bold text-obsidian-text",
-                    "No-match transactions ({no_match_snapshot.len()})"
+            if row_count > 0 {
+                div { class: "mt-6 mb-3 border-b border-obsidian-border/5 pb-2",
+                    h2 { class: "text-sm font-bold text-obsidian-text", "Without a pair ({row_count})" }
                 }
-                p { class: "text-xs text-obsidian-text-muted mt-1",
-                    "Statement rows or auto-imports with no pairing candidate — assign a category to resolve each."
-                }
-            }
-            div { class: "space-y-3",
-                for row in no_match_snapshot {
-                    NoMatchRowCard {
-                        key: "{row.txn_id}",
-                        row: row.clone(),
-                        on_resolve: {
-                            let id = row.txn_id.clone();
-                            move |category: String| resolve(id.clone(), category)
-                        },
+                div { class: "space-y-3",
+                    for row in no_match_snapshot {
+                        NoMatchRowCard {
+                            key: "{row.txn_id}",
+                            row: row.clone(),
+                            busy: active.as_deref() == Some(row.txn_id.as_str()),
+                            on_resolve: {
+                                let id = row.txn_id.clone();
+                                move |category: String| resolve(id.clone(), category)
+                            },
+                        }
                     }
                 }
-            }
-        } else if !is_loading && visible_empty {
-            // True empty state — no pairs AND no no-match rows.
-            div { class: "p-6 bg-obsidian-sidebar/60 border border-obsidian-border/5 rounded-lg text-center text-obsidian-text-muted text-sm",
-                "No reconciliation candidates. Import a statement or wait for more auto-imported transactions to accumulate."
             }
         }
     }
 }
 
+/// One confirmation for many rows. Every row is listed before anything runs,
+/// because a merge cannot be undone and the user is approving exactly these.
+#[derive(Clone, PartialEq)]
+enum BulkAction {
+    Merge(Vec<MatchCandidateView>),
+    Resolve(Vec<ReconciliationTxnPreview>),
+}
+
+/// The high-confidence pairs that can all be merged in one pass: a transaction
+/// sits in at most one, since merging it into the first pair would leave the
+/// second naming a row that no longer exists. Highest score first wins.
+fn disjoint_confident_pairs(candidates: &[MatchCandidateView]) -> Vec<MatchCandidateView> {
+    let mut by_score: Vec<&MatchCandidateView> = candidates
+        .iter()
+        .filter(|c| c.score >= CONFIDENT_PAIR)
+        .collect();
+    by_score.sort_by(|a, b| b.score.total_cmp(&a.score));
+    let mut taken = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for c in by_score {
+        if taken.contains(&c.primary_id) || taken.contains(&c.secondary_id) {
+            continue;
+        }
+        taken.insert(c.primary_id.clone());
+        taken.insert(c.secondary_id.clone());
+        out.push(c.clone());
+    }
+    out
+}
+
+/// The score `confidence_label` calls "High".
+const CONFIDENT_PAIR: f64 = 0.85;
+
 #[component]
-fn NoMatchRowCard(row: ReconciliationTxnPreview, on_resolve: EventHandler<String>) -> Element {
-    let mut category_input: Signal<String> = use_signal(String::new);
+fn BulkConfirm(
+    action: BulkAction,
+    progress: Option<(usize, usize)>,
+    on_cancel: EventHandler<()>,
+    on_confirm: EventHandler<()>,
+) -> Element {
+    let (title, verb, lines): (String, &str, Vec<(String, String)>) = match &action {
+        BulkAction::Merge(pairs) => (
+            format!("Merge these {} pairs? This cannot be undone.", pairs.len()),
+            "Merge",
+            pairs
+                .iter()
+                .map(|c| {
+                    (
+                        format!("{} ↔ {}", c.primary.description, c.secondary.description),
+                        format!(
+                            "{} {}",
+                            unsigned(&c.primary.unmatched_amount),
+                            c.primary.unmatched_commodity
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+        BulkAction::Resolve(rows) => (
+            format!(
+                "File these {} under their suggested categories?",
+                rows.len()
+            ),
+            "File",
+            rows.iter()
+                .map(|r| {
+                    (
+                        r.description.clone(),
+                        r.suggested_category.clone().unwrap_or_default(),
+                    )
+                })
+                .collect(),
+        ),
+    };
+    let count = lines.len();
+    rsx! {
+        Card { class: "mb-4 space-y-3",
+            div { class: "text-sm font-semibold text-obsidian-text", "{title}" }
+            div { class: "max-h-72 overflow-y-auto divide-y divide-obsidian-border/5 text-xs",
+                for (i , (what , detail)) in lines.into_iter().enumerate() {
+                    div { key: "{i}", class: "py-1.5 flex justify-between gap-3",
+                        span { class: "text-obsidian-text break-words min-w-0", "{what}" }
+                        span { class: "text-obsidian-text-muted shrink-0 text-right", "{detail}" }
+                    }
+                }
+            }
+            if let Some((done, total)) = progress {
+                div { class: "text-xs text-obsidian-text-muted", "Working… {done} of {total}" }
+            } else {
+                div { class: "flex justify-end gap-2",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        size: ButtonSize::Sm,
+                        onclick: move |_| on_cancel.call(()),
+                        "Cancel"
+                    }
+                    Button {
+                        size: ButtonSize::Sm,
+                        onclick: move |_| on_confirm.call(()),
+                        "{verb} {count}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// An amount without its sign. The `Unmatched` leg carries the bank line's
+/// sign inverted, which reads as backwards beside the description.
+fn unsigned(amount: &str) -> &str {
+    amount.strip_prefix('-').unwrap_or(amount)
+}
+
+#[component]
+fn NoMatchRowCard(
+    row: ReconciliationTxnPreview,
+    busy: bool,
+    on_resolve: EventHandler<String>,
+) -> Element {
+    let suggested = row.suggested_category.clone();
+    let mut category_input: Signal<String> = use_signal(|| suggested.clone().unwrap_or_default());
     let mut error: Signal<Option<String>> = use_signal(|| None);
-    let source_label = row.statement_source.as_deref().unwrap_or("captured");
 
     let mut submit = move || {
         let cat = category_input.read().trim().to_string();
@@ -7611,30 +7815,25 @@ fn NoMatchRowCard(row: ReconciliationTxnPreview, on_resolve: EventHandler<String
         error.set(None);
         on_resolve.call(cat);
     };
+    let showing_suggestion = suggested.as_deref() == Some(category_input.read().as_str());
 
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
-            div { class: "min-w-0",
-                div { class: "text-sm font-semibold text-obsidian-text truncate",
-                    "{row.description}"
-                }
-                div { class: "text-xs text-obsidian-text-muted mt-1",
-                    "{row.date} · {row.unmatched_amount} {row.unmatched_commodity} · {source_label}"
-                }
-            }
-            div { class: "flex gap-2",
+        Card { class: "space-y-3",
+            TxnSummary { txn: row.clone() }
+            div { class: "flex gap-2 items-start",
                 AccountInput {
-                    wrapper_class: "flex-1".to_string(),
-                    input_class: "w-full px-3 py-1.5 bg-obsidian-bg border border-obsidian-border/10 rounded text-xs text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none".to_string(),
+                    wrapper_class: "flex-1 min-w-0".to_string(),
+                    input_class: INPUT_CLASS.to_string(),
                     placeholder: "Expenses:Groceries".to_string(),
                     mode: AccountMode::Add,
                     value: category_input.read().clone(),
                     on_input: move |v: String| category_input.set(v),
                 }
-                button {
-                    class: "px-3 py-1.5 text-xs font-semibold text-black bg-obsidian-accent/90 hover:bg-obsidian-accent rounded",
-                    onclick: move |_| submit(),
-                    "Resolve"
+                Button { disabled: busy, onclick: move |_| submit(), "Resolve" }
+            }
+            if showing_suggestion {
+                div { class: "text-xs text-obsidian-text-muted",
+                    "Suggested: where you filed this merchant before."
                 }
             }
             if let Some(msg) = error.read().clone() {
@@ -7653,35 +7852,39 @@ fn CandidateCard(
 ) -> Element {
     let conf = confidence_label(cand.score);
     let conf_class = confidence_color_class(cand.score);
+    let days = match cand.days_apart {
+        0 => "same day".to_string(),
+        1 => "1 day apart".to_string(),
+        n => format!("{n} days apart"),
+    };
     rsx! {
-        div { class: "p-4 bg-obsidian-sidebar/60 border border-obsidian-border/10 rounded-lg space-y-3",
-            div { class: "flex items-center gap-2",
-                span {
-                    class: "px-2 py-0.5 text-xs font-semibold border rounded-full {conf_class}",
+        Card { class: "space-y-3",
+            div { class: "flex flex-wrap items-center gap-2",
+                span { class: "px-2 py-0.5 text-xs font-semibold border rounded-full {conf_class}",
                     "{conf}"
                 }
                 span { class: "text-xs text-obsidian-text-muted",
-                    "{cand.days_apart} day(s) apart · descriptions {(cand.description_similarity * 100.0) as u32}% similar"
-                }
-                if cand.clears_statement {
-                    span { class: "text-xs text-obsidian-accent",
-                        "· clears statement"
-                    }
+                    "{unsigned(&cand.primary.unmatched_amount)} {cand.primary.unmatched_commodity} · {days}"
                 }
             }
-            div { class: "grid grid-cols-2 gap-3",
-                CandidateSide { txn: cand.primary.clone() }
-                CandidateSide { txn: cand.secondary.clone() }
+            div { class: "space-y-2",
+                div { class: "p-3 bg-obsidian-bg/60 border border-obsidian-border/5 rounded-md",
+                    TxnSummary { txn: cand.primary.clone() }
+                }
+                div { class: "p-3 bg-obsidian-bg/60 border border-obsidian-border/5 rounded-md",
+                    TxnSummary { txn: cand.secondary.clone() }
+                }
             }
-            div { class: "flex gap-2 justify-end pt-1",
-                button {
-                    class: "px-3 py-1.5 text-xs text-obsidian-text-muted hover:text-obsidian-text border border-obsidian-border/10 hover:border-obsidian-border/20 rounded disabled:opacity-50",
+            div { class: "flex gap-2 justify-end",
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    size: ButtonSize::Sm,
                     disabled: is_merging,
                     onclick: move |_| on_dismiss.call(()),
                     "Skip"
                 }
-                button {
-                    class: "px-4 py-1.5 text-xs font-semibold text-black bg-obsidian-accent/90 hover:bg-obsidian-accent rounded disabled:opacity-50",
+                Button {
+                    size: ButtonSize::Sm,
                     disabled: is_merging,
                     onclick: move |_| on_merge.call(()),
                     if is_merging { "Merging…" } else { "Merge" }
@@ -7691,19 +7894,22 @@ fn CandidateCard(
     }
 }
 
+/// One transaction in full: the description wraps rather than truncating,
+/// because the end of a bank line is often the part that names the merchant.
 #[component]
-fn CandidateSide(txn: crate::types::ReconciliationTxnPreview) -> Element {
-    let source_label = txn.statement_source.as_deref().unwrap_or("captured");
+fn TxnSummary(txn: ReconciliationTxnPreview) -> Element {
+    let accounts = txn.accounts.join(", ");
     rsx! {
-        div { class: "p-3 bg-obsidian-bg/60 border border-obsidian-border/5 rounded text-xs space-y-1",
-            div { class: "text-obsidian-text font-medium truncate",
-                "{txn.description}"
-            }
+        div { class: "space-y-0.5 text-xs min-w-0",
+            div { class: "text-sm text-obsidian-text font-medium break-words", "{txn.description}" }
             div { class: "text-obsidian-text-muted",
-                "{txn.date} · {txn.unmatched_amount} {txn.unmatched_commodity}"
+                "{txn.date} · {unsigned(&txn.unmatched_amount)} {txn.unmatched_commodity}"
             }
-            div { class: "text-obsidian-text-muted/80 italic truncate",
-                "{source_label}"
+            div { class: "text-obsidian-text-muted break-words",
+                "{txn.origin}"
+                if !accounts.is_empty() {
+                    " · {accounts}"
+                }
             }
         }
     }
@@ -8199,6 +8405,59 @@ fn SampleTxnRow(txn: crate::types::JournalImportSampleTxn) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pair(primary: &str, secondary: &str, score: f64) -> MatchCandidateView {
+        let side = |id: &str| ReconciliationTxnPreview {
+            txn_id: id.into(),
+            date: "2026-10-07".into(),
+            description: id.into(),
+            unmatched_amount: "9.99".into(),
+            unmatched_commodity: "CAD".into(),
+            statement_source: None,
+            origin: String::new(),
+            accounts: vec![],
+            suggested_category: None,
+        };
+        MatchCandidateView {
+            primary_id: primary.into(),
+            secondary_id: secondary.into(),
+            score,
+            days_apart: 0,
+            description_similarity: 0.0,
+            clears_statement: false,
+            primary: side(primary),
+            secondary: side(secondary),
+        }
+    }
+
+    /// One receipt can pair with two identical bank lines. Bulk merge takes the
+    /// better pair and leaves the other, which would name a merged-away row.
+    #[test]
+    fn bulk_merge_takes_each_transaction_once_best_score_first() {
+        let pairs = [
+            pair("receipt", "bank-1", 0.90),
+            pair("receipt", "bank-2", 0.95),
+            pair("other", "bank-3", 0.88),
+            pair("low", "bank-4", 0.70),
+        ];
+        let chosen: Vec<(String, String)> = disjoint_confident_pairs(&pairs)
+            .into_iter()
+            .map(|c| (c.primary_id, c.secondary_id))
+            .collect();
+        assert_eq!(
+            chosen,
+            [
+                ("receipt".to_string(), "bank-2".to_string()),
+                ("other".to_string(), "bank-3".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_amount_reads_without_the_unmatched_legs_sign() {
+        assert_eq!(unsigned("-9.99"), "9.99");
+        assert_eq!(unsigned("9.99"), "9.99");
+    }
 
     fn draft(postings: &[(&str, &str)]) -> DraftTransactionView {
         DraftTransactionView {
