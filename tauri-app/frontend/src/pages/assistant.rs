@@ -15,7 +15,7 @@ use crate::Tab;
 use crate::bridge;
 use crate::components::nav::{ALL_TABS, tab_label};
 use crate::components::primitives::{
-    Banner, BannerKind, Button, ButtonSize, ButtonVariant, PageHeader,
+    Banner, BannerKind, Button, ButtonSize, ButtonVariant, Card, PageHeader,
 };
 use crate::components::proposal_card::ProposalCard;
 use crate::types::{
@@ -153,77 +153,92 @@ fn ThreadList(
         });
     };
 
+    let waiting_text = if waiting_count == 1 {
+        "1 suggestion waiting for you".to_string()
+    } else {
+        format!("{waiting_count} suggestions waiting for you")
+    };
+
+    // No horizontal padding of its own: the app shell already pads every page,
+    // and adding more here is what made this screen narrower than the others.
     rsx! {
         div { class: "flex flex-col h-full",
-            PageHeader { title: "Assistant".to_string() }
+            div { class: "flex-1 overflow-y-auto space-y-3",
+                PageHeader {
+                    title: "Assistant".to_string(),
+                    subtitle: "Ask about anything you have written.".to_string(),
+                    class: "mb-1".to_string(),
+                }
 
-            if let Some(e) = error_msg.read().clone() {
-                Banner { kind: BannerKind::Error, "{e}" }
-            }
+                if let Some(e) = error_msg.read().clone() {
+                    Banner { kind: BannerKind::Error, "{e}" }
+                }
 
-            if waiting_count > 0 {
-                div {
-                    class: "mx-4 mt-3 px-3 py-2 rounded-md bg-obsidian-accent/10 border border-obsidian-accent/30 cursor-pointer hover:bg-obsidian-accent/15 flex items-center justify-between gap-2",
-                    onclick: move |_| on_open_inbox.call(()),
-                    div { class: "text-obsidian-text text-sm",
-                        if waiting_count == 1 {
-                            "1 suggestion waiting for you"
-                        } else {
-                            "{waiting_count} suggestions waiting for you"
-                        }
+                if waiting_count > 0 {
+                    NoticeRow {
+                        text: waiting_text,
+                        action: "Review".to_string(),
+                        accent: true,
+                        on_open: move |_| on_open_inbox.call(()),
                     }
-                    span { class: "text-obsidian-accent text-xs font-medium", "Review" }
                 }
-            }
 
-            ApprovalsElsewhere {}
+                ApprovalsElsewhere {}
 
-            div { class: "px-4 pt-2",
-                button {
-                    class: "text-obsidian-text-muted text-xs underline cursor-pointer bg-transparent border-0 p-0",
-                    onclick: move |_| on_open_memory.call(()),
-                    "What it believes about you"
+                div { class: "grid grid-cols-2 gap-2",
+                    Card {
+                        class: "text-sm text-obsidian-text",
+                        onclick: move |_| on_open_memory.call(()),
+                        "What it believes about you"
+                    }
+                    Card {
+                        class: "text-sm text-obsidian-text",
+                        onclick: move |_| on_open_permissions.call(()),
+                        "What it may do without asking"
+                    }
                 }
-                span { class: "text-obsidian-text-muted text-xs", " · " }
-                button {
-                    class: "text-obsidian-text-muted text-xs underline cursor-pointer bg-transparent border-0 p-0",
-                    onclick: move |_| on_open_permissions.call(()),
-                    "What it may do without asking"
-                }
-            }
 
-            div { class: "flex-1 overflow-y-auto px-4",
                 if *loaded.read() && threads.read().is_empty() {
                     div { class: "text-obsidian-text-muted text-sm py-8 text-center",
-                        p { "Ask a question about anything you have written." }
+                        p { "No conversations yet." }
                         p { class: "mt-2 text-xs",
                             "Answers come from the assistant running on your server, so they can take a moment — and they arrive even if you close the app."
                         }
                     }
                 }
-                for thread in active {
-                    ThreadRow {
-                        key: "{thread.thread_id}",
-                        thread: thread.clone(),
-                        on_open: move |_| on_open.call(thread.thread_id.clone()),
-                        on_archive: move |(id, on)| archive(id, on),
-                        on_delete: delete,
+                if !active.is_empty() {
+                    h2 { class: "pt-2 text-xs font-semibold uppercase tracking-wide text-obsidian-text-muted",
+                        "Conversations"
+                    }
+                }
+                div { class: "space-y-2",
+                    for thread in active {
+                        ThreadRow {
+                            key: "{thread.thread_id}",
+                            thread: thread.clone(),
+                            on_open: move |_| on_open.call(thread.thread_id.clone()),
+                            on_archive: move |(id, on)| archive(id, on),
+                            on_delete: delete,
+                        }
                     }
                 }
                 if !archived.is_empty() {
-                    button {
-                        class: "w-full text-left text-obsidian-text-muted text-xs py-3",
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
                         onclick: move |_| show_archived.toggle(),
                         if *show_archived.read() { "Hide archived" } else { "Archived ({archived.len()})" }
                     }
                     if *show_archived.read() {
-                        for thread in archived {
-                            ThreadRow {
-                                key: "{thread.thread_id}",
-                                thread: thread.clone(),
-                                on_open: move |_| on_open.call(thread.thread_id.clone()),
-                                on_archive: move |(id, on)| archive(id, on),
-                                on_delete: delete,
+                        div { class: "space-y-2",
+                            for thread in archived {
+                                ThreadRow {
+                                    key: "{thread.thread_id}",
+                                    thread: thread.clone(),
+                                    on_open: move |_| on_open.call(thread.thread_id.clone()),
+                                    on_archive: move |(id, on)| archive(id, on),
+                                    on_delete: delete,
+                                }
                             }
                         }
                     }
@@ -241,6 +256,31 @@ fn ThreadList(
                     });
                 },
             }
+        }
+    }
+}
+
+/// A queue waiting somewhere, as one tappable row. Shared by the suggestions
+/// row and the other tabs' queues so the two cannot drift apart in look.
+#[component]
+fn NoticeRow(
+    text: String,
+    action: String,
+    #[props(default = false)] accent: bool,
+    on_open: EventHandler<()>,
+) -> Element {
+    let tone = if accent {
+        "bg-obsidian-accent/10 border-obsidian-accent/30"
+    } else {
+        "bg-obsidian-surface border-obsidian-border/10"
+    };
+    rsx! {
+        button {
+            r#type: "button",
+            class: "w-full text-left px-4 py-3 rounded-card border {tone} flex items-center justify-between gap-3 hover:bg-obsidian-border/5",
+            onclick: move |_| on_open.call(()),
+            span { class: "text-sm text-obsidian-text", "{text}" }
+            span { class: "text-xs font-semibold text-obsidian-accent shrink-0", "{action}" }
         }
     }
 }
@@ -295,23 +335,17 @@ fn ApprovalsElsewhere() -> Element {
     }
 
     rsx! {
-        div { class: "mx-4 mt-2 flex flex-col gap-1",
+        div { class: "space-y-2",
             for (tab, count) in rows {
-                div {
+                NoticeRow {
                     key: "{tab_label(tab)}",
-                    class: "px-3 py-2 rounded-md bg-obsidian-border/5 border border-obsidian-border/10 \
-                            cursor-pointer hover:bg-obsidian-border/10 flex items-center justify-between gap-2",
-                    onclick: move |_| {
-                        crate::request_nav(crate::NavTarget { tab, intent: intent_for(tab) })
+                    text: if count == 1 {
+                        format!("1 item waiting in {}", tab_label(tab))
+                    } else {
+                        format!("{count} items waiting in {}", tab_label(tab))
                     },
-                    div { class: "text-obsidian-text text-sm",
-                        if count == 1 {
-                            "1 item waiting in {tab_label(tab)}"
-                        } else {
-                            "{count} items waiting in {tab_label(tab)}"
-                        }
-                    }
-                    span { class: "text-obsidian-accent text-xs font-medium", "Open" }
+                    action: "Open".to_string(),
+                    on_open: move |_| crate::request_nav(crate::NavTarget { tab, intent: intent_for(tab) }),
                 }
             }
         }
@@ -332,34 +366,41 @@ fn ThreadRow(
         .unwrap_or_else(|| "Untitled conversation".to_string());
     let (id_a, id_d) = (thread.thread_id.clone(), thread.thread_id.clone());
     let archived = thread.archived;
-    let action = "shrink-0 text-xs px-2 py-3 text-obsidian-text-muted hover:text-obsidian-text";
+    let action = "shrink-0 text-xs px-3 py-2 rounded-md text-obsidian-text-muted hover:text-obsidian-text hover:bg-obsidian-border/5";
+    // A card like every other list in the app; the title gets two lines rather
+    // than one, because an auto-titled conversation is the question itself.
     rsx! {
-        div { class: "flex items-center gap-1 border-b border-obsidian-border/10 min-w-0",
-            div {
-                class: "flex-1 min-w-0 px-3 py-3 cursor-pointer hover:bg-obsidian-border/5",
+        div { class: "bg-obsidian-surface border border-obsidian-border/10 rounded-card shadow-card",
+            button {
+                r#type: "button",
+                class: "w-full text-left px-4 pt-3 pb-1",
                 onclick: move |_| on_open.call(()),
-                div { class: "text-obsidian-text text-sm font-medium truncate", "{title}" }
-                div { class: "text-obsidian-text-muted text-xs mt-1",
+                div { class: "text-obsidian-text text-sm font-medium line-clamp-2 break-words",
+                    "{title}"
+                }
+            }
+            div { class: "flex items-center gap-1 pl-4 pr-2 pb-1",
+                div { class: "flex-1 text-obsidian-text-muted text-xs",
                     "{thread.message_count} message"
                     if thread.message_count != 1 { "s" }
                 }
-            }
-            button {
-                class: action,
-                onclick: move |_| on_archive.call((id_a.clone(), !archived)),
-                if archived { "Restore" } else { "Archive" }
-            }
-            // Two taps: a delete is permanent and the row is easy to brush.
-            button {
-                class: if *confirm_delete.read() { "shrink-0 text-xs px-2 py-3 text-red-300 font-medium" } else { action },
-                onclick: move |_| {
-                    if *confirm_delete.read() {
-                        on_delete.call(id_d.clone());
-                    } else {
-                        confirm_delete.set(true);
-                    }
-                },
-                if *confirm_delete.read() { "Delete?" } else { "Delete" }
+                button {
+                    class: action,
+                    onclick: move |_| on_archive.call((id_a.clone(), !archived)),
+                    if archived { "Restore" } else { "Archive" }
+                }
+                // Two taps: a delete is permanent and the row is easy to brush.
+                button {
+                    class: if *confirm_delete.read() { "shrink-0 text-xs px-3 py-2 rounded-md text-red-300 font-medium" } else { action },
+                    onclick: move |_| {
+                        if *confirm_delete.read() {
+                            on_delete.call(id_d.clone());
+                        } else {
+                            confirm_delete.set(true);
+                        }
+                    },
+                    if *confirm_delete.read() { "Delete?" } else { "Delete" }
+                }
             }
         }
     }
@@ -931,7 +972,9 @@ fn Composer(placeholder: String, on_send: EventHandler<String>) -> Element {
     };
 
     rsx! {
-        div { class: "flex items-end gap-2 px-3 py-2 border-t border-obsidian-border/10",
+        // `items-stretch`: the button takes the text box's height. Aligned to the
+        // bottom it sat beside a taller box and read as misplaced (S9, 2026-10-07).
+        div { class: "flex items-stretch gap-2 pt-3 border-t border-obsidian-border/10",
             textarea {
                 class: "flex-1 px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent resize-none",
                 rows: 2,
