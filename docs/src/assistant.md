@@ -323,6 +323,11 @@ feature being broken. And the schedule does not drift: an interval-based rule
 would push each day's check-in a little later than the last until it wandered out
 of your waking hours.
 
+**The hour is yours, not the server's.** The agent runs on a UTC machine, so when you
+switch the check-in on or change its hour, the app also records your time zone, and
+"6" means 6 in the morning where you are. "Today" is your calendar day too. Changes to
+the schedule reach the agent within a minute; it does not need restarting.
+
 ## Autonomy is earned, one action type at a time **(today)**
 
 The assistant starts able to do nothing but propose. Permission is granted per action type,
