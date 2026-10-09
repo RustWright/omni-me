@@ -710,10 +710,11 @@ fn advance_when_checked(
         if doc.unverified_count() > 0 {
             return;
         }
-        let next = bridge::invoke_list_documents(None, None, None, None, Some(true), Some(2), Some(0))
-            .await
-            .ok()
-            .and_then(|rows| rows.into_iter().find(|d| d.document_id != document_id));
+        let next =
+            bridge::invoke_list_documents(None, None, None, None, Some(true), Some(2), Some(0))
+                .await
+                .ok()
+                .and_then(|rows| rows.into_iter().find(|d| d.document_id != document_id));
         match next {
             Some(d) => on_open.call(d.document_id),
             None => on_back.call(()),
@@ -1532,7 +1533,11 @@ fn FieldRow(
         }
         let id = id_for_save.clone();
         let key = field_for_save.key.clone();
-        let value = if remove { String::new() } else { draft.read().clone() };
+        let value = if remove {
+            String::new()
+        } else {
+            draft.read().clone()
+        };
         saving.set(true);
         spawn(async move {
             match bridge::invoke_correct_document_field(&id, &key, &value).await {

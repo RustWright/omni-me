@@ -98,7 +98,10 @@ pub async fn set_global_config(
 
     // The agent runs on a UTC box and only knows the hour, so the zone the
     // person meant it in travels with the schedule.
-    if matches!(key, ConfigKey::AssistantCheckIn | ConfigKey::AssistantCheckInHour) {
+    if matches!(
+        key,
+        ConfigKey::AssistantCheckIn | ConfigKey::AssistantCheckInHour
+    ) {
         let tz = ConfigValue::Text(state.timezone.read().await.clone());
         if ConfigKey::AssistantCheckInTimezone.validate(&tz).is_ok() {
             let event = NewEvent::config_set(
