@@ -4,17 +4,20 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — fix round 2's findings and build D1–D4, then deploy to dev for round 3
-Everything is in `tasks.md` § "Stage 2, round 2 results" (R2-1..R2-5 and his D1–D4 rulings).
-Then write round 3's checklist, deploy, hand it to him. Repeat rounds until he is satisfied;
-then stage 3 (review: security, logic, performance, bloat), then stage 4 (merge, go-live
-sequence drafted then).
+## ▶ NEXT ACTION — his round 3 phone test (1.1.28-dev is on the S9 and dev), then fix what it finds
+Round 2's findings, D1–D4 and two found while verifying are fixed and deployed: `tasks.md`
+§ "Stage 2, round 2 results". Hand him § "Stage 2, round 3 checklist". Repeat rounds until he is
+satisfied; then stage 3 (review: security, logic, performance, bloat), then stage 4 (merge,
+go-live sequence drafted then).
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
 Dev workflows: `--ref dev/untested-overlay`. Dev actions need no permission; live ones do.
 
 ## ⛔ Waiting on him
+- **Round 3 of the phone test**, incl. whether R2-1 was fields (my reading) or literal tags.
+- **Dev document reading** (`OMNI_ENRICH_ENABLED=0` since 09-18): on or off. `tasks.md` decision log.
+- **0-posting receipt batches** (Spotify, Price) under the 10-02 ruling. Same place.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The official finances import**: go-live sequence, after the merge. Gate 1 (live backup) first.

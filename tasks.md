@@ -1385,6 +1385,23 @@ Fixes (2026-10-09, all checked/clippy clean; tests run in CI):
   Filter hidden until a tag exists; Retention says how to get one.
 - D1 ✅ `7f50f5c` · D2 ✅ `d6c31ae` (`commits_unseen`: also excludes manual-FX, revisions,
   any warning) · D3 ✅ `d6c31ae` · D4 ✅ overlay `a18abd0` (+ lock `a8bcfbb`).
+Found while verifying, fixed:
+- R2-6 ✅ `40b646e`. Belief search failed on every call ("no suitable index"): the catalog
+  lists `beliefs.statement` as searchable and no FULLTEXT index existed. Surfaced by the first
+  real check-in, whose job is reviewing beliefs. All other catalog text fields checked: indexed.
+  New test searches every catalog type on a fresh database.
+- R2-7 ✅ `13aa3dd`. Retention never proposed anything on dev: the scan took the OLDEST 500
+  documents of any kind and filtered by tag afterwards, so with 834 documents the tagged ones
+  were never reached. Tag filter moved into the SQL (`CONTAINSANY`, docs-checked); regression
+  test. Purge preview checked: it filters by tag in SQL already.
+Verified on the S9 over CDP (1.1.27/1.1.28-dev): email ↔ attachment both ways; tag add and ×;
+field Remove survives reopening; top bar hides/returns on Archive and in a chat with Back bar
+and reply box pinned; Finances badge 99+; check-in fired on the agent's first tick and its
+thread is on the phone; retention end to end (3 promos tagged `r3-junk`, rule 1 d, Review 3,
+spared 1, purged 2, today's tagged PDF not proposed). NOT verified on device: D1, D2.
+Dev data touched by me: tag `r3-junk` on 4 docs + rule 1 d; 2 promo emails purged; field
+`Terminal ID` removed on Harvey's order 39229; the $60.48 "Amazon.com" row deleted. Backups
+`omni-dev-20261009T170919-pre-round3.tar.gz`, `…T174816-pre-round3b.tar.gz`.
 Decision log (judgement calls made while he was away):
 - D4's filter drops schedules BEFORE `fetched` is counted rather than adding a disposition
   bucket: the subprocess contract is frozen and no bucket means "not a movement".
@@ -1397,7 +1414,8 @@ Decision log (judgement calls made while he was away):
   0-posting receipt batches today. Consistent with the 10-02 "unpriced receipt still reaches
   review" ruling, so his call.
 
-**Stage 2, round 3 checklist (1.1.27-dev on the S9).**
+**Stage 2, round 3 checklist (1.1.28-dev on the S9).** Items 2, 5 and 8 I already ran on device;
+they are here for his eyes, not as open questions.
 1. Any page that scrolls, incl. Archive and an Assistant chat: the top bar hides on scroll down
    and returns on scroll up; in a chat the Back bar and the reply box stay put.
 2. Archive › the Price email: tap an attachment, it opens; "Arrived inside…" opens the email.
@@ -1410,8 +1428,9 @@ Decision log (judgement calls made while he was away):
 6. Finances menu badge: includes the reconcile rows (a large number on dev, expected).
 7. Finances › Auto-import review: "Commit N verified batches…" appears only when 2+ qualify;
    read the list before committing.
-8. Settings › Assistant: re-save the check-in hour (stamps your time zone). Right: the next
-   morning at that hour, a "Daily check-in" thread appears in Assistant.
+8. Assistant › "Daily check-in" (today's): is its belief review sound? Then Settings ›
+   Assistant: re-save the hour, which stamps your time zone; tomorrow it should arrive at 6
+   your time.
 
 - R1-8 🔴 **RULED 2026-10-07: full dev deploy authorised for this stretch** (server + agent images
   to dev, APK built and installed on galaxy-s9:5555, opened once, logcat checked). ⛔ Live untouched.
