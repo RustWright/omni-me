@@ -211,3 +211,9 @@ select {
         padding-bottom: 1.5rem;
     }
 }
+/* The assistant's composer, pinned inside the shell's own scroll so the top bar
+   can still hide. The scrollport runs under the system bar and keyboard. */
+.sticky-composer {
+    position: sticky;
+    bottom: calc(var(--safe-area-inset-bottom) + var(--keyboard-inset-bottom));
+}

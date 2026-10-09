@@ -300,11 +300,15 @@ impl DocumentsProjection {
             .unwrap_or_default();
 
         let merged = merge_fields(existing, parsed.fields);
+        // An empty value is a person removing the field: it outranks any re-read,
+        // so it stays in `fields`, but the column reads as never set. Tags are
+        // the exception, where empty means "every tag taken off".
         let hoisted = |key: &str| {
             merged
                 .iter()
                 .find(|f| f.key == key)
                 .map(|f| f.value.clone())
+                .filter(|v| key == DOCUMENT_TAGS_KEY || !v.is_empty())
         };
 
         let fields = serde_json::to_value(&merged)
@@ -589,6 +593,23 @@ mod tests {
             Some("2023 Notice of Assessment"),
             "a re-run must never undo what the user fixed by hand"
         );
+    }
+
+    #[tokio::test]
+    async fn a_removed_field_reads_as_unset_and_a_rerun_cannot_restore_it() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived("doc-r"), &db)
+            .await
+            .unwrap();
+        for e in [
+            extracted("doc-r", &[field("title", "Payslip", "model:qwen@2")]),
+            extracted("doc-r", &[field("title", "", "human")]),
+            extracted("doc-r", &[field("title", "Payslip", "model:qwen@3")]),
+        ] {
+            DocumentsProjection.apply(&e, &db).await.unwrap();
+        }
+        assert_eq!(column(&db, "doc-r", "title").await, None);
     }
 
     /// The `tags` column, read as elements rather than as a string.
