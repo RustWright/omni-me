@@ -1363,6 +1363,56 @@ Round 2 findings, all to fix before release:
   48 h of dev agent logs, and not after a restart either. Known defects so far: the agent
   reads config once at boot; `is_due` compares the hour in UTC.
 
+Fixes (2026-10-09, all checked/clippy clean; tests run in CI):
+- R2-5 ✅ `2c3eba7`. Root cause, verified in source: the responder's 30 s branch was a
+  `sleep` inside `select!`, recreated each loop, and the pull scheduler sends `Idle` every 3 s,
+  so it never fired on any agent. Now a `tokio::time::interval`. Also: config re-read per tick
+  and per question (it was a boot snapshot); new shared key `assistant.check_in_timezone`,
+  stamped from the phone's zone whenever the switch or hour is saved; `is_due` reads hour and
+  date in that zone. Sibling checked: `index_refresh` has the same shape but a deadline-based
+  wait, so it is correct.
+- R2-2 ✅ `7f50f5c`. `DocumentDetail`'s resource captured the first id; opening another
+  document re-rendered the same one. Detail is now keyed per document (full remount) and its
+  resources use `use_reactive`; `ParentLink`, `EmailView` the same.
+- R2-1 ✅ `7f50f5c`, ⚠️ ON MY READING: no document on the phone has a tag at all, and the field
+  panel was add/edit-only, so I read "tags" as the reviewer's FIELDS. Field editor has Remove:
+  an empty human value, which outranks any re-read; hidden in the panel, `None` in hoisted
+  columns. `docs/src/archive.md`. The tag ×, if he meant literal tags, is untested on device.
+- R2-3 ✅ `7f50f5c`. Archive's root and the five assistant views scrolled internally, so the
+  shell never saw a scroll. Now the shell scrolls; assistant top bars `sticky top-0`, the
+  composer `.sticky-composer` above the system insets.
+- R2-4 ✅ `7f50f5c`. Not broken: zero tags exist, so both menus held only their placeholder.
+  Filter hidden until a tag exists; Retention says how to get one.
+- D1 ✅ `7f50f5c` · D2 ✅ `d6c31ae` (`commits_unseen`: also excludes manual-FX, revisions,
+  any warning) · D3 ✅ `d6c31ae` · D4 ✅ overlay `a18abd0` (+ lock `a8bcfbb`).
+Decision log (judgement calls made while he was away):
+- D4's filter drops schedules BEFORE `fetched` is counted rather than adding a disposition
+  bucket: the subprocess contract is frozen and no bucket means "not a movement".
+- D1 advances only if the document had something unchecked before the save, so a Remove or
+  edit on a checked document never jumps away.
+- R2-1 built as field removal on my reading of his words; see above.
+- Left OFF: dev's document reading (`OMNI_ENRICH_ENABLED=0`, set 09-18 for spend). Turning it
+  on is his call; it is why nothing new gets fields or tags.
+- Not acted on: Spotify "out of listening time" and the Price pension email reached review as
+  0-posting receipt batches today. Consistent with the 10-02 "unpriced receipt still reaches
+  review" ruling, so his call.
+
+**Stage 2, round 3 checklist (1.1.27-dev on the S9).**
+1. Any page that scrolls, incl. Archive and an Assistant chat: the top bar hides on scroll down
+   and returns on scroll up; in a chat the Back bar and the reply box stay put.
+2. Archive › the Price email: tap an attachment, it opens; "Arrived inside…" opens the email.
+3. Archive › a document with read values: tap a value › Remove. Right: it disappears and stays
+   gone. Tags: add one, then × it.
+4. Archive › Unchecked only › confirm a document's values. Right: the next unchecked document
+   opens by itself; after the last, the list.
+5. Archive › Retention, with a tag on a few junk documents: set a short rule, Review, spare one,
+   Purge. Right: the spared one stays, the rest show "purged".
+6. Finances menu badge: includes the reconcile rows (a large number on dev, expected).
+7. Finances › Auto-import review: "Commit N verified batches…" appears only when 2+ qualify;
+   read the list before committing.
+8. Settings › Assistant: re-save the check-in hour (stamps your time zone). Right: the next
+   morning at that hour, a "Daily check-in" thread appears in Assistant.
+
 - R1-8 🔴 **RULED 2026-10-07: full dev deploy authorised for this stretch** (server + agent images
   to dev, APK built and installed on galaxy-s9:5555, opened once, logcat checked). ⛔ Live untouched.
 

@@ -803,7 +803,8 @@ mod tests {
     use super::*;
     use crate::assistant::catalog::ALL_ENTRIES;
     use crate::events::{
-        BudgetProjection, DocumentsProjection, NotesProjection, Projection, RoutinesProjection,
+        BeliefsProjection, BudgetProjection, DocumentsProjection, NotesProjection, Projection,
+        RoutinesProjection,
     };
 
     async fn test_db() -> Database {
@@ -812,7 +813,21 @@ mod tests {
         RoutinesProjection.init_schema(&db).await.unwrap();
         DocumentsProjection.init_schema(&db).await.unwrap();
         BudgetProjection.init_schema(&db).await.unwrap();
+        BeliefsProjection.init_schema(&db).await.unwrap();
         db
+    }
+
+    /// Each text field needs its own FULLTEXT index, and a missing one is an
+    /// error only at query time. Beliefs had none until 2026-10-09, so every
+    /// belief search failed, the check-in's review included.
+    #[tokio::test]
+    async fn every_catalog_type_can_be_searched() {
+        let db = test_db().await;
+        for entry in ALL_ENTRIES {
+            search(&db, entry, "anything", 5)
+                .await
+                .unwrap_or_else(|e| panic!("{} cannot be searched: {e}", entry.name));
+        }
     }
 
     /// A ledger row, with the reconciliation trail a real one carries.
