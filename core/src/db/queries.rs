@@ -1463,18 +1463,23 @@ pub async fn retention_rules(db: &Database) -> Result<Vec<(String, u32)>, DbErro
 pub async fn documents_archived_before(
     db: &Database,
     boundary: &str,
+    any_of_tags: &[String],
     limit: u32,
 ) -> Result<Vec<DocumentRow>, DbError> {
+    // The tag filter is here, not in the caller: filtering after LIMIT took the
+    // oldest untagged documents and never reached a tagged one in a large archive.
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
          WHERE archived_at != NONE AND archived_at < type::datetime($boundary) AND {NOT_PURGED}
+           AND (tags ?? []) CONTAINSANY $tags
          ORDER BY archived_at ASC
          LIMIT $limit"
     );
     let mut resp = db
         .query(sql)
         .bind(("boundary", boundary.to_string()))
+        .bind(("tags", any_of_tags.to_vec()))
         .bind(("limit", limit))
         .await?;
     Ok(resp.take(0)?)
