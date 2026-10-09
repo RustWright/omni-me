@@ -157,7 +157,8 @@ pub fn ArchivePage() -> Element {
     });
 
     rsx! {
-        div { class: "h-full overflow-y-auto",
+        // No scroll of its own: the shell's scroll is what hides the top bar.
+        div {
             if let Some(msg) = added_notice.read().clone() {
                 div { class: "mx-4 mt-3 px-3 py-2 rounded-md bg-obsidian-accent/10 border border-obsidian-accent/30 \
                               text-sm text-obsidian-text flex items-start justify-between gap-2",
@@ -203,12 +204,18 @@ pub fn ArchivePage() -> Element {
                         },
                     }
                 },
+                // Keyed so a different document remounts the view. Otherwise
+                // every nested hook (a field's edit draft) carries over from the
+                // document opened before it.
                 View::Detail(id) => rsx! {
-                    DocumentDetail {
-                        document_id: id,
-                        on_back: move |_| view.set(View::List),
-                        on_corrected: move |_| reload += 1,
-                        on_open: move |id: String| view.set(View::Detail(id)),
+                    for id in std::iter::once(id) {
+                        DocumentDetail {
+                            key: "{id}",
+                            document_id: id,
+                            on_back: move |_| view.set(View::List),
+                            on_corrected: move |_| reload += 1,
+                            on_open: move |id: String| view.set(View::Detail(id)),
+                        }
                     }
                 },
                 View::List => rsx! {
@@ -256,14 +263,16 @@ pub fn ArchivePage() -> Element {
                             // A menu rather than a text box. Tags are exact-match,
                             // so a typed "reciept" returns an empty archive and
                             // looks like a missing document rather than a typo.
-                            select {
-                                value: "{tag}",
-                                onchange: move |e| tag.set(e.value()),
-                                class: "px-3 py-2 text-sm rounded-lg bg-obsidian-sidebar/60 \
-                                        border border-obsidian-border/10 text-obsidian-text \
-                                        focus:outline-none focus:border-obsidian-accent/40",
-                                option { value: "", "All tags" }
-                                if let Some(Ok(list)) = tags.read().as_ref() {
+                            // Hidden until a tag exists: a menu offering only
+                            // "All tags" reads as a broken filter.
+                            if let Some(Ok(list)) = tags.read().as_ref().filter(|r| matches!(r, Ok(l) if !l.is_empty())) {
+                                select {
+                                    value: "{tag}",
+                                    onchange: move |e| tag.set(e.value()),
+                                    class: "px-3 py-2 text-sm rounded-lg bg-obsidian-sidebar/60 \
+                                            border border-obsidian-border/10 text-obsidian-text \
+                                            focus:outline-none focus:border-obsidian-accent/40",
+                                    option { value: "", "All tags" }
                                     for t in list.iter() {
                                         option { key: "{t}", value: "{t}", "{t}" }
                                     }
@@ -563,12 +572,12 @@ fn DocumentDetail(
     on_open: EventHandler<String>,
 ) -> Element {
     let mut reload = use_signal(|| 0u32);
-    let id_for_fetch = document_id.clone();
-    let doc = use_resource(move || {
-        let id = id_for_fetch.clone();
+    // Reactive on the prop: opening an attachment or the parent swaps the id on
+    // this same component, and a plain capture kept fetching the first one.
+    let doc = use_resource(use_reactive((&document_id,), move |(id,)| {
         let _ = reload.read();
         async move { bridge::invoke_get_document(&id).await }
-    });
+    }));
 
     rsx! {
         div { class: "p-4 space-y-4 max-w-5xl mx-auto",
@@ -666,9 +675,16 @@ fn DocumentDetail(
                                 }
                                 FieldPanel {
                                     doc: d.clone(),
-                                    on_saved: move |_| {
-                                        reload += 1;
-                                        on_corrected.call(());
+                                    on_saved: {
+                                        let id = d.document_id.clone();
+                                        let had_unchecked = d.unverified_count() > 0;
+                                        move |_| {
+                                            reload += 1;
+                                            on_corrected.call(());
+                                            if had_unchecked {
+                                                advance_when_checked(id.clone(), on_open, on_back);
+                                            }
+                                        }
                                     },
                                 }
                             }
@@ -678,6 +694,31 @@ fn DocumentDetail(
             }
         }
     }
+}
+
+/// Once nothing on this document is unchecked, open the next document that has
+/// something unchecked, or go back to the list when none does (his D1 ruling).
+fn advance_when_checked(
+    document_id: String,
+    on_open: EventHandler<String>,
+    on_back: EventHandler<()>,
+) {
+    spawn(async move {
+        let Ok(Some(doc)) = bridge::invoke_get_document(&document_id).await else {
+            return;
+        };
+        if doc.unverified_count() > 0 {
+            return;
+        }
+        let next = bridge::invoke_list_documents(None, None, None, None, Some(true), Some(2), Some(0))
+            .await
+            .ok()
+            .and_then(|rows| rows.into_iter().find(|d| d.document_id != document_id));
+        match next {
+            Some(d) => on_open.call(d.document_id),
+            None => on_back.call(()),
+        }
+    });
 }
 
 /// Split the archive's stored email text into headers and body.
@@ -712,11 +753,9 @@ fn split_email_text(text: &str) -> (Vec<(String, String)>, String) {
 /// the useful fact is *which* message, and the way back to it.
 #[component]
 fn ParentLink(parent_id: String, on_open: EventHandler<String>) -> Element {
-    let id_for_fetch = parent_id.clone();
-    let parent = use_resource(move || {
-        let id = id_for_fetch.clone();
-        async move { bridge::invoke_get_document(&id).await }
-    });
+    let parent = use_resource(use_reactive((&parent_id,), |(id,)| async move {
+        bridge::invoke_get_document(&id).await
+    }));
 
     rsx! {
         // ⛔ Renders nothing until the parent is known, and nothing at all if the
@@ -748,16 +787,12 @@ fn ParentLink(parent_id: String, on_open: EventHandler<String>) -> Element {
 /// give a second implementation to disagree with the first.
 #[component]
 fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
-    let id_for_text = document_id.clone();
-    let text = use_resource(move || {
-        let id = id_for_text.clone();
-        async move { bridge::invoke_get_document_text(&id).await }
-    });
-    let id_for_children = document_id.clone();
-    let children = use_resource(move || {
-        let id = id_for_children.clone();
-        async move { bridge::invoke_document_children(&id).await }
-    });
+    let text = use_resource(use_reactive((&document_id,), |(id,)| async move {
+        bridge::invoke_get_document_text(&id).await
+    }));
+    let children = use_resource(use_reactive((&document_id,), |(id,)| async move {
+        bridge::invoke_document_children(&id).await
+    }));
 
     rsx! {
         div { class: "space-y-3",
@@ -882,6 +917,8 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
         });
     };
 
+    let has_tags = matches!(tags.read().as_ref(), Some(Ok(l)) if !l.is_empty());
+
     rsx! {
         div { class: "p-3 rounded-lg border border-obsidian-border/10 bg-obsidian-sidebar/30 space-y-3",
             div { class: "space-y-1",
@@ -896,7 +933,12 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
                 }
             }
 
-            div { class: "flex flex-wrap items-center gap-2",
+            if !has_tags {
+                p { class: "text-[11px] text-obsidian-text-muted",
+                    "No document has a tag yet. Open a document and add one under Tags, then set how long that tag is kept here."
+                }
+            }
+            div { class: if has_tags { "flex flex-wrap items-center gap-2" } else { "hidden" },
                 select {
                     value: "{chosen}",
                     onchange: move |e| chosen.set(e.value()),
@@ -1386,7 +1428,8 @@ fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
         .clone()
         .unwrap_or_default()
         .into_iter()
-        .filter(|f| f.key != TAGS_FIELD_KEY)
+        // An empty value is a removed field; see `FieldRow`'s Remove.
+        .filter(|f| f.key != TAGS_FIELD_KEY && !f.value.is_empty())
         .collect();
 
     // ⛔ A purged document cannot be checked against anything — its bytes are
@@ -1482,13 +1525,14 @@ fn FieldRow(
     let id_for_save = document_id.clone();
     let field_for_confirm = field.clone();
     let id_for_confirm = document_id.clone();
-    let save = move |_| {
+    // `remove` writes an empty value, which is how a removal is recorded.
+    let mut save = move |remove: bool| {
         if *saving.read() {
             return;
         }
         let id = id_for_save.clone();
         let key = field_for_save.key.clone();
-        let value = draft.read().clone();
+        let value = if remove { String::new() } else { draft.read().clone() };
         saving.set(true);
         spawn(async move {
             match bridge::invoke_correct_document_field(&id, &key, &value).await {
@@ -1503,6 +1547,7 @@ fn FieldRow(
             saving.set(false);
         });
     };
+    let mut remove = save.clone();
 
     rsx! {
         div { class: "p-2.5 rounded-lg bg-obsidian-sidebar/40 border border-obsidian-border/5 space-y-1",
@@ -1531,11 +1576,18 @@ fn FieldRow(
                     }
                     div { class: "flex gap-1.5",
                         button {
-                            onclick: save,
+                            onclick: move |_| save(false),
                             disabled: *saving.read(),
                             class: "px-2 py-1 text-[11px] rounded bg-obsidian-accent text-black \
                                     font-medium disabled:opacity-50",
                             if *saving.read() { "Saving…" } else { "Save" }
+                        }
+                        button {
+                            onclick: move |_| remove(true),
+                            disabled: *saving.read(),
+                            class: "px-2 py-1 text-[11px] rounded text-red-300 \
+                                    hover:bg-red-500/10 disabled:opacity-50 ml-auto",
+                            "Remove"
                         }
                         button {
                             onclick: move |_| {

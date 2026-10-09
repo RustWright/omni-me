@@ -162,8 +162,8 @@ fn ThreadList(
     // No horizontal padding of its own: the app shell already pads every page,
     // and adding more here is what made this screen narrower than the others.
     rsx! {
-        div { class: "flex flex-col h-full",
-            div { class: "flex-1 overflow-y-auto space-y-3",
+        div { class: "flex flex-col min-h-full",
+            div { class: "flex-1 space-y-3",
                 PageHeader {
                     title: "Assistant".to_string(),
                     subtitle: "Ask about anything you have written.".to_string(),
@@ -442,8 +442,8 @@ fn ProposalInbox(on_back: EventHandler<()>) -> Element {
     };
 
     rsx! {
-        div { class: "flex flex-col h-full",
-            div { class: "flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
+        div { class: "flex flex-col min-h-full",
+            div { class: "sticky top-0 z-10 bg-obsidian-bg flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
                 Button {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
@@ -457,7 +457,7 @@ fn ProposalInbox(on_back: EventHandler<()>) -> Element {
                 Banner { kind: BannerKind::Error, "{e}" }
             }
 
-            div { class: "flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3",
+            div { class: "flex-1 px-4 py-3 flex flex-col gap-3",
                 if *loaded.read() && proposals.read().is_empty() {
                     div { class: "text-obsidian-text-muted text-sm py-8 text-center",
                         p { "Nothing waiting." }
@@ -511,8 +511,8 @@ fn MemoryView(on_back: EventHandler<()>) -> Element {
     let retired_on = *show_retired.read();
 
     rsx! {
-        div { class: "flex flex-col h-full",
-            div { class: "flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
+        div { class: "flex flex-col min-h-full",
+            div { class: "sticky top-0 z-10 bg-obsidian-bg flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
                 Button {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
@@ -534,7 +534,7 @@ fn MemoryView(on_back: EventHandler<()>) -> Element {
                 }
             }
 
-            div { class: "flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3",
+            div { class: "flex-1 px-4 py-3 flex flex-col gap-3",
                 if *loaded.read() && snapshot.is_empty() {
                     div { class: "text-obsidian-text-muted text-sm py-8 text-center",
                         p { "It has not concluded anything about you." }
@@ -630,8 +630,8 @@ fn PermissionsView(on_back: EventHandler<()>) -> Element {
     let snapshot = records.read().clone();
 
     rsx! {
-        div { class: "flex flex-col h-full",
-            div { class: "flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
+        div { class: "flex flex-col min-h-full",
+            div { class: "sticky top-0 z-10 bg-obsidian-bg flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
                 Button {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
@@ -650,7 +650,7 @@ fn PermissionsView(on_back: EventHandler<()>) -> Element {
                  about things it has got right, and take that back at any time."
             }
 
-            div { class: "flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3",
+            div { class: "flex-1 px-4 py-3 flex flex-col gap-3",
                 if *loaded.read() && snapshot.is_empty() {
                     div { class: "text-obsidian-text-muted text-sm py-8 text-center",
                         "There is nothing it can do yet."
@@ -820,8 +820,8 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
     let id_for_send = thread_id.clone();
 
     rsx! {
-        div { class: "flex flex-col h-full",
-            div { class: "flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
+        div { class: "flex flex-col min-h-full",
+            div { class: "sticky top-0 z-10 bg-obsidian-bg flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
                 Button {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
@@ -834,7 +834,7 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
                 Banner { kind: BannerKind::Error, "{e}" }
             }
 
-            div { class: "flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3",
+            div { class: "flex-1 px-4 py-3 flex flex-col gap-3",
                 for message in messages.iter().cloned() {
                     MessageBubble { key: "{message.message_id}", message: message.clone() }
 
@@ -974,7 +974,7 @@ fn Composer(placeholder: String, on_send: EventHandler<String>) -> Element {
     rsx! {
         // `items-stretch`: the button takes the text box's height. Aligned to the
         // bottom it sat beside a taller box and read as misplaced (S9, 2026-10-07).
-        div { class: "flex items-stretch gap-2 pt-3 border-t border-obsidian-border/10",
+        div { class: "sticky-composer bg-obsidian-bg flex items-stretch gap-2 pt-3 border-t border-obsidian-border/10",
             textarea {
                 class: "flex-1 px-3 py-2 bg-obsidian-sidebar border border-obsidian-border/10 rounded-md text-obsidian-text text-sm outline-none focus:border-obsidian-accent resize-none",
                 rows: 2,
