@@ -53,9 +53,8 @@ failure this table looks for is a number that does not match what its destinatio
 | Retention "Review N…" | Archive retention panel | documents past the rule | purge preview listing them | ✅ |
 | Routine "done/total" | Routines | today's checks | (not a link) | — |
 
-⚠️ **Not counted anywhere: the reconcile queue on the menu badge.** Finances' badge counts
-batches and suggestions, not unmatched rows, so ~380 transactions waiting were invisible from
-the menu. Design call, listed below (D3).
+Finances' menu badge counts pending batches, finance suggestions and unmatched rows (D3,
+`core::approvals::summary`), so the reconcile queue is visible from the menu.
 
 ## Walkthroughs
 
@@ -122,7 +121,11 @@ then the remainder one by one.
 | R1-4/5 | Reconcile cards truncated; list reloaded after every merge | `f4fb517` |
 | M-1 | "Unmatched to reconcile" showed the balance, not the count; the dashboard card said "everything reconciles" when rows netted to zero | `c804523` |
 
-### For his ruling (design changes, not applied)
+### For his ruling (design changes)
+
+All four ruled yes on 2026-10-09 and built: D1 advances once the open document has
+nothing unchecked; D2 offers only batches with an authenticated sender, a performed
+total check and no warnings; D4 is filtered in the private overlay, not the box driver.
 
 - **D1 — "Next unchecked" in document detail.** After confirming, jump to the next unchecked
   document instead of back to the list: 2 taps per document instead of 3.

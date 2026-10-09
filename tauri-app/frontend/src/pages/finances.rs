@@ -2788,12 +2788,51 @@ fn SuggestionsView(on_back: EventHandler<()>) -> Element {
 #[component]
 fn BatchListView(on_back: EventHandler<()>, on_open_batch: EventHandler<String>) -> Element {
     let mut batches: Signal<Option<Result<Vec<PendingBatchView>, String>>> = use_signal(|| None);
+    let mut reload = use_signal(|| 0u32);
+    let mut bulk: Signal<Option<BulkAction>> = use_signal(|| None);
+    let mut bulk_progress: Signal<Option<(usize, usize)>> = use_signal(|| None);
+    let mut bulk_error: Signal<Option<String>> = use_signal(|| None);
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
 
     use_effect(move || {
+        let _ = reload.read();
         spawn(async move {
             batches.set(Some(bridge::invoke_list_pending_batches().await));
         });
     });
+
+    let verified: Vec<PendingBatchView> = match batches.read().as_ref() {
+        Some(Ok(rows)) => rows.iter().filter(|b| commits_unseen(b)).cloned().collect(),
+        _ => Vec::new(),
+    };
+
+    // One at a time, as proposed: every row accepted, nothing corrected.
+    let run_commit = move |list: Vec<PendingBatchView>| {
+        spawn(async move {
+            let total = list.len();
+            let mut failures = Vec::new();
+            for (i, b) in list.iter().enumerate() {
+                bulk_progress.set(Some((i + 1, total)));
+                let all: Vec<usize> = (0..b.draft_postings.len()).collect();
+                if let Err(e) =
+                    bridge::invoke_commit_batch(&b.batch_id, all, None, None, vec![], vec![]).await
+                {
+                    failures.push(format!("{}: {e}", batch_headline(b).0));
+                }
+            }
+            bulk_progress.set(None);
+            bulk.set(None);
+            if !failures.is_empty() {
+                bulk_error.set(Some(format!(
+                    "{} did not go through:\n{}",
+                    failures.len(),
+                    failures.join("\n")
+                )));
+            }
+            crate::sync_refresh::bump_sync_epoch(sync_epoch);
+            reload += 1;
+        });
+    };
 
     rsx! {
         PageHeader { title: "Auto-import review", class: "mb-6",
@@ -2801,6 +2840,39 @@ fn BatchListView(on_back: EventHandler<()>, on_open_batch: EventHandler<String>)
                 class: "text-sm text-obsidian-text-muted hover:text-obsidian-text",
                 onclick: move |_| on_back.call(()),
                 "← Back"
+            }
+        }
+
+        if let Some(msg) = bulk_error.read().clone() {
+            div { class: "mb-4 p-3 bg-red-950/30 border border-red-500/30 rounded-md text-sm text-red-300 whitespace-pre-line",
+                "{msg}"
+            }
+        }
+        if let Some(action) = bulk.read().clone() {
+            BulkConfirm {
+                action: action.clone(),
+                progress: *bulk_progress.read(),
+                on_cancel: move |_| bulk.set(None),
+                on_confirm: move |_| {
+                    if let BulkAction::Commit(list) = action.clone() {
+                        run_commit(list);
+                    }
+                },
+            }
+        } else if verified.len() > 1 {
+            div { class: "mb-4",
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    size: ButtonSize::Sm,
+                    onclick: {
+                        let list = verified.clone();
+                        move |_| {
+                            bulk_error.set(None);
+                            bulk.set(Some(BulkAction::Commit(list.clone())));
+                        }
+                    },
+                    "Commit {verified.len()} verified batches…"
+                }
             }
         }
 
@@ -2879,6 +2951,27 @@ fn BatchListRow(batch: PendingBatchView, on_open: EventHandler<()>) -> Element {
             }
         }
     }
+}
+
+/// Whether a batch may be committed from the list without opening it (his D2
+/// ruling, 2026-10-09): the sender authenticated, the line items were summed
+/// against a stated total, and nothing raised a warning. Anything less is
+/// opened one at a time.
+fn commits_unseen(batch: &PendingBatchView) -> bool {
+    let Some(meta) = batch.source_metadata.as_ref() else {
+        return false;
+    };
+    let text = |k: &str| meta.get(k).and_then(|v| v.as_str());
+    !batch.draft_postings.is_empty()
+        && batch.revises_batch_id.is_none()
+        && batch_needs_manual_fx(batch).is_none()
+        && text("sender_auth") == Some("authenticated")
+        && text("total_check") == Some("performed")
+        && meta.get("needs_manual_review").and_then(|v| v.as_bool()) == Some(false)
+        && meta
+            .get("warnings")
+            .and_then(|v| v.as_array())
+            .is_some_and(|w| w.is_empty())
 }
 
 /// The dates the batch's transactions carry, which for a receipt is when the
@@ -7539,6 +7632,8 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
                     }
                     account_suggestions.refresh();
                 }
+                // Built only by the batch list, which runs its own.
+                BulkAction::Commit(_) => {}
             }
             bulk_progress.set(None);
             bulk.set(None);
@@ -7682,6 +7777,7 @@ fn ReconciliationReviewView(on_back: EventHandler<()>) -> Element {
 enum BulkAction {
     Merge(Vec<MatchCandidateView>),
     Resolve(Vec<ReconciliationTxnPreview>),
+    Commit(Vec<PendingBatchView>),
 }
 
 /// The high-confidence pairs that can all be merged in one pass: a transaction
@@ -7745,6 +7841,27 @@ fn BulkConfirm(
                     (
                         r.description.clone(),
                         r.suggested_category.clone().unwrap_or_default(),
+                    )
+                })
+                .collect(),
+        ),
+        BulkAction::Commit(batches) => (
+            format!(
+                "Commit these {} batches as proposed? This cannot be undone.",
+                batches.len()
+            ),
+            "Commit",
+            batches
+                .iter()
+                .map(|b| {
+                    let (headline, sender) = batch_headline(b);
+                    let n = b.draft_postings.len();
+                    (
+                        match sender {
+                            Some(from) => format!("{headline} · {from}"),
+                            None => headline,
+                        },
+                        format!("{} · {n} txn", batch_date_label(b)),
                     )
                 })
                 .collect(),
