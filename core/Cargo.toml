@@ -39,6 +39,8 @@ ulid = { version = "1", features = ["serde"] }
 sha2 = "0.10"
 infer = "0.19"
 chrono = { workspace = true }
+# The check-in hour is local to the user, and the agent runs on a UTC box.
+chrono-tz = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 url = "2"
 regex = { version = "1", default-features = false, features = ["std", "perf"] }

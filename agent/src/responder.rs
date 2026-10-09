@@ -89,6 +89,12 @@ impl Responder<'_> {
         // this process was down has no event left to announce it.
         self.sweep().await;
 
+        // An interval, not a `sleep` inside the select. A fresh sleep restarts on
+        // every loop, and the scheduler sends `Idle` after each 3 s pull, so the
+        // 30 s branch never fired and the check-in never ran.
+        let mut floor = tokio::time::interval(SWEEP_FLOOR);
+        floor.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
         loop {
             tokio::select! {
                 received = outcomes.recv() => match received {
@@ -109,7 +115,7 @@ impl Responder<'_> {
                         self.sweep().await;
                     }
                 },
-                _ = tokio::time::sleep(SWEEP_FLOOR) => {
+                _ = floor.tick() => {
                     // Checked on the same tick as the sweep rather than on a timer
                     // of its own. `is_due` is a date comparison, so asking it
                     // every 30s costs one query and removes a second clock that
@@ -125,6 +131,21 @@ impl Responder<'_> {
         }
     }
 
+    /// The shared config as it stands now, over the boot-time device layer.
+    ///
+    /// Re-read per tick because the shared layer arrives over sync: the boot
+    /// snapshot never saw the check-in switched on. On a read error the boot
+    /// snapshot stands rather than defaults, which would switch features off.
+    async fn current_config(&self) -> ResolvedConfig {
+        match omni_me_core::events::load_persisted(self.db).await {
+            Ok(global) => ResolvedConfig::new(global, self.config.device.clone()),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not re-read shared config; using the boot snapshot");
+                self.config.clone()
+            }
+        }
+    }
+
     /// Raise the scheduled check-in, if one is due.
     ///
     /// ⚠️ This authors an **ordinary question** and stops. The answering sweep
@@ -133,7 +154,7 @@ impl Responder<'_> {
     /// inbox, the same sync. Nothing here decides what the assistant may do — it
     /// only decides that it may be asked.
     async fn maybe_check_in(&self) {
-        let policy = CheckInPolicy::from_config(self.config);
+        let policy = CheckInPolicy::from_config(&self.current_config().await);
         if !policy.enabled {
             return;
         }
@@ -188,7 +209,8 @@ impl Responder<'_> {
         // it once would keep answering after the user turned the feature off on
         // their phone. The writer would refuse the append — but only after the
         // model call had been paid for.
-        if !self.config.enabled(Feature::Llm) {
+        let config = self.current_config().await;
+        if !config.enabled(Feature::Llm) {
             return;
         }
 
@@ -205,7 +227,7 @@ impl Responder<'_> {
         tracing::info!(waiting = pending.len(), "questions waiting");
 
         for question in pending {
-            self.adjudicate(question).await;
+            self.adjudicate(&config, question).await;
         }
     }
 
@@ -215,7 +237,7 @@ impl Responder<'_> {
     /// terminal event is indistinguishable from one still being worked on, so
     /// dropping one silently leaves a spinner on the user's phone forever — which
     /// is the failure this whole event pair is shaped to prevent.
-    async fn adjudicate(&self, pending: PendingQuestion) {
+    async fn adjudicate(&self, config: &ResolvedConfig, pending: PendingQuestion) {
         let age = pending.age();
         let PendingQuestion {
             question, history, ..
@@ -251,7 +273,7 @@ impl Responder<'_> {
         }
 
         let llm = client_for(self.llm, self.batch, &question);
-        let session = match Session::new(self.db, self.config, llm) {
+        let session = match Session::new(self.db, config, llm) {
             Ok(s) => s,
             Err(e) => {
                 // A session that cannot even be built is a configuration fault,
@@ -307,7 +329,7 @@ impl Responder<'_> {
         // about a decision they cannot find. Derived from the trace rather than
         // from the prose, so nothing here can invent one; see
         // `assistant::answer::proposals`.
-        let proposed = proposals(self.config, &outcome);
+        let proposed = proposals(config, &outcome);
         if !proposed.is_empty() {
             tracing::info!(
                 thread = %question.thread_id,
@@ -365,7 +387,7 @@ impl Responder<'_> {
         // two into a direct write would save an event and lose the only record
         // that says what was carried out and under whose authority.
         for proposal_id in proposed_ids {
-            self.maybe_auto_approve(&proposal_id).await;
+            self.maybe_auto_approve(config, &proposal_id).await;
         }
     }
 
@@ -374,11 +396,11 @@ impl Responder<'_> {
     /// Nothing here re-implements approval: it calls the same `inbox::decide` the
     /// phone does, so the reversibility rule, the argument re-validation and the
     /// one-batch atomicity all apply unchanged.
-    async fn maybe_auto_approve(&self, proposal_id: &str) {
+    async fn maybe_auto_approve(&self, config: &ResolvedConfig, proposal_id: &str) {
         let Ok(Some(proposal)) = inbox::get(self.db, proposal_id).await else {
             return;
         };
-        match promotion::is_autonomous(self.db, self.config, &proposal.action).await {
+        match promotion::is_autonomous(self.db, config, &proposal.action).await {
             Ok(false) => return,
             Ok(true) => {}
             Err(e) => {
@@ -396,7 +418,7 @@ impl Responder<'_> {
         );
         if let Err(e) = inbox::decide(
             self.db,
-            self.config,
+            config,
             self.writer,
             proposal_id,
             ProposalDecision::Approved,
