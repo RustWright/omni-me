@@ -122,6 +122,10 @@ pub async fn summary(
     if enabled.contains(&Feature::Finances) {
         let n = crate::db::queries::count_pending_batches(db).await? as usize;
         add(&mut out, ReviewedAt::Feature(Feature::Finances), n);
+        // Rows waiting to be reconciled count too (his D3 ruling, 2026-10-09):
+        // the ledger needs both queues cleared to stay current.
+        let n = crate::db::queries::count_unmatched_transactions(db).await? as usize;
+        add(&mut out, ReviewedAt::Feature(Feature::Finances), n);
     }
 
     if enabled.contains(&Feature::Documents) {
@@ -227,6 +231,28 @@ mod tests {
             .find(|e| e.reviewed_at == reviewed_at)
             .map(|e| e.count)
             .unwrap_or(0)
+    }
+
+    #[tokio::test]
+    async fn unmatched_rows_count_toward_the_finances_badge() {
+        let (db, enabled, _w) = harness(&[]).await;
+        for (id, account) in [("a", "Unmatched"), ("b", "Unmatched"), ("c", "Assets:Chequing")] {
+            db.query(format!(
+                "CREATE transactions:{id} CONTENT {{ removed: false, superseded_by: NONE,
+                 postings: [{{ account: '{account}', amount: '1.00', commodity: 'CAD' }}] }}"
+            ))
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            crate::db::queries::count_unmatched_transactions(&db).await.unwrap(),
+            2,
+            "the seed must be what the reconcile queue counts"
+        );
+
+        let summary = summary(&db, &enabled).await.unwrap();
+
+        assert_eq!(count_at(&summary, ReviewedAt::Feature(Feature::Finances)), 2);
     }
 
     #[tokio::test]
