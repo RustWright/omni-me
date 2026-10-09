@@ -87,6 +87,15 @@ later machine pass, and a parser checked against the bank's own figures survives
 The fallback within a rank matters too. Comparing with "strictly greater" would discard a
 *second* human correction of the same field — a save that reports success and changes nothing.
 
+### Removing a field is a correction to nothing
+
+The fold has no removal, so a person removing a field writes it again with an empty value. That
+write is human-ranked, so a later re-read cannot bring the value back, which is the point: the
+removed fields are mostly ones nobody wants kept, a social insurance number read off a payslip.
+The field stays in `fields` to hold its rank; the panel hides it, and a hoisted column (`kind`,
+`title`, `document_date`) reads it as never set. `tags` is the exception, where an empty value
+already means "every tag taken off" and is kept as such.
+
 ## Tags are a field, and that is what makes them removable
 
 A document's tags are one folded field keyed `tags`, whose value is the whole set joined by
