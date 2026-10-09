@@ -101,7 +101,9 @@ pub async fn candidates(
     // older than that boundary can qualify, and asking the database to drop the
     // rest keeps the exact evaluation below off the whole archive.
     let boundary = now - Duration::days(i64::from(shortest));
-    let rows = queries::documents_archived_before(db, &boundary.to_rfc3339(), limit).await?;
+    let governed: Vec<String> = rules.keys().cloned().collect();
+    let rows =
+        queries::documents_archived_before(db, &boundary.to_rfc3339(), &governed, limit).await?;
 
     let mut out = Vec::new();
     for row in rows {
@@ -246,6 +248,22 @@ mod tests {
             candidates(&db, Utc::now(), 100).await.unwrap().is_empty(),
             "an ungoverned archive proposes nothing, however old"
         );
+    }
+
+    /// Dev, 2026-10-09: 834 documents, the scan limit 500, and the tagged ones not
+    /// among the oldest. The tag filter ran after LIMIT, so nothing was proposed.
+    #[tokio::test]
+    async fn older_untagged_documents_do_not_crowd_out_a_tagged_one() {
+        let (db, store, runner) = harness().await;
+        set_rule(&store, &runner, "promo", Some(1)).await;
+        for i in 0..3 {
+            archive(&store, &runner, &format!("untagged-{i}.eml"), 300, &[]).await;
+        }
+        let promo = archive(&store, &runner, "promo.eml", 10, &["promo"]).await;
+
+        let found = candidates(&db, Utc::now(), 2).await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].document_id, promo);
     }
 
     #[tokio::test]
