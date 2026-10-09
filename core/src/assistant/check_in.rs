@@ -21,6 +21,7 @@
 //! without waiting a day. The agent owns only the timer.
 
 use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono_tz::Tz;
 
 use crate::config::{ConfigKey, ResolvedConfig};
 use crate::db::Database;
@@ -64,6 +65,8 @@ pub struct CheckInPolicy {
     pub enabled: bool,
     pub prompt: String,
     pub hour: u32,
+    /// The zone the hour and "today" are read in. The agent's own clock is UTC.
+    pub timezone: Tz,
 }
 
 impl CheckInPolicy {
@@ -76,6 +79,12 @@ impl CheckInPolicy {
             enabled: config.bool_of(ConfigKey::AssistantCheckIn),
             prompt: config.text_of(ConfigKey::AssistantCheckInPrompt),
             hour,
+            // Validated on write; an unparseable value from an older build falls
+            // back to UTC, the behaviour before the key existed.
+            timezone: config
+                .text_of(ConfigKey::AssistantCheckInTimezone)
+                .parse()
+                .unwrap_or(Tz::UTC),
         }
     }
 }
@@ -101,14 +110,19 @@ pub fn is_due(policy: &CheckInPolicy, last_run: Option<DateTime<Utc>>, now: Date
     if !policy.enabled || policy.prompt.trim().is_empty() {
         return false;
     }
+    let now = now.with_timezone(&policy.timezone);
     if now.hour() < policy.hour {
         return false;
     }
     match last_run {
         // ⚠️ Compared by ordinal date, not by `now - last < 24h`. An interval test
         // makes the check-in drift later every day, because each run's clock
-        // becomes the next one's baseline.
-        Some(last) => (last.year(), last.ordinal()) != (now.year(), now.ordinal()),
+        // becomes the next one's baseline. Both dates are local, or an evening
+        // run lands on tomorrow's UTC date and suppresses tomorrow's.
+        Some(last) => {
+            let last = last.with_timezone(&policy.timezone);
+            (last.year(), last.ordinal()) != (now.year(), now.ordinal())
+        }
         None => true,
     }
 }
@@ -127,6 +141,7 @@ mod tests {
             enabled,
             prompt: "Review what is due.".to_string(),
             hour,
+            timezone: Tz::UTC,
         }
     }
 
@@ -223,6 +238,42 @@ mod tests {
         let p = policy(true, 0);
         let ran = at("2025-01-01T09:00:00Z");
         assert!(is_due(&p, Some(ran), at("2026-01-01T09:00:00Z")));
+    }
+
+    /// 2026-10-08 on dev: hour 6 meant 02:00 in Toronto, because the hour was
+    /// read off the agent's UTC clock.
+    #[test]
+    fn the_hour_and_the_day_are_the_users_not_the_agents() {
+        let mut p = policy(true, 6);
+        p.timezone = "America/Toronto".parse().unwrap();
+        // 06:00 EDT is 10:00 UTC.
+        assert!(!is_due(&p, None, at("2026-10-09T09:59:00Z")), "05:59 local");
+        assert!(is_due(&p, None, at("2026-10-09T10:00:00Z")), "06:00 local");
+        // Ran 21:00 local on the 8th, which is already the 9th in UTC.
+        let ran = at("2026-10-09T01:00:00Z");
+        assert!(
+            is_due(&p, Some(ran), at("2026-10-09T10:00:00Z")),
+            "yesterday evening locally must not count as today"
+        );
+    }
+
+    #[test]
+    fn the_zone_is_read_from_config() {
+        let mut global = ConfigMap::new();
+        global.insert(
+            ConfigKey::AssistantCheckInTimezone,
+            ConfigValue::Text("America/Toronto".into()),
+        );
+        let config = ResolvedConfig::new(global, ConfigMap::new());
+        assert_eq!(
+            CheckInPolicy::from_config(&config).timezone,
+            chrono_tz::America::Toronto
+        );
+        assert!(
+            ConfigKey::AssistantCheckInTimezone
+                .validate(&ConfigValue::Text("Mars/Base".into()))
+                .is_err()
+        );
     }
 
     #[test]

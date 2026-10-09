@@ -1346,6 +1346,23 @@ dev/untested-overlay` (memory `project-dev-workflows-dispatch-from-overlay-branc
 7. Rule on D1–D4 in `interaction-map/README.md` § For his ruling.
 Anything else annoying: say whether it is worth fixing before release.
 
+**Stage 2, round 2 results (his phone test, 2026-10-09).** ✅ Assistant page, archive "Unchecked
+only" (4), bulk reconcile, no more constant refresh. 🔴 RULED 2026-10-09: D1 auto-advance to the
+next unchecked document after confirm · D2 list-first "Commit N verified batches…" (arithmetic
+checked + sender authenticated only) · D3 reconcile rows count into the Finances badge · D4 drop
+`recurring_investment_policy-*` in the private overlay's WS source module (beat: the box driver,
+hand-managed and dev/live each have a copy, `/opt/omni-ws-dev` vs `/opt/omni-ws`; leave it).
+Reconcile backlog on dev: his "don't care what happens to them".
+Round 2 findings, all to fix before release:
+- R2-1 Archive: tags (incl. the reviewer's) can be added but not removed.
+- R2-2 Archive: email ↔ attachment cross-links render as links and do nothing (Price email, 2 attachments).
+- R2-3 Top bar: stays pinned on Archive and Assistant only. ⛔ The OTHER pages are right (it
+  scrolls away); the two new pages are the bug. I first read it backwards.
+- R2-4 Archive "All tags" filter and Retention's tag picker do nothing; retention untested.
+- R2-5 Daily check-in never ran: on, shared, hour 6, synced; no "raising the daily check-in" in
+  48 h of dev agent logs, and not after a restart either. Known defects so far: the agent
+  reads config once at boot; `is_due` compares the hour in UTC.
+
 - R1-8 🔴 **RULED 2026-10-07: full dev deploy authorised for this stretch** (server + agent images
   to dev, APK built and installed on galaxy-s9:5555, opened once, logcat checked). ⛔ Live untouched.
 
