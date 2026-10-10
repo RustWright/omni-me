@@ -1411,9 +1411,10 @@ Decision log (judgement calls made while he was away):
 - 🔴 RULED 2026-10-10 (his pick, my recommendation): dev's document reading ON
   (`OMNI_ENRICH_ENABLED=1` in `~/omni-dev/docker-compose.yml`, backup beside it; 1 per 60 s).
   Off since 09-18 for spend, which is why nothing new had fields or tags. Beat: leave it off.
-- Not acted on: Spotify "out of listening time" and the Price pension email reached review as
-  0-posting receipt batches today. Consistent with the 10-02 "unpriced receipt still reaches
-  review" ruling, so his call.
+- 🔴 RULED 2026-10-10 (his pick, my recommendation): keep the G6 rule (an empty batch reaches
+  review only for `receipt`); misreads like Spotify "out of listening time" and the Price pension
+  email are dismissed by hand and count as classifier misses. Beat: a purchase-evidence gate
+  (the fixed-gate shape the 09-25 ruling rejects); routing empty receipts to Archive.
 
 **Stage 2, round 3 checklist (1.1.28-dev on the S9).** Items 2, 5 and 8 I already ran on device;
 they are here for his eyes, not as open questions.
