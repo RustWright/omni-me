@@ -16,7 +16,7 @@ Dev workflows: `--ref dev/untested-overlay`. Dev actions need no permission; liv
 
 ## ⛔ Waiting on him
 - **Round 3 of the phone test**, incl. whether R2-1 was fields (my reading) or literal tags.
-- **0-posting receipt batches** (Spotify, Price) under the 10-02 ruling. Same place.
+- **0-posting receipt batches** (Spotify, Price) under the 10-02 ruling. `tasks.md` decision log.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The official finances import**: go-live sequence, after the merge. Gate 1 (live backup) first.
