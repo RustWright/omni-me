@@ -1408,8 +1408,9 @@ Decision log (judgement calls made while he was away):
 - D1 advances only if the document had something unchecked before the save, so a Remove or
   edit on a checked document never jumps away.
 - R2-1 built as field removal on my reading of his words; see above.
-- Left OFF: dev's document reading (`OMNI_ENRICH_ENABLED=0`, set 09-18 for spend). Turning it
-  on is his call; it is why nothing new gets fields or tags.
+- 🔴 RULED 2026-10-10 (his pick, my recommendation): dev's document reading ON
+  (`OMNI_ENRICH_ENABLED=1` in `~/omni-dev/docker-compose.yml`, backup beside it; 1 per 60 s).
+  Off since 09-18 for spend, which is why nothing new had fields or tags. Beat: leave it off.
 - Not acted on: Spotify "out of listening time" and the Price pension email reached review as
   0-posting receipt batches today. Consistent with the 10-02 "unpriced receipt still reaches
   review" ruling, so his call.
