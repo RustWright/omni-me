@@ -75,7 +75,7 @@ pub fn SettingsPage() -> Element {
                     label { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest mb-2 block", "Sync Server Address" }
                     div { class: "flex gap-2",
                         input {
-                            class: "{INPUT_CLASS} flex-1",
+                            class: "{INPUT_CLASS} flex-1 min-w-0",
                             r#type: "text",
                             value: "{server_url}",
                             oninput: move |e| {
@@ -110,7 +110,7 @@ pub fn SettingsPage() -> Element {
                     }
                     div { class: "flex gap-2",
                         input {
-                            class: "{INPUT_CLASS} flex-1",
+                            class: "{INPUT_CLASS} flex-1 min-w-0",
                             r#type: "password",
                             autocomplete: "off",
                             placeholder: if *has_token.read() { "Configured — type to replace" } else { "Not set" },
@@ -182,7 +182,7 @@ pub fn SettingsPage() -> Element {
                     }
                     div { class: "flex gap-2",
                         input {
-                            class: "{INPUT_CLASS} flex-1",
+                            class: "{INPUT_CLASS} flex-1 min-w-0",
                             r#type: "text",
                             placeholder: "e.g. America/New_York",
                             value: "{tz_input}",
@@ -537,9 +537,11 @@ fn ConfigRow(
                 r#type: "button",
                 class: "w-full flex items-center justify-between gap-3 text-left",
                 onclick: move |_| on_toggle.call(()),
-                span { class: "text-sm font-medium text-obsidian-text", "{entry.label}" }
-                span { class: "flex items-center gap-2 shrink-0",
-                    span { class: "text-sm text-obsidian-text-muted",
+                span { class: "text-sm font-medium text-obsidian-text min-w-0", "{entry.label}" }
+                // A text value can be a whole prompt; unshrinkable, it once made
+                // the page three screens wide. The expanded row shows it in full.
+                span { class: "flex items-center gap-2 min-w-0 max-w-[50%]",
+                    span { class: "text-sm text-obsidian-text-muted truncate",
                         "{entry.effective.display()}"
                         if let Some(origin) = origin {
                             span { class: "text-obsidian-accent", " · {origin}" }
@@ -547,8 +549,13 @@ fn ConfigRow(
                     }
                     Icon {
                         name: IconName::ChevronRight,
-                        class: if expanded { "w-4 h-4 text-obsidian-text-muted rotate-90 transition-transform" } else { "w-4 h-4 text-obsidian-text-muted transition-transform" },
+                        class: if expanded { "w-4 h-4 shrink-0 text-obsidian-text-muted rotate-90 transition-transform" } else { "w-4 h-4 shrink-0 text-obsidian-text-muted transition-transform" },
                     }
+                }
+            }
+            if expanded && entry.choices.is_none() && matches!(entry.effective, ConfigValue::Text(_)) {
+                p { class: "mt-2 pl-1 text-xs text-obsidian-text-muted whitespace-pre-wrap break-words",
+                    "{entry.effective.display()}"
                 }
             }
 
@@ -1571,7 +1578,9 @@ fn AccountOverrideRow(
     let mut saving = use_signal(|| false);
     let row_dim = if hidden { "opacity-50" } else { "" };
 
-    let inp = "flex-1 min-w-0 px-2 py-1 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-50";
+    // `w-full`, not `flex-1`: the input's parent is a block, so flex sizing never
+    // applied and the default input width ran 42px under the Liquid button.
+    let inp = "w-full min-w-0 px-2 py-1 bg-obsidian-bg border border-obsidian-border/10 rounded text-sm text-obsidian-text placeholder:text-obsidian-text-muted focus:border-obsidian-accent/60 focus:outline-none disabled:opacity-50";
 
     // Current rename value → Option (empty = clear the override label).
     let current_name = move || {
@@ -1906,7 +1915,7 @@ fn AutoImportRow(
                                                         Some("invalid_otp") => {
                                                             msg.set(Some((
                                                                 true,
-                                                                "Authenticator code rejected — try again.".into(),
+                                                                "Sign-in refused — check the code and try again.".into(),
                                                             )));
                                                             otp.set(String::new());
                                                         }
@@ -1944,6 +1953,11 @@ fn AutoImportRow(
                                         msg.set(None);
                                     },
                                     "Cancel"
+                                }
+                            }
+                            if *submitting.read() {
+                                div { class: "text-[11px] text-obsidian-text-muted",
+                                    "If your provider asks you to approve this sign-in on your phone, approve it now."
                                 }
                             }
                         }

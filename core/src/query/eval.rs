@@ -73,24 +73,38 @@ fn segments(path: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether a tag query matches a tag set.
+///
+/// The `Tag`-side half of [`tag_matches`], lifted out so a caller holding a plain
+/// set — the archive's hoisted `tags` column — gets these semantics rather than a
+/// second comparison that agrees with this one until it doesn't.
+///
+/// `Bare` matches a bare tag *or* the key of a `key:value` tag, so `tag:institution`
+/// finds `institution:rbc`. `KeyValue` requires both halves. Case-insensitive
+/// throughout, which is what makes it agree with `Tag::normalize`'s lowercasing.
+pub fn tag_query_matches(tag_query: &TagQuery, tags: &[Tag]) -> bool {
+    tags.iter().any(|t| match (tag_query, t) {
+        (TagQuery::Bare(name), Tag::Bare(s)) => s.eq_ignore_ascii_case(name),
+        (TagQuery::Bare(name), Tag::KeyValue { key, .. }) => key.eq_ignore_ascii_case(name),
+        (TagQuery::KeyValue { key, value }, Tag::KeyValue { key: k, value: v }) => {
+            k.eq_ignore_ascii_case(key) && v.eq_ignore_ascii_case(value)
+        }
+        (TagQuery::KeyValue { .. }, Tag::Bare(_)) => false,
+    })
+}
+
 fn tag_matches(tag_query: &TagQuery, txn: &QueryTxn) -> bool {
-    match tag_query {
-        TagQuery::Bare(name) => {
-            txn.top_tags.iter().any(|t| t.eq_ignore_ascii_case(name))
-                || txn.postings.iter().flat_map(|p| &p.tags).any(|t| match t {
-                    Tag::Bare(s) => s.eq_ignore_ascii_case(name),
-                    Tag::KeyValue { key, .. } => key.eq_ignore_ascii_case(name),
-                })
-        }
-        TagQuery::KeyValue { key, value } => {
-            txn.postings.iter().flat_map(|p| &p.tags).any(|t| match t {
-                Tag::KeyValue { key: k, value: v } => {
-                    k.eq_ignore_ascii_case(key) && v.eq_ignore_ascii_case(value)
-                }
-                Tag::Bare(_) => false,
-            })
-        }
-    }
+    // ⚠️ Only the bare form reaches `top_tags`, so a transaction-level
+    // `key:value` tag is matched through the postings alone. Preserved exactly:
+    // widening it here would quietly change the result of every saved query.
+    let top = match tag_query {
+        TagQuery::Bare(name) => txn.top_tags.iter().any(|t| t.eq_ignore_ascii_case(name)),
+        TagQuery::KeyValue { .. } => false,
+    };
+    top || txn
+        .postings
+        .iter()
+        .any(|p| tag_query_matches(tag_query, &p.tags))
 }
 
 fn date_in_range(date: &str, range: &DateRange) -> bool {

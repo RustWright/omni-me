@@ -20,17 +20,21 @@ use serde_json::Value;
 
 pub mod config;
 pub mod csv;
+pub mod duplicates;
 pub mod imap;
 pub mod imap_real;
 pub mod imap_source;
 // Moved to `crate::mime` so the archive can read an .eml without this
 // feature. Re-exported so `super::mime::…` keeps resolving in here.
 pub use crate::mime;
+pub mod order_ref;
 pub mod paused;
 pub mod receipts;
 pub mod rest;
+pub mod sender_auth;
 pub mod setup;
 pub mod subprocess;
+pub mod triage;
 
 /// What a record-oriented parse produced, including what it could **not**
 /// parse.

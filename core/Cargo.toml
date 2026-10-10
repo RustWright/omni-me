@@ -23,7 +23,7 @@ auto-import = [
 # assistant's semantic `search`. Same reasoning as `auto-import` — `fastembed` pulls
 # `ort` and a bundled ONNX Runtime, which must never enter the Android dep tree.
 # The agent enables it; Tauri and the server do not.
-embeddings = ["dep:fastembed"]
+embeddings = ["dep:fastembed", "dep:ort"]
 
 [dependencies]
 surrealdb = { version = "3", features = ["kv-surrealkv"] }
@@ -39,6 +39,8 @@ ulid = { version = "1", features = ["serde"] }
 sha2 = "0.10"
 infer = "0.19"
 chrono = { workspace = true }
+# The check-in hour is local to the user, and the agent runs on a UTC box.
+chrono-tz = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 url = "2"
 regex = { version = "1", default-features = false, features = ["std", "perf"] }
@@ -60,6 +62,9 @@ image = { version = "0.25", default-features = false, features = [
     "png",
     "webp",
 ] }
+# Writes the PDF a multi-photo capture is archived as. Pure Rust; it embeds a JPEG
+# as-is (DCTDecode), so a page keeps the camera's bytes.
+pdf-writer = "0.15"
 toml = "0.8"
 tracing = "0.1"
 mail-parser = "0.10"
@@ -100,8 +105,12 @@ fastembed = { version = "6", default-features = false, features = [
     "ort-download-binaries-rustls-tls",
     "hf-hub-rustls-tls",
 ], optional = true }
+# Named only to switch off ONNX Runtime's CPU arena (`embedding.rs`). Pinned to
+# fastembed's own version so one ONNX Runtime is linked, not two.
+ort = { version = "=2.0.0-rc.13", default-features = false, optional = true }
 
 
 [dev-dependencies]
+tracing-subscriber = "0.3"
 wiremock = "0.6"
 tokio = { workspace = true, features = ["test-util"] }

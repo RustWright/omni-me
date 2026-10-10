@@ -85,7 +85,7 @@ pub fn records_read(outcome: &Outcome) -> Vec<RecordRef> {
 pub fn proposals(config: &ResolvedConfig, outcome: &Outcome) -> Vec<ProposedAction> {
     let mut out: Vec<ProposedAction> = Vec::new();
     for turn in &outcome.trace {
-        if turn.verb.as_deref() != Some("propose") {
+        if turn.verb.as_deref() != Some("propose") || turn.refused {
             continue;
         }
         let Some(name) = turn.arguments.get("action").and_then(|v| v.as_str()) else {
@@ -248,6 +248,7 @@ mod tests {
             verb: verb.map(str::to_string),
             arguments,
             repeated: false,
+            refused: false,
             usage: Usage::default(),
             latency: Duration::from_millis(100),
         }

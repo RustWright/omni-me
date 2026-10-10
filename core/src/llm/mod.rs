@@ -5,6 +5,7 @@ mod openai_compat;
 pub mod pipeline;
 mod prompts;
 mod provider;
+pub mod sampling;
 mod tools;
 
 pub use chat::{ChatMessage, ChatRequest, ChatResponse, Usage};
@@ -18,5 +19,7 @@ pub use pipeline::{
 pub use prompts::{CallMetadata, PromptRegistry, PromptTemplate};
 pub use provider::{
     ClientOptions, build_extractor, build_llm_client, build_reader, build_transcriber,
+    resolved_sampling,
 };
+pub use sampling::Sampling;
 pub use tools::{LlmResponse, ToolCall, ToolDef, default_note_tools};

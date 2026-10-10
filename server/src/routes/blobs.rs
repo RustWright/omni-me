@@ -4,7 +4,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
-    routing::put,
+    routing::{get, put},
 };
 use omni_me_core::blob;
 use thiserror::Error;
@@ -44,6 +44,7 @@ impl IntoResponse for BlobError {
 pub fn blob_routes() -> Router<AppState> {
     Router::new()
         .route("/blobs/{hash}", put(put_blob_handler).get(get_blob_handler))
+        .route("/blobs/{hash}/preview", get(get_preview_handler))
         .layer(DefaultBodyLimit::max(MAX_BLOB_BYTES))
 }
 
@@ -83,6 +84,12 @@ async fn get_blob_handler(
         Err(e) => return Err(BlobError::Io(e)),
     };
 
+    Ok(blob_response(bytes))
+}
+
+/// The bytes with a sniffed type and the headers that stop them rendering as a
+/// page. Shared by the original and its preview so neither can lose them.
+fn blob_response(bytes: Vec<u8>) -> Response {
     let mime = infer::get(&bytes)
         .map(|t| t.mime_type())
         .unwrap_or("application/octet-stream");
@@ -97,7 +104,7 @@ async fn get_blob_handler(
     // `attachment` stops it rendering the response as a document at all. The
     // app's own reader fetches these bytes programmatically, so neither header
     // changes anything for the legitimate caller.
-    Ok((
+    (
         [
             (header::CONTENT_TYPE, mime),
             (header::CONTENT_LENGTH, &bytes.len().to_string()),
@@ -106,5 +113,95 @@ async fn get_blob_handler(
         ],
         bytes,
     )
-        .into_response())
+        .into_response()
+}
+
+/// Previews live beside the blob directory, never in it: they are derived and
+/// disposable, and deleting this directory is always safe.
+fn preview_dir(blob_dir: &std::path::Path) -> std::path::PathBuf {
+    match blob_dir.parent() {
+        Some(parent) => parent.join("previews"),
+        None => blob_dir.join("previews"),
+    }
+}
+
+/// `GET /blobs/{hash}/preview` — what a device should show first: a small upright
+/// JPEG for a photo, an unencrypted copy of an encrypted PDF, otherwise the
+/// original. Derived copies are made once and cached.
+async fn get_preview_handler(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Response, BlobError> {
+    let hash = validate_hash_format(&hash)?;
+    let dir = preview_dir(&state.blob_dir);
+    for name in [format!("{hash}.jpg"), format!("{hash}.pdf")] {
+        if let Ok(bytes) = tokio::fs::read(dir.join(name)).await {
+            return Ok(blob_response(bytes));
+        }
+    }
+    let original = match tokio::fs::read(state.blob_dir.join(&hash)).await {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(BlobError::NotFound),
+        Err(e) => return Err(BlobError::Io(e)),
+    };
+    let mime = infer::get(&original).map(|t| t.mime_type());
+    if mime == Some("application/pdf") {
+        return Ok(pdf_preview(&state, &hash, original).await);
+    }
+    if !mime.is_some_and(|m| m.starts_with("image/")) {
+        return Ok(blob_response(original));
+    }
+    // Decoding a 12-megapixel photo is seconds of CPU; keep it off the workers.
+    let made = tokio::task::spawn_blocking(move || {
+        let preview = omni_me_core::extraction::media::preview_jpeg(&original);
+        (preview, original)
+    })
+    .await
+    .map_err(|e| BlobError::Io(std::io::Error::other(e)))?;
+    match made {
+        (Ok(Some(preview)), _) => {
+            cache_preview(&dir, &format!("{hash}.jpg"), &preview).await;
+            Ok(blob_response(preview))
+        }
+        (Ok(None), original) => Ok(blob_response(original)),
+        (Err(e), original) => {
+            tracing::warn!(hash = %hash, error = %e, "preview failed; serving the original");
+            Ok(blob_response(original))
+        }
+    }
+}
+
+/// An encrypted PDF decrypted with the configured passwords, so the phone never
+/// holds one. When none opens it, the original goes back marked `no-store`: a
+/// device that cached it would keep showing a locked file after one is added.
+async fn pdf_preview(state: &AppState, hash: &str, original: Vec<u8>) -> Response {
+    let passwords = omni_me_core::credentials::PdfPasswords::from_secrets(&state.secrets);
+    match omni_me_core::statement::pdf::decrypted_copy_with_any(&original, &passwords.values())
+        .await
+    {
+        Ok(Some(copy)) => {
+            cache_preview(&preview_dir(&state.blob_dir), &format!("{hash}.pdf"), &copy).await;
+            blob_response(copy)
+        }
+        Ok(None) => blob_response(original),
+        Err(e) => {
+            tracing::warn!(hash = %hash, error = %e, "pdf preview: serving the original");
+            let mut response = blob_response(original);
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-store"),
+            );
+            response
+        }
+    }
+}
+
+/// Best effort: a failed cache write costs a re-make next time.
+async fn cache_preview(dir: &std::path::Path, name: &str, bytes: &[u8]) {
+    if tokio::fs::create_dir_all(dir).await.is_ok() {
+        let tmp = dir.join(format!("{name}.tmp"));
+        if tokio::fs::write(&tmp, bytes).await.is_ok() {
+            let _ = tokio::fs::rename(&tmp, dir.join(name)).await;
+        }
+    }
 }

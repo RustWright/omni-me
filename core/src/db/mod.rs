@@ -77,6 +77,8 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
         ",
     )
     .await
+    .map_err(DbError::Schema)?
+    .check()
     .map_err(DbError::Schema)?;
 
     // One-time backfill for events stored before `received_at` existed. The
@@ -87,14 +89,98 @@ async fn init_schema(db: &Surreal<Db>) -> Result<(), DbError> {
     // local events could never push again).
     db.query("UPDATE events SET received_at = timestamp WHERE received_at IS NONE")
         .await
+        .map_err(DbError::Schema)?
+        .check()
         .map_err(DbError::Schema)?;
 
     Ok(())
 }
 
+/// A fresh, empty database for one test: its own namespace on one instance
+/// shared by the test binary. A `connect` per test leaks an engine thread
+/// each, which wedged the suite; see `docs/src/testing.md`.
+#[cfg(test)]
+pub(crate) async fn test_db() -> Database {
+    use std::sync::LazyLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    // The engine runs on the runtime that connects it, and a #[tokio::test]
+    // runtime ends with its test, so the shared instance gets the one the
+    // binaries use, which also carries the stack the engine needs.
+    static RUNTIME: LazyLock<tokio::runtime::Runtime> =
+        LazyLock::new(|| crate::async_runtime::build().expect("test database runtime"));
+    static SHARED: tokio::sync::OnceCell<Database> = tokio::sync::OnceCell::const_new();
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    // Code under test reports swallowed errors as warnings; without a subscriber
+    // a failing test shows only a count of them, never what they said.
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_max_level(tracing::Level::WARN)
+        .try_init();
+
+    let shared = SHARED
+        .get_or_init(|| async {
+            RUNTIME
+                .spawn(async {
+                    let dir = tempfile::tempdir().expect("test database dir").keep();
+                    Surreal::new::<SurrealKv>(dir.join("shared.db").to_str().unwrap())
+                        .await
+                        .expect("test database")
+                })
+                .await
+                .expect("test database task")
+        })
+        .await;
+    let db = shared.clone();
+    let ns = format!("test_{}", NEXT.fetch_add(1, Ordering::Relaxed));
+    db.use_ns(ns).use_db(DATABASE).await.unwrap();
+    init_schema(&db).await.unwrap();
+    db
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the shared fixture rests on: a write in one test's namespace is
+    /// invisible to another's, including the projection bookmarks.
+    #[tokio::test]
+    async fn test_databases_do_not_see_each_others_rows() {
+        use crate::events::{BudgetProjection, ProjectionRunner};
+
+        let (a, b) = (test_db().await, test_db().await);
+        for db in [&a, &b] {
+            ProjectionRunner::new(db.clone(), vec![Box::new(BudgetProjection)])
+                .init_all()
+                .await
+                .unwrap();
+        }
+        a.query(
+            "CREATE events CONTENT { event_type: 'x', aggregate_id: 'a', \
+             timestamp: time::now(), device_id: 'd', payload: {} };
+             CREATE projection_versions CONTENT { name: 'only_in_a', version: 1, last_event_id: '' };",
+        )
+        .await
+        .unwrap()
+        .check()
+        .unwrap();
+
+        let count = |db: &Database, query: &'static str| {
+            let db = db.clone();
+            async move {
+                let n: Option<usize> = db.query(query).await.unwrap().take("n").unwrap();
+                n.unwrap_or(0)
+            }
+        };
+        let events = "SELECT count() AS n FROM events GROUP ALL";
+        let bookmark =
+            "SELECT count() AS n FROM projection_versions WHERE name = 'only_in_a' GROUP ALL";
+        assert_eq!(count(&a, events).await, 1);
+        assert_eq!(count(&b, events).await, 0);
+        assert_eq!(count(&a, bookmark).await, 1);
+        assert_eq!(count(&b, bookmark).await, 0);
+    }
 
     #[tokio::test]
     async fn test_connect_and_schema() {
@@ -130,5 +216,42 @@ mod tests {
             .unwrap();
 
         assert_eq!(count, Some(1));
+    }
+
+    /// The trap every write in this crate has to know about: a statement the
+    /// database *rejects* still comes back as `Ok`.
+    ///
+    /// `await?` only forwards transport and parse failures. A statement error
+    /// travels inside the `Response` and reaches the caller solely through
+    /// `.check()` or `.take()`. A write that discards the response therefore
+    /// cannot fail, which reads in the source exactly like a write that
+    /// succeeded — the projections were built on that misreading.
+    #[tokio::test]
+    async fn a_rejected_statement_still_returns_ok_until_it_is_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let db = connect(path.to_str().unwrap()).await.unwrap();
+
+        // `sync_state.device_id` carries a UNIQUE index, so the second write of
+        // the same device is refused. Chosen over a SCHEMAFULL type violation
+        // because an index conflict is a statement error in every version, where
+        // what SCHEMAFULL does with an undeclared field has moved between them.
+        let insert = "CREATE sync_state CONTENT \
+                      { device_id: 'dup', last_sync_timestamp: d'2026-01-01T00:00:00Z' }";
+        db.query(insert)
+            .await
+            .unwrap()
+            .check()
+            .expect("the first write is legal");
+
+        let response = db
+            .query(insert)
+            .await
+            .expect("the transport succeeded, which is all `await?` can report");
+
+        assert!(
+            response.check().is_err(),
+            "the write was refused, and `check` is the only thing that says so"
+        );
     }
 }

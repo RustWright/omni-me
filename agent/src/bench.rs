@@ -71,7 +71,7 @@ use std::time::Duration;
 use omni_me_core::assistant::{Session, StopReason};
 use omni_me_core::config::ResolvedConfig;
 use omni_me_core::db::Database;
-use omni_me_core::llm::{LlmClient, Usage};
+use omni_me_core::llm::{LlmClient, Sampling, Usage};
 
 /// What a correct final answer has to contain, on top of the verb that reached
 /// it.
@@ -128,6 +128,16 @@ const ABSENCE_SIGNALS: &[&str] = &[
 
 /// One case: a request, the verb a correct run must reach, and what the answer
 /// has to say.
+/// How many times the whole slate is run.
+///
+/// Three, matching every other arm, because a single run cannot separate a model
+/// from the draw it happened to get (`MODEL_BENCH.md` R26) — and this arm is where
+/// two seats' ties were called. ⚠️ It multiplies the most expensive run in the
+/// project: a slate is 15 multi-turn cases per variant, so three runs of both
+/// halves is what the plan line prints before it starts.
+const REPEATS_ENV: &str = "OMNI_BENCH_SLATE_REPEATS";
+const DEFAULT_REPEATS: usize = 3;
+
 struct Case {
     request: &'static str,
     /// The verb that has to appear in the trace. `None` means the right outcome
@@ -287,6 +297,7 @@ const CASES: &[Case] = &[
     },
 ];
 
+#[derive(Default)]
 struct Score {
     correct: usize,
     total: usize,
@@ -405,23 +416,85 @@ impl Score {
 /// Accuracy, latency and tokens are all still real; only the tax is unavailable,
 /// and it is reported as *not applicable* rather than *not measurable*, because a
 /// deliberate omission and a broken endpoint are different findings.
+/// Run one variant `repeats` times, pooled, keeping each run's correct count.
+///
+/// Pooled rather than averaged because every field of [`Score`] is a count or a
+/// sample: adding them is the same measurement over more cases. The per-run counts
+/// come back separately because the pooled number cannot show a model that scored
+/// 14, then 9, then 14 — which is the whole reason this arm needed repeats.
+async fn pooled_variant(
+    db: &Database,
+    config: &ResolvedConfig,
+    llm: &dyn LlmClient,
+    constrained: bool,
+    repeats: usize,
+) -> (Score, Vec<usize>) {
+    let mut pooled = Score::default();
+    let mut per_run = Vec::new();
+    for _ in 0..repeats {
+        let score = run_variant(db, config, llm, constrained).await;
+        per_run.push(score.correct);
+        pooled.correct += score.correct;
+        pooled.total += score.total;
+        pooled.errors += score.errors;
+        pooled.off_schema += score.off_schema;
+        pooled.content_miss += score.content_miss;
+        pooled.latencies.extend(score.latencies);
+        pooled.failed_latencies.extend(score.failed_latencies);
+        pooled.usage += score.usage;
+        pooled.turns += score.turns;
+    }
+    (pooled, per_run)
+}
+
+/// One line saying whether the runs agreed, or that nothing asked them to.
+fn stability(label: &str, per_run: &[usize], cases: usize) -> String {
+    if per_run.len() < 2 {
+        return format!(
+            "  {label} stability UNMEASURED — one run. Set {REPEATS_ENV} to at least 2 \
+             before ranking anything on this number."
+        );
+    }
+    let counts: Vec<String> = per_run.iter().map(|c| c.to_string()).collect();
+    let agreed = per_run.windows(2).all(|w| w[0] == w[1]);
+    format!(
+        "  {label} per run, of {cases}: {}{}",
+        counts.join(", "),
+        if agreed {
+            ""
+        } else {
+            "   ⚠️ the runs disagree; the pooled score above is the only one that means anything"
+        }
+    )
+}
+
 pub async fn run(
     db: &Database,
     config: &ResolvedConfig,
     llm: &dyn LlmClient,
     constrained_only: bool,
+    sampling: Sampling,
 ) {
     if Session::new(db, config, llm).is_err() {
         eprintln!("cannot bench: the LLM feature is off");
         return;
     }
 
+    let repeats: usize = std::env::var(REPEATS_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_REPEATS);
+
     if constrained_only {
         println!(
-            "verb selection, {} cases, CONSTRAINED ARM ONLY\n",
-            CASES.len()
+            "verb selection, {} cases x {repeats} runs = {} requests, CONSTRAINED ARM ONLY · \
+             sampling {}\n",
+            CASES.len(),
+            CASES.len() * repeats,
+            sampling.describe()
         );
-        let constrained = run_variant(db, config, llm, true).await;
+        let (constrained, per_run) = pooled_variant(db, config, llm, true, repeats).await;
         println!(
             "  schema-constrained {}/{} ({:.0}%){}",
             constrained.correct,
@@ -434,6 +507,7 @@ pub async fn run(
                 (e, s) => format!("   ⚠️ {e} errored, {s} ignored the schema"),
             }
         );
+        println!("{}", stability("schema-constrained", &per_run, CASES.len()));
         println!(
             "\n  constraint tax: NOT APPLICABLE — the free-form arm was not run, by \
              request. There is nothing wrong with this endpoint; it simply offers no \
@@ -443,9 +517,15 @@ pub async fn run(
         return;
     }
 
-    println!("verb selection, {} cases, both variants\n", CASES.len());
-    let free = run_variant(db, config, llm, false).await;
-    let constrained = run_variant(db, config, llm, true).await;
+    println!(
+        "verb selection, {} cases x {repeats} runs = {} requests per variant, both variants · \
+         sampling {}\n",
+        CASES.len(),
+        CASES.len() * repeats,
+        sampling.describe()
+    );
+    let (free, free_runs) = pooled_variant(db, config, llm, false, repeats).await;
+    let (constrained, constrained_runs) = pooled_variant(db, config, llm, true, repeats).await;
 
     println!(
         "  free-form         {}/{} ({:.0}%){}",
@@ -468,6 +548,12 @@ pub async fn run(
             (0, s) => format!("   ⚠️ {s} repl(ies) ignored the schema"),
             (e, s) => format!("   ⚠️ {e} errored, {s} ignored the schema"),
         }
+    );
+
+    println!("{}", stability("free-form", &free_runs, CASES.len()));
+    println!(
+        "{}",
+        stability("schema-constrained", &constrained_runs, CASES.len())
     );
 
     if free.errors == free.total && constrained.errors == constrained.total {
@@ -681,6 +767,26 @@ mod tests {
             usage: Usage::default(),
             turns: 0,
         }
+    }
+
+    /// A single run cannot disagree with anything, and saying "yes" would claim a
+    /// stability nobody measured — the mistake R26 is about.
+    #[test]
+    fn one_run_reports_stability_as_unmeasured() {
+        let line = stability("free-form", &[14], 14);
+        assert!(line.contains("UNMEASURED"), "{line}");
+        assert!(line.contains(REPEATS_ENV), "must say how to fix it: {line}");
+    }
+
+    #[test]
+    fn runs_that_disagree_say_so_beside_their_counts() {
+        let steady = stability("free-form", &[14, 14, 14], 14);
+        assert!(steady.contains("14, 14, 14"), "{steady}");
+        assert!(!steady.contains("disagree"), "{steady}");
+
+        let moved = stability("free-form", &[14, 9, 13], 14);
+        assert!(moved.contains("14, 9, 13"), "{moved}");
+        assert!(moved.contains("disagree"), "{moved}");
     }
 
     #[test]

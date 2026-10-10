@@ -88,7 +88,7 @@ fn ImportFlow() -> Element {
             if matches!(*phase.read(), ImportPhase::Idle | ImportPhase::Error(_)) {
                 div { class: "flex gap-2",
                     input {
-                        class: "flex-1 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-md text-sm text-obsidian-text font-mono placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent",
+                        class: "flex-1 min-w-0 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-md text-sm text-obsidian-text font-mono placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent",
                         r#type: "text",
                         placeholder: "/path/to/obsidian/vault",
                         value: "{root}",
@@ -405,7 +405,7 @@ fn ExportFlow() -> Element {
             if matches!(*phase.read(), ExportPhase::Idle | ExportPhase::Error(_)) {
                 div { class: "flex gap-2",
                     input {
-                        class: "flex-1 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-md text-sm text-obsidian-text font-mono placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent",
+                        class: "flex-1 min-w-0 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-md text-sm text-obsidian-text font-mono placeholder-obsidian-text-muted outline-none focus:border-obsidian-accent",
                         r#type: "text",
                         placeholder: "/path/to/export-target",
                         value: "{target}",

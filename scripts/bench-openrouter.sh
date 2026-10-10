@@ -151,7 +151,30 @@ export OMNI_AGENT_LLM_API_KEY="$OPENROUTER_KEY"
 # refuses to route to an endpoint that lacks a parameter we sent, so a provider
 # that would treat `response_format` as a hint becomes a routing ERROR instead of
 # a clean-looking scorecard measuring nothing.
-default_extra_body="{\"provider\":{\"only\":[\"$pin\"],\"allow_fallbacks\":false,\"zdr\":true,\"data_collection\":\"deny\",\"require_parameters\":true}}"
+#
+# ⚠️ `temperature` is still set here, but it is no longer the only place it is set:
+# role C now defaults to 0 in `core` (R26's code half, 2026-09-27) and the chat
+# seats still send nothing. It stays because this object is what a screening run
+# uses to pin the *whole* request shape, and because an explicit value here wins
+# over the config — so a run can sample differently on purpose without editing
+# credentials. ⚠️ It is also what the scorecard header prints, folded over the
+# seat's own sampling.
+#
+# ⛔ Until 2026-09-27 this object reached roles A and B ONLY: the role-C and role-D
+# builders took no options, so neither the pin nor these terms were ever applied to
+# a document request. See R27 before reading any C or D result on this page.
+#
+# ⚠️ Folded into the DEFAULT rather than exported separately, because
+# `OMNI_AGENT_LLM_EXTRA_BODY` replaces this whole object rather than merging into
+# it. Setting temperature through that variable would silently drop the pin,
+# `zdr`, `data_collection` and `require_parameters` along with it.
+#
+# ⛔ No `seed`. `require_parameters` refuses to route to an endpoint lacking a
+# parameter we send, so an unsupported `seed` would turn into a routing failure
+# on some rows and quietly shrink the slate. Temperature is universally served;
+# seed is not, and is not worth that risk for the determinism it adds on top.
+bench_temperature="${OMNI_BENCH_TEMPERATURE:-0}"
+default_extra_body="{\"provider\":{\"only\":[\"$pin\"],\"allow_fallbacks\":false,\"zdr\":true,\"data_collection\":\"deny\",\"require_parameters\":true},\"temperature\":$bench_temperature}"
 export OMNI_AGENT_LLM_EXTRA_BODY="${OMNI_AGENT_LLM_EXTRA_BODY:-$default_extra_body}"
 # Spacing only stops us *causing* a 429. The one seen live came from the pinned
 # upstream's shared pool being overloaded by other traffic, which no interval can

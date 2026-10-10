@@ -15,8 +15,10 @@
 use dioxus::prelude::*;
 
 use crate::bridge;
-use crate::components::attachment_viewer::{AttachmentMeta, AttachmentViewer};
-use crate::types::{DocumentField, DocumentItem};
+use crate::components::attachment_viewer::{AttachmentViewer, document_meta};
+use crate::components::tag_editor::TagChipEditor;
+use crate::pages::finances::{DocumentCapture, DocumentKind};
+use crate::types::{DocumentField, DocumentItem, ExtractedDraft};
 use crate::use_page_back;
 
 /// The MIME type an archived email carries. ⛔ Must match `archive::mime_for`'s
@@ -24,10 +26,33 @@ use crate::use_page_back;
 /// connects the two.
 const MAIL_MIME: &str = "message/rfc822";
 
+/// The field key carrying a document's tag set. ⛔ Must match
+/// `events::DOCUMENT_TAGS_KEY` — this crate cannot see it, and the consequence of
+/// a mismatch is that `FieldPanel` starts offering the joined tag value as an
+/// editable text row again.
+const TAGS_FIELD_KEY: &str = "tags";
+
+/// Rows per list call.
+///
+/// ⚠️ The page size is the caller's, deliberately: a short page is how this
+/// screen knows it has reached the end, and that inference only holds if it
+/// chose the number. The command clamps it to its own ceiling.
+const DOC_PAGE: u32 = 50;
+
 #[derive(Clone, PartialEq)]
 enum View {
     List,
     Detail(String),
+    /// The purge queue for one tag group, optionally narrowed to what is past
+    /// that tag's retention (RFC3339).
+    ///
+    /// ⛔ A nested view on this page, never the assistant inbox: approval lives
+    /// with the domain the thing belongs to, and these are archive documents.
+    /// ⛔ The cutoff travels from `RetentionGroup::cutoff` untouched — re-deriving
+    /// it here would let the screen and the server disagree about the set.
+    Purge(String, Option<String>),
+    /// "Add document": the capture screen, reading any document.
+    Add(DocumentKind),
 }
 
 #[component]
@@ -39,16 +64,45 @@ pub fn ArchivePage() -> Element {
     // field extraction, which has not run for mail and may never — a kind-based
     // mail filter would return nothing and look like an empty archive.
     let mut mail_only = use_signal(|| false);
+    let mut tag = use_signal(String::new);
+    let mut retention_open = use_signal(|| false);
     let mut reload = use_signal(|| 0u32);
+    // The badge's set, reachable. ⛔ Without this the count on the nav and the
+    // assistant's reminder row name a queue with no way in — the list has no
+    // other way to tell a counted document from the rest, and past one page they
+    // are not on screen at all.
+    let mut unverified_only = use_signal(|| false);
+    let mut added_notice: Signal<Option<String>> = use_signal(|| None);
+
+    // A reminder row that named this tab asked for its queue, not its root.
+    let mut nav_intent = crate::use_nav_intent();
+    use_effect(move || {
+        // Snapshot before any .set() — a read guard held across a write to the
+        // same signal deadlocks (the pattern `pending_share` documents).
+        let intent = *nav_intent.read();
+        if intent == Some(crate::NavIntent::ArchiveUnverified) {
+            nav_intent.set(None);
+            unverified_only.set(true);
+            view.set(View::List);
+        }
+    });
 
     // Hardware back pops the detail view before it leaves the tab.
     use_page_back(
         move || match *view.read() {
             View::List => 0,
-            View::Detail(_) => 1,
+            View::Detail(_) | View::Purge(_, _) | View::Add(_) => 1,
         },
         move || view.set(View::List),
     );
+
+    // Pages past the first, appended as the user asks for them. ⛔ Reset whenever
+    // a filter moves, or rows fetched under the old one survive into the new
+    // result — see the effect below.
+    let mut extra_pages: Signal<Vec<DocumentItem>> = use_signal(Vec::new);
+    let mut loading_more = use_signal(|| false);
+    let mut page_error: Signal<Option<String>> = use_signal(|| None);
+    let mut exhausted = use_signal(|| false);
 
     let documents = use_resource(move || {
         let q = search.read().clone();
@@ -58,26 +112,129 @@ pub fn ArchivePage() -> Element {
         } else {
             String::new()
         };
+        let t = tag.read().clone();
+        let u = *unverified_only.read();
         let _ = reload.read();
-        async move { bridge::invoke_list_documents(Some(q), Some(k), Some(m), None).await }
+        async move {
+            bridge::invoke_list_documents(
+                Some(q),
+                Some(k),
+                Some(m),
+                Some(t),
+                Some(u),
+                Some(DOC_PAGE),
+                Some(0),
+            )
+            .await
+        }
+    });
+
+    // Every filter the resource above keys on, read again here so a change to any
+    // of them drops the accumulated pages. ⚠️ Reading them in the resource's
+    // closure does not do this — that closure re-runs to fetch page 0, it does
+    // not know page 1..n exist.
+    use_effect(move || {
+        let _ = (
+            search.read().clone(),
+            kind.read().clone(),
+            tag.read().clone(),
+            *mail_only.read(),
+            *unverified_only.read(),
+            *reload.read(),
+        );
+        extra_pages.write().clear();
+        exhausted.set(false);
+        page_error.set(None);
     });
 
     let kinds = use_resource(move || async move { bridge::invoke_document_kinds().await });
+    // Re-read on `reload` so tagging a document from the detail view adds its new
+    // tag to this menu; otherwise the tag just applied is unselectable until the
+    // tab is left and re-entered.
+    let tags = use_resource(move || {
+        let _ = reload.read();
+        async move { bridge::invoke_document_tags().await }
+    });
 
     rsx! {
-        div { class: "h-full overflow-y-auto",
+        // No scroll of its own: the shell's scroll is what hides the top bar.
+        div {
+            if let Some(msg) = added_notice.read().clone() {
+                div { class: "mx-4 mt-3 px-3 py-2 rounded-md bg-obsidian-accent/10 border border-obsidian-accent/30 \
+                              text-sm text-obsidian-text flex items-start justify-between gap-2",
+                    span { class: "min-w-0", "{msg}" }
+                    button {
+                        class: "shrink-0 text-xs text-obsidian-text-muted px-2",
+                        onclick: move |_| added_notice.set(None),
+                        "✕"
+                    }
+                }
+            }
             match view.read().clone() {
-                View::Detail(id) => rsx! {
-                    DocumentDetail {
-                        document_id: id,
+                View::Add(capture_kind) => rsx! {
+                    div { class: "p-4 max-w-3xl mx-auto",
+                        DocumentCapture {
+                            kind: capture_kind,
+                            for_archive: true,
+                            on_done: move |_| view.set(View::List),
+                            on_extracted: move |draft: ExtractedDraft| {
+                                reload += 1;
+                                let to_review = draft.proposed_batch_id.is_some();
+                                added_notice.set(Some(if to_review {
+                                    "Filed. It reads as a receipt, so it is also waiting in Finances review.".to_string()
+                                } else {
+                                    "Filed in the archive.".to_string()
+                                }));
+                                match draft.attachment.and_then(|a| a.document_id) {
+                                    Some(id) => view.set(View::Detail(id)),
+                                    None => view.set(View::List),
+                                }
+                            },
+                        }
+                    }
+                },
+                View::Purge(tag, cutoff) => rsx! {
+                    PurgeGroup {
+                        tag: tag,
+                        archived_before: cutoff,
                         on_back: move |_| view.set(View::List),
-                        on_corrected: move |_| reload += 1,
-                        on_open: move |id: String| view.set(View::Detail(id)),
+                        on_purged: move |_| {
+                            reload += 1;
+                            view.set(View::List);
+                        },
+                    }
+                },
+                // Keyed so a different document remounts the view. Otherwise
+                // every nested hook (a field's edit draft) carries over from the
+                // document opened before it.
+                View::Detail(id) => rsx! {
+                    for id in std::iter::once(id) {
+                        DocumentDetail {
+                            key: "{id}",
+                            document_id: id,
+                            on_back: move |_| view.set(View::List),
+                            on_corrected: move |_| reload += 1,
+                            on_open: move |id: String| view.set(View::Detail(id)),
+                        }
                     }
                 },
                 View::List => rsx! {
                     div { class: "p-4 space-y-4 max-w-5xl mx-auto",
-                        h1 { class: "text-lg font-semibold text-obsidian-text", "Archive" }
+                        div { class: "flex items-center justify-between gap-2",
+                            h1 { class: "text-lg font-semibold text-obsidian-text", "Archive" }
+                            div { class: "flex gap-1 shrink-0",
+                                button {
+                                    class: "text-sm text-obsidian-accent px-3 py-2",
+                                    onclick: move |_| view.set(View::Add(DocumentKind::Photo)),
+                                    "+ Photo"
+                                }
+                                button {
+                                    class: "text-sm text-obsidian-accent px-3 py-2",
+                                    onclick: move |_| view.set(View::Add(DocumentKind::Pdf)),
+                                    "+ PDF"
+                                }
+                            }
+                        }
 
                         div { class: "flex flex-wrap gap-2",
                             input {
@@ -103,6 +260,59 @@ pub fn ArchivePage() -> Element {
                                     }
                                 }
                             }
+                            // A menu rather than a text box. Tags are exact-match,
+                            // so a typed "reciept" returns an empty archive and
+                            // looks like a missing document rather than a typo.
+                            // Hidden until a tag exists: a menu offering only
+                            // "All tags" reads as a broken filter.
+                            if let Some(Ok(list)) = tags.read().as_ref().filter(|r| matches!(r, Ok(l) if !l.is_empty())) {
+                                select {
+                                    value: "{tag}",
+                                    onchange: move |e| tag.set(e.value()),
+                                    class: "px-3 py-2 text-sm rounded-lg bg-obsidian-sidebar/60 \
+                                            border border-obsidian-border/10 text-obsidian-text \
+                                            focus:outline-none focus:border-obsidian-accent/40",
+                                    option { value: "", "All tags" }
+                                    for t in list.iter() {
+                                        option { key: "{t}", value: "{t}", "{t}" }
+                                    }
+                                }
+                            }
+                            // ⛔ Only offered once a tag is chosen, and it names
+                            // that tag. A bare "Purge…" with no group in view
+                            // would be an irreversible action whose scope the
+                            // user has to infer.
+                            if !tag.read().is_empty() {
+                                button {
+                                    onclick: move |_| {
+                                        let t = tag.read().clone();
+                                        view.set(View::Purge(t, None));
+                                    },
+                                    class: "px-3 py-2 text-sm rounded-lg border \
+                                            border-red-500/30 bg-red-950/20 text-red-300 \
+                                            hover:bg-red-950/40",
+                                    "Purge \"{tag}\"…"
+                                }
+                            }
+                            // Retention is a policy surface, not a filter, so it
+                            // is behind a toggle: the list's job is finding a
+                            // document, and a rules editor sitting open above it
+                            // competes with that on every visit.
+                            button {
+                                onclick: move |_| {
+                                    let next = !*retention_open.read();
+                                    retention_open.set(next);
+                                },
+                                class: if *retention_open.read() {
+                                    "px-3 py-2 text-sm rounded-lg border border-obsidian-accent/50 \
+                                     bg-obsidian-accent/15 text-obsidian-text"
+                                } else {
+                                    "px-3 py-2 text-sm rounded-lg border border-obsidian-border/10 \
+                                     bg-obsidian-sidebar/60 text-obsidian-text-muted \
+                                     hover:text-obsidian-text"
+                                },
+                                "Retention"
+                            }
                             // ⚠️ Its own control rather than an entry in the kind
                             // dropdown: mail has no `kind`, so listing it there
                             // would put a value in a menu built from a different
@@ -122,6 +332,33 @@ pub fn ArchivePage() -> Element {
                                 },
                                 "Mail only"
                             }
+                            // The nav badge's set. ⛔ A filter, never a queue of
+                            // its own: the module header's rule is that a value
+                            // is corrected beside its document, and narrowing the
+                            // list still opens the detail view to do it.
+                            button {
+                                onclick: move |_| {
+                                    let next = !*unverified_only.read();
+                                    unverified_only.set(next);
+                                },
+                                class: if *unverified_only.read() {
+                                    "px-3 py-2 text-sm rounded-lg border border-amber-500/50 \
+                                     bg-amber-500/15 text-obsidian-text"
+                                } else {
+                                    "px-3 py-2 text-sm rounded-lg border border-obsidian-border/10 \
+                                     bg-obsidian-sidebar/60 text-obsidian-text-muted \
+                                     hover:text-obsidian-text"
+                                },
+                                "Unchecked only"
+                            }
+                        }
+
+                        if *retention_open.read() {
+                            RetentionPanel {
+                                on_review: move |(t, cutoff): (String, String)| {
+                                    view.set(View::Purge(t, Some(cutoff)));
+                                },
+                            }
                         }
 
                         match documents.read().as_ref() {
@@ -134,19 +371,106 @@ pub fn ArchivePage() -> Element {
                                 }
                             },
                             Some(Ok(docs)) if docs.is_empty() => rsx! {
-                                EmptyState { searching: !search.read().is_empty() || !kind.read().is_empty() }
+                                // ⚠️ Every filter counts, not just the search box.
+                                // A narrowing that is not listed here reports "the
+                                // archive is empty" for a filter that simply
+                                // matched nothing — the two readings this
+                                // component exists to keep apart. `mail_only` was
+                                // missing for the same reason `tag` would have been.
+                                EmptyState {
+                                    searching: !search.read().is_empty()
+                                        || !kind.read().is_empty()
+                                        || !tag.read().is_empty()
+                                        || *mail_only.read()
+                                        || *unverified_only.read(),
+                                }
                             },
-                            Some(Ok(docs)) => rsx! {
-                                ul { class: "space-y-1.5",
-                                    for doc in docs.iter() {
-                                        DocumentCard {
-                                            key: "{doc.document_id}",
-                                            doc: doc.clone(),
-                                            on_open: move |id| view.set(View::Detail(id)),
+                            Some(Ok(docs)) => {
+                                let first_len = docs.len() as u32;
+                                let extra = extra_pages.read().clone();
+                                let shown = docs.len() + extra.len();
+                                // The first page filling exactly is the only
+                                // evidence there is more; a short page is the end.
+                                // ⚠️ `exhausted` then records what a later page
+                                // actually returned, so this never has to guess
+                                // twice.
+                                let more_possible = first_len == DOC_PAGE && !*exhausted.read();
+                                rsx! {
+                                    ul { class: "space-y-1.5",
+                                        for doc in docs.iter().chain(extra.iter()) {
+                                            DocumentCard {
+                                                key: "{doc.document_id}",
+                                                doc: doc.clone(),
+                                                on_open: move |id| view.set(View::Detail(id)),
+                                            }
+                                        }
+                                    }
+
+                                    if let Some(msg) = page_error.read().clone() {
+                                        p { class: "text-[11px] text-red-300", "Couldn't load more: {msg}" }
+                                    }
+
+                                    // ⛔ The count is always stated once there is
+                                    // more than a page. Newest-first ordering makes
+                                    // a silent cut-off read as "nothing older
+                                    // exists", which is the failure this replaces.
+                                    if more_possible {
+                                        div { class: "flex items-center gap-3 pt-1",
+                                            button {
+                                                disabled: *loading_more.read(),
+                                                onclick: move |_| {
+                                                    if *loading_more.peek() { return; }
+                                                    loading_more.set(true);
+                                                    page_error.set(None);
+                                                    let q = search.peek().clone();
+                                                    let k = kind.peek().clone();
+                                                    let m = if *mail_only.peek() {
+                                                        MAIL_MIME.to_string()
+                                                    } else {
+                                                        String::new()
+                                                    };
+                                                    let t = tag.peek().clone();
+                                                    let u = *unverified_only.peek();
+                                                    // `peek`, not `read`: this runs
+                                                    // inside an event handler, and a
+                                                    // tracked read here would
+                                                    // subscribe the handler's scope
+                                                    // to every filter it touches.
+                                                    let next_offset = shown as u32;
+                                                    spawn(async move {
+                                                        let got = bridge::invoke_list_documents(
+                                                            Some(q), Some(k), Some(m), Some(t),
+                                                            Some(u), Some(DOC_PAGE), Some(next_offset),
+                                                        ).await;
+                                                        match got {
+                                                            Ok(rows) => {
+                                                                if (rows.len() as u32) < DOC_PAGE {
+                                                                    exhausted.set(true);
+                                                                }
+                                                                extra_pages.write().extend(rows);
+                                                            }
+                                                            Err(e) => page_error.set(Some(e)),
+                                                        }
+                                                        loading_more.set(false);
+                                                    });
+                                                },
+                                                class: "px-3 py-2 text-sm rounded-lg border \
+                                                        border-obsidian-border/10 bg-obsidian-sidebar/60 \
+                                                        text-obsidian-text hover:border-obsidian-accent/40 \
+                                                        disabled:opacity-50",
+                                                if *loading_more.read() { "Loading…" } else { "Load more" }
+                                            }
+                                            span { class: "text-[11px] text-obsidian-text-muted",
+                                                "{shown} shown"
+                                            }
+                                        }
+                                    } else if shown > docs.len() {
+                                        p { class: "pt-1 text-[11px] text-obsidian-text-muted",
+                                            "{shown} shown — that's everything."
                                         }
                                     }
                                 }
-                            },
+                            }
                         }
                     }
                 },
@@ -206,6 +530,22 @@ fn DocumentCard(doc: DocumentItem, on_open: EventHandler<String>) -> Element {
                                 span { class: "text-amber-400/80", "no text" }
                             }
                         }
+                        // On the row rather than the detail view only: a tag is
+                        // how the user finds this again, so scanning the list is
+                        // when they need to see whether it carries one.
+                        if let Some(tags) = doc.tags.as_ref().filter(|t| !t.is_empty()) {
+                            div { class: "flex flex-wrap gap-1 pt-0.5",
+                                for t in tags.iter() {
+                                    span {
+                                        key: "{t}",
+                                        class: "px-1.5 py-0.5 rounded text-[10px] \
+                                                bg-obsidian-accent/10 text-obsidian-accent/90 \
+                                                border border-obsidian-accent/20",
+                                        "{t}"
+                                    }
+                                }
+                            }
+                        }
                     }
                     if unverified > 0 {
                         span {
@@ -232,12 +572,12 @@ fn DocumentDetail(
     on_open: EventHandler<String>,
 ) -> Element {
     let mut reload = use_signal(|| 0u32);
-    let id_for_fetch = document_id.clone();
-    let doc = use_resource(move || {
-        let id = id_for_fetch.clone();
+    // Reactive on the prop: opening an attachment or the parent swaps the id on
+    // this same component, and a plain capture kept fetching the first one.
+    let doc = use_resource(use_reactive((&document_id,), move |(id,)| {
         let _ = reload.read();
         async move { bridge::invoke_get_document(&id).await }
-    });
+    }));
 
     rsx! {
         div { class: "p-4 space-y-4 max-w-5xl mx-auto",
@@ -263,9 +603,10 @@ fn DocumentDetail(
                 },
                 Some(Ok(Some(d))) => {
                     let d = d.clone();
-                    let meta = viewer_meta(&d);
+                    let meta = document_meta(&d);
                     rsx! {
-                        h1 { class: "text-lg font-semibold text-obsidian-text", "{d.display_name()}" }
+                        // `break-all`: a filename has no spaces, and unbroken it panned the page.
+                        h1 { class: "text-lg font-semibold text-obsidian-text break-all", "{d.display_name()}" }
 
                         // The reverse of the email view's attachment list. Without
                         // it the parent link is navigable one way only, and a
@@ -280,13 +621,34 @@ fn DocumentDetail(
                         // stacked below. Editing a value requires seeing the
                         // document; this grid is that requirement, in layout.
                         div { class: "grid md:grid-cols-2 gap-4 items-start",
-                            div {
+                            // min-w-0 on both children is load-bearing. A grid item
+                            // defaults to min-width:auto, so it refuses to shrink
+                            // below its content and the viewers below — each of
+                            // which sets overflow-auto expecting to scroll itself —
+                            // widen the track instead. The page then pans sideways.
+                            div { class: "min-w-0",
                                 // ⛔ An email renders from its stored text, never
                                 // from its bytes. The bytes are raw MIME — quoted-
                                 // printable and base64 parts — so the byte viewer
                                 // would show scaffolding, and parsing MIME again in
                                 // wasm would duplicate what ingest already did.
-                                if d.is_email() {
+                                // ⛔ Checked before the viewer, never after. A
+                                // purged document still carries its `sha256`, so
+                                // the viewer would fetch, get a 404 and render
+                                // "couldn't load attachment" — which is what a
+                                // *broken* archive looks like. A 404 cannot tell
+                                // deliberate removal from a missing file; the
+                                // column can, and this is the only place that
+                                // distinction reaches the reader.
+                                if d.purged.unwrap_or(false) {
+                                    div { class: "p-3 rounded border border-obsidian-border/10 text-xs text-obsidian-text-muted space-y-1",
+                                        p { class: "text-obsidian-text", "This document was purged." }
+                                        p { "Its file has been deleted and cannot be recovered." }
+                                        // What it was still shows in the panel
+                                        // beside this, which is the whole reason a
+                                        // purge keeps the labels.
+                                    }
+                                } else if d.is_email() {
                                     EmailView { document_id: d.document_id.clone(), on_open: on_open }
                                 } else {
                                     match meta {
@@ -299,12 +661,32 @@ fn DocumentDetail(
                                     }
                                 }
                             }
-                            FieldPanel {
-                                doc: d.clone(),
-                                on_saved: move |_| {
-                                    reload += 1;
-                                    on_corrected.call(());
-                                },
+                            div { class: "min-w-0 space-y-4",
+                                // ⚠️ No tag editor on a purged document: tags exist
+                                // to find a document again, and this one is gone.
+                                if !d.purged.unwrap_or(false) {
+                                    TagPanel {
+                                        doc: d.clone(),
+                                        on_saved: move |_| {
+                                            reload += 1;
+                                            on_corrected.call(());
+                                        },
+                                    }
+                                }
+                                FieldPanel {
+                                    doc: d.clone(),
+                                    on_saved: {
+                                        let id = d.document_id.clone();
+                                        let had_unchecked = d.unverified_count() > 0;
+                                        move |_| {
+                                            reload += 1;
+                                            on_corrected.call(());
+                                            if had_unchecked {
+                                                advance_when_checked(id.clone(), on_open, on_back);
+                                            }
+                                        }
+                                    },
+                                }
                             }
                         }
                     }
@@ -314,19 +696,30 @@ fn DocumentDetail(
     }
 }
 
-/// ⚠️ `None` when the row has no `sha256` — a fields event can fold before the
-/// archive event that carries the hash, so a document can legitimately exist
-/// with nothing to render yet.
-fn viewer_meta(doc: &DocumentItem) -> Option<AttachmentMeta> {
-    Some(AttachmentMeta {
-        sha256: doc.sha256.clone()?,
-        filename: doc.filename.clone().unwrap_or_else(|| doc.display_name()),
-        mime_type: doc
-            .mime_type
-            .clone()
-            .unwrap_or_else(|| "application/octet-stream".to_string()),
-        size: doc.size.unwrap_or(0).max(0) as u64,
-    })
+/// Once nothing on this document is unchecked, open the next document that has
+/// something unchecked, or go back to the list when none does (his D1 ruling).
+fn advance_when_checked(
+    document_id: String,
+    on_open: EventHandler<String>,
+    on_back: EventHandler<()>,
+) {
+    spawn(async move {
+        let Ok(Some(doc)) = bridge::invoke_get_document(&document_id).await else {
+            return;
+        };
+        if doc.unverified_count() > 0 {
+            return;
+        }
+        let next =
+            bridge::invoke_list_documents(None, None, None, None, Some(true), Some(2), Some(0))
+                .await
+                .ok()
+                .and_then(|rows| rows.into_iter().find(|d| d.document_id != document_id));
+        match next {
+            Some(d) => on_open.call(d.document_id),
+            None => on_back.call(()),
+        }
+    });
 }
 
 /// Split the archive's stored email text into headers and body.
@@ -361,11 +754,9 @@ fn split_email_text(text: &str) -> (Vec<(String, String)>, String) {
 /// the useful fact is *which* message, and the way back to it.
 #[component]
 fn ParentLink(parent_id: String, on_open: EventHandler<String>) -> Element {
-    let id_for_fetch = parent_id.clone();
-    let parent = use_resource(move || {
-        let id = id_for_fetch.clone();
-        async move { bridge::invoke_get_document(&id).await }
-    });
+    let parent = use_resource(use_reactive((&parent_id,), |(id,)| async move {
+        bridge::invoke_get_document(&id).await
+    }));
 
     rsx! {
         // ⛔ Renders nothing until the parent is known, and nothing at all if the
@@ -397,16 +788,12 @@ fn ParentLink(parent_id: String, on_open: EventHandler<String>) -> Element {
 /// give a second implementation to disagree with the first.
 #[component]
 fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
-    let id_for_text = document_id.clone();
-    let text = use_resource(move || {
-        let id = id_for_text.clone();
-        async move { bridge::invoke_get_document_text(&id).await }
-    });
-    let id_for_children = document_id.clone();
-    let children = use_resource(move || {
-        let id = id_for_children.clone();
-        async move { bridge::invoke_document_children(&id).await }
-    });
+    let text = use_resource(use_reactive((&document_id,), |(id,)| async move {
+        bridge::invoke_get_document_text(&id).await
+    }));
+    let children = use_resource(use_reactive((&document_id,), |(id,)| async move {
+        bridge::invoke_document_children(&id).await
+    }));
 
     rsx! {
         div { class: "space-y-3",
@@ -475,14 +862,624 @@ fn EmailView(document_id: String, on_open: EventHandler<String>) -> Element {
     }
 }
 
+/// The purge queue for one tag group: every document listed, each sparable, one
+/// confirm.
+///
+/// ⛔ **This shape is the ruling, not a layout choice** (user, 2026-09-27).
+/// Strict per-item confirmation was refused as unusable at backfill scale, and
+/// approving a *rule* was refused because it grants autonomy over an irreversible
+/// action. What makes this satisfy the autonomy rule is that nothing goes without
+/// the person having seen it listed — so if the list is ever truncated, the
+/// confirm must cover only what was listed, and say so.
+/// Retention rules, and what they have caught.
+///
+/// ⛔ Proposes only. "Review" opens the same purge preview and confirm every purge
+/// goes through — retention never removes anything itself, which is the standing
+/// ruling, not a limitation of this screen.
 #[component]
-fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
-    let fields = doc.fields.clone().unwrap_or_default();
+fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
+    let mut reload = use_signal(|| 0u32);
+    let mut chosen = use_signal(String::new);
+    let mut days = use_signal(String::new);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let mut saving = use_signal(|| false);
+
+    let tags = use_resource(move || async move { bridge::invoke_document_tags().await });
+    let rules = use_resource(move || {
+        let _ = reload.read();
+        async move { bridge::invoke_list_document_retention().await }
+    });
+    let groups = use_resource(move || {
+        let _ = reload.read();
+        async move { bridge::invoke_list_retention_candidates().await }
+    });
+
+    // `None` clears the rule. Both paths go through here so the two buttons cannot
+    // drift apart on what "saved" means.
+    let mut apply = move |keep_days: Option<u32>| {
+        let tag = chosen.read().clone();
+        if tag.is_empty() {
+            error.set(Some("pick a tag first".into()));
+            return;
+        }
+        if *saving.read() {
+            return;
+        }
+        saving.set(true);
+        spawn(async move {
+            match bridge::invoke_set_document_retention(&tag, keep_days).await {
+                Ok(()) => {
+                    error.set(None);
+                    reload += 1;
+                }
+                Err(e) => error.set(Some(e)),
+            }
+            saving.set(false);
+        });
+    };
+
+    let has_tags = matches!(tags.read().as_ref(), Some(Ok(l)) if !l.is_empty());
+
+    rsx! {
+        div { class: "p-3 rounded-lg border border-obsidian-border/10 bg-obsidian-sidebar/30 space-y-3",
+            div { class: "space-y-1",
+                h2 { class: "text-sm font-semibold text-obsidian-text", "Retention" }
+                // ⛔ The sentence this surface exists to carry. An empty rules list
+                // is not "nothing configured yet", it is "everything is kept", and
+                // a tag with no rule keeps its documents even when another tag on
+                // them says to let go.
+                p { class: "text-[11px] text-obsidian-text-muted",
+                    "A tag with no rule is kept forever, and a document is only ever proposed when \
+                     every tag on it has one — the longest of them decides."
+                }
+            }
+
+            if !has_tags {
+                p { class: "text-[11px] text-obsidian-text-muted",
+                    "No document has a tag yet. Open a document and add one under Tags, then set how long that tag is kept here."
+                }
+            }
+            div { class: if has_tags { "flex flex-wrap items-center gap-2" } else { "hidden" },
+                select {
+                    value: "{chosen}",
+                    onchange: move |e| chosen.set(e.value()),
+                    class: "px-2 py-1.5 text-sm rounded bg-obsidian-bg border \
+                            border-obsidian-border/10 text-obsidian-text focus:outline-none",
+                    option { value: "", "Pick a tag…" }
+                    if let Some(Ok(list)) = tags.read().as_ref() {
+                        for t in list.iter() {
+                            option { key: "{t}", value: "{t}", "{t}" }
+                        }
+                    }
+                }
+                span { class: "text-[11px] text-obsidian-text-muted", "keep for" }
+                input {
+                    r#type: "number",
+                    min: "1",
+                    placeholder: "days",
+                    value: "{days}",
+                    oninput: move |e| days.set(e.value()),
+                    class: "w-24 px-2 py-1.5 text-sm rounded bg-obsidian-bg border \
+                            border-obsidian-border/10 text-obsidian-text focus:outline-none",
+                }
+                button {
+                    onclick: move |_| {
+                        match days.read().trim().parse::<u32>() {
+                            Ok(n) if n > 0 => apply(Some(n)),
+                            // ⛔ Zero is refused rather than read as "purge now" —
+                            // the most destructive reading of a typo.
+                            _ => error.set(Some("give a number of days, at least 1".into())),
+                        }
+                    },
+                    disabled: *saving.read(),
+                    class: "px-2 py-1.5 text-[11px] rounded bg-obsidian-accent text-black \
+                            font-medium disabled:opacity-50",
+                    "Save"
+                }
+                button {
+                    onclick: move |_| apply(None),
+                    disabled: *saving.read(),
+                    class: "px-2 py-1.5 text-[11px] rounded border border-obsidian-border/20 \
+                            text-obsidian-text-muted hover:text-obsidian-text disabled:opacity-50",
+                    "Keep forever"
+                }
+            }
+            if let Some(msg) = error.read().clone() {
+                p { class: "text-[11px] text-red-300", "{msg}" }
+            }
+
+            match rules.read().as_ref() {
+                Some(Ok(list)) if !list.is_empty() => rsx! {
+                    div { class: "flex flex-wrap gap-1.5",
+                        for rule in list.iter() {
+                            span {
+                                key: "{rule.tag}",
+                                class: "px-2 py-0.5 text-[10px] rounded-full bg-obsidian-bg \
+                                        border border-obsidian-border/10 text-obsidian-text-muted",
+                                "{rule.tag} · {rule.keep_days}d"
+                            }
+                        }
+                    }
+                },
+                Some(Ok(_)) => rsx! {
+                    p { class: "text-[11px] text-obsidian-text-muted", "No rules yet, so nothing is proposed." }
+                },
+                Some(Err(e)) => rsx! {
+                    p { class: "text-[11px] text-red-300", "Couldn't read the rules: {e}" }
+                },
+                None => rsx! {
+                    p { class: "text-[11px] text-obsidian-text-muted", "Reading the rules…" }
+                },
+            }
+
+            match groups.read().as_ref() {
+                Some(Ok(list)) if !list.is_empty() => rsx! {
+                    div { class: "space-y-1.5",
+                        h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                            "Past their retention"
+                        }
+                        for group in list.iter() {
+                            div {
+                                key: "{group.tag}",
+                                class: "flex items-center justify-between gap-2 p-2 rounded \
+                                        border border-obsidian-border/10 text-xs",
+                                div {
+                                    p { class: "text-obsidian-text", "{group.tag} · {group.count} document(s)" }
+                                    p { class: "text-[10px] text-obsidian-text-muted",
+                                        "kept {group.keep_days} days"
+                                        if let Some(oldest) = group.oldest_archived_at.as_deref() {
+                                            ", oldest {oldest}"
+                                        }
+                                    }
+                                }
+                                // ⛔ "Review", not "Purge". What this opens is the
+                                // preview: every document listed, each sparable,
+                                // one confirm.
+                                button {
+                                    onclick: {
+                                        let tag = group.tag.clone();
+                                        let cutoff = group.cutoff.clone();
+                                        move |_| on_review.call((tag.clone(), cutoff.clone()))
+                                    },
+                                    class: "px-2 py-1 text-[11px] rounded border border-obsidian-accent/40 \
+                                            text-obsidian-accent hover:bg-obsidian-accent/10 shrink-0",
+                                    "Review {group.count}…"
+                                }
+                            }
+                        }
+                    }
+                },
+                Some(Ok(_)) => rsx! {
+                    p { class: "text-[11px] text-obsidian-text-muted", "Nothing is past its retention." }
+                },
+                Some(Err(e)) => rsx! {
+                    p { class: "text-[11px] text-red-300", "Couldn't work out what is due: {e}" }
+                },
+                None => rsx! {
+                    p { class: "text-[11px] text-obsidian-text-muted", "Checking what is due…" }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn PurgeGroup(
+    tag: String,
+    // Set for a retention group: only documents archived before this are in it.
+    archived_before: Option<String>,
+    on_back: EventHandler<()>,
+    on_purged: EventHandler<()>,
+) -> Element {
+    // Ids the user has unchecked. Absent means going — the default is that the
+    // group the user chose to purge is purged.
+    let mut spared: Signal<std::collections::HashSet<String>> =
+        use_signal(std::collections::HashSet::new);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let mut working = use_signal(|| false);
+    let mut report: Signal<Option<crate::types::PurgeReport>> = use_signal(|| None);
+
+    let for_load = tag.clone();
+    let cutoff_for_load = archived_before.clone();
+    let preview = use_resource(move || {
+        let t = for_load.clone();
+        let before = cutoff_for_load.clone();
+        async move { bridge::invoke_preview_document_purge(&t, before.as_deref()).await }
+    });
+
+    rsx! {
+        div { class: "p-4 space-y-4 max-w-3xl mx-auto",
+            button {
+                onclick: move |_| on_back.call(()),
+                class: "text-xs text-obsidian-text-muted hover:text-obsidian-text",
+                "← Archive"
+            }
+
+            match preview.read().as_ref() {
+                None => rsx! {
+                    p { class: "text-sm text-obsidian-text-muted", "Working out what this would remove…" }
+                },
+                Some(Err(e)) => rsx! {
+                    div { class: "p-3 bg-red-950/30 border border-red-500/30 rounded text-sm text-red-300",
+                        "Couldn't read the group: {e}"
+                    }
+                },
+                Some(Ok(p)) if p.items.is_empty() => rsx! {
+                    p { class: "text-sm text-obsidian-text", "Nothing is tagged \"{tag}\" any more." }
+                },
+                Some(Ok(p)) => {
+                    let going: Vec<String> = p
+                        .items
+                        .iter()
+                        .filter(|i| !spared.read().contains(&i.document_id))
+                        .map(|i| i.document_id.clone())
+                        .collect();
+                    // ⚠️ Recomputed from what is actually checked, not taken from
+                    // the preview totals — otherwise sparing a row would leave the
+                    // button promising bytes that are no longer going.
+                    let bytes_going: u64 = p
+                        .items
+                        .iter()
+                        .filter(|i| !i.bytes_shared && !spared.read().contains(&i.document_id))
+                        .map(|i| i.size.unwrap_or(0).max(0) as u64)
+                        .sum();
+                    let token = p.token.clone();
+                    let group = p.group.clone();
+                    let count = going.len();
+
+                    rsx! {
+                        h1 { class: "text-lg font-semibold text-obsidian-text",
+                            "Purge \"{p.group}\""
+                        }
+                        div { class: "text-xs text-obsidian-text-muted space-y-1",
+                            p {
+                                "{p.total} {crate::types::plural(p.total, \"document\")} · frees {crate::types::human_bytes(p.bytes_reclaimable)}"
+                            }
+                            // ⚠️ Stated separately rather than netted off: "frees
+                            // 31 MB" and "frees 0.3 MB of the 31 MB you selected"
+                            // are different answers, and shared bytes make the
+                            // second one the true one.
+                            if p.bytes_shared > 0 {
+                                p { class: "text-amber-400/80",
+                                    "{crate::types::human_bytes(p.bytes_shared)} stays — those files are also \
+                                     used by something else."
+                                }
+                            }
+                            if p.is_truncated() {
+                                p { class: "text-amber-400/80",
+                                    "⚠ Showing the first {p.listed}. Only these are purged — \
+                                     run it again for the rest."
+                                }
+                            }
+                            p { class: "text-red-300/80", "This cannot be undone." }
+                        }
+
+                        ul { class: "space-y-1",
+                            for item in p.items.iter() {
+                                {
+                                    let id = item.document_id.clone();
+                                    let is_spared = spared.read().contains(&id);
+                                    rsx! {
+                                        li {
+                                            key: "{item.document_id}",
+                                            class: "flex items-start gap-2 p-2 rounded border border-obsidian-border/5",
+                                            input {
+                                                r#type: "checkbox",
+                                                checked: !is_spared,
+                                                onchange: move |_| {
+                                                    let mut set = spared.write();
+                                                    if !set.remove(&id) {
+                                                        set.insert(id.clone());
+                                                    }
+                                                },
+                                                class: "mt-0.5",
+                                            }
+                                            div { class: "min-w-0 flex-1",
+                                                div {
+                                                    class: if is_spared {
+                                                        "text-sm text-obsidian-text-muted line-through truncate"
+                                                    } else {
+                                                        "text-sm text-obsidian-text truncate"
+                                                    },
+                                                    "{item.label}"
+                                                }
+                                                div { class: "text-[11px] text-obsidian-text-muted flex flex-wrap gap-x-2",
+                                                    // ⚠️ The date, not the stored
+                                                    // timestamp. This list is
+                                                    // scanned to decide what goes,
+                                                    // and `…T09:00:00Z` is noise in
+                                                    // every row of it.
+                                                    if let Some(d) = &item.archived_at {
+                                                        span { "{crate::types::day_of(d)}" }
+                                                    }
+                                                    if let Some(src) = &item.ingest_source {
+                                                        span { "via {src}" }
+                                                    }
+                                                    if let Some(sz) = item.size {
+                                                        span { "{crate::types::human_bytes(sz.max(0) as u64)}" }
+                                                    }
+                                                    // Per item, because "purging
+                                                    // this frees nothing" is a
+                                                    // reason to spare it.
+                                                    if item.bytes_shared {
+                                                        span { class: "text-amber-400/80", "file kept — shared" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(msg) = error.read().clone() {
+                            div { class: "p-3 bg-red-950/30 border border-red-500/30 rounded text-sm text-red-300",
+                                "{msg}"
+                            }
+                        }
+                        if let Some(r) = report.read().clone() {
+                            div { class: "p-3 rounded border border-obsidian-border/10 text-xs text-obsidian-text-muted",
+                                "Purged {r.purged} of {r.selected} · freed {crate::types::human_bytes(r.bytes_deleted)}"
+                                if r.blobs_retained_shared > 0 {
+                                    " · {r.blobs_retained_shared} files kept, still in use"
+                                }
+                                if r.failed > 0 {
+                                    span { class: "text-red-300", " · {r.failed} failed" }
+                                }
+                            }
+                        }
+
+                        button {
+                            disabled: count == 0 || *working.read(),
+                            onclick: move |_| {
+                                let ids = going.clone();
+                                let token = token.clone();
+                                let group = group.clone();
+                                working.set(true);
+                                spawn(async move {
+                                    match bridge::invoke_confirm_document_purge(
+                                        &token, ids, Some(group),
+                                    ).await {
+                                        Ok(r) => {
+                                            report.set(Some(r));
+                                            error.set(None);
+                                            on_purged.call(());
+                                        }
+                                        // ⚠️ Left on screen rather than bounced
+                                        // back: a purge that half-failed is
+                                        // something the user has to see, and the
+                                        // report above says what did go.
+                                        Err(e) => error.set(Some(e)),
+                                    }
+                                    working.set(false);
+                                });
+                            },
+                            class: "px-3 py-2 text-sm rounded-lg border border-red-500/40 \
+                                    bg-red-950/30 text-red-200 hover:bg-red-950/50 \
+                                    disabled:opacity-40",
+                            // ⚠️ Read it back before changing it. This is the last
+                            // thing a person sees before an irreversible action,
+                            // so it states the count and what it actually frees —
+                            // and "frees nothing" is a real and common answer when
+                            // every file in the group is shared.
+                            if *working.read() {
+                                "Purging…"
+                            } else if count == 0 {
+                                "Nothing selected"
+                            } else if bytes_going == 0 {
+                                "Purge {count} {crate::types::plural(count, \"document\")} · frees nothing"
+                            } else {
+                                "Purge {count} {crate::types::plural(count, \"document\")} · frees {crate::types::human_bytes(bytes_going)}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Write a document's tag set.
+///
+/// A free function rather than a closure in [`TagPanel`] because both the add and
+/// the remove handler need it, and a closure capturing the panel's signals is not
+/// `Copy` — it can be moved into one handler or the other, never both.
+///
+/// ⚠️ Always the whole set. The fold overwrites the `tags` key and can never
+/// remove one, so a delta would leave a tag the person took off still on the row.
+#[allow(clippy::too_many_arguments)]
+fn save_tag_set(
+    document_id: String,
+    next: Vec<String>,
+    mut saving: Signal<bool>,
+    mut error: Signal<Option<String>>,
+    sync_epoch: Signal<u64>,
+    on_saved: EventHandler<()>,
+) {
+    if *saving.read() {
+        return;
+    }
+    saving.set(true);
+    spawn(async move {
+        match bridge::invoke_set_document_tags(&document_id, next).await {
+            Ok(()) => {
+                error.set(None);
+                crate::sync_refresh::bump_sync_epoch(sync_epoch);
+                on_saved.call(());
+            }
+            Err(e) => error.set(Some(e)),
+        }
+        saving.set(false);
+    });
+}
+
+/// The tags a person has put on this document.
+///
+/// Its own panel rather than a row in [`FieldPanel`], because a tag is not a
+/// reading of the document: the fields panel shows what something *claimed* and
+/// whether anything checked it, and a tag has no such claim to display. It also
+/// writes the whole set at once, which no field row does.
+#[component]
+fn TagPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
+    // Not `mut` here: `save_tag_set` takes them by value and owns the mutation.
+    let error: Signal<Option<String>> = use_signal(|| None);
+    let saving = use_signal(|| false);
+    let current = doc.tags.clone().unwrap_or_default();
+    let id = doc.document_id.clone();
+    // At the top, never inside the save closure: it is a hook, and the badge and
+    // the assistant's reminder row read a count this component is not.
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
+
+    let for_add = current.clone();
+    let for_remove = current.clone();
+    let id_for_add = id.clone();
+    let id_for_remove = id;
 
     rsx! {
         div { class: "space-y-2",
             h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
-                "What we know"
+                "Tags"
+            }
+            div { class: "p-2 rounded border border-obsidian-border/10 text-xs",
+                // ⛔ `sanitize: false`. The shared editor's sanitizer strips `:`,
+                // which is what a `key:value` tag is built on; the backend
+                // normalizes instead.
+                TagChipEditor {
+                    tags: current.clone(),
+                    sanitize: false,
+                    on_add: move |t: String| {
+                        let mut next = for_add.clone();
+                        next.push(t);
+                        save_tag_set(
+                            id_for_add.clone(), next, saving, error, sync_epoch, on_saved,
+                        );
+                    },
+                    on_remove: move |idx: usize| {
+                        let mut next = for_remove.clone();
+                        if idx < next.len() {
+                            next.remove(idx);
+                            save_tag_set(
+                                id_for_remove.clone(), next, saving, error, sync_epoch, on_saved,
+                            );
+                        }
+                    },
+                }
+            }
+            if let Some(msg) = error.read().clone() {
+                // ⚠️ The backend rejects a whole set rather than dropping one bad
+                // tag, so this has to be visible: silently keeping the old set
+                // would look like a tag that saved and then vanished.
+                p { class: "text-[11px] text-red-300", "Couldn't save tags: {msg}" }
+            }
+        }
+    }
+}
+
+/// Record that a person read the document and these values are right.
+///
+/// Goes through the correction path with the value unchanged, which is what lands
+/// `human` / `verified: true`. A later reader separates a confirm from a
+/// correction by comparing with the model's own event, so neither needs a flag.
+fn confirm_fields(
+    document_id: String,
+    fields: Vec<(String, String)>,
+    mut saving: Signal<bool>,
+    mut error: Signal<Option<String>>,
+    sync_epoch: Signal<u64>,
+    on_saved: EventHandler<()>,
+) {
+    if *saving.read() {
+        return;
+    }
+    saving.set(true);
+    spawn(async move {
+        // One event per key, never one batched event: fields fold by key, and
+        // each value has to stay separately attributable to the person who
+        // checked it. See `human_correction` in `core/src/document_fields.rs`.
+        let mut confirmed = 0usize;
+        let mut failure = None;
+        for (key, value) in fields {
+            match bridge::invoke_correct_document_field(&document_id, &key, &value).await {
+                Ok(()) => confirmed += 1,
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            }
+        }
+        // Refreshed whenever anything landed, even when a later key failed: those
+        // events are real, and the unverified count the badge reads has moved.
+        if confirmed > 0 {
+            crate::sync_refresh::bump_sync_epoch(sync_epoch);
+            on_saved.call(());
+        }
+        error.set(failure);
+        saving.set(false);
+    });
+}
+
+#[component]
+fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
+    // ⛔ `tags` is a folded field like any other, so it arrives here too — and it
+    // must not be offered as a free-text row. Its value is the whole set joined by
+    // commas, and editing it as text would write tags nothing normalized, which
+    // the filter then cannot match. `TagPanel` owns that key.
+    let fields: Vec<DocumentField> = doc
+        .fields
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        // An empty value is a removed field; see `FieldRow`'s Remove.
+        .filter(|f| f.key != TAGS_FIELD_KEY && !f.value.is_empty())
+        .collect();
+
+    // ⛔ A purged document cannot be checked against anything — its bytes are
+    // gone — so confirming or correcting a value here would write `verified: true`
+    // with no oracle behind it. Same argument that hides the tag editor above.
+    let purged = doc.purged.unwrap_or(false);
+    let unchecked: Vec<(String, String)> = fields
+        .iter()
+        .filter(|f| !f.verified)
+        .map(|f| (f.key.clone(), f.value.clone()))
+        .collect();
+
+    let error: Signal<Option<String>> = use_signal(|| None);
+    let saving = use_signal(|| false);
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
+    let id_for_all = doc.document_id.clone();
+    // Cloned for the closure so the count stays readable in the label beside it.
+    let unchecked_for_all = unchecked.clone();
+
+    rsx! {
+        div { class: "space-y-2",
+            div { class: "flex items-baseline justify-between gap-2",
+                h3 { class: "text-[10px] font-bold text-obsidian-text-muted uppercase tracking-widest",
+                    "What we know"
+                }
+                // Offered from two unchecked values up: below that the row's own
+                // control is the shorter path, and this would read as a second way
+                // to do the same thing.
+                if !purged && unchecked.len() > 1 {
+                    button {
+                        onclick: move |_| {
+                            confirm_fields(
+                                id_for_all.clone(),
+                                unchecked_for_all.clone(),
+                                saving,
+                                error,
+                                sync_epoch,
+                                on_saved,
+                            );
+                        },
+                        disabled: *saving.read(),
+                        class: "px-2 py-0.5 text-[10px] rounded border border-obsidian-accent/40 \
+                                text-obsidian-accent hover:bg-obsidian-accent/10 disabled:opacity-50",
+                        if *saving.read() { "Confirming…" } else { "All {unchecked.len()} look right" }
+                    }
+                }
+            }
+            if let Some(msg) = error.read().clone() {
+                p { class: "text-[11px] text-red-300", "Couldn't confirm: {msg}" }
             }
             if fields.is_empty() {
                 div { class: "p-3 rounded border border-obsidian-border/10 text-xs text-obsidian-text-muted space-y-1",
@@ -499,6 +1496,7 @@ fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
                     key: "{field.key}",
                     document_id: doc.document_id.clone(),
                     field: field.clone(),
+                    read_only: purged,
                     on_saved: move |_| on_saved.call(()),
                 }
             }
@@ -507,7 +1505,14 @@ fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
 }
 
 #[component]
-fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()>) -> Element {
+fn FieldRow(
+    document_id: String,
+    field: DocumentField,
+    /// Set for a purged document: the value stays readable, but there is nothing
+    /// left to check it against. See [`FieldPanel`].
+    read_only: bool,
+    on_saved: EventHandler<()>,
+) -> Element {
     let mut editing = use_signal(|| false);
     let mut draft = use_signal(|| field.value.clone());
     let mut error: Signal<Option<String>> = use_signal(|| None);
@@ -519,13 +1524,20 @@ fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()
 
     let field_for_save = field.clone();
     let id_for_save = document_id.clone();
-    let save = move |_| {
+    let field_for_confirm = field.clone();
+    let id_for_confirm = document_id.clone();
+    // `remove` writes an empty value, which is how a removal is recorded.
+    let mut save = move |remove: bool| {
         if *saving.read() {
             return;
         }
         let id = id_for_save.clone();
         let key = field_for_save.key.clone();
-        let value = draft.read().clone();
+        let value = if remove {
+            String::new()
+        } else {
+            draft.read().clone()
+        };
         saving.set(true);
         spawn(async move {
             match bridge::invoke_correct_document_field(&id, &key, &value).await {
@@ -540,6 +1552,7 @@ fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()
             saving.set(false);
         });
     };
+    let mut remove = save.clone();
 
     rsx! {
         div { class: "p-2.5 rounded-lg bg-obsidian-sidebar/40 border border-obsidian-border/5 space-y-1",
@@ -568,11 +1581,18 @@ fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()
                     }
                     div { class: "flex gap-1.5",
                         button {
-                            onclick: save,
+                            onclick: move |_| save(false),
                             disabled: *saving.read(),
                             class: "px-2 py-1 text-[11px] rounded bg-obsidian-accent text-black \
                                     font-medium disabled:opacity-50",
                             if *saving.read() { "Saving…" } else { "Save" }
+                        }
+                        button {
+                            onclick: move |_| remove(true),
+                            disabled: *saving.read(),
+                            class: "px-2 py-1 text-[11px] rounded text-red-300 \
+                                    hover:bg-red-500/10 disabled:opacity-50 ml-auto",
+                            "Remove"
                         }
                         button {
                             onclick: move |_| {
@@ -584,16 +1604,44 @@ fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()
                             "Cancel"
                         }
                     }
-                    if let Some(msg) = error.read().clone() {
-                        p { class: "text-[11px] text-red-300", "{msg}" }
+                }
+            } else if read_only {
+                p { class: "text-sm text-obsidian-text", "{field.value}" }
+            } else {
+                div { class: "flex items-start justify-between gap-2",
+                    button {
+                        onclick: move |_| editing.set(true),
+                        class: "flex-1 text-left text-sm text-obsidian-text hover:text-obsidian-accent",
+                        "{field.value}"
+                    }
+                    // Only on an unchecked value: confirming one already checked
+                    // would write a second event saying what the first said.
+                    if !field.verified {
+                        button {
+                            onclick: move |_| {
+                                confirm_fields(
+                                    id_for_confirm.clone(),
+                                    vec![(
+                                        field_for_confirm.key.clone(),
+                                        field_for_confirm.value.clone(),
+                                    )],
+                                    saving,
+                                    error,
+                                    sync_epoch,
+                                    on_saved,
+                                );
+                            },
+                            disabled: *saving.read(),
+                            class: "px-2 py-0.5 text-[10px] rounded border border-obsidian-accent/40 \
+                                    text-obsidian-accent hover:bg-obsidian-accent/10 shrink-0 \
+                                    disabled:opacity-50",
+                            if *saving.read() { "…" } else { "Looks right" }
+                        }
                     }
                 }
-            } else {
-                button {
-                    onclick: move |_| editing.set(true),
-                    class: "w-full text-left text-sm text-obsidian-text hover:text-obsidian-accent",
-                    "{field.value}"
-                }
+            }
+            if let Some(msg) = error.read().clone() {
+                p { class: "text-[11px] text-red-300", "{msg}" }
             }
         }
     }
@@ -603,7 +1651,7 @@ fn FieldRow(document_id: String, field: DocumentField, on_saved: EventHandler<()
 ///
 /// ⚠️ Display only. The stored key is what folds and what filters match, so ⛔
 /// nothing may round-trip through this.
-fn humanise(key: &str) -> String {
+pub(crate) fn humanise(key: &str) -> String {
     let spaced = key.replace('_', " ");
     let mut chars = spaced.chars();
     match chars.next() {
@@ -629,6 +1677,8 @@ mod tests {
             kind: None,
             title: None,
             document_date: None,
+            tags: None,
+            purged: None,
             fields: None,
             parent_document_id: None,
         }
@@ -701,7 +1751,7 @@ mod tests {
         // that carries the hash, so this row shape is reachable in normal sync.
         let mut d = doc();
         d.sha256 = None;
-        assert!(viewer_meta(&d).is_none());
+        assert!(document_meta(&d).is_none());
     }
 
     #[test]
@@ -709,7 +1759,7 @@ mod tests {
         let mut d = doc();
         d.mime_type = None;
         d.filename = None;
-        let meta = viewer_meta(&d).expect("a hash is all the viewer needs");
+        let meta = document_meta(&d).expect("a hash is all the viewer needs");
         assert_eq!(meta.mime_type, "application/octet-stream");
         assert!(
             !meta.filename.is_empty(),

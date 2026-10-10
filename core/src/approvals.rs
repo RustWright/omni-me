@@ -122,6 +122,10 @@ pub async fn summary(
     if enabled.contains(&Feature::Finances) {
         let n = crate::db::queries::count_pending_batches(db).await? as usize;
         add(&mut out, ReviewedAt::Feature(Feature::Finances), n);
+        // Rows waiting to be reconciled count too (his D3 ruling, 2026-10-09):
+        // the ledger needs both queues cleared to stay current.
+        let n = crate::db::queries::count_unmatched_transactions(db).await? as usize;
+        add(&mut out, ReviewedAt::Feature(Feature::Finances), n);
     }
 
     if enabled.contains(&Feature::Documents) {
@@ -155,8 +159,15 @@ fn add(out: &mut Vec<PendingApprovals>, reviewed_at: ReviewedAt, count: usize) {
 async fn count_documents_with_unverified_fields(db: &Database) -> Result<usize, EventError> {
     let mut resp = db
         .query(
+            // ⛔ `purged != true`, and it lives outside `queries.rs` — which is
+            // exactly why it was the easy one to miss. A purged document keeps its
+            // fields, so without this the nav badge would keep counting documents
+            // the user can no longer open to correct, and the count would never
+            // reach zero.
+            // `?? []` too: filtering an absent `fields` gives NONE, and NONE != [],
+            // so every never-extracted document was counted as waiting.
             "SELECT count() AS c FROM documents
-             WHERE fields[WHERE verified = false] != [] GROUP ALL",
+             WHERE (fields[WHERE verified = false] ?? []) != [] AND purged != true GROUP ALL",
         )
         .await?;
     let counts: Vec<i64> = resp.take("c").unwrap_or_default();
@@ -178,10 +189,7 @@ mod tests {
     /// from `EventWriter`, so the tests exercise the set production uses rather
     /// than one assembled to suit them.
     async fn harness(features_off: &[Feature]) -> (Database, BTreeSet<Feature>, EventWriter) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("approvals.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
 
         let mut global = ConfigMap::new();
         for f in features_off {
@@ -226,6 +234,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unmatched_rows_count_toward_the_finances_badge() {
+        let (db, enabled, _w) = harness(&[]).await;
+        for (id, account) in [
+            ("a", "Unmatched"),
+            ("b", "Unmatched"),
+            ("c", "Assets:Chequing"),
+        ] {
+            db.query(format!(
+                "CREATE transactions:{id} CONTENT {{ removed: false, superseded_by: NONE,
+                 postings: [{{ account: '{account}', amount: '1.00', commodity: 'CAD' }}] }}"
+            ))
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            crate::db::queries::count_unmatched_transactions(&db)
+                .await
+                .unwrap(),
+            2,
+            "the seed must be what the reconcile queue counts"
+        );
+
+        let summary = summary(&db, &enabled).await.unwrap();
+
+        assert_eq!(
+            count_at(&summary, ReviewedAt::Feature(Feature::Finances)),
+            2
+        );
+    }
+
+    #[tokio::test]
     async fn a_surface_with_nothing_waiting_is_absent_rather_than_zero() {
         let (db, enabled, _w) = harness(&[]).await;
 
@@ -240,6 +279,11 @@ mod tests {
         seed_unverified_document(&db, "01JKDOCAPPROVAL000000001", false).await;
         seed_unverified_document(&db, "01JKDOCAPPROVAL000000002", false).await;
         seed_unverified_document(&db, "01JKDOCAPPROVAL000000003", true).await;
+        // Archived, never extracted: no `fields` at all, so nothing to verify.
+        db.query("UPSERT type::record('documents', $id) SET document_id = $id")
+            .bind(("id", "01JKDOCAPPROVAL000000005"))
+            .await
+            .unwrap();
 
         let summary = summary(&db, &enabled).await.unwrap();
 

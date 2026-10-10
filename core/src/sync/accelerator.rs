@@ -39,17 +39,10 @@ mod tests {
     use super::super::pusher::PushDebouncer;
     use super::super::retry::{RetryEngine, RetryEvent};
     use super::*;
+    use crate::db::test_db;
     use crate::events::{EventStore, NewEvent, SurrealEventStore};
     use chrono::Utc;
     use std::time::Duration;
-
-    async fn test_db() -> crate::db::Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("accel.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
 
     fn sample_event(device_id: &str, aggregate_id: &str) -> NewEvent {
         NewEvent {

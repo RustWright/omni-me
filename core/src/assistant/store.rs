@@ -423,6 +423,12 @@ pub async fn list(
             NarrowOp::Gte => format!("{} >= ${param}", n.column),
             NarrowOp::Lte => format!("{} <= ${param}", n.column),
             NarrowOp::Eq => format!("{} = ${param}", n.column),
+            // ✅ Needs no coalesce, checked against a real database rather than
+            // assumed: `NONE CONTAINS 'x'` is `false`, not an error. That matters
+            // because `documents.tags` is the first `option<array>` to reach here —
+            // every earlier `FilterKind::Tag` column is `TYPE array` and so never
+            // absent — and the neighbouring `string::lowercase(NONE)` *is* a hard
+            // error, which makes the wrong guess the intuitive one.
             NarrowOp::Contains => format!("{} CONTAINS ${param}", n.column),
         });
         binds.push((param, n.value.clone()));
@@ -688,14 +694,42 @@ fn hide_fields(row: &mut Value, hidden: &[&str]) {
 /// The cap lives in the catalog rather than here because it is a property of the
 /// data — a routine has a handful of items and an unbounded completion history —
 /// and an uncapped history would quietly become the largest thing in a prompt.
+/// Whatever the entry owning `table` hides, as SQL.
+///
+/// ⚠️ Resolved from the **table**, not from the parent entry. A child collection
+/// can read a different table than its parent, so inheriting the parent's rule
+/// would apply the wrong one — it is only by coincidence that today's single case
+/// (`document` → its own `attachments`) reads the same table.
+fn hidden_clause_for_table(table: &str) -> Option<String> {
+    super::catalog::ALL_ENTRIES
+        .iter()
+        .find(|e| e.table == table)
+        .and_then(hidden_clause)
+}
+
 async fn fetch_children(
     db: &Database,
     child: &ChildCollection,
     parent_id: &str,
 ) -> Result<Vec<serde_json::Value>, DbError> {
+    // ⛔ Whatever the child's table hides, this must hide too. An attachment is a
+    // document, so a purged one reached the model through its parent email long
+    // after `search`, `list` and `read` had all stopped returning it — the same
+    // shape of leak the vector index has, through a different door.
+    //
+    // The child's own declaration wins where it has one, because a table with no
+    // entry (`routine_items`) has nothing to inherit; otherwise the rule comes
+    // from the entry that owns the table, so a table with an entry declares it
+    // exactly once.
+    let hidden = child
+        .hidden_when
+        .map(|col| format!("{col} != true"))
+        .or_else(|| hidden_clause_for_table(child.table))
+        .map(|c| format!(" AND {c}"))
+        .unwrap_or_default();
     let sql = format!(
         "SELECT *, meta::id(id) AS id FROM {table}
-         WHERE {fk} = $parent
+         WHERE {fk} = $parent{hidden}
          ORDER BY {order_col} {direction}
          LIMIT {limit}",
         table = child.table,
@@ -769,19 +803,31 @@ mod tests {
     use super::*;
     use crate::assistant::catalog::ALL_ENTRIES;
     use crate::events::{
-        BudgetProjection, DocumentsProjection, NotesProjection, Projection, RoutinesProjection,
+        BeliefsProjection, BudgetProjection, DocumentsProjection, NotesProjection, Projection,
+        RoutinesProjection,
     };
 
     async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("store.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+        let db = crate::db::test_db().await;
         NotesProjection.init_schema(&db).await.unwrap();
         RoutinesProjection.init_schema(&db).await.unwrap();
         DocumentsProjection.init_schema(&db).await.unwrap();
         BudgetProjection.init_schema(&db).await.unwrap();
-        std::mem::forget(dir);
+        BeliefsProjection.init_schema(&db).await.unwrap();
         db
+    }
+
+    /// Each text field needs its own FULLTEXT index, and a missing one is an
+    /// error only at query time. Beliefs had none until 2026-10-09, so every
+    /// belief search failed, the check-in's review included.
+    #[tokio::test]
+    async fn every_catalog_type_can_be_searched() {
+        let db = test_db().await;
+        for entry in ALL_ENTRIES {
+            search(&db, entry, "anything", 5)
+                .await
+                .unwrap_or_else(|e| panic!("{} cannot be searched: {e}", entry.name));
+        }
     }
 
     /// A ledger row, with the reconciliation trail a real one carries.
@@ -1118,6 +1164,119 @@ mod tests {
         assert_eq!(names, vec!["Morning", "Evening winddown"]);
         assert_eq!(out.total_matches, 2);
         assert!(out.hits[0].snippet.is_none(), "handle is the only text");
+    }
+
+    /// ⛔ An attachment is a document, so a purged one must not come back through
+    /// the email it arrived in.
+    ///
+    /// ⚠️ This is the door the catalogue's structural guard used to hold shut by
+    /// forbidding the shape entirely. `documents` is self-referential, so the
+    /// moment it gained a hidden rule the shape existed — and `fetch_children`
+    /// queries the child table directly, with none of `search`/`list`/`read`'s
+    /// exclusions in the way.
+    #[tokio::test]
+    async fn a_purged_attachment_is_not_returned_through_its_parent() {
+        let db = test_db().await;
+        let mail = "01JKMAIL00000000000000000A";
+        seed_document(&db, mail, "statement available.eml", Some("body"), None).await;
+        seed_document(
+            &db,
+            "01JKATT000000000000000001",
+            "kept.pdf",
+            None,
+            Some(mail),
+        )
+        .await;
+        seed_document(
+            &db,
+            "01JKATT000000000000000002",
+            "purged.pdf",
+            None,
+            Some(mail),
+        )
+        .await;
+        db.query("UPDATE type::record('documents', $id) SET purged = true")
+            .bind(("id", "01JKATT000000000000000002"))
+            .await
+            .unwrap();
+
+        let full = read(&db, entry("document"), mail).await.unwrap().unwrap();
+        let attachments = full
+            .children
+            .get("attachments")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        let names: Vec<&str> = attachments
+            .iter()
+            .filter_map(|a| a["filename"].as_str())
+            .collect();
+        assert_eq!(names, vec!["kept.pdf"], "a purged attachment came back");
+    }
+
+    /// ⛔ The twin of the purged-attachment case, and it was already shipping.
+    ///
+    /// `routine_items` has a `removed` column and no catalogue entry, so there was
+    /// nothing for `fetch_children` to inherit — while the completion rollup over
+    /// the *same* items filtered them. `read` therefore handed the model a raw
+    /// `items` array that disagreed with its own derived view.
+    #[tokio::test]
+    async fn a_removed_routine_item_is_not_returned_through_its_group() {
+        let db = test_db().await;
+        let group = "01JKGROUP0000000000000099";
+        db.query("CREATE type::record('routine_groups', $id) SET name = 'Morning', frequency = 'daily', order_num = 0, removed = false, created_at = time::now(), updated_at = time::now()")
+            .bind(("id", group))
+            .await
+            .unwrap();
+        for (id, name, removed) in [
+            ("01JKITEM0000000000000001", "Stretch", false),
+            ("01JKITEM0000000000000002", "Dropped habit", true),
+        ] {
+            db.query("CREATE type::record('routine_items', $id) SET group_id = $g, name = $n, estimated_duration_min = 5, order_num = 0, removed = $r")
+                .bind(("id", id))
+                .bind(("g", group))
+                .bind(("n", name))
+                .bind(("r", removed))
+                .await
+                .unwrap();
+        }
+
+        let full = read(&db, entry("routine"), group).await.unwrap().unwrap();
+        let items = full.children.get("items").unwrap().as_array().unwrap();
+        let names: Vec<&str> = items.iter().filter_map(|i| i["name"].as_str()).collect();
+        assert_eq!(names, vec!["Stretch"], "a removed item came back");
+    }
+
+    /// The archive is the first catalogued type whose tag column can be **absent**:
+    /// `journal.tags` and `note.tags` are `TYPE array` and always `[]`, while
+    /// `documents.tags` is `option<array>` and is absent for most of a real corpus.
+    ///
+    /// ✅ It works without a coalesce — `NONE CONTAINS 'x'` is `false`. This test
+    /// exists because that is not the guessable answer: `string::lowercase(NONE)` in
+    /// the neighbouring query *is* a hard error, and reasoning by analogy from it
+    /// produces a coalesce nothing needs. ⛔ So the fixture carries an untagged row,
+    /// and the assertion is that the query returns rather than fails.
+    #[tokio::test]
+    async fn a_tag_filter_survives_a_row_with_no_tags_at_all() {
+        let db = test_db().await;
+        seed_document(&db, "01JKDOCTAGGED0000000000001", "receipt.pdf", None, None).await;
+        seed_document(&db, "01JKDOCBARE000000000000002", "scan.jpg", None, None).await;
+        db.query("UPDATE type::record('documents', $id) SET tags = ['receipt']")
+            .bind(("id", "01JKDOCTAGGED0000000000001"))
+            .await
+            .unwrap();
+
+        let narrowings = [Narrowing {
+            column: "tags",
+            op: NarrowOp::Contains,
+            value: serde_json::json!("receipt"),
+        }];
+        let out = list(&db, entry("document"), &narrowings, 20)
+            .await
+            .expect("an untagged row must not fail the query");
+
+        assert_eq!(out.hits.len(), 1, "{out:?}");
+        assert_eq!(out.hits[0].handle, "receipt.pdf");
     }
 
     /// `read` carries the app's own answer to "did I do my routine", not just the

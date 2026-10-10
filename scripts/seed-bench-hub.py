@@ -74,6 +74,26 @@ ROUTINES = [
 ]
 
 
+# Only with --with-beliefs, for `--bench-review` (role B). Kept off by default so
+# `--bench`'s corpus, and every seat-A score measured on it, stays what it was.
+# All recorded 2026-03-01, before every journal entry above. `agent/src/
+# review_bench.rs` holds the verdict for each, by position; edit both together.
+BELIEFS = [
+    # Due, contradicted by the sourdough entries and log: retire.
+    ("You have given up on baking.", "medium", "2026-03-10"),
+    # Due, contradicted by the 2026-03-16 appointment: retire.
+    ("You keep putting off going to the dentist.", "high", "2026-03-10"),
+    # Due, contradicted by the canal walk and 30km ride: retire.
+    ("You rarely get any exercise.", "medium", "2026-03-10"),
+    # Due, supported by 2026-03-14 (rent notice, slept badly): keep.
+    ("Worrying about money costs you sleep.", "medium", "2026-03-10"),
+    # Due, and nothing written since says anything about it: keep.
+    ("You find it hard to turn down extra work.", "low", "2026-03-10"),
+    # Contradicted by 2026-03-18 (wrote up notes) but NOT due: leave alone.
+    ("You never write down what you learn at work.", "low", "2027-06-01"),
+]
+
+
 def ulid(n: int, prefix: str) -> str:
     """A 26-char ULID-shaped id. Not a real ULID — stable and readable beats
     sortable here, because a reseed must land on the same ids or a second push
@@ -81,8 +101,20 @@ def ulid(n: int, prefix: str) -> str:
     return f"01JK{prefix}{n:0{26 - 4 - len(prefix)}d}"
 
 
-def build_events(device_id: str) -> list[dict]:
+def build_events(device_id: str, with_beliefs: bool = False) -> list[dict]:
     events: list[dict] = []
+
+    if with_beliefs:
+        for i, (statement, confidence, review_after) in enumerate(BELIEFS):
+            bid = ulid(i, "BELIEF")
+            events.append({
+                "event_type": "belief_recorded",
+                "aggregate_id": bid,
+                "timestamp": f"2026-03-01T10:0{i}:00Z",
+                "device_id": device_id,
+                "payload": {"belief_id": bid, "statement": statement,
+                            "confidence": confidence, "review_after": review_after},
+            })
 
     for date, text in JOURNALS:
         events.append({
@@ -165,6 +197,8 @@ def main() -> int:
     ap.add_argument("--device-id", default="seed-device",
                     help="author device id; must NOT be the agent's own, or the "
                          "agent's pull will filter these out (default: %(default)s)")
+    ap.add_argument("--with-beliefs", action="store_true",
+                    help="also seed the beliefs --bench-review scores against")
     args = ap.parse_args()
 
     refusal = require_dev_hub(args.url)
@@ -172,7 +206,7 @@ def main() -> int:
         print(refusal, file=sys.stderr)
         return 1
 
-    events = build_events(args.device_id)
+    events = build_events(args.device_id, args.with_beliefs)
     body = json.dumps({"device_id": args.device_id, "events": events}).encode()
     req = urllib.request.Request(
         f"{args.url.rstrip('/')}/sync/push",
@@ -190,7 +224,8 @@ def main() -> int:
 
     print(f"pushed {len(events)} events: {reply}")
     print(f"  {len(JOURNALS)} journal entries, {len(NOTES)} notes, "
-          f"{len(ROUTINES)} routine groups")
+          f"{len(ROUTINES)} routine groups"
+          + (f", {len(BELIEFS)} beliefs" if args.with_beliefs else ""))
     return 0
 
 

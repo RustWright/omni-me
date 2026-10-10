@@ -40,7 +40,8 @@ impl Embedder {
 
         let options = TextInitOptions::new(model.clone())
             .with_cache_dir(cache_dir)
-            .with_show_download_progress(false);
+            .with_show_download_progress(false)
+            .with_execution_providers(vec![cpu_without_arena()]);
         let embedder =
             TextEmbedding::try_new(options).map_err(|e| EmbeddingError::Load(e.to_string()))?;
 
@@ -101,12 +102,27 @@ impl Embedder {
                 .lock()
                 .map_err(|_| EmbeddingError::Embed("embedding model lock poisoned".into()))?;
             guard
-                .embed(texts, None)
+                .embed(texts, Some(BATCH_SIZE))
                 .map_err(|e| EmbeddingError::Embed(e.to_string()))
         })
         .await
         .map_err(|e| EmbeddingError::Embed(format!("embedding task failed: {e}")))?
     }
+}
+
+/// Chunks per inference call. fastembed's default is 256, and its working memory
+/// grows with batch size times sequence length squared: a 70-chunk note in one
+/// batch spiked the agent past its 2 GB cap (2026-10-04). On CPU a small batch
+/// costs no throughput.
+pub(crate) const BATCH_SIZE: usize = 16;
+
+/// ONNX Runtime's CPU provider with its memory arena off.
+///
+/// The arena keeps every block it ever allocated, and inputs of varying length
+/// keep asking for new sizes, so a long sweep grew the agent to its 2 GB cap
+/// (2026-10-05). Without it, large tensors go through malloc and are returned.
+pub(crate) fn cpu_without_arena() -> fastembed::ExecutionProviderDispatch {
+    ort::ep::CPU::default().with_arena_allocator(false).build()
 }
 
 impl std::fmt::Debug for Embedder {

@@ -39,6 +39,10 @@ web-sys = { version = "0.3", features = [
     # both the query itself and its change event so a theme switch in the OS
     # reaches a running app instead of waiting for the next launch.
     "MediaQueryList",
+    # keyboard.rs: scroll a focused field above the soft keyboard.
+    "DomRect",
+    "ScrollIntoViewOptions",
+    "ScrollLogicalPosition",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -52,7 +56,10 @@ futures = "0.3"
 [profile.release]
 opt-level = "s"
 lto = true
-strip = true
+# Off: any strip makes dx shell out to `rust-objcopy`, which on 1.99 cannot load
+# libLLVM outside rustup's proxy, and `--strip-all` there (LLVM 23) also deletes the
+# section wasm-bindgen reads. The DWARF is stripped at link time instead (.cargo/config.toml).
+strip = false
 panic = "abort"
 codegen-units = 1
 

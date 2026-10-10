@@ -73,6 +73,9 @@ pub enum EventType {
     // § "It proposes; you dispose".
     AssistantProposalMade,
     AssistantProposalDecided,
+    // Housekeeping on a conversation: hide it, or remove it from every view.
+    AssistantThreadArchived,
+    AssistantThreadDeleted,
     // Beliefs — what the assistant has concluded about the user, with the
     // evidence behind it. Arrive only through a proposal the user accepted.
     BeliefRecorded,
@@ -89,6 +92,15 @@ pub enum EventType {
     DocumentArchived,
     DocumentFieldsExtracted,
     DocumentTextTranscribed,
+    /// A document removed on purpose, bytes and all.
+    ///
+    /// ⛔ A tombstone, not a deletion. The archive event stays in the log — it has
+    /// to, the log is append-only and a projection rebuild replays it — so the row
+    /// comes back on every rebuild and this is what makes it come back *purged*
+    /// rather than pointing at bytes that are gone.
+    DocumentPurged,
+    /// A retention rule for one document tag. See `crate::retention`.
+    DocumentRetentionSet,
 }
 
 impl fmt::Display for EventType {
@@ -139,6 +151,8 @@ impl fmt::Display for EventType {
             EventType::AssistantAnswerGiven => "assistant_answer_given",
             EventType::AssistantProposalMade => "assistant_proposal_made",
             EventType::AssistantProposalDecided => "assistant_proposal_decided",
+            EventType::AssistantThreadArchived => "assistant_thread_archived",
+            EventType::AssistantThreadDeleted => "assistant_thread_deleted",
             EventType::BeliefRecorded => "belief_recorded",
             EventType::BeliefSuperseded => "belief_superseded",
             EventType::AutonomyGranted => "autonomy_granted",
@@ -146,6 +160,8 @@ impl fmt::Display for EventType {
             EventType::DocumentArchived => "document_archived",
             EventType::DocumentFieldsExtracted => "document_fields_extracted",
             EventType::DocumentTextTranscribed => "document_text_transcribed",
+            EventType::DocumentPurged => "document_purged",
+            EventType::DocumentRetentionSet => "document_retention_set",
         };
         write!(f, "{s}")
     }
@@ -201,6 +217,8 @@ impl FromStr for EventType {
             "assistant_answer_given" => Ok(EventType::AssistantAnswerGiven),
             "assistant_proposal_made" => Ok(EventType::AssistantProposalMade),
             "assistant_proposal_decided" => Ok(EventType::AssistantProposalDecided),
+            "assistant_thread_archived" => Ok(EventType::AssistantThreadArchived),
+            "assistant_thread_deleted" => Ok(EventType::AssistantThreadDeleted),
             "belief_recorded" => Ok(EventType::BeliefRecorded),
             "belief_superseded" => Ok(EventType::BeliefSuperseded),
             "autonomy_granted" => Ok(EventType::AutonomyGranted),
@@ -208,6 +226,8 @@ impl FromStr for EventType {
             "document_archived" => Ok(EventType::DocumentArchived),
             "document_fields_extracted" => Ok(EventType::DocumentFieldsExtracted),
             "document_text_transcribed" => Ok(EventType::DocumentTextTranscribed),
+            "document_purged" => Ok(EventType::DocumentPurged),
+            "document_retention_set" => Ok(EventType::DocumentRetentionSet),
             other => Err(format!("unknown event type: {other}")),
         }
     }
@@ -265,6 +285,8 @@ impl EventType {
         EventType::AssistantAnswerGiven,
         EventType::AssistantProposalMade,
         EventType::AssistantProposalDecided,
+        EventType::AssistantThreadArchived,
+        EventType::AssistantThreadDeleted,
         EventType::BeliefRecorded,
         EventType::BeliefSuperseded,
         EventType::AutonomyGranted,
@@ -272,7 +294,38 @@ impl EventType {
         EventType::DocumentArchived,
         EventType::DocumentFieldsExtracted,
         EventType::DocumentTextTranscribed,
+        EventType::DocumentPurged,
+        EventType::DocumentRetentionSet,
     ];
+
+    /// Every event type a set of features owns, for a scoped wipe.
+    ///
+    /// Derived from [`EventType::authoring_features`] rather than from a second list,
+    /// because a second list is how one of them ends up stale — a new finance event
+    /// would be gated correctly and then survive a finances wipe, leaving a ledger
+    /// that is neither empty nor complete.
+    ///
+    /// ⚠️ **Ownership is read off the authoring gate, and the two are not quite the
+    /// same question.** `TransactionRecorded` is authored under *either* finances or
+    /// auto-import, so it belongs to both and a wipe of either claims it — which is
+    /// right for a ledger wipe (a transaction is a transaction, whoever proposed it)
+    /// and is the reason a finances wipe cannot leave auto-import's own events alone.
+    /// See `docs/src/features.md` § Wiping one feature's data.
+    ///
+    /// The four types with no feature at all — `DataWiped`, `FeedbackCaptured`,
+    /// `ConfigSet`, `RecordTypeDeclared` — are owned by nothing and so survive every
+    /// scoped wipe. That is deliberate: a wipe must not take the config that says
+    /// which features are on, nor the audit record of itself.
+    pub fn owned_by(features: &[Feature]) -> Vec<&'static EventType> {
+        EventType::ALL
+            .iter()
+            .filter(|t| {
+                t.authoring_features()
+                    .iter()
+                    .any(|owner| features.contains(owner))
+            })
+            .collect()
+    }
 
     /// The features that may author this event, or `None` for an event no feature
     /// owns.
@@ -359,6 +412,11 @@ impl EventType {
             // rest of the conversation.
             EventType::AssistantProposalMade => &[Feature::Llm],
 
+            // Tidying the conversation list; with the assistant off there is no list.
+            EventType::AssistantThreadArchived | EventType::AssistantThreadDeleted => {
+                &[Feature::Llm]
+            }
+
             // A belief exists only because the assistant concluded it, so it is
             // the assistant's feature that owns it — even though the user is the
             // one who accepted it.
@@ -374,7 +432,9 @@ impl EventType {
 
             EventType::DocumentArchived
             | EventType::DocumentFieldsExtracted
-            | EventType::DocumentTextTranscribed => &[Feature::Documents],
+            | EventType::DocumentTextTranscribed
+            | EventType::DocumentPurged
+            | EventType::DocumentRetentionSet => &[Feature::Documents],
 
             EventType::DataWiped
             | EventType::FeedbackCaptured
@@ -575,6 +635,10 @@ pub struct AttachmentRef {
     pub filename: String,
     pub mime_type: String,
     pub size: u64,
+    /// The archive document the same capture filed, which links a transaction to it.
+    /// Absent on attachments stored before captures were archived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
 }
 
 /// FX rate captured at posting time — sourced from a receipt's `@` rate or
@@ -619,6 +683,96 @@ impl FromStr for Tag {
             None => Ok(Tag::Bare(s.into())),
         }
     }
+}
+
+/// Separator between tags when a whole set is stored in one string.
+///
+/// `,` because `:` is already spent on [`Tag`]'s key/value split. [`Tag::normalize`]
+/// refuses a tag containing it, so a set cannot round-trip into more tags than it
+/// went in with.
+pub const TAG_SEPARATOR: char = ',';
+
+impl Tag {
+    /// Parse into the form a tag is stored and compared in: trimmed, lowercased.
+    ///
+    /// Stricter than [`FromStr`], which rejects only the empty string and so
+    /// accepts `" Foo "`, `":x"` and a value carrying [`TAG_SEPARATOR`]. Every
+    /// comparison downstream is against the stored string — SurrealDB `CONTAINS`
+    /// on the hoisted column is exact — so a tag differing from another only by
+    /// case or padding is a second tag, and the filter comes back empty for a
+    /// document that visibly carries the tag.
+    ///
+    /// ⚠️ `FromStr` keeps its lenient behaviour: it parses tags already in the
+    /// event log, written before this existed, and tightening it would fail
+    /// events that cannot be rewritten.
+    pub fn normalize(raw: &str) -> Result<Self, String> {
+        let trimmed = raw.trim().to_lowercase();
+        if trimmed.is_empty() {
+            return Err("empty tag".into());
+        }
+        if trimmed.contains(TAG_SEPARATOR) {
+            return Err(format!("a tag cannot contain '{TAG_SEPARATOR}'"));
+        }
+        match trimmed.split_once(':') {
+            Some((k, v)) if k.is_empty() || v.is_empty() => {
+                Err(format!("'{trimmed}' needs both halves of key:value"))
+            }
+            Some((k, v)) => Ok(Tag::KeyValue {
+                key: k.to_string(),
+                value: v.to_string(),
+            }),
+            None => Ok(Tag::Bare(trimmed)),
+        }
+    }
+}
+
+/// Normalize a caller's tags into the set to store: ordered and deduplicated.
+///
+/// Ordered so that two writes of the same set produce the same stored value and
+/// the fold has nothing to do; deduplicated because the column is an array and
+/// SurrealDB enforces no uniqueness on one.
+///
+/// ⛔ Rejects the whole set on the first bad tag rather than dropping it. A
+/// silently-skipped tag is a tag the user typed, watched land, and cannot find.
+pub fn normalize_tag_set<I, S>(raw: I) -> Result<Vec<Tag>, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut tags: Vec<Tag> = raw
+        .into_iter()
+        .map(|s| Tag::normalize(s.as_ref()))
+        .collect::<Result<_, _>>()?;
+    // Keyed on `Display` because `Tag` derives neither `Ord` nor `Hash`, and the
+    // stored form is what has to be unique.
+    tags.sort_by_key(|t| t.to_string());
+    tags.dedup_by_key(|t| t.to_string());
+    Ok(tags)
+}
+
+/// Join a tag set into the single value one `DocumentField` carries.
+pub fn encode_tag_set(tags: &[Tag]) -> String {
+    tags.iter()
+        .map(Tag::to_string)
+        .collect::<Vec<_>>()
+        .join(&TAG_SEPARATOR.to_string())
+}
+
+/// Split a stored value back into tags.
+///
+/// Lenient on purpose, and it is the read half of a pair whose write half is
+/// strict: this parses what is already in the log, including values written by a
+/// build that normalized differently or not at all. An unparseable segment is
+/// skipped rather than failing the fold — one bad tag must not cost a document
+/// its row.
+pub fn decode_tag_set(value: &str) -> Vec<Tag> {
+    value
+        .split(TAG_SEPARATOR)
+        .filter_map(|s| {
+            let s = s.trim();
+            (!s.is_empty()).then(|| s.parse().ok()).flatten()
+        })
+        .collect()
 }
 
 /// Single posting line within a `TransactionRecorded` event. Mirrors hledger's
@@ -928,6 +1082,27 @@ pub struct AutoImportBatchCommittedPayload {
     /// the user's configured base currency at commit time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fx_commodity: Option<String>,
+    /// Rows the reviewer changed before committing. The `Proposed` event keeps
+    /// the model's version, so original and correction are both on record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corrections: Vec<DraftCorrection>,
+    /// Rows the reviewer entered by hand, typically for a receipt the reader
+    /// got nothing from. `index` is the position within this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<DraftCorrection>,
+}
+
+/// One proposed row as the reviewer committed it, replacing the draft at
+/// `index` in `Proposed.draft_postings`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DraftCorrection {
+    pub index: usize,
+    pub date: chrono::NaiveDate,
+    pub description: String,
+    pub postings: Vec<Posting>,
+    /// Transaction tags, normalized; the committed transaction carries them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// User dismisses the batch — no transactions recorded. Reason is free-form
@@ -947,6 +1122,26 @@ pub struct AutoImportBatchDismissedPayload {
 pub struct DataWipedPayload {
     pub initiated_at: chrono::DateTime<chrono::Utc>,
     pub device_id: String,
+    /// The features a server wipe took, spelled as their config key's suffix.
+    /// Empty for a device's local wipe of everything, which peers ignore.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
+}
+
+impl DataWipedPayload {
+    /// The named features this build knows. An unknown name is skipped, so a
+    /// newer server's feature cannot make an older device purge anything else.
+    pub fn known_features(&self) -> Vec<crate::config::Feature> {
+        crate::config::ALL_FEATURES
+            .iter()
+            .copied()
+            .filter(|f| {
+                let key = f.key().to_string();
+                let name = key.strip_prefix("feature.").unwrap_or(&key);
+                self.features.iter().any(|n| n.trim() == name)
+            })
+            .collect()
+    }
 }
 
 // Feedback
@@ -1253,6 +1448,21 @@ pub struct AssistantProposalMadePayload {
     /// the live declaration is a real signal, and it cannot be seen if the value
     /// is read live.
     pub reversible: bool,
+}
+
+/// A conversation hidden from the list, or brought back.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantThreadArchivedPayload {
+    pub thread_id: String,
+    /// `false` brings it back. Last write wins, by event timestamp.
+    pub archived: bool,
+}
+
+/// A conversation removed from every view, permanently. The log keeps its
+/// messages; proposals made in it stay decidable in the inbox.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssistantThreadDeletedPayload {
+    pub thread_id: String,
 }
 
 /// What the user decided about one proposal.
@@ -1570,12 +1780,67 @@ pub struct DocumentTextTranscribedPayload {
     pub model: String,
     /// RFC3339, from the transcribing device's clock.
     pub transcribed_at: String,
+    /// `extracted` when the text came off the file's own text layer after ingest
+    /// (an encrypted PDF re-read once a password exists, `model` = `pdftotext`).
+    /// Absent means a model's reading, which is every event before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_source: Option<String>,
+}
+
+/// A document purged on purpose: its row tombstoned and its bytes reclaimed.
+///
+/// ⛔ **Not soft-delete, and not a row deletion either.** The point is reclaiming
+/// storage, so the blob has to go — but the `document_archived` event stays in the
+/// log and a projection rebuild replays it, so without this the row would come
+/// back looking ordinary while its bytes were gone. Every reader must be able to
+/// tell *purged* from *broken*.
+///
+/// ⚠️ **Deliberately carries no `sha256`.** Which blob a document pointed at is
+/// already on its archive event, and bytes are shared — a statement that arrived
+/// by email and the same statement scanned are one blob and two documents. Naming
+/// the hash here would invite a reader to treat this event as authority to delete
+/// it, when that is only ever safe after counting every other document *and*
+/// transaction attachment still referencing it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentPurgedPayload {
+    /// The archive entry being purged — `DocumentArchivedPayload::document_id`.
+    pub document_id: String,
+    /// RFC3339, from the purging device's clock.
+    pub purged_at: String,
+    /// Why it went, in the user's terms — the tag or sender group it was purged
+    /// under. ⚠️ Recorded because a purge is irreversible and the log is the only
+    /// account of it that survives; a bare tombstone cannot answer "why is this
+    /// gone".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// How long documents carrying one tag are kept.
+///
+/// `aggregate_id` is the tag, so `get_by_aggregate` yields that tag's rule history
+/// for free. Why a rule per tag rather than a `ConfigKey`, and what an absent rule
+/// means: [`crate::retention`].
+///
+/// ⛔ `keep_days: None` clears the rule, which is the same state as never having
+/// set one. There is deliberately no separate "never".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentRetentionSetPayload {
+    /// The tag this governs, already normalized by [`normalize_tag_set`]'s rules.
+    pub tag: String,
+    /// Days to keep a document carrying this tag, counted from `archived_at`.
+    /// `None` clears the rule.
+    #[serde(default)]
+    pub keep_days: Option<u32>,
 }
 
 /// Keys the projection hoists into columns. See [`DocumentFieldsExtractedPayload::fields`].
 pub const DOCUMENT_KIND_KEY: &str = "kind";
 pub const DOCUMENT_TITLE_KEY: &str = "title";
 pub const DOCUMENT_DATE_KEY: &str = "document_date";
+/// The whole tag set, joined by [`TAG_SEPARATOR`]. One key rather than one key
+/// per tag because the field fold can overwrite a key but never remove one, so
+/// per-tag keys would leave a model's wrong tag impossible to take off.
+pub const DOCUMENT_TAGS_KEY: &str = "tags";
 
 /// Validate that a payload JSON value matches the expected shape for the given event type.
 pub fn validate_payload(
@@ -1707,6 +1972,9 @@ pub fn validate_payload(
         EventType::ConfigSet => {
             serde_json::from_value::<ConfigSetPayload>(payload.clone()).map(|_| ())
         }
+        EventType::DocumentRetentionSet => {
+            serde_json::from_value::<DocumentRetentionSetPayload>(payload.clone()).map(|_| ())
+        }
         EventType::RecordTypeDeclared => {
             serde_json::from_value::<RecordTypeDeclaredPayload>(payload.clone()).map(|_| ())
         }
@@ -1731,6 +1999,12 @@ pub fn validate_payload(
         EventType::AssistantProposalDecided => {
             serde_json::from_value::<AssistantProposalDecidedPayload>(payload.clone()).map(|_| ())
         }
+        EventType::AssistantThreadArchived => {
+            serde_json::from_value::<AssistantThreadArchivedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::AssistantThreadDeleted => {
+            serde_json::from_value::<AssistantThreadDeletedPayload>(payload.clone()).map(|_| ())
+        }
         EventType::AssistantAnswerGiven => {
             serde_json::from_value::<AssistantAnswerGivenPayload>(payload.clone()).map(|_| ())
         }
@@ -1742,6 +2016,9 @@ pub fn validate_payload(
         }
         EventType::DocumentTextTranscribed => {
             serde_json::from_value::<DocumentTextTranscribedPayload>(payload.clone()).map(|_| ())
+        }
+        EventType::DocumentPurged => {
+            serde_json::from_value::<DocumentPurgedPayload>(payload.clone()).map(|_| ())
         }
     };
 
@@ -1857,16 +2134,20 @@ mod tests {
                 | EventType::AssistantAnswerGiven
                 | EventType::AssistantProposalMade
                 | EventType::AssistantProposalDecided
+                | EventType::AssistantThreadArchived
+                | EventType::AssistantThreadDeleted
                 | EventType::BeliefRecorded
                 | EventType::BeliefSuperseded
                 | EventType::AutonomyGranted
                 | EventType::AutonomyRevoked
                 | EventType::DocumentArchived
                 | EventType::DocumentFieldsExtracted
-                | EventType::DocumentTextTranscribed => counted += 1,
+                | EventType::DocumentTextTranscribed
+                | EventType::DocumentPurged
+                | EventType::DocumentRetentionSet => counted += 1,
             }
         }
-        assert_eq!(counted, 52, "EventType::ALL does not list every variant");
+        assert_eq!(counted, 56, "EventType::ALL does not list every variant");
 
         let unique: std::collections::BTreeSet<String> =
             EventType::ALL.iter().map(|t| t.to_string()).collect();
@@ -1908,6 +2189,8 @@ mod tests {
             accepted_indices: vec![0, 2, 3],
             fx_rate: Some(Decimal::new(84, 5)), // 0.00084
             fx_commodity: Some("AED".into()),
+            corrections: vec![],
+            added: vec![],
         };
         let json = serde_json::to_value(&payload).unwrap();
         validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
@@ -1925,6 +2208,8 @@ mod tests {
             accepted_indices: vec![0, 1, 2, 3, 4],
             fx_rate: None,
             fx_commodity: None,
+            corrections: vec![],
+            added: vec![],
         };
         let json = serde_json::to_value(&payload).unwrap();
         validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
@@ -1932,6 +2217,29 @@ mod tests {
         let json_str = serde_json::to_string(&payload).unwrap();
         assert!(!json_str.contains("fx_rate"));
         assert!(!json_str.contains("fx_commodity"));
+        assert!(!json_str.contains("corrections"));
+    }
+
+    #[test]
+    fn auto_import_batch_committed_payload_carries_corrections() {
+        let json = serde_json::json!({
+            "batch_id": "01HJ...",
+            "accepted_indices": [0, 1],
+            "corrections": [{
+                "index": 1,
+                "date": "2026-09-14",
+                "description": "Pharmacy",
+                "postings": [
+                    { "account": "Expenses:Health", "commodity": "CAD", "amount": "12.40" },
+                    { "account": "Liabilities:Visa", "commodity": "CAD", "amount": "-12.40" },
+                ],
+            }],
+        });
+        validate_payload(&EventType::AutoImportBatchCommitted, &json).unwrap();
+        let back: AutoImportBatchCommittedPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(back.corrections.len(), 1);
+        assert_eq!(back.corrections[0].index, 1);
+        assert_eq!(back.corrections[0].postings[0].account, "Expenses:Health");
     }
 
     #[test]
@@ -2431,5 +2739,81 @@ mod tests {
         assert_eq!(p.tags.len(), 1);
         assert_eq!(p.statement_source.as_deref(), Some("summit-2026-01"));
         assert!(p.attachment.is_none());
+    }
+
+    /// The four values `FromStr` accepts and the stored form must not.
+    ///
+    /// Each is a tag that would compare unequal to the one the user meant, and
+    /// the symptom is always the same: a filter returning nothing for a document
+    /// that visibly carries the tag.
+    #[test]
+    fn normalize_rejects_what_from_str_waves_through() {
+        // Padding and case: accepted by `FromStr` verbatim, folded here.
+        assert_eq!(
+            Tag::normalize(" Receipt ").unwrap(),
+            Tag::Bare("receipt".into())
+        );
+        assert_eq!(
+            Tag::normalize("Institution:RBC").unwrap(),
+            Tag::KeyValue {
+                key: "institution".into(),
+                value: "rbc".into()
+            }
+        );
+        // A half-empty key:value. `FromStr` builds `KeyValue { key: "", .. }`.
+        assert!(Tag::normalize(":x").is_err(), "an empty key is not a tag");
+        assert!(Tag::normalize("x:").is_err(), "an empty value is not a tag");
+        // The set separator. Left in, one tag would round-trip into two.
+        assert!(
+            Tag::normalize("a,b").is_err(),
+            "a tag cannot carry the separator"
+        );
+        assert!(Tag::normalize("   ").is_err(), "whitespace is not a tag");
+    }
+
+    /// `a:b:c` keeps `FromStr`'s first-colon split — the value is allowed to
+    /// carry colons, so only the leading key is taken.
+    #[test]
+    fn normalize_splits_on_the_first_colon_only() {
+        assert_eq!(
+            Tag::normalize("ref:a:b").unwrap(),
+            Tag::KeyValue {
+                key: "ref".into(),
+                value: "a:b".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_tag_set_is_ordered_and_deduplicated() {
+        let set = normalize_tag_set(["Receipt", "groceries", "receipt", " GROCERIES "]).unwrap();
+        assert_eq!(encode_tag_set(&set), "groceries,receipt");
+    }
+
+    /// ⛔ One bad tag fails the write. Dropping it would report success for a tag
+    /// the user typed and can never find.
+    #[test]
+    fn a_bad_tag_fails_the_whole_set() {
+        assert!(normalize_tag_set(["receipt", "a,b"]).is_err());
+    }
+
+    #[test]
+    fn a_tag_set_round_trips_through_its_stored_form() {
+        let set = normalize_tag_set(["receipt", "institution:rbc"]).unwrap();
+        let encoded = encode_tag_set(&set);
+        assert_eq!(encoded, "institution:rbc,receipt");
+        assert_eq!(decode_tag_set(&encoded), set);
+    }
+
+    /// The read half is lenient where the write half is strict: it parses values
+    /// already in the log, and an empty segment is not a tag.
+    #[test]
+    fn decoding_skips_empty_segments_rather_than_inventing_tags() {
+        assert_eq!(decode_tag_set(""), vec![]);
+        assert_eq!(decode_tag_set(",,"), vec![]);
+        assert_eq!(
+            decode_tag_set("receipt,,groceries"),
+            vec![Tag::Bare("receipt".into()), Tag::Bare("groceries".into())]
+        );
     }
 }

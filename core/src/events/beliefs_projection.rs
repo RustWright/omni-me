@@ -75,7 +75,11 @@ impl Projection for BeliefsProjection {
              DEFINE FIELD IF NOT EXISTS superseded_at ON beliefs TYPE option<datetime>;
              DEFINE FIELD IF NOT EXISTS superseded_reason ON beliefs TYPE option<string>;
              DEFINE FIELD IF NOT EXISTS superseded_by ON beliefs TYPE option<string>;
-             DEFINE INDEX IF NOT EXISTS beliefs_superseded ON beliefs FIELDS superseded_at;",
+             DEFINE INDEX IF NOT EXISTS beliefs_superseded ON beliefs FIELDS superseded_at;
+             -- The catalog lists `statement` as searchable; without this every
+             -- belief search failed, including the check-in's own review.
+             DEFINE INDEX IF NOT EXISTS idx_belief_statement_fts ON beliefs
+                 FIELDS statement FULLTEXT ANALYZER omni_text BM25 HIGHLIGHTS;",
         )
         .await?
         .check()?;
@@ -180,10 +184,7 @@ mod tests {
     use chrono::{Duration, Utc};
 
     async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("beliefs.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         BeliefsProjection.init_schema(&db).await.unwrap();
         db
     }

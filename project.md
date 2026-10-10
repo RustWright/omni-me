@@ -66,7 +66,9 @@ product invariant rather than a phase it is passing through.
 ⛔ **What it does not have is initiative about him.** Beliefs are proposed **only when
 asked for** (his decision, 2026-09-10). The two wider policies considered — propose
 whenever a durable pattern is noticed, and propose only on repeated independent
-evidence — are **deferred, not dropped**, and neither is built. That is why `Trigger`
+evidence — are **deferred, not dropped**, and neither is built. ✅ Of the two, the
+**second is preferred and is role B's intended long-term shape** (2026-09-16); it
+needs a per-role turn budget and a second scheduled question first, both in `tasks.md`. That is why `Trigger`
 is an enum with one variant rather than a comment: an absent policy should be a
 declaration someone can review, not a silence. ⚠️ Nothing in this build volunteers an
 opinion about him, and "the assistant can write" must not be read as saying otherwise.

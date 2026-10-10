@@ -389,10 +389,7 @@ mod tests {
     };
 
     async fn harness(features_off: &[Feature]) -> (Database, ResolvedConfig, EventWriter) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("inbox.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
 
         let mut global = ConfigMap::new();
         for f in features_off {

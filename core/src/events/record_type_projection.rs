@@ -39,12 +39,13 @@ impl Projection for RecordTypeProjection {
              DEFINE FIELD IF NOT EXISTS declaration ON record_types TYPE object FLEXIBLE;
              DEFINE FIELD IF NOT EXISTS updated_at ON record_types TYPE datetime;",
         )
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
     async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
-        db.query("DELETE FROM record_types").await?;
+        db.query("DELETE FROM record_types").await?.check()?;
         Ok(())
     }
 
@@ -107,7 +108,8 @@ impl RecordTypeProjection {
         .bind(("name", name))
         .bind(("declaration", declaration))
         .bind(("ts", event.timestamp.to_rfc3339()))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -226,6 +228,7 @@ pub async fn seed_journal_record_type(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::notes_projection::NotesProjection;
     use crate::events::projection::ProjectionRunner;
     use crate::events::store::{EventStore, NewEvent, SurrealEventStore};
@@ -243,14 +246,6 @@ mod tests {
             crate::config::ALL_FEATURES.iter().copied().collect(),
             "d1",
         )
-    }
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
     }
 
     /// Every journal frontmatter shape the pre-record-type scanner was tested

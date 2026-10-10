@@ -922,7 +922,7 @@ fn GroupDetailView(
                                     div { class: "px-4 py-3 bg-obsidian-sidebar/40 border border-obsidian-accent/40 rounded-lg space-y-3 animate-in fade-in duration-150",
                                         div { class: "flex gap-2",
                                             input {
-                                                class: "flex-1 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
+                                                class: "flex-1 min-w-0 px-3 py-2 bg-obsidian-bg border border-obsidian-border/10 rounded-lg text-sm text-obsidian-text outline-none focus:border-obsidian-accent transition-colors",
                                                 r#type: "text",
                                                 value: "{edit_name}",
                                                 oninput: move |e| edit_name.set(e.value()),

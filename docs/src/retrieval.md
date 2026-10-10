@@ -129,6 +129,18 @@ as current. `clear` exists as the forced-rebuild escape hatch on top of that.
 A sweep reports what it skipped, not only what it embedded. A sweep that silently embedded
 nothing and a sweep that correctly found nothing to do are otherwise indistinguishable.
 
+### Keeping the index current
+
+Until 2026-10-04 the agent swept only at startup, so the index described the data as it stood
+when the agent last booted. Anything written afterwards was invisible to meaning-based search
+(keyword search reads the live tables and was unaffected), and a wiped feature's records kept
+answering searches from their stored chunk text until the next restart.
+
+The agent now sweeps again after a pull lands changes, at most once every 15 minutes. The gap
+exists because an incremental sweep still reads every record to compare hashes, and a busy
+evening of journal autosaves arrives as many small pulls. A failed refresh is retried at the next
+gap rather than waiting for another pull.
+
 ### The index is used only if you ask for it exactly right
 
 ⚠️ SurrealDB's KNN operator dispatches on the *shape* of its arguments. `<|K,EF|>` with two

@@ -206,15 +206,8 @@ mod tests {
     use super::*;
     use crate::config::{ConfigMap, ConfigValue};
     use crate::db::Database;
+    use crate::db::test_db;
     use crate::events::SurrealEventStore;
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
 
     async fn writer_without(features: &[Feature]) -> (EventWriter, Database) {
         let db = test_db().await;

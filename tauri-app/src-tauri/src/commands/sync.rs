@@ -24,7 +24,15 @@ pub async fn trigger_sync(state: State<'_, AppState>) -> Result<SyncCommandResul
     // Apply pulled events through projections so they become visible in the UI.
     // Best-effort: a single bad remote event is logged and skipped, never aborts
     // the batch (the events are durably stored, so a rebuild always recovers).
-    if !result.pulled_events.is_empty() {
+    if result.wiped > 0 {
+        // A server wipe removed local events; only a rebuild clears them from view.
+        tracing::warn!(removed = result.wiped, "applied a server wipe; rebuilding");
+        state
+            .projections
+            .rebuild()
+            .await
+            .map_err(|e| e.to_string())?;
+    } else if !result.pulled_events.is_empty() {
         tracing::info!(
             pulled = result.pulled,
             "applying pulled events to projections"

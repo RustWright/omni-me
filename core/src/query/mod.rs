@@ -20,6 +20,6 @@ pub mod parser;
 pub use ast::{
     AccountMatch, CmpOp, Combinator, DateRange, Predicate, Query, QueryPosting, QueryTxn, TagQuery,
 };
-pub use eval::{matches, run};
+pub use eval::{matches, run, tag_query_matches};
 pub use group::{TagGroup, UNASSIGNED, group_account_by_tag};
 pub use parser::{QueryParseError, parse, to_dsl};

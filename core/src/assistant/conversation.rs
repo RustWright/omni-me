@@ -202,14 +202,24 @@ pub struct ThreadSummary {
     pub created_at: String,
     pub last_message_at: String,
     pub message_count: i64,
+    /// Hidden into the "Archived" list. Filled from `assistant_thread_state`.
+    pub archived: bool,
+}
+
+/// One row of `assistant_thread_state`.
+#[derive(Debug, Clone, SurrealValue)]
+struct ThreadState {
+    thread_id: String,
+    archived: Option<bool>,
+    deleted: Option<bool>,
 }
 
 /// One message, with everything the client needs to render it.
 ///
 /// `usage` and `records_read` stay [`DbValue`] rather than typed structs: they
 /// are stored shapes owned by the event payload, and re-declaring them here
-/// would be a second definition to keep in step with the first. The client
-/// reads them as JSON either way.
+/// would be a second definition to keep in step with the first. They serialize
+/// through [`db_value_as_json`]; `DbValue`'s own serde form is enum-tagged.
 ///
 /// ⚠️ **`records_read` carries no title** — see
 /// [`crate::assistant::answer::records_read`] for why, and resolve the display
@@ -231,11 +241,18 @@ pub struct ConversationMessage {
     pub model: Option<String>,
     pub elapsed_ms: Option<i64>,
     pub verbs: Option<Vec<String>>,
+    #[serde(serialize_with = "db_value_as_json")]
     pub records_read: Option<DbValue>,
+    #[serde(serialize_with = "db_value_as_json")]
     pub usage: Option<DbValue>,
     /// True when the agent raised this question on a schedule. `None` on answers
     /// and on every question authored before the field existed.
     pub scheduled: Option<bool>,
+}
+
+/// Plain JSON for a stored value, rather than `DbValue`'s `{"Array": …}` form.
+fn db_value_as_json<S: serde::Serializer>(v: &Option<DbValue>, s: S) -> Result<S::Ok, S::Error> {
+    v.clone().map(DbValue::into_json_value).serialize(s)
 }
 
 /// One thread, plus whether it is still waiting on an answer.
@@ -254,8 +271,23 @@ pub struct ThreadView {
     pub pending_since: Option<String>,
 }
 
-/// Every thread, most recently active first.
+/// Every thread not deleted, most recently active first, archived ones marked.
 pub async fn list_threads(db: &Database) -> Result<Vec<ThreadSummary>, EventError> {
+    let mut threads = all_threads(db).await?;
+    let mut resp = db
+        .query("SELECT thread_id, archived, deleted FROM assistant_thread_state")
+        .await?
+        .check()?;
+    let states: Vec<ThreadState> = resp.take(0)?;
+    let state = |id: &str| states.iter().find(|s| s.thread_id == id);
+    threads.retain(|t| !state(&t.thread_id).is_some_and(|s| s.deleted == Some(true)));
+    for t in &mut threads {
+        t.archived = state(&t.thread_id).is_some_and(|s| s.archived == Some(true));
+    }
+    Ok(threads)
+}
+
+async fn all_threads(db: &Database) -> Result<Vec<ThreadSummary>, EventError> {
     // ⚠️ `last_message_at` is selected as well as ordered on — SurrealDB v3
     // rejects `ORDER BY` over a field the projection does not return, and names
     // it a "missing order idiom", which does not read as the cause. Ordering on
@@ -263,7 +295,7 @@ pub async fn list_threads(db: &Database) -> Result<Vec<ThreadSummary>, EventErro
     // in a fixed RFC 3339 form, so lexical order matches.
     let mut resp = db
         .query(
-            "SELECT thread_id, title, message_count,
+            "SELECT thread_id, title, message_count, false AS archived,
                     <string> created_at AS created_at,
                     <string> last_message_at AS last_message_at
              FROM assistant_threads ORDER BY last_message_at DESC",
@@ -340,10 +372,7 @@ mod tests {
     use chrono::Duration;
 
     async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         AssistantProjection.init_schema(&db).await.unwrap();
         db
     }
@@ -795,14 +824,81 @@ mod tests {
         )
         .await;
 
+        // Asserted on the serialized view, which is what the client receives. A
+        // manual `into_json_value()` here once passed while the app got
+        // `{"Array": [...]}` and could not open any thread.
         let view = read_thread(&db, "t1").await.unwrap();
-        let cited = view.messages[1]
-            .records_read
-            .clone()
-            .expect("the citation should survive the round trip");
-        let json = cited.into_json_value();
-        assert_eq!(json[0]["kind"], "note");
-        assert_eq!(json[0]["id"], "note-1");
+        let json = serde_json::to_value(&view).unwrap();
+        let cited = &json["messages"][1]["records_read"];
+        assert_eq!(cited[0]["kind"], "note");
+        assert_eq!(cited[0]["id"], "note-1");
+        assert!(json["messages"][1]["usage"].is_object());
+        assert!(json["messages"][1]["usage"].get("Object").is_none());
+    }
+
+    async fn housekeep(
+        db: &Database,
+        ts: DateTime<Utc>,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) {
+        let ev = Event {
+            id: ulid::Ulid::new().to_string(),
+            event_type: event_type.into(),
+            aggregate_id: payload["thread_id"].as_str().unwrap().into(),
+            timestamp: ts,
+            device_id: "phone".into(),
+            payload,
+            received_at: None,
+        };
+        AssistantProjection.apply(&ev, db).await.unwrap();
+    }
+
+    async fn archive(db: &Database, ts: DateTime<Utc>, thread: &str, on: bool) {
+        let payload = serde_json::json!({ "thread_id": thread, "archived": on });
+        housekeep(db, ts, "assistant_thread_archived", payload).await;
+    }
+
+    #[tokio::test]
+    async fn archived_threads_are_marked_and_deleted_ones_are_gone() {
+        let db = test_db().await;
+        let now = Utc::now();
+        ask(&db, now, "t1", "m1", "keep").await;
+        ask(&db, now, "t2", "m2", "archive").await;
+        ask(&db, now, "t3", "m3", "delete").await;
+        archive(&db, now + Duration::seconds(1), "t2", true).await;
+        let deleted = serde_json::json!({ "thread_id": "t3" });
+        housekeep(
+            &db,
+            now + Duration::seconds(1),
+            "assistant_thread_deleted",
+            deleted,
+        )
+        .await;
+
+        let threads = list_threads(&db).await.unwrap();
+        let ids: Vec<(&str, bool)> = threads
+            .iter()
+            .map(|t| (t.thread_id.as_str(), t.archived))
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&("t1", false)));
+        assert!(ids.contains(&("t2", true)));
+    }
+
+    /// Sync delivers in arrival order: an archive can land before the thread,
+    /// and an older un-archive can land after a newer archive.
+    #[tokio::test]
+    async fn archive_survives_arrival_order() {
+        let db = test_db().await;
+        let now = Utc::now();
+        archive(&db, now + Duration::seconds(5), "t1", true).await;
+        ask(&db, now, "t1", "m1", "early").await;
+        archive(&db, now + Duration::seconds(2), "t1", false).await;
+        assert!(list_threads(&db).await.unwrap()[0].archived);
+
+        archive(&db, now + Duration::seconds(9), "t1", false).await;
+        assert!(!list_threads(&db).await.unwrap()[0].archived);
     }
 
     #[tokio::test]

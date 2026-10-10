@@ -1,0 +1,4 @@
+# Strip DWARF in rustc's own link step (wasm-ld --strip-debug), never via the
+# profile's `strip`: that makes dx run `rust-objcopy`, see Cargo.toml.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "strip=debuginfo"]

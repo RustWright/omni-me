@@ -21,6 +21,7 @@ use tokio::time::{Duration, Instant};
 
 use super::chat::{ChatRequest, ChatResponse, Usage};
 use super::client::{LlmClient, LlmError};
+use super::sampling::Sampling;
 use super::tools::{LlmResponse, ToolCall, ToolDef};
 
 /// How many times a 429 is retried before the call is given up on.
@@ -65,6 +66,8 @@ pub struct OpenAiCompatClient {
     /// First wait after a 429, doubling per retry. See [`MAX_RATE_LIMIT_RETRIES`].
     retry_backoff: Duration,
     last_request: Arc<Mutex<Instant>>,
+    /// What every request says about how to sample. See [`super::sampling`].
+    sampling: Sampling,
 }
 
 impl OpenAiCompatClient {
@@ -85,6 +88,7 @@ impl OpenAiCompatClient {
             extra_body: None,
             min_interval: None,
             retry_backoff: Duration::from_secs(2),
+            sampling: Sampling::provider_default(),
             // Far enough back that the first request never waits.
             last_request: Arc::new(Mutex::new(
                 Instant::now()
@@ -103,6 +107,12 @@ impl OpenAiCompatClient {
     /// Space requests at least this far apart. See [`Self::min_interval`].
     pub fn with_min_interval(mut self, interval: Duration) -> Self {
         self.min_interval = Some(interval);
+        self
+    }
+
+    /// Sample every request this way. See [`super::sampling`].
+    pub fn with_sampling(mut self, sampling: Sampling) -> Self {
+        self.sampling = sampling;
         self
     }
 
@@ -152,7 +162,10 @@ impl OpenAiCompatClient {
     /// are scrubbed of the URL (and thus any key in it) via `without_url`,
     /// — a leaked key in a log line is the failure mode
     /// guarded against.
-    async fn send(&self, body: Value) -> Result<Value, LlmError> {
+    async fn send(&self, mut body: Value) -> Result<Value, LlmError> {
+        // Sampling first, `extra_body` second: a caller that names a parameter
+        // itself still wins, which is the precedence `min_interval` already has.
+        self.sampling.apply_to(&mut body);
         let body = self.apply_extra(body);
         let mut attempt = 0u32;
 
@@ -586,6 +599,52 @@ mod tests {
         );
         // The mock only matches when the pin is present, so reaching a reply at
         // all is the assertion.
+        assert_eq!(client.complete("x").await.unwrap(), "ok");
+    }
+
+    /// R26: every request ran at whatever the provider defaulted to, and the same
+    /// model on the same statement scored 33% one run and 100% the next.
+    #[tokio::test]
+    async fn sampling_reaches_the_request_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(wiremock::matchers::body_partial_json(
+                json!({ "temperature": 0.0, "seed": 11 }),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat_text_response("ok")))
+            .mount(&server)
+            .await;
+
+        let client =
+            OpenAiCompatClient::new(server.uri(), "test-model", "k").with_sampling(Sampling {
+                temperature: Some(0.0),
+                top_p: None,
+                seed: Some(11),
+            });
+        // The mock matches only when both keys are present, so a reply is the
+        // assertion. `send` is the one choke point, so this covers `complete`,
+        // `complete_json`, `complete_with_tools` and `chat` alike.
+        assert_eq!(client.complete("x").await.unwrap(), "ok");
+    }
+
+    /// The precedence `min_interval` already has, stated where it can regress:
+    /// a caller that names a parameter itself is not overridden by a role default.
+    #[tokio::test]
+    async fn an_explicit_extra_body_outranks_the_sampling() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(wiremock::matchers::body_partial_json(
+                json!({ "temperature": 0.7 }),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat_text_response("ok")))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiCompatClient::new(server.uri(), "test-model", "k")
+            .with_sampling(Sampling::deterministic())
+            .with_extra_body(json!({ "temperature": 0.7 }));
         assert_eq!(client.complete("x").await.unwrap(), "ok");
     }
 

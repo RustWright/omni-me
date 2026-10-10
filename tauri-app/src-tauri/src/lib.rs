@@ -437,13 +437,41 @@ fn pid_is_alive(pid: u32) -> bool {
     Path::new(&format!("/proc/{pid}")).exists()
 }
 
+/// Hand Tauri a runtime with a database-sized worker stack.
+///
+/// Tauri builds `tokio::runtime::Runtime::new()` on first use, which gives every
+/// command handler tokio's 2 MiB — the size the agent aborted on. This must run
+/// before anything touches `tauri::async_runtime`, which panics if it is already
+/// initialised, and the runtime must outlive the app.
+fn install_async_runtime() {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = match omni_me_core::async_runtime::build() {
+        Ok(runtime) => runtime,
+        // Not fatal on purpose: Tauri falls back to its own runtime, and a
+        // smaller stack is a better outcome than an app that will not open.
+        Err(e) => {
+            tracing::error!(error = %e, "could not build the async runtime; using Tauri's");
+            return;
+        }
+    };
+    let runtime = RUNTIME.get_or_init(|| runtime);
+    tauri::async_runtime::set(runtime.handle().clone());
+}
+
 pub fn run() {
+    // `omni_me_core` is in the default filter because leaving it out made a
+    // working projection rebuild indistinguishable from a hang on Android,
+    // where `RUST_LOG` cannot be set: the line naming the rebuild was written
+    // the whole time and dropped. Core at `info`, not `debug` — the app's own
+    // spans stay the verbose ones.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "omni_me_app=debug".into()),
+                .unwrap_or_else(|_| "omni_me_app=debug,omni_me_core=info".into()),
         )
         .init();
+
+    install_async_runtime();
 
     // Bake the (possibly CI-`--config`-merged) config now so we can inspect it
     // before registering config-driven plugins.
@@ -814,6 +842,8 @@ pub fn run() {
             commands::assistant::list_finance_proposals,
             commands::assistant::read_thread_proposals,
             commands::assistant::decide_assistant_proposal,
+            commands::assistant::archive_assistant_thread,
+            commands::assistant::delete_assistant_thread,
             commands::assistant::list_beliefs,
             commands::assistant::list_beliefs_due_for_review,
             commands::assistant::list_action_records,
@@ -867,16 +897,25 @@ pub fn run() {
             commands::budget::check_account_balance,
             // Document extraction (forwards to the server-side extractor)
             commands::extract::extract_document,
+            commands::extract::extract_document_pages,
             // Local attachment cache (Phase 3.7)
             commands::attachments::fetch_attachment,
+            commands::attachments::fetch_attachment_preview,
             commands::attachments::attachment_cache_size,
             commands::attachments::clear_attachment_cache,
             commands::documents::list_documents,
             commands::documents::get_document,
             commands::documents::document_kinds,
+            commands::documents::document_tags,
             commands::documents::get_document_text,
             commands::documents::document_children,
             commands::documents::correct_document_field,
+            commands::documents::set_document_tags,
+            commands::documents::set_document_retention,
+            commands::documents::list_document_retention,
+            commands::documents::list_retention_candidates,
+            commands::documents::preview_document_purge,
+            commands::documents::confirm_document_purge,
             // Auto-import observability (Phase 3.9)
             commands::auto_import::list_auto_import_sources,
             commands::auto_import::trigger_auto_import_tick,

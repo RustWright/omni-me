@@ -96,6 +96,24 @@ pub async fn set_global_config(
         .map_err(|e| format!("could not build the config event: {e}"))?;
     append_new_and_apply(&state, event).await?;
 
+    // The agent runs on a UTC box and only knows the hour, so the zone the
+    // person meant it in travels with the schedule.
+    if matches!(
+        key,
+        ConfigKey::AssistantCheckIn | ConfigKey::AssistantCheckInHour
+    ) {
+        let tz = ConfigValue::Text(state.timezone.read().await.clone());
+        if ConfigKey::AssistantCheckInTimezone.validate(&tz).is_ok() {
+            let event = NewEvent::config_set(
+                state.device_id.clone(),
+                ConfigKey::AssistantCheckInTimezone,
+                Some(tz),
+            )
+            .map_err(|e| format!("could not build the config event: {e}"))?;
+            append_new_and_apply(&state, event).await?;
+        }
+    }
+
     // Re-read the materialized table rather than assuming the write landed. The
     // projection orders by authoring timestamp, so it can legitimately decline an
     // event — and a settings screen that showed a value the table doesn't hold

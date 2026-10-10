@@ -253,10 +253,7 @@ mod tests {
     };
 
     async fn harness() -> (Database, ResolvedConfig, EventWriter) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("promotion.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
 
         let config = ResolvedConfig::new(ConfigMap::new(), ConfigMap::new());
         let store: Arc<dyn EventStore> = Arc::new(SurrealEventStore::new(db.clone()));

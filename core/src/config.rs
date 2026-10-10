@@ -33,6 +33,7 @@ pub enum ConfigKey {
     AssistantCheckIn,
     AssistantCheckInPrompt,
     AssistantCheckInHour,
+    AssistantCheckInTimezone,
     AssistantMaxTurns,
 }
 
@@ -53,6 +54,7 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::AssistantCheckIn,
     ConfigKey::AssistantCheckInPrompt,
     ConfigKey::AssistantCheckInHour,
+    ConfigKey::AssistantCheckInTimezone,
     ConfigKey::AssistantMaxTurns,
 ];
 
@@ -117,6 +119,7 @@ impl fmt::Display for ConfigKey {
             ConfigKey::AssistantCheckIn => "assistant.check_in",
             ConfigKey::AssistantCheckInPrompt => "assistant.check_in_prompt",
             ConfigKey::AssistantCheckInHour => "assistant.check_in_hour",
+            ConfigKey::AssistantCheckInTimezone => "assistant.check_in_timezone",
             ConfigKey::AssistantMaxTurns => "assistant.max_turns",
         };
         write!(f, "{s}")
@@ -143,6 +146,7 @@ impl FromStr for ConfigKey {
             "assistant.check_in" => Ok(ConfigKey::AssistantCheckIn),
             "assistant.check_in_prompt" => Ok(ConfigKey::AssistantCheckInPrompt),
             "assistant.check_in_hour" => Ok(ConfigKey::AssistantCheckInHour),
+            "assistant.check_in_timezone" => Ok(ConfigKey::AssistantCheckInTimezone),
             "assistant.max_turns" => Ok(ConfigKey::AssistantMaxTurns),
             other => Err(format!("unknown config key: {other}")),
         }
@@ -294,13 +298,19 @@ impl ConfigKey {
             ConfigKey::AssistantCheckInPrompt => ConfigValue::Text(
                 "Review anything you concluded about me that is now due for \
                  re-examination, and tell me what still holds and what does not. \
-                 Do not draw new conclusions."
+                 Judge each against what I have written since you concluded it, \
+                 most recent first. For each one that no longer holds, propose \
+                 retiring it. Do not draw new conclusions."
                     .to_string(),
             ),
-            // 07:00 in the agent's local time. Early enough to be waiting when the
+            // 07:00 in the check-in time zone. Early enough to be waiting when the
             // user wakes, late enough that a machine asleep overnight has usually
             // come back.
             ConfigKey::AssistantCheckInHour => ConfigValue::Int(7),
+            // The agent runs on a UTC box, so the hour means nothing without a
+            // zone. The app stamps its own zone here whenever the schedule is
+            // edited; UTC only until then.
+            ConfigKey::AssistantCheckInTimezone => ConfigValue::Text("UTC".to_string()),
             // Ten, raised from six 2026-09-14. Confirming a record exists costs
             // two to four turns; establishing one does NOT exist was measured at
             // eight, because the model has to narrow, widen, enumerate and check
@@ -326,7 +336,8 @@ impl ConfigKey {
             | ConfigKey::AppearanceAccent
             | ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerankModel
-            | ConfigKey::AssistantCheckInPrompt => ValueKind::Text,
+            | ConfigKey::AssistantCheckInPrompt
+            | ConfigKey::AssistantCheckInTimezone => ValueKind::Text,
             ConfigKey::AssistantCheckInHour | ConfigKey::AssistantMaxTurns => ValueKind::Int,
         }
     }
@@ -340,6 +351,12 @@ impl ConfigKey {
     pub fn applies_immediately(self) -> bool {
         match self {
             ConfigKey::AppearanceTheme | ConfigKey::AppearanceAccent => true,
+            // The agent re-reads shared config on every tick and per question.
+            ConfigKey::AssistantCheckIn
+            | ConfigKey::AssistantCheckInPrompt
+            | ConfigKey::AssistantCheckInHour
+            | ConfigKey::AssistantCheckInTimezone
+            | ConfigKey::AssistantMaxTurns => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -351,15 +368,7 @@ impl ConfigKey {
             // mid-run would stall every question for the length of a download.
             | ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerank
-            | ConfigKey::AssistantRerankModel
-            // The agent reads the schedule when it starts its timer, so a
-            // change lands on its next launch — the same contract as the
-            // models above, and for the same reason: the value is consumed
-            // once at startup rather than per run.
-            | ConfigKey::AssistantCheckIn
-            | ConfigKey::AssistantCheckInPrompt
-            | ConfigKey::AssistantCheckInHour
-            | ConfigKey::AssistantMaxTurns => false,
+            | ConfigKey::AssistantRerankModel => false,
         }
     }
 
@@ -381,6 +390,7 @@ impl ConfigKey {
             ConfigKey::AssistantCheckIn => "Daily check-in",
             ConfigKey::AssistantCheckInPrompt => "Check-in prompt",
             ConfigKey::AssistantCheckInHour => "Check-in hour",
+            ConfigKey::AssistantCheckInTimezone => "Check-in time zone",
             ConfigKey::AssistantMaxTurns => "Assistant turn budget",
         }
     }
@@ -410,6 +420,7 @@ impl ConfigKey {
             | ConfigKey::AssistantCheckIn
             | ConfigKey::AssistantCheckInPrompt
             | ConfigKey::AssistantCheckInHour
+            | ConfigKey::AssistantCheckInTimezone
             | ConfigKey::AssistantMaxTurns => None,
         }
     }
@@ -435,6 +446,7 @@ impl ConfigKey {
             | ConfigKey::AssistantCheckIn
             | ConfigKey::AssistantCheckInPrompt
             | ConfigKey::AssistantCheckInHour
+            | ConfigKey::AssistantCheckInTimezone
             | ConfigKey::AssistantMaxTurns => ConfigGroup::Assistant,
         }
     }
@@ -501,6 +513,12 @@ impl ConfigKey {
             let n = value.as_int().unwrap_or_default();
             if n < lo || n > hi {
                 return Err(format!("{self} must be between {lo} and {hi}, got {n}"));
+            }
+        }
+        if self == ConfigKey::AssistantCheckInTimezone {
+            let t = value.as_text().unwrap_or_default();
+            if t.parse::<chrono_tz::Tz>().is_err() {
+                return Err(format!("{self} must be an IANA time zone, got {t:?}"));
             }
         }
         Ok(())
@@ -705,11 +723,12 @@ mod tests {
                 | ConfigKey::AssistantCheckIn
                 | ConfigKey::AssistantCheckInPrompt
                 | ConfigKey::AssistantCheckInHour
+                | ConfigKey::AssistantCheckInTimezone
                 | ConfigKey::AssistantMaxTurns => counted += 1,
             }
         }
         assert_eq!(
-            counted, 16,
+            counted, 17,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

@@ -39,12 +39,13 @@ impl Projection for ConfigProjection {
              DEFINE FIELD IF NOT EXISTS value ON app_config TYPE option<object> FLEXIBLE;
              DEFINE FIELD IF NOT EXISTS updated_at ON app_config TYPE datetime;",
         )
-        .await?;
+        .await?
+        .check()?;
         Ok(())
     }
 
     async fn clear_tables(&self, db: &Database) -> Result<(), EventError> {
-        db.query("DELETE FROM app_config").await?;
+        db.query("DELETE FROM app_config").await?.check()?;
         Ok(())
     }
 
@@ -124,7 +125,8 @@ impl ConfigProjection {
         .bind(("key", key))
         .bind(("value", value_json))
         .bind(("ts", event.timestamp.to_rfc3339()))
-        .await?;
+        .await?
+        .check()?;
 
         Ok(())
     }
@@ -166,16 +168,9 @@ pub async fn load_persisted(db: &Database) -> Result<crate::config::ConfigMap, E
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_db;
     use crate::events::store::{EventStore, NewEvent, SurrealEventStore};
     use chrono::{Duration, Utc};
-
-    async fn test_db() -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
-        db
-    }
 
     fn event_at(ts: chrono::DateTime<Utc>, key: ConfigKey, value: Option<ConfigValue>) -> Event {
         let new = NewEvent::config_set("d1", key, value).unwrap();

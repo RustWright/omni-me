@@ -16,8 +16,8 @@
 //! companion (for non-Rust plugin authors) is `SUBPROCESS_SOURCE_CONTRACT.md`.
 
 use async_trait::async_trait;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -25,10 +25,11 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use crate::auto_import::to_proposed_event;
+use crate::auto_import::{content_dedup_key, to_proposed_event};
 use crate::auto_import_scheduler::{
     AutoImportSource, DropReason, ImportError, ImportSummary, ImportTally, ReauthOutcome,
 };
+use crate::db::queries;
 use crate::events::{DraftTransaction, EventStore, ProjectionRunner};
 
 /// How long a helper may run before it is killed.
@@ -38,6 +39,24 @@ use crate::events::{DraftTransaction, EventStore, ProjectionRunner};
 /// a bound at all: before this, a helper that hung blocked its scheduler task
 /// for the lifetime of the process.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Write a helper's one-line request, then close its stdin. A helper that exits
+/// without reading it breaks the pipe, and then its exit status and stderr are the
+/// error worth reporting, so a broken pipe is passed through to the wait.
+pub async fn feed_stdin(
+    mut stdin: tokio::process::ChildStdin,
+    request: &str,
+) -> std::io::Result<()> {
+    let written = async {
+        stdin.write_all(request.as_bytes()).await?;
+        stdin.write_all(b"\n").await
+    }
+    .await;
+    match written {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other,
+    }
+}
 
 /// Cap on how much of a helper's stdout/stderr is retained. `wait_with_output`
 /// buffers both streams in full, so an unbounded writer is an OOM on the box.
@@ -109,8 +128,12 @@ pub struct HelperResponse {
     /// wraps these verbatim — it never reasons about banks or balancing.
     #[serde(default)]
     pub drafts: Vec<DraftTransaction>,
-    /// Per-batch idempotency token. When `None`, the engine falls back to
-    /// `"{source-name}-{unix_millis}"`.
+    /// Transactions the helper assembled from several upstream rows. See
+    /// [`JoinedDraft`].
+    #[serde(default)]
+    pub joined: Vec<JoinedDraft>,
+    /// Per-batch idempotency token. When `None`, the engine derives one from
+    /// the drafts' `external_id`s.
     #[serde(default)]
     pub dedup_key: Option<String>,
     /// Opaque JSON the review screen can render; engine stores but never reads.
@@ -128,6 +151,48 @@ pub struct HelperResponse {
     /// Human-readable detail; required when `status == Error`.
     #[serde(default)]
     pub message: Option<String>,
+}
+
+/// One transaction built from several upstream rows, such as both halves of a
+/// transfer between two of the user's accounts. `parts` are those rows as
+/// standalone drafts, which the engine falls back to when any was proposed before.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JoinedDraft {
+    pub draft: DraftTransaction,
+    pub parts: Vec<DraftTransaction>,
+}
+
+/// Drop what this source already proposed, and return what is left with the
+/// number of upstream rows it covers. A joined draft goes out whole only when
+/// none of its parts went out before; otherwise only its unseen parts do, so a
+/// row is never proposed twice and never lost.
+fn select_unproposed(
+    drafts: Vec<DraftTransaction>,
+    joined: Vec<JoinedDraft>,
+    known: &HashSet<String>,
+    tally: &mut ImportTally,
+) -> (Vec<DraftTransaction>, usize) {
+    let seen = |d: &DraftTransaction| known.contains(d.external_id.trim());
+    let mut out = Vec::new();
+    let mut rows = 0;
+    let mut singles = drafts;
+    for j in joined {
+        if seen(&j.draft) || j.parts.iter().any(seen) {
+            singles.extend(j.parts);
+        } else {
+            rows += j.parts.len().max(1);
+            out.push(j.draft);
+        }
+    }
+    for d in singles {
+        if seen(&d) {
+            tally.dropped(d.external_id, DropReason::Deduped);
+        } else {
+            rows += 1;
+            out.push(d);
+        }
+    }
+    (out, rows)
 }
 
 /// A helper's account of what it did with every row it fetched.
@@ -277,17 +342,10 @@ impl SubprocessSource {
                 ImportError::Io(format!("spawn helper {}: {e}", self.command.display()))
             })?;
 
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(request_json.as_bytes())
+        if let Some(stdin) = child.stdin.take() {
+            feed_stdin(stdin, &request_json)
                 .await
                 .map_err(|e| ImportError::Io(format!("write stdin: {e}")))?;
-            stdin
-                .write_all(b"\n")
-                .await
-                .map_err(|e| ImportError::Io(format!("write stdin newline: {e}")))?;
-            // Drop stdin → EOF, so the helper's stdin read completes.
-            drop(stdin);
         }
 
         // A helper that never exits used to block its scheduler task forever —
@@ -373,25 +431,40 @@ impl SubprocessSource {
             tally.failed(f.id.clone(), f.reason.clone());
         }
 
-        if response.drafts.is_empty() {
+        // A row already offered for review is not offered again. Without this a
+        // second tick while the first batch was pending re-proposed all 101 of
+        // its rows as a new batch, and both were committed.
+        let known = match queries::proposed_external_ids(self.projections.db(), &self.name).await {
+            Ok(known) => known,
+            Err(e) => {
+                tracing::warn!(
+                    source = %self.name,
+                    error = %e,
+                    "could not read prior proposals; proposing without that filter",
+                );
+                HashSet::new()
+            }
+        };
+        let (drafts, rows) =
+            select_unproposed(response.drafts, response.joined, &known, &mut tally);
+
+        if drafts.is_empty() {
             // Still finishes the tally: "no drafts" must prove it accounted for
             // the fetched rows. A helper that fetched 295 and produced zero
             // drafts now fails here instead of returning a tidy zero.
             return tally.finish();
         }
-        let draft_count = response.drafts.len();
 
-        // Helper-supplied dedup_key wins; else a per-tick timestamp (matches the
-        // old WS polling behavior — row-level dedup still rides each draft's
-        // stable external_id).
+        // Helper-supplied dedup_key wins; else one derived from the drafts, never
+        // the clock (see `content_dedup_key`).
         let dedup_key = response
             .dedup_key
-            .unwrap_or_else(|| format!("{}-{}", self.name, Utc::now().timestamp_millis()));
+            .unwrap_or_else(|| content_dedup_key(&self.name, &drafts));
 
         let proposed = to_proposed_event(
             &self.name,
             dedup_key,
-            response.drafts,
+            drafts,
             response.source_metadata,
             self.device_id.clone(),
         );
@@ -407,12 +480,10 @@ impl SubprocessSource {
             .await
             .map_err(|e| ImportError::Upstream(format!("project: {e}")))?;
 
-        // Counts **drafts**, not `appended.len()`. The batch is a single
-        // `AutoImportBatchProposed` event carrying N drafts, so the old
-        // `events_appended: appended.len()` reported 1 for a 150-row pull — a
-        // number that could never be reconciled against a statement's row count.
-        // The tally's unit is the upstream row throughout.
-        tally.appended(draft_count);
+        // Counts upstream rows, not events (one batch event carries N drafts) and
+        // not drafts (a joined draft covers several rows). The tally's unit is
+        // the upstream row throughout.
+        tally.appended(rows);
         tally.finish()
     }
 }
@@ -476,6 +547,15 @@ impl AutoImportSource for SubprocessSource {
                 };
             }
         };
+        // The helper's reason is the only record of why a login was refused.
+        if response.status != HelperStatus::ReauthOk {
+            tracing::warn!(
+                source = %self.name,
+                status = ?response.status,
+                message = ?response.message,
+                "reauth did not succeed",
+            );
+        }
         match response.status {
             HelperStatus::ReauthOk => ReauthOutcome::Active,
             HelperStatus::InvalidOtp => ReauthOutcome::InvalidOtp,
@@ -498,6 +578,19 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    /// Lost a race in overlay CI on 2026-10-01: a helper that exits first must not
+    /// turn into "write stdin: Broken pipe". 1 MB outruns any pipe buffer.
+    #[tokio::test]
+    async fn a_helper_that_never_reads_its_request_is_not_a_write_error() {
+        let mut child = Command::new("true").stdin(Stdio::piped()).spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        child.wait().await.unwrap();
+        let request = "x".repeat(1 << 20);
+        feed_stdin(stdin, &request)
+            .await
+            .expect("a broken pipe is the helper's exit to report, not ours");
+    }
+
     /// Write an executable shell script standing in for a real helper. Returns
     /// the TempDir (kept alive for the script's lifetime) + the script path.
     fn write_shell_helper(content: &str) -> (tempfile::TempDir, PathBuf) {
@@ -517,10 +610,7 @@ mod tests {
     }
 
     async fn test_db_and_runner() -> (crate::db::Database, Arc<dyn EventStore>, ProjectionRunner) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
-        std::mem::forget(dir);
+        let db = crate::db::test_db().await;
         let store: Arc<dyn EventStore> =
             Arc::new(crate::events::SurrealEventStore::new(db.clone()));
         let runner = ProjectionRunner::new(
@@ -614,6 +704,82 @@ mod tests {
         let summary = source.pull().await.unwrap();
         assert_eq!(summary.fetched, 0);
         assert_eq!(summary.appended, 0);
+        assert_eq!(summary.lost(), 0);
+    }
+
+    fn bare(id: &str) -> DraftTransaction {
+        DraftTransaction {
+            external_id: id.into(),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
+            description: id.into(),
+            postings: vec![],
+        }
+    }
+
+    fn transfer() -> JoinedDraft {
+        JoinedDraft {
+            draft: bare("t"),
+            parts: vec![bare("t-out"), bare("t-in")],
+        }
+    }
+
+    fn select(known: &[&str]) -> (Vec<String>, usize) {
+        let known = known.iter().map(|s| s.to_string()).collect();
+        let mut tally = ImportTally::new(2);
+        let (out, rows) = select_unproposed(vec![], vec![transfer()], &known, &mut tally);
+        (out.into_iter().map(|d| d.external_id).collect(), rows)
+    }
+
+    #[test]
+    fn a_fresh_transfer_goes_out_joined_and_counts_both_rows() {
+        let mut tally = ImportTally::new(2);
+        let (out, rows) = select_unproposed(vec![], vec![transfer()], &HashSet::new(), &mut tally);
+        assert_eq!(
+            out.iter()
+                .map(|d| d.external_id.as_str())
+                .collect::<Vec<_>>(),
+            ["t"]
+        );
+        assert_eq!(rows, 2);
+    }
+
+    #[test]
+    fn a_transfer_whose_halves_were_both_proposed_goes_nowhere() {
+        let mut tally = ImportTally::new(2);
+        let known = ["t-out", "t-in"].iter().map(|s| s.to_string()).collect();
+        let (out, rows) = select_unproposed(vec![], vec![transfer()], &known, &mut tally);
+        assert!(out.is_empty());
+        assert_eq!(rows, 0);
+        tally.appended(rows);
+        assert_eq!(tally.finish().unwrap().deduped, 2);
+    }
+
+    /// The case that rules out keeping either half's id on the joined draft:
+    /// that would either drop the unseen half or book the seen one twice.
+    #[test]
+    fn a_transfer_with_one_half_already_proposed_sends_only_the_other() {
+        let (ids, rows) = select(&["t-out"]);
+        assert_eq!(ids, ["t-in"]);
+        assert_eq!(rows, 1);
+    }
+
+    /// A second tick while the first batch is still pending re-sends the same
+    /// window. Only the new row may reach review, and the repeat counts as
+    /// deduped rather than vanishing.
+    #[tokio::test]
+    async fn a_row_already_proposed_is_not_proposed_again() {
+        let (_db, store, projections) = test_db_and_runner().await;
+        let (_d1, first) = emit_helper(ONE_DRAFT_OK);
+        let source = source_with(first, vec![], store.clone(), projections.clone());
+        assert_eq!(source.pull().await.unwrap().appended, 1);
+
+        let two = r#"{"status":"ok","disposition":{"fetched":2},"drafts":[{"external_id":"ws-t1","date":"2026-06-15","description":"Loblaws","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-87.42"},{"account":"Unmatched","commodity":"CAD","amount":"87.42"}]},{"external_id":"ws-t2","date":"2026-06-16","description":"Metro","postings":[{"account":"Assets:Northwind:Cash","commodity":"CAD","amount":"-12.00"},{"account":"Unmatched","commodity":"CAD","amount":"12.00"}]}]}"#;
+        let (_d2, second) = emit_helper(two);
+        let source = source_with(second, vec![], store, projections);
+        let summary = source.pull().await.unwrap();
+        assert_eq!(summary.fetched, 2);
+        assert_eq!(summary.appended, 1);
+        assert_eq!(summary.deduped, 1);
         assert_eq!(summary.lost(), 0);
     }
 

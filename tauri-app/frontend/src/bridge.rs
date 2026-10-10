@@ -50,12 +50,13 @@ pub static OMNI_MOCK_BUILD_SENTINEL: &[u8; 32] = b"OMNI_MOCK_BUILD__DO_NOT_SHIP_
 
 use crate::types::{
     AccountSummaryView, AccountTagBreakdownView, AutoImportSourceView, BalanceCheckView,
-    BudgetProgress, BudgetRow, CommitBatchResult, CompletionEntry, DashboardSummaryView,
-    DocumentItem, ExportPreview, ExtractedDraft, GenericNoteItem, ImportStatementResult,
-    JournalDayStat, JournalEntryItem, LlmResult, MatchCandidateView, NetWorthSeriesView,
-    PendingBatchView, PendingShareCapture, ReconciliationTxnPreview, RecurringPattern,
-    RoutineGroup, RoutineItem, ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot,
-    TimezoneInfo, TransactionFormDraft, TransactionView, TxnFilter,
+    BudgetProgress, BudgetRow, CapturePageInput, CommitBatchResult, CompletionEntry,
+    DashboardSummaryView, DocumentItem, DraftCorrectionInput, ExportPreview, ExtractedDraft,
+    GenericNoteItem, ImportStatementResult, JournalDayStat, JournalEntryItem, LlmResult,
+    MatchCandidateView, NetWorthSeriesView, PendingBatchView, PendingShareCapture, PurgePreview,
+    PurgeReport, ReconciliationTxnPreview, RecurringPattern, RoutineGroup, RoutineItem,
+    ScanRecurringResult, SyncInfo, SyncStatus, SyncStatusSnapshot, TimezoneInfo,
+    TransactionFormDraft, TransactionView, TxnFilter,
 };
 #[cfg(feature = "mock")]
 use crate::types::{
@@ -426,6 +427,13 @@ const BOOT_RETRY_DEADLINE_MS: f64 = 10_000.0;
 /// That "never ran" is what makes retrying safe even for a mutating command,
 /// and it is why this is matched separately from a timeout — see
 /// [`invoke_timed`], where the distinction actually bites.
+/// A rejected invoke as the text the backend sent. Tauri rejects with the command's error
+/// string; debug-formatting it wrapped every message the user saw in `JsValue("…")`.
+#[cfg(not(feature = "mock"))]
+fn invoke_error(e: wasm_bindgen::JsValue) -> String {
+    e.as_string().unwrap_or_else(|| format!("{e:?}"))
+}
+
 #[cfg(not(feature = "mock"))]
 fn backend_not_ready(err: &str) -> bool {
     err.contains("state not managed")
@@ -456,7 +464,7 @@ async fn invoke<T: serde::de::DeserializeOwned>(
             let promise = tauri_invoke(cmd, args_js);
             let result = wasm_bindgen_futures::JsFuture::from(promise)
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(invoke_error)?;
             serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
         }
         .await;
@@ -498,7 +506,7 @@ async fn invoke_unit(cmd: &str, args: &impl serde::Serialize) -> Result<(), Stri
             let promise = tauri_invoke(cmd, args_js);
             wasm_bindgen_futures::JsFuture::from(promise)
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(invoke_error)?;
             Ok(())
         }
         .await;
@@ -576,7 +584,7 @@ async fn invoke_timed<T: serde::de::DeserializeOwned>(
                 js_sys::Promise::race(&js_sys::Array::of2(&invoke_promise, &timeout_promise));
             let result = wasm_bindgen_futures::JsFuture::from(race)
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(invoke_error)?;
             serde_wasm_bindgen::from_value(result).map_err(|e| format!("deserialize result: {e}"))
         }
         .await;
@@ -1763,6 +1771,10 @@ pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
     #[cfg(feature = "mock")]
     {
         use crate::types::{ConfigGroup, ConfigLayer};
+        const CHECK_IN_PROMPT: &str = "Review anything you concluded about me that is now due \
+            for re-examination, and tell me what still holds and what does not. Judge each \
+            against what I have written since you concluded it, most recent first. For each \
+            one that no longer holds, propose retiring it. Do not draw new conclusions.";
         // Every key at its built-in default — the state a fresh install is in,
         // which is also the state the headless UI checks should render.
         // `on` is a parameter rather than a constant so a browser session can
@@ -1825,6 +1837,21 @@ pub async fn invoke_get_config() -> Result<Vec<ConfigEntry>, String> {
                         .map(|s| (*s).to_string())
                         .collect(),
                 ),
+                int_range: None,
+            },
+            // A long free-text value, so the viewport sweep can see a row that
+            // once made Settings three screens wide on the phone.
+            ConfigEntry {
+                key: "assistant.check_in_prompt".to_string(),
+                label: "Check-in prompt".to_string(),
+                group: ConfigGroup::Assistant,
+                effective: ConfigValue::Text(CHECK_IN_PROMPT.to_string()),
+                layer: ConfigLayer::Default,
+                global: None,
+                device: None,
+                default: ConfigValue::Text(CHECK_IN_PROMPT.to_string()),
+                applies_immediately: true,
+                choices: None,
                 int_range: None,
             },
         ])
@@ -2024,19 +2051,29 @@ pub async fn invoke_export_obsidian(target: &str) -> Result<ExportSummary, Strin
 /// server-side extractor. `hint` mirrors `core::extraction::ExtractionHint`
 /// serialised snake_case (`"receipt"`, `"bank_statement"`, ...).
 ///
+/// `filename` is what the picker or the share intent reported; `None` for the
+/// pasted email body, which never had one.
+///
 /// The mock branch fakes a ~1.2s round trip + returns a canned receipt so
-/// `dx serve --features mock` flows end-to-end without a backend.
+/// `dx serve --features mock` flows end-to-end without a backend. It answers
+/// `paystub` with a draft that fails verification, because a clean-only mock
+/// leaves the confirm form's warning panel unreachable in the browser — and
+/// paystub is the hint that actually warns most often against a real model.
 pub async fn invoke_extract_document(
     bytes: Vec<u8>,
     mime: &str,
     hint: &str,
+    filename: Option<&str>,
+    propose: bool,
 ) -> Result<ExtractedDraft, String> {
     #[cfg(feature = "mock")]
     {
         let size = bytes.len() as u64;
-        let _ = (bytes, hint);
+        let _ = bytes;
+        let name = filename.unwrap_or("mock-receipt").to_string();
         // Simulate network + LLM latency so the UI's wait state is visible.
         crate::timer::sleep_ms(1200).await;
+        let unverified = hint == "paystub";
         Ok(ExtractedDraft {
             date: Some("2026-05-17".into()),
             description: Some("Loblaws — Groceries".into()),
@@ -2055,14 +2092,26 @@ pub async fn invoke_extract_document(
                 },
             ],
             total: Some("42.18".into()),
-            confidence: 0.91,
+            confidence: if unverified { 0.41 } else { 0.91 },
             model: "mock-extractor".into(),
             attachment: Some(AttachmentRef {
                 sha256: "0".repeat(64),
-                filename: "mock-receipt".into(),
+                filename: name,
                 mime_type: mime.to_string(),
                 size,
+                document_id: None,
             }),
+            warnings: if unverified {
+                vec![
+                    "line items sum to 42.18, but the document's total is 51.02".into(),
+                    "1 line item(s) discarded — the model gave an unusable amount".into(),
+                ]
+            } else {
+                Vec::new()
+            },
+            needs_review: unverified,
+            // The mock reads everything as a receipt.
+            proposed_batch_id: propose.then(|| "01HXMOCKCAPTURE0000000001".into()),
         })
     }
     #[cfg(not(feature = "mock"))]
@@ -2072,8 +2121,63 @@ pub async fn invoke_extract_document(
             bytes: Vec<u8>,
             mime: &'a str,
             hint: &'a str,
+            filename: Option<&'a str>,
+            propose: bool,
         }
-        invoke("extract_document", &Args { bytes, mime, hint }).await
+        invoke(
+            "extract_document",
+            &Args {
+                bytes,
+                mime,
+                hint,
+                filename,
+                propose,
+            },
+        )
+        .await
+    }
+}
+
+/// Several photos of one document: read together, archived by the server as one
+/// PDF. One page goes through [`invoke_extract_document`] unchanged.
+pub async fn invoke_extract_document_pages(
+    pages: Vec<CapturePageInput>,
+    hint: &str,
+    propose: bool,
+) -> Result<ExtractedDraft, String> {
+    #[cfg(feature = "mock")]
+    {
+        let first = pages.first().ok_or("no pages")?;
+        let mut draft = invoke_extract_document(
+            first.bytes.clone(),
+            "application/pdf",
+            hint,
+            Some("mock-capture.pdf"),
+            propose,
+        )
+        .await?;
+        if let Some(att) = draft.attachment.as_mut() {
+            att.size = pages.iter().map(|p| p.bytes.len() as u64).sum();
+        }
+        Ok(draft)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            pages: Vec<CapturePageInput>,
+            hint: &'a str,
+            propose: bool,
+        }
+        invoke(
+            "extract_document_pages",
+            &Args {
+                pages,
+                hint,
+                propose,
+            },
+        )
+        .await
     }
 }
 
@@ -2494,6 +2598,23 @@ pub async fn invoke_fetch_attachment(sha256: &str) -> Result<Vec<u8>, String> {
             sha256: &'a str,
         }
         invoke("fetch_attachment", &Args { sha256 }).await
+    }
+}
+
+/// Bytes to view an image: the server's small preview, falling back to the
+/// original. See `commands::attachments::fetch_attachment_preview`.
+pub async fn invoke_fetch_attachment_preview(sha256: &str) -> Result<Vec<u8>, String> {
+    #[cfg(feature = "mock")]
+    {
+        invoke_fetch_attachment(sha256).await
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            sha256: &'a str,
+        }
+        invoke("fetch_attachment_preview", &Args { sha256 }).await
     }
 }
 
@@ -3388,25 +3509,61 @@ pub async fn invoke_merge_transactions(primary_id: &str, secondary_id: &str) -> 
     }
 }
 
+/// One side as the real command builds it; the long description is there so
+/// the card is seen wrapping, not truncating.
+#[cfg(feature = "mock")]
+fn mock_preview(
+    id: &str,
+    date: &str,
+    description: &str,
+    amount: &str,
+    origin: &str,
+    account: &str,
+    suggested: Option<&str>,
+) -> ReconciliationTxnPreview {
+    ReconciliationTxnPreview {
+        txn_id: id.to_string(),
+        date: date.to_string(),
+        description: description.to_string(),
+        unmatched_amount: amount.to_string(),
+        unmatched_commodity: "CAD".to_string(),
+        statement_source: None,
+        origin: origin.to_string(),
+        accounts: vec![account.to_string()],
+        suggested_category: suggested.map(String::from),
+    }
+}
+
 #[cfg(feature = "mock")]
 fn mock_unmatched_no_candidate() -> Vec<ReconciliationTxnPreview> {
     vec![
-        ReconciliationTxnPreview {
-            txn_id: "01JK099".to_string(),
-            date: "2026-05-12".to_string(),
-            description: "Costco Wholesale".to_string(),
-            unmatched_amount: "-185.42".to_string(),
-            unmatched_commodity: "CAD".to_string(),
-            statement_source: Some("summit-chequing-2026-05".to_string()),
-        },
-        ReconciliationTxnPreview {
-            txn_id: "01JK100".to_string(),
-            date: "2026-05-13".to_string(),
-            description: "Etransfer to Jane".to_string(),
-            unmatched_amount: "-50.00".to_string(),
-            unmatched_commodity: "CAD".to_string(),
-            statement_source: Some("summit-chequing-2026-05".to_string()),
-        },
+        mock_preview(
+            "01JK099",
+            "2026-05-12",
+            "Purchase: Northwind Wholesale #1234 Springfield",
+            "185.42",
+            "Globepay feed",
+            "Assets:NonRegistered:CAD",
+            Some("Expenses:Food:Groceries"),
+        ),
+        mock_preview(
+            "01JK100",
+            "2026-05-13",
+            "Money transfer: to Globepay TFSA (GP-TFSA-01)",
+            "50.00",
+            "Globepay feed",
+            "Assets:NonRegistered:CAD",
+            None,
+        ),
+        mock_preview(
+            "01JK101",
+            "2026-05-14",
+            "Purchase: Vaultly U* Vaultly P Springfield",
+            "0.71",
+            "Globepay feed",
+            "Assets:NonRegistered:CAD",
+            Some("Expenses:Subscriptions"),
+        ),
     ]
 }
 
@@ -3419,47 +3576,77 @@ fn mock_match_candidates() -> Vec<MatchCandidateView> {
             score: 0.95,
             days_apart: 0,
             description_similarity: 1.0,
-            clears_statement: true,
-            primary: ReconciliationTxnPreview {
-                txn_id: "01JK001".to_string(),
-                date: "2026-05-15".to_string(),
-                description: "Loblaws Groceries".to_string(),
-                unmatched_amount: "42.18".to_string(),
-                unmatched_commodity: "CAD".to_string(),
-                statement_source: None,
-            },
-            secondary: ReconciliationTxnPreview {
-                txn_id: "01JK002".to_string(),
-                date: "2026-05-15".to_string(),
-                description: "LOBLAWS".to_string(),
-                unmatched_amount: "-42.18".to_string(),
-                unmatched_commodity: "CAD".to_string(),
-                statement_source: Some("summit-chequing-2026-05".to_string()),
-            },
+            clears_statement: false,
+            primary: mock_preview(
+                "01JK001",
+                "2026-05-15",
+                "Organic Wellness Ginger Shots (4 x 60 ml)",
+                "-9.99",
+                "Receipt email",
+                "Expenses:Groceries:Beverages",
+                None,
+            ),
+            secondary: mock_preview(
+                "01JK002",
+                "2026-05-15",
+                "Purchase: Northwind.ca",
+                "9.99",
+                "Globepay feed",
+                "Assets:NonRegistered:CAD",
+                None,
+            ),
         },
         MatchCandidateView {
             primary_id: "01JK003".to_string(),
             secondary_id: "01JK004".to_string(),
+            score: 0.91,
+            days_apart: 1,
+            description_similarity: 0.5,
+            clears_statement: false,
+            primary: mock_preview(
+                "01JK003",
+                "2026-05-10",
+                "Payment to Contoso Mobile",
+                "-63.84",
+                "Receipt email",
+                "Expenses:Utilities:Internet",
+                None,
+            ),
+            secondary: mock_preview(
+                "01JK004",
+                "2026-05-11",
+                "Pre-authorized debit: to Contoso Mobile",
+                "63.84",
+                "Globepay feed",
+                "Assets:NonRegistered:CAD",
+                None,
+            ),
+        },
+        MatchCandidateView {
+            primary_id: "01JK005".to_string(),
+            secondary_id: "01JK006".to_string(),
             score: 0.72,
             days_apart: 3,
-            description_similarity: 0.5,
-            clears_statement: true,
-            primary: ReconciliationTxnPreview {
-                txn_id: "01JK003".to_string(),
-                date: "2026-05-10".to_string(),
-                description: "Hydro Bill".to_string(),
-                unmatched_amount: "87.50".to_string(),
-                unmatched_commodity: "CAD".to_string(),
-                statement_source: None,
-            },
-            secondary: ReconciliationTxnPreview {
-                txn_id: "01JK004".to_string(),
-                date: "2026-05-13".to_string(),
-                description: "Toronto Hydro".to_string(),
-                unmatched_amount: "-87.50".to_string(),
-                unmatched_commodity: "CAD".to_string(),
-                statement_source: Some("summit-chequing-2026-05".to_string()),
-            },
+            description_similarity: 0.0,
+            clears_statement: false,
+            primary: mock_preview(
+                "01JK005",
+                "2026-05-10",
+                "FABRIKAM POWER",
+                "-87.50",
+                "Receipt email",
+                "Expenses:Utilities",
+                None,
+            ),
+            secondary: mock_preview(
+                "01JK006",
+                "2026-05-13",
+                "Pre-authorized debit: to Fabrikam Power Board",
+                "87.50",
+                "Globepay feed",
+                "Assets:NonRegistered:CAD",
+                None,
+            ),
         },
     ]
 }
@@ -3675,6 +3862,7 @@ fn mock_dashboard_summary() -> DashboardSummaryView {
         base_currency: "CAD".into(),
         net_worth_in_base: Some("3891.89".into()),
         unmatched_balance: Some("-1.50".into()),
+        unmatched_count: 6,
         monthly_buckets: vec![
             MonthlyTrendBucketView {
                 month: "2025-12".into(),
@@ -4208,6 +4396,8 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                     },
                 ],
                 source_metadata: None,
+                superseded: None,
+                revises_batch_id: None,
             },
             PendingBatchView {
                 batch_id: "01HXMOCKMRDN000000000001".into(),
@@ -4238,6 +4428,155 @@ pub async fn invoke_list_pending_batches() -> Result<Vec<PendingBatchView>, Stri
                     "subject": "April statement",
                     "uid": 42,
                 })),
+                superseded: None,
+                revises_batch_id: None,
+            },
+            // A `receipts` batch that failed verification. The two bank batches
+            // above carry no verdict — only this path runs `verify` — so without
+            // it the review screen's warning panel is unreachable in mock. The
+            // figures are a real 2026-09-23 capture: a delivery notice itemising
+            // part of a larger order.
+            PendingBatchView {
+                batch_id: "01HXMOCKRCPT000000000001".into(),
+                source: "receipts".into(),
+                dedup_key: "receipts-uid-3458".into(),
+                fetched_at: (now - chrono::Duration::minutes(2)).to_rfc3339(),
+                draft_postings: vec![DraftTransactionView {
+                    external_id: "receipts-uid-3458-row-1".into(),
+                    date: "2026-09-12".into(),
+                    description: "Northwind — order delivered".into(),
+                    postings: vec![
+                        PostingInput {
+                            account: "Expenses:Groceries".into(),
+                            commodity: "CAD".into(),
+                            amount: "27.86".into(),
+                            tags: vec![],
+                        },
+                        PostingInput {
+                            account: "Unmatched".into(),
+                            commodity: "CAD".into(),
+                            amount: "-27.86".into(),
+                            tags: vec![],
+                        },
+                    ],
+                }],
+                source_metadata: Some(serde_json::json!({
+                    "from": "me@example.com",
+                    "subject": "Fwd: Your Northwind order was delivered",
+                    "uid": 3458,
+                    "effective_confidence": 0.31,
+                    "needs_manual_review": true,
+                    "dropped_postings": 0,
+                    "warnings": [
+                        "line-item sum 27.86 does not match document total 99.83 (diff 71.97)"
+                    ],
+                    "order_group": "nw118762884",
+                    "group_member": "uid-3458",
+                })),
+                // Grouped: the delivery notice displaced the order confirmation
+                // that arrived first. Without a fixture the merge panel is
+                // unreachable in mock, and a merge nobody can see is the whole
+                // risk the panel exists to cover.
+                superseded: Some(serde_json::json!([{
+                    "batch_id": "01HXMOCKRCPT000000000000",
+                    "status": "pending",
+                    "fetched_at": (now - chrono::Duration::minutes(40)).to_rfc3339(),
+                    "subject": "Thank you for shopping with Northwind!",
+                    "document_kind": "order_confirmation",
+                    "order_ref": "NW-118-762-884",
+                    "group_member": "uid-3455",
+                    "draft_postings": [{
+                        "external_id": "receipts-uid-3455-row-1",
+                        "date": "2026-09-12",
+                        "description": "Northwind — order confirmed",
+                        "postings": [
+                            { "account": "Expenses:Groceries", "commodity": "CAD",
+                              "amount": "105.43", "tags": [] },
+                            { "account": "Unmatched", "commodity": "CAD",
+                              "amount": "-105.43", "tags": [] },
+                        ],
+                    }],
+                }])),
+                revises_batch_id: None,
+            },
+            // A receipt the reader got nothing from: no drafts, so the only way
+            // to commit is to enter it by hand.
+            PendingBatchView {
+                batch_id: "01HXMOCKRCPT000000000003".into(),
+                source: "receipts".into(),
+                dedup_key: "receipts-uid-9001".into(),
+                fetched_at: (now - chrono::Duration::minutes(2)).to_rfc3339(),
+                draft_postings: vec![],
+                source_metadata: Some(serde_json::json!({
+                    "from": "royalties@northwind.example",
+                    "subject": "Royalty payment notification",
+                    "document_kind": "receipt",
+                    "effective_confidence": 0.3,
+                    "needs_manual_review": true,
+                    "warnings": ["no postings extracted"],
+                })),
+                superseded: None,
+                revises_batch_id: None,
+            },
+            // A message about an order whose earlier batch is already committed.
+            // Nothing amends committed books, so it arrives as its own review
+            // item — the fixture that makes that banner reachable in mock.
+            PendingBatchView {
+                batch_id: "01HXMOCKRCPT000000000002".into(),
+                source: "receipts".into(),
+                dedup_key: "receipts-order-nw124202519".into(),
+                fetched_at: (now - chrono::Duration::minutes(1)).to_rfc3339(),
+                draft_postings: vec![DraftTransactionView {
+                    external_id: "receipts-uid-3461-row-1".into(),
+                    date: "2026-09-14".into(),
+                    description: "Northwind — refund for substituted item".into(),
+                    postings: vec![
+                        PostingInput {
+                            account: "Expenses:Groceries".into(),
+                            commodity: "CAD".into(),
+                            amount: "-4.20".into(),
+                            tags: vec![],
+                        },
+                        PostingInput {
+                            account: "Unmatched".into(),
+                            commodity: "CAD".into(),
+                            amount: "4.20".into(),
+                            tags: vec![],
+                        },
+                    ],
+                }],
+                source_metadata: Some(serde_json::json!({
+                    "from": "orders@northwind.example",
+                    "subject": "We've updated your Northwind order",
+                    "uid": 3461,
+                    "effective_confidence": 0.88,
+                    "needs_manual_review": false,
+                    "dropped_postings": 0,
+                    "warnings": [],
+                    "order_group": "nw124202519",
+                    "group_member": "uid-3461",
+                })),
+                superseded: Some(serde_json::json!([{
+                    "batch_id": "01HXMOCKRCPT000000000003",
+                    "status": "committed",
+                    "fetched_at": (now - chrono::Duration::days(2)).to_rfc3339(),
+                    "subject": "Your Northwind order is on its way",
+                    "document_kind": "shipping_notice",
+                    "order_ref": "NW-124-202-519",
+                    "group_member": "uid-3457",
+                    "draft_postings": [{
+                        "external_id": "receipts-uid-3457-row-1",
+                        "date": "2026-09-13",
+                        "description": "Northwind — order shipped",
+                        "postings": [
+                            { "account": "Expenses:Groceries", "commodity": "CAD",
+                              "amount": "61.90", "tags": [] },
+                            { "account": "Unmatched", "commodity": "CAD",
+                              "amount": "-61.90", "tags": [] },
+                        ],
+                    }],
+                }])),
+                revises_batch_id: Some("01HXMOCKRCPT000000000003".into()),
             },
         ])
     }
@@ -4254,14 +4593,16 @@ pub async fn invoke_commit_batch(
     accepted_indices: Vec<usize>,
     fx_rate: Option<String>,
     fx_commodity: Option<String>,
+    corrections: Vec<DraftCorrectionInput>,
+    added: Vec<DraftCorrectionInput>,
 ) -> Result<CommitBatchResult, String> {
     #[cfg(feature = "mock")]
     {
-        let _ = (batch_id, fx_rate, fx_commodity);
+        let _ = (batch_id, fx_rate, fx_commodity, corrections);
         crate::timer::sleep_ms(450).await;
         Ok(CommitBatchResult {
-            events_appended: accepted_indices.len() + 1,
-            txns_recorded: accepted_indices.len(),
+            events_appended: accepted_indices.len() + added.len() + 1,
+            txns_recorded: accepted_indices.len() + added.len(),
             fx_recorded: false,
         })
     }
@@ -4275,6 +4616,10 @@ pub async fn invoke_commit_batch(
             fx_rate: Option<String>,
             #[serde(skip_serializing_if = "Option::is_none")]
             fx_commodity: Option<String>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            corrections: Vec<DraftCorrectionInput>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            added: Vec<DraftCorrectionInput>,
         }
         invoke(
             "commit_batch",
@@ -4283,6 +4628,8 @@ pub async fn invoke_commit_batch(
                 accepted_indices,
                 fx_rate,
                 fx_commodity,
+                corrections,
+                added,
             },
         )
         .await
@@ -4605,6 +4952,51 @@ pub async fn invoke_list_assistant_threads() -> Result<Vec<crate::types::Assista
     }
 }
 
+/// Hide a conversation into the archived list, or bring it back.
+pub async fn invoke_archive_assistant_thread(
+    thread_id: &str,
+    archived: bool,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        mock_assistant::set_archived(thread_id, archived);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            thread_id: &'a str,
+            archived: bool,
+        }
+        invoke_unit(
+            "archive_assistant_thread",
+            &Args {
+                thread_id,
+                archived,
+            },
+        )
+        .await
+    }
+}
+
+/// Remove a conversation from every view, permanently.
+pub async fn invoke_delete_assistant_thread(thread_id: &str) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        mock_assistant::delete(thread_id);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            thread_id: &'a str,
+        }
+        invoke_unit("delete_assistant_thread", &Args { thread_id }).await
+    }
+}
+
 /// One conversation, oldest first, with its pending question resolved.
 pub async fn invoke_read_assistant_thread(
     thread_id: &str,
@@ -4823,6 +5215,8 @@ mod mock_assistant {
     thread_local! {
         static STORE: RefCell<Vec<AssistantMessage>> = const { RefCell::new(Vec::new()) };
         static PROPOSALS: RefCell<Vec<AssistantProposal>> = const { RefCell::new(Vec::new()) };
+        static ARCHIVED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        static DELETED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
         static SEQ: RefCell<u32> = const { RefCell::new(0) };
     }
 
@@ -5142,13 +5536,29 @@ mod mock_assistant {
                             .map(|m| m.created_at.clone())
                             .unwrap_or_default(),
                         message_count: msgs.len() as i64,
+                        archived: ARCHIVED.with(|a| a.borrow().contains(&id)),
                         thread_id: id,
                     }
                 })
+                .filter(|t| !DELETED.with(|d| d.borrow().contains(&t.thread_id)))
                 .collect();
             threads.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
             threads
         })
+    }
+
+    pub fn set_archived(thread_id: &str, on: bool) {
+        ARCHIVED.with(|a| {
+            let mut a = a.borrow_mut();
+            a.retain(|t| t != thread_id);
+            if on {
+                a.push(thread_id.to_string());
+            }
+        });
+    }
+
+    pub fn delete(thread_id: &str) {
+        DELETED.with(|d| d.borrow_mut().push(thread_id.to_string()));
     }
 
     pub fn read(thread_id: &str) -> AssistantThreadView {
@@ -5194,11 +5604,16 @@ pub async fn invoke_list_documents(
     query: Option<String>,
     kind: Option<String>,
     mime: Option<String>,
+    tag: Option<String>,
+    unverified_only: Option<bool>,
+    limit: Option<u32>,
     offset: Option<u32>,
 ) -> Result<Vec<DocumentItem>, String> {
     #[cfg(feature = "mock")]
     {
-        let _ = offset;
+        // The mock corpus is a handful of rows, so paging it would only ever
+        // return page 0 — the filters below are what this twin exists to mirror.
+        let _ = (limit, offset);
         let all = mock_documents();
         let needle = query.unwrap_or_default().to_lowercase();
         Ok(all
@@ -5216,23 +5631,51 @@ pub async fn invoke_list_documents(
                 Some(m) if !m.is_empty() => d.mime_type.as_deref() == Some(m.as_str()),
                 _ => true,
             })
+            // ⚠️ Whole-element equality, matching the `CONTAINS` the real query
+            // emits. A `contains()` on the string here would make the mock accept
+            // a prefix the backend rejects.
+            .filter(|d| match &tag {
+                Some(t) if !t.is_empty() => {
+                    let t = t.trim().to_lowercase();
+                    d.tags.as_ref().is_some_and(|tags| tags.contains(&t))
+                }
+                _ => true,
+            })
+            // Mirrors the real query's `fields[WHERE verified = false] != []`.
+            .filter(|d| !unverified_only.unwrap_or(false) || d.unverified_count() > 0)
             .collect())
     }
     #[cfg(not(feature = "mock"))]
     {
+        // ⛔ The filter is nested, matching `list_documents`'s
+        // `Option<DocumentListFilter>`. Flat fields deserialize to a default
+        // filter and return the whole archive unnarrowed — no error, just the
+        // wrong rows, which is the failure mode worth naming here.
         #[derive(serde::Serialize)]
-        struct Args {
+        struct Filter {
             query: Option<String>,
             kind: Option<String>,
             mime: Option<String>,
+            tag: Option<String>,
+            unverified_only: Option<bool>,
+        }
+        #[derive(serde::Serialize)]
+        struct Args {
+            filter: Filter,
+            limit: Option<u32>,
             offset: Option<u32>,
         }
         invoke(
             "list_documents",
             &Args {
-                query,
-                kind,
-                mime,
+                filter: Filter {
+                    query,
+                    kind,
+                    mime,
+                    tag,
+                    unverified_only,
+                },
+                limit,
                 offset,
             },
         )
@@ -5292,6 +5735,27 @@ pub async fn invoke_document_kinds() -> Result<Vec<String>, String> {
         #[derive(serde::Serialize)]
         struct Args {}
         invoke("document_kinds", &Args {}).await
+    }
+}
+
+/// Every tag in use across the archive, for the filter control.
+pub async fn invoke_document_tags() -> Result<Vec<String>, String> {
+    #[cfg(feature = "mock")]
+    {
+        let mut tags: Vec<String> = mock_documents()
+            .into_iter()
+            .filter_map(|d| d.tags)
+            .flatten()
+            .collect();
+        tags.sort();
+        tags.dedup();
+        Ok(tags)
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("document_tags", &Args {}).await
     }
 }
 
@@ -5368,6 +5832,201 @@ pub async fn invoke_correct_document_field(
     }
 }
 
+/// Replace a document's tag set.
+///
+/// ⚠️ **Send the whole set, not the delta** — to add a tag, pass the current tags
+/// plus the new one. The backend normalizes (trim, lowercase) and refuses the
+/// whole set if any tag is malformed, so a caller must not pre-sanitize here and
+/// assume the two agree.
+pub async fn invoke_set_document_tags(document_id: &str, tags: Vec<String>) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (document_id, tags);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            document_id: &'a str,
+            tags: Vec<String>,
+        }
+        invoke("set_document_tags", &Args { document_id, tags }).await
+    }
+}
+
+/// Set, change or clear how long a tag's documents are kept. `None` clears.
+pub async fn invoke_set_document_retention(
+    tag: &str,
+    keep_days: Option<u32>,
+) -> Result<(), String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (tag, keep_days);
+        Ok(())
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            tag: &'a str,
+            keep_days: Option<u32>,
+        }
+        invoke("set_document_retention", &Args { tag, keep_days }).await
+    }
+}
+
+/// Every tag with a live rule. ⚠️ A tag absent from this list is kept forever.
+pub async fn invoke_list_document_retention() -> Result<Vec<crate::types::RetentionRule>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(vec![crate::types::RetentionRule {
+            tag: "newsletter".into(),
+            keep_days: 90,
+        }])
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_document_retention", &Args {}).await
+    }
+}
+
+/// Documents past their retention, grouped by the rule that caught them. ⛔ A
+/// proposal: opening one goes to the ordinary purge preview and confirm.
+pub async fn invoke_list_retention_candidates() -> Result<Vec<crate::types::RetentionGroup>, String>
+{
+    #[cfg(feature = "mock")]
+    {
+        // ⚠️ One group with a plausible count, so the surface can be looked at
+        // without a governed archive behind it.
+        Ok(vec![crate::types::RetentionGroup {
+            tag: "newsletter".into(),
+            keep_days: 90,
+            count: 3,
+            oldest_archived_at: Some("2025-01-04T09:12:00Z".into()),
+            cutoff: "2026-06-29T00:00:00Z".into(),
+        }])
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_retention_candidates", &Args {}).await
+    }
+}
+
+/// What purging this group would remove. ⛔ Writes nothing.
+pub async fn invoke_preview_document_purge(
+    tag: &str,
+    // Retention's cutoff, from `RetentionGroup::cutoff`. `None` previews the tag.
+    archived_before: Option<&str>,
+) -> Result<PurgePreview, String> {
+    #[cfg(feature = "mock")]
+    {
+        let items: Vec<crate::types::PurgeItem> = mock_documents()
+            .into_iter()
+            .filter(|d| d.tags.as_ref().is_some_and(|t| t.iter().any(|x| x == tag)))
+            // The cutoff narrows the same set here too, or the mock would show a
+            // retention group as if it were the whole tag.
+            .filter(|d| match (archived_before, d.archived_at.as_deref()) {
+                (Some(before), Some(at)) => at < before,
+                (Some(_), None) => false,
+                (None, _) => true,
+            })
+            .map(|d| crate::types::PurgeItem {
+                document_id: d.document_id.clone(),
+                label: d.display_name(),
+                archived_at: d.archived_at.clone(),
+                ingest_source: d.ingest_source.clone(),
+                size: d.size,
+                // ⚠️ One shared item in the fixture on purpose: a preview where
+                // everything is reclaimable cannot show that the surface
+                // distinguishes the two.
+                bytes_shared: d.mime_type.as_deref() == Some("text/csv"),
+            })
+            .collect();
+        let bytes_reclaimable = items
+            .iter()
+            .filter(|i| !i.bytes_shared)
+            .map(|i| i.size.unwrap_or(0).max(0) as u64)
+            .sum();
+        let bytes_shared = items
+            .iter()
+            .filter(|i| i.bytes_shared)
+            .map(|i| i.size.unwrap_or(0).max(0) as u64)
+            .sum();
+        let listed = items.len();
+        Ok(PurgePreview {
+            group: tag.to_string(),
+            items,
+            total: listed,
+            bytes_reclaimable,
+            bytes_shared,
+            token: "mock-token".into(),
+            listed,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            tag: &'a str,
+            archived_before: Option<&'a str>,
+        }
+        invoke(
+            "preview_document_purge",
+            &Args {
+                tag,
+                archived_before,
+            },
+        )
+        .await
+    }
+}
+
+/// ⛔ Irreversible. Only ever called with a set the user has just confirmed, and
+/// the `token` is what lets the server check that.
+pub async fn invoke_confirm_document_purge(
+    token: &str,
+    document_ids: Vec<String>,
+    reason: Option<String>,
+) -> Result<PurgeReport, String> {
+    #[cfg(feature = "mock")]
+    {
+        let _ = (token, &reason);
+        let n = document_ids.len();
+        Ok(PurgeReport {
+            selected: n,
+            purged: n,
+            skipped: 0,
+            failed: 0,
+            blobs_deleted: n,
+            blobs_retained_shared: 0,
+            bytes_deleted: 0,
+        })
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args<'a> {
+            token: &'a str,
+            document_ids: Vec<String>,
+            reason: Option<String>,
+        }
+        invoke(
+            "confirm_document_purge",
+            &Args {
+                token,
+                document_ids,
+                reason,
+            },
+        )
+        .await
+    }
+}
+
 #[cfg(feature = "mock")]
 fn mock_documents() -> Vec<DocumentItem> {
     use crate::types::DocumentField;
@@ -5392,6 +6051,9 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: Some("brokerage_statement".into()),
             title: None,
             document_date: Some("2026-01-31".into()),
+            // Two tags, one of them key:value, so the chip row renders both forms.
+            tags: Some(vec!["statement".into(), "period:2026-01".into()]),
+            purged: None,
             fields: Some(vec![
                 parsed("kind", "brokerage_statement", false),
                 parsed("period_start", "2026-01-02", true),
@@ -5413,6 +6075,8 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: Some("notice_of_assessment".into()),
             title: Some("Notice of assessment, 2023 tax year".into()),
             document_date: Some("2024-06-14".into()),
+            tags: Some(vec!["taxes".into()]),
+            purged: None,
             fields: Some(vec![
                 DocumentField {
                     key: "kind".into(),
@@ -5443,6 +6107,10 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: None,
             title: None,
             document_date: None,
+            // ⚠️ Never tagged. Distinct from the cleared case below, and the
+            // state most of a real archive is in.
+            tags: None,
+            purged: None,
             fields: None,
             parent_document_id: None,
         },
@@ -5466,6 +6134,11 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: None,
             title: None,
             document_date: None,
+            // ⚠️ Tags cleared by a person — `Some(vec![])`, not `None`. A fixture
+            // carrying only one of these two states cannot show that the UI
+            // distinguishes them.
+            tags: Some(vec![]),
+            purged: None,
             fields: None,
             parent_document_id: None,
         },
@@ -5481,8 +6154,38 @@ fn mock_documents() -> Vec<DocumentItem> {
             kind: None,
             title: None,
             document_date: None,
+            tags: None,
+            purged: None,
             fields: None,
             parent_document_id: Some("doc-email".into()),
+        },
+        // ⛔ The adversarial one, and the reason it exists is worth keeping. The
+        // detail view overflowed the screen on a real statement and every other
+        // fixture here is narrow enough to have rendered it clean — a viewport
+        // check run against them would have reported green on the broken build.
+        // Keep this wider than any phone: it is the only row that can fail. The
+        // filename is long and unbreakable for the same reason: one pushed the
+        // attachment header off a phone screen on 2026-09-30.
+        DocumentItem {
+            document_id: "doc-wide-statement".into(),
+            sha256: Some("f".repeat(64)),
+            filename: Some(
+                "chequing-2026-02-full-export_AllAccounts__20260228_000123456789.csv".into(),
+            ),
+            mime_type: Some("text/csv".into()),
+            size: Some(64_233),
+            archived_at: Some("2026-03-05T08:00:00Z".into()),
+            ingest_source: Some("bulk".into()),
+            text_source: Some("extracted".into()),
+            kind: Some("bank_statement".into()),
+            title: None,
+            document_date: Some("2026-02-28".into()),
+            tags: Some(vec!["statement".into()]),
+            purged: None,
+            // One unchecked field, so the "Unchecked only" filter has something
+            // to find in the mock.
+            fields: Some(vec![parsed("closing_balance", "4102.88", false)]),
+            parent_document_id: None,
         },
     ]
 }
@@ -5506,6 +6209,18 @@ fn mock_document_bytes(sha256: &str) -> Option<Vec<u8>> {
               2026-01-09,\"BUY ACME, LTD\",-320.00,11680.00\n\
               2026-01-18,DIVIDEND,45.55,11725.55\n\
               2026-01-31,BUY WIDGETCO,755.00,12480.55\n"
+                .to_vec(),
+        )
+    } else if sha256 == "f".repeat(64) {
+        // ⛔ Deliberately far wider than a phone. `whitespace-pre` cells cannot
+        // wrap, so this is what pushes the CSV table past its container — the
+        // exact shape that made the archive detail view pan sideways. Narrowing
+        // it to tidy the fixture would silently retire the only case that fails.
+        Some(
+            b"Posted Date,Transaction Date,Description,Merchant Category Code,Reference Number,Debit Amount,Credit Amount,Running Balance,Currency,Exchange Rate,Originating Institution,Channel\n\
+              2026-02-01,2026-01-31,\"PREAUTHORIZED DEBIT - MUNICIPAL PROPERTY TAX INSTALMENT\",9311,000000000418277341,842.15,,4102.88,CAD,1.0000,Bank of Somewhere,Online Banking\n\
+              2026-02-03,2026-02-02,\"POINT OF SALE PURCHASE - GROCERY WAREHOUSE #2281 TORONTO ON\",5411,000000000418277342,164.72,,3938.16,CAD,1.0000,Bank of Somewhere,Debit Card\n\
+              2026-02-14,2026-02-14,\"INCOMING WIRE TRANSFER - PAYROLL DEPOSIT FEBRUARY\",0000,000000000418277343,,3200.00,7138.16,CAD,1.0000,Bank of Somewhere,Wire\n"
                 .to_vec(),
         )
     } else if sha256 == c {

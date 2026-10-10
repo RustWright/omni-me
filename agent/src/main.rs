@@ -22,9 +22,11 @@
 mod ask;
 mod bench;
 mod extraction_bench;
+mod index_refresh;
 mod reading_bench;
 mod responder;
 mod retrieval_bench;
+mod review_bench;
 mod structuring_bench;
 mod transcription_bench;
 
@@ -33,6 +35,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use omni_me_core::config::{ConfigKey, ConfigMap, ConfigValue, ResolvedConfig};
+use omni_me_core::credentials::LlmRole;
 use omni_me_core::db::{self, Database};
 use omni_me_core::events::{
     AssistantQuestionAskedPayload, EventStore, EventWriter, NewEvent, ProjectionRunner,
@@ -256,6 +259,12 @@ struct Args {
     /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
     bench_transcription: bool,
 
+    /// Score role B on its own job: the scheduled belief review, against beliefs
+    /// seeded with `scripts/seed-bench-hub.py --with-beliefs`.
+    ///
+    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    bench_review: bool,
+
     /// Author a question event, then exit — a stand-in for the client.
     ///
     /// Distinct from [`Args::ask`] in the thing that matters: that one calls the
@@ -286,6 +295,7 @@ fn parse_args() -> Result<Args, String> {
         bench_structuring: false,
         bench_reading: false,
         bench_transcription: false,
+        bench_review: false,
         ask_event: None,
         thread: None,
     };
@@ -300,6 +310,7 @@ fn parse_args() -> Result<Args, String> {
             "--bench-structuring" => args.bench_structuring = true,
             "--bench-reading" => args.bench_reading = true,
             "--bench-transcription" => args.bench_transcription = true,
+            "--bench-review" => args.bench_review = true,
             "--constrained" => args.constrained = true,
             "--reindex" => args.reindex = true,
             "--ask" => {
@@ -369,6 +380,17 @@ fn parse_args() -> Result<Args, String> {
     {
         return Err("--bench-transcription is its own run; pick one".to_string());
     }
+    if args.bench_review
+        && (args.bench
+            || args.bench_retrieval
+            || args.bench_extraction
+            || args.bench_structuring
+            || args.bench_reading
+            || args.bench_transcription
+            || args.ask.is_some())
+    {
+        return Err("--bench-review is its own run; pick one".to_string());
+    }
     // With `--bench` this means **bench the constrained arm only**, and it is
     // deliberate rather than a mistake: some endpoints offer `response_format`
     // and no `tools` parameter at all, so the free-form arm cannot be run there
@@ -398,7 +420,8 @@ fn parse_args() -> Result<Args, String> {
             || args.bench_extraction
             || args.bench_structuring
             || args.bench_reading
-            || args.bench_transcription)
+            || args.bench_transcription
+            || args.bench_review)
     {
         return Err("--ask-event is its own run; pick one".to_string());
     }
@@ -425,8 +448,21 @@ fn server_url_policy() -> ServerUrlPolicy<'static> {
     }
 }
 
-#[tokio::main]
-async fn main() {
+/// Built by hand rather than with `#[tokio::main]`: the database engine needs a
+/// worker stack larger than tokio's default, and this binary is where that was
+/// first proven — it aborted on its first answer-loop tick without it.
+fn main() {
+    let runtime = match omni_me_core::async_runtime::build() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("could not start the async runtime: {e}");
+            std::process::exit(1);
+        }
+    };
+    runtime.block_on(run_agent());
+}
+
+async fn run_agent() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -467,9 +503,20 @@ async fn main() {
     // Above `run` for the same reason: this one scores documents against a CSV
     // twin and needs credentials and a corpus, never the agent's own database.
     if args.bench_extraction {
-        match load_credentials() {
-            Ok(creds) => {
-                extraction_bench::run(omni_me_core::llm::build_extractor(&creds).as_ref()).await;
+        match load_credentials().and_then(|c| Ok((c, client_options_from_env()?))) {
+            Ok((creds, options)) => {
+                if let Err(e) =
+                    privacy_preflight(&creds, &options, LlmRole::Extractor, "--bench-extraction")
+                {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                }
+                let sampling = bench_sampling(&creds, &options, LlmRole::Extractor);
+                extraction_bench::run(
+                    omni_me_core::llm::build_extractor(&creds, options).as_ref(),
+                    sampling,
+                )
+                .await;
             }
             Err(e) => {
                 eprintln!("{e}");
@@ -483,14 +530,15 @@ async fn main() {
     // role explicitly is what `build_llm_client` requires, and it is why a
     // structurer override cannot be silently ignored here.
     if args.bench_structuring {
-        match load_credentials() {
-            Ok(creds) => {
+        match load_credentials().and_then(|c| Ok((c, client_options_from_env()?))) {
+            Ok((creds, options)) => {
+                let sampling = bench_sampling(&creds, &options, LlmRole::Structurer);
                 let llm = omni_me_core::llm::build_llm_client(
                     &creds,
-                    omni_me_core::llm::ClientOptions::default(),
+                    options,
                     omni_me_core::credentials::LlmRole::Structurer,
                 );
-                structuring_bench::run(llm.as_ref()).await;
+                structuring_bench::run(llm.as_ref(), sampling).await;
             }
             Err(e) => {
                 eprintln!("{e}");
@@ -500,14 +548,15 @@ async fn main() {
         return;
     }
 
-    // Role C2, on role C's endpoint. `build_reader` answers `None` rather than a
+    // Role C2, on the [llm.reader] seat. `build_reader` answers `None` rather than a
     // null object, so an unconfigured run has nothing to mistake for a model
     // that answered badly — the bench still prints its plan, then refuses.
     if args.bench_reading {
-        match load_credentials() {
-            Ok(creds) => {
-                let reader = omni_me_core::llm::build_reader(&creds);
-                reading_bench::run(reader.as_deref()).await;
+        match load_credentials().and_then(|c| Ok((c, client_options_from_env()?))) {
+            Ok((creds, options)) => {
+                let sampling = bench_sampling(&creds, &options, LlmRole::Reader);
+                let reader = omni_me_core::llm::build_reader(&creds, options);
+                reading_bench::run(reader.as_deref(), sampling).await;
             }
             Err(e) => {
                 eprintln!("{e}");
@@ -517,13 +566,23 @@ async fn main() {
         return;
     }
 
-    // Role C3, on role C's endpoint again. Needs the corpus on disk but never
+    // Role C3, on the [llm.transcriber] seat. Needs the corpus on disk but never
     // the agent's database — the answer key is inside each file.
     if args.bench_transcription {
-        match load_credentials() {
-            Ok(creds) => {
-                let t = omni_me_core::llm::build_transcriber(&creds);
-                transcription_bench::run(t.as_deref()).await;
+        match load_credentials().and_then(|c| Ok((c, client_options_from_env()?))) {
+            Ok((creds, options)) => {
+                if let Err(e) = privacy_preflight(
+                    &creds,
+                    &options,
+                    LlmRole::Transcriber,
+                    "--bench-transcription",
+                ) {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                }
+                let sampling = bench_sampling(&creds, &options, LlmRole::Transcriber);
+                let t = omni_me_core::llm::build_transcriber(&creds, options);
+                transcription_bench::run(t.as_deref(), sampling, &creds.pdf_passwords()).await;
             }
             Err(e) => {
                 eprintln!("{e}");
@@ -546,6 +605,11 @@ async fn main() {
 struct AssistantLlms {
     interactive: std::sync::Arc<dyn omni_me_core::llm::LlmClient>,
     batch: std::sync::Arc<dyn omni_me_core::llm::LlmClient>,
+    /// What role A will send, for the one caller that has to print it: the slate's
+    /// header. Carried here rather than re-derived, so the header cannot describe a
+    /// different resolution from the client beside it.
+    interactive_sampling: omni_me_core::llm::Sampling,
+    batch_sampling: omni_me_core::llm::Sampling,
 }
 
 /// Build both assistant clients from `[llm]` and its per-role overrides.
@@ -555,8 +619,35 @@ struct AssistantLlms {
 /// a config selects.
 fn build_assistant_llms() -> Result<AssistantLlms, String> {
     let creds = load_credentials()?;
+    let options = client_options_from_env()?;
 
-    let options = omni_me_core::llm::ClientOptions {
+    let interactive_sampling = bench_sampling(&creds, &options, LlmRole::Interactive);
+    let batch_sampling = bench_sampling(&creds, &options, LlmRole::Batch);
+    Ok(AssistantLlms {
+        interactive: omni_me_core::llm::build_llm_client(
+            &creds,
+            options.clone(),
+            omni_me_core::credentials::LlmRole::Interactive,
+        ),
+        batch: omni_me_core::llm::build_llm_client(
+            &creds,
+            options,
+            omni_me_core::credentials::LlmRole::Batch,
+        ),
+        interactive_sampling,
+        batch_sampling,
+    })
+}
+
+/// The per-run endpoint options this process was started with.
+///
+/// ⛔ Shared by every seat, and that is the point. Until 2026-09-27 only roles A
+/// and B were given these, so the bench's upstream pin, `require_parameters` and
+/// the `zdr` / `data_collection: "deny"` terms were applied to the chat seats and
+/// to no document request at all — `MODEL_BENCH.md` R27. A seat built without
+/// them is a seat measured against a stack nobody chose.
+fn client_options_from_env() -> Result<omni_me_core::llm::ClientOptions, String> {
+    Ok(omni_me_core::llm::ClientOptions {
         extra_body: match std::env::var(LLM_EXTRA_BODY_ENV) {
             Ok(raw) => Some(
                 serde_json::from_str(&raw)
@@ -571,20 +662,67 @@ fn build_assistant_llms() -> Result<AssistantLlms, String> {
             )),
             Err(_) => None,
         },
-    };
-
-    Ok(AssistantLlms {
-        interactive: omni_me_core::llm::build_llm_client(
-            &creds,
-            options.clone(),
-            omni_me_core::credentials::LlmRole::Interactive,
-        ),
-        batch: omni_me_core::llm::build_llm_client(
-            &creds,
-            options,
-            omni_me_core::credentials::LlmRole::Batch,
-        ),
     })
+}
+
+/// Refuse a corpus-reading bench that would send real documents through a gateway
+/// with nothing attached about what may be done with them.
+///
+/// ⛔ R27: the privacy terms travel in `extra_body`, and until 2026-09-27 role C's
+/// builders took no options — so every `--bench-extraction` and
+/// `--bench-transcription` run sent real statements through OpenRouter with neither
+/// `zdr` nor `data_collection: "deny"`. The plumbing is fixed; this is the guard
+/// against the same omission arriving by a different route, such as an
+/// `OMNI_AGENT_LLM_EXTRA_BODY` that overwrites the default object and drops them.
+///
+/// ⚠️ Keyed on the gateway's hostname, and that is a real limitation rather than a
+/// shortcut: `zdr` and `data_collection` are OpenRouter's request vocabulary, and a
+/// direct provider ignores them — its guarantee comes from its own policy plus the
+/// open-weights refusal. So a second gateway needs its name added here, and the
+/// guard says so when it passes rather than staying silent.
+fn privacy_preflight(
+    creds: &omni_me_core::credentials::Credentials,
+    options: &omni_me_core::llm::ClientOptions,
+    role: LlmRole,
+    arm: &str,
+) -> Result<(), String> {
+    /// The one gateway this project screens through. See the note above.
+    const GATEWAYS: [&str; 1] = ["openrouter.ai"];
+
+    let Some(cfg) = creds.llm.as_ref().map(|c| c.for_role(role)) else {
+        return Ok(());
+    };
+    let base_url = cfg.base_url.unwrap_or_default().to_lowercase();
+    if !GATEWAYS.iter().any(|g| base_url.contains(g)) {
+        return Ok(());
+    }
+
+    let terms = options
+        .extra_body
+        .as_ref()
+        .is_some_and(|extra| extra.get("data_collection").is_some() || extra.get("zdr").is_some());
+    if terms {
+        return Ok(());
+    }
+    Err(format!(
+        "{arm} reads the real corpus, and this run would send it through a gateway with \
+         no `zdr` or `data_collection` term attached (MODEL_BENCH.md R27). Set them in \
+         {LLM_EXTRA_BODY_ENV} — scripts/bench-openrouter.sh does, in the same object as \
+         the upstream pin. Refusing rather than sending your statements on unstated terms."
+    ))
+}
+
+/// What this run will actually sample at, for the scorecard's own header.
+///
+/// Folds the run's `extra_body` over the seat's configured sampling, because that
+/// is the order the client applies them in. A header printed from the config alone
+/// would name a temperature the request did not carry.
+fn bench_sampling(
+    creds: &omni_me_core::credentials::Credentials,
+    options: &omni_me_core::llm::ClientOptions,
+    role: LlmRole,
+) -> omni_me_core::llm::Sampling {
+    omni_me_core::llm::resolved_sampling(creds, role).with_overrides(options.extra_body.as_ref())
 }
 
 /// Load credentials and apply any environment redirect.
@@ -640,6 +778,8 @@ fn load_credentials() -> Result<omni_me_core::credentials::Credentials, String> 
         llm.interactive = None;
         llm.batch = None;
         llm.extractor = None;
+        llm.reader = None;
+        llm.transcriber = None;
         llm.structurer = None;
         // The model, never the key or the URL — a base URL can carry a key.
         tracing::info!(model = ?llm.model, "LLM endpoint overridden by environment");
@@ -869,11 +1009,16 @@ async fn run(args: Args) -> Result<(), String> {
     // rather than starting the schedulers. They pull once first: asking about
     // records this device has not seen would answer "not there" for data that
     // exists, which looks like a retrieval failure and is not one.
-    if args.ask.is_some() || args.bench {
+    if args.ask.is_some() || args.bench || args.bench_review {
         match sync_client.pull_only(&db).await {
             Ok(outcome) => {
                 tracing::info!(pulled = outcome.pulled, "pull before diagnostics");
-                if let Err(e) = projections.init_all().await {
+                let caught_up = if outcome.wiped > 0 {
+                    projections.rebuild().await
+                } else {
+                    projections.init_all().await
+                };
+                if let Err(e) = caught_up {
                     tracing::warn!(error = %e, "could not project the pulled events");
                 }
             }
@@ -883,9 +1028,10 @@ async fn run(args: Args) -> Result<(), String> {
             Err(e) => tracing::warn!(error = %e, "pull failed; answering from local data only"),
         }
 
-        // Interactive only: this branch answers one question and exits, so the
-        // batch client would be built and never called.
-        let llm = build_assistant_llms()?.interactive;
+        // Interactive, except `--bench-review`, which measures the batch seat.
+        let llms = build_assistant_llms()?;
+        let sampling = llms.interactive_sampling;
+        let llm = llms.interactive;
         tracing::info!(model = llm.model_name(), "assistant model");
         // Built here rather than in a helper: `Retrievers` borrows both services,
         // so a function returning one would be returning references to its own
@@ -918,8 +1064,17 @@ async fn run(args: Args) -> Result<(), String> {
                 retrievers,
             )
             .await;
+        } else if args.bench_review {
+            review_bench::run(
+                &db,
+                &config,
+                llms.batch.as_ref(),
+                llms.batch_sampling,
+                retrievers,
+            )
+            .await;
         } else {
-            bench::run(&db, &config, llm.as_ref(), args.constrained).await;
+            bench::run(&db, &config, llm.as_ref(), args.constrained, sampling).await;
         }
         return Ok(());
     }
@@ -1006,8 +1161,19 @@ async fn run(args: Args) -> Result<(), String> {
         retrievers,
         horizon,
     };
-    match responder.run(&pull_scheduler).await {
-        responder::Stopped::Interrupted => Ok(()),
+    // Beside the responder rather than spawned: both borrow the embedder, which
+    // lives in this scope. Only the responder ends the agent.
+    let refresh = async {
+        match embedder.as_ref() {
+            Some(e) => index_refresh::run(&db, &config, e, &pull_scheduler).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        stopped = responder.run(&pull_scheduler) => match stopped {
+            responder::Stopped::Interrupted => Ok(()),
+        },
+        () = refresh => Ok(()),
     }
 }
 
@@ -1192,4 +1358,103 @@ async fn learn_config(db: &Database, client: &SyncClient) -> Result<ResolvedConf
         tracing::info!("log carries no config events; default features apply");
     }
     Ok(resolve(global))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use omni_me_core::credentials::{Credentials, LlmProviderConfig};
+
+    fn creds_for(base_url: &str) -> Credentials {
+        Credentials {
+            llm: Some(LlmProviderConfig {
+                provider: "openai_compatible".to_string(),
+                base_url: Some(base_url.to_string()),
+                model: Some("some/model".to_string()),
+                vision: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn options_with(extra: Option<serde_json::Value>) -> omni_me_core::llm::ClientOptions {
+        omni_me_core::llm::ClientOptions {
+            extra_body: extra,
+            min_interval: None,
+        }
+    }
+
+    /// R27, as a guard: the corpus must not go through a gateway on unstated terms.
+    #[test]
+    fn a_gateway_run_without_privacy_terms_is_refused() {
+        let err = privacy_preflight(
+            &creds_for("https://openrouter.ai/api/v1"),
+            &options_with(Some(serde_json::json!({
+                "provider": { "only": ["deepinfra/fp4"] }
+            }))),
+            LlmRole::Extractor,
+            "--bench-extraction",
+        )
+        .unwrap_err();
+        assert!(err.contains("R27"), "{err}");
+        assert!(
+            err.contains(LLM_EXTRA_BODY_ENV),
+            "must say how to fix it: {err}"
+        );
+    }
+
+    #[test]
+    fn the_terms_being_present_is_enough_to_proceed() {
+        for extra in [
+            serde_json::json!({ "provider": { "zdr": true } , "zdr": true }),
+            serde_json::json!({ "data_collection": "deny" }),
+        ] {
+            assert!(
+                privacy_preflight(
+                    &creds_for("https://openrouter.ai/api/v1"),
+                    &options_with(Some(extra)),
+                    LlmRole::Extractor,
+                    "--bench-extraction",
+                )
+                .is_ok()
+            );
+        }
+    }
+
+    /// ⚠️ A direct provider is not held to this: `zdr` and `data_collection` are a
+    /// gateway's vocabulary, and the direct guarantee is the provider's own policy
+    /// plus the open-weights refusal. Refusing here would be theatre.
+    #[test]
+    fn a_direct_endpoint_needs_no_per_request_terms() {
+        for url in [
+            "https://api.deepinfra.com/v1/openai",
+            "http://localhost:11434/v1",
+        ] {
+            assert!(
+                privacy_preflight(
+                    &creds_for(url),
+                    &options_with(None),
+                    LlmRole::Extractor,
+                    "--bench-extraction",
+                )
+                .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn an_unconfigured_run_is_not_the_guards_business() {
+        // Nothing will be sent, so there is nothing to protect — and refusing here
+        // would report a missing endpoint as a privacy failure.
+        assert!(
+            privacy_preflight(
+                &Credentials::default(),
+                &options_with(None),
+                LlmRole::Extractor,
+                "--bench-extraction",
+            )
+            .is_ok()
+        );
+    }
 }

@@ -38,9 +38,15 @@ pub enum VectorError {
 /// identical otherwise.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct SweepReport {
+    /// Every record looked at; equal to `embedded + skipped + hidden + empty`.
     pub scanned: usize,
     pub embedded: usize,
     pub skipped: usize,
+    /// Hidden records, whose chunks are deleted rather than kept current.
+    pub hidden: usize,
+    /// Records with no text to embed.
+    pub empty: usize,
+    /// Chunks deleted, counted per chunk rather than per record.
     pub removed: usize,
     /// Types that could not be swept at all, counted rather than swallowed.
     pub failed: usize,
@@ -67,7 +73,7 @@ pub async fn init_schema(db: &Database, dim: usize) -> Result<(), DbError> {
          DEFINE INDEX IF NOT EXISTS idx_re_hnsw ON {TABLE}
              FIELDS vector HNSW DIMENSION {dim} DISTANCE COSINE TYPE F32 EFC 150 M 12;"
     );
-    db.query(&sql).await?;
+    db.query(&sql).await?.check()?;
     Ok(())
 }
 
@@ -169,17 +175,49 @@ async fn sweep_one(
     );
     let mut resp = db.query(&sql).await.map_err(DbError::from)?;
     let rows: Vec<SourceRow> = resp.take(0).map_err(DbError::from)?;
+    let text_bytes: usize = rows
+        .iter()
+        .filter_map(|r| r.text.as_ref())
+        .map(String::len)
+        .sum();
+    tracing::info!(
+        record_type = entry.name,
+        rows = rows.len(),
+        text_bytes,
+        "sweeping"
+    );
+    let scanned_before = report.scanned;
+
+    // ⚠️ Collected because the scan above is the only thing that knows which
+    // records still exist, and the prune below needs exactly that set. Safe only
+    // because the query is unpaged: under a LIMIT this would read every record
+    // beyond the page as deleted and drop live vectors.
+    let mut live: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(rows.len());
 
     for row in rows {
         let Some(record_id) = row.id else { continue };
+        live.insert(record_id.clone());
         let text = row.text.unwrap_or_default();
         report.scanned += 1;
+        // A full sweep runs for hours on a small host; without this its memory
+        // cannot be tied to the type or position it was at.
+        let done = report.scanned - scanned_before;
+        if done.is_multiple_of(500) {
+            tracing::info!(
+                record_type = entry.name,
+                done,
+                embedded = report.embedded,
+                "sweep progress"
+            );
+        }
 
         // ⛔ Before `is_current`, not after. A hidden row that was indexed while
         // visible still has its original text, so its hash still matches and
         // `is_current` would report it up to date and skip it — leaving the chunks
         // in place. Hiding has to win over freshness.
         if row.hidden {
+            report.hidden += 1;
             report.removed += delete_chunks(db, entry.name, &record_id).await?;
             continue;
         }
@@ -198,6 +236,7 @@ async fn sweep_one(
 
         let chunks = chunk::chunk(&text);
         if chunks.is_empty() {
+            report.empty += 1;
             continue;
         }
         let vectors = embedder.embed_passages(chunks.clone()).await?;
@@ -216,7 +255,40 @@ async fn sweep_one(
         }
         report.embedded += 1;
     }
+
+    // ⛔ Records that no longer exist at all, which the loop above can never
+    // reach: it iterates what is there, so a deleted record simply produces no
+    // row and its chunks are never visited.
+    //
+    // Left in place they are not merely wasted index — `retrieval::describe`
+    // takes a semantic hit's snippet from the *stored* chunk text rather than
+    // re-reading the record, and fills the handle from a live lookup that comes
+    // back empty. So a deleted record keeps ranking, and its text is handed to
+    // the model as a current result. A scoped wipe of finances is exactly this
+    // case: the events go, the projection empties, and every transaction stays
+    // searchable by its own words.
+    for stale in embedded_ids(db, entry.name).await? {
+        if !live.contains(&stale) {
+            report.removed += delete_chunks(db, entry.name, &stale).await?;
+        }
+    }
     Ok(())
+}
+
+/// Every record id this type currently has chunks for.
+async fn embedded_ids(db: &Database, record_type: &str) -> Result<Vec<String>, DbError> {
+    #[derive(Debug, SurrealValue)]
+    struct IdRow {
+        record_id: String,
+    }
+    let mut resp = db
+        .query(format!(
+            "SELECT record_id FROM {TABLE} WHERE record_type = $t GROUP BY record_id"
+        ))
+        .bind(("t", record_type.to_string()))
+        .await?;
+    let rows: Vec<IdRow> = resp.take(0)?;
+    Ok(rows.into_iter().map(|r| r.record_id).collect())
 }
 
 /// Is this record already indexed, under this exact text and this exact model?
@@ -292,7 +364,8 @@ async fn insert_chunk(
         .bind(("h", hash.to_string()))
         .bind(("m", model.to_string()))
         .bind(("v", vector))
-        .await?;
+        .await?
+        .check()?;
     Ok(())
 }
 
@@ -459,14 +532,11 @@ mod tests {
     }
 
     async fn test_db(dim: usize) -> Database {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("vec.db");
-        let db = crate::db::connect(path.to_str().unwrap()).await.unwrap();
+        let db = crate::db::test_db().await;
         NotesProjection.init_schema(&db).await.unwrap();
         RoutinesProjection.init_schema(&db).await.unwrap();
         DocumentsProjection.init_schema(&db).await.unwrap();
         init_schema(&db, dim).await.unwrap();
-        std::mem::forget(dir);
         db
     }
 
@@ -521,6 +591,11 @@ mod tests {
 
         let report = sweep(&db, &config(), embedder).await.unwrap();
         assert_eq!(report.embedded, 2, "{report:?}");
+        assert_eq!(
+            report.scanned,
+            report.embedded + report.skipped + report.hidden + report.empty,
+            "every scanned record lands in exactly one count: {report:?}"
+        );
 
         let hits = knn_search(&db, &config(), embedder, "rent increase", 2)
             .await
@@ -547,6 +622,52 @@ mod tests {
         let second = sweep(&db, &config(), embedder).await.unwrap();
         assert_eq!(second.embedded, 0, "re-embedded unchanged text: {second:?}");
         assert_eq!(second.skipped, 1, "{second:?}");
+    }
+
+    /// A record that is deleted outright must leave the index with it.
+    ///
+    /// ⚠️ This is the wipe's case, and it is not the shrinking one below: there
+    /// the record still exists and the sweep visits it. Here it is gone, so the
+    /// scan produces no row for it and nothing in the per-record path can ever
+    /// run. Without the prune its chunks stay, keep ranking, and
+    /// `retrieval::describe` serves their stored text as a current result —
+    /// which is a wiped record answering a search in its own words.
+    #[tokio::test]
+    async fn a_deleted_record_does_not_stay_searchable() {
+        let embedder = shared_embedder();
+        let db = test_db(embedder.dim()).await;
+        seed_note(
+            &db,
+            "01JKVEC0000000000000000009",
+            "Gone",
+            "the landlord raised the rent again this spring",
+        )
+        .await;
+        sweep(&db, &config(), embedder).await.unwrap();
+        assert!(
+            count_chunks(&db).await > 0,
+            "nothing was indexed to begin with"
+        );
+
+        // Straight out of the projection table, which is what a projection
+        // rebuild after a scoped wipe leaves behind.
+        db.query("DELETE FROM generic_notes").await.unwrap();
+
+        let report = sweep(&db, &config(), embedder).await.unwrap();
+        assert!(report.removed > 0, "pruned nothing: {report:?}");
+        assert_eq!(
+            count_chunks(&db).await,
+            0,
+            "the deleted record's vectors outlived it"
+        );
+
+        let hits = knn_search(&db, &config(), embedder, "rent increase", 5)
+            .await
+            .unwrap();
+        assert!(
+            hits.is_empty(),
+            "a deleted record still answers a search: {hits:?}"
+        );
     }
 
     /// Editing a long record down to a short one must not strand the vanished
@@ -579,10 +700,7 @@ mod tests {
         let embedder = shared_embedder();
         // Deliberately only the tables `NotesProjection` defines; every other
         // visible type's table is absent.
-        let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::connect(dir.path().join("v.db").to_str().unwrap())
-            .await
-            .unwrap();
+        let db = crate::db::test_db().await;
         NotesProjection.init_schema(&db).await.unwrap();
         init_schema(&db, embedder.dim()).await.unwrap();
         seed_note(&db, "01JKVEC0000000000000000005", "A", "a quiet day").await;
