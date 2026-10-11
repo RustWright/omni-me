@@ -1467,6 +1467,19 @@ Assistant capability run on the S9 (2026-10-11), 13 requests, all actions he gra
   then steps needs two turns (steps need the routine's id). No weekday frequency exists.
 - ⚠️ R3-11 A research-then-write request ("note with three books from my journal") spent all
   10 turns searching and returned an empty answer.
+Belief prompts, drafted for him to pick from (beliefs stay ask-only; each says to weight the
+last 12 months, after his 10-04 rejection of a belief that weighed 2022 like 2026). Topics
+from the assistant's own count of his journal (the list is kept out of this public file).
+1. What kind of work energizes me and what drains me?
+2. What keeps me going in training when it gets hard, and what stops me?
+3. What tends to come before my hardest stretches?
+4. How do I talk about the people closest to me, and has it changed?
+5. What do I reach for when I'm bored or frustrated, and does it help?
+6. What am I trying to learn, judging by what I read and listen to?
+7. What do my good weeks have in common?
+8. What have I said I want my life to look like in a few years, and has it stayed consistent?
+Each to be asked as: "<question> Weight the last 12 months most. Record it as a belief only
+if the evidence is consistent."
 Dev data the run created: routine "Weekday Morning" (6 steps, today's completions/skip),
 note "Assistant test (renamed)", belief on exercise, one Uber categorized/tagged, a pending
 supersede of a test belief.
