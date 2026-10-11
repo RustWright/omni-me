@@ -4,7 +4,7 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — assistant build order (R4-3 ruling), step 1 baseline then step 2
+## ▶ NEXT ACTION — assistant build order (R4-3 ruling): bench steps 2-6, then step 7
 Order and rulings: `tasks.md` § "Round 4 early feedback" (R4-2, R4-3, R4-4). Baseline 25/36.
 Steps 2-6 built; bench them (`--bench-cases`, agent `f3de10e`, on a copy of the dev agent
 volume, dev agent stopped meanwhile), then deploy, then step 7 (stronger open-weights models
@@ -16,7 +16,7 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 Dev workflows: `--ref dev/untested-overlay`. Dev actions need no permission; live ones do.
 
 ## ⛔ Waiting on him
-- **Round 4 of the phone test** (1.1.31-dev). `tasks.md` § round 4 checklist.
+- **Round 4 of the phone test** (now 1.1.32-dev). `tasks.md` § round 4 checklist.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The official finances import**: go-live sequence, after the merge. Gate 1 (live backup) first.
