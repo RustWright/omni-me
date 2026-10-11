@@ -943,8 +943,9 @@ mod tests {
             proposals.push((
                 format!("p-i{i}"),
                 "routine.add_item",
+                // A model-sent position must be overwritten at approval.
                 serde_json::json!({ "group_id": "GROUP", "name": name,
-                                    "estimated_duration_min": "10" }),
+                                    "estimated_duration_min": "10", "order": "0" }),
             ));
         }
         for (id, action, args) in proposals {

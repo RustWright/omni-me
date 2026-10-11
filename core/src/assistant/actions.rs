@@ -2286,8 +2286,13 @@ mod tests {
     #[test]
     fn placement_is_not_something_the_model_supplies() {
         for action in [&ROUTINE_CREATE, &ROUTINE_ADD_ITEM] {
+            // `routine.add_item` declares one, resolved at approval and inserted
+            // over whatever the model sent; the model still never chooses it.
             assert!(
-                !action.params.iter().any(|p| p.key == "order"),
+                !action
+                    .params
+                    .iter()
+                    .any(|p| p.key == "order" && p.source != ParamSource::ResolvedAtApproval),
                 "{} must not ask the model for a position",
                 action.name
             );
