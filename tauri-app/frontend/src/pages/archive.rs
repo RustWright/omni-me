@@ -1500,6 +1500,101 @@ fn FieldPanel(doc: DocumentItem, on_saved: EventHandler<()>) -> Element {
                     on_saved: move |_| on_saved.call(()),
                 }
             }
+            if !purged {
+                AddFieldRow {
+                    document_id: doc.document_id.clone(),
+                    on_saved: move |_| on_saved.call(()),
+                }
+            }
+        }
+    }
+}
+
+/// A value the reader missed, typed by the person: the counterpart of Remove.
+/// It goes through the same correction path, so it lands as a checked human value.
+#[component]
+fn AddFieldRow(document_id: String, on_saved: EventHandler<()>) -> Element {
+    let mut open = use_signal(|| false);
+    let mut key = use_signal(String::new);
+    let mut value = use_signal(String::new);
+    let mut error: Signal<Option<String>> = use_signal(|| None);
+    let mut saving = use_signal(|| false);
+    let sync_epoch = crate::sync_refresh::use_sync_epoch();
+
+    let save = move |_| {
+        let k = key.read().trim().to_string();
+        let v = value.read().trim().to_string();
+        if k.is_empty() || v.is_empty() {
+            error.set(Some("give the value a name and a value".into()));
+            return;
+        }
+        // Tags have their own panel; a typed `tags` row would bypass normalizing.
+        if k.eq_ignore_ascii_case(TAGS_FIELD_KEY) {
+            error.set(Some("add tags under Tags above".into()));
+            return;
+        }
+        let id = document_id.clone();
+        saving.set(true);
+        spawn(async move {
+            match bridge::invoke_correct_document_field(&id, &k, &v).await {
+                Ok(()) => {
+                    key.set(String::new());
+                    value.set(String::new());
+                    error.set(None);
+                    open.set(false);
+                    crate::sync_refresh::bump_sync_epoch(sync_epoch);
+                    on_saved.call(());
+                }
+                Err(e) => error.set(Some(e)),
+            }
+            saving.set(false);
+        });
+    };
+
+    rsx! {
+        if *open.read() {
+            div { class: "p-2.5 rounded-lg bg-obsidian-sidebar/40 border border-obsidian-accent/30 space-y-1.5",
+                input {
+                    placeholder: "Name, e.g. Policy number",
+                    value: "{key}",
+                    oninput: move |e| key.set(e.value()),
+                    class: "w-full px-2 py-1 text-sm rounded bg-obsidian-bg border \
+                            border-obsidian-border/20 text-obsidian-text focus:outline-none",
+                }
+                input {
+                    placeholder: "Value",
+                    value: "{value}",
+                    oninput: move |e| value.set(e.value()),
+                    class: "w-full px-2 py-1 text-sm rounded bg-obsidian-bg border \
+                            border-obsidian-border/20 text-obsidian-text focus:outline-none",
+                }
+                div { class: "flex gap-1.5",
+                    button {
+                        onclick: save,
+                        disabled: *saving.read(),
+                        class: "px-2 py-1 text-[11px] rounded bg-obsidian-accent text-black \
+                                font-medium disabled:opacity-50",
+                        if *saving.read() { "Saving…" } else { "Add" }
+                    }
+                    button {
+                        onclick: move |_| {
+                            open.set(false);
+                            error.set(None);
+                        },
+                        class: "px-2 py-1 text-[11px] rounded text-obsidian-text-muted hover:text-obsidian-text",
+                        "Cancel"
+                    }
+                }
+                if let Some(msg) = error.read().clone() {
+                    p { class: "text-[11px] text-red-300", "{msg}" }
+                }
+            }
+        } else {
+            button {
+                onclick: move |_| open.set(true),
+                class: "text-xs text-obsidian-text-muted hover:text-obsidian-accent",
+                "+ Add a value"
+            }
         }
     }
 }
