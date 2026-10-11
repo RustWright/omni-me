@@ -180,6 +180,9 @@ pub struct Usage {
     /// routinely the *majority* of it. Folding it into `completion_tokens` hides
     /// where the money and the latency actually went.
     pub reasoning_tokens: u32,
+    /// Prompt tokens the provider served from its prefix cache, billed at a
+    /// fraction of the rest. Inside `prompt_tokens`, not added to it.
+    pub cached_tokens: u32,
     pub total_tokens: u32,
 }
 
@@ -191,6 +194,9 @@ impl Usage {
             prompt_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             completion_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
             reasoning_tokens: usage["completion_tokens_details"]["reasoning_tokens"]
+                .as_u64()
+                .unwrap_or(0) as u32,
+            cached_tokens: usage["prompt_tokens_details"]["cached_tokens"]
                 .as_u64()
                 .unwrap_or(0) as u32,
             total_tokens: usage["total_tokens"].as_u64().unwrap_or(0) as u32,
@@ -211,6 +217,7 @@ impl std::ops::Add for Usage {
             prompt_tokens: self.prompt_tokens + other.prompt_tokens,
             completion_tokens: self.completion_tokens + other.completion_tokens,
             reasoning_tokens: self.reasoning_tokens + other.reasoning_tokens,
+            cached_tokens: self.cached_tokens + other.cached_tokens,
             total_tokens: self.total_tokens + other.total_tokens,
         }
     }

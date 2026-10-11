@@ -850,12 +850,14 @@ mod tests {
             prompt_tokens: 100,
             completion_tokens: 40,
             reasoning_tokens: 30,
+            cached_tokens: 0,
             total_tokens: 140,
         };
         let b = Usage {
             prompt_tokens: 200,
             completion_tokens: 10,
             reasoning_tokens: 5,
+            cached_tokens: 0,
             total_tokens: 210,
         };
         let summed: Usage = [a, b].into_iter().sum();

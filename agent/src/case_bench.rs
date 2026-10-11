@@ -414,6 +414,7 @@ pub async fn run(
 
     let (mut passed, mut total) = (0usize, 0usize);
     let mut tokens = 0u64;
+    let mut cached = 0u64;
     for case in CASES {
         let mut case_passes = 0;
         for run in 1..=repeats {
@@ -435,6 +436,7 @@ pub async fn run(
             let outcome = session.ask(case.request).await;
             tokens +=
                 u64::from(outcome.usage.prompt_tokens) + u64::from(outcome.usage.completion_tokens);
+            cached += u64::from(outcome.usage.cached_tokens);
             let made = proposals(&outcome);
             let failures: Vec<String> = UNIVERSAL
                 .iter()
@@ -472,7 +474,8 @@ pub async fn run(
         total += repeats;
     }
     println!(
-        "\n{passed}/{total} runs passed every check ({:.0}%) · {tokens} tokens",
+        "\n{passed}/{total} runs passed every check ({:.0}%) · {tokens} tokens, {cached} of \
+         the prompt served from the provider's cache",
         100.0 * passed as f64 / total.max(1) as f64
     );
 }

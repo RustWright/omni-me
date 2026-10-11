@@ -262,6 +262,7 @@ mod tests {
                 prompt_tokens: 900,
                 completion_tokens: 40,
                 reasoning_tokens: 700,
+                cached_tokens: 0,
                 total_tokens: 1640,
             },
             elapsed: Duration::from_millis(8400),

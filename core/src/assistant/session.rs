@@ -380,7 +380,9 @@ impl<'a> Session<'a> {
             ),
             None => format!("{SYSTEM_PROMPT}{LOOP_RULES}"),
         };
-        let system = format!("{system}{}", today_line(self.config, chrono::Utc::now()));
+        // The brief before the date: the provider caches the longest unchanged
+        // prefix, and the date line changes every minute while a 44 KB brief
+        // does not.
         let system = if self.specialists {
             let who = super::specialist::route(self.llm, self.config, history, question).await;
             tracing::info!(specialist = ?who, "routed");
@@ -388,6 +390,7 @@ impl<'a> Session<'a> {
         } else {
             system
         };
+        let system = format!("{system}{}", today_line(self.config, chrono::Utc::now()));
         let mut messages = vec![ChatMessage::System(system)];
         for turn in history {
             messages.push(match turn.role {
@@ -913,6 +916,7 @@ mod tests {
                 prompt_tokens: 100,
                 completion_tokens: 10,
                 reasoning_tokens: 5,
+                cached_tokens: 0,
                 total_tokens: 110,
             },
             latency: Duration::from_millis(10),
@@ -929,6 +933,7 @@ mod tests {
                 prompt_tokens: 100,
                 completion_tokens: 20,
                 reasoning_tokens: 5,
+                cached_tokens: 0,
                 total_tokens: 125,
             },
             latency: Duration::from_millis(10),
