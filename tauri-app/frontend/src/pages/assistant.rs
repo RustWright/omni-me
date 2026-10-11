@@ -457,7 +457,7 @@ fn ProposalInbox(on_back: EventHandler<()>) -> Element {
                 Banner { kind: BannerKind::Error, "{e}" }
             }
 
-            div { class: "flex-1 px-4 py-3 flex flex-col gap-3",
+            div { class: "flex-1 py-3 flex flex-col gap-3",
                 if *loaded.read() && proposals.read().is_empty() {
                     div { class: "text-obsidian-text-muted text-sm py-8 text-center",
                         p { "Nothing waiting." }
@@ -526,7 +526,7 @@ fn MemoryView(on_back: EventHandler<()>) -> Element {
                 Banner { kind: BannerKind::Error, "{e}" }
             }
 
-            div { class: "px-4 pt-3",
+            div { class: "pt-3",
                 button {
                     class: "text-obsidian-text-muted text-xs underline cursor-pointer bg-transparent border-0 p-0",
                     onclick: move |_| show_retired.toggle(),
@@ -534,7 +534,7 @@ fn MemoryView(on_back: EventHandler<()>) -> Element {
                 }
             }
 
-            div { class: "flex-1 px-4 py-3 flex flex-col gap-3",
+            div { class: "flex-1 py-3 flex flex-col gap-3",
                 if *loaded.read() && snapshot.is_empty() {
                     div { class: "text-obsidian-text-muted text-sm py-8 text-center",
                         p { "It has not concluded anything about you." }
@@ -645,12 +645,12 @@ fn PermissionsView(on_back: EventHandler<()>) -> Element {
                 Banner { kind: BannerKind::Error, "{e}" }
             }
 
-            div { class: "px-4 pt-3 text-obsidian-text-muted text-xs",
+            div { class: "pt-3 text-obsidian-text-muted text-xs",
                 "The assistant asks before doing anything. You can let it stop asking \
                  about things it has got right, and take that back at any time."
             }
 
-            div { class: "flex-1 px-4 py-3 flex flex-col gap-3",
+            div { class: "flex-1 py-3 flex flex-col gap-3",
                 if *loaded.read() && snapshot.is_empty() {
                     div { class: "text-obsidian-text-muted text-sm py-8 text-center",
                         "There is nothing it can do yet."
@@ -834,7 +834,7 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
                 Banner { kind: BannerKind::Error, "{e}" }
             }
 
-            div { class: "flex-1 px-4 py-3 flex flex-col gap-3",
+            div { class: "flex-1 py-3 flex flex-col gap-3",
                 for message in messages.iter().cloned() {
                     MessageBubble { key: "{message.message_id}", message: message.clone() }
 

@@ -160,7 +160,7 @@ pub fn ArchivePage() -> Element {
         // No scroll of its own: the shell's scroll is what hides the top bar.
         div {
             if let Some(msg) = added_notice.read().clone() {
-                div { class: "mx-4 mt-3 px-3 py-2 rounded-md bg-obsidian-accent/10 border border-obsidian-accent/30 \
+                div { class: "mt-3 px-3 py-2 rounded-md bg-obsidian-accent/10 border border-obsidian-accent/30 \
                               text-sm text-obsidian-text flex items-start justify-between gap-2",
                     span { class: "min-w-0", "{msg}" }
                     button {
@@ -172,7 +172,7 @@ pub fn ArchivePage() -> Element {
             }
             match view.read().clone() {
                 View::Add(capture_kind) => rsx! {
-                    div { class: "p-4 max-w-3xl mx-auto",
+                    div { class: "max-w-3xl mx-auto",
                         DocumentCapture {
                             kind: capture_kind,
                             for_archive: true,
@@ -219,7 +219,7 @@ pub fn ArchivePage() -> Element {
                     }
                 },
                 View::List => rsx! {
-                    div { class: "p-4 space-y-4 max-w-5xl mx-auto",
+                    div { class: "space-y-4 max-w-5xl mx-auto",
                         div { class: "flex items-center justify-between gap-2",
                             h1 { class: "text-lg font-semibold text-obsidian-text", "Archive" }
                             div { class: "flex gap-1 shrink-0",
@@ -580,7 +580,7 @@ fn DocumentDetail(
     }));
 
     rsx! {
-        div { class: "p-4 space-y-4 max-w-5xl mx-auto",
+        div { class: "space-y-4 max-w-5xl mx-auto",
             button {
                 onclick: move |_| on_back.call(()),
                 class: "text-xs text-obsidian-text-muted hover:text-obsidian-text",
@@ -1088,7 +1088,7 @@ fn PurgeGroup(
     });
 
     rsx! {
-        div { class: "p-4 space-y-4 max-w-3xl mx-auto",
+        div { class: "space-y-4 max-w-3xl mx-auto",
             button {
                 onclick: move |_| on_back.call(()),
                 class: "text-xs text-obsidian-text-muted hover:text-obsidian-text",
