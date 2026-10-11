@@ -889,7 +889,7 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
                                 }
                             }
                         } else {
-                            "Thinking…"
+                            ThinkingLine { waited_ms: *waited_ms.read(), seed: thread_id.clone() }
                         }
                     }
                 }
@@ -976,6 +976,54 @@ fn MessageBubble(message: AssistantMessage) -> Element {
 /// Enter sends and Shift+Enter breaks the line, which is the convention every
 /// chat surface shares — but the button stays visible rather than relying on it,
 /// because on a phone there is no Enter key doing that job.
+/// Shown while an answer is being worked on, so the wait has something to watch.
+/// A fixed list, picked by time: no model call (his ruling, 2026-10-11).
+const THINKING_LINES: &[&str] = &[
+    "Leafing through your journal…",
+    "Asking the ledger nicely…",
+    "Untangling receipts…",
+    "Cross-checking with past you…",
+    "Dusting off old notes…",
+    "Following the paper trail…",
+    "Counting beans, carefully…",
+    "Reading between the lines…",
+    "Lining up the facts…",
+    "Checking which accounts you actually use…",
+    "Herding thoughts…",
+    "Weighing the evidence…",
+    "Making sure nothing is made up…",
+    "Brewing a careful answer…",
+];
+
+/// How long each line stays up: two answer polls (`POLL_MS`), so it changes
+/// evenly, the wait only advancing when a poll does.
+const THINKING_LINE_MS: i64 = 2 * POLL_MS as i64;
+
+/// The line to show after `waited_ms`, starting from a point that depends on the
+/// thread so every conversation does not open the same way.
+fn thinking_line(waited_ms: i64, seed: &str) -> &'static str {
+    let start = seed
+        .bytes()
+        .fold(0usize, |a, b| a.wrapping_mul(31).wrapping_add(b as usize));
+    let step = (waited_ms.max(0) / THINKING_LINE_MS) as usize;
+    THINKING_LINES[(start + step) % THINKING_LINES.len()]
+}
+
+#[component]
+fn ThinkingLine(waited_ms: i64, seed: String) -> Element {
+    let line = thinking_line(waited_ms, &seed);
+    rsx! {
+        div { class: "not-italic flex items-center gap-2",
+            span { class: "flex items-center gap-1", "aria-hidden": "true",
+                span { class: "thinking-dot" }
+                span { class: "thinking-dot", style: "animation-delay: 0.2s" }
+                span { class: "thinking-dot", style: "animation-delay: 0.4s" }
+            }
+            span { key: "{line}", class: "animate-in fade-in duration-500", "{line}" }
+        }
+    }
+}
+
 #[component]
 fn Composer(placeholder: String, on_send: EventHandler<String>) -> Element {
     let mut draft = use_signal(String::new);
@@ -1019,6 +1067,18 @@ fn Composer(placeholder: String, on_send: EventHandler<String>) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_waiting_line_moves_on_and_differs_by_thread() {
+        let a0 = thinking_line(0, "thread-a");
+        assert_ne!(a0, thinking_line(THINKING_LINE_MS, "thread-a"));
+        assert_eq!(a0, thinking_line(THINKING_LINE_MS - 1, "thread-a"));
+        let starts: std::collections::BTreeSet<_> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|t| thinking_line(0, t))
+            .collect();
+        assert!(starts.len() > 1, "every thread opened on the same line");
+    }
     use crate::NavIntent;
 
     /// ⛔ Every tab that can appear in a reminder row needs a destination inside

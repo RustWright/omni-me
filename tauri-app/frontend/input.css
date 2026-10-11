@@ -185,11 +185,21 @@ select {
     50%      { opacity: 1;   transform: scale(1.1); }
 }
 
+/* The assistant's waiting indicator: three dots breathing in turn. */
+.thinking-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: rgb(var(--color-accent));
+    animation: splash-breathe 1.2s ease-in-out infinite;
+}
+
 /* Reduced motion: keep the mark and the charcoal hold — the splash still does
  * its job of not showing a half-built UI — but stop moving it. */
 @media (prefers-reduced-motion: reduce) {
     .splash-ring,
-    .splash-core {
+    .splash-core,
+    .thinking-dot {
         animation: none;
     }
     .splash-core {
