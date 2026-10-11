@@ -4,11 +4,10 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — step 7 results (stronger models), then his round 4 test
-Steps 1-6 of the R4-3 build order are done: bench 35/36 (baseline 25/36), `tasks.md` § "Round 4
-early feedback". Dev runs `d2ddc22` (server, agent), APK 1.1.34-dev on the S9. Step 7 (running): run
-`--bench-cases` against other open-weights interactive models (cost secondary, his ruling).
-Then his round 4 test, stage 3 (review), stage 4 (merge).
+## ▶ NEXT ACTION — his round 4 phone test (1.1.34-dev), then stage 3 (review)
+The R4-3 build order (steps 1-7) is done: bench 35/36 on DeepSeek-V4-Pro, which stays the
+interactive model; results and rulings in `tasks.md` § "Round 4 early feedback". Dev runs
+server/agent `d2ddc22`, APK 1.1.34-dev on the S9. Then stage 3 (review), stage 4 (merge).
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.

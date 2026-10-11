@@ -1592,6 +1592,11 @@ deployed code is CI-green (`7d6d485`).
   GLM-5.3 on `c5c0b36`: 34/36 (94%), both misses network errors; R3-11 3/3 and routine 3/3
   (V4-Pro: 2/3, 3/3), but slow: several runs 5-7 min against V4-Pro's ~30-70 s. A candidate
   for the batch seat (scheduled check-in, nobody waiting), not the interactive one.
+  DeepSeek-V4.1-Flash: 29/36 (81%), median 11.5 s, worst 32 s; real misses (no proposal on
+  record, categorize, note create). Kimi-K2.6: stopped after 3 runs, all DeepInfra network
+  timeouts at 3.5-9 min each; inconclusive, like K3. ✅ Step 7 conclusion (mine): keep
+  DeepSeek-V4-Pro interactive (35/36, ~30-70 s). GLM-5.3 is worth `--bench-review` for the
+  batch seat later; not urgent. Logs in `~/omni-dev-bench/` on the box.
 - R4-5 (his report 2026-10-11): Archive cards narrower than every other page. Measured on the
   S9: 296px at 32px vs 328px at 16px; Archive and four Assistant sub-screens padded inside the
   shell's gutter. Fixed `d1b5845`. 🔴 RULED (his pick A, my recommendation): a CI gate, not a
