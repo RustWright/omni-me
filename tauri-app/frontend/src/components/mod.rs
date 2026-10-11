@@ -4,6 +4,7 @@ pub mod date_field;
 pub mod editor;
 pub mod feedback;
 pub mod month_grid;
+pub mod search_pick;
 // `icon` keeps an `allow(dead_code)` for exactly one reason: six glyphs
 // (Menu, Link, ChartBar, Wallet, ArrowUp, ArrowDown) exist in the set while
 // nav.rs and tag_editor.rs still hand-draw the same shapes as inline SVG. That

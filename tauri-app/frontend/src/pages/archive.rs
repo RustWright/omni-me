@@ -12,6 +12,7 @@
 //! person could see what the document actually says. A "fix these values" queue
 //! divorced from the documents would turn the flag into a lie at scale.
 
+use crate::components::search_pick::SearchPick;
 use dioxus::prelude::*;
 
 use crate::bridge;
@@ -247,18 +248,17 @@ pub fn ArchivePage() -> Element {
                                         placeholder:text-obsidian-text-muted/60 focus:outline-none \
                                         focus:border-obsidian-accent/40",
                             }
-                            select {
-                                value: "{kind}",
-                                onchange: move |e| kind.set(e.value()),
-                                class: "px-3 py-2 text-sm rounded-lg bg-obsidian-sidebar/60 \
-                                        border border-obsidian-border/10 text-obsidian-text \
-                                        focus:outline-none focus:border-obsidian-accent/40",
-                                option { value: "", "All kinds" }
-                                if let Some(Ok(list)) = kinds.read().as_ref() {
-                                    for k in list.iter() {
-                                        option { key: "{k}", value: "{k}", "{humanise(k)}" }
-                                    }
-                                }
+                            SearchPick {
+                                options: kinds
+                                    .read()
+                                    .as_ref()
+                                    .and_then(|r| r.as_ref().ok())
+                                    .map(|l| l.iter().map(|k| (k.clone(), humanise(k))).collect())
+                                    .unwrap_or_default(),
+                                value: kind.read().clone(),
+                                on_pick: move |v: String| kind.set(v),
+                                placeholder: "All kinds".to_string(),
+                                class: "w-40".to_string(),
                             }
                             // A menu rather than a text box. Tags are exact-match,
                             // so a typed "reciept" returns an empty archive and
@@ -266,16 +266,12 @@ pub fn ArchivePage() -> Element {
                             // Hidden until a tag exists: a menu offering only
                             // "All tags" reads as a broken filter.
                             if let Some(Ok(list)) = tags.read().as_ref().filter(|r| matches!(r, Ok(l) if !l.is_empty())) {
-                                select {
-                                    value: "{tag}",
-                                    onchange: move |e| tag.set(e.value()),
-                                    class: "px-3 py-2 text-sm rounded-lg bg-obsidian-sidebar/60 \
-                                            border border-obsidian-border/10 text-obsidian-text \
-                                            focus:outline-none focus:border-obsidian-accent/40",
-                                    option { value: "", "All tags" }
-                                    for t in list.iter() {
-                                        option { key: "{t}", value: "{t}", "{t}" }
-                                    }
+                                SearchPick {
+                                    options: list.iter().map(|t| (t.clone(), t.clone())).collect(),
+                                    value: tag.read().clone(),
+                                    on_pick: move |v: String| tag.set(v),
+                                    placeholder: "All tags".to_string(),
+                                    class: "w-40".to_string(),
                                 }
                             }
                             // ⛔ Only offered once a tag is chosen, and it names
@@ -940,17 +936,17 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
                 }
             }
             div { class: if has_tags { "flex flex-wrap items-center gap-2" } else { "hidden" },
-                select {
-                    value: "{chosen}",
-                    onchange: move |e| chosen.set(e.value()),
-                    class: "px-2 py-1.5 text-sm rounded bg-obsidian-bg border \
-                            border-obsidian-border/10 text-obsidian-text focus:outline-none",
-                    option { value: "", "Pick a tag…" }
-                    if let Some(Ok(list)) = tags.read().as_ref() {
-                        for t in list.iter() {
-                            option { key: "{t}", value: "{t}", "{t}" }
-                        }
-                    }
+                SearchPick {
+                    options: tags
+                        .read()
+                        .as_ref()
+                        .and_then(|r| r.as_ref().ok())
+                        .map(|l| l.iter().map(|t| (t.clone(), t.clone())).collect())
+                        .unwrap_or_default(),
+                    value: chosen.read().clone(),
+                    on_pick: move |v: String| chosen.set(v),
+                    placeholder: "Pick a tag…".to_string(),
+                    class: "w-48".to_string(),
                 }
                 span { class: "text-[11px] text-obsidian-text-muted", "keep for" }
                 input {
