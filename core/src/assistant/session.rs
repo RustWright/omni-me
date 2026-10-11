@@ -634,6 +634,41 @@ impl<'a> Session<'a> {
             messages.extend(results);
         }
 
+        // The budget ran out with no reply. One closing call with no tools at all,
+        // so prose is the only thing it can return: offering `propose` on the last
+        // turn let the model call a lookup it was not offered, and the run ended
+        // in silence (bench, 2026-10-11).
+        if self.response_schema.is_none() {
+            if !nudged {
+                messages.push(ChatMessage::User(LAST_TURN_NUDGE.to_string()));
+            }
+            let mut request = ChatRequest::new(messages);
+            if let Some(t) = self.enable_thinking {
+                request = request.with_thinking(t);
+            }
+            if let Ok(reply) = self.llm.chat(&request).await {
+                total += reply.usage;
+                if let Some(text) = reply.content.filter(|t| !t.trim().is_empty()) {
+                    trace.push(TurnRecord {
+                        verb: None,
+                        arguments: Value::Null,
+                        repeated: false,
+                        refused: false,
+                        usage: reply.usage,
+                        latency: reply.latency,
+                    });
+                    return self.finish(
+                        Some(text),
+                        trace,
+                        total,
+                        started,
+                        StopReason::Answered,
+                        off_schema,
+                    );
+                }
+            }
+        }
+
         self.finish(
             None,
             trace,
@@ -1076,6 +1111,37 @@ mod tests {
         assert!(out.answer.is_none());
     }
 
+    /// A run that spends its budget still ends in a reply: the closing call has
+    /// no tools, so the model can only write prose.
+    #[tokio::test]
+    async fn a_spent_budget_still_ends_in_a_reply() {
+        let db = test_db().await;
+        let mut script: Vec<_> = (0..3)
+            .map(|i| {
+                tool_turn(
+                    &format!("c{i}"),
+                    "search",
+                    json!({ "query": format!("q{i}") }),
+                )
+            })
+            .collect();
+        script.push(prose_turn(
+            "I could not find a reading list in your journal.",
+        ));
+        let llm = ScriptedLlm::new(script);
+        let cfg = config();
+        let out = Session::new(&db, &cfg, &llm)
+            .unwrap()
+            .with_max_turns(3)
+            .ask("q")
+            .await;
+        assert_eq!(out.stopped, StopReason::Answered);
+        assert_eq!(
+            out.answer.as_deref(),
+            Some("I could not find a reading list in your journal.")
+        );
+    }
+
     /// **The guarantee, and the bug it closes.** The budget's exit carries no
     /// text, so a model still calling tools when it runs out leaves the user
     /// with nothing after N calls. Measured 2026-09-14: six turns of legitimate
@@ -1107,7 +1173,11 @@ mod tests {
             .await;
 
         let seen = llm.seen.lock().unwrap();
-        assert_eq!(seen.len(), 4);
+        assert_eq!(seen.len(), 5, "four turns, then the closing call");
+        assert!(
+            seen[4].tools.is_empty(),
+            "the closing call offers nothing, so prose is all it can return"
+        );
         for (i, request) in seen.iter().enumerate().take(3) {
             assert!(
                 !request.tools.is_empty(),
@@ -1738,7 +1808,9 @@ mod tests {
         let llm = ScriptedLlm::new(vec![
             tool_turn("call-1", "list_types", serde_json::json!({})),
             ChatResponse {
-                content: Some(r#"{"verb":"answer","arguments":{"text":"Here is what I found."}}"#.into()),
+                content: Some(
+                    r#"{"verb":"answer","arguments":{"text":"Here is what I found."}}"#.into(),
+                ),
                 tool_calls: vec![],
                 usage: Usage::default(),
                 latency: Duration::ZERO,

@@ -43,6 +43,9 @@ enum Check {
     TargetsNewest(&'static str),
     /// A note it creates has at least this many non-empty body lines.
     NoteBodyLines(usize),
+    /// A routine is created with at least this many steps, inside the create
+    /// or as separate add_item proposals.
+    RoutineSteps(usize),
 }
 
 const UNIVERSAL: &[Check] = &[Check::Answered, Check::NoUnbackedClaim];
@@ -60,10 +63,7 @@ const CASES: &[Case] = &[
         id: "R3-10 routine",
         request: "Build me a weekday morning routine based on what I've written in my journal \
                   about mornings and waking up. Keep it to 4 to 6 steps with rough durations.",
-        checks: &[
-            Check::Proposes("routine.create", 1),
-            Check::Proposes("routine.add_item", 4),
-        ],
+        checks: &[Check::Proposes("routine.create", 1), Check::RoutineSteps(4)],
     },
     Case {
         id: "R3-11 research-then-write",
@@ -344,6 +344,17 @@ fn check(
                 Ok(())
             }
         }
+        Check::RoutineSteps(n) => {
+            let inside: usize = of(made, "routine.create")
+                .map(|(_, a)| a.get("steps").and_then(Value::as_array).map_or(0, Vec::len))
+                .sum();
+            let separate = of(made, "routine.add_item").count();
+            if inside + separate >= n {
+                Ok(())
+            } else {
+                Err(format!("{} step(s), wanted {n}", inside + separate))
+            }
+        }
         Check::NoteBodyLines(n) => {
             for (_, args) in of(made, "note.create") {
                 let body = args.get("body").and_then(Value::as_str).unwrap_or("");
@@ -425,6 +436,17 @@ pub async fn run(
             );
             for f in &failures {
                 println!("       - {f}");
+            }
+            if !failures.is_empty() {
+                let reply: String = outcome
+                    .answer
+                    .as_deref()
+                    .unwrap_or("")
+                    .chars()
+                    .take(160)
+                    .collect();
+                println!("       verbs {:?}", outcome.verbs());
+                println!("       reply {:?}", reply);
             }
             if failures.is_empty() {
                 case_passes += 1;

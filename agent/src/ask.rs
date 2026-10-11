@@ -44,7 +44,8 @@ pub async fn run(
     retrievers: Retrievers<'_>,
 ) {
     let session = match Session::new(db, config, llm) {
-        Ok(s) => s,
+        // As the resident agent runs, so a trace shows what a real answer does.
+        Ok(s) => s.with_specialists(),
         Err(e) => {
             eprintln!("cannot ask: {e}");
             return;
