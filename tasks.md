@@ -1584,6 +1584,11 @@ deployed code is CI-green (`7d6d485`).
   agent `d2ddc22`, server `d2ddc22` (overlay `034798d`, backup `pre-d2ddc22`), APK 1.1.33-dev
   on the S9; Settings shows budget 15, archive 30, delete 90. Step 7 running: Kimi-K3,
   GLM-5.3, Kimi-K2.6, DeepSeek-V4.1-Flash on the same set (`omni-dev-bench/models.sh`).
+- Step 7, first pair (agent `d2ddc22`): Kimi-K3 24/36 but 10 of its 12 failures were DeepInfra
+  rate limits / network errors (about 24/26 of runs that reached it; routine 1/3), so K3 is
+  capacity-limited there, itself a reason not to depend on it. GLM-5.3 18/36, nearly all "ran
+  out of output budget": the loop's 3,000-token cap was spent on reasoning. Fixed `c5c0b36`
+  (16k cap for the loop only). Re-running GLM-5.3, Kimi-K2.6, DeepSeek-V4.1-Flash on it.
 - R4-5 (his report 2026-10-11): Archive cards narrower than every other page. Measured on the
   S9: 296px at 32px vs 328px at 16px; Archive and four Assistant sub-screens padded inside the
   shell's gutter. Fixed `d1b5845`. 🔴 RULED (his pick A, my recommendation): a CI gate, not a
