@@ -35,6 +35,8 @@ pub enum ConfigKey {
     AssistantCheckInHour,
     AssistantCheckInTimezone,
     AssistantMaxTurns,
+    AssistantChatArchiveDays,
+    AssistantChatDeleteDays,
 }
 
 /// Display / persistence order, and the order the settings screen renders.
@@ -56,6 +58,8 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::AssistantCheckInHour,
     ConfigKey::AssistantCheckInTimezone,
     ConfigKey::AssistantMaxTurns,
+    ConfigKey::AssistantChatArchiveDays,
+    ConfigKey::AssistantChatDeleteDays,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -121,6 +125,8 @@ impl fmt::Display for ConfigKey {
             ConfigKey::AssistantCheckInHour => "assistant.check_in_hour",
             ConfigKey::AssistantCheckInTimezone => "assistant.check_in_timezone",
             ConfigKey::AssistantMaxTurns => "assistant.max_turns",
+            ConfigKey::AssistantChatArchiveDays => "assistant.chat_archive_after_days",
+            ConfigKey::AssistantChatDeleteDays => "assistant.chat_delete_after_days",
         };
         write!(f, "{s}")
     }
@@ -148,6 +154,8 @@ impl FromStr for ConfigKey {
             "assistant.check_in_hour" => Ok(ConfigKey::AssistantCheckInHour),
             "assistant.check_in_timezone" => Ok(ConfigKey::AssistantCheckInTimezone),
             "assistant.max_turns" => Ok(ConfigKey::AssistantMaxTurns),
+            "assistant.chat_archive_after_days" => Ok(ConfigKey::AssistantChatArchiveDays),
+            "assistant.chat_delete_after_days" => Ok(ConfigKey::AssistantChatDeleteDays),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -318,6 +326,10 @@ impl ConfigKey {
             // so every "not found" answer died on the budget. A ceiling costs
             // nothing on the runs that never reach it.
             ConfigKey::AssistantMaxTurns => ConfigValue::Int(10),
+            // His ruling, 2026-10-11: untouched a month, archived; archived a
+            // quarter, deleted. Events remain, so a deleted chat is recoverable.
+            ConfigKey::AssistantChatArchiveDays => ConfigValue::Int(30),
+            ConfigKey::AssistantChatDeleteDays => ConfigValue::Int(90),
         }
     }
 
@@ -338,7 +350,10 @@ impl ConfigKey {
             | ConfigKey::AssistantRerankModel
             | ConfigKey::AssistantCheckInPrompt
             | ConfigKey::AssistantCheckInTimezone => ValueKind::Text,
-            ConfigKey::AssistantCheckInHour | ConfigKey::AssistantMaxTurns => ValueKind::Int,
+            ConfigKey::AssistantCheckInHour
+            | ConfigKey::AssistantMaxTurns
+            | ConfigKey::AssistantChatArchiveDays
+            | ConfigKey::AssistantChatDeleteDays => ValueKind::Int,
         }
     }
 
@@ -356,7 +371,9 @@ impl ConfigKey {
             | ConfigKey::AssistantCheckInPrompt
             | ConfigKey::AssistantCheckInHour
             | ConfigKey::AssistantCheckInTimezone
-            | ConfigKey::AssistantMaxTurns => true,
+            | ConfigKey::AssistantMaxTurns
+            | ConfigKey::AssistantChatArchiveDays
+            | ConfigKey::AssistantChatDeleteDays => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -392,6 +409,8 @@ impl ConfigKey {
             ConfigKey::AssistantCheckInHour => "Check-in hour",
             ConfigKey::AssistantCheckInTimezone => "Check-in time zone",
             ConfigKey::AssistantMaxTurns => "Assistant turn budget",
+            ConfigKey::AssistantChatArchiveDays => "Archive chats untouched for (days)",
+            ConfigKey::AssistantChatDeleteDays => "Delete archived chats after (days)",
         }
     }
 
@@ -421,7 +440,9 @@ impl ConfigKey {
             | ConfigKey::AssistantCheckInPrompt
             | ConfigKey::AssistantCheckInHour
             | ConfigKey::AssistantCheckInTimezone
-            | ConfigKey::AssistantMaxTurns => None,
+            | ConfigKey::AssistantMaxTurns
+            | ConfigKey::AssistantChatArchiveDays
+            | ConfigKey::AssistantChatDeleteDays => None,
         }
     }
 
@@ -447,7 +468,9 @@ impl ConfigKey {
             | ConfigKey::AssistantCheckInPrompt
             | ConfigKey::AssistantCheckInHour
             | ConfigKey::AssistantCheckInTimezone
-            | ConfigKey::AssistantMaxTurns => ConfigGroup::Assistant,
+            | ConfigKey::AssistantMaxTurns
+            | ConfigKey::AssistantChatArchiveDays
+            | ConfigKey::AssistantChatDeleteDays => ConfigGroup::Assistant,
         }
     }
 
@@ -487,6 +510,8 @@ impl ConfigKey {
             // grows superlinearly per turn — 50 is well past useful and exists to
             // bound the damage, not to be reached.
             ConfigKey::AssistantMaxTurns => Some((3, 50)),
+            ConfigKey::AssistantChatArchiveDays => Some((1, 365)),
+            ConfigKey::AssistantChatDeleteDays => Some((1, 3650)),
             _ => None,
         }
     }
@@ -724,11 +749,13 @@ mod tests {
                 | ConfigKey::AssistantCheckInPrompt
                 | ConfigKey::AssistantCheckInHour
                 | ConfigKey::AssistantCheckInTimezone
-                | ConfigKey::AssistantMaxTurns => counted += 1,
+                | ConfigKey::AssistantMaxTurns
+                | ConfigKey::AssistantChatArchiveDays
+                | ConfigKey::AssistantChatDeleteDays => counted += 1,
             }
         }
         assert_eq!(
-            counted, 17,
+            counted, 19,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

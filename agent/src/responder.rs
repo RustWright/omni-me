@@ -20,6 +20,7 @@
 
 use std::time::Duration;
 
+use omni_me_core::assistant::chat_tidy;
 use omni_me_core::assistant::check_in::{self, CheckInPolicy};
 use omni_me_core::assistant::conversation::{PendingQuestion, pending_questions};
 use omni_me_core::assistant::{
@@ -44,6 +45,9 @@ use tokio::sync::broadcast::error::RecvError;
 /// trigger costs: there, an append that skipped the nudge did not sync slowly, it
 /// did not sync at all.
 const SWEEP_FLOOR: Duration = Duration::from_secs(30);
+
+/// How often idle chats are looked at. The windows are days, so hourly is plenty.
+const CHAT_TIDY_EVERY: Duration = Duration::from_secs(60 * 60);
 
 /// How the loop ended.
 pub enum Stopped {
@@ -94,6 +98,7 @@ impl Responder<'_> {
         // 30 s branch never fired and the check-in never ran.
         let mut floor = tokio::time::interval(SWEEP_FLOOR);
         floor.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_tidy: Option<std::time::Instant> = None;
 
         loop {
             tokio::select! {
@@ -121,6 +126,7 @@ impl Responder<'_> {
                     // every 30s costs one query and removes a second clock that
                     // could disagree with this one about what day it is.
                     self.maybe_check_in().await;
+                    self.maybe_tidy_chats(&mut last_tidy).await;
                     self.sweep().await;
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -219,6 +225,37 @@ impl Responder<'_> {
                 archived = plan.archive.len(),
                 deleted = plan.delete.len(),
                 "tidied earlier check-ins"
+            );
+        }
+    }
+
+    /// Archive idle chats and delete long-archived ones, at most hourly: the
+    /// windows are in days. See `chat_tidy::plan`.
+    async fn maybe_tidy_chats(&self, last: &mut Option<std::time::Instant>) {
+        if last.is_some_and(|t| t.elapsed() < CHAT_TIDY_EVERY) {
+            return;
+        }
+        *last = Some(std::time::Instant::now());
+        let threads = match chat_tidy::chat_threads(self.db).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read chats; not tidying");
+                return;
+            }
+        };
+        let config = self.current_config().await;
+        let (plan, events) = chat_tidy::tidy_now(&threads, &config, self.writer.device_id());
+        for event in events {
+            let id = event.aggregate_id.clone();
+            if let Err(e) = self.writer.append_new(event).await {
+                tracing::warn!(thread = %id, error = %e, "could not tidy a chat");
+            }
+        }
+        if !plan.is_empty() {
+            tracing::info!(
+                archived = plan.archive.len(),
+                deleted = plan.delete.len(),
+                "tidied idle chats"
             );
         }
     }

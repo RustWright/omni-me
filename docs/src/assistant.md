@@ -328,6 +328,13 @@ switch the check-in on or change its hour, the app also records your time zone, 
 "6" means 6 in the morning where you are. "Today" is your calendar day too. Changes to
 the schedule reach the agent within a minute; it does not need restarting.
 
+**The chat list stays short on its own.** Each new check-in archives the previous one,
+and a check-in is deleted after two weeks. Any chat untouched for 30 days is archived,
+and one that has sat in the archive for 90 days is deleted; both windows are settings.
+Two things are never deleted: a chat with a suggestion you have not decided, and one you
+wrote in after it was archived, until that message is old too. A delete is an event like
+any other, so the conversation is still in the log if you ever need it back.
+
 ## Autonomy is earned, one action type at a time **(today)**
 
 The assistant starts able to do nothing but propose. Permission is granted per action type,

@@ -13,6 +13,8 @@ pub mod actions;
 /// One run's outcome, rendered into the event that records it.
 pub mod answer;
 pub mod catalog;
+/// Archiving idle chats and deleting long-archived ones.
+pub mod chat_tidy;
 /// The scheduled check-in: the assistant asking on the user's behalf.
 pub mod check_in;
 pub mod chunk;

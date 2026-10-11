@@ -462,8 +462,10 @@ pub fn FinancesPage() -> Element {
                 // the top. The negative margins + matching padding let the
                 // background span the scroll column's own `p-4`/`md:p-6` gutter,
                 // otherwise content shows through at the sides as it passes
-                // under. `z-30` stays well below the nav drawer (140/150).
-                div { class: "sticky top-0 z-30 flex items-center justify-between gap-3 mb-4 -mx-4 px-4 md:-mx-6 md:px-6 py-2 bg-obsidian-bg/95 backdrop-blur-sm",
+                // under. `z-30` stays well below the nav drawer (140/150). The
+                // negative top does the same for the top gutter: a sticky offset
+                // counts from inside the scroller's padding.
+                div { class: "sticky -top-4 md:-top-6 z-30flex items-center justify-between gap-3 mb-4 -mx-4 px-4 md:-mx-6 md:px-6 py-2 bg-obsidian-bg/95 backdrop-blur-sm",
                     SegmentedNav {
                         items: vec![
                             ("overview".to_string(), "Overview".to_string()),

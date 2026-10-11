@@ -54,12 +54,7 @@ pub async fn last_check_in(db: &Database) -> Result<Option<DateTime<Utc>>, Event
 /// previous one, delete after a window). Two weeks to read it or act on it.
 pub const KEEP_CHECK_INS_DAYS: i64 = 14;
 
-/// What the agent tidies after raising a check-in.
-#[derive(Debug, Default, PartialEq)]
-pub struct Housekeeping {
-    pub archive: Vec<String>,
-    pub delete: Vec<String>,
-}
+pub use super::chat_tidy::Housekeeping;
 
 /// One check-in thread, as the plan needs it.
 #[derive(Debug, Clone)]
@@ -102,36 +97,8 @@ pub fn housekeeping_events(
     current: &str,
     device_id: &str,
 ) -> (Housekeeping, Vec<crate::events::NewEvent>) {
-    use crate::events::{
-        AssistantThreadArchivedPayload, AssistantThreadDeletedPayload, EventType, NewEvent,
-    };
     let plan = plan_housekeeping(threads, current, Utc::now());
-    let event = |event_type: EventType, id: &str, payload: serde_json::Value| NewEvent {
-        id: None,
-        event_type: event_type.to_string(),
-        aggregate_id: id.to_string(),
-        timestamp: Utc::now(),
-        device_id: device_id.to_string(),
-        payload,
-    };
-    let mut events = Vec::new();
-    for id in &plan.archive {
-        let p = AssistantThreadArchivedPayload {
-            thread_id: id.clone(),
-            archived: true,
-        };
-        if let Ok(v) = serde_json::to_value(&p) {
-            events.push(event(EventType::AssistantThreadArchived, id, v));
-        }
-    }
-    for id in &plan.delete {
-        let p = AssistantThreadDeletedPayload {
-            thread_id: id.clone(),
-        };
-        if let Ok(v) = serde_json::to_value(&p) {
-            events.push(event(EventType::AssistantThreadDeleted, id, v));
-        }
-    }
+    let events = super::chat_tidy::events(&plan, device_id);
     (plan, events)
 }
 

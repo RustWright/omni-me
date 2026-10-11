@@ -1503,6 +1503,20 @@ deployed code is CI-green (`7d6d485`).
   rewrite is on the table, and token cost is a secondary criterion to quality. Still ⛔ fixed:
   the safety lines (journal unwritable, irreversible never grantable, approval gate, beliefs
   ask-only) unless he rules otherwise. Judge options against the R3/R4 failures as a test set.
+  ✅ Research done: `ASSISTANT_RESEARCH.md`. 🔴 RULED 2026-10-11 (his pick, my
+  recommendation): keep our Rust loop, no framework. Beat: LangGraph sidecar (Python service,
+  second state store, fixes none of the failures). Build order: (1) scored test set from the
+  R3/R4 requests; (2) ledger grounding: validation errors fed back to the model, a generated
+  conventions summary, similar past transactions as examples, a ledger specialist; (3) search
+  sort/date; (4) one-step routine with steps; (5) plan step + resume when out of turns;
+  (6) claim check against the run's proposals; (7) stronger models on the set.
+  🔴 His addition: specialists generalise to every feature (archive, journal, ...), the
+  ledger one first.
+- R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
+  archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
+  Settings page. My defaults, not his: the 90 days count from when it was archived, manual
+  archives included; a thread with an undecided suggestion is never deleted (as check-ins);
+  the 14-day check-in rule stays as is.
 
 **Stage 2, round 4 checklist (1.1.30-dev).**
 1. Archive: no badge; Unchecked only still filters; confirm a document's values and the next
