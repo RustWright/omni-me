@@ -1543,6 +1543,14 @@ deployed code is CI-green (`7d6d485`).
   ledger brief. Extractor guard: `ground_hint` on the mail and capture paths (unknown
   hint mapped by last name part, else dropped to review); overlay `.with_accounts`. ⏳ Not
   yet: CategoryInUse grounding for categorize/tag.
+- Steps 3-6 built 2026-10-11, all clippy-clean, unmeasured until the next bench:
+  3 `5bd7ffb` `list` takes a `description` text filter (newest first) for "most recent X";
+  4 `c4b9081` `routine.create` carries `steps` ("name, minutes"), card lists them; still
+  no weekday frequency (domain gap, unbuilt); 5 `12b2828` the last turn offers `propose`
+  only, plus a loop rule to research briefly then propose; 6 `86a766a` a reply claiming a
+  change with nothing proposed is sent back once (`claims.rs`), and a `propose` that
+  returned an error is now marked refused. ⚠️ That last one closed a hole in step 2: the
+  collector re-checks syntax only, so ledger-refused entries would have reached the inbox.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual

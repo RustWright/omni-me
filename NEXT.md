@@ -5,10 +5,10 @@ findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
 ## ▶ NEXT ACTION — assistant build order (R4-3 ruling), step 1 baseline then step 2
-Order and rulings: `tasks.md` § "Round 4 early feedback" (R4-2, R4-3, R4-4). Step 1 is built
-(`--bench-cases`); run it on the box against a copy of the dev agent's volume, dev agent
-stopped meanwhile (4 GB box, live beside it). Then step 2, ledger grounding from his
-CONVENTIONS.md. R4-1/R4-4 built (`6f9bcc5`): deploy with APK 1.1.32-dev, check on the S9.
+Order and rulings: `tasks.md` § "Round 4 early feedback" (R4-2, R4-3, R4-4). Baseline 25/36.
+Steps 2-6 built; bench them (`--bench-cases`, agent `f3de10e`, on a copy of the dev agent
+volume, dev agent stopped meanwhile), then deploy, then step 7 (stronger open-weights models
+on the same set). R4-1/R4-4 deployed and verified on the S9 (1.1.32-dev).
 Then his round 4 test, stage 3 (review), stage 4 (merge).
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
