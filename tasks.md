@@ -1592,6 +1592,8 @@ deployed code is CI-green (`7d6d485`).
   those screens) and visits Assistant sub-screens; its `continue-on-error` is gone, so it
   blocks. Beat: B, me checking on the S9 (depends on remembering, how this slipped); C, a
   rule only. Rule in `UI_WORKFLOW.md` § The layout sweep.
+  ✅ CI `339093e` green as a gate (20 screens). APK 1.1.34-dev on the S9: every tab, both
+  Assistant sub-screens and a chat measured at the 16px gutter.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
