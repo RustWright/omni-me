@@ -96,6 +96,12 @@ pub const MAX_TURNS: usize = 15;
 /// this.
 pub const PROPOSAL_TURNS: usize = 4;
 
+/// Output cap per call in the loop. A model that reasons first spends its
+/// thinking from this before answering; at the shared default of 3,000, GLM-5.3
+/// ran out on most runs and returned nothing (bench, 2026-10-11). A ceiling, so
+/// a model that answers briefly is billed for what it writes, not for this.
+pub const MAX_REPLY_TOKENS: u32 = 16_000;
+
 /// Sent on the final turn, when the budget is about to end the loop.
 ///
 /// Without it the budget's exit carries no text: the user waits through N model
@@ -428,7 +434,7 @@ impl<'a> Session<'a> {
             }
 
             // ⚠️ Exactly one channel, never both. See `Session::constrained`.
-            let mut request = ChatRequest::new(messages.clone());
+            let mut request = ChatRequest::new(messages.clone()).with_max_tokens(MAX_REPLY_TOKENS);
             if let Some(schema) = &self.response_schema {
                 request = request.with_response_schema(schema.clone());
             } else if last_turn {
@@ -661,7 +667,7 @@ impl<'a> Session<'a> {
             if !nudged {
                 messages.push(ChatMessage::User(LAST_TURN_NUDGE.to_string()));
             }
-            let mut request = ChatRequest::new(messages);
+            let mut request = ChatRequest::new(messages).with_max_tokens(MAX_REPLY_TOKENS);
             if let Some(t) = self.enable_thinking {
                 request = request.with_thinking(t);
             }

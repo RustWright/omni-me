@@ -135,6 +135,12 @@ impl ChatRequest {
         }
     }
 
+    /// Raise or lower the output cap. See [`ChatRequest::max_tokens`].
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
     pub fn with_tools(mut self, tools: Vec<ToolDef>) -> Self {
         self.tools = tools;
         self
