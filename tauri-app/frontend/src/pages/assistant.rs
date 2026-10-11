@@ -838,6 +838,24 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
                 for message in messages.iter().cloned() {
                     MessageBubble { key: "{message.message_id}", message: message.clone() }
 
+                    // The app's account of what the reply did, under the model's.
+                    if !message.is_user() && message.failure_note().is_none() {
+                        {
+                            let mine: Vec<_> = proposals
+                                .read()
+                                .iter()
+                                .filter(|p| p.message_id == message.message_id)
+                                .cloned()
+                                .collect();
+                            let outcome = crate::types::reply_outcome(&mine);
+                            rsx! {
+                                div { class: "self-start pl-1 text-[11px] text-obsidian-text-muted",
+                                    "{outcome}"
+                                }
+                            }
+                        }
+                    }
+
                     // Proposals sit under the answer that made them, so the
                     // reasoning and the decision are read together. The inbox
                     // screen is the same cards without that context, for

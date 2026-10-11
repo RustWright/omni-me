@@ -1447,6 +1447,33 @@ pub struct AssistantProposal {
     pub decision: Option<String>,
 }
 
+/// What a reply actually did, from its suggestions rather than its prose (his
+/// ruling, 2026-10-11). A long thread once produced "done ✅" for four actions
+/// with no tool calls; this line is built by the app, so it cannot be talked into
+/// agreeing.
+pub fn reply_outcome(proposals: &[AssistantProposal]) -> String {
+    let carried = proposals
+        .iter()
+        .filter(|p| p.decision.as_deref() == Some("approved"))
+        .count();
+    let waiting = proposals.iter().filter(|p| p.is_pending()).count();
+    let declined = proposals.len() - carried - waiting;
+    let parts: Vec<String> = [
+        (carried, "Carried out"),
+        (waiting, "Waiting for you"),
+        (declined, "Declined"),
+    ]
+    .into_iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, label)| format!("{label}: {n}"))
+    .collect();
+    if parts.is_empty() {
+        "No changes made in this reply.".to_string()
+    } else {
+        parts.join(" · ")
+    }
+}
+
 impl AssistantProposal {
     pub fn is_pending(&self) -> bool {
         self.decision.is_none()
@@ -2371,5 +2398,44 @@ mod purge_display_tests {
         assert!(p.is_truncated());
         p.total = 200;
         assert!(!p.is_truncated());
+    }
+}
+
+#[cfg(test)]
+mod reply_outcome_tests {
+    use super::*;
+
+    fn proposal(decision: Option<&str>) -> AssistantProposal {
+        AssistantProposal {
+            proposal_id: "p".into(),
+            thread_id: "t".into(),
+            message_id: "m".into(),
+            action: "note.create".into(),
+            args: serde_json::json!({}),
+            rationale: String::new(),
+            reversible: true,
+            created_at: String::new(),
+            decision: decision.map(str::to_string),
+        }
+    }
+
+    /// The case that motivated it: prose claiming four actions, no suggestions.
+    #[test]
+    fn a_reply_with_no_suggestions_says_nothing_changed() {
+        assert_eq!(reply_outcome(&[]), "No changes made in this reply.");
+    }
+
+    #[test]
+    fn granted_waiting_and_declined_are_counted_apart() {
+        let ps = [
+            proposal(Some("approved")),
+            proposal(Some("approved")),
+            proposal(None),
+            proposal(Some("rejected")),
+        ];
+        assert_eq!(
+            reply_outcome(&ps),
+            "Carried out: 2 · Waiting for you: 1 · Declined: 1"
+        );
     }
 }
