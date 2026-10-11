@@ -42,6 +42,19 @@ pub const INTENTIONS: &[&str] = &[
     "i'll create",
     "let me record",
     "i'll record",
+    // Asking leave to propose, when the user already asked for the change: a
+    // proposal is itself the question, answered in the inbox (S9, 2026-10-11:
+    // "Shall I propose creating this as a new routine?").
+    "shall i propose",
+    "should i propose",
+    "would you like me to propose",
+    "want me to propose",
+    "shall i create",
+    "should i create",
+    "would you like me to create",
+    "shall i add",
+    "would you like me to add",
+    "shall i record",
 ];
 
 /// The first claim phrase in `reply`, if any.
@@ -60,7 +73,9 @@ pub fn announced_change(reply: &str) -> Option<&'static str> {
 pub fn follow_through(phrase: &str) -> String {
     format!(
         "You wrote {phrase:?}, but nothing was proposed, so the user has nothing to accept. \
-         Propose it now with the propose tool, or say plainly why you cannot."
+         A proposal does not act on its own: the user accepts or declines it, so there is no \
+         need to ask first. If they asked for the change, propose it now with the propose \
+         tool; otherwise say plainly why you cannot."
     )
 }
 
@@ -95,6 +110,10 @@ mod tests {
         assert_eq!(
             announced_change("Here is what I found. Let me now propose the routine."),
             Some("let me now propose")
+        );
+        assert_eq!(
+            announced_change("Shall I propose creating this as a new routine in the app?"),
+            Some("shall i propose")
         );
     }
 }
