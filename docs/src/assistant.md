@@ -117,7 +117,7 @@ rots.
 
 ## Proving something is absent costs more than finding it **(today)**
 
-A request gets a budget of model calls — ten by default, configurable. It exists because
+A request gets a budget of model calls — fifteen by default, configurable. It exists because
 there is no terminal verb: the assistant finishes by replying in prose, so a model that keeps
 calling tools would otherwise never stop.
 
@@ -133,8 +133,9 @@ announcing a negative you had not actually established. But it means a budget si
 common case is *structurally* unable to answer the harder one, and the budget used to sit
 right between the two.
 
-So two things hold now. The budget is ten rather than six, because a ceiling costs nothing on
-the runs that never reach it. And **on the last call, the lookups are withheld** and the model
+So two things hold now. The budget is fifteen (six, then ten, then fifteen once research that
+ends in a written change needed more), because a ceiling costs nothing on the runs that never
+reach it. And **on the last call, the lookups are withheld** and the model
 is told to answer with what it has. Proposing stays available: a request to research something
 and then write it down used to spend every call researching and end with nothing written, so
 the last call can still turn what was found into the change you asked for. That matters more than the number: whatever the budget,

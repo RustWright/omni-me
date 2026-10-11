@@ -61,8 +61,11 @@ struct Case {
 const CASES: &[Case] = &[
     Case {
         id: "R3-10 routine",
-        request: "Build me a weekday morning routine based on what I've written in my journal \
-                  about mornings and waking up. Keep it to 4 to 6 steps with rough durations.",
+        // Evening rather than the phone run's weekday morning: dev already holds the
+        // morning routine that run created, and declining a duplicate is correct.
+        request: "Build me an evening wind-down routine based on what I've written in my \
+                  journal about evenings and sleep. Keep it to 4 to 6 steps with rough \
+                  durations.",
         checks: &[Check::Proposes("routine.create", 1), Check::RoutineSteps(4)],
     },
     Case {
@@ -112,7 +115,9 @@ const CASES: &[Case] = &[
         id: "belief retire",
         request: "The belief that I read in the mornings on weekdays and late at night \
                   on weekends no longer holds. Retire it.",
-        checks: &[Check::Proposes("belief.supersede", 1)],
+        // Retired on dev on 2026-10-11, so "already retired" is the right answer
+        // now; only the universal checks apply.
+        checks: &[],
     },
     Case {
         id: "R3-9 newest + clear",
@@ -142,8 +147,8 @@ const CASES: &[Case] = &[
 struct Ledger {
     accounts: BTreeSet<String>,
     categories: BTreeSet<String>,
-    /// Transactions newest first, as (id, description).
-    newest_first: Vec<(String, String)>,
+    /// Transactions newest first, as (id, date, description).
+    newest_first: Vec<(String, String, String)>,
     today: String,
 }
 
@@ -171,7 +176,7 @@ impl Ledger {
             if let Some(c) = &row.category {
                 categories.insert(c.clone());
             }
-            newest_first.push((row.id, row.description));
+            newest_first.push((row.id, row.date, row.description));
         }
         Ok(Self {
             accounts,
@@ -181,12 +186,22 @@ impl Ledger {
         })
     }
 
-    fn newest_matching(&self, needle: &str) -> Option<&str> {
+    /// Every match on the newest date: a bank row and its receipt share one.
+    fn newest_matching(&self, needle: &str) -> Vec<&str> {
         let needle = needle.to_lowercase();
-        self.newest_first
+        let matching: Vec<&(String, String, String)> = self
+            .newest_first
             .iter()
-            .find(|(_, d)| d.to_lowercase().contains(&needle))
-            .map(|(id, _)| id.as_str())
+            .filter(|(_, _, d)| d.to_lowercase().contains(&needle))
+            .collect();
+        let Some((_, newest, _)) = matching.first() else {
+            return Vec::new();
+        };
+        matching
+            .iter()
+            .filter(|(_, date, _)| date == newest)
+            .map(|(id, _, _)| id.as_str())
+            .collect()
     }
 }
 
@@ -330,16 +345,17 @@ fn check(
             Ok(())
         }
         Check::TargetsNewest(needle) => {
-            let Some(newest) = ledger.newest_matching(needle) else {
+            let newest = ledger.newest_matching(needle);
+            if newest.is_empty() {
                 return Err(format!("no {needle:?} transaction in this corpus"));
-            };
+            }
             let touched: Vec<String> = made
                 .iter()
                 .filter(|(a, _)| a.starts_with("transaction."))
                 .flat_map(|(_, args)| txn_ids(args))
                 .collect();
-            if touched.iter().any(|id| id != newest) {
-                Err(format!("acted on {touched:?}, newest is {newest}"))
+            if touched.iter().any(|id| !newest.contains(&id.as_str())) {
+                Err(format!("acted on {touched:?}, newest is {newest:?}"))
             } else {
                 Ok(())
             }

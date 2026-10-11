@@ -325,7 +325,10 @@ impl ConfigKey {
             // other types before the negative is honest. Six sat between the two,
             // so every "not found" answer died on the budget. A ceiling costs
             // nothing on the runs that never reach it.
-            ConfigKey::AssistantMaxTurns => ConfigValue::Int(10),
+            // Fifteen from 2026-10-11: a request to research the journal and then
+            // write something read 15+ entries and ran out before proposing
+            // (R3-11). Quality over token cost, his ruling for the assistant.
+            ConfigKey::AssistantMaxTurns => ConfigValue::Int(15),
             // His ruling, 2026-10-11: untouched a month, archived; archived a
             // quarter, deleted. Events remain, so a deleted chat is recoverable.
             ConfigKey::AssistantChatArchiveDays => ConfigValue::Int(30),

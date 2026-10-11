@@ -74,11 +74,11 @@ fn today_line(config: &ResolvedConfig, now: chrono::DateTime<chrono::Utc>) -> St
 /// to be found by trying rather than argued to once — see [`Session::new`]. The
 /// constant stays for tests and for callers with no config in hand.
 ///
-/// Ten, tracking the config default it stands in for. Six left a caller without
+/// Fifteen, tracking the config default it stands in for. Six left a caller without
 /// config on the pre-2026-09-14 behaviour, where establishing that a record does
 /// not exist — measured at eight turns against two to four for confirming one
 /// does — could not fit inside the budget.
-pub const MAX_TURNS: usize = 10;
+pub const MAX_TURNS: usize = 15;
 
 /// Extra turns a request may spend on `propose`, beyond its budget.
 ///
@@ -569,7 +569,16 @@ impl<'a> Session<'a> {
                     .then(|| {
                         recency::belief_needs_a_recent_look(&trace, chrono::Utc::now().date_naive())
                     })
-                    .flatten();
+                    .flatten()
+                    // A lookup on the last turn was not offered; running it spent
+                    // the turn and ended the run in silence (bench, 2026-10-11).
+                    .or_else(|| {
+                        (last_turn && call.name != verbs::PROPOSE).then(|| {
+                            "no lookups left: propose the change from what you found, or \
+                             answer now"
+                                .to_string()
+                        })
+                    });
 
                 let result = if repeated {
                     // Said plainly rather than silently re-serving identical rows.
