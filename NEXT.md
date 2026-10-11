@@ -4,10 +4,10 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — assistant-architecture research (his ruling R4-3), before stage 3
-Fresh session. Scope, candidates and why: `tasks.md` § "Round 4 early feedback". Then fix
-R4-1 (sticky bars cover content) and design R4-2 (ledger conventions) from what it finds;
-finish his round 4 test (1.1.31-dev on the S9). Then stage 3 (review), then stage 4 (merge).
+## ▶ NEXT ACTION — his ruling on the R4-3 research, then build what he picks
+Research done: `ASSISTANT_RESEARCH.md` (recommends keeping the Rust loop and adopting six
+patterns, test set first). Independent of his answer: fix R4-1 (sticky bars cover content).
+Then finish his round 4 test (1.1.31-dev on the S9), stage 3 (review), stage 4 (merge).
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
