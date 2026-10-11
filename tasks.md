@@ -1621,6 +1621,14 @@ deployed code is CI-green (`7d6d485`).
   receipt draft extracted from the email forces the category. ⏳ Build: closed list + schema,
   intake skip for social, one-time backfill, a labelled set from these docs to score models,
   then his timers per category.
+  His addition: improve the tagging scaffolding generally, not only retention. Plan (mine,
+  the ledger pattern): topic tags chosen from his existing tags first, a new one only when
+  none fits; a normalisation pass after each read (case, plurals, `social` vs `social_media`);
+  then measure, and change the model only if the scaffolded version still scores badly.
+- R4-8 🔴 RULED 2026-10-11 (his pick, my recommendation): waiting indicator in the assistant
+  chat: animation + rotating playful lines now (no model cost); real step-by-step progress
+  (agent publishes its current step as a short-lived server status) after the merge. Beat: 2
+  now (days before the merge), model-written quips (cost and latency for a distraction).
 - R4-7 Type-to-search picker for the archive tag filter, Kind filter and retention tag picker
   (his report: the tag list is too long to scroll). `250903f`; APK 1.1.35-dev building.
 - Assistant asked "Shall I propose creating this?" instead of proposing (S9-equivalent run,
