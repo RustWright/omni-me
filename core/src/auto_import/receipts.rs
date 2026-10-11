@@ -54,6 +54,9 @@ pub struct ReceiptHandler {
     device_id: String,
     extractor: Arc<dyn DocumentExtractor>,
     triage: Option<Arc<MailTriage>>,
+    /// Holds the extractor's account hints to the ledger's accounts. See
+    /// `ledger_grounding::ground_hint`.
+    accounts: Option<crate::db::Database>,
 }
 
 impl ReceiptHandler {
@@ -67,7 +70,14 @@ impl ReceiptHandler {
             device_id: device_id.into(),
             extractor,
             triage: None,
+            accounts: None,
         }
+    }
+
+    /// Hold the extractor's account hints to the accounts this database knows.
+    pub fn with_accounts(mut self, db: crate::db::Database) -> Self {
+        self.accounts = Some(db);
+        self
     }
 
     /// Screen each message with the triage seat first. Shadow mode: the verdict is
@@ -399,6 +409,10 @@ impl ImapHandler for ReceiptHandler {
         }
 
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
+        let mut result = result;
+        if let Some(db) = &self.accounts {
+            crate::assistant::ledger_grounding::ground_hints(db, &mut result.postings).await;
+        }
         let drafts = receipt_extraction_to_drafts(&result, &source_prefix);
         // With no drafts, only a receipt still reaches review, where it can be
         // entered by hand (a KDP royalty notice did this). Order and shipping

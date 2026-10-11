@@ -120,6 +120,37 @@ pub fn closest<'a>(wanted: &str, known: &'a BTreeSet<String>) -> Vec<&'a str> {
         .collect()
 }
 
+/// An importer's account hint held to the known accounts: kept when known;
+/// otherwise the one known account under the same top level whose last part
+/// matches (`Expenses:Groceries` to `Expenses:Food:Groceries`); otherwise `None`,
+/// so the importer's own default leaves it for review.
+pub fn ground_hint(hint: &str, known: &BTreeSet<String>) -> Option<String> {
+    if known.contains(hint) {
+        return Some(hint.to_string());
+    }
+    let top = hint.split(':').next()?;
+    let leaf = hint.rsplit(':').next()?.to_lowercase();
+    let mut same: Vec<&String> = known
+        .iter()
+        .filter(|k| k.split(':').next() == Some(top))
+        .filter(|k| k.rsplit(':').next().map(str::to_lowercase).as_deref() == Some(leaf.as_str()))
+        .collect();
+    match (same.pop(), same.is_empty()) {
+        (Some(one), true) => Some(one.clone()),
+        _ => None,
+    }
+}
+
+/// Hold every account hint an extraction carries to the known accounts.
+pub async fn ground_hints(db: &Database, postings: &mut [crate::extraction::ExtractedPosting]) {
+    let known = known_accounts(db).await;
+    for p in postings {
+        if let Some(hint) = p.account_hint.take() {
+            p.account_hint = ground_hint(&hint, &known);
+        }
+    }
+}
+
 /// Past entries whose description shares words with `description`, newest
 /// first, as (date, description, accounts).
 async fn similar_entries(db: &Database, description: &str) -> Vec<(String, String, Vec<String>)> {
@@ -265,6 +296,34 @@ mod tests {
             closest("Expenses:Transportation:Rideshare", &known)[0],
             "Expenses:Transport:RideShare"
         );
+    }
+
+    #[test]
+    fn an_importer_hint_is_kept_mapped_or_dropped() {
+        let known: BTreeSet<String> = [
+            "Expenses:Food:Groceries",
+            "Expenses:Transport:RideShare",
+            "Expenses:Tax:Income",
+            "Expenses:Tax:Transaction",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let g = |h: &str| ground_hint(h, &known);
+        assert_eq!(
+            g("Expenses:Food:Groceries").as_deref(),
+            Some("Expenses:Food:Groceries")
+        );
+        assert_eq!(
+            g("Expenses:Groceries").as_deref(),
+            Some("Expenses:Food:Groceries")
+        );
+        assert_eq!(
+            g("Expenses:Transportation:Rideshare").as_deref(),
+            Some("Expenses:Transport:RideShare")
+        );
+        assert_eq!(g("Expenses:Coffee"), None, "nothing like it");
+        assert_eq!(g("Assets:Groceries"), None, "a different top level");
     }
 
     #[test]

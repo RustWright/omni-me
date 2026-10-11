@@ -1527,6 +1527,22 @@ deployed code is CI-green (`7d6d485`).
   examples once the official import lands; the same check on the receipt extractor (same bug
   class). Beat: B, learn from omni-me's ledger (teaches the importer drift); C, a new spec
   (second copy of his document).
+- Dev changes 2026-10-11 (decision log): deployed server `6f9bcc5` + agent `e92b3e7`, APK
+  1.1.32-dev on the S9 (backup `omni-dev-20261011T154941-pre-r44`). Archive window set to 10
+  days and back to 30 to see R4-4 work: it archived the one active 09-27 chat. Created the
+  note "Ledger conventions" (his CONVENTIONS.md + the 124 accounts his paisa ledger uses,
+  excluding budget.ledger's old names). Bench baseline ran on a copy of the agent volume
+  (`omni-dev_bench_data`), log in `~/omni-dev-bench/` on the box.
+- Step 1 BASELINE 2026-10-11 (agent `e92b3e7`, DeepSeek-V4-Pro, dev data: 180 accounts,
+  10,927 transactions): 25/36 runs pass every check (69%), 1.6M tokens. 0/3 routine (R3-10),
+  0/3 research-then-write (R3-11; one false "done"), 0/3 record (invented Expenses:Food and
+  Assets:Cash every time), 2/3 newest+categorize (R3-9), 2/3 belief (a false "done": may be
+  the claim heuristic, unchecked). Everything else 3/3.
+- Step 2 first cut `1903af6`: `propose` refuses unknown accounts (closest named) and a
+  known payee under a different account; `specialist::route` sends money requests to the
+  ledger brief. Extractor guard: `ground_hint` on the mail and capture paths (unknown
+  hint mapped by last name part, else dropped to review); overlay `.with_accounts`. ⏳ Not
+  yet: CategoryInUse grounding for categorize/tag.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual

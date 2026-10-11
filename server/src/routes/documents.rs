@@ -347,6 +347,11 @@ async fn read_and_file(
     let document_id = attachment.as_ref().and_then(|a| a.document_id.clone());
     let proposed_batch_id = match document_id {
         Some(id) if q.propose && extraction.kind() == Some(DocumentKind::Receipt) => {
+            omni_me_core::assistant::ledger_grounding::ground_hints(
+                &state.db,
+                &mut extraction.postings,
+            )
+            .await;
             let drafts = receipt_extraction_to_drafts(&extraction, &format!("capture-{id}"));
             let metadata = serde_json::json!({
                 "document_id": id,
