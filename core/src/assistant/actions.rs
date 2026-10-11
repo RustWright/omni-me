@@ -978,10 +978,12 @@ const TRANSACTION_RECORD: ActionType = ActionType {
                   description line, then one indented posting per account. Use this for money \
                   you have read about and cannot find in the ledger — a receipt, a confirmation \
                   email. Postings must balance to zero; you may leave the amount off exactly \
-                  one of them and it will be worked out. Example:\n\
-                  2026-05-14 Coffee at the station\n    \
-                  Expenses:Food  4.20 EUR\n    \
-                  Assets:Checking  -4.20 EUR",
+                  one of them and it will be worked out. Use only accounts this ledger already \
+                  has: look at past transactions with the same payee and follow them. An \
+                  account the ledger does not have is refused. Shape:\n\
+                  YYYY-MM-DD Payee and what it was\n    \
+                  <spending account>  4.20 CAD\n    \
+                  <paying account>  -4.20 CAD",
     params: &[
         ActionParam::text(
             "entry",

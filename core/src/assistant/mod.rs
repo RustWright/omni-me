@@ -27,6 +27,8 @@ pub mod embedding;
 pub mod fusion;
 /// The approval inbox: reading proposals back, and deciding them.
 pub mod inbox;
+/// Checking a proposed ledger write against the ledger.
+pub mod ledger_grounding;
 /// What the assistant believes about the user, and when to re-examine it.
 pub mod memory;
 /// Autonomy: the evidence for granting it, and the grant itself.
@@ -41,6 +43,8 @@ pub mod retrieval;
 /// Resolving an anchored mid-note edit against the note's live body.
 pub mod revise;
 pub mod session;
+/// Routing a request to the instructions of its domain.
+pub mod specialist;
 pub mod store;
 /// The vector index and its sweep. Gated with [`embedding`] — it needs a model.
 #[cfg(feature = "embeddings")]

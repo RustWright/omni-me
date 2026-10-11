@@ -251,6 +251,9 @@ pub struct Session<'a> {
     /// `embeddings` feature, or a host whose model failed to load, still answers
     /// questions — less well, and without pretending otherwise.
     retrievers: Retrievers<'a>,
+    /// Route each request to a specialist first. Off by default: it costs one
+    /// model call, and scripted test clients answer only the loop's own calls.
+    specialists: bool,
 }
 
 impl<'a> Session<'a> {
@@ -279,6 +282,7 @@ impl<'a> Session<'a> {
             response_schema: None,
             enable_thinking: None,
             retrievers: Retrievers::default(),
+            specialists: false,
         })
     }
 
@@ -295,6 +299,12 @@ impl<'a> Session<'a> {
     /// two would make the reranker unmeasurable on its own.
     pub fn with_reranker(mut self, reranker: &'a dyn Rerank) -> Self {
         self.retrievers.reranker = Some(reranker);
+        self
+    }
+
+    /// Route each request to a specialist. See `specialist`.
+    pub fn with_specialists(mut self) -> Self {
+        self.specialists = true;
         self
     }
 
@@ -367,6 +377,13 @@ impl<'a> Session<'a> {
             None => format!("{SYSTEM_PROMPT}{LOOP_RULES}"),
         };
         let system = format!("{system}{}", today_line(self.config, chrono::Utc::now()));
+        let system = if self.specialists {
+            let who = super::specialist::route(self.llm, self.config, history, question).await;
+            tracing::info!(specialist = ?who, "routed");
+            format!("{system}{}", super::specialist::brief(self.db, who).await)
+        } else {
+            system
+        };
         let mut messages = vec![ChatMessage::System(system)];
         for turn in history {
             messages.push(match turn.role {

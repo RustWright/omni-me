@@ -338,7 +338,7 @@ impl Responder<'_> {
 
         let llm = client_for(self.llm, self.batch, &question);
         let session = match Session::new(self.db, config, llm) {
-            Ok(s) => s,
+            Ok(s) => s.with_specialists(),
             Err(e) => {
                 // A session that cannot even be built is a configuration fault,
                 // not a model failure — but the question still gets closed, with

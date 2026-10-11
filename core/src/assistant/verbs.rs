@@ -300,7 +300,7 @@ pub async fn dispatch_with(
             (Some(t), Some(id)) => read(db, config, t, id).await,
             _ => json!({ "error": "read needs both `type` and `id`" }),
         },
-        "propose" => propose(config, args),
+        "propose" => propose(db, config, args).await,
         other => json!({
             "error": format!("no such tool `{other}`"),
             "available": VERB_NAMES,
@@ -422,7 +422,7 @@ fn arg_type(param: &actions::ActionParam) -> String {
 /// model finds out on the turn it called, while it still has budget to fix the
 /// arguments. A proposal that failed validation is never recorded at all: the
 /// user's inbox is for decisions they can actually take.
-fn propose(config: &ResolvedConfig, args: &Value) -> Value {
+async fn propose(db: &Database, config: &ResolvedConfig, args: &Value) -> Value {
     let Some(name) = args["action"].as_str() else {
         return json!({
             "error": "propose needs an `action`",
@@ -441,8 +441,18 @@ fn propose(config: &ResolvedConfig, args: &Value) -> Value {
         });
     };
 
-    match actions::validate_args(action, &args["args"]) {
-        Ok(validated) => json!({
+    let validated = match actions::validate_args(action, &args["args"]) {
+        Ok(v) => v,
+        Err(why) => return json!({ "error": why }),
+    };
+    if action.name == "transaction.record"
+        && let Some(entry) = validated.get("entry").and_then(Value::as_str)
+        && let Err(refusal) = super::ledger_grounding::check_record(db, entry).await
+    {
+        return refusal;
+    }
+    {
+        json!({
             "proposed": true,
             "action": action.name,
             "args": validated,
@@ -451,8 +461,7 @@ fn propose(config: &ResolvedConfig, args: &Value) -> Value {
             // Said back to the model rather than assumed, because the failure
             // this guards against is it reporting the change as done.
             "status": "waiting for the user to accept or decline; nothing has changed yet",
-        }),
-        Err(why) => json!({ "error": why }),
+        })
     }
 }
 

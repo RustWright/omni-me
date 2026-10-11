@@ -409,7 +409,7 @@ pub async fn run(
         let mut case_passes = 0;
         for run in 1..=repeats {
             let session = match Session::new(db, config, llm) {
-                Ok(s) => s,
+                Ok(s) => s.with_specialists(),
                 Err(e) => {
                     eprintln!("cannot bench: {e}");
                     return;

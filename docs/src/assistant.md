@@ -237,6 +237,22 @@ it deliberately. If the amounts can be restated by a model, "the amount is what 
 bank said" stops being true, and it would stop being true inside something
 presented as a wording fix.
 
+**It records the way you already record.** A ledger only works if the same thing is
+filed the same way every time, and a model left to itself files a lunch under
+whatever account sounds right. Three things hold it to your conventions:
+
+- **A money request goes to the ledger specialist.** One small model call routes each
+  request first; a request about money gets your conventions in its instructions —
+  the note you title "Ledger conventions", or, without one, the accounts the ledger
+  already uses — and the rule to follow how the same payee was recorded before.
+- **An account the ledger does not have is refused.** The refusal names the closest
+  real accounts and goes back to the model on the same turn, so it can fix the entry
+  rather than hand you a wrong one. With a conventions note, "the ledger has it" means
+  your note names it: accounts the importers invented do not count.
+- **A payee keeps its account.** If the same payee was recorded before under a
+  different spending account, the proposal is refused with those past entries as the
+  pattern to follow, unless you asked for a different one.
+
 **Ledger proposals are decided in Finances, not in the assistant's inbox.** A
 change to money is approved beside the money, with the ledger on screen. The two
 queues are disjoint by construction rather than by convention: the assistant inbox
