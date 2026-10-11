@@ -14,8 +14,7 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 Dev workflows: `--ref dev/untested-overlay`. Dev actions need no permission; live ones do.
 
 ## ⛔ Waiting on him
-- **Round 4 of the phone test**, and R3-7 / R3-8 (the assistant claiming actions it never took;
-  saying "waiting for approval" for granted ones). `tasks.md` § round 3 results.
+- **Round 4 of the phone test** (1.1.31-dev). `tasks.md` § round 4 checklist.
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
 - **The official finances import**: go-live sequence, after the merge. Gate 1 (live backup) first.

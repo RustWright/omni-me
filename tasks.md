@@ -1458,10 +1458,12 @@ Assistant capability run on the S9 (2026-10-11), 13 requests, all actions he gra
   in his zone.
 - 🔴 R3-6 FIXED `850d44b`: steps added together all took position 10000 (tie); position is
   now resolved at approval, after the routine's last step.
-- ⚠️ R3-7 NOT FIXED, his call: in a long thread the model answered "done ✅" to four actions
-  with ZERO tool calls (history-induced; the same request in a fresh thread worked).
-- ⚠️ R3-8 NOT FIXED, his call: replies say "waiting for your approval" for actions his grants
-  already applied (the prompt still says propose = only asks).
+- 🔴 R3-7 + R3-8 RULED 2026-10-11 (his pick, my recommendation): an app-written line under
+  every reply, built from its suggestions, never from the prose: "Carried out: N · Waiting for
+  you: N · Declined: N" or "No changes made in this reply." ✅ `types::reply_outcome`, APK
+  1.1.31-dev; on the S9 the false "done ✅" reply reads "No changes made in this reply." Beat:
+  prompt changes (a request, not a guarantee; the model already ignored its prompt). The
+  model can still claim falsely in prose; the line is what makes it visible.
 - ⚠️ R3-9 "most recent X" picked 09-02 over 09-25: search ranks by relevance, not date.
 - ⚠️ R3-10 "Build me a routine" described one without creating it until told to; creation
   then steps needs two turns (steps need the routine's id). No weekday frequency exists.
@@ -1488,7 +1490,7 @@ deployed code is CI-green (`7d6d485`).
 4. Routines › Weekday Morning (the assistant built it): steps in order, today's marks.
 5. Assistant inbox: one suggestion, retiring a test belief, approve or decline.
 6. Pick belief prompts from the list below and ask one or two.
-7. Rule on R3-7 / R3-8 (model honesty about actions) when convenient.
+7. Under each assistant reply: the grey line saying what actually happened.
 
 Belief prompts, drafted for him to pick from (beliefs stay ask-only; each says to weight the
 last 12 months, after his 10-04 rejection of a belief that weighed 2022 like 2026). Topics
