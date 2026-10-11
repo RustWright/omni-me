@@ -1573,6 +1573,10 @@ deployed code is CI-green (`7d6d485`).
   visible/hidden condition used by search, list, read, counts and the vector index), with
   narrower claim phrases. Cost: `1afc2fa` moves the brief ahead of the minute-level date line
   so DeepInfra's automatic prefix cache can reuse it, and counts `cached_tokens`.
+- Bench `1fc6da4`: 26/30 of the runs that reached the model (6 hit HTTP 402, DeepInfra out of
+  balance; he is topping up, 2026-10-11). Cache works: 3.47M of ~4.0M prompt tokens served from
+  the prefix cache. Still weak: R3-11 1/3, routine 2/3, one newest-Uber run tagged two old
+  imports. ⏳ Re-run in full once a call succeeds.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
