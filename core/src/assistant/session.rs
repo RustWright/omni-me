@@ -107,8 +107,9 @@ pub const PROPOSAL_TURNS: usize = 4;
 /// find it" is a correct answer, and the model read that on every turn and kept
 /// searching anyway. What changes the outcome is saying it at the moment it is
 /// actionable and withholding the tools, so there is nothing else to do.
-const LAST_TURN_NUDGE: &str = "You have no tool calls left. Answer now using only what you \
-     have already found. If the records you looked for do not exist, say plainly that you \
+const LAST_TURN_NUDGE: &str = "You have no lookups left. If the user asked for a change, \
+     propose it now from what you have already found, then answer. Otherwise answer now using \
+     only what you have already found. If the records you looked for do not exist, say plainly that you \
      could not find them and name what you searched for — that is a useful answer, not a \
      failure. Do not claim a record exists unless you retrieved it.";
 
@@ -130,7 +131,10 @@ or three calls before answering is normal and expected.
 - Stop as soon as you can answer. Reply in prose. Do not keep searching to be thorough.
 - Never repeat a call you have already made with the same arguments. If a search did not \
 find something, change the words or accept that it is not there.
-- \"I could not find it\" is a correct answer. Guessing is not.";
+- \"I could not find it\" is a correct answer. Guessing is not.
+- When asked to find something and then make a change from it (a note, a routine, a \
+transaction), do a few targeted lookups and then propose the change. Do not spend every \
+lookup researching, and do not describe the change instead of proposing it.";
 
 /// How to reply when the tool channel is closed and a grammar is in force.
 ///
@@ -405,6 +409,7 @@ impl<'a> Session<'a> {
         // loop outright, so even a model that does nothing but propose halts.
         let mut spent = 0usize;
         let ceiling = self.max_turns.saturating_add(PROPOSAL_TURNS);
+        let mut nudged = false;
 
         for _ in 0..ceiling {
             if spent >= self.max_turns {
@@ -413,18 +418,28 @@ impl<'a> Session<'a> {
             // On the last turn the budget is about to end the loop, and its only
             // other exit returns no text at all. See `LAST_TURN_NUDGE`.
             let last_turn = spent + 1 == self.max_turns;
-            if last_turn {
+            if last_turn && !nudged {
                 messages.push(ChatMessage::User(LAST_TURN_NUDGE.to_string()));
+                nudged = true;
             }
 
             // ⚠️ Exactly one channel, never both. See `Session::constrained`.
             let mut request = ChatRequest::new(messages.clone());
             if let Some(schema) = &self.response_schema {
                 request = request.with_response_schema(schema.clone());
-            } else if !last_turn {
-                // Tools withheld on the last turn, so prose is the only reply
-                // the model can form. The nudge alone is advice, and this model
-                // ignored the response schema seven times in one bench run.
+            } else if last_turn {
+                // Lookups withheld on the last turn, so prose or a proposal is
+                // all the model can form: the nudge alone is advice, and this
+                // model ignored the response schema seven times in one bench run.
+                // `propose` stays so research that ran long can still end in the
+                // change asked for (R3-11: ten lookups, then nothing).
+                request = request.with_tools(
+                    verbs::tools()
+                        .into_iter()
+                        .filter(|t| t.name == "propose")
+                        .collect(),
+                );
+            } else {
                 request = request.with_tools(verbs::tools());
             }
             if let Some(t) = self.enable_thinking {
@@ -982,7 +997,7 @@ mod tests {
     /// the same model ignored the response schema seven times in one bench run,
     /// so a politely worded instruction is not enough.
     #[tokio::test]
-    async fn the_last_turn_offers_no_tools_so_prose_is_the_only_reply() {
+    async fn the_last_turn_offers_only_propose_so_no_lookup_can_spend_it() {
         let db = test_db().await;
         let llm = ScriptedLlm::new(
             (0..10)
@@ -1011,10 +1026,12 @@ mod tests {
                 "turn {i} should still offer tools"
             );
         }
-        assert!(
-            seen[3].tools.is_empty(),
-            "the last turn must offer no tools, or the model can spend it on \
-             another call and the user gets silence"
+        let last: Vec<&str> = seen[3].tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(
+            last,
+            ["propose"],
+            "the last turn must offer no lookup, or the model can spend it on another \
+             search and the user gets silence; propose stays so the change still lands"
         );
     }
 

@@ -134,8 +134,10 @@ common case is *structurally* unable to answer the harder one, and the budget us
 right between the two.
 
 So two things hold now. The budget is ten rather than six, because a ceiling costs nothing on
-the runs that never reach it. And **on the last call, the tools are withheld** and the model
-is told to answer with what it has. That matters more than the number: whatever the budget,
+the runs that never reach it. And **on the last call, the lookups are withheld** and the model
+is told to answer with what it has. Proposing stays available: a request to research something
+and then write it down used to spend every call researching and end with nothing written, so
+the last call can still turn what was found into the change you asked for. That matters more than the number: whatever the budget,
 running out of it used to produce *no reply at all* — you waited through several calls and got
 silence. Now the final call can only produce prose, so the worst case is an answer that says
 what was searched for and did not turn up.
