@@ -1607,6 +1607,24 @@ deployed code is CI-green (`7d6d485`).
   rule only. Rule in `UI_WORKFLOW.md` § The layout sweep.
   ✅ CI `339093e` green as a gate (20 screens). APK 1.1.34-dev on the S9: every tab, both
   Assistant sub-screens and a chat measured at the 16px gutter.
+- R4-6 Retention before live (his ask 2026-10-11). Analysis of the dev archive (clone of live):
+  862 docs, 820 from email. By what they are: social notifications 411 (276 untagged), dev/CI
+  notifications 51, promos/newsletters 51+, sign-in codes/security alerts 38, delivery updates
+  34, terms/policy notices 29, banking notifications 20, receipts/statements/tax ~63, other 103.
+  Free-form tags (`extraction/document.rs` schema: any strings) do not line up with any of it.
+  🔴 RULED (his pick A + C, my recommendation): one retention category per email from a fixed
+  list, chosen at intake, stored as a `retain:<category>` tag with a timer per category; the
+  existing documents categorized once; social notifications not archived at all. Beat: B, rules
+  by sender (sender recorded on 244 of 820). His conditions: (1) measure before changing the
+  tagging model (I expect the closed list, not the model, to be the fix); (2) a delivery notice
+  that also shows a charge is a receipt: rule "an amount charged makes it a receipt", and a
+  receipt draft extracted from the email forces the category. ⏳ Build: closed list + schema,
+  intake skip for social, one-time backfill, a labelled set from these docs to score models,
+  then his timers per category.
+- R4-7 Type-to-search picker for the archive tag filter, Kind filter and retention tag picker
+  (his report: the tag list is too long to scroll). `250903f`; APK 1.1.35-dev building.
+- Assistant asked "Shall I propose creating this?" instead of proposing (S9-equivalent run,
+  2026-10-11); asking leave now gets the same send-back as an announced change, `362e6da`.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
