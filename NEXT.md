@@ -4,10 +4,12 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — his ruling on the R4-3 research, then build what he picks
-Research done: `ASSISTANT_RESEARCH.md` (recommends keeping the Rust loop and adopting six
-patterns, test set first). Independent of his answer: fix R4-1 (sticky bars cover content).
-Then finish his round 4 test (1.1.31-dev on the S9), stage 3 (review), stage 4 (merge).
+## ▶ NEXT ACTION — assistant build order (R4-3 ruling), step 1 baseline then step 2
+Order and rulings: `tasks.md` § "Round 4 early feedback" (R4-2, R4-3, R4-4). Step 1 is built
+(`--bench-cases`); run it on the box against a copy of the dev agent's volume, dev agent
+stopped meanwhile (4 GB box, live beside it). Then step 2, ledger grounding from his
+CONVENTIONS.md. R4-1/R4-4 built (`6f9bcc5`): deploy with APK 1.1.32-dev, check on the S9.
+Then his round 4 test, stage 3 (review), stage 4 (merge).
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.

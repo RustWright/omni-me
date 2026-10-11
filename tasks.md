@@ -1512,6 +1512,21 @@ deployed code is CI-green (`7d6d485`).
   (6) claim check against the run's proposals; (7) stronger models on the set.
   🔴 His addition: specialists generalise to every feature (archive, journal, ...), the
   ledger one first.
+- R4-2 findings (2026-10-11, for the design): (a) `transaction.record`'s own description
+  carries an example with `Expenses:Food` / `Assets:Checking`, which the bad proposal echoed;
+  (b) the dev ledger is importer-written and drifts from his conventions (`Expenses:Groceries`
+  vs his `Expenses:Food:Groceries`, `Expenses:Transportation:Rideshare` vs his
+  `Expenses:Transport:RideShare`, four spellings of tax), so the receipt extractor has the
+  same class of bug and "accounts the ledger has" on dev is not his convention; (c) his
+  conventions are written down: `CONVENTIONS.md` in the restored paisa ledger (local only, ⛔
+  never in the public repo), MECE account trees plus posting tags. Case bench (step 1) is
+  `--bench-cases`, `e92b3e7`.
+  🔴 RULED 2026-10-11 (his pick A, my recommendation): his `CONVENTIONS.md` is the source.
+  Imported as a reference note the assistant reads for money requests; proposed accounts
+  validated against his account tree with "did you mean" errors fed back; past entries as
+  examples once the official import lands; the same check on the receipt extractor (same bug
+  class). Beat: B, learn from omni-me's ledger (teaches the importer drift); C, a new spec
+  (second copy of his document).
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
