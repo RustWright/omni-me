@@ -1476,6 +1476,10 @@ present, so read as compaction). Verified on device: no Archive badge; the Uber 
 approval-resolved one); and `f6d2463`'s agent image failed on `chrono` being a dev-dependency
 only (fixed by moving the clock into core).
 
+✅ Check-in housekeeping verified live 2026-10-11: fired 11:00 UTC (06:00 Winnipeg), "tidied
+earlier check-ins archived=2 deleted=0", answered; the phone lists only today's as active. All
+deployed code is CI-green (`7d6d485`).
+
 **Stage 2, round 4 checklist (1.1.30-dev).**
 1. Archive: no badge; Unchecked only still filters; confirm a document's values and the next
    unchecked one opens (D1).
