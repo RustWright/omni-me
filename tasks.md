@@ -1551,6 +1551,12 @@ deployed code is CI-green (`7d6d485`).
   change with nothing proposed is sent back once (`claims.rs`), and a `propose` that
   returned an error is now marked refused. ⚠️ That last one closed a hole in step 2: the
   collector re-checks syntax only, so ledger-refused entries would have reached the inbox.
+- Bench after steps 2-6 (`f3de10e`): 18/36 (50%), WORSE than the 25/36 baseline, 3.8M tokens
+  (2.3x; the 44 KB conventions note rides every ledger call). Cause, read from a trace: with
+  `propose` offered on the last turn the model called `search` anyway (not offered), which
+  spent the turn and ended in silence; 12 runs ended "TurnBudget, 0 chars". Fix `26287bc`: a
+  closing call with no tools when the budget runs out, so a reply is guaranteed again. Also
+  the routine check now counts steps inside `routine.create` (run 1 had created one).
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
