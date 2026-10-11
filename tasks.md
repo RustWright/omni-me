@@ -1577,6 +1577,11 @@ deployed code is CI-green (`7d6d485`).
   balance; he is topping up, 2026-10-11). Cache works: 3.47M of ~4.0M prompt tokens served from
   the prefix cache. Still weak: R3-11 1/3, routine 2/3, one newest-Uber run tagged two old
   imports. ⏳ Re-run in full once a call succeeds.
+- ✅ Bench `d2ddc22` (adds: a reply announcing a change it then does not make is sent back
+  once, `claims::announced_change`): 35/36 (97%; baseline 25/36), 5.35M tokens of which 4.68M
+  served from cache (my estimate ~$1.30 a bench vs ~$2.10 at baseline, cache-write fee not
+  counted). Only miss: one R3-11 run listed the books without proposing. Agent `d2ddc22`
+  deployed to dev; server image + APK 1.1.33-dev building.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual

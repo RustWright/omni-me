@@ -4,11 +4,10 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — assistant build order (R4-3 ruling): bench steps 2-6, then step 7
-Order and rulings: `tasks.md` § "Round 4 early feedback" (R4-2, R4-3, R4-4). Baseline 25/36.
-Steps 2-6 built; bench them (`--bench-cases`, agent `f3de10e`, on a copy of the dev agent
-volume, dev agent stopped meanwhile), then deploy, then step 7 (stronger open-weights models
-on the same set). R4-1/R4-4 deployed and verified on the S9 (1.1.32-dev).
+## ▶ NEXT ACTION — install 1.1.33-dev on the S9, then step 7 (stronger models)
+Steps 1-6 of the R4-3 build order are done: bench 35/36 (baseline 25/36), `tasks.md` § "Round 4
+early feedback". Agent `d2ddc22` on dev; server image + APK 1.1.33-dev building. Step 7: run
+`--bench-cases` against other open-weights interactive models (cost secondary, his ruling).
 Then his round 4 test, stage 3 (review), stage 4 (merge).
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
