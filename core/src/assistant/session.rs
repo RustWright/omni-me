@@ -537,22 +537,29 @@ impl<'a> Session<'a> {
                 let proposed = trace
                     .iter()
                     .any(|t| t.verb.as_deref() == Some(verbs::PROPOSE) && !t.refused);
+                // Also a reply that announces a change and stops: the same
+                // check, future tense.
+                let correction = answer.as_deref().and_then(|text| {
+                    super::claims::claimed_change(text)
+                        .map(super::claims::correction)
+                        .or_else(|| {
+                            super::claims::announced_change(text).map(super::claims::follow_through)
+                        })
+                });
                 if !claim_checked
                     && !proposed
                     && matches!(stopped, StopReason::Answered)
-                    && let Some(text) = answer.as_deref()
-                    && let Some(phrase) = super::claims::claimed_change(text)
+                    && let Some(correction) = correction
                 {
                     claim_checked = true;
                     tracing::info!(
-                        phrase,
-                        "reply claims a change nothing proposed; asking again"
+                        "reply claims or announces a change nothing proposed; asking again"
                     );
                     messages.push(ChatMessage::Assistant {
-                        content: Some(text.to_string()),
+                        content: answer.clone(),
                         tool_calls: Vec::new(),
                     });
-                    messages.push(ChatMessage::User(super::claims::correction(phrase)));
+                    messages.push(ChatMessage::User(correction));
                     continue;
                 }
                 return self.finish(answer, trace, total, started, stopped, off_schema);

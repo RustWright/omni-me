@@ -29,10 +29,39 @@ pub const CLAIMS: &[&str] = &[
     "is now recorded",
 ];
 
+/// Phrases that announce a change about to be made. A reply ending on one with
+/// nothing proposed stopped short: "Let me now propose the routine." was the
+/// whole of a run's last word (bench, 2026-10-11).
+pub const INTENTIONS: &[&str] = &[
+    "let me now propose",
+    "let me propose",
+    "i'll propose",
+    "i will propose",
+    "i'll now propose",
+    "let me create",
+    "i'll create",
+    "let me record",
+    "i'll record",
+];
+
 /// The first claim phrase in `reply`, if any.
 pub fn claimed_change(reply: &str) -> Option<&'static str> {
     let reply = reply.to_lowercase();
     CLAIMS.iter().copied().find(|c| reply.contains(c))
+}
+
+/// The first phrase announcing a change about to be made, if any.
+pub fn announced_change(reply: &str) -> Option<&'static str> {
+    let reply = reply.to_lowercase();
+    INTENTIONS.iter().copied().find(|c| reply.contains(c))
+}
+
+/// What the model is told when it announced a change and then stopped.
+pub fn follow_through(phrase: &str) -> String {
+    format!(
+        "You wrote {phrase:?}, but nothing was proposed, so the user has nothing to accept. \
+         Propose it now with the propose tool, or say plainly why you cannot."
+    )
 }
 
 /// What the model is told when its reply claims a change it did not propose.
@@ -62,6 +91,10 @@ mod tests {
         assert_eq!(
             claimed_change("I've proposed the note; it waits for you."),
             None
+        );
+        assert_eq!(
+            announced_change("Here is what I found. Let me now propose the routine."),
+            Some("let me now propose")
         );
     }
 }
