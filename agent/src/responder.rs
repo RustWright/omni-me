@@ -28,9 +28,8 @@ use omni_me_core::assistant::{
 use omni_me_core::config::{Feature, ResolvedConfig};
 use omni_me_core::db::Database;
 use omni_me_core::events::{
-    AnswerStop, AssistantProposalMadePayload, AssistantQuestionAskedPayload,
-    AssistantThreadArchivedPayload, AssistantThreadDeletedPayload, EventType, EventWriter,
-    NewEvent, ProposalDecision,
+    AnswerStop, AssistantProposalMadePayload, AssistantQuestionAskedPayload, EventWriter, NewEvent,
+    ProposalDecision,
 };
 use omni_me_core::llm::LlmClient;
 use omni_me_core::sync::{PullEvent, PullScheduler};
@@ -207,39 +206,10 @@ impl Responder<'_> {
                 return;
             }
         };
-        let plan = check_in::plan_housekeeping(&threads, current, chrono::Utc::now());
-        let mut events = Vec::new();
-        for id in &plan.archive {
-            let payload = AssistantThreadArchivedPayload {
-                thread_id: id.clone(),
-                archived: true,
-            };
-            events.push((
-                EventType::AssistantThreadArchived,
-                id,
-                serde_json::to_value(&payload),
-            ));
-        }
-        for id in &plan.delete {
-            let payload = AssistantThreadDeletedPayload {
-                thread_id: id.clone(),
-            };
-            events.push((
-                EventType::AssistantThreadDeleted,
-                id,
-                serde_json::to_value(&payload),
-            ));
-        }
-        for (event_type, id, payload) in events {
-            let Ok(payload) = payload else { continue };
-            let event = NewEvent {
-                id: None,
-                event_type: event_type.to_string(),
-                aggregate_id: id.clone(),
-                timestamp: chrono::Utc::now(),
-                device_id: self.writer.device_id().to_string(),
-                payload,
-            };
+        let (plan, events) =
+            check_in::housekeeping_events(&threads, current, self.writer.device_id());
+        for event in events {
+            let id = event.aggregate_id.clone();
             if let Err(e) = self.writer.append_new(event).await {
                 tracing::warn!(thread = %id, error = %e, "could not tidy a check-in");
             }

@@ -95,6 +95,46 @@ pub fn plan_housekeeping(
     out
 }
 
+/// [`plan_housekeeping`] against the current clock, as the events that carry it
+/// out. Here rather than in the agent, which takes no `chrono` dependency.
+pub fn housekeeping_events(
+    threads: &[CheckInThread],
+    current: &str,
+    device_id: &str,
+) -> (Housekeeping, Vec<crate::events::NewEvent>) {
+    use crate::events::{
+        AssistantThreadArchivedPayload, AssistantThreadDeletedPayload, EventType, NewEvent,
+    };
+    let plan = plan_housekeeping(threads, current, Utc::now());
+    let event = |event_type: EventType, id: &str, payload: serde_json::Value| NewEvent {
+        id: None,
+        event_type: event_type.to_string(),
+        aggregate_id: id.to_string(),
+        timestamp: Utc::now(),
+        device_id: device_id.to_string(),
+        payload,
+    };
+    let mut events = Vec::new();
+    for id in &plan.archive {
+        let p = AssistantThreadArchivedPayload {
+            thread_id: id.clone(),
+            archived: true,
+        };
+        if let Ok(v) = serde_json::to_value(&p) {
+            events.push(event(EventType::AssistantThreadArchived, id, v));
+        }
+    }
+    for id in &plan.delete {
+        let p = AssistantThreadDeletedPayload {
+            thread_id: id.clone(),
+        };
+        if let Ok(v) = serde_json::to_value(&p) {
+            events.push(event(EventType::AssistantThreadDeleted, id, v));
+        }
+    }
+    (plan, events)
+}
+
 /// Every check-in thread with its state, for [`plan_housekeeping`].
 pub async fn check_in_threads(db: &Database) -> Result<Vec<CheckInThread>, EventError> {
     let mut resp = db
