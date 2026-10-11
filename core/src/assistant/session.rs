@@ -410,6 +410,7 @@ impl<'a> Session<'a> {
         let mut spent = 0usize;
         let ceiling = self.max_turns.saturating_add(PROPOSAL_TURNS);
         let mut nudged = false;
+        let mut claim_checked = false;
 
         for _ in 0..ceiling {
             if spent >= self.max_turns {
@@ -528,6 +529,29 @@ impl<'a> Session<'a> {
                     Some(_) => unwrap_constrained_answer(reply.content),
                     None => reply.content,
                 };
+                // R3-7: a reply saying a change was made when nothing was
+                // proposed gets one chance to propose it or say otherwise.
+                let proposed = trace
+                    .iter()
+                    .any(|t| t.verb.as_deref() == Some(verbs::PROPOSE) && !t.refused);
+                if !claim_checked
+                    && !proposed
+                    && matches!(stopped, StopReason::Answered)
+                    && let Some(text) = answer.as_deref()
+                    && let Some(phrase) = super::claims::claimed_change(text)
+                {
+                    claim_checked = true;
+                    tracing::info!(
+                        phrase,
+                        "reply claims a change nothing proposed; asking again"
+                    );
+                    messages.push(ChatMessage::Assistant {
+                        content: Some(text.to_string()),
+                        tool_calls: Vec::new(),
+                    });
+                    messages.push(ChatMessage::User(super::claims::correction(phrase)));
+                    continue;
+                }
                 return self.finish(answer, trace, total, started, stopped, off_schema);
             }
 
@@ -571,11 +595,16 @@ impl<'a> Session<'a> {
                     .await
                 };
 
+                // A `propose` that came back as an error proposed nothing. The
+                // collector re-checks syntax only, so without this a ledger
+                // refusal (`ledger_grounding`) would still reach the inbox.
+                let refused = refusal.is_some()
+                    || (call.name == verbs::PROPOSE && result.get("error").is_some());
                 trace.push(TurnRecord {
                     verb: Some(call.name.clone()),
                     arguments: call.arguments.clone(),
                     repeated,
-                    refused: refusal.is_some(),
+                    refused,
                     usage: reply.usage,
                     latency: reply.latency,
                 });
@@ -903,6 +932,65 @@ mod tests {
         ResolvedConfig::new(Default::default(), Default::default())
     }
 
+    /// R3-7: "Done ✅" with nothing proposed gets one correction, and the reply
+    /// that follows it is the answer.
+    #[tokio::test]
+    async fn a_claimed_change_with_nothing_proposed_is_sent_back_once() {
+        let db = test_db().await;
+        let llm = ScriptedLlm::new(vec![
+            prose_turn("Done ✅"),
+            prose_turn("I have not changed anything; tell me which note you mean."),
+        ]);
+        let cfg = config();
+        let outcome = Session::new(&db, &cfg, &llm).unwrap().ask("q").await;
+        assert_eq!(llm.seen.lock().unwrap().len(), 2);
+        assert_eq!(
+            outcome.answer.as_deref(),
+            Some("I have not changed anything; tell me which note you mean.")
+        );
+    }
+
+    /// A proposal the ledger check refused is not a proposal: the collector
+    /// re-checks syntax only, so the run itself has to mark it.
+    #[tokio::test]
+    async fn a_ledger_refusal_is_recorded_as_refused() {
+        let db = test_db().await;
+        crate::events::BudgetProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        db.query(
+            "CREATE generic_notes:conv SET title = 'Ledger conventions', \
+             raw_text = 'Meals: Expenses:Food:Dining. Cash: Assets:NonRegistered:CAD.', \
+             tags = [], created_at = time::now(), updated_at = time::now()",
+        )
+        .await
+        .unwrap();
+        let entry = "2026-10-11 Tim Hortons lunch\n    Expenses:Food  14.50 CAD\n    \
+                     Assets:Cash  -14.50 CAD\n";
+        let llm = ScriptedLlm::new(vec![
+            tool_turn(
+                "c1",
+                "propose",
+                json!({
+                    "action": "transaction.record",
+                    "args": { "entry": entry },
+                    "rationale": "Lunch at Tim Hortons.",
+                }),
+            ),
+            prose_turn("I could not record it under an account you use."),
+        ]);
+        let cfg = config();
+        let outcome = Session::new(&db, &cfg, &llm).unwrap().ask("q").await;
+        let propose = outcome
+            .trace
+            .iter()
+            .find(|t| t.verb.as_deref() == Some("propose"))
+            .unwrap();
+        assert!(propose.refused);
+        assert!(super::super::answer::proposals(&cfg, &outcome).is_empty());
+    }
+
     #[tokio::test]
     async fn a_discovery_then_answer_run_records_its_path_and_cost() {
         let db = test_db().await;
@@ -951,7 +1039,7 @@ mod tests {
         let llm = ScriptedLlm::new(vec![
             tool_turn("c1", "search", json!({ "query": "rent" })),
             tool_turn("c2", "search", json!({ "query": "landlord" })),
-            prose_turn("done"),
+            prose_turn("Here is what I found."),
         ]);
         let cfg = config();
         let out = Session::new(&db, &cfg, &llm).unwrap().ask("q").await;
@@ -1342,7 +1430,7 @@ mod tests {
             name: "search".into(),
             arguments: json!({ "query": "rent" }),
         });
-        let llm = ScriptedLlm::new(vec![two, prose_turn("done")]);
+        let llm = ScriptedLlm::new(vec![two, prose_turn("Here is what I found.")]);
         let cfg = config();
 
         let out = Session::new(&db, &cfg, &llm).unwrap().ask("q").await;

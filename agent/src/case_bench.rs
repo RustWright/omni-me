@@ -138,25 +138,6 @@ const CASES: &[Case] = &[
     },
 ];
 
-/// Phrases that report a change as made. A reply that proposes says so in
-/// other words ("I've proposed", "waiting for your approval").
-const CLAIMS: &[&str] = &[
-    "done",
-    "✅",
-    "i've added",
-    "i have added",
-    "i've created",
-    "i have created",
-    "i've recorded",
-    "i have recorded",
-    "i've marked",
-    "i have marked",
-    "has been added",
-    "has been created",
-    "has been recorded",
-    "is now recorded",
-];
-
 /// What the checks compare against, read once from the pulled ledger.
 struct Ledger {
     accounts: BTreeSet<String>,
@@ -290,8 +271,9 @@ fn check(
             }
         }
         Check::NoUnbackedClaim => {
-            let reply = outcome.answer.as_deref().unwrap_or("").to_lowercase();
-            match CLAIMS.iter().find(|c| reply.contains(*c)) {
+            match omni_me_core::assistant::claims::claimed_change(
+                outcome.answer.as_deref().unwrap_or(""),
+            ) {
                 Some(c) if made.is_empty() => Err(format!("says {c:?} with nothing proposed")),
                 _ => Ok(()),
             }

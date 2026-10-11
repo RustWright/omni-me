@@ -18,6 +18,8 @@ pub mod chat_tidy;
 /// The scheduled check-in: the assistant asking on the user's behalf.
 pub mod check_in;
 pub mod chunk;
+/// Telling a reply that reports a change from one that proposes it.
+pub mod claims;
 /// Reading conversations back: what is waiting for an answer, and what was said.
 pub mod conversation;
 /// Local embedding models. Absent unless the host opted into `embeddings` — the
