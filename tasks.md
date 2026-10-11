@@ -1557,6 +1557,14 @@ deployed code is CI-green (`7d6d485`).
   spent the turn and ended in silence; 12 runs ended "TurnBudget, 0 chars". Fix `26287bc`: a
   closing call with no tools when the budget runs out, so a reply is guaranteed again. Also
   the routine check now counts steps inside `routine.create` (run 1 had created one).
+- Bench after the closing call (`26287bc`): 27/36 (75%, baseline 69%), 4.0M tokens. Record
+  3/3 (was 0/3); routine 1/3; R3-11 still 0/3 (reads 15+ entries, never proposes). Several
+  "failures" were dev state, not the model: a Weekday Morning routine, the exercise belief and
+  the retired test belief already exist; a bank row and its receipt tie on the newest
+  date. Deployed to dev: server `b4aa329` (overlay `034798d`), agent `26287bc`; backup
+  `pre-step2-6`. Next run `8a269f7`: last-turn lookups refused (not run), default budget
+  10 -> 15 (my call under his quality-over-cost ruling; it is a Settings dial), bench checks
+  fixed for those dev-state cases. ⏳ Then: trim the 44 KB conventions brief.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
