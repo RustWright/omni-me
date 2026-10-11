@@ -1467,6 +1467,25 @@ Assistant capability run on the S9 (2026-10-11), 13 requests, all actions he gra
   then steps needs two turns (steps need the routine's id). No weekday frequency exists.
 - ⚠️ R3-11 A research-then-write request ("note with three books from my journal") spent all
   10 turns searching and returned an empty answer.
+Deployed 2026-10-11: server+agent `1ce9973` (test-only fix `7d6d485` after), APK 1.1.30-dev on
+the S9; backup `omni-dev-20261011T050913-pre-round4.tar.gz` (95 MB vs 139 MB before: 857 docs
+present, so read as compaction). Verified on device: no Archive badge; the Uber receipt left
+"Unchecked only"; Add a value adds, survives reopening, removes. His zone is America/Winnipeg
+(I had assumed Toronto); stamped by re-saving the hour from the phone.
+⚠️ CI failed once on `1ce9973` (a test asserting no `order` param; updated to allow the
+approval-resolved one); and `f6d2463`'s agent image failed on `chrono` being a dev-dependency
+only (fixed by moving the clock into core).
+
+**Stage 2, round 4 checklist (1.1.30-dev).**
+1. Archive: no badge; Unchecked only still filters; confirm a document's values and the next
+   unchecked one opens (D1).
+2. A document › + Add a value › Add; then Remove it.
+3. Assistant: only today's Daily check-in in the list; yesterday's under Archived.
+4. Routines › Weekday Morning (the assistant built it): steps in order, today's marks.
+5. Assistant inbox: one suggestion, retiring a test belief, approve or decline.
+6. Pick belief prompts from the list below and ask one or two.
+7. Rule on R3-7 / R3-8 (model honesty about actions) when convenient.
+
 Belief prompts, drafted for him to pick from (beliefs stay ask-only; each says to weight the
 last 12 months, after his 10-04 rejection of a belief that weighed 2022 like 2026). Topics
 from the assistant's own count of his journal (the list is kept out of this public file).
