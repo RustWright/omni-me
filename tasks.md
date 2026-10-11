@@ -1565,6 +1565,14 @@ deployed code is CI-green (`7d6d485`).
   `pre-step2-6`. Next run `8a269f7`: last-turn lookups refused (not run), default budget
   10 -> 15 (my call under his quality-over-cost ruling; it is a Settings dial), bench checks
   fixed for those dev-state cases. ⏳ Then: trim the 44 KB conventions brief.
+- Bench `8a269f7` (budget 15, last-turn lookups refused): 30/36 (83%), 5.7M tokens. R3-11 2/3,
+  routine 2/3, record 3/3. Two belief "failures" were the claim check matching "done" inside
+  the model's own correction. The "most recent Uber" misses found a real bug: the catalog hid
+  only `removed` rows, so a bank row merged into its receipt (`superseded_by` set) stayed
+  readable and was categorized as the newest. Fixed `1fc6da4` (`hidden_when_set`, one
+  visible/hidden condition used by search, list, read, counts and the vector index), with
+  narrower claim phrases. Cost: `1afc2fa` moves the brief ahead of the minute-level date line
+  so DeepInfra's automatic prefix cache can reuse it, and counts `cached_tokens`.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
