@@ -34,14 +34,26 @@ use crate::db::Database;
 use crate::llm::chat::{ChatMessage, ChatRequest, Usage};
 use crate::llm::{LlmClient, LlmError};
 
+fn user_zone(config: &ResolvedConfig) -> chrono_tz::Tz {
+    config
+        .text_of(crate::config::ConfigKey::AssistantCheckInTimezone)
+        .parse()
+        .unwrap_or(chrono_tz::Tz::UTC)
+}
+
+/// Today's date where the user is, as YYYY-MM-DD: the date the prompt states.
+pub fn today_iso(config: &ResolvedConfig) -> String {
+    chrono::Utc::now()
+        .with_timezone(&user_zone(config))
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
 /// The date, so "today" means today. Without it the model guessed from its
 /// training (dev, 2026-10-11: a lunch "today" recorded as 2025-06-25). Read in
 /// the person's zone, the one the app stamps with the check-in schedule.
 fn today_line(config: &ResolvedConfig, now: chrono::DateTime<chrono::Utc>) -> String {
-    let tz: chrono_tz::Tz = config
-        .text_of(crate::config::ConfigKey::AssistantCheckInTimezone)
-        .parse()
-        .unwrap_or(chrono_tz::Tz::UTC);
+    let tz = user_zone(config);
     let local = now.with_timezone(&tz);
     format!(
         "\n\nToday is {} ({}), {} in {tz}.",

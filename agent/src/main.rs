@@ -21,6 +21,7 @@
 
 mod ask;
 mod bench;
+mod case_bench;
 mod extraction_bench;
 mod index_refresh;
 mod reading_bench;
@@ -265,6 +266,12 @@ struct Args {
     /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
     bench_review: bool,
 
+    /// Score the phone's failed requests on what they proposed. See
+    /// `case_bench`.
+    ///
+    /// ⚠️ Test scaffolding, on the same terms as [`Args::ask`].
+    bench_cases: bool,
+
     /// Author a question event, then exit — a stand-in for the client.
     ///
     /// Distinct from [`Args::ask`] in the thing that matters: that one calls the
@@ -296,6 +303,7 @@ fn parse_args() -> Result<Args, String> {
         bench_reading: false,
         bench_transcription: false,
         bench_review: false,
+        bench_cases: false,
         ask_event: None,
         thread: None,
     };
@@ -311,6 +319,7 @@ fn parse_args() -> Result<Args, String> {
             "--bench-reading" => args.bench_reading = true,
             "--bench-transcription" => args.bench_transcription = true,
             "--bench-review" => args.bench_review = true,
+            "--bench-cases" => args.bench_cases = true,
             "--constrained" => args.constrained = true,
             "--reindex" => args.reindex = true,
             "--ask" => {
@@ -391,6 +400,18 @@ fn parse_args() -> Result<Args, String> {
     {
         return Err("--bench-review is its own run; pick one".to_string());
     }
+    if args.bench_cases
+        && (args.bench
+            || args.bench_retrieval
+            || args.bench_extraction
+            || args.bench_structuring
+            || args.bench_reading
+            || args.bench_transcription
+            || args.bench_review
+            || args.ask.is_some())
+    {
+        return Err("--bench-cases is its own run; pick one".to_string());
+    }
     // With `--bench` this means **bench the constrained arm only**, and it is
     // deliberate rather than a mistake: some endpoints offer `response_format`
     // and no `tools` parameter at all, so the free-form arm cannot be run there
@@ -421,7 +442,8 @@ fn parse_args() -> Result<Args, String> {
             || args.bench_structuring
             || args.bench_reading
             || args.bench_transcription
-            || args.bench_review)
+            || args.bench_review
+            || args.bench_cases)
     {
         return Err("--ask-event is its own run; pick one".to_string());
     }
@@ -1009,7 +1031,7 @@ async fn run(args: Args) -> Result<(), String> {
     // rather than starting the schedulers. They pull once first: asking about
     // records this device has not seen would answer "not there" for data that
     // exists, which looks like a retrieval failure and is not one.
-    if args.ask.is_some() || args.bench || args.bench_review {
+    if args.ask.is_some() || args.bench || args.bench_review || args.bench_cases {
         match sync_client.pull_only(&db).await {
             Ok(outcome) => {
                 tracing::info!(pulled = outcome.pulled, "pull before diagnostics");
@@ -1064,6 +1086,8 @@ async fn run(args: Args) -> Result<(), String> {
                 retrievers,
             )
             .await;
+        } else if args.bench_cases {
+            case_bench::run(&db, &config, llm.as_ref(), retrievers).await;
         } else if args.bench_review {
             review_bench::run(
                 &db,
