@@ -166,8 +166,8 @@ async fn sweep_one(
     // `false` when the entry hides nothing, so the column is always present and
     // `SourceRow` needs no second shape.
     let hidden_expr = entry
-        .hidden_when
-        .map_or_else(|| "false".to_string(), |col| format!("{col} = true"));
+        .hidden_condition()
+        .unwrap_or_else(|| "false".to_string());
 
     let sql = format!(
         "SELECT meta::id(id) AS id, ({text_expr}) AS text, ({hidden_expr}) AS hidden FROM {}",

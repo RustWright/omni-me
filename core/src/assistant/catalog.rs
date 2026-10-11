@@ -228,6 +228,37 @@ pub struct CatalogEntry {
     /// that is a filter's job, not this one. The test is whether a person would
     /// call the row *gone*.
     pub hidden_when: Option<&'static str>,
+    /// A column that hides the row whenever it holds a value: a transaction
+    /// merged into its twin keeps its row, with `superseded_by` naming the twin.
+    /// Acting on it acts on a duplicate (bench, 2026-10-11).
+    pub hidden_when_set: Option<&'static str>,
+}
+
+impl CatalogEntry {
+    /// The SQL condition under which a row is gone, or `None` if none ever is.
+    pub fn hidden_condition(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(col) = self.hidden_when {
+            parts.push(format!("{col} = true"));
+        }
+        if let Some(col) = self.hidden_when_set {
+            parts.push(format!("{col} IS NOT NONE"));
+        }
+        (!parts.is_empty()).then(|| format!("({})", parts.join(" OR ")))
+    }
+
+    /// The SQL condition a row must meet to be seen at all. `!= true` rather
+    /// than `= false`: the boolean columns can be absent.
+    pub fn visible_condition(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(col) = self.hidden_when {
+            parts.push(format!("{col} != true"));
+        }
+        if let Some(col) = self.hidden_when_set {
+            parts.push(format!("{col} IS NONE"));
+        }
+        (!parts.is_empty()).then(|| parts.join(" AND "))
+    }
 }
 
 const JOURNAL_ENTRY: CatalogEntry = CatalogEntry {
@@ -270,6 +301,7 @@ const JOURNAL_ENTRY: CatalogEntry = CatalogEntry {
     record_type: Some(JOURNAL),
     hidden_fields: &[],
     hidden_when: None,
+    hidden_when_set: None,
 };
 
 const NOTE: CatalogEntry = CatalogEntry {
@@ -298,6 +330,7 @@ const NOTE: CatalogEntry = CatalogEntry {
     // them; they are how replay converges and not a word the user wrote.
     hidden_fields: &["applied_appends"],
     hidden_when: None,
+    hidden_when_set: None,
 };
 
 const ROUTINE: CatalogEntry = CatalogEntry {
@@ -376,6 +409,7 @@ const ROUTINE: CatalogEntry = CatalogEntry {
     // The routines table itself has no `removed`; its *items* do, and `derive`
     // already filters those — see `store::derive`'s note.
     hidden_when: None,
+    hidden_when_set: None,
 };
 
 /// What the assistant has concluded about the user, and is allowed to read back.
@@ -431,6 +465,7 @@ const BELIEF: CatalogEntry = CatalogEntry {
     // deliberate capability. What is missing is the *filter*; see this entry's
     // description.
     hidden_when: None,
+    hidden_when_set: None,
 };
 
 /// Columns on `documents` that mean nothing to a reader.
@@ -535,6 +570,7 @@ const DOCUMENT: CatalogEntry = CatalogEntry {
     // reachable by `knn_search` long after every other path stopped returning it,
     // which is the failure `vector_store::sweep` documents at length.
     hidden_when: Some("purged"),
+    hidden_when_set: None,
 };
 
 /// Reconciliation bookkeeping on `transactions`, and the merge trail.
@@ -613,6 +649,7 @@ const TRANSACTION: CatalogEntry = CatalogEntry {
     // model-supplied filters alone — so without this the assistant reads money
     // the user deleted and cites it as though it had been spent.
     hidden_when: Some("removed"),
+    hidden_when_set: Some("superseded_by"),
 };
 
 /// Every catalogued collection, before feature gating.
@@ -744,6 +781,11 @@ mod tests {
             Some("removed"),
             "a deleted transaction must be unreachable, not merely unlisted — the \
              queries build their WHERE from model-supplied filters alone"
+        );
+        assert_eq!(
+            txn.hidden_when_set,
+            Some("superseded_by"),
+            "a transaction merged into its twin is a duplicate; acting on it acts twice"
         );
     }
 

@@ -5,8 +5,15 @@
 
 /// Phrases that report a change as made. A reply that proposes says so in other
 /// words ("I've proposed", "waiting for your approval").
+/// Bare "done" is not one: "I didn't mean to imply I had done anything" is the
+/// correction itself (bench, 2026-10-11).
 pub const CLAIMS: &[&str] = &[
-    "done",
+    "done ✅",
+    "done!",
+    "all done",
+    "it's done",
+    "that's done",
+    "is done",
     "✅",
     "i've added",
     "i have added",
@@ -43,7 +50,11 @@ mod tests {
 
     #[test]
     fn a_reported_change_is_caught_and_a_proposal_is_not() {
-        assert_eq!(claimed_change("Done ✅ — added it."), Some("done"));
+        assert_eq!(claimed_change("Done ✅ — added it."), Some("done ✅"));
+        assert_eq!(
+            claimed_change("You're right — I didn't mean to imply I had done anything."),
+            None
+        );
         assert_eq!(
             claimed_change("I've created the note."),
             Some("i've created")

@@ -613,8 +613,8 @@ fn identity_hint(entry: &CatalogEntry) -> &'static str {
 /// transactions" followed by a list that can only ever reach 380 reads as a
 /// retrieval failure and invites it to keep digging.
 async fn count_rows(db: &Database, entry: &CatalogEntry) -> u64 {
-    let where_clause = match entry.hidden_when {
-        Some(col) => format!(" WHERE {col} != true"),
+    let where_clause = match entry.visible_condition() {
+        Some(visible) => format!(" WHERE {visible}"),
         None => String::new(),
     };
     let table = entry.table;

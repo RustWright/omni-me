@@ -156,7 +156,7 @@ struct RawHit {
 /// person notices. ⛔ The opposite failure is a transaction vanishing from the
 /// assistant's view with nothing to indicate it was ever there.
 fn hidden_clause(entry: &CatalogEntry) -> Option<String> {
-    entry.hidden_when.map(|col| format!("{col} != true"))
+    entry.visible_condition()
 }
 
 pub async fn search(
@@ -848,16 +848,17 @@ mod tests {
         }
     }
 
-    /// A ledger row, with the reconciliation trail a real one carries.
+    /// A ledger row, with the merge trail a surviving row carries.
     ///
-    /// `superseded_by` and `merged_ids` are set on every seeded row rather than
-    /// only where a test looks at them, so `reading_a_transaction_hides_its_merge_trail`
-    /// is checking a hidden column that is genuinely present.
+    /// `merged_ids` is set on every seeded row rather than only where a test looks
+    /// at it, so `reading_a_transaction_hides_its_merge_trail` checks a hidden
+    /// column that is genuinely present. `superseded_by` stays unset: a row that
+    /// has it is the merged-away twin, which the catalog hides outright.
     async fn seed_transaction(db: &Database, id: &str, description: &str, removed: bool) {
         db.query(
             "UPSERT type::record('transactions', $id) SET date = '2026-05-14',
              description = $d, postings = [], tags_top = [], removed = $r,
-             superseded_by = 'txn-other', merged_ids = ['txn-dupe'],
+             merged_ids = ['txn-dupe'],
              cleared = false, created_at = time::now(), updated_at = time::now()",
         )
         .bind(("id", id.to_string()))
@@ -1276,13 +1277,11 @@ mod tests {
             ("t3", "2026-09-30", "Tim Hortons"),
         ] {
             seed_transaction(&db, id, d, false).await;
-            db.query(
-                "UPDATE type::record('transactions', $id) SET date = $date, superseded_by = NONE",
-            )
-            .bind(("id", id))
-            .bind(("date", date))
-            .await
-            .unwrap();
+            db.query("UPDATE type::record('transactions', $id) SET date = $date")
+                .bind(("id", id))
+                .bind(("date", date))
+                .await
+                .unwrap();
         }
         let narrowings = plan_filters(
             entry("transaction"),
@@ -1697,6 +1696,29 @@ mod tests {
                 .unwrap()
                 .is_some(),
             "the exclusion swallowed a live row — `!= true` is not matching `false`"
+        );
+    }
+
+    /// A bank row merged into its receipt keeps its row, with `superseded_by`
+    /// naming the twin. The assistant categorized that stale twin as "the most
+    /// recent Uber" (bench, 2026-10-11); it must not be reachable.
+    #[tokio::test]
+    async fn a_superseded_transaction_is_gone_from_list_and_read() {
+        let db = test_db().await;
+        seed_transaction(&db, "keep", "Uber", false).await;
+        seed_transaction(&db, "twin", "Purchase: Uber trip", false).await;
+        db.query("UPDATE transactions:twin SET superseded_by = 'keep'")
+            .await
+            .unwrap();
+        let listed = list(&db, entry("transaction"), &[], 50).await.unwrap();
+        let ids: Vec<&str> = listed.hits.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["keep"]);
+        assert_eq!(listed.total_matches, 1);
+        assert!(
+            read(&db, entry("transaction"), "twin")
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 
