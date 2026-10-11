@@ -145,7 +145,9 @@ pub fn tools() -> Vec<ToolDef> {
             description: "List records of one kind, without searching for words. Use this for \
                           \"what X do I have\" and for anything scoped by date rather than by \
                           wording — `search` matches text, so it cannot answer either. Narrow \
-                          with `filters`, whose valid keys for a kind come from describe_type."
+                          with `filters`, whose valid keys for a kind come from describe_type. \
+                          Dated kinds come newest first, so for \"my most recent X\" use this \
+                          with a text filter rather than `search`, which ranks by relevance."
                 .to_string(),
             parameters: json!({
                 "type": "object",

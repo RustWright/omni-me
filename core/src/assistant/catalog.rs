@@ -66,6 +66,8 @@ pub enum FilterKind {
     Tag,
     /// A boolean column.
     Flag,
+    /// Words a string column contains, ignoring case.
+    Text,
 }
 
 /// A non-text field a query can narrow on.
@@ -573,6 +575,13 @@ const TRANSACTION: CatalogEntry = CatalogEntry {
             key: "date",
             kind: FilterKind::Range,
             description: "Transaction date, YYYY-MM-DD.",
+        },
+        FilterField {
+            key: "description",
+            kind: FilterKind::Text,
+            description: "Words the description contains, ignoring case, such as a payee \
+                          (\"uber\"). With list's newest-first order, the first result is the \
+                          most recent one.",
         },
         FilterField {
             key: "category",

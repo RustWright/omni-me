@@ -335,6 +335,9 @@ enum NarrowOp {
     Lte,
     Eq,
     Contains,
+    /// Case-insensitive substring of a string column. Only for `TYPE string`
+    /// columns: `string::lowercase(NONE)` is an error.
+    TextContains,
 }
 
 /// Turn the model's `filters` object into clauses, or say what went wrong.
@@ -396,6 +399,17 @@ pub fn plan_filters(entry: &CatalogEntry, filters: &Value) -> Result<Vec<Narrowi
                 op: NarrowOp::Contains,
                 value: value.clone(),
             }),
+            FilterKind::Text => {
+                let words = value
+                    .as_str()
+                    .filter(|w| !w.trim().is_empty())
+                    .ok_or_else(|| format!("`{key}` takes the words to look for, as text"))?;
+                out.push(Narrowing {
+                    column: field.key,
+                    op: NarrowOp::TextContains,
+                    value: Value::String(words.trim().to_string()),
+                });
+            }
         }
     }
     Ok(out)
@@ -430,6 +444,10 @@ pub async fn list(
             // absent — and the neighbouring `string::lowercase(NONE)` *is* a hard
             // error, which makes the wrong guess the intuitive one.
             NarrowOp::Contains => format!("{} CONTAINS ${param}", n.column),
+            NarrowOp::TextContains => format!(
+                "string::lowercase({}) CONTAINS string::lowercase(${param})",
+                n.column
+            ),
         });
         binds.push((param, n.value.clone()));
     }
@@ -1245,6 +1263,37 @@ mod tests {
         let items = full.children.get("items").unwrap().as_array().unwrap();
         let names: Vec<&str> = items.iter().filter_map(|i| i["name"].as_str()).collect();
         assert_eq!(names, vec!["Stretch"], "a removed item came back");
+    }
+
+    /// "My most recent Uber" (R3-9): search ranked an older ride first. A text
+    /// filter on `list` keeps list's newest-first order, so the first hit is it.
+    #[tokio::test]
+    async fn a_description_filter_lists_the_newest_match_first() {
+        let db = test_db().await;
+        for (id, date, d) in [
+            ("t1", "2026-09-02", "UBER *TRIP"),
+            ("t2", "2026-09-25", "Uber trip home"),
+            ("t3", "2026-09-30", "Tim Hortons"),
+        ] {
+            seed_transaction(&db, id, d, false).await;
+            db.query(
+                "UPDATE type::record('transactions', $id) SET date = $date, superseded_by = NONE",
+            )
+            .bind(("id", id))
+            .bind(("date", date))
+            .await
+            .unwrap();
+        }
+        let narrowings = plan_filters(
+            entry("transaction"),
+            &serde_json::json!({"description": "uber"}),
+        )
+        .unwrap();
+        let out = list(&db, entry("transaction"), &narrowings, 20)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = out.hits.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["t2", "t1"]);
     }
 
     /// The archive is the first catalogued type whose tag column can be **absent**:
