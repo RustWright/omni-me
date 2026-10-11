@@ -1482,6 +1482,23 @@ only (fixed by moving the clock into core).
 earlier check-ins archived=2 deleted=0", answered; the phone lists only today's as active. All
 deployed code is CI-green (`7d6d485`).
 
+**Round 4 early feedback (his, 2026-10-11).**
+- R4-1 Assistant page: the sticky Back bar and reply box cover content; worst at the bottom
+  (end of a chat; the archived-chats dropdown on the Assistant home). My regression from R2-3:
+  nothing reserves the composer's height. Fix and check on the S9.
+- R4-2 🔴 The assistant's `transaction.record` ignored his ledger's conventions
+  (`Expenses:Food` / `Assets:Cash` without looking at existing accounts, categories, tags).
+  Same gap for categorize/tag/update. Not acceptable for ledger writes; candidate fixes:
+  refuse accounts the ledger does not have, show similar past transactions as examples,
+  require an account lookup first. Design it AFTER the research below.
+- R4-3 🔴 RULED 2026-10-11 (his pick, my recommendation): research existing assistant
+  architectures and frameworks NEXT SESSION, before stage 3. He realised it was never done
+  (his standing rule: search OSS before custom code). Scope: claim verification vs the tool
+  trace, history handling, multi-step planning, recency-aware retrieval, grounding writes in
+  existing records; candidates incl. LangGraph, Letta/MemGPT, DSPy, provider agent SDKs.
+  Output: a written comparison against our design and what to adopt. Beat: after release
+  (ship then rework), in parallel (split attention).
+
 **Stage 2, round 4 checklist (1.1.30-dev).**
 1. Archive: no badge; Unchecked only still filters; confirm a document's values and the next
    unchecked one opens (D1).

@@ -4,10 +4,10 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — his round 4 phone test (1.1.31-dev on the S9; server/agent `1ce9973` on dev), then fix what it finds
-Round 3's findings, his two rulings (archive is a filing cabinet; check-ins archived then
-deleted at 14 days) and the assistant capability run are in `tasks.md` § "Stage 2, round 3
-results". Hand him § "Stage 2, round 4 checklist". Then stage 3 (review), then stage 4 (merge).
+## ▶ NEXT ACTION — assistant-architecture research (his ruling R4-3), before stage 3
+Fresh session. Scope, candidates and why: `tasks.md` § "Round 4 early feedback". Then fix
+R4-1 (sticky bars cover content) and design R4-2 (ledger conventions) from what it finds;
+finish his round 4 test (1.1.31-dev on the S9). Then stage 3 (review), then stage 4 (merge).
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
