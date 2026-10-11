@@ -34,6 +34,23 @@ use crate::db::Database;
 use crate::llm::chat::{ChatMessage, ChatRequest, Usage};
 use crate::llm::{LlmClient, LlmError};
 
+/// The date, so "today" means today. Without it the model guessed from its
+/// training (dev, 2026-10-11: a lunch "today" recorded as 2025-06-25). Read in
+/// the person's zone, the one the app stamps with the check-in schedule.
+fn today_line(config: &ResolvedConfig, now: chrono::DateTime<chrono::Utc>) -> String {
+    let tz: chrono_tz::Tz = config
+        .text_of(crate::config::ConfigKey::AssistantCheckInTimezone)
+        .parse()
+        .unwrap_or(chrono_tz::Tz::UTC);
+    let local = now.with_timezone(&tz);
+    format!(
+        "\n\nToday is {} ({}), {} in {tz}.",
+        local.format("%Y-%m-%d"),
+        local.format("%A"),
+        local.format("%H:%M"),
+    )
+}
+
 /// How many model calls one request may make, when nothing configures it.
 ///
 /// Discovery legitimately costs two or three (`list_types`, `describe_type`,
@@ -337,6 +354,7 @@ impl<'a> Session<'a> {
             ),
             None => format!("{SYSTEM_PROMPT}{LOOP_RULES}"),
         };
+        let system = format!("{system}{}", today_line(self.config, chrono::Utc::now()));
         let mut messages = vec![ChatMessage::System(system)];
         for turn in history {
             messages.push(match turn.role {
@@ -1207,6 +1225,23 @@ mod tests {
                 .is_err(),
             "the sibling key had no bounds before this"
         );
+    }
+
+    #[test]
+    fn the_prompt_says_what_day_it_is_where_the_user_is() {
+        let mut global = crate::config::ConfigMap::new();
+        global.insert(
+            crate::config::ConfigKey::AssistantCheckInTimezone,
+            crate::config::ConfigValue::Text("America/Toronto".into()),
+        );
+        let config = ResolvedConfig::new(global, Default::default());
+        // 02:00 UTC on the 11th is still the evening of the 10th in Toronto.
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-11T02:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let line = today_line(&config, now);
+        assert!(line.contains("2026-10-10 (Saturday)"), "{line}");
+        assert!(line.contains("America/Toronto"), "{line}");
     }
 
     /// An empty reply that ran out of budget is a configuration failure, and
