@@ -138,6 +138,66 @@ async function overflowReport(page) {
   });
 }
 
+/**
+ * Whether the screen's content starts at the shell's gutter.
+ *
+ * The shell pads every page; a page that pads again sits one gutter further in
+ * and reads as "narrower than everywhere else" (Archive and four Assistant
+ * sub-screens, found on the phone 2026-10-11). Measured as the leftmost thing
+ * actually painted: a large box with a background or border at its edge, or
+ * text where its padding lets it start. Checked against the double-padded build
+ * on the S9 before trusting it: it flagged exactly those screens and no others.
+ *
+ * Skipped: anything wider than the column (full-bleed on purpose, like the
+ * Finances sub-nav), anything under half the column's width (an indented detail
+ * is not a gutter), and anything inside a sticky or fixed bar (a bar at the edge
+ * would otherwise mask misplaced content under it).
+ */
+async function gutterReport(page) {
+  return page.evaluate(() => {
+    const col = document.querySelector(".overflow-y-auto.pb-mobile-nav");
+    if (!col) return { missing: true };
+    const cs = getComputedStyle(col);
+    const r = col.getBoundingClientRect();
+    const left = r.left + parseFloat(cs.paddingLeft);
+    const right = r.right - parseFloat(cs.paddingRight);
+    const width = right - left;
+    let min = null;
+    let minPath = null;
+    for (const el of col.querySelectorAll("*")) {
+      const b = el.getBoundingClientRect();
+      if (!b.width || !b.height) continue;
+      if (b.left < left - 1 || b.width > width + 1 || b.width < 0.5 * width) continue;
+      const s = getComputedStyle(el);
+      if (s.visibility === "hidden" || s.opacity === "0") continue;
+      const bg = s.backgroundColor;
+      const boxed =
+        (bg && bg !== "transparent" && !/rgba\(.*, 0\)$/.test(bg)) ||
+        parseFloat(s.borderLeftWidth) > 0;
+      const texted = [...el.childNodes].some(
+        (n) => n.nodeType === 3 && n.textContent.trim(),
+      );
+      if (!boxed && !texted) continue;
+      let pinned = false;
+      for (let a = el; a && a !== col; a = a.parentElement) {
+        const p = getComputedStyle(a).position;
+        if (p === "sticky" || p === "fixed") {
+          pinned = true;
+          break;
+        }
+      }
+      if (pinned) continue;
+      const at = boxed ? b.left : b.left + parseFloat(s.paddingLeft);
+      if (min === null || at < min) {
+        min = at;
+        minPath = window.__omniPath(el);
+      }
+    }
+    if (min === null) return { empty: true };
+    return { gutter: Math.round(left), startsAt: Math.round(min), path: minPath };
+  });
+}
+
 /** Interactive controls smaller than a fingertip. Reported, never fatal. */
 async function tapTargetReport(page, minPx) {
   return page.evaluate((min) => {
@@ -184,7 +244,33 @@ async function openTab(page, tab) {
   await page.waitForTimeout(400);
 }
 
+// Screens one tap inside a tab, by the text of what opens them and the text of
+// what closes them. A sub-screen lays itself out too, so it pads itself too; the
+// four that double-padded were all one level in. ⚠️ Add new sub-screens here.
+const SUBSCREENS = {
+  assistant: [
+    { open: "What it believes about you", back: "Back" },
+    { open: "What it may do without asking", back: "Back" },
+  ],
+};
+
+async function checkGutter(page, where) {
+  const g = await gutterReport(page);
+  if (g.missing || g.empty) {
+    gutterFailures.push({ where, why: g.missing ? "no shell scroll column found" : "nothing rendered" });
+    return;
+  }
+  // One pixel of rounding either way; anything more is a second gutter.
+  if (Math.abs(g.startsAt - g.gutter) > 1) {
+    gutterFailures.push({
+      where,
+      why: `content starts at ${g.startsAt}px, the gutter is ${g.gutter}px — ${g.path}`,
+    });
+  }
+}
+
 const failures = [];
+const gutterFailures = [];
 const notes = [];
 // ⛔ What was actually measured, printed on success. A pass that does not say
 // what it looked at is indistinguishable from a pass that looked at nothing —
@@ -246,6 +332,20 @@ try {
       }
       const rep = await overflowReport(page);
       measured.push(label);
+      await checkGutter(page, label);
+      for (const sub of SUBSCREENS[tab] ?? []) {
+        const opener = page.locator(`text=${sub.open}`).first();
+        if (!(await opener.count())) {
+          gutterFailures.push({ where: `${label} › ${sub.open}`, why: "could not open it" });
+          continue;
+        }
+        await opener.click();
+        await page.waitForTimeout(500);
+        measured.push(`${label} › ${sub.open}`);
+        await checkGutter(page, `${label} › ${sub.open}`);
+        await page.locator(`button:has-text("${sub.back}")`).first().click();
+        await page.waitForTimeout(400);
+      }
       if (rep.pans || rep.offenders.length || rep.panners.length) {
         failures.push({ where: label, ...rep });
       }
@@ -263,6 +363,7 @@ try {
           await page.waitForTimeout(600);
           const deep = await overflowReport(page);
           measured.push(`${label} › detail (wide CSV)`);
+          await checkGutter(page, `${label} › detail`);
           if (deep.pans || deep.offenders.length || deep.panners.length) {
             failures.push({ where: `${label} › detail`, ...deep });
           }
@@ -290,6 +391,13 @@ if (notes.length) {
   }
 }
 
+if (gutterFailures.length) {
+  console.error("\nContent not at the shell's gutter (a page padding itself again?):");
+  for (const g of gutterFailures) {
+    console.error(`  ${g.where}: ${g.why}`);
+  }
+}
+
 if (failures.length) {
   console.error("\nHorizontal overflow:");
   for (const f of failures) {
@@ -304,6 +412,10 @@ if (failures.length) {
     }
   }
   console.error(`\n${failures.length} screen(s) overflow. Nothing should pan sideways.`);
+  process.exit(1);
+}
+if (gutterFailures.length) {
+  console.error(`\n${gutterFailures.length} screen(s) off the gutter.`);
   process.exit(1);
 }
 

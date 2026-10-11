@@ -191,6 +191,13 @@ node tests/viewport-check.mjs http://127.0.0.1:8080
 It also reports controls under 44px, which it never fails on — shrinking a control is a
 bug and enlarging one is a design decision.
 
+It fails, too, when a screen's content does not start at the shell's gutter. ⛔ **The shell
+owns the page margin; a page or sub-screen never adds its own horizontal padding** (`p-4`,
+`px-4`, `mx-4` on its outer wrapper). Archive and four Assistant sub-screens did, and sat one
+gutter narrower than everything else. CI runs this sweep on every frontend change and it
+blocks. ⚠️ It only measures what it visits: a new sub-screen goes into `SUBSCREENS` in the
+script, or nothing checks it.
+
 ⚠️ **The sweep is only as wide as the fixture.** Every mock document except
 `doc-wide-statement` is narrow enough to render clean in a phone column, so before that
 fixture existed this check would have reported green on the build that was broken. When

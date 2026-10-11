@@ -1584,6 +1584,14 @@ deployed code is CI-green (`7d6d485`).
   agent `d2ddc22`, server `d2ddc22` (overlay `034798d`, backup `pre-d2ddc22`), APK 1.1.33-dev
   on the S9; Settings shows budget 15, archive 30, delete 90. Step 7 running: Kimi-K3,
   GLM-5.3, Kimi-K2.6, DeepSeek-V4.1-Flash on the same set (`omni-dev-bench/models.sh`).
+- R4-5 (his report 2026-10-11): Archive cards narrower than every other page. Measured on the
+  S9: 296px at 32px vs 328px at 16px; Archive and four Assistant sub-screens padded inside the
+  shell's gutter. Fixed `d1b5845`. 🔴 RULED (his pick A, my recommendation): a CI gate, not a
+  habit. The phone-width sweep gained a gutter check (leftmost painted content must start at
+  the shell's gutter; validated on the S9 against the double-padded build: flagged exactly
+  those screens) and visits Assistant sub-screens; its `continue-on-error` is gone, so it
+  blocks. Beat: B, me checking on the S9 (depends on remembering, how this slipped); C, a
+  rule only. Rule in `UI_WORKFLOW.md` § The layout sweep.
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual

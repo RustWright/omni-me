@@ -338,27 +338,25 @@ jobs:
       # screen and review never saw it, because the defect is a measurement — a
       # grid item at `min-width: auto` refusing to shrink — and not something a
       # diff shows. `tests/viewport-check.mjs` drives every tab at 360px and
-      # 390px and fails if the page can be panned sideways.
+      # 390px and fails if the page can be panned sideways, or if a screen's
+      # content does not start at the shell's gutter (a page padding itself
+      # again: Archive and four Assistant sub-screens did, 2026-10-11).
       #
-      # ⚠️ `continue-on-error` until it has proven itself on a few real runs. It
-      # has never executed: the box this was written on cannot link a wasm build,
-      # so CI is its first run. Drop the flag once it has passed and caught at
-      # least one deliberate regression — a gate nobody trusts gets disabled, and
-      # a flaky one nobody trusts gets ignored, which is worse.
+      # A gate since 2026-10-11, by his ruling: it had passed on every run, and
+      # its gutter check was proven on the phone against the double-padded build
+      # before being trusted here.
       #
       # ⛔ The mock build lands in the DEBUG output dir, which is what
       # `tauri.conf.json` pins `frontendDist` to. Harmless on a CI runner and
       # dangerous on a dev machine: that is exactly how a mock-data APK once
       # shipped. Never copy this step into a job that also bundles the app.
       - name: Install Playwright
-        continue-on-error: true
         working-directory: tauri-app/frontend
         run: |
           npm install --no-save playwright
           npx playwright install --with-deps chromium
 
       - name: Build frontend (mock, for the layout sweep)
-        continue-on-error: true
         working-directory: tauri-app/frontend
         run: dx build --platform web --features mock
 
@@ -369,12 +367,10 @@ jobs:
       # That is exactly how the sweep failed on its first run. All three bundles are
       # tracked, so this is a copy and needs no npm install.
       - name: Copy the JS bundles the app aborts without
-        continue-on-error: true
         working-directory: tauri-app
         run: npm run copy:editor:dev
 
       - name: Layout sweep at phone widths
-        continue-on-error: true
         working-directory: tauri-app/frontend
         run: |
           dist=target/dx/frontend/debug/web/public
