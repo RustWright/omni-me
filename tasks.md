@@ -1434,6 +1434,43 @@ they are here for his eyes, not as open questions.
    Assistant: re-save the hour, which stamps your time zone; tomorrow it should arrive at 6
    your time.
 
+**Stage 2, round 3 results (his test, 2026-10-10).** ✅ Top bar, email links, field Remove.
+Findings and rulings:
+- R3-1 🔴 RULED (his pick B, my recommendation): the archive is a filing cabinet, not an inbox.
+  No Archive badge or reminder count; Unchecked filter and D1 stay. Cause of "700s → 800s":
+  the reading pass marks every document it reads unchecked (819 of 852). Beat: queue only
+  receipt/statement/tax/bill/payslip kinds (relies on the reader's label). ✅ `21282d1`.
+- R3-2 D1 did not advance on his Uber receipt: its only unchecked field was `tags`, which the
+  panel hides and "All look right" never confirms, so it never left the queue. Tags and
+  removed (empty) values no longer count as unchecked, app and SQL alike. ✅ `21282d1`.
+- R3-3 🔴 RULED (his words): check-ins archive the previous one and are DELETED after a
+  window; I chose 14 days. A thread with an undecided suggestion is never deleted. ✅
+  `21282d1` (`check_in::plan_housekeeping`, run by the agent after each new check-in).
+- R3-4 Add a value (the counterpart of Remove). ✅ `f6d2463`.
+- Reconcile no-pair rows on dev: left alone, his call ("no bandwidth, dev data").
+Assistant capability run on the S9 (2026-10-11), 13 requests, all actions he granted:
+- ✅ routine.create, add_item ×6, complete, skip, modify_item; note.create/append/rename;
+  transaction.categorize/tag; belief.record; all auto-applied under his grants.
+- ✅ belief.supersede (not granted) stayed pending; transaction.clear refused without a
+  statement to cite; journal write refused, offered a note.
+- 🔴 R3-5 FIXED `97a0023`: the prompt never said today's date, so "today" was a guess:
+  a lunch "today" was recorded as 2025-06-25 (deleted from dev). Prompt now states the date
+  in his zone.
+- 🔴 R3-6 FIXED `850d44b`: steps added together all took position 10000 (tie); position is
+  now resolved at approval, after the routine's last step.
+- ⚠️ R3-7 NOT FIXED, his call: in a long thread the model answered "done ✅" to four actions
+  with ZERO tool calls (history-induced; the same request in a fresh thread worked).
+- ⚠️ R3-8 NOT FIXED, his call: replies say "waiting for your approval" for actions his grants
+  already applied (the prompt still says propose = only asks).
+- ⚠️ R3-9 "most recent X" picked 09-02 over 09-25: search ranks by relevance, not date.
+- ⚠️ R3-10 "Build me a routine" described one without creating it until told to; creation
+  then steps needs two turns (steps need the routine's id). No weekday frequency exists.
+- ⚠️ R3-11 A research-then-write request ("note with three books from my journal") spent all
+  10 turns searching and returned an empty answer.
+Dev data the run created: routine "Weekday Morning" (6 steps, today's completions/skip),
+note "Assistant test (renamed)", belief on exercise, one Uber categorized/tagged, a pending
+supersede of a test belief.
+
 - R1-8 🔴 **RULED 2026-10-07: full dev deploy authorised for this stretch** (server + agent images
   to dev, APK built and installed on galaxy-s9:5555, opened once, logcat checked). ⛔ Live untouched.
 

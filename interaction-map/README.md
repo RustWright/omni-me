@@ -42,7 +42,7 @@ failure this table looks for is a number that does not match what its destinatio
 | Counter | Where | Counts | Tap lands on | Delivers? |
 |---|---|---|---|---|
 | Nav badge, Finances | menu | pending import batches + finance-claimed assistant suggestions | Finances Overview, review inbox highlighted | ✅ |
-| Nav badge, Archive | menu | documents with an unchecked field | Archive with "Unchecked only" on | ✅ after R1-1 (it counted never-read documents, 795 extra on dev) |
+| Nav badge, Archive | menu | assistant suggestions about documents only; unchecked readings are NOT counted (his ruling 2026-10-10, filing cabinet) | Archive | ✅ |
 | Nav badge, Assistant | menu | assistant suggestions no domain screen claims | Assistant home | ✅ |
 | "N suggestions waiting for you" | Assistant home | the same | suggestions inbox | ✅ |
 | "N items waiting in X" | Assistant home | the other tabs' badges | that tab, at its queue | ✅ (same fix as the Archive badge) |
