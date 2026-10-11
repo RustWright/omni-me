@@ -1738,7 +1738,7 @@ mod tests {
         let llm = ScriptedLlm::new(vec![
             tool_turn("call-1", "list_types", serde_json::json!({})),
             ChatResponse {
-                content: Some(r#"{"verb":"answer","arguments":{"text":"done"}}"#.into()),
+                content: Some(r#"{"verb":"answer","arguments":{"text":"Here is what I found."}}"#.into()),
                 tool_calls: vec![],
                 usage: Usage::default(),
                 latency: Duration::ZERO,
