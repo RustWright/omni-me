@@ -1498,6 +1498,11 @@ deployed code is CI-green (`7d6d485`).
   existing records; candidates incl. LangGraph, Letta/MemGPT, DSPy, provider agent SDKs.
   Output: a written comparison against our design and what to adopt. Beat: after release
   (ship then rework), in parallel (split attention).
+  🔴 His scope (2026-10-11): "I'm fine redoing the entire assistant from scratch if we can
+  find options that make it significantly better even at a higher token cost." So: a full
+  rewrite is on the table, and token cost is a secondary criterion to quality. Still ⛔ fixed:
+  the safety lines (journal unwritable, irreversible never grantable, approval gate, beliefs
+  ask-only) unless he rules otherwise. Judge options against the R3/R4 failures as a test set.
 
 **Stage 2, round 4 checklist (1.1.30-dev).**
 1. Archive: no badge; Unchecked only still filters; confirm a document's values and the next
