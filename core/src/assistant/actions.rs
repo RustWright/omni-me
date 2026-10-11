@@ -661,6 +661,26 @@ const APPEND_ORDER: u32 = 10_000;
 /// reasoning that caps `Frequency::Custom` at monthly.
 const MAX_ITEM_MINUTES: u32 = 1_440;
 
+/// One step of a new routine, `name, minutes`: the minutes follow the last comma.
+fn parse_step(value: &str) -> Result<(String, u32), String> {
+    let (name, mins) = value
+        .rsplit_once(',')
+        .ok_or_else(|| format!("step {value:?} needs `name, minutes`"))?;
+    let name = name.trim();
+    let mins = mins.trim().trim_end_matches("min").trim();
+    let mins: u32 = mins
+        .parse()
+        .map_err(|_| format!("step {value:?}: minutes must be a whole number"))?;
+    if name.is_empty() {
+        return Err(format!("step {value:?} has no name"));
+    }
+    Ok((name.to_string(), mins))
+}
+
+fn valid_step(value: &str) -> Result<(), String> {
+    parse_step(value).map(|_| ())
+}
+
 fn valid_frequency(value: &str) -> Result<(), String> {
     value
         .parse::<crate::routines::Frequency>()
@@ -681,7 +701,9 @@ const ROUTINE_CREATE: ActionType = ActionType {
     kind: ActionKind::RoutineCreate,
     feature: Feature::Routines,
     description: "Create a new routine — a group of things the user does together on a \
-                  repeating schedule. Creates the group only; add its items separately.",
+                  repeating schedule — with its steps, in one proposal. When the user asks \
+                  you to build a routine, propose it this way rather than describing it \
+                  first; they accept or decline it in their inbox.",
     params: &[
         ActionParam::text(
             "name",
@@ -695,8 +717,17 @@ const ROUTINE_CREATE: ActionType = ActionType {
             32,
         )
         .checked_by(valid_frequency),
+        ActionParam::list(
+            "steps",
+            "The routine's steps in order, each as `name, minutes`, e.g. \"Stretch, 10\". \
+             Leave out to create an empty routine.",
+            160,
+            BATCH_LIMIT,
+        )
+        .optional()
+        .checked_by(valid_step),
     ],
-    produces: &[EventType::RoutineGroupCreated],
+    produces: &[EventType::RoutineGroupCreated, EventType::RoutineItemAdded],
     // Rule 1: the log holds the create, and removal is a soft delete. Rule 2:
     // nothing leaves the log. Rule 3: an unopened routine has been observed by
     // nobody.
@@ -1568,16 +1599,34 @@ pub fn build_events(
         }
         ActionKind::RoutineCreate => {
             let group_id = ulid::Ulid::new().to_string();
-            Ok(vec![routine_event(
+            let mut events = vec![routine_event(
                 EventType::RoutineGroupCreated,
-                group_id,
+                group_id.clone(),
                 device_id,
                 json!({
                     "name": args["name"].as_str().unwrap_or_default(),
                     "frequency": args["frequency"].as_str().unwrap_or("daily"),
                     "order": APPEND_ORDER,
                 }),
-            )])
+            )];
+            // Steps take their position from the list: the group is new, so
+            // there is no last step to append after.
+            let steps = args["steps"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+            for (i, step) in steps.iter().filter_map(Value::as_str).enumerate() {
+                let (name, mins) = parse_step(step)?;
+                events.push(routine_event(
+                    EventType::RoutineItemAdded,
+                    ulid::Ulid::new().to_string(),
+                    device_id,
+                    json!({
+                        "group_id": group_id,
+                        "name": name,
+                        "estimated_duration_min": mins,
+                        "order": i as u32,
+                    }),
+                ));
+            }
+            Ok(events)
         }
         ActionKind::RoutineAddItem => {
             let item_id = ulid::Ulid::new().to_string();
@@ -2034,7 +2083,11 @@ mod tests {
                 "belief_id": "01BELIEF0000000000000001",
                 "reason": "Their last four estimates were accurate.",
             }),
-            ActionKind::RoutineCreate => json!({ "name": "Morning", "frequency": "daily" }),
+            ActionKind::RoutineCreate => json!({
+                "name": "Morning",
+                "frequency": "daily",
+                "steps": ["Stretch, 10"],
+            }),
             ActionKind::RoutineAddItem => json!({
                 "group_id": "01GROUP00000000000000001",
                 "name": "Stretch",
@@ -2301,6 +2354,39 @@ mod tests {
         }
         let events = build_events(&ROUTINE_CREATE, &sample_args(&ROUTINE_CREATE), "d").unwrap();
         assert_eq!(events[0].payload["order"], json!(APPEND_ORDER));
+    }
+
+    /// R3-10: a routine and its steps arrive as one proposal, so building one no
+    /// longer needs a second request that knows the new routine's id.
+    #[test]
+    fn a_routine_is_created_with_its_steps_in_order() {
+        let args = json!({
+            "name": "Weekday morning",
+            "frequency": "daily",
+            "steps": ["Stretch, 10", "Shower, 15 min"],
+        });
+        let events = build_events(&ROUTINE_CREATE, &args, "d").unwrap();
+        assert_eq!(events.len(), 3);
+        let group = &events[0].aggregate_id;
+        let steps: Vec<(&str, u64, u64)> = events[1..]
+            .iter()
+            .map(|e| {
+                assert_eq!(e.payload["group_id"].as_str(), Some(group.as_str()));
+                (
+                    e.payload["name"].as_str().unwrap(),
+                    e.payload["estimated_duration_min"].as_u64().unwrap(),
+                    e.payload["order"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(steps, [("Stretch", 10, 0), ("Shower", 15, 1)]);
+        assert!(
+            validate_args(
+                &ROUTINE_CREATE,
+                &json!({"name": "x", "frequency": "daily", "steps": ["no minutes"]})
+            )
+            .is_err()
+        );
     }
 
     /// ⚠️ A completion asserts something happened. The user reads their own

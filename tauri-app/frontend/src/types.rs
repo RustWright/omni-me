@@ -1671,7 +1671,24 @@ impl AssistantProposal {
             // The date is already in the summary and the evidence renders as its
             // own row, so there is nothing left to add — and a line repeating
             // either would make the card look like it says more than it does.
-            "routine.create" | "routine.complete" => return None,
+            // The steps are what is being approved, so each is shown as written.
+            "routine.create" => {
+                let steps = self.args.get("steps")?.as_array()?;
+                let lines: Vec<String> = steps
+                    .iter()
+                    .filter_map(|s| s.as_str())
+                    .enumerate()
+                    .map(|(i, s)| {
+                        format!(
+                            "{}. {} min",
+                            i + 1,
+                            s.trim().trim_end_matches("min").trim_end()
+                        )
+                    })
+                    .collect();
+                return (!lines.is_empty()).then(|| lines.join("\n"));
+            }
+            "routine.complete" => return None,
             // ⛔ The postings verbatim, never a summary of them. The amounts and
             // the accounts *are* the proposal, and a card that rendered "about
             // €4" would be asking for approval of a number the user never saw.
@@ -1977,6 +1994,15 @@ mod proposal_tests {
             serde_json::json!({ "name": "Morning", "frequency": "custom:3" }),
         );
         assert_eq!(p.summary(), "Create a every 3 days routine: Morning");
+        assert_eq!(p.detail(), None);
+        let with_steps = proposal(
+            "routine.create",
+            serde_json::json!({ "name": "Morning", "frequency": "daily", "steps": ["Stretch, 10", "Shower, 15 min"] }),
+        );
+        assert_eq!(
+            with_steps.detail().as_deref(),
+            Some("1. Stretch, 10 min\n2. Shower, 15 min")
+        );
 
         let item = proposal(
             "routine.add_item",
