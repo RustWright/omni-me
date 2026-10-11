@@ -4,7 +4,7 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — his round 4 phone test (1.1.30-dev on the S9 and dev), then fix what it finds
+## ▶ NEXT ACTION — his round 4 phone test (1.1.31-dev on the S9; server/agent `1ce9973` on dev), then fix what it finds
 Round 3's findings, his two rulings (archive is a filing cabinet; check-ins archived then
 deleted at 14 days) and the assistant capability run are in `tasks.md` § "Stage 2, round 3
 results". Hand him § "Stage 2, round 4 checklist". Then stage 3 (review), then stage 4 (merge).
