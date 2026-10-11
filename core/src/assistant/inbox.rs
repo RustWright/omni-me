@@ -338,6 +338,9 @@ async fn resolve_args(
     action: &ActionType,
     args: &serde_json::Value,
 ) -> Result<serde_json::Value, DecideError> {
+    if action.kind == actions::ActionKind::RoutineAddItem {
+        return Ok(with_next_item_order(db, args).await?);
+    }
     if action.kind != actions::ActionKind::NoteRevise {
         return Ok(args.clone());
     }
@@ -366,6 +369,26 @@ async fn resolve_args(
     // `ParamSource::ResolvedAtApproval`.
     if let Some(obj) = out.as_object_mut() {
         obj.insert("raw_text".to_string(), serde_json::json!(resolved));
+    }
+    Ok(out)
+}
+
+/// Place a new routine item after the group's current last one. Resolved here
+/// because only approval knows what the list holds by then; approving several
+/// in a row sees each earlier one, so they keep the order they were proposed in.
+async fn with_next_item_order(
+    db: &Database,
+    args: &serde_json::Value,
+) -> Result<serde_json::Value, crate::db::DbError> {
+    let group_id = args
+        .get("group_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let items = crate::db::queries::list_routine_items(db, group_id).await?;
+    let next = items.iter().map(|i| i.order_num + 1).max().unwrap_or(0);
+    let mut out = args.clone();
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("order".to_string(), serde_json::json!(next.to_string()));
     }
     Ok(out)
 }
@@ -904,6 +927,65 @@ mod tests {
         let freqs: Vec<String> = resp.take("frequency").unwrap_or_default();
         assert_eq!(names, vec!["Morning".to_string()]);
         assert_eq!(freqs, vec!["daily".to_string()]);
+    }
+
+    /// Steps proposed together keep the order they were proposed in; they all
+    /// used to take one fixed position and tie (dev, 2026-10-11).
+    #[tokio::test]
+    async fn items_approved_in_a_row_keep_their_order() {
+        let (db, config, writer) = harness(&[]).await;
+        let mut proposals = vec![(
+            "p-g".to_string(),
+            "routine.create",
+            serde_json::json!({ "name": "Morning", "frequency": "daily" }),
+        )];
+        for (i, name) in ["Flashcards", "Meditation", "Hygiene"].iter().enumerate() {
+            proposals.push((
+                format!("p-i{i}"),
+                "routine.add_item",
+                serde_json::json!({ "group_id": "GROUP", "name": name,
+                                    "estimated_duration_min": "10" }),
+            ));
+        }
+        for (id, action, args) in proposals {
+            let group: Vec<String> = db
+                .query("SELECT VALUE record::id(id) FROM routine_groups")
+                .await
+                .unwrap()
+                .take(0)
+                .unwrap_or_default();
+            let args = match group.first() {
+                Some(g) => serde_json::from_str(&args.to_string().replace("GROUP", g)).unwrap(),
+                None => args,
+            };
+            let payload = AssistantProposalMadePayload {
+                proposal_id: id.clone(),
+                thread_id: "t1".into(),
+                message_id: "m2".into(),
+                action: action.into(),
+                args,
+                rationale: "You asked.".into(),
+                reversible: true,
+            };
+            writer
+                .append_new(NewEvent::assistant_proposal_made("agent", &payload).unwrap())
+                .await
+                .unwrap();
+            decide(&db, &config, &writer, &id, ProposalDecision::Approved, None)
+                .await
+                .expect("approve");
+        }
+
+        let mut resp = db
+            .query("SELECT name, order_num FROM routine_items ORDER BY order_num ASC")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let names: Vec<String> = resp.take("name").unwrap_or_default();
+        let orders: Vec<i64> = resp.take("order_num").unwrap_or_default();
+        assert_eq!(names, ["Flashcards", "Meditation", "Hygiene"]);
+        assert_eq!(orders, [0, 1, 2], "no two items share a position");
     }
 
     /// ⚠️ Re-validated at approval, so a frequency that was legal when proposed

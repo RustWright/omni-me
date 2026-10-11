@@ -729,6 +729,14 @@ const ROUTINE_ADD_ITEM: ActionType = ActionType {
             8,
         )
         .checked_by(valid_minutes),
+        // Steps added together all took APPEND_ORDER and tied, so their order
+        // was left to chance (dev, 2026-10-11).
+        ActionParam::resolved(
+            "order",
+            "Filled in automatically when the user approves: after the routine's last \
+             item. You cannot set it.",
+            10,
+        ),
     ],
     produces: &[EventType::RoutineItemAdded],
     reversible: true,
@@ -1579,7 +1587,11 @@ pub fn build_events(
                     "group_id": args["group_id"].as_str().unwrap_or_default(),
                     "name": args["name"].as_str().unwrap_or_default(),
                     "estimated_duration_min": minutes(&args, "estimated_duration_min").unwrap_or(0),
-                    "order": APPEND_ORDER,
+                    "order": args
+                        .get("order")
+                        .and_then(|v| v.as_str())
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(APPEND_ORDER),
                 }),
             )])
         }
