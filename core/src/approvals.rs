@@ -128,10 +128,9 @@ pub async fn summary(
         add(&mut out, ReviewedAt::Feature(Feature::Finances), n);
     }
 
-    if enabled.contains(&Feature::Documents) {
-        let n = count_documents_with_unverified_fields(db).await?;
-        add(&mut out, ReviewedAt::Feature(Feature::Documents), n);
-    }
+    // ⛔ Unchecked document readings are NOT counted (his ruling, 2026-10-10): the
+    // reading pass marks every filed document unchecked, ~60 a day, a queue no one
+    // can clear. The archive is a filing cabinet; checking happens on demand.
 
     out.retain(|entry| entry.count > 0);
     Ok(out)
@@ -143,35 +142,6 @@ fn add(out: &mut Vec<PendingApprovals>, reviewed_at: ReviewedAt, count: usize) {
         Some(existing) => existing.count += count,
         None => out.push(PendingApprovals { reviewed_at, count }),
     }
-}
-
-/// Documents carrying at least one field no oracle has checked.
-///
-/// ⚠️ **Counts documents, not fields.** A notice with four unverified fields is
-/// one thing to open, and "12 documents need review" is a number the user can act
-/// on where "37 fields" is not.
-///
-/// The predicate reads inside the `fields` array rather than off a hoisted
-/// column, and that is the whole reason no projection migration was needed here:
-/// SurrealDB filters an array of objects in the `WHERE` directly. ⚠️ The
-/// catalogue's `FilterField` mechanism still cannot express this — that limit is
-/// real and is about the *model's* filters, not about SQL.
-async fn count_documents_with_unverified_fields(db: &Database) -> Result<usize, EventError> {
-    let mut resp = db
-        .query(
-            // ⛔ `purged != true`, and it lives outside `queries.rs` — which is
-            // exactly why it was the easy one to miss. A purged document keeps its
-            // fields, so without this the nav badge would keep counting documents
-            // the user can no longer open to correct, and the count would never
-            // reach zero.
-            // `?? []` too: filtering an absent `fields` gives NONE, and NONE != [],
-            // so every never-extracted document was counted as waiting.
-            "SELECT count() AS c FROM documents
-             WHERE (fields[WHERE verified = false] ?? []) != [] AND purged != true GROUP ALL",
-        )
-        .await?;
-    let counts: Vec<i64> = resp.take("c").unwrap_or_default();
-    Ok(counts.first().copied().unwrap_or(0).max(0) as usize)
 }
 
 #[cfg(test)]
@@ -273,23 +243,17 @@ mod tests {
         assert!(summary.is_empty(), "{summary:?}");
     }
 
+    /// The reading pass leaves every document unchecked; none of it is a queue.
     #[tokio::test]
-    async fn unverified_documents_are_counted_per_document_not_per_field() {
+    async fn unchecked_document_readings_are_not_a_queue() {
         let (db, enabled, _w) = harness(&[]).await;
         seed_unverified_document(&db, "01JKDOCAPPROVAL000000001", false).await;
-        seed_unverified_document(&db, "01JKDOCAPPROVAL000000002", false).await;
-        seed_unverified_document(&db, "01JKDOCAPPROVAL000000003", true).await;
-        // Archived, never extracted: no `fields` at all, so nothing to verify.
-        db.query("UPSERT type::record('documents', $id) SET document_id = $id")
-            .bind(("id", "01JKDOCAPPROVAL000000005"))
-            .await
-            .unwrap();
 
         let summary = summary(&db, &enabled).await.unwrap();
 
         assert_eq!(
             count_at(&summary, ReviewedAt::Feature(Feature::Documents)),
-            2,
+            0,
             "{summary:?}"
         );
     }

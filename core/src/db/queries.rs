@@ -1182,13 +1182,11 @@ pub async fn list_documents(
            -- true. That is why the column is an array and not the joined value —
            -- filtering the string would make `receipt` find `receipts-2026`.
            AND ($tag = '' OR tags CONTAINS $tag)
-           -- ⛔ Must stay the same predicate as `approvals::
-           -- count_documents_with_unverified_fields`. That count is the nav badge
-           -- and the assistant's reminder row; this filter is the only way to
-           -- reach what it counts, so a drift between them is a queue the user is
-           -- told about and cannot open. Both also require NOT_PURGED — a purged
-           -- document keeps its fields.
-           AND ($unverified = false OR (fields[WHERE verified = false] ?? []) != [])
+           -- Tags are the person's labels and an empty value is a removal, so
+           -- neither is a reading left to check. Must match the app's
+           -- `DocumentItem::unverified_count`, or D1 never sees a document done.
+           AND ($unverified = false OR
+                (fields[WHERE verified = false AND key != 'tags' AND value != ''] ?? []) != [])
            AND {NOT_PURGED}
          ORDER BY archived_at DESC
          LIMIT $limit START $offset"
@@ -2007,6 +2005,16 @@ mod tests {
     /// Fold one document carrying a single field with the given `verified` flag,
     /// or, for `None`, archived and never extracted: no `fields` at all.
     async fn fold_doc_with_verified_field(db: &Database, id: &str, verified: Option<bool>) {
+        fold_doc_with_field(db, id, "total", "12.00", verified).await;
+    }
+
+    async fn fold_doc_with_field(
+        db: &Database,
+        id: &str,
+        key: &str,
+        value: &str,
+        verified: Option<bool>,
+    ) {
         use crate::events::{Event, EventType, Projection, validate_payload};
 
         let mut payloads = vec![(
@@ -2029,7 +2037,7 @@ mod tests {
                     "document_id": id,
                     "extracted_at": "2026-09-01T00:00:00Z",
                     "fields": [
-                        { "key": "total", "value": "12.00",
+                        { "key": key, "value": value,
                           "source": "model", "verified": verified },
                     ],
                 }),
@@ -2054,15 +2062,16 @@ mod tests {
         }
     }
 
-    /// ⛔ The set the nav badge counts must be reachable. `approvals::summary`
-    /// counts documents with any `verified = false` field; this filter is the
-    /// only way into that set, so the two predicates have to agree — if they
-    /// drift, the badge names a queue the archive cannot open.
+    /// "Unchecked only" lists documents with a reading left to confirm. Tags are
+    /// labels and an empty value is a removal: a document with only those must
+    /// not be listed, or D1 never sees it done (the Uber receipt, 2026-10-10).
     #[tokio::test]
-    async fn the_unverified_filter_returns_exactly_what_the_badge_counts() {
+    async fn the_unverified_filter_lists_only_readings_left_to_confirm() {
         let db = doc_db().await;
         fold_doc_with_verified_field(&db, "unchecked", Some(false)).await;
         fold_doc_with_verified_field(&db, "checked", Some(true)).await;
+        fold_doc_with_field(&db, "tagsonly", "tags", "receipt", Some(false)).await;
+        fold_doc_with_field(&db, "removed", "total", "", Some(false)).await;
         // Never extracted: nothing to verify. Counted as waiting once, 795 times
         // over on dev (2026-10-07), because filtering an absent array is NONE.
         fold_doc_with_verified_field(&db, "unread", None).await;
@@ -2090,7 +2099,7 @@ mod tests {
         let all = list_documents(&db, &DocumentFilter::default(), 50, 0)
             .await
             .unwrap();
-        assert_eq!(all.len(), 3, "off, the filter narrows nothing");
+        assert_eq!(all.len(), 5, "off, the filter narrows nothing");
     }
 
     /// A document is counted once however many of its fields are unchecked, and

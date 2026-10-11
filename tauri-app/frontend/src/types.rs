@@ -242,11 +242,19 @@ impl DocumentItem {
         }
     }
 
-    /// Fields a person has not yet confirmed, and that no oracle checked.
+    /// Readings a person has not yet confirmed, and that no oracle checked.
+    ///
+    /// Tags are excluded: they are labels, not readings, and the panel offers no
+    /// way to confirm them, so counting them left documents unchecked forever.
+    /// Must match the list filter in `queries::list_documents`.
     pub fn unverified_count(&self) -> usize {
         self.fields
             .as_ref()
-            .map(|f| f.iter().filter(|f| !f.verified).count())
+            .map(|f| {
+                f.iter()
+                    .filter(|f| !f.verified && f.key != "tags" && !f.value.is_empty())
+                    .count()
+            })
             .unwrap_or(0)
     }
 

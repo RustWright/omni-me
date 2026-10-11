@@ -50,6 +50,93 @@ pub async fn last_check_in(db: &Database) -> Result<Option<DateTime<Utc>>, Event
         .map(|t| t.with_timezone(&Utc)))
 }
 
+/// How long a check-in thread is kept (his ruling, 2026-10-10: archive the
+/// previous one, delete after a window). Two weeks to read it or act on it.
+pub const KEEP_CHECK_INS_DAYS: i64 = 14;
+
+/// What the agent tidies after raising a check-in.
+#[derive(Debug, Default, PartialEq)]
+pub struct Housekeeping {
+    pub archive: Vec<String>,
+    pub delete: Vec<String>,
+}
+
+/// One check-in thread, as the plan needs it.
+#[derive(Debug, Clone)]
+pub struct CheckInThread {
+    pub thread_id: String,
+    pub created_at: DateTime<Utc>,
+    pub archived: bool,
+    pub deleted: bool,
+    /// A suggestion in it is still undecided.
+    pub has_pending: bool,
+}
+
+/// Archive every earlier check-in still showing; delete those past the window.
+/// A thread with an undecided suggestion is never deleted, so nothing he has
+/// not answered disappears.
+pub fn plan_housekeeping(
+    threads: &[CheckInThread],
+    current: &str,
+    now: DateTime<Utc>,
+) -> Housekeeping {
+    let cutoff = now - chrono::Duration::days(KEEP_CHECK_INS_DAYS);
+    let mut out = Housekeeping::default();
+    for t in threads
+        .iter()
+        .filter(|t| t.thread_id != current && !t.deleted)
+    {
+        if t.created_at < cutoff && !t.has_pending {
+            out.delete.push(t.thread_id.clone());
+        } else if !t.archived {
+            out.archive.push(t.thread_id.clone());
+        }
+    }
+    out
+}
+
+/// Every check-in thread with its state, for [`plan_housekeeping`].
+pub async fn check_in_threads(db: &Database) -> Result<Vec<CheckInThread>, EventError> {
+    let mut resp = db
+        .query(
+            "SELECT thread_id, <string> created_at AS created_at FROM assistant_messages
+             WHERE scheduled = true;
+             SELECT thread_id, archived, deleted FROM assistant_thread_state;
+             SELECT VALUE thread_id FROM assistant_proposals
+             WHERE decision IS NONE AND thread_id != NONE;",
+        )
+        .await?
+        .check()?;
+    let ids: Vec<String> = resp.take((0, "thread_id")).unwrap_or_default();
+    let created: Vec<String> = resp.take((0, "created_at")).unwrap_or_default();
+    let state_ids: Vec<String> = resp.take((1, "thread_id")).unwrap_or_default();
+    let archived: Vec<Option<bool>> = resp.take((1, "archived")).unwrap_or_default();
+    let deleted: Vec<Option<bool>> = resp.take((1, "deleted")).unwrap_or_default();
+    let pending: Vec<String> = resp.take(2).unwrap_or_default();
+
+    let state: std::collections::HashMap<String, (bool, bool)> = state_ids
+        .into_iter()
+        .zip(archived.into_iter().zip(deleted))
+        .map(|(id, (a, d))| (id, (a.unwrap_or(false), d.unwrap_or(false))))
+        .collect();
+    Ok(ids
+        .into_iter()
+        .zip(created)
+        .filter_map(|(thread_id, at)| {
+            let created_at = DateTime::parse_from_rfc3339(&at).ok()?.with_timezone(&Utc);
+            let (archived, deleted) = state.get(&thread_id).copied().unwrap_or_default();
+            let has_pending = pending.contains(&thread_id);
+            Some(CheckInThread {
+                thread_id,
+                created_at,
+                archived,
+                deleted,
+                has_pending,
+            })
+        })
+        .collect())
+}
+
 /// The hour is a wall-clock hour, so it is clamped rather than trusted.
 ///
 /// A value outside the range is a typo in shared config that arrived over sync,
@@ -274,6 +361,84 @@ mod tests {
                 .validate(&ConfigValue::Text("Mars/Base".into()))
                 .is_err()
         );
+    }
+
+    fn thread(id: &str, days_ago: i64, archived: bool, has_pending: bool) -> CheckInThread {
+        CheckInThread {
+            thread_id: id.into(),
+            created_at: at("2026-10-20T10:00:00Z") - chrono::Duration::days(days_ago),
+            archived,
+            deleted: false,
+            has_pending,
+        }
+    }
+
+    #[test]
+    fn housekeeping_archives_the_previous_and_deletes_past_the_window() {
+        let threads = vec![
+            thread("today", 0, false, false),
+            thread("yesterday", 1, false, false),
+            thread("last-week", 7, true, false),
+            thread("old", 20, true, false),
+            thread("old-but-undecided", 20, true, true),
+        ];
+        let plan = plan_housekeeping(&threads, "today", at("2026-10-20T10:00:00Z"));
+        assert_eq!(plan.archive, vec!["yesterday".to_string()]);
+        assert_eq!(plan.delete, vec!["old".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn check_in_threads_reads_every_scheduled_thread_with_its_state() {
+        use crate::events::{
+            AssistantProjection, AssistantQuestionAskedPayload, AssistantThreadArchivedPayload,
+            Event, EventType, NewEvent, Projection,
+        };
+        let db = crate::db::test_db().await;
+        AssistantProjection.init_schema(&db).await.unwrap();
+        let apply = |new: NewEvent| {
+            let db = db.clone();
+            async move {
+                let ev = Event {
+                    id: ulid::Ulid::new().to_string(),
+                    event_type: new.event_type,
+                    aggregate_id: new.aggregate_id,
+                    timestamp: Utc::now(),
+                    device_id: new.device_id,
+                    payload: new.payload,
+                    received_at: None,
+                };
+                AssistantProjection.apply(&ev, &db).await.unwrap();
+            }
+        };
+        for (thread, scheduled) in [("c1", true), ("c2", true), ("user", false)] {
+            let p = AssistantQuestionAskedPayload {
+                thread_id: thread.into(),
+                message_id: format!("m-{thread}"),
+                text: "Review what is due.".into(),
+                title: None,
+                scheduled,
+            };
+            apply(NewEvent::assistant_question_asked("agent", &p).unwrap()).await;
+        }
+        let archived = AssistantThreadArchivedPayload {
+            thread_id: "c1".into(),
+            archived: true,
+        };
+        apply(NewEvent {
+            id: None,
+            event_type: EventType::AssistantThreadArchived.to_string(),
+            aggregate_id: "c1".into(),
+            timestamp: Utc::now(),
+            device_id: "phone".into(),
+            payload: serde_json::to_value(&archived).unwrap(),
+        })
+        .await;
+
+        let mut threads = check_in_threads(&db).await.unwrap();
+        threads.sort_by(|a, b| a.thread_id.cmp(&b.thread_id));
+        let ids: Vec<&str> = threads.iter().map(|t| t.thread_id.as_str()).collect();
+        assert_eq!(ids, ["c1", "c2"], "a typed question is never housekept");
+        assert!(threads[0].archived && !threads[1].archived);
     }
 
     #[test]
