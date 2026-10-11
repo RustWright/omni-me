@@ -4,9 +4,9 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — install 1.1.33-dev on the S9, then step 7 (stronger models)
+## ▶ NEXT ACTION — step 7 results (stronger models), then his round 4 test
 Steps 1-6 of the R4-3 build order are done: bench 35/36 (baseline 25/36), `tasks.md` § "Round 4
-early feedback". Agent `d2ddc22` on dev; server image + APK 1.1.33-dev building. Step 7: run
+early feedback". Dev runs `d2ddc22` everywhere, APK 1.1.33-dev on the S9. Step 7 (running): run
 `--bench-cases` against other open-weights interactive models (cost secondary, his ruling).
 Then his round 4 test, stage 3 (review), stage 4 (merge).
 

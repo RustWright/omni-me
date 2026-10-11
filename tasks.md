@@ -1580,8 +1580,10 @@ deployed code is CI-green (`7d6d485`).
 - ✅ Bench `d2ddc22` (adds: a reply announcing a change it then does not make is sent back
   once, `claims::announced_change`): 35/36 (97%; baseline 25/36), 5.35M tokens of which 4.68M
   served from cache (my estimate ~$1.30 a bench vs ~$2.10 at baseline, cache-write fee not
-  counted). Only miss: one R3-11 run listed the books without proposing. Agent `d2ddc22`
-  deployed to dev; server image + APK 1.1.33-dev building.
+  counted). Only miss: one R3-11 run listed the books without proposing. Deployed to dev:
+  agent `d2ddc22`, server `d2ddc22` (overlay `034798d`, backup `pre-d2ddc22`), APK 1.1.33-dev
+  on the S9; Settings shows budget 15, archive 30, delete 90. Step 7 running: Kimi-K3,
+  GLM-5.3, Kimi-K2.6, DeepSeek-V4.1-Flash on the same set (`omni-dev-bench/models.sh`).
 - R4-4 🔴 RULED 2026-10-11 (his words): chats untouched 30 days auto-archive; chats in the
   archive 90 days auto-delete (events remain, so recoverable). Both durations tunable on the
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
