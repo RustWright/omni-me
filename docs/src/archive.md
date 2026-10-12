@@ -453,10 +453,11 @@ kinds of referrer — other documents, and transaction attachments.
 
 The two are read from different stores, and that is not an inconsistency. Documents come
 from the projection. Transaction attachments come from the **event log**, because the
-server is the only host holding blobs and therefore the only one that can delete them — and
-the server maintains the documents projection alone. `transactions` does not exist there,
-and querying a missing table is a hard error rather than an empty set. A count that assumed
-otherwise would fail loudly on the server, or, worse, quietly report no references and
+server is the only host holding blobs and therefore the only one that can delete them, and
+its projections are whatever its own background work needs. Since 2026-10-12 that includes
+the ledger, which receipt import checks accounts against. The event log stays the source
+here anyway: it holds every attachment ever recorded, whichever projections a host keeps,
+and a count that trusted a missing or lagging table would quietly report no references and
 delete bytes a committed receipt still points at.
 
 Both are counted for a whole selection in one read. The event log has no index on event

@@ -185,7 +185,15 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
     // The rules still reach the server as events and fold on any device that
     // rebuilds — ⛔ this is the line to change if evaluation ever moves here, and
     // the server would then also need the config read it does not do today.
-    vec![Box::new(DocumentsProjection)]
+    //
+    // Notes and budget because receipt import runs here and holds its accounts to
+    // the conventions note and the ledger. Without these tables the account list
+    // was empty and every emailed receipt landed in `Expenses:Unknown` (R4-9).
+    vec![
+        Box::new(DocumentsProjection),
+        Box::new(NotesProjection),
+        Box::new(BudgetProjection),
+    ]
 }
 
 #[cfg(test)]

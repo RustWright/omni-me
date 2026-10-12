@@ -404,6 +404,36 @@ mod tests {
         assert!(check_record(&db, ok).await.is_ok());
     }
 
+    /// Receipt import runs on the server, so the server's own projections must
+    /// hold what grounding reads. They once held documents only, and every
+    /// account an emailed receipt named was dropped.
+    #[tokio::test]
+    async fn the_server_can_see_the_conventions_its_receipts_are_held_to() {
+        use crate::events::{EventStore, NewEvent, ProjectionRunner, SurrealEventStore, registry};
+        let db = crate::db::test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), registry::build_projections_server());
+        runner.init_all().await.unwrap();
+        let note = store
+            .append(NewEvent {
+                id: None,
+                event_type: "generic_note_created".into(),
+                aggregate_id: "01JKNOTE0000000000000CONV1".into(),
+                timestamp: chrono::Utc::now(),
+                device_id: "d1".into(),
+                payload: json!({
+                    "note_id": "01JKNOTE0000000000000CONV1",
+                    "title": "Ledger conventions",
+                    "raw_text": "Restaurants: Expenses:Food:Dining.",
+                }),
+            })
+            .await
+            .unwrap();
+        runner.apply_events(&[note]).await.unwrap();
+
+        assert_eq!(spending_accounts(&db).await, vec!["Expenses:Food:Dining"]);
+    }
+
     #[tokio::test]
     async fn an_ungrounded_receipt_line_takes_the_payees_past_account() {
         let db = crate::db::test_db().await;
