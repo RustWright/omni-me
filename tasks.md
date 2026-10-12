@@ -1636,6 +1636,14 @@ deployed code is CI-green (`7d6d485`).
   rule (junk with stray untimed tags never expires). Skip list built `b5c53f0`: listed senders
   are offered to the receipt handlers first and skipped only when nothing comes of it (a
   LinkedIn Premium charge still imports); Settings › Archive & import.
+  Built 2026-10-11/12: `2447e96` category list (`retention_class.rs`, 12 categories, receipt
+  first: "any email showing a charged amount is a receipt") enforced by the reader schema, stored
+  as its own `retention` field and shown as a `retain:<key>` tag; an email that yields a charge
+  is written `receipt` at parser rank. `74b4e05` rule B + `KEEP_FOREVER`. `6fba67d` retention
+  screen offers categories and a real "keep forever" (the old button cleared the timer, which
+  rule B would ignore). `944cce1` backfill: the enrichment sweep re-reads any document with no
+  `retain:` tag (parser statements write `statement`, an off-list answer `other`, so nothing
+  loops). ⏳ Then: score the reader's categories against a hand-checked sample; his timers.
 - R4-7 Type-to-search picker for the archive tag filter, Kind filter and retention tag picker
   (his report: the tag list is too long to scroll). `250903f`; APK 1.1.35-dev building.
 - Assistant asked "Shall I propose creating this?" instead of proposing (S9-equivalent run,
