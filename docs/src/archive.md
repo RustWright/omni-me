@@ -421,6 +421,18 @@ An archive event carries `extracted` and a transcription carries `transcribed`; 
 outrank the `none` a purge leaves behind, so either would restore a purged document's words
 — on a device that never held the bytes and has no way to notice.
 
+### How old a document is
+
+A retention timer counts from the earlier of two dates: when the document was archived, and
+its own date. An email's own date is its `Date:` header, filed at parser rank when it is
+archived. Otherwise it is whatever the reader found on the page, or your correction. The
+earlier one wins because of the backfill: years of old mail archived on one day would
+otherwise all be "new" and wait out their full timer again. A date later than the archive
+time, such as an expiry or a renewal date read off the page, never holds a document back.
+
+The retention scan on a device and the purge preview on the server select with one shared
+condition (`OLDER_THAN_CUTOFF`), so the group a person is shown is the group a confirm purges.
+
 ### What a purge does and does not reclaim
 
 It reclaims the **blob**. It does not empty the log: the archive event still carries the

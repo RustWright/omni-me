@@ -117,6 +117,18 @@ pub async fn rules(db: &Database) -> Result<HashMap<String, u32>, DbError> {
     Ok(queries::retention_rules(db).await?.into_iter().collect())
 }
 
+/// When a document's retention clock started: its own date if earlier than its
+/// archive time, which a backfill of old mail always is. Never later, so a date
+/// read off the page (an expiry, a renewal) cannot hold a document back.
+/// Matches `queries::OLDER_THAN_CUTOFF`.
+fn age_from(archived: DateTime<Utc>, document_date: Option<&str>) -> DateTime<Utc> {
+    document_date
+        .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|d| d.and_utc().min(archived))
+        .unwrap_or(archived)
+}
+
 /// Documents whose tags all have rules and which are older than the longest.
 ///
 /// `now` is a parameter rather than read here so a test can state the date it is
@@ -161,7 +173,10 @@ pub async fn candidates(
         let Ok(archived) = DateTime::parse_from_rfc3339(&archived_at) else {
             continue;
         };
-        if archived.with_timezone(&Utc) + Duration::days(i64::from(longest)) > now {
+        if age_from(archived.with_timezone(&Utc), row.document_date.as_deref())
+            + Duration::days(i64::from(longest))
+            > now
+        {
             continue;
         }
         out.push(RetentionCandidate {
@@ -329,6 +344,50 @@ mod tests {
         let found = candidates(&db, Utc::now(), 2).await.unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].document_id, promo);
+    }
+
+    /// A backfill archives years of mail today. The email's own date is its age,
+    /// and the purge preview must select exactly what the scan proposed.
+    #[tokio::test]
+    async fn backfilled_mail_counts_from_its_own_date() {
+        let (db, store, runner) = harness().await;
+        set_rule(&store, &runner, "promo", Some(14)).await;
+        let old = archive(&store, &runner, "2024 sale.eml", 0, &["promo"]).await;
+        let renewal = archive(&store, &runner, "renewal.eml", 30, &["promo"]).await;
+        archive(&store, &runner, "today.eml", 0, &["promo"]).await;
+        for (id, day) in [
+            (&old, "2024-03-01".to_string()),
+            (&renewal, "2030-01-01".into()),
+        ] {
+            let mut fields = crate::document_fields::email_date(id, Utc::now());
+            fields.fields[0].value = day;
+            let e = store
+                .append(NewEvent::document_fields_extracted("d1", &fields).unwrap())
+                .await
+                .unwrap();
+            runner.apply_events(&[e]).await.unwrap();
+        }
+
+        let found = candidates(&db, Utc::now(), 100).await.unwrap();
+        let mut ids: Vec<&str> = found.iter().map(|c| c.document_id.as_str()).collect();
+        ids.sort();
+        let mut want = vec![old.as_str(), renewal.as_str()];
+        want.sort();
+        assert_eq!(
+            ids, want,
+            "old by its date; a future date never holds one back"
+        );
+
+        let cutoff = (Utc::now() - Duration::days(14)).to_rfc3339();
+        let preview = queries::documents_tagged(&db, "promo", Some(&cutoff))
+            .await
+            .unwrap();
+        let mut previewed: Vec<&str> = preview.iter().map(|r| r.document_id.as_str()).collect();
+        previewed.sort();
+        assert_eq!(
+            previewed, want,
+            "the preview selects what the scan proposed"
+        );
     }
 
     #[tokio::test]

@@ -1426,8 +1426,8 @@ pub async fn documents_tagged(
     // is cast: comparing a `datetime` column against a bound string matches
     // nothing instead of erroring.
     let cutoff = match archived_before {
-        Some(_) => "AND archived_at != NONE AND archived_at < type::datetime($before)",
-        None => "",
+        Some(_) => format!("AND {OLDER_THAN_CUTOFF}"),
+        None => String::new(),
     };
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
@@ -1437,7 +1437,9 @@ pub async fn documents_tagged(
     );
     let mut query = db.query(sql).bind(("tag", tag.trim().to_lowercase()));
     if let Some(before) = archived_before {
-        query = query.bind(("before", before.to_string()));
+        query = query
+            .bind(("cutoff", before.to_string()))
+            .bind(("cutoff_day", cutoff_day(before)));
     }
     let mut resp = query.await?;
     Ok(resp.take(0)?)
@@ -1475,6 +1477,20 @@ pub async fn retention_rules(db: &Database) -> Result<Vec<(String, u32)>, DbErro
 /// ⚠️ `boundary` is RFC3339 and **must** be cast: the column is a `datetime`, and
 /// comparing it against a bound string matches nothing at all rather than erroring
 /// — an empty candidate list that reads exactly like "nothing is due".
+/// A document's age counts from the earlier of its archive time and its own date,
+/// so old mail backfilled today is as old as it is (R4-6). Shared by the retention
+/// scan and the purge preview, which must agree on every member.
+///
+/// `document_date` is compared as a `YYYY-MM-DD` string: casting a malformed
+/// one would fail the whole query. `<=`, as its midnight is on or before the cutoff.
+const OLDER_THAN_CUTOFF: &str = "((archived_at != NONE AND archived_at < type::datetime($cutoff))
+     OR (document_date != NONE AND document_date <= $cutoff_day))";
+
+/// The day part of an RFC 3339 cutoff, for comparing against `document_date`.
+fn cutoff_day(cutoff: &str) -> String {
+    cutoff.chars().take(10).collect()
+}
+
 pub async fn documents_archived_before(
     db: &Database,
     boundary: &str,
@@ -1486,14 +1502,15 @@ pub async fn documents_archived_before(
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
-         WHERE archived_at != NONE AND archived_at < type::datetime($boundary) AND {NOT_PURGED}
+         WHERE {OLDER_THAN_CUTOFF} AND {NOT_PURGED}
            AND (tags ?? []) CONTAINSANY $tags
          ORDER BY archived_at ASC
          LIMIT $limit"
     );
     let mut resp = db
         .query(sql)
-        .bind(("boundary", boundary.to_string()))
+        .bind(("cutoff", boundary.to_string()))
+        .bind(("cutoff_day", cutoff_day(boundary)))
         .bind(("tags", any_of_tags.to_vec()))
         .bind(("limit", limit))
         .await?;

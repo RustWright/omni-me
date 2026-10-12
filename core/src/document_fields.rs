@@ -220,6 +220,25 @@ pub fn human_tag_set(document_id: &str, tags: &[Tag]) -> DocumentFieldsExtracted
     }
 }
 
+/// An email's own date, from its `Date:` header, at parser rank: above the
+/// reader's guess, below a person's correction. Retention counts from it, so a
+/// backfill of old mail lands already as old as it is.
+pub fn email_date(
+    document_id: &str,
+    sent: chrono::DateTime<Utc>,
+) -> DocumentFieldsExtractedPayload {
+    DocumentFieldsExtractedPayload {
+        document_id: document_id.to_string(),
+        extracted_at: Utc::now().to_rfc3339(),
+        fields: vec![DocumentField {
+            key: crate::events::DOCUMENT_DATE_KEY.to_string(),
+            value: sent.date_naive().to_string(),
+            source: "parser:email".to_string(),
+            verified: false,
+        }],
+    }
+}
+
 /// The deterministic half: what a parser can say about the bytes alone.
 ///
 /// Synchronous, and takes no reader — which is the point. Ingest calls this one,

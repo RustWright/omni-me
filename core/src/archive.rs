@@ -431,6 +431,12 @@ pub async fn ingest_email(
 
     let email_document_id = email.document_id.clone();
     let mut events = email.events;
+    if let Some(sent) = parsed.date {
+        events.push(NewEvent::document_fields_extracted(
+            ctx.device_id,
+            &document_fields::email_date(&email_document_id, sent),
+        )?);
+    }
     let mut attachment_document_ids = Vec::new();
 
     for att in parsed.real_attachments() {
@@ -880,6 +886,32 @@ mod tests {
             "different bytes, different blob"
         );
         assert_eq!(child.source, "email");
+    }
+
+    /// Retention counts from this date, so old mail backfilled today is old.
+    #[tokio::test]
+    async fn an_emails_own_date_is_filed_at_parser_rank() {
+        let raw = b"From: shop@example.com\r\n\
+                    Date: Tue, 05 Mar 2024 14:00:00 +0000\r\n\
+                    Subject: Spring sale\r\n\
+                    Content-Type: text/plain\r\n\r\n\
+                    Everything 20% off.\r\n";
+        let parsed = crate::mime::parse_eml(raw).expect("parses");
+        let d = dir();
+        let out = ingest_email(&ctx(d.path(), &no_passwords()), raw, &parsed)
+            .await
+            .unwrap();
+
+        let fields: crate::events::DocumentFieldsExtractedPayload = out
+            .events
+            .iter()
+            .find(|e| e.event_type == "document_fields_extracted")
+            .map(|e| serde_json::from_value(e.payload.clone()).unwrap())
+            .expect("a dated email files its date");
+        assert_eq!(fields.document_id, out.email_document_id);
+        assert_eq!(fields.fields[0].key, crate::events::DOCUMENT_DATE_KEY);
+        assert_eq!(fields.fields[0].value, "2024-03-05");
+        assert_eq!(fields.fields[0].source, "parser:email");
     }
 
     /// ⚠️ Three of five real fixtures are like this: the receipt IS the body.
