@@ -161,6 +161,28 @@ fn unprinted_amounts(result: &ExtractionResult, text: &str) -> Vec<Decimal> {
         .collect()
 }
 
+/// How far a charge date may sit from the email's arrival. A payment reminder
+/// names a date days ahead; a domain receipt's renewal date is years ahead.
+const CHARGE_DATE_WINDOW_DAYS: i64 = 31;
+
+/// The draft's date: the one read, unless missing or further than the window
+/// from when the email arrived, in which case the arrival date and why.
+fn charge_date(
+    read: Option<chrono::NaiveDate>,
+    arrived: chrono::NaiveDate,
+) -> (chrono::NaiveDate, Option<String>) {
+    match read {
+        None => (arrived, None),
+        Some(d) if (d - arrived).num_days().abs() <= CHARGE_DATE_WINDOW_DAYS => (d, None),
+        Some(d) => (
+            arrived,
+            Some(format!(
+                "read the date as {d}, far from when the email arrived; dated {arrived} instead"
+            )),
+        ),
+    }
+}
+
 /// Pdftotext over bytes, no encryption — used to pull text out of plain
 /// (non-password-protected) PDF attachments. Returns empty string when
 /// pdftotext can't extract (typically image-only PDFs); the caller decides
@@ -415,6 +437,8 @@ impl ImapHandler for ReceiptHandler {
 
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
         let mut result = result;
+        let (date, date_warning) = charge_date(result.date, message.date.date_naive());
+        result.date = Some(date);
         if let Some(db) = &self.accounts {
             let description = result.description.clone().unwrap_or_default();
             crate::assistant::ledger_grounding::ground_hints(
@@ -459,6 +483,7 @@ impl ImapHandler for ReceiptHandler {
             None => format!("{}-uid-{}", self.name, message.uid),
         };
         let mut warnings = report.warnings.clone();
+        warnings.extend(date_warning);
         if !unprinted.is_empty() {
             let list: Vec<String> = unprinted.iter().map(Decimal::to_string).collect();
             warnings.push(format!("not printed in the email: {}", list.join(", ")));
@@ -510,6 +535,24 @@ impl ImapHandler for ReceiptHandler {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_charge_date_far_from_arrival_takes_the_arrival_date() {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let arrived = d("2026-10-12");
+        assert_eq!(super::charge_date(None, arrived), (arrived, None));
+        // A payment reminder for a withdrawal three days out stays as read.
+        assert_eq!(
+            super::charge_date(Some(d("2026-10-15")), arrived),
+            (d("2026-10-15"), None)
+        );
+        // A domain's renewal date, and an order dated to the start of the year.
+        for far in ["2028-02-01", "2026-01-01"] {
+            let (date, warning) = super::charge_date(Some(d(far)), arrived);
+            assert_eq!(date, arrived);
+            assert!(warning.unwrap().contains(far));
+        }
+    }
+
     use super::*;
     use chrono::TimeZone;
     use std::path::PathBuf;
