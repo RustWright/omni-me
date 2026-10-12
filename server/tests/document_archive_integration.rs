@@ -353,13 +353,20 @@ async fn a_field_corrected_on_a_phone_reaches_the_servers_documents_table() {
     let client = reqwest::Client::new();
     let document_id = archive_a_scan(&client, &url).await;
 
-    let correction = document_fields::human_correction(&document_id, "kind", "receipt");
-    let event = NewEvent::document_fields_extracted("phone-1", &correction).unwrap();
+    // Kind and retention category both, which is what "classified" means since
+    // R4-6: a document without a category is read once more for one.
+    let events = ["kind", "retention"]
+        .into_iter()
+        .map(|key| {
+            let correction = document_fields::human_correction(&document_id, key, "receipt");
+            NewEvent::document_fields_extracted("phone-1", &correction).unwrap()
+        })
+        .collect();
     let resp = client
         .post(format!("{url}/sync/push"))
         .json(&PushRequest {
             device_id: "phone-1".into(),
-            events: vec![event],
+            events,
         })
         .send()
         .await
