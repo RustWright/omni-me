@@ -1690,6 +1690,31 @@ deployed code is CI-green (`7d6d485`).
   may want changed: dance and strava as fitness, pension as employment.
 - Dev now: server `5821f50` (receipt accounts, receipt dates, tags), APK 1.1.39-dev on the S9
   (Accent row wraps, checked at 360px).
+- R4-9 corrected 2026-10-12: the cause above was half of it. The server registered the
+  documents projection only, so grounding on the server found no conventions note and no
+  ledger; the known list was empty and every hint was dropped. `42c4490` handed the reader
+  that same empty list. Found by re-extracting his restaurant photo: it answered
+  `Expenses:Groceries`, not one of his accounts. `44a08a3`: the server also projects notes and
+  the ledger, guarded by a test through the server's own projection list.
+- R4-12 His report: purge review slow for small lists, and the 372 social list errored.
+  Reproduced from the S9: the preview ran past the app's 30s request limit. Cause: one full
+  event-log scan per document to count transaction references (`event_type` has no index).
+  `d215722`: preview and confirm count every blob in one read (`blob_reference_counts`).
+- R4-13 His scan of a restaurant receipt: Groceries instead of Dining, and no date. The dev
+  conventions note does offer `Expenses:Food:Dining`; my prompt said "choose by what was
+  bought", and bread and rice pudding read as groceries. Now: by the merchant and the purchase
+  as a whole. The date printed "October 11" with no year, which the reader is told to leave
+  empty; it is now told the day the document arrived (capture day, email date) and completes
+  the year. His conventions table files Uber Eats under `Food:Convenience`; he expected
+  dining, so I followed him. `d215722`.
+- R4-14 His UI report: "+ Add" hugs the Overview/Ledger/Analyze bar, and the net-worth range
+  picker went to two rows. Cause of the first: my R4-1 bulk edit (`6f9bcc5`) glued `z-30flex`,
+  and `bg-obsidian-bgflex` on four assistant sub-screen headers. The range picker needed 288px
+  of 286 (it had overflowed 2px since it was built; the wrap made it visible); `SegmentedNav
+  fill` spans the row in equal segments. Class guard: `tests/class-check.mjs` in CI fails on any
+  class the built stylesheet lacks. It also found `border-bottom` (meant `border-b`) and that
+  the animation classes (`animate-in`, `fade-in`, ...) never worked, the plugin was never
+  installed; defined in `input.css`. `d215722`.
 - R4-10 His report: Settings › Appearance › Accent overflowed on the phone (six accents plus
   Follow in one row). `SegmentedNav` now wraps, which covers all six users; the viewport sweep
   now opens every settings row, since an expanded row was never measured. `42c4490`.
