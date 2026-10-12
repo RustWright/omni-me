@@ -546,6 +546,9 @@ fn ConfigRow(
         div { class: "py-3",
             button {
                 r#type: "button",
+                // The viewport sweep opens every row by this; an expanded row is
+                // where a long choice list overflows.
+                "data-config-row": "{entry.key}",
                 class: "w-full flex items-center justify-between gap-3 text-left",
                 onclick: move |_| on_toggle.call(()),
                 span { class: "text-sm font-medium text-obsidian-text min-w-0", "{entry.label}" }

@@ -256,6 +256,11 @@ whatever account sounds right. Three things hold it to your conventions:
   different spending account, the proposal is refused with those past entries as the
   pattern to follow, unless you asked for a different one.
 
+The receipt reader is held the same way. It is given your spending accounts as the
+only categories to choose from. A line whose account still isn't one of yours takes the
+account past entries for that payee used, if they all used the same one. Otherwise it is
+left as `Expenses:Unknown` for you to file at review.
+
 **Ledger proposals are decided in Finances, not in the assistant's inbox.** A
 change to money is approved beside the money, with the ledger on screen. The two
 queues are disjoint by construction rather than by convention: the assistant inbox

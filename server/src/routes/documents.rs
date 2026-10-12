@@ -324,9 +324,10 @@ async fn read_and_file(
     parts: &[DocumentPart<'_>],
     (bytes, mime, filename): (&[u8], &str, &str),
 ) -> Result<ExtractResponse, (StatusCode, String)> {
+    let accounts = omni_me_core::assistant::ledger_grounding::spending_accounts(&state.db).await;
     let mut extraction = state
         .extractor
-        .extract(parts, q.hint)
+        .extract_among(parts, q.hint, &accounts)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -347,8 +348,10 @@ async fn read_and_file(
     let document_id = attachment.as_ref().and_then(|a| a.document_id.clone());
     let proposed_batch_id = match document_id {
         Some(id) if q.propose && extraction.kind() == Some(DocumentKind::Receipt) => {
+            let description = extraction.description.clone().unwrap_or_default();
             omni_me_core::assistant::ledger_grounding::ground_hints(
                 &state.db,
+                &description,
                 &mut extraction.postings,
             )
             .await;

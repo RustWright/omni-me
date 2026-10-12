@@ -141,13 +141,53 @@ pub fn ground_hint(hint: &str, known: &BTreeSet<String>) -> Option<String> {
     }
 }
 
-/// Hold every account hint an extraction carries to the known accounts.
-pub async fn ground_hints(db: &Database, postings: &mut [crate::extraction::ExtractedPosting]) {
+/// The spending accounts an extractor may choose from.
+pub async fn spending_accounts(db: &Database) -> Vec<String> {
+    known_accounts(db)
+        .await
+        .into_iter()
+        .filter(|a| a.starts_with("Expenses:"))
+        .collect()
+}
+
+/// Hold every account hint an extraction carries to the known accounts. A hint
+/// that does not ground takes the payee's account when past entries for the
+/// payee all used one, so a known payee keeps its account here as in proposals.
+pub async fn ground_hints(
+    db: &Database,
+    description: &str,
+    postings: &mut [crate::extraction::ExtractedPosting],
+) {
     let known = known_accounts(db).await;
+    let mut payee_account: Option<Option<String>> = None;
     for p in postings {
-        if let Some(hint) = p.account_hint.take() {
-            p.account_hint = ground_hint(&hint, &known);
+        let Some(hint) = p.account_hint.take() else {
+            continue;
+        };
+        p.account_hint = ground_hint(&hint, &known);
+        if p.account_hint.is_none() && hint.starts_with("Expenses:") {
+            if payee_account.is_none() {
+                payee_account = Some(past_payee_account(db, description).await);
+            }
+            p.account_hint = payee_account.clone().flatten();
         }
+    }
+}
+
+/// The one spending account past entries for this payee used, if exactly one.
+async fn past_payee_account(db: &Database, description: &str) -> Option<String> {
+    let payee = payee_word(description)?;
+    let used: BTreeSet<String> = similar_entries(db, description)
+        .await
+        .into_iter()
+        .filter(|(_, d, _)| payee_word(d).as_deref() == Some(payee.as_str()))
+        .flat_map(|(_, _, accounts)| accounts)
+        .filter(|a| a.starts_with("Expenses:"))
+        .collect();
+    let mut used = used.into_iter();
+    match (used.next(), used.next()) {
+        (Some(one), None) => Some(one),
+        _ => None,
     }
 }
 
@@ -362,5 +402,51 @@ mod tests {
         let ok = "2026-10-11 Tim Hortons lunch\n    Expenses:Food:Dining  14.50 CAD\n    \
                   Assets:NonRegistered:CAD  -14.50 CAD\n";
         assert!(check_record(&db, ok).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn an_ungrounded_receipt_line_takes_the_payees_past_account() {
+        let db = crate::db::test_db().await;
+        use crate::events::Projection;
+        crate::events::BudgetProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        crate::events::NotesProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        db.query(
+            "CREATE generic_notes:conv SET title = 'Ledger conventions', \
+             raw_text = 'Domains: Expenses:Business:Domains. Fees: Expenses:Fees.', \
+             tags = [], created_at = time::now(), updated_at = time::now();
+             CREATE transactions:p CONTENT { removed: false, superseded_by: NONE, \
+             date: '2026-01-05', description: 'Porkbun renewal', cleared: false, \
+             postings: [{ account: 'Expenses:Business:Domains', amount: '11.08', commodity: 'USD' }], \
+             tags_top: [], merged_ids: [], created_at: time::now(), updated_at: time::now() };",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            spending_accounts(&db).await,
+            vec!["Expenses:Business:Domains", "Expenses:Fees"]
+        );
+        let line = |hint: &str| crate::extraction::ExtractedPosting {
+            account_hint: Some(hint.to_string()),
+            commodity: "USD".to_string(),
+            amount: rust_decimal::Decimal::ONE,
+            line_label: None,
+        };
+        let mut postings = vec![line("Expenses:Web:Registration"), line("Expenses:Fees")];
+        ground_hints(&db, "Porkbun", &mut postings).await;
+        assert_eq!(
+            postings[0].account_hint.as_deref(),
+            Some("Expenses:Business:Domains")
+        );
+        assert_eq!(postings[1].account_hint.as_deref(), Some("Expenses:Fees"));
+
+        let mut unknown_payee = vec![line("Expenses:Web:Registration")];
+        ground_hints(&db, "Namecheap", &mut unknown_payee).await;
+        assert_eq!(unknown_payee[0].account_hint, None);
     }
 }

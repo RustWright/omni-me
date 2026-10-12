@@ -324,10 +324,15 @@ impl ImapHandler for ReceiptHandler {
         // the unattended path: nobody is watching to re-run a mail that came back
         // unpriced, and one measured document returned no line items on half its runs
         // against a total it stated correctly every time.
+        let accounts = match &self.accounts {
+            Some(db) => crate::assistant::ledger_grounding::spending_accounts(db).await,
+            None => Vec::new(),
+        };
         let (result, report) = extract_reconciled(
             self.extractor.as_ref(),
             &[DocumentPart::new(combined_text.as_bytes(), "text/plain")],
             ExtractionHint::EmailBody,
+            &accounts,
             DEFAULT_CONFIDENCE_THRESHOLD,
             RECONCILE_ATTEMPTS,
         )
@@ -411,7 +416,13 @@ impl ImapHandler for ReceiptHandler {
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
         let mut result = result;
         if let Some(db) = &self.accounts {
-            crate::assistant::ledger_grounding::ground_hints(db, &mut result.postings).await;
+            let description = result.description.clone().unwrap_or_default();
+            crate::assistant::ledger_grounding::ground_hints(
+                db,
+                &description,
+                &mut result.postings,
+            )
+            .await;
         }
         let drafts = receipt_extraction_to_drafts(&result, &source_prefix);
         // With no drafts, only a receipt still reaches review, where it can be

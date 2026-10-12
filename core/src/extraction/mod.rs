@@ -303,13 +303,14 @@ pub async fn extract_reconciled(
     extractor: &dyn DocumentExtractor,
     parts: &[DocumentPart<'_>],
     hint: ExtractionHint,
+    accounts: &[String],
     threshold: f64,
     attempts: usize,
 ) -> Result<(ExtractionResult, VerificationReport), ExtractionError> {
     let mut best: Option<(ExtractionResult, VerificationReport)> = None;
 
     for attempt in 1..=attempts.max(1) {
-        let result = extractor.extract(parts, hint).await?;
+        let result = extractor.extract_among(parts, hint, accounts).await?;
         let report = verify(&result, hint, threshold);
         let Some(gap) = report.total_mismatch else {
             // Nothing to compare, or it reconciled. Either way another call
@@ -341,7 +342,7 @@ pub async fn extract_reconciled(
     match best {
         Some(pair) => Ok(pair),
         None => {
-            let result = extractor.extract(parts, hint).await?;
+            let result = extractor.extract_among(parts, hint, accounts).await?;
             let report = verify(&result, hint, threshold);
             Ok((result, report))
         }
@@ -372,6 +373,18 @@ pub trait DocumentExtractor: Send + Sync {
         parts: &[DocumentPart<'_>],
         hint: ExtractionHint,
     ) -> Result<ExtractionResult, ExtractionError>;
+
+    /// As `extract`, with the ledger's spending accounts offered as the only
+    /// categories. An extractor with no prompt to put them in reads as `extract`.
+    async fn extract_among(
+        &self,
+        parts: &[DocumentPart<'_>],
+        hint: ExtractionHint,
+        accounts: &[String],
+    ) -> Result<ExtractionResult, ExtractionError> {
+        let _ = accounts;
+        self.extract(parts, hint).await
+    }
 }
 
 // --- Routing: MIME-derived default hint, with a user override where MIME is ambiguous ---
@@ -430,6 +443,25 @@ pub fn route(mime: &str, sender: Option<&str>) -> Option<ExtractionHint> {
 // the same response schema, and the same parse + confidence-clamp. Keeping one
 // copy means the verification pass (`verify`) sees a uniform `ExtractionResult`
 // shape regardless of which model produced it.
+
+/// The ledger's spending accounts as a closing prompt section, empty when there
+/// are none. Without it the model invented names like `Expenses:Transportation:Taxi`
+/// that grounding then dropped, and every line landed in `Expenses:Unknown`.
+pub(crate) fn accounts_section(accounts: &[String]) -> String {
+    if accounts.is_empty() {
+        return String::new();
+    }
+    let list: Vec<String> = accounts.iter().map(|a| format!("- {a}")).collect();
+    format!(
+        "\n\nThe ledger's spending accounts are listed below. ⚠️ Every `account_hint` \
+         MUST be one of them, copied exactly. Choose by what was bought, not by the \
+         wording the document uses. Tax, fee and tip lines take the account that fits \
+         them if one is listed, otherwise the account of what they were charged on. \
+         If nothing fits at all, leave `account_hint` null rather than inventing an \
+         account.\n{}",
+        list.join("\n")
+    )
+}
 
 /// Per-hint extraction prompt — instructs the model to emit the
 /// `ExtractionResult` JSON shape with string amounts + ISO dates.
@@ -971,12 +1003,21 @@ mod reconcile_tests {
         }
     }
 
+    #[test]
+    fn the_account_list_is_offered_only_when_there_is_one() {
+        assert_eq!(accounts_section(&[]), "");
+        let s = accounts_section(&["Expenses:Food:Groceries".to_string()]);
+        assert!(s.contains("- Expenses:Food:Groceries"));
+        assert!(s.contains("MUST be one of them"));
+    }
+
     async fn run(script: Vec<ExtractionResult>) -> (ExtractionResult, VerificationReport, usize) {
         let ex = ScriptedExtractor::new(script);
         let (result, report) = extract_reconciled(
             &ex,
             &[DocumentPart::new(b"body", "text/plain")],
             ExtractionHint::EmailBody,
+            &[],
             DEFAULT_CONFIDENCE_THRESHOLD,
             RECONCILE_ATTEMPTS,
         )

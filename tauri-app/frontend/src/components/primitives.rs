@@ -238,7 +238,9 @@ pub fn SegmentedNav(
     #[props(default = String::new())] class: String,
 ) -> Element {
     rsx! {
-        div { class: "inline-flex items-center gap-1 p-1 rounded-lg bg-obsidian-sidebar {class}",
+        // Wraps rather than scrolls: six accents plus "Follow" ran past a phone's
+        // width, and a row that scrolls sideways hides choices without saying so.
+        div { class: "inline-flex flex-wrap max-w-full items-center gap-1 p-1 rounded-lg bg-obsidian-sidebar {class}",
             for (key , label) in items.iter() {
                 button {
                     key: "{key}",

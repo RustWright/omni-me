@@ -349,6 +349,33 @@ try {
       if (rep.pans || rep.offenders.length || rep.panners.length) {
         failures.push({ where: label, ...rep });
       }
+      // A settings row shows its controls only when expanded, and the accent
+      // list overflowed there unmeasured. Each row is opened and checked in turn.
+      if (tab === "settings") {
+        const rows = page.locator("[data-config-row]");
+        const n = await rows.count();
+        if (!n) {
+          failures.push({
+            where: `${label} › rows`,
+            scrollWidth: 0,
+            clientWidth: 0,
+            offenders: [{ path: "(no [data-config-row] found — not measured)", right: 0 }],
+          });
+        }
+        for (let i = 0; i < n; i++) {
+          const row = rows.nth(i);
+          const key = await row.getAttribute("data-config-row");
+          await row.click();
+          await page.waitForTimeout(250);
+          const open = await overflowReport(page);
+          if (open.pans || open.offenders.length || open.panners.length) {
+            failures.push({ where: `${label} › ${key}`, ...open });
+          }
+          await row.click();
+          await page.waitForTimeout(150);
+        }
+        measured.push(`${label} › ${n} expanded rows`);
+      }
       for (const t of await tapTargetReport(page, MIN_TAP_PX)) {
         notes.push({ where: label, ...t });
       }
