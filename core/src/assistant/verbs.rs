@@ -449,7 +449,8 @@ async fn propose(db: &Database, config: &ResolvedConfig, args: &Value) -> Value 
     };
     if action.name == "transaction.record"
         && let Some(entry) = validated.get("entry").and_then(Value::as_str)
-        && let Err(refusal) = super::ledger_grounding::check_record(db, entry).await
+        && let Err(refusal) =
+            super::ledger_grounding::check_record(db, entry, super::session::today(config)).await
     {
         return refusal;
     }

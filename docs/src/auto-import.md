@@ -169,6 +169,17 @@ from, and re-polling a mailbox mints a fresh batch id for identical content, so 
 identity is the only thing that can tell a re-poll from a new mail. That distinction is what keeps
 a dismissal dismissed while still letting the next real message through.
 
+## Nothing dated after today is committed
+
+A draft dated after today cannot be committed from review, whatever produced it: an email,
+a scan, a statement, or the assistant. The commit button names the date instead ("Dated Oct
+15. Fix the date, or commit it from Oct 15"). A misread date is corrected in place and the
+row commits; a real upcoming payment, such as a pre-authorised withdrawal named days ahead,
+waits in review until it has happened, which is when a ledger should record it. A
+"commit anyway" prompt was the alternative, and it is the kind of tap that let future-dated
+entries in before. The rule is `future_dated::refusal`; `commit_batch` enforces it, and the
+assistant's `transaction.record` is refused at the same point as an unknown account.
+
 ## What this does not do
 
 - **Sender authentication is a signal, never a gate.** Anyone who knows the watched address can

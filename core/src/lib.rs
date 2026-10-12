@@ -19,6 +19,7 @@ pub mod document_enrichment;
 pub mod document_fields;
 pub mod events;
 pub mod extraction;
+pub mod future_dated;
 pub mod fx;
 pub mod http;
 pub mod import;

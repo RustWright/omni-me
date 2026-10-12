@@ -487,6 +487,15 @@ pub async fn commit_batch(
     if indices.is_empty() && added.is_empty() {
         return Err("nothing to commit: no row selected and none added".into());
     }
+    // After corrections, so a fixed date is the one judged. The phone's own day.
+    let today = chrono::Local::now().date_naive();
+    let dates = effective.iter().map(|r| r.date).chain(added.iter().map(|a| a.date));
+    if let Some(why) = dates
+        .filter_map(|d| omni_me_core::future_dated::refusal(d, today))
+        .next()
+    {
+        return Err(why);
+    }
 
     let mut new_events: Vec<NewEvent> = Vec::with_capacity(indices.len() + added.len() + 2);
     let mut accepted_dates: Vec<NaiveDate> = Vec::with_capacity(indices.len() + added.len());

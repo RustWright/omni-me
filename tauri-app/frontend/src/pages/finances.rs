@@ -3387,8 +3387,25 @@ fn pretty_source(source: &str) -> &str {
     }
 }
 
+/// Mirrors `omni_me_core::future_dated::refusal`, which `commit_batch` enforces;
+/// this only says it on the button before the tap. Keep the wording in step.
+fn future_refusal(date: &str, today: chrono::NaiveDate) -> Option<String> {
+    use chrono::Datelike;
+    let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    (date > today).then(|| {
+        let day = date.format("%b %-d");
+        let year = if date.year() == today.year() {
+            String::new()
+        } else {
+            format!(", {}", date.year())
+        };
+        format!("Dated {day}{year}. Fix the date, or commit it from {day}{year}.")
+    })
+}
+
 #[component]
 fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
+    let tz_signal: Signal<chrono_tz::Tz> = use_context();
     let batch_id_for_resource = batch_id.clone();
     let mut batch: Signal<Option<Result<PendingBatchView, String>>> = use_signal(|| None);
     let mut accepted: Signal<Vec<bool>> = use_signal(Vec::new);
@@ -3454,6 +3471,19 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
             let row_count = b.draft_postings.len();
             let accepted_count = accepted.read().iter().filter(|x| **x).count();
             let added_count = added.read().len();
+            // The first ticked or added row dated after today, as the button says it.
+            let today = crate::user_date::UserDate::today(&tz_signal.read()).naive_date();
+            let not_yet: Option<String> = {
+                let fixes = corrections.read();
+                let ticked = accepted.read();
+                b.draft_postings
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| ticked.get(*i).copied().unwrap_or(false))
+                    .map(|(i, d)| fixes.get(&i).map_or(d.date.clone(), |f| f.date.clone()))
+                    .chain(added.read().iter().map(|f| f.date.clone()))
+                    .find_map(|d| future_refusal(&d, today))
+            };
             let blank = blank_fields(&b.fetched_at);
             let metadata_pretty = b
                 .source_metadata
@@ -3640,6 +3670,7 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                     button {
                         class: "flex-1 px-4 py-3 bg-obsidian-accent text-black font-semibold rounded-lg hover:bg-obsidian-accent/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
                         disabled: *busy.read() || accepted_count + added_count == 0
+                            || not_yet.is_some()
                             || editing_row.read().is_some() || *adding.read()
                             || (manual_fx_commodity.is_some() && fx_rate_input.read().trim().is_empty()),
                         onclick: {
@@ -3713,6 +3744,8 @@ fn BatchReviewView(batch_id: String, on_done: EventHandler<()>) -> Element {
                         },
                         if *busy.read() {
                             "Committing…"
+                        } else if let Some(why) = &not_yet {
+                            "{why}"
                         } else if row_count == 0 {
                             "Commit {added_count} added"
                         } else if accepted_count == row_count {

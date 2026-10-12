@@ -241,12 +241,24 @@ fn payee_word(description: &str) -> Option<String> {
 
 /// Check a `transaction.record` entry against the ledger. `Err` is the JSON the
 /// model gets back instead of a proposal.
-pub async fn check_record(db: &Database, entry: &str) -> Result<(), Value> {
+pub async fn check_record(
+    db: &Database,
+    entry: &str,
+    today: chrono::NaiveDate,
+) -> Result<(), Value> {
     let parsed = match crate::journal_import::parse_one_entry(entry) {
         Ok(p) => p,
         // Syntax was already checked by the action's own validator.
         Err(_) => return Ok(()),
     };
+    if let Some(why) = crate::future_dated::refusal(parsed.date, today) {
+        return Err(json!({
+            "error": format!(
+                "{why} An entry is recorded once the money has moved; if the user gave \
+                 this date for a payment still to come, say so rather than proposing it."
+            ),
+        }));
+    }
     let known = known_accounts(db).await;
     let accounts: Vec<&str> = parsed.postings.iter().map(|p| p.account.as_str()).collect();
     let known_refs: std::collections::HashSet<&str> = known.iter().map(String::as_str).collect();
@@ -394,14 +406,14 @@ mod tests {
         .unwrap();
         let entry = "2026-10-11 Tim Hortons lunch\n    Expenses:Food  14.50 CAD\n    \
                      Assets:Cash  -14.50 CAD\n";
-        let err = check_record(&db, entry).await.unwrap_err();
+        let err = check_record(&db, entry, chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()).await.unwrap_err();
         let unknown = err["unknown"].as_array().unwrap();
         assert_eq!(unknown.len(), 2);
         assert_eq!(unknown[0]["closest"][0], "Expenses:Food:Dining");
 
         let ok = "2026-10-11 Tim Hortons lunch\n    Expenses:Food:Dining  14.50 CAD\n    \
                   Assets:NonRegistered:CAD  -14.50 CAD\n";
-        assert!(check_record(&db, ok).await.is_ok());
+        assert!(check_record(&db, ok, chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()).await.is_ok());
     }
 
     /// Receipt import runs on the server, so the server's own projections must
