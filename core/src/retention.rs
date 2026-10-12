@@ -9,6 +9,10 @@
 //!
 //! ## The rule, and why it fails toward keeping
 //!
+//! ⚠️ For a document with a retention category (`retain:<key>`, R4-6), the
+//! category's timer decides instead, unless a topic tag keeps it longer; see
+//! [`keep_days`]. What follows is the rule for a document without one.
+//!
 //! A document is a candidate only when **every tag it carries has a retention
 //! rule**, and then only once it is older than the **longest** of them.
 //!
@@ -30,6 +34,38 @@ use std::collections::HashMap;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::db::{Database, DbError, queries};
+use crate::retention_class::RETAIN_TAG_PREFIX;
+
+/// A timer that never runs out: a topic tag set to this keeps every document
+/// carrying it, whatever its retention category says (his rule B, R4-6).
+pub const KEEP_FOREVER: u32 = u32::MAX;
+
+/// The days a document is kept for under the rules, or `None` when it is kept
+/// regardless.
+///
+/// With a retention category (`retain:<key>`), the category's timer decides,
+/// unless a topic tag carries a longer one; topic tags with no timer are ignored,
+/// and a category with no timer keeps the document. Without one, the original
+/// rule: every tag must have a timer, and the longest decides.
+pub fn keep_days(tags: &[String], rules: &HashMap<String, u32>) -> Option<u32> {
+    let decided = match tags.iter().find(|t| t.starts_with(RETAIN_TAG_PREFIX)) {
+        Some(class) => {
+            let class_days = *rules.get(class)?;
+            tags.iter()
+                .filter(|t| *t != class)
+                .filter_map(|t| rules.get(t).copied())
+                .fold(class_days, u32::max)
+        }
+        None => {
+            let mut longest = 0u32;
+            for tag in tags {
+                longest = longest.max(*rules.get(tag)?);
+            }
+            longest
+        }
+    };
+    (decided != KEEP_FOREVER).then_some(decided)
+}
 
 /// One document retention would propose for purging.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,7 +128,9 @@ pub async fn candidates(
 ) -> Result<Vec<RetentionCandidate>, DbError> {
     let rules = rules(db).await?;
     // Nothing governed: no candidates, and no query worth running.
-    let Some(shortest) = rules.values().copied().min() else {
+    // "Keep forever" never makes anything a candidate, and as a number it would
+    // take the boundary below past the earliest representable date.
+    let Some(shortest) = rules.values().copied().filter(|d| *d != KEEP_FOREVER).min() else {
         return Ok(Vec::new());
     };
 
@@ -111,21 +149,9 @@ pub async fn candidates(
         if tags.is_empty() {
             continue;
         }
-        // Every tag, or none of it: one ungoverned tag keeps the document.
-        let mut longest = 0u32;
-        let mut all_governed = true;
-        for tag in &tags {
-            match rules.get(tag) {
-                Some(days) => longest = longest.max(*days),
-                None => {
-                    all_governed = false;
-                    break;
-                }
-            }
-        }
-        if !all_governed {
+        let Some(longest) = keep_days(&tags, &rules) else {
             continue;
-        }
+        };
         let Some(archived_at) = row.archived_at.clone() else {
             // Nothing to measure from. `archived_at` is written by ingest, so this
             // is a row from a build that did not, and guessing a date here would
@@ -156,6 +182,45 @@ pub async fn candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn r(pairs: &[(&str, u32)]) -> HashMap<String, u32> {
+        pairs.iter().map(|(t, d)| (t.to_string(), *d)).collect()
+    }
+    fn t(tags: &[&str]) -> Vec<String> {
+        tags.iter().map(|x| x.to_string()).collect()
+    }
+
+    /// His rule B (R4-6): the category decides, a longer topic timer wins,
+    /// untimed topic tags no longer block, and "keep forever" keeps.
+    #[test]
+    fn the_category_decides_unless_a_topic_tag_keeps_longer() {
+        let rules = r(&[
+            ("retain:promo", 14),
+            ("taxes", KEEP_FOREVER),
+            ("newsletter", 30),
+        ]);
+        assert_eq!(
+            keep_days(&t(&["retain:promo", "shopping"]), &rules),
+            Some(14)
+        );
+        assert_eq!(
+            keep_days(&t(&["retain:promo", "newsletter"]), &rules),
+            Some(30)
+        );
+        assert_eq!(keep_days(&t(&["retain:promo", "taxes"]), &rules), None);
+        assert_eq!(
+            keep_days(&t(&["retain:receipt"]), &rules),
+            None,
+            "untimed category keeps"
+        );
+    }
+
+    #[test]
+    fn without_a_category_every_tag_must_have_a_timer() {
+        let rules = r(&[("newsletter", 30), ("promo", 14)]);
+        assert_eq!(keep_days(&t(&["newsletter", "promo"]), &rules), Some(30));
+        assert_eq!(keep_days(&t(&["newsletter", "taxes"]), &rules), None);
+    }
     use crate::events::DocumentsProjection;
     use crate::events::{
         DocumentRetentionSetPayload, EventStore, NewEvent, ProjectionRunner, RetentionProjection,
