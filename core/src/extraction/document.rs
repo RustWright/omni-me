@@ -86,6 +86,17 @@ pub trait DocumentReader: Send + Sync {
         &self,
         parts: &[DocumentPart<'_>],
     ) -> Result<DocumentSummary, ExtractionError>;
+
+    /// As `read_document`, with the archive's tags in use offered for reuse.
+    /// A reader with no prompt to put them in reads as `read_document`.
+    async fn read_document_among(
+        &self,
+        parts: &[DocumentPart<'_>],
+        tags: &[String],
+    ) -> Result<DocumentSummary, ExtractionError> {
+        let _ = tags;
+        self.read_document(parts).await
+    }
 }
 
 /// The prompt. Deliberately asks for description, never for judgement.
@@ -112,11 +123,14 @@ pub fn document_prompt() -> String {
      printed. ⛔ Do not compute, convert, or normalise them, and do not include \
      a value the document does not state — a document that genuinely states none \
      of these returns an empty list, which is a real answer.\n\n\
-     `tags` is a short list of lowercase labels for grouping documents that \
-     belong together — for example: taxes, insurance, medical, housing, vehicle, \
-     utilities, banking, employment, warranty, receipt, newsletter. Reuse these \
-     when they fit rather than inventing a near-synonym, and leave the list \
-     empty rather than reaching for a label that does not apply. ⚠️ Tags group; \
+     `tags` is one or two lowercase labels naming the area of life the document \
+     is about, for grouping documents that belong together — for example: taxes, \
+     insurance, medical, housing, vehicle, utilities, banking, employment, \
+     education, travel. ⛔ A tag is never the sender, a company or a product \
+     (not github, amazon, uber), and never the kind of message (not receipt, \
+     promotion, newsletter, notification): `retention` below already records \
+     that. Leave the list empty rather than reaching for a label that does not \
+     apply; most promotions and notifications need none. ⚠️ Tags group; \
      `fields` identifies. A policy number is never a tag.\n\n\
      `retention` decides how long the document is kept. Pick exactly one of these \
      categories, the first that fits:\n"
@@ -236,6 +250,7 @@ pub fn to_fields_payload(
     let mut tags: Vec<crate::events::Tag> = Vec::new();
     for raw in &summary.tags {
         match crate::events::Tag::normalize(raw) {
+            Ok(tag) if !crate::tag_vocabulary::is_topic(&tag.to_string()) => {}
             Ok(tag) if !tags.contains(&tag) => tags.push(tag),
             Ok(_) => {}
             Err(e) => {
@@ -482,6 +497,21 @@ mod tests {
         );
         assert!(!tags.verified, "a model's label is not a checked one");
         assert_eq!(tags.source, "model:m");
+    }
+
+    #[test]
+    fn the_kind_of_email_never_lands_as_a_tag() {
+        let reading = parse_summary(
+            serde_json::json!({
+                "kind": "email", "title": "Your receipt", "fields": [],
+                "tags": ["Receipt", "newsletter", "social", "taxes"]
+            }),
+            "m",
+        )
+        .unwrap();
+        let payload = to_fields_payload("doc-4", &reading);
+        let tags = payload.fields.iter().find(|f| f.key == DOCUMENT_TAGS_KEY);
+        assert_eq!(tags.map(|f| f.value.as_str()), Some("taxes"));
     }
 
     #[test]

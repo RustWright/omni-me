@@ -260,6 +260,7 @@ pub async fn derive_fields(
     bytes: &[u8],
     mime: &str,
     reader: Option<&dyn DocumentReader>,
+    tags_in_use: &[String],
 ) -> Option<DocumentFieldsExtractedPayload> {
     if let Some(mut parsed) = parser_fields(document_id, bytes) {
         // Everything the parser recognises is a statement. Written here so a
@@ -276,7 +277,7 @@ pub async fn derive_fields(
 
     let reader = reader?;
     match reader
-        .read_document(&[DocumentPart::new(bytes, mime)])
+        .read_document_among(&[DocumentPart::new(bytes, mime)], tags_in_use)
         .await
     {
         Ok(summary) => Some(document::to_fields_payload(document_id, &summary)),
@@ -524,9 +525,15 @@ Date,Description,Amount
     #[tokio::test]
     async fn a_parseable_statement_never_reaches_the_model() {
         let reader = StubReader::new();
-        let payload = derive_fields("doc-1", BROKERAGE.as_bytes(), "text/csv", Some(&reader))
-            .await
-            .unwrap();
+        let payload = derive_fields(
+            "doc-1",
+            BROKERAGE.as_bytes(),
+            "text/csv",
+            Some(&reader),
+            &[],
+        )
+        .await
+        .unwrap();
 
         assert!(
             !reader.asked.load(Ordering::SeqCst),
@@ -549,6 +556,7 @@ Date,Description,Amount
             b"a letter, not a statement",
             "text/plain",
             Some(&reader),
+            &[],
         )
         .await
         .unwrap();
@@ -563,7 +571,7 @@ Date,Description,Amount
         // ⛔ Not an error. The document is already archived and findable by name;
         // a backfill must not abort over a file nothing can structure.
         assert!(
-            derive_fields("doc-3", b"a letter", "text/plain", None)
+            derive_fields("doc-3", b"a letter", "text/plain", None, &[])
                 .await
                 .is_none()
         );

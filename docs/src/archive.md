@@ -146,6 +146,20 @@ The frontend does not normalize, and the shared chip editor's sanitizer is expli
 for the archive: it filters to alphanumerics plus `-_/`, which strips the colon a `key:value` tag
 is built on. Two normalizers is how the stored form and the queried form come apart.
 
+### What a model may tag
+
+A model's tag names the area of life a document is about: taxes, housing, employment. It
+never names the sender or the kind of message. The retention category already records the
+kind, so `receipt` or `social` as a tag only buries the topic tags. Left to itself, the reader
+tagged 395 of 867 emails `social`, and named senders (`github`, `strava`) as if they were
+topics.
+
+So `tag_vocabulary` does two things. It drops any label that names a kind of message, whatever
+the model says. It also shows the reader the topic tags already in use and tells it to reuse
+one of them, adding a new tag only for a topic none covers; this stops near-synonyms such as
+`dev`, `development` and `ci` building up. Your own tags are never touched: they outrank any
+model reading.
+
 ## Text travels in the event
 
 A document's text is stored on the archive event rather than derived per device, which looks

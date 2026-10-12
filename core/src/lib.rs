@@ -47,3 +47,4 @@ pub mod routines;
 pub mod runtime;
 pub mod statement;
 pub mod sync;
+pub mod tag_vocabulary;

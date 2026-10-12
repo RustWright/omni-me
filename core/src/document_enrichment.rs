@@ -234,6 +234,11 @@ pub async fn enrich_fields_once(
     let held = holds.held_at(Instant::now());
     let candidates = queries::documents_awaiting_fields(db, &mimes, max as u32, &held).await?;
     let mut tally = EnrichTally::new(candidates.len());
+    let tags_in_use = if candidates.is_empty() {
+        Vec::new()
+    } else {
+        crate::tag_vocabulary::tags_in_use(db).await
+    };
 
     for row in candidates {
         let raw_mime = row
@@ -263,7 +268,15 @@ pub async fn enrich_fields_once(
         // Through `derive_fields` rather than `read_document` directly, so the
         // parser still gets first refusal. A parser improved since this file was
         // ingested now claims it here, for free.
-        match document_fields::derive_fields(&row.document_id, &bytes, mime, Some(reader)).await {
+        match document_fields::derive_fields(
+            &row.document_id,
+            &bytes,
+            mime,
+            Some(reader),
+            &tags_in_use,
+        )
+        .await
+        {
             Some(fields) => {
                 writer
                     .append_new(NewEvent::document_fields_extracted(

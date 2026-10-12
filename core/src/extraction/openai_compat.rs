@@ -390,10 +390,18 @@ impl DocumentReader for OpenAiCompatExtractor {
         &self,
         parts: &[DocumentPart<'_>],
     ) -> Result<DocumentSummary, ExtractionError> {
+        self.read_document_among(parts, &[]).await
+    }
+
+    async fn read_document_among(
+        &self,
+        parts: &[DocumentPart<'_>],
+        tags: &[String],
+    ) -> Result<DocumentSummary, ExtractionError> {
         let raw = self
             .ask(
                 parts,
-                document_prompt(),
+                document_prompt() + &crate::tag_vocabulary::prompt_section(tags),
                 document_schema(),
                 "document_summary",
                 Some(READER_MAX_TOKENS),
