@@ -1700,9 +1700,20 @@ deployed code is CI-green (`7d6d485`).
   be committed from review, whatever its source (mail, scan, import). The commit button names
   the date ("Dated Oct 15. Fix the date, or commit it from Oct 15"); a misread date is fixed in
   place, a real upcoming payment waits in review until it has happened. Beat: B, a "commit
-  anyway?" confirm (the same tap-through that let his accidental future commits in). Not
-  built yet. Also agreed: the retention clock counts from the email's own date (his reason:
-  a live backfill of old mail would land already past its window).
+  anyway?" confirm (the same tap-through that let his accidental future commits in). Built
+  `20a16a3`: `future_dated::refusal`, enforced in `commit_batch` after corrections (the
+  phone's day), shown on the commit button, and applied at propose time to the assistant's
+  `transaction.record` (the user's zone), beside the unknown-account refusal.
+  Also agreed: the retention clock counts from the email's own date (his reason: a live
+  backfill of old mail would land already past its window). Built `63b1ce5`: an email files
+  its `Date:` header as `document_date` at `parser:email` rank; a document's age counts from
+  the earlier of that and `archived_at` (a later date never holds one back). The scan and the
+  purge preview share one condition (`queries::OLDER_THAN_CUTOFF`). Dev emails archived
+  before this keep the reader's date, usually the sent date.
+  Checked on the S9 (1.1.41-dev): a test batch dated tomorrow showed the disabled button
+  "Dated Oct 13. Fix the date, or commit it from Oct 13.", a direct `commit_batch` was refused
+  with the same words, and the test batch was dismissed. Not checked on device: committing
+  after correcting the date (the check runs on the corrected rows, `commit_batch`).
 - R4-12 His report: purge review slow for small lists, and the 372 social list errored.
   Reproduced from the S9: the preview ran past the app's 30s request limit. Cause: one full
   event-log scan per document to count transaction references (`event_type` has no index).

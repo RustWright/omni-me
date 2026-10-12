@@ -4,13 +4,11 @@
 findings and what-not-to-re-survey live in `tasks.md`; rationale lives in `docs/src/` and at the edit
 site. ⛔ If a line here could be derived from either, it does not belong here — point, do not restate.
 
-## ▶ NEXT ACTION — fresh session: two builds, then stage 3 (review)
-His call (2026-10-12): start fresh, then run the code review. My proposed order, not a
-dependency: (1) retention clock from the email's own date (agreed; live backfill lands old
-mail already past its window), (2) R4-15 future-dated commit block (ruled A), (3) stage 3
-review of the whole branch, (4) stage 4 merge. Both in `tasks.md` § "Round 4 early feedback".
-Dev: server `44a08a3`, agent `362e6da`, APK 1.1.40-dev on the S9. He accepted the
-re-extracted Uber receipt as the R4-9 check; a real emailed receipt is still unseen.
+## ▶ NEXT ACTION — stage 3: code review of the whole branch (fresh session, his call)
+Round 4 is closed: R4-1..R4-15 built, on dev and checked (`tasks.md` § "Round 4 early
+feedback"). Dev: server + agent `20a16a3` (`2a75882` is fmt only), APK 1.1.41-dev on the S9.
+Then stage 4 (merge), then the go-live sequence. A real emailed receipt through the fixed
+server path is still unseen; he accepted the re-extracted Uber receipt for now.
 
 ⛔ **Never `cargo build`/`test` on this box** — `check`/`fmt`/`clippy` only; anything that links
 goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/devsrv.py`.
