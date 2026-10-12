@@ -719,6 +719,64 @@ mod tests {
         assert_eq!(reader.calls.load(Ordering::SeqCst), 1);
     }
 
+    /// The backfill (R4-6): a document catalogued before retention categories
+    /// existed is read once more for one, and then left alone.
+    #[tokio::test]
+    async fn a_document_without_a_retention_category_is_read_once_more() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(DocumentsProjection)]);
+        let writer = EventWriter::new(
+            Arc::new(store.clone()),
+            runner.clone(),
+            ALL_FEATURES.iter().copied().collect(),
+            "d1",
+        );
+        let blob_dir = tempfile::tempdir().unwrap();
+        let id = seed(
+            &store,
+            &runner,
+            blob_dir.path(),
+            b"an old letter",
+            "text/plain",
+        )
+        .await;
+        // Catalogued the old way: a kind and a title, no category.
+        let old = crate::events::DocumentFieldsExtractedPayload {
+            document_id: id.clone(),
+            extracted_at: chrono::Utc::now().to_rfc3339(),
+            fields: vec![crate::events::DocumentField {
+                key: crate::events::DOCUMENT_KIND_KEY.into(),
+                value: "letter".into(),
+                source: "model:old@1".into(),
+                verified: false,
+            }],
+        };
+        writer
+            .append_new(NewEvent::document_fields_extracted("d1", &old).unwrap())
+            .await
+            .unwrap();
+
+        let reader = StubReader::new(false);
+        for _ in 0..2 {
+            enrich_fields_once(
+                &db,
+                &writer,
+                blob_dir.path(),
+                &reader,
+                DEFAULT_MAX_PER_TICK,
+                &mut RetryHolds::default(),
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            reader.calls.load(Ordering::SeqCst),
+            1,
+            "read once, then settled"
+        );
+    }
+
     #[tokio::test]
     async fn a_refusing_reader_spends_one_call_and_leaves_the_document_for_later() {
         let db = test_db().await;

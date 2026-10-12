@@ -261,7 +261,16 @@ pub async fn derive_fields(
     mime: &str,
     reader: Option<&dyn DocumentReader>,
 ) -> Option<DocumentFieldsExtractedPayload> {
-    if let Some(parsed) = parser_fields(document_id, bytes) {
+    if let Some(mut parsed) = parser_fields(document_id, bytes) {
+        // Everything the parser recognises is a statement. Written here so a
+        // re-read for a missing category (the enrichment sweep) settles it rather
+        // than finding it missing again on every tick.
+        parsed.fields.push(crate::events::DocumentField {
+            key: crate::events::DOCUMENT_RETENTION_KEY.to_string(),
+            value: "statement".to_string(),
+            source: "parser:statement".to_string(),
+            verified: false,
+        });
         return Some(parsed);
     }
 

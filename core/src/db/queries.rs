@@ -1496,7 +1496,9 @@ pub async fn documents_awaiting_fields(
     let sql = format!(
         "SELECT {DOCUMENT_COLUMNS}
          FROM documents
-         WHERE kind = NONE AND (mime_type ?? '') IN $mimes AND document_id NOT IN $held
+         WHERE (kind = NONE
+                OR array::any(tags ?? [], |$t| string::starts_with($t, 'retain:')) = false)
+           AND (mime_type ?? '') IN $mimes AND document_id NOT IN $held
            AND {NOT_PURGED}
          ORDER BY archived_at DESC
          LIMIT $limit"

@@ -252,14 +252,16 @@ pub fn to_fields_payload(
             &crate::events::encode_tag_set(&tags),
         ));
     }
-    if let Some(class) = summary
+    // Missing or off the list files it under `other` rather than leaving it
+    // blank: a blank category keeps the document a candidate for re-reading, and
+    // the sweep would pay to read it again on every tick.
+    let class = summary
         .retention
         .as_deref()
         .map(str::trim)
         .filter(|c| crate::retention_class::is_class(c))
-    {
-        fields.push(field(DOCUMENT_RETENTION_KEY, class));
-    }
+        .unwrap_or("other");
+    fields.push(field(DOCUMENT_RETENTION_KEY, class));
     for extra in &summary.fields {
         // ⛔ A model must not be able to overwrite a hoisted key through the open
         // `fields` list. They have their own slots above; a duplicate key here
@@ -407,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn a_listed_retention_category_becomes_a_field_and_another_is_dropped() {
+    fn a_listed_retention_category_becomes_a_field_and_another_is_other() {
         let mut s = summary();
         s.retention = Some("promo".into());
         let payload = to_fields_payload("doc-1", &s);
@@ -423,7 +425,8 @@ mod tests {
             payload
                 .fields
                 .iter()
-                .all(|f| f.key != DOCUMENT_RETENTION_KEY)
+                .any(|f| f.key == DOCUMENT_RETENTION_KEY && f.value == "other"),
+            "off the list is filed as other, so the sweep does not re-read it forever"
         );
     }
 
