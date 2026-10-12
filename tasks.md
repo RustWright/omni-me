@@ -1649,7 +1649,16 @@ deployed code is CI-green (`7d6d485`).
   the dev compose (⚠️ drop back to 1 once done). Scoring: 63 hand-labelled emails, labels in
   `~/omni-dev-tools/cdp/work/labels.json` (local, never in the repo). Assistant on the S9:
   routine now proposed in one go with steps; reading list answered honestly without a note.
-  ⏳ Then his timers per category.
+  ✅ Backfill done 2026-10-12: 845 of 867 categorised (22 held or unreadable); dev rate back to
+  1/min. Score on the sample: 57/61 right (93%). Misses: a token-regenerated alert as dev, a
+  group suggestion as promo, an Instacart order confirmation as `other`, and a bursary appeal as
+  `promo` (the one costly miss; caught at the purge confirm). Answer to his model question: keep
+  the Gemma reader; the closed list, not the model, was the fix. 🔴 RULED 2026-10-12 (his pick,
+  my recommendation): timers receipt/statement/personal/other forever, banking_notice 365,
+  policy_notice 90, security_alert and delivery_update 30, promo 14, social and dev_notification
+  7, login_code 1. Set on dev; first purge lists: social 363, promo 25, dev 10, codes 3, left for
+  him to confirm. ⚠️ Timers count from `archived_at`, not the email's date, so an imported
+  backlog expires gradually; worth a look before live (the official import re-archives).
 - R4-7 Type-to-search picker for the archive tag filter, Kind filter and retention tag picker
   (his report: the tag list is too long to scroll). `250903f`; APK 1.1.35-dev building.
 - Assistant asked "Shall I propose creating this?" instead of proposing (S9-equivalent run,
