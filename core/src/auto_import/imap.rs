@@ -216,6 +216,40 @@ pub async fn poll_once(
     cursor: &FetchCursor,
     archive: Option<&ArchiveTarget<'_>>,
 ) -> Result<PollOutcome, ImportError> {
+    poll_once_skipping(fetcher, handlers, cursor, archive, &[]).await
+}
+
+/// The sender's domain from a `From` header, lowercased: `a@b.com` or
+/// `Name <a@b.com>`.
+pub fn sender_domain(from: &str) -> Option<String> {
+    let addr = match (from.rfind('<'), from.rfind('>')) {
+        (Some(open), Some(close)) if open < close => &from[open + 1..close],
+        _ => from,
+    };
+    let domain = addr.trim().rsplit_once('@')?.1.trim().to_lowercase();
+    (!domain.is_empty()).then_some(domain)
+}
+
+/// Whether mail from `from` is on the skip list: its domain, or a subdomain of
+/// one listed.
+pub fn is_skipped_sender(from: &str, skip: &[String]) -> bool {
+    let Some(domain) = sender_domain(from) else {
+        return false;
+    };
+    skip.iter()
+        .any(|d| domain == *d || domain.ends_with(&format!(".{d}")))
+}
+
+/// [`poll_once`], leaving out mail from the senders in `skip`: not archived and
+/// not offered to any handler (his ruling, 2026-10-11: social notifications are
+/// not records). Counted in [`PollOutcome::skipped`], never dropped silently.
+pub async fn poll_once_skipping(
+    fetcher: &dyn ImapFetcher,
+    handlers: &[Box<dyn ImapHandler>],
+    cursor: &FetchCursor,
+    archive: Option<&ArchiveTarget<'_>>,
+    skip: &[String],
+) -> Result<PollOutcome, ImportError> {
     let FetchOutcome {
         messages,
         highest_uid: max_uid,
@@ -234,8 +268,31 @@ pub async fn poll_once(
     // the user has for finding it again.
     let mut unrouted: Vec<u32> = Vec::new();
     let mut failed: Vec<(u32, String)> = Vec::new();
+    let mut skipped: Vec<u32> = Vec::new();
 
     for msg in &messages {
+        // A listed sender is offered to the handlers first, and skipped only if
+        // nothing comes of it: LinkedIn bills Premium from linkedin.com, and a
+        // charge is never dropped for its sender (his rule: an amount charged
+        // makes it a receipt).
+        let early: Option<Result<Vec<NewEvent>, String>> = if is_skipped_sender(&msg.from, skip) {
+            match dispatch_to(msg, handlers) {
+                Some(handler) => match handler.handle(msg).await {
+                    Ok(evs) if !evs.is_empty() => Some(Ok(evs)),
+                    Ok(_) => {
+                        skipped.push(msg.uid);
+                        continue;
+                    }
+                    Err(e) => Some(Err(e.to_string())),
+                },
+                None => {
+                    skipped.push(msg.uid);
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
         // Archive first, and independently of routing. ⚠️ A failure here must
         // not cost the transaction: the draft is the thing the user is waiting
         // on, and a blob-store error is recoverable by re-fetching later, while
@@ -266,8 +323,15 @@ pub async fn poll_once(
             }
         }
 
-        match dispatch_to(msg, handlers) {
-            Some(handler) => match handler.handle(msg).await {
+        let handled: Option<Result<Vec<NewEvent>, String>> = match early {
+            Some(r) => Some(r),
+            None => match dispatch_to(msg, handlers) {
+                Some(handler) => Some(handler.handle(msg).await.map_err(|e| e.to_string())),
+                None => None,
+            },
+        };
+        match handled {
+            Some(result) => match result {
                 Ok(mut handler_events) => {
                     // ⛔ Stamped here, not in the handler. Every handler would
                     // otherwise have to remember to do it — including the
@@ -298,7 +362,7 @@ pub async fn poll_once(
                 // and moved on. A message a handler claimed but choked on is no
                 // more re-processable than one nobody wanted.
                 Err(e) => {
-                    failed.push((msg.uid, e.to_string()));
+                    failed.push((msg.uid, e.clone()));
                     tracing::warn!(
                         account = fetcher.name(),
                         uid = msg.uid,
@@ -346,6 +410,7 @@ pub async fn poll_once(
         events,
         unrouted,
         failed,
+        skipped,
         next_cursor,
     })
 }
@@ -370,6 +435,8 @@ pub struct PollOutcome {
     pub unrouted: Vec<u32>,
     /// `(uid, error)` for messages a handler claimed but could not process.
     pub failed: Vec<(u32, String)>,
+    /// UIDs left out by the sender skip list: not archived, not dispatched.
+    pub skipped: Vec<u32>,
     pub next_cursor: FetchCursor,
 }
 
@@ -578,6 +645,74 @@ mod tests {
         let (events, next) = (outcome.events, outcome.next_cursor);
         assert_eq!(events.len(), 2, "two messages routed to handlers");
         assert_eq!(next.last_seen_uid, Some(103));
+    }
+
+    #[test]
+    fn a_sender_matches_its_domain_and_subdomains_only() {
+        let skip: Vec<String> = vec!["facebookmail.com".into(), "linkedin.com".into()];
+        assert!(is_skipped_sender(
+            "Facebook <notification@facebookmail.com>",
+            &skip
+        ));
+        assert!(is_skipped_sender("jobs-noreply@e.linkedin.com", &skip));
+        assert!(!is_skipped_sender("someone@notlinkedin.com", &skip));
+        assert!(!is_skipped_sender("no address here", &skip));
+        assert!(!is_skipped_sender("a@facebookmail.com", &[]));
+    }
+
+    /// His ruling, 2026-10-11: social notifications are not archived. A listed
+    /// sender that yields nothing is skipped, counted, and moved past.
+    #[tokio::test]
+    async fn a_listed_sender_with_nothing_to_import_is_skipped() {
+        let fetcher = MockFetcher::new("gmail");
+        fetcher.push_response(
+            vec![
+                make_message(101, "Facebook <notification@facebookmail.com>"),
+                make_message(102, "ship@amazon.ca"),
+            ],
+            Some(102),
+        );
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(NeedleHandler {
+            name: "receipts".into(),
+            needle: "@amazon.ca".into(),
+        })];
+        let cursor = FetchCursor {
+            last_seen_uid: Some(100),
+            ..Default::default()
+        };
+        let skip = vec!["facebookmail.com".to_string()];
+        let outcome = poll_once_skipping(&fetcher, &handlers, &cursor, None, &skip)
+            .await
+            .unwrap();
+        assert_eq!(outcome.skipped, vec![101]);
+        assert!(
+            outcome.unrouted.is_empty(),
+            "a skipped message is not also unrouted"
+        );
+        assert_eq!(outcome.events.len(), 1);
+        assert_eq!(outcome.next_cursor.last_seen_uid, Some(102));
+    }
+
+    /// ⛔ A charge is never dropped for its sender: LinkedIn bills Premium from
+    /// linkedin.com, and that receipt must import like any other.
+    #[tokio::test]
+    async fn a_listed_sender_with_a_charge_is_kept() {
+        let fetcher = MockFetcher::new("gmail");
+        fetcher.push_response(vec![make_message(101, "billing@linkedin.com")], Some(101));
+        let handlers: Vec<Box<dyn ImapHandler>> = vec![Box::new(NeedleHandler {
+            name: "receipts".into(),
+            needle: "@linkedin.com".into(),
+        })];
+        let cursor = FetchCursor {
+            last_seen_uid: Some(100),
+            ..Default::default()
+        };
+        let skip = vec!["linkedin.com".to_string()];
+        let outcome = poll_once_skipping(&fetcher, &handlers, &cursor, None, &skip)
+            .await
+            .unwrap();
+        assert!(outcome.skipped.is_empty());
+        assert_eq!(outcome.events.len(), 1, "the charge was imported");
     }
 
     #[tokio::test]

@@ -41,6 +41,18 @@ So the classifier decides alone, and a new vendor is no longer a code change, a 
 forwarded email. It is a review item you either commit or dismiss. What that costs is a wider
 injection surface, which the last section of this page is about.
 
+### Senders that are never archived
+
+There is one list, and it is the opposite of the allowlist above: senders whose mail is not kept
+at all. Social notifications were half of one real archive (411 of 862 documents) and none of
+them is a record of anything. The list lives in Settings under *Archive & import*, starts with
+the common social senders, and matches a domain or any subdomain of it.
+
+It cannot cost a receipt. Mail from a listed sender is still offered to the receipt handlers
+first, and is skipped only if nothing comes of it: LinkedIn bills Premium from the same domain
+it sends notifications from, and that charge imports like any other. Skipped mail is counted
+in the import summary by message, never dropped silently.
+
 ### A triage seat, in shadow mode
 
 The cost argument above still holds: a cheap model screening each email first saves about ten

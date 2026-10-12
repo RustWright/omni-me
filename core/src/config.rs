@@ -37,6 +37,20 @@ pub enum ConfigKey {
     AssistantMaxTurns,
     AssistantChatArchiveDays,
     AssistantChatDeleteDays,
+    ArchiveSkipSenders,
+}
+
+/// Social notification senders: not records, and half the archive before this.
+pub const DEFAULT_SKIP_SENDERS: &str =
+    "facebookmail.com, linkedin.com, strava.com, pinterest.com, instagram.com, tiktok.com";
+
+/// The domains in an `archive.skip_senders` value: comma or whitespace separated,
+/// lowercased, empties dropped.
+pub fn sender_domains(value: &str) -> impl Iterator<Item = String> + '_ {
+    value
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .map(|d| d.trim().trim_start_matches('@').to_lowercase())
+        .filter(|d| !d.is_empty())
 }
 
 /// Display / persistence order, and the order the settings screen renders.
@@ -60,6 +74,7 @@ pub const ALL_KEYS: &[ConfigKey] = &[
     ConfigKey::AssistantMaxTurns,
     ConfigKey::AssistantChatArchiveDays,
     ConfigKey::AssistantChatDeleteDays,
+    ConfigKey::ArchiveSkipSenders,
 ];
 
 /// The theme values `appearance.theme` accepts. `System` follows
@@ -127,6 +142,7 @@ impl fmt::Display for ConfigKey {
             ConfigKey::AssistantMaxTurns => "assistant.max_turns",
             ConfigKey::AssistantChatArchiveDays => "assistant.chat_archive_after_days",
             ConfigKey::AssistantChatDeleteDays => "assistant.chat_delete_after_days",
+            ConfigKey::ArchiveSkipSenders => "archive.skip_senders",
         };
         write!(f, "{s}")
     }
@@ -156,6 +172,7 @@ impl FromStr for ConfigKey {
             "assistant.max_turns" => Ok(ConfigKey::AssistantMaxTurns),
             "assistant.chat_archive_after_days" => Ok(ConfigKey::AssistantChatArchiveDays),
             "assistant.chat_delete_after_days" => Ok(ConfigKey::AssistantChatDeleteDays),
+            "archive.skip_senders" => Ok(ConfigKey::ArchiveSkipSenders),
             other => Err(format!("unknown config key: {other}")),
         }
     }
@@ -243,6 +260,8 @@ pub enum ConfigGroup {
     /// has no settings screen of its own. The values sync as the global layer;
     /// the agent picks them up on its next start.
     Assistant,
+    /// What the importers keep: senders whose mail is never archived.
+    Archive,
 }
 
 /// Which layer supplied the value that is actually in effect.
@@ -333,6 +352,9 @@ impl ConfigKey {
             // quarter, deleted. Events remain, so a deleted chat is recoverable.
             ConfigKey::AssistantChatArchiveDays => ConfigValue::Int(30),
             ConfigKey::AssistantChatDeleteDays => ConfigValue::Int(90),
+            // His ruling, 2026-10-11: social notifications are not records and
+            // were half the archive. A sender's domain or any subdomain of it.
+            ConfigKey::ArchiveSkipSenders => ConfigValue::Text(DEFAULT_SKIP_SENDERS.to_string()),
         }
     }
 
@@ -352,7 +374,8 @@ impl ConfigKey {
             | ConfigKey::AssistantEmbedModel
             | ConfigKey::AssistantRerankModel
             | ConfigKey::AssistantCheckInPrompt
-            | ConfigKey::AssistantCheckInTimezone => ValueKind::Text,
+            | ConfigKey::AssistantCheckInTimezone
+            | ConfigKey::ArchiveSkipSenders => ValueKind::Text,
             ConfigKey::AssistantCheckInHour
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
@@ -376,7 +399,9 @@ impl ConfigKey {
             | ConfigKey::AssistantCheckInTimezone
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
-            | ConfigKey::AssistantChatDeleteDays => true,
+            | ConfigKey::AssistantChatDeleteDays
+            // Re-read by the importer on every pull.
+            | ConfigKey::ArchiveSkipSenders => true,
             ConfigKey::FeatureJournal
             | ConfigKey::FeatureNotes
             | ConfigKey::FeatureRoutines
@@ -414,6 +439,7 @@ impl ConfigKey {
             ConfigKey::AssistantMaxTurns => "Assistant turn budget",
             ConfigKey::AssistantChatArchiveDays => "Archive chats untouched for (days)",
             ConfigKey::AssistantChatDeleteDays => "Delete archived chats after (days)",
+            ConfigKey::ArchiveSkipSenders => "Never archive mail from",
         }
     }
 
@@ -445,7 +471,8 @@ impl ConfigKey {
             | ConfigKey::AssistantCheckInTimezone
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
-            | ConfigKey::AssistantChatDeleteDays => None,
+            | ConfigKey::AssistantChatDeleteDays
+            | ConfigKey::ArchiveSkipSenders => None,
         }
     }
 
@@ -474,6 +501,7 @@ impl ConfigKey {
             | ConfigKey::AssistantMaxTurns
             | ConfigKey::AssistantChatArchiveDays
             | ConfigKey::AssistantChatDeleteDays => ConfigGroup::Assistant,
+            ConfigKey::ArchiveSkipSenders => ConfigGroup::Archive,
         }
     }
 
@@ -541,6 +569,12 @@ impl ConfigKey {
             let n = value.as_int().unwrap_or_default();
             if n < lo || n > hi {
                 return Err(format!("{self} must be between {lo} and {hi}, got {n}"));
+            }
+        }
+        if self == ConfigKey::ArchiveSkipSenders {
+            let t = value.as_text().unwrap_or_default();
+            if let Some(bad) = sender_domains(t).find(|d| !d.contains('.') || d.contains('@')) {
+                return Err(format!("{self}: {bad:?} is not a domain like example.com"));
             }
         }
         if self == ConfigKey::AssistantCheckInTimezone {
@@ -754,11 +788,12 @@ mod tests {
                 | ConfigKey::AssistantCheckInTimezone
                 | ConfigKey::AssistantMaxTurns
                 | ConfigKey::AssistantChatArchiveDays
-                | ConfigKey::AssistantChatDeleteDays => counted += 1,
+                | ConfigKey::AssistantChatDeleteDays
+                | ConfigKey::ArchiveSkipSenders => counted += 1,
             }
         }
         assert_eq!(
-            counted, 19,
+            counted, 20,
             "ALL_KEYS does not list every ConfigKey variant"
         );
 

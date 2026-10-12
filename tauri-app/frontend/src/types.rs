@@ -411,6 +411,8 @@ pub enum ConfigGroup {
     /// here fails deserialization of the *whole* config list, so one unrecognised
     /// group empties the settings screen rather than hiding one section.
     Assistant,
+    /// What the importers keep.
+    Archive,
 }
 
 /// A feature that can be switched off whole. Mirror of `core::config::Feature`.

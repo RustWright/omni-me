@@ -260,6 +260,9 @@ pub fn SettingsPage() -> Element {
             // --- Assistant retrieval ---
             ConfigSection { group: ConfigGroup::Assistant }
 
+            // --- Archive & import ---
+            ConfigSection { group: ConfigGroup::Archive }
+
             // Feature-owned sections below. A section whose feature is off is not
             // rendered at all rather than disabled — a control for something inert
             // is worse than its absence. The two `ConfigSection`s above are never
@@ -342,6 +345,14 @@ fn group_meta(group: ConfigGroup) -> (&'static str, Option<&'static str>) {
             ),
         ),
         ConfigGroup::Appearance => ("Appearance", None),
+        ConfigGroup::Archive => (
+            "Archive & import",
+            Some(
+                "Mail from these senders is never archived or imported: a domain such \
+                 as linkedin.com also covers its subdomains. Separate them with commas. \
+                 Applies from the next mail check.",
+            ),
+        ),
         // Not "Assistant retrieval" any more: the turn budget governs the loop,
         // not how records are found, and a heading that named only retrieval
         // would make the one non-retrieval key here look misfiled.

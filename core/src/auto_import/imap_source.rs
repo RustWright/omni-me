@@ -26,7 +26,7 @@ use crate::events::{EventStore, ProjectionRunner};
 use surrealdb::types::SurrealValue;
 
 use super::imap::{
-    ArchiveTarget, FetchCursor, ImapFetcher, ImapHandler, cursor_for_anchor, poll_once,
+    ArchiveTarget, FetchCursor, ImapFetcher, ImapHandler, cursor_for_anchor, poll_once_skipping,
 };
 
 #[async_trait]
@@ -213,11 +213,23 @@ impl AutoImportSource for ImapSource {
             device_id: &a.device_id,
             passwords: &a.pdf_passwords,
         });
-        let mut outcome = poll_once(
+        // Read per pull, so a change on the phone applies to the next poll.
+        let skip: Vec<String> = crate::events::load_persisted(self.projections.db())
+            .await
+            .map(|global| crate::config::ResolvedConfig::new(global, Default::default()))
+            .map(|c| {
+                crate::config::sender_domains(
+                    &c.text_of(crate::config::ConfigKey::ArchiveSkipSenders),
+                )
+                .collect()
+            })
+            .unwrap_or_default();
+        let mut outcome = poll_once_skipping(
             self.fetcher.as_ref(),
             &self.handlers,
             &cursor_snapshot,
             target.as_ref(),
+            &skip,
         )
         .await?;
         let next_cursor = outcome.next_cursor.clone();
@@ -232,10 +244,21 @@ impl AutoImportSource for ImapSource {
         for (uid, err) in &outcome.failed {
             tally.failed(format!("uid {uid}"), err.clone());
         }
+        for uid in &outcome.skipped {
+            tally.dropped(
+                format!("uid {uid} (sender on the skip list)"),
+                DropReason::Ignored,
+            );
+        }
         // A handler that succeeds but yields no events still *processed* its
         // message, so it counts here. The claim being made is "this message was
         // handled as intended", which is exactly what the identity needs.
-        tally.appended(outcome.messages_seen - outcome.unrouted.len() - outcome.failed.len());
+        tally.appended(
+            outcome.messages_seen
+                - outcome.unrouted.len()
+                - outcome.failed.len()
+                - outcome.skipped.len(),
+        );
 
         if !outcome.events.is_empty() {
             super::duplicates::flag_likely_duplicates(self.projections.db(), &mut outcome.events)
