@@ -913,6 +913,7 @@ pub fn run() {
             commands::documents::set_document_tags,
             commands::documents::set_document_retention,
             commands::documents::list_document_retention,
+            commands::documents::list_retention_classes,
             commands::documents::list_retention_candidates,
             commands::documents::preview_document_purge,
             commands::documents::confirm_document_purge,

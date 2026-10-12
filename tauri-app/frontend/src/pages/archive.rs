@@ -12,15 +12,18 @@
 //! person could see what the document actually says. A "fix these values" queue
 //! divorced from the documents would turn the flag into a lie at scale.
 
-use crate::components::search_pick::SearchPick;
 use dioxus::prelude::*;
 
 use crate::bridge;
 use crate::components::attachment_viewer::{AttachmentViewer, document_meta};
+use crate::components::search_pick::SearchPick;
 use crate::components::tag_editor::TagChipEditor;
 use crate::pages::finances::{DocumentCapture, DocumentKind};
 use crate::types::{DocumentField, DocumentItem, ExtractedDraft};
 use crate::use_page_back;
+
+/// The "keep forever" retention timer. Mirrors `core::retention::KEEP_FOREVER`.
+const KEEP_FOREVER: u32 = u32::MAX;
 
 /// The MIME type an archived email carries. ⛔ Must match `archive::mime_for`'s
 /// `"eml"` arm — the archive writes it and this filters on it, and nothing else
@@ -881,6 +884,8 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
     let mut saving = use_signal(|| false);
 
     let tags = use_resource(move || async move { bridge::invoke_document_tags().await });
+    let classes =
+        use_resource(move || async move { bridge::invoke_list_retention_classes().await });
     let rules = use_resource(move || {
         let _ = reload.read();
         async move { bridge::invoke_list_document_retention().await }
@@ -914,7 +919,26 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
         });
     };
 
-    let has_tags = matches!(tags.read().as_ref(), Some(Ok(l)) if !l.is_empty());
+    // Categories first, by their label, then every other tag as itself.
+    let class_options: Vec<(String, String)> = classes
+        .read()
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map(|l| {
+            l.iter()
+                .map(|(tag, label)| (tag.clone(), format!("Category · {label}")))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut options = class_options.clone();
+    if let Some(Ok(list)) = tags.read().as_ref() {
+        for t in list {
+            if !options.iter().any(|(v, _)| v == t) {
+                options.push((t.clone(), t.clone()));
+            }
+        }
+    }
+    let has_tags = !options.is_empty();
 
     rsx! {
         div { class: "p-3 rounded-lg border border-obsidian-border/10 bg-obsidian-sidebar/30 space-y-3",
@@ -925,8 +949,10 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
                 // a tag with no rule keeps its documents even when another tag on
                 // them says to let go.
                 p { class: "text-[11px] text-obsidian-text-muted",
-                    "A tag with no rule is kept forever, and a document is only ever proposed when \
-                     every tag on it has one — the longest of them decides."
+                    "Every email gets one category. Its timer decides, unless another tag on the \
+                     document keeps it longer — set \"Keep forever\" on a tag like taxes to protect \
+                     it. A category with no timer is kept. Nothing is deleted until you confirm \
+                     the list it lands in."
                 }
             }
 
@@ -937,16 +963,11 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
             }
             div { class: if has_tags { "flex flex-wrap items-center gap-2" } else { "hidden" },
                 SearchPick {
-                    options: tags
-                        .read()
-                        .as_ref()
-                        .and_then(|r| r.as_ref().ok())
-                        .map(|l| l.iter().map(|t| (t.clone(), t.clone())).collect())
-                        .unwrap_or_default(),
+                    options: options.clone(),
                     value: chosen.read().clone(),
                     on_pick: move |v: String| chosen.set(v),
-                    placeholder: "Pick a tag…".to_string(),
-                    class: "w-48".to_string(),
+                    placeholder: "Pick a category or tag…".to_string(),
+                    class: "w-56".to_string(),
                 }
                 span { class: "text-[11px] text-obsidian-text-muted", "keep for" }
                 input {
@@ -972,12 +993,21 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
                             font-medium disabled:opacity-50",
                     "Save"
                 }
+                // A real timer now, not a cleared one: under the category rule an
+                // untimed tag is ignored, so only this protects a document.
+                button {
+                    onclick: move |_| apply(Some(KEEP_FOREVER)),
+                    disabled: *saving.read(),
+                    class: "px-2 py-1.5 text-[11px] rounded border border-obsidian-border/20 \
+                            text-obsidian-text-muted hover:text-obsidian-text disabled:opacity-50",
+                    "Keep forever"
+                }
                 button {
                     onclick: move |_| apply(None),
                     disabled: *saving.read(),
                     class: "px-2 py-1.5 text-[11px] rounded border border-obsidian-border/20 \
                             text-obsidian-text-muted hover:text-obsidian-text disabled:opacity-50",
-                    "Keep forever"
+                    "No timer"
                 }
             }
             if let Some(msg) = error.read().clone() {
@@ -992,7 +1022,18 @@ fn RetentionPanel(on_review: EventHandler<(String, String)>) -> Element {
                                 key: "{rule.tag}",
                                 class: "px-2 py-0.5 text-[10px] rounded-full bg-obsidian-bg \
                                         border border-obsidian-border/10 text-obsidian-text-muted",
-                                "{rule.tag} · {rule.keep_days}d"
+                                {
+                                    let shown = class_options
+                                        .iter()
+                                        .find(|(v, _)| *v == rule.tag)
+                                        .map(|(_, l)| l.clone())
+                                        .unwrap_or_else(|| rule.tag.clone());
+                                    if rule.keep_days == KEEP_FOREVER {
+                                        format!("{shown} · forever")
+                                    } else {
+                                        format!("{shown} · {}d", rule.keep_days)
+                                    }
+                                }
                             }
                         }
                     }

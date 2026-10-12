@@ -5877,6 +5877,24 @@ pub async fn invoke_set_document_retention(
 }
 
 /// Every tag with a live rule. ⚠️ A tag absent from this list is kept forever.
+/// The retention categories as (tag, label). See `list_retention_classes`.
+pub async fn invoke_list_retention_classes() -> Result<Vec<(String, String)>, String> {
+    #[cfg(feature = "mock")]
+    {
+        Ok(vec![
+            ("retain:receipt".into(), "Receipts and invoices".into()),
+            ("retain:promo".into(), "Promotions and newsletters".into()),
+            ("retain:login_code".into(), "Sign-in links and codes".into()),
+        ])
+    }
+    #[cfg(not(feature = "mock"))]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {}
+        invoke("list_retention_classes", &Args {}).await
+    }
+}
+
 pub async fn invoke_list_document_retention() -> Result<Vec<crate::types::RetentionRule>, String> {
     #[cfg(feature = "mock")]
     {

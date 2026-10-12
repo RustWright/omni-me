@@ -267,6 +267,22 @@ pub async fn set_document_retention(
     append_new_and_apply(&state, event).await.map(|_| ())
 }
 
+/// The retention categories (R4-6), as (tag, label), so the retention screen can
+/// offer them before any document carries one. Served from core rather than
+/// copied into the frontend, where a second list would drift.
+#[tauri::command(rename_all = "snake_case")]
+pub fn list_retention_classes() -> Vec<(String, String)> {
+    omni_me_core::retention_class::CLASSES
+        .iter()
+        .map(|c| {
+            (
+                omni_me_core::retention_class::retain_tag(c.key),
+                c.label.to_string(),
+            )
+        })
+        .collect()
+}
+
 /// Every tag with a live rule, and the days it keeps for.
 ///
 /// ⚠️ Tags absent from this list are **kept** — the surface has to say so.
