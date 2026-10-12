@@ -1696,6 +1696,13 @@ deployed code is CI-green (`7d6d485`).
   that same empty list. Found by re-extracting his restaurant photo: it answered
   `Expenses:Groceries`, not one of his accounts. `44a08a3`: the server also projects notes and
   the ledger, guarded by a test through the server's own projection list.
+- R4-15 🔴 RULED 2026-10-12 (his pick A, my recommendation): a draft dated after today cannot
+  be committed from review, whatever its source (mail, scan, import). The commit button names
+  the date ("Dated Oct 15. Fix the date, or commit it from Oct 15"); a misread date is fixed in
+  place, a real upcoming payment waits in review until it has happened. Beat: B, a "commit
+  anyway?" confirm (the same tap-through that let his accidental future commits in). Not
+  built yet. Also agreed: the retention clock counts from the email's own date (his reason:
+  a live backfill of old mail would land already past its window).
 - R4-12 His report: purge review slow for small lists, and the 372 social list errored.
   Reproduced from the S9: the preview ran past the app's 30s request limit. Cause: one full
   event-log scan per document to count transaction references (`event_type` has no index).
