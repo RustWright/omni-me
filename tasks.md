@@ -1629,6 +1629,13 @@ deployed code is CI-green (`7d6d485`).
   chat: animation + rotating playful lines now (no model cost); real step-by-step progress
   (agent publishes its current step as a short-lived server status) after the merge. Beat: 2
   now (days before the merge), model-written quips (cost and latency for a distraction).
+  🔴 RULED 2026-10-11 (his pick B, my recommendation): the retention category's timer decides,
+  unless a topic tag carries a longer timer he set (an explicit "keep forever" joins the timer
+  choices); topic tags with no timer are ignored. Beat: A, category alone (a miscategorised tax
+  document would ride the wrong clock, caught only at the purge confirm); C, today's every-tag
+  rule (junk with stray untimed tags never expires). Skip list built `b5c53f0`: listed senders
+  are offered to the receipt handlers first and skipped only when nothing comes of it (a
+  LinkedIn Premium charge still imports); Settings › Archive & import.
 - R4-7 Type-to-search picker for the archive tag filter, Kind filter and retention tag picker
   (his report: the tag list is too long to scroll). `250903f`; APK 1.1.35-dev building.
 - Assistant asked "Shall I propose creating this?" instead of proposing (S9-equivalent run,
