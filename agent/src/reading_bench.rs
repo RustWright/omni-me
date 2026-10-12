@@ -542,6 +542,7 @@ mod tests {
                 })
                 .collect(),
             tags: vec![],
+            retention: None,
             model: "test@1".to_string(),
         }
     }

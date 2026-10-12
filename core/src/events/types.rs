@@ -1842,6 +1842,11 @@ pub const DOCUMENT_DATE_KEY: &str = "document_date";
 /// per-tag keys would leave a model's wrong tag impossible to take off.
 pub const DOCUMENT_TAGS_KEY: &str = "tags";
 
+/// The retention category, one of `retention_class::CLASSES`. Its own key, not a
+/// tag: a charge found by the receipt importer writes it at parser rank, which
+/// must outrank the reader's guess without touching the reader's tags.
+pub const DOCUMENT_RETENTION_KEY: &str = "retention";
+
 /// Validate that a payload JSON value matches the expected shape for the given event type.
 pub fn validate_payload(
     event_type: &EventType,

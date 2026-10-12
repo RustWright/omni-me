@@ -42,6 +42,7 @@ pub mod reconciliation;
 pub mod record_type;
 pub mod recurring;
 pub mod retention;
+pub mod retention_class;
 pub mod routines;
 pub mod runtime;
 pub mod statement;

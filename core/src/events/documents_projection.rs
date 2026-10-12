@@ -20,9 +20,9 @@ use crate::db::Database;
 use super::projection::Projection;
 use super::store::{Event, EventError};
 use super::types::{
-    DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DOCUMENT_TAGS_KEY, DOCUMENT_TITLE_KEY,
-    DocumentArchivedPayload, DocumentField, DocumentFieldsExtractedPayload, DocumentPurgedPayload,
-    DocumentTextTranscribedPayload, Tag, decode_tag_set,
+    DOCUMENT_DATE_KEY, DOCUMENT_KIND_KEY, DOCUMENT_RETENTION_KEY, DOCUMENT_TAGS_KEY,
+    DOCUMENT_TITLE_KEY, DocumentArchivedPayload, DocumentField, DocumentFieldsExtractedPayload,
+    DocumentPurgedPayload, DocumentTextTranscribedPayload, Tag, decode_tag_set,
 };
 
 pub struct DocumentsProjection;
@@ -319,8 +319,19 @@ impl DocumentsProjection {
         // were cleared, and `docs/src/archive.md` records why an absent column
         // has to stay absent: `string::concat` renders it as the literal `NONE`
         // and the embedding sweep would index that word as the document's text.
-        let tags: Option<Vec<String>> = hoisted(DOCUMENT_TAGS_KEY)
+        let mut tags: Option<Vec<String>> = hoisted(DOCUMENT_TAGS_KEY)
             .map(|joined| decode_tag_set(&joined).iter().map(Tag::to_string).collect());
+        // The retention category shows as a `retain:` tag, so the filter and the
+        // retention rules see it like any other; it lives in its own field.
+        if let Some(class) =
+            hoisted(DOCUMENT_RETENTION_KEY).filter(|c| crate::retention_class::is_class(c))
+        {
+            let tag = crate::retention_class::retain_tag(&class);
+            let list = tags.get_or_insert_with(Vec::new);
+            if !list.contains(&tag) {
+                list.push(tag);
+            }
+        }
 
         db.query(
             "UPSERT type::record('documents', $id) SET
@@ -646,6 +657,37 @@ mod tests {
             tags_column(&db, "t1").await,
             Some(vec!["taxes".to_string(), "institution:rbc".to_string()]),
             "the joined value must land as elements the filter can match whole"
+        );
+    }
+
+    /// The retention category shows as a `retain:` tag beside the reader's own,
+    /// and a receipt found by the importer (parser rank) outranks the reader.
+    #[tokio::test]
+    async fn the_retention_category_shows_as_a_retain_tag() {
+        let db = test_db().await;
+        DocumentsProjection
+            .apply(&archived("r1"), &db)
+            .await
+            .unwrap();
+        for e in [
+            extracted(
+                "r1",
+                &[
+                    field("tags", "shopping", "model:qwen@2"),
+                    field("retention", "delivery_update", "model:qwen@2"),
+                ],
+            ),
+            extracted(
+                "r1",
+                &[field("retention", "receipt", "parser:receipt-import")],
+            ),
+            extracted("r1", &[field("retention", "promo", "model:qwen@3")]),
+        ] {
+            DocumentsProjection.apply(&e, &db).await.unwrap();
+        }
+        assert_eq!(
+            tags_column(&db, "r1").await,
+            Some(vec!["shopping".to_string(), "retain:receipt".to_string()])
         );
     }
 

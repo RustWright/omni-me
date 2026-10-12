@@ -166,6 +166,22 @@ pub const EMAIL_DOCUMENT_ID_KEY: &str = "email_document_id";
 ///
 /// Silently does nothing for any other event type: a handler may legitimately
 /// return events that are not batch proposals.
+/// The event filing an email's document as a receipt, because a transaction
+/// was extracted from it.
+fn receipt_retention_event(device_id: &str, document_id: &str) -> Option<NewEvent> {
+    let payload = crate::events::DocumentFieldsExtractedPayload {
+        document_id: document_id.to_string(),
+        extracted_at: Utc::now().to_rfc3339(),
+        fields: vec![crate::events::DocumentField {
+            key: crate::events::DOCUMENT_RETENTION_KEY.to_string(),
+            value: "receipt".to_string(),
+            source: "parser:receipt-import".to_string(),
+            verified: false,
+        }],
+    };
+    NewEvent::document_fields_extracted(device_id, &payload).ok()
+}
+
 fn stamp_email_document(event: &mut NewEvent, document_id: &str) {
     if event.event_type != EventType::AutoImportBatchProposed.to_string() {
         return;
@@ -341,6 +357,14 @@ pub async fn poll_once_skipping(
                     if let Some(doc_id) = &email_document_id {
                         for event in &mut handler_events {
                             stamp_email_document(event, doc_id);
+                        }
+                        // A charge came out of it, so it is a receipt: written at
+                        // parser rank, above the reader's guess (his rule, R4-6).
+                        if !handler_events.is_empty()
+                            && let Some(target) = archive
+                            && let Some(event) = receipt_retention_event(target.device_id, doc_id)
+                        {
+                            events.push(event);
                         }
                     }
                     events.append(&mut handler_events);

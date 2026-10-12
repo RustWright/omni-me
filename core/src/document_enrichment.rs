@@ -501,6 +501,7 @@ mod tests {
                 document_date: None,
                 fields: vec![],
                 tags: vec![],
+                retention: None,
                 model: "stub@1".into(),
             })
         }
@@ -596,6 +597,7 @@ mod tests {
                 document_date: None,
                 fields: vec![],
                 tags: vec![],
+                retention: None,
                 model: "spy@1".into(),
             })
         }
