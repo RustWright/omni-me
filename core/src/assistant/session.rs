@@ -44,7 +44,9 @@ fn user_zone(config: &ResolvedConfig) -> chrono_tz::Tz {
 /// Today's date where the user is, as YYYY-MM-DD: the date the prompt states.
 /// Today in the user's zone.
 pub fn today(config: &ResolvedConfig) -> chrono::NaiveDate {
-    chrono::Utc::now().with_timezone(&user_zone(config)).date_naive()
+    chrono::Utc::now()
+        .with_timezone(&user_zone(config))
+        .date_naive()
 }
 
 pub fn today_iso(config: &ResolvedConfig) -> String {

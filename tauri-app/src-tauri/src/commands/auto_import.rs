@@ -489,7 +489,10 @@ pub async fn commit_batch(
     }
     // After corrections, so a fixed date is the one judged. The phone's own day.
     let today = chrono::Local::now().date_naive();
-    let dates = effective.iter().map(|r| r.date).chain(added.iter().map(|a| a.date));
+    let dates = effective
+        .iter()
+        .map(|r| r.date)
+        .chain(added.iter().map(|a| a.date));
     if let Some(why) = dates
         .filter_map(|d| omni_me_core::future_dated::refusal(d, today))
         .next()

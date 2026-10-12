@@ -406,14 +406,28 @@ mod tests {
         .unwrap();
         let entry = "2026-10-11 Tim Hortons lunch\n    Expenses:Food  14.50 CAD\n    \
                      Assets:Cash  -14.50 CAD\n";
-        let err = check_record(&db, entry, chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()).await.unwrap_err();
+        let err = check_record(
+            &db,
+            entry,
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+        )
+        .await
+        .unwrap_err();
         let unknown = err["unknown"].as_array().unwrap();
         assert_eq!(unknown.len(), 2);
         assert_eq!(unknown[0]["closest"][0], "Expenses:Food:Dining");
 
         let ok = "2026-10-11 Tim Hortons lunch\n    Expenses:Food:Dining  14.50 CAD\n    \
                   Assets:NonRegistered:CAD  -14.50 CAD\n";
-        assert!(check_record(&db, ok, chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()).await.is_ok());
+        assert!(
+            check_record(
+                &db,
+                ok,
+                chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()
+            )
+            .await
+            .is_ok()
+        );
     }
 
     /// Receipt import runs on the server, so the server's own projections must
