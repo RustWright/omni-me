@@ -1643,7 +1643,13 @@ deployed code is CI-green (`7d6d485`).
   screen offers categories and a real "keep forever" (the old button cleared the timer, which
   rule B would ignore). `944cce1` backfill: the enrichment sweep re-reads any document with no
   `retain:` tag (parser statements write `statement`, an off-list answer `other`, so nothing
-  loops). ⏳ Then: score the reader's categories against a hand-checked sample; his timers.
+  loops). Deployed to dev 2026-10-12: server `1f214ad` (backup `pre-retention`), APK
+  1.1.38-dev; the type-to-search tag filter checked by real taps on the S9. Backfill reader is
+  `google/gemma-4-26B-A4B-it`; first 11 categories all right at 1/min, then raised to 20/min in
+  the dev compose (⚠️ drop back to 1 once done). Scoring: 63 hand-labelled emails, labels in
+  `~/omni-dev-tools/cdp/work/labels.json` (local, never in the repo). Assistant on the S9:
+  routine now proposed in one go with steps; reading list answered honestly without a note.
+  ⏳ Then his timers per category.
 - R4-7 Type-to-search picker for the archive tag filter, Kind filter and retention tag picker
   (his report: the tag list is too long to scroll). `250903f`; APK 1.1.35-dev building.
 - Assistant asked "Shall I propose creating this?" instead of proposing (S9-equivalent run,
