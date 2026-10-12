@@ -148,8 +148,10 @@ pub async fn preview(
     // ⚠️ Counted over the whole set, not just the listed page. A total derived
     // from the truncated list would shrink as the selection grew, which is
     // exactly backwards.
+    let hashes: Vec<String> = rows.iter().filter_map(|r| r.sha256.clone()).collect();
+    let references = queries::blob_reference_counts(db, &hashes).await?;
     for row in &rows {
-        let shared = is_shared(db, row, &rows).await?;
+        let shared = is_shared(row, &rows, &references);
         // A row with no blob has no bytes to reclaim, whatever `size` says it was
         // at ingest — there is nothing to unlink.
         let first_sighting = row.sha256.as_deref().is_some_and(|sha| counted.insert(sha));
@@ -187,21 +189,21 @@ pub async fn preview(
 /// ⚠️ References *inside the selection* do not count as sharing — they are about
 /// to go too. Counting them would report every duplicate in a batch as shared and
 /// make a purge look like it reclaims nothing.
-async fn is_shared(
-    db: &Database,
+fn is_shared(
     row: &DocumentRow,
     selection: &[DocumentRow],
-) -> Result<bool, PurgeError> {
+    references: &std::collections::HashMap<String, usize>,
+) -> bool {
     let Some(sha) = row.sha256.as_deref() else {
         // No bytes recorded, so nothing to reclaim and nothing shared.
-        return Ok(false);
+        return false;
     };
-    let outside = queries::blob_reference_count(db, sha).await?;
+    let outside = references.get(sha).copied().unwrap_or(0);
     let inside = selection
         .iter()
         .filter(|r| r.sha256.as_deref() == Some(sha))
         .count();
-    Ok(outside > inside)
+    outside > inside
 }
 
 /// Title if anything has read the document, else its filename.
@@ -281,9 +283,9 @@ pub async fn apply(
     hashes.sort();
     hashes.dedup();
 
+    let remaining = queries::blob_reference_counts(db, &hashes).await?;
     for sha in hashes {
-        let remaining = queries::blob_reference_count(db, &sha).await?;
-        if remaining > 0 {
+        if remaining.get(&sha).copied().unwrap_or(0) > 0 {
             report.blobs_retained_shared += 1;
             continue;
         }

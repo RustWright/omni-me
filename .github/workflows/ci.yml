@@ -319,6 +319,12 @@ jobs:
         working-directory: tauri-app/frontend
         run: dx build --platform web --release
 
+      # Tailwind drops a class it does not know without a word; a glued pair like
+      # `z-30flex` once cost five bars their layout. Needs the stylesheet above.
+      - name: Class check
+        working-directory: tauri-app/frontend
+        run: node tests/class-check.mjs
+
       - name: Run tests
         working-directory: tauri-app/frontend
         run: cargo test

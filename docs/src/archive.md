@@ -459,6 +459,10 @@ and querying a missing table is a hard error rather than an empty set. A count t
 otherwise would fail loudly on the server, or, worse, quietly report no references and
 delete bytes a committed receipt still points at.
 
+Both are counted for a whole selection in one read. The event log has no index on event
+type, so counting file by file read the whole log once per document, and a 372-document
+preview ran past the phone's 30-second limit.
+
 The count is deliberately conservative: the log has no cheap notion of current visibility,
 so a transaction the user later deleted still holds its bytes. Over-counting keeps bytes
 that might be reclaimable; under-counting destroys bytes something needs. Only one of those

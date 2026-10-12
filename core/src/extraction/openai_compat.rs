@@ -358,19 +358,20 @@ impl DocumentExtractor for OpenAiCompatExtractor {
         parts: &[DocumentPart<'_>],
         hint: ExtractionHint,
     ) -> Result<ExtractionResult, ExtractionError> {
-        self.extract_among(parts, hint, &[]).await
+        self.extract_with(parts, hint, &super::ExtractionContext::default())
+            .await
     }
 
-    async fn extract_among(
+    async fn extract_with(
         &self,
         parts: &[DocumentPart<'_>],
         hint: ExtractionHint,
-        accounts: &[String],
+        context: &super::ExtractionContext,
     ) -> Result<ExtractionResult, ExtractionError> {
         let raw = self
             .ask(
                 parts,
-                prompt_for(hint) + &super::accounts_section(accounts),
+                prompt_for(hint) + &context.prompt_section(),
                 response_schema(),
                 "extraction_result",
                 Some(EXTRACTOR_MAX_TOKENS),

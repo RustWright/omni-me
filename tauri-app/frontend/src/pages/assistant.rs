@@ -443,7 +443,7 @@ fn ProposalInbox(on_back: EventHandler<()>) -> Element {
 
     rsx! {
         div { class: "flex flex-col min-h-full",
-            div { class: "sticky -top-4 md:-top-6 z-10 bg-obsidian-bgflex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
+            div { class: "sticky -top-4 md:-top-6 z-10 bg-obsidian-bg flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
                 Button {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
@@ -512,7 +512,7 @@ fn MemoryView(on_back: EventHandler<()>) -> Element {
 
     rsx! {
         div { class: "flex flex-col min-h-full",
-            div { class: "sticky -top-4 md:-top-6 z-10 bg-obsidian-bgflex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
+            div { class: "sticky -top-4 md:-top-6 z-10 bg-obsidian-bg flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
                 Button {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
@@ -631,7 +631,7 @@ fn PermissionsView(on_back: EventHandler<()>) -> Element {
 
     rsx! {
         div { class: "flex flex-col min-h-full",
-            div { class: "sticky -top-4 md:-top-6 z-10 bg-obsidian-bgflex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
+            div { class: "sticky -top-4 md:-top-6 z-10 bg-obsidian-bg flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
                 Button {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
@@ -821,7 +821,7 @@ fn ThreadDetail(thread_id: String, on_back: EventHandler<()>) -> Element {
 
     rsx! {
         div { class: "flex flex-col min-h-full",
-            div { class: "sticky -top-4 md:-top-6 z-10 bg-obsidian-bgflex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
+            div { class: "sticky -top-4 md:-top-6 z-10 bg-obsidian-bg flex items-center gap-2 px-3 py-2 border-b border-obsidian-border/10",
                 Button {
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,

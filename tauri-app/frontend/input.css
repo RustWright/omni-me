@@ -194,12 +194,31 @@ select {
     animation: splash-breathe 1.2s ease-in-out infinite;
 }
 
+/* Entrance animations, in tailwindcss-animate's class names. The pages used
+ * these from the start, but the plugin was never installed, so nothing moved.
+ * No fill mode: the transform is gone once it ends, so it cannot become a
+ * containing block for anything fixed inside. */
+@keyframes omni-enter {
+    from {
+        opacity: var(--omni-enter-opacity, 1);
+        transform: translate3d(var(--omni-enter-x, 0), var(--omni-enter-y, 0), 0)
+            scale(var(--omni-enter-scale, 1));
+    }
+}
+.animate-in { animation: omni-enter 200ms ease-out; }
+.fade-in { --omni-enter-opacity: 0; }
+.zoom-in-95 { --omni-enter-scale: 0.95; }
+.slide-in-from-bottom-4 { --omni-enter-y: 1rem; }
+.slide-in-from-top-1 { --omni-enter-y: -0.25rem; }
+.slide-in-from-right-4 { --omni-enter-x: 1rem; }
+
 /* Reduced motion: keep the mark and the charcoal hold — the splash still does
  * its job of not showing a half-built UI — but stop moving it. */
 @media (prefers-reduced-motion: reduce) {
     .splash-ring,
     .splash-core,
-    .thinking-dot {
+    .thinking-dot,
+    .animate-in {
         animation: none;
     }
     .splash-core {

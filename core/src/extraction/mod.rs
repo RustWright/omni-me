@@ -303,14 +303,14 @@ pub async fn extract_reconciled(
     extractor: &dyn DocumentExtractor,
     parts: &[DocumentPart<'_>],
     hint: ExtractionHint,
-    accounts: &[String],
+    context: &ExtractionContext,
     threshold: f64,
     attempts: usize,
 ) -> Result<(ExtractionResult, VerificationReport), ExtractionError> {
     let mut best: Option<(ExtractionResult, VerificationReport)> = None;
 
     for attempt in 1..=attempts.max(1) {
-        let result = extractor.extract_among(parts, hint, accounts).await?;
+        let result = extractor.extract_with(parts, hint, context).await?;
         let report = verify(&result, hint, threshold);
         let Some(gap) = report.total_mismatch else {
             // Nothing to compare, or it reconciled. Either way another call
@@ -342,7 +342,7 @@ pub async fn extract_reconciled(
     match best {
         Some(pair) => Ok(pair),
         None => {
-            let result = extractor.extract_among(parts, hint, accounts).await?;
+            let result = extractor.extract_with(parts, hint, context).await?;
             let report = verify(&result, hint, threshold);
             Ok((result, report))
         }
@@ -374,15 +374,16 @@ pub trait DocumentExtractor: Send + Sync {
         hint: ExtractionHint,
     ) -> Result<ExtractionResult, ExtractionError>;
 
-    /// As `extract`, with the ledger's spending accounts offered as the only
-    /// categories. An extractor with no prompt to put them in reads as `extract`.
-    async fn extract_among(
+    /// As `extract`, told what the document cannot say about itself: the
+    /// ledger's accounts and when it arrived. An extractor with no prompt to put
+    /// them in reads as `extract`.
+    async fn extract_with(
         &self,
         parts: &[DocumentPart<'_>],
         hint: ExtractionHint,
-        accounts: &[String],
+        context: &ExtractionContext,
     ) -> Result<ExtractionResult, ExtractionError> {
-        let _ = accounts;
+        let _ = context;
         self.extract(parts, hint).await
     }
 }
@@ -444,8 +445,32 @@ pub fn route(mime: &str, sender: Option<&str>) -> Option<ExtractionHint> {
 // copy means the verification pass (`verify`) sees a uniform `ExtractionResult`
 // shape regardless of which model produced it.
 
-/// The ledger's spending accounts as a closing prompt section, empty when there
-/// are none. Without it the model invented names like `Expenses:Transportation:Taxi`
+/// What an extraction is told beyond the document itself.
+#[derive(Debug, Clone, Default)]
+pub struct ExtractionContext {
+    /// The ledger's spending accounts, the only categories offered.
+    pub accounts: Vec<String>,
+    /// When the document arrived: an email's date, a capture's day.
+    pub received_on: Option<NaiveDate>,
+}
+
+impl ExtractionContext {
+    /// The closing prompt section for this context, empty when it holds nothing.
+    pub(crate) fn prompt_section(&self) -> String {
+        let mut out = accounts_section(&self.accounts);
+        if let Some(day) = self.received_on {
+            out.push_str(&format!(
+                "\n\nThis document arrived on {day}. A date printed without a year \
+                 (\"October 11\") is the latest such date on or before that day: give it \
+                 in full in `date`, and keep `date_as_printed` exactly as printed."
+            ));
+        }
+        out
+    }
+}
+
+/// The ledger's spending accounts as a prompt section, empty when there are
+/// none. Without it the model invented names like `Expenses:Transportation:Taxi`
 /// that grounding then dropped, and every line landed in `Expenses:Unknown`.
 pub(crate) fn accounts_section(accounts: &[String]) -> String {
     if accounts.is_empty() {
@@ -454,8 +479,9 @@ pub(crate) fn accounts_section(accounts: &[String]) -> String {
     let list: Vec<String> = accounts.iter().map(|a| format!("- {a}")).collect();
     format!(
         "\n\nThe ledger's spending accounts are listed below. ⚠️ Every `account_hint` \
-         MUST be one of them, copied exactly. Choose by what was bought, not by the \
-         wording the document uses. Tax, fee and tip lines take the account that fits \
+         MUST be one of them, copied exactly. Choose by the merchant and the purchase \
+         as a whole, never by item names: a restaurant or delivery meal is dining even \
+         when its lines read like groceries. Tax, fee and tip lines take the account that fits \
          them if one is listed, otherwise the account of what they were charged on. \
          If nothing fits at all, leave `account_hint` null rather than inventing an \
          account.\n{}",
@@ -1011,13 +1037,25 @@ mod reconcile_tests {
         assert!(s.contains("MUST be one of them"));
     }
 
+    #[test]
+    fn the_arrival_day_is_offered_for_a_date_without_a_year() {
+        assert_eq!(ExtractionContext::default().prompt_section(), "");
+        let ctx = ExtractionContext {
+            accounts: vec![],
+            received_on: NaiveDate::from_ymd_opt(2026, 10, 12),
+        };
+        let s = ctx.prompt_section();
+        assert!(s.contains("arrived on 2026-10-12"));
+        assert!(s.contains("without a year"));
+    }
+
     async fn run(script: Vec<ExtractionResult>) -> (ExtractionResult, VerificationReport, usize) {
         let ex = ScriptedExtractor::new(script);
         let (result, report) = extract_reconciled(
             &ex,
             &[DocumentPart::new(b"body", "text/plain")],
             ExtractionHint::EmailBody,
-            &[],
+            &ExtractionContext::default(),
             DEFAULT_CONFIDENCE_THRESHOLD,
             RECONCILE_ATTEMPTS,
         )

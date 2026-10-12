@@ -257,7 +257,10 @@ whatever account sounds right. Three things hold it to your conventions:
   pattern to follow, unless you asked for a different one.
 
 The receipt reader is held the same way. It is given your spending accounts as the
-only categories to choose from. A line whose account still isn't one of yours takes the
+only categories to choose from, and told to choose by the merchant and the purchase as a
+whole: a restaurant meal is dining even when its lines read like groceries. It is also told
+the day the document arrived, so a receipt printing "October 11" with no year gets a full
+date. A line whose account still isn't one of yours takes the
 account past entries for that payee used, if they all used the same one. Otherwise it is
 left as `Expenses:Unknown` for you to file at review.
 

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use surrealdb::types::{SurrealValue, Value as DbValue};
@@ -1359,31 +1359,48 @@ pub async fn archived_document_with_sha(
 }
 
 pub async fn blob_reference_count(db: &Database, sha256: &str) -> Result<usize, DbError> {
-    let docs_sql = format!(
-        "SELECT VALUE count() FROM documents
-         WHERE sha256 = $h AND {NOT_PURGED} GROUP ALL"
-    );
-    let mut resp = db.query(docs_sql).bind(("h", sha256.to_string())).await?;
-    let docs: Vec<i64> = resp.take(0)?;
+    let counts = blob_reference_counts(db, &[sha256.to_string()]).await?;
+    Ok(counts.get(sha256).copied().unwrap_or(0))
+}
+
+/// [`blob_reference_count`] for many blobs in one read of the event log.
+///
+/// One query per blob scanned the whole log each time (`event_type` has no
+/// index), and a 372-document purge preview ran past the phone's 30s timeout.
+pub async fn blob_reference_counts(
+    db: &Database,
+    hashes: &[String],
+) -> Result<HashMap<String, usize>, DbError> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    if hashes.is_empty() {
+        return Ok(counts);
+    }
+    let docs_sql =
+        format!("SELECT VALUE sha256 FROM documents WHERE sha256 IN $hs AND {NOT_PURGED}");
+    let mut resp = db.query(docs_sql).bind(("hs", hashes.to_vec())).await?;
+    let docs: Vec<String> = resp.take(0)?;
 
     // ⚠️ Both shapes, and both are needed: a merge writes the surviving
     // attachment as `combined_attachment` on a different event type, so counting
     // `transaction_recorded` alone would miss every reconciled receipt.
     let mut resp = db
         .query(
-            "SELECT VALUE count() FROM events
-             WHERE (event_type = 'transaction_recorded'
-                    AND payload.attachment.sha256 = $h)
-                OR (event_type = 'transactions_merged'
-                    AND payload.combined_attachment.sha256 = $h)
-             GROUP ALL",
+            "SELECT VALUE payload.attachment.sha256 FROM events
+             WHERE event_type = 'transaction_recorded'
+               AND payload.attachment.sha256 IN $hs;
+             SELECT VALUE payload.combined_attachment.sha256 FROM events
+             WHERE event_type = 'transactions_merged'
+               AND payload.combined_attachment.sha256 IN $hs;",
         )
-        .bind(("h", sha256.to_string()))
+        .bind(("hs", hashes.to_vec()))
         .await?;
-    let txns: Vec<i64> = resp.take(0)?;
+    let recorded: Vec<String> = resp.take(0)?;
+    let merged: Vec<String> = resp.take(1)?;
 
-    let total = docs.first().copied().unwrap_or(0) + txns.first().copied().unwrap_or(0);
-    Ok(total.max(0) as usize)
+    for sha in docs.into_iter().chain(recorded).chain(merged) {
+        *counts.entry(sha).or_default() += 1;
+    }
+    Ok(counts)
 }
 
 /// Every live document carrying `tag`, oldest first.
@@ -2392,6 +2409,34 @@ mod tests {
         .await;
 
         assert_eq!(blob_reference_count(&db, &sha).await.unwrap(), 1);
+    }
+
+    /// Many blobs in one read, each counted from every place that names it.
+    #[tokio::test]
+    async fn blob_references_are_counted_for_a_whole_selection_at_once() {
+        let db = doc_db().await;
+        let (a, b, c) = ("a".repeat(64), "b".repeat(64), "c".repeat(64));
+        seed_doc_with_hash(&db, "one", &a, false).await;
+        seed_doc_with_hash(&db, "two", &a, false).await;
+        seed_doc_with_hash(&db, "three", &b, false).await;
+        seed_event(
+            &db,
+            "transactions_merged",
+            serde_json::json!({
+                "primary_id": "t1", "merged_ids": ["t2"], "combined_postings": [],
+                "combined_description": "receipt",
+                "combined_attachment": { "sha256": b, "filename": "r.pdf",
+                                         "mime_type": "application/pdf", "size": 10 },
+            }),
+        )
+        .await;
+
+        let counts = blob_reference_counts(&db, &[a.clone(), b.clone(), c.clone()])
+            .await
+            .unwrap();
+        assert_eq!(counts.get(&a), Some(&2));
+        assert_eq!(counts.get(&b), Some(&2), "a document and a merged receipt");
+        assert_eq!(counts.get(&c), None);
     }
 
     /// Bytes shared by two documents survive purging one of them.

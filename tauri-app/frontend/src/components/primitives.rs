@@ -236,19 +236,28 @@ pub fn SegmentedNav(
     active: String,
     on_select: EventHandler<String>,
     #[props(default = String::new())] class: String,
+    /// Span the row with equal segments, for short labels that must stay on one
+    /// line: the six net-worth ranges needed 288px of a 286px card.
+    #[props(default = false)]
+    fill: bool,
 ) -> Element {
+    let (outer, size) = if fill {
+        ("flex w-full", "flex-1 px-1")
+    } else {
+        ("inline-flex flex-wrap max-w-full", "px-3")
+    };
     rsx! {
         // Wraps rather than scrolls: six accents plus "Follow" ran past a phone's
         // width, and a row that scrolls sideways hides choices without saying so.
-        div { class: "inline-flex flex-wrap max-w-full items-center gap-1 p-1 rounded-lg bg-obsidian-sidebar {class}",
+        div { class: "{outer} items-center gap-1 p-1 rounded-lg bg-obsidian-sidebar {class}",
             for (key , label) in items.iter() {
                 button {
                     key: "{key}",
                     r#type: "button",
                     class: if key == &active {
-                        "px-3 py-1.5 text-sm font-medium rounded-md bg-obsidian-accent text-white"
+                        "{size} py-1.5 text-sm font-medium rounded-md bg-obsidian-accent text-white"
                     } else {
-                        "px-3 py-1.5 text-sm font-medium rounded-md text-obsidian-text-muted hover:text-obsidian-text hover:bg-obsidian-border/5"
+                        "{size} py-1.5 text-sm font-medium rounded-md text-obsidian-text-muted hover:text-obsidian-text hover:bg-obsidian-border/5"
                     },
                     onclick: {
                         let k = key.clone();

@@ -324,10 +324,14 @@ async fn read_and_file(
     parts: &[DocumentPart<'_>],
     (bytes, mime, filename): (&[u8], &str, &str),
 ) -> Result<ExtractResponse, (StatusCode, String)> {
-    let accounts = omni_me_core::assistant::ledger_grounding::spending_accounts(&state.db).await;
+    // Received today: a capture is a photo taken now, and its date may print no year.
+    let context = omni_me_core::extraction::ExtractionContext {
+        accounts: omni_me_core::assistant::ledger_grounding::spending_accounts(&state.db).await,
+        received_on: Some(chrono::Utc::now().date_naive()),
+    };
     let mut extraction = state
         .extractor
-        .extract_among(parts, q.hint, &accounts)
+        .extract_with(parts, q.hint, &context)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 

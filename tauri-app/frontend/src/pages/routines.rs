@@ -379,7 +379,7 @@ fn ChecklistGroup(group: RoutineGroup, date: String) -> Element {
             if let Some(err) = &*toggle_error.read() {
                 div { class: "px-4 py-2 text-xs text-error bg-error/10 border-b border-error/20", "{err}" }
             }
-            div { class: "px-4 py-3 bg-obsidian-border/5 flex justify-between items-center border-bottom border-obsidian-border/5",
+            div { class: "px-4 py-3 bg-obsidian-border/5 flex justify-between items-center border-b border-obsidian-border/5",
                 div { class: "flex items-center gap-2",
                     span { class: "font-bold text-[15px] tracking-tight text-white", "{group.name}" }
                     span { class: "px-2 py-0.5 bg-obsidian-accent/10 text-obsidian-accent border border-obsidian-accent/20 rounded text-[10px] font-bold uppercase tracking-wider",
