@@ -1668,6 +1668,31 @@ deployed code is CI-green (`7d6d485`).
   Settings page. My defaults, not his: the 90 days count from when it was archived, manual
   archives included; a thread with an undecided suggestion is never deleted (as check-ins);
   the 14-day check-in rule stays as is.
+- R4-9 His round 4 test, 2026-10-12: every auto-imported receipt said `Expenses:Unknown`.
+  Cause, from the dev batches: the extractor invented accounts (`Expenses:Transportation:Taxi`,
+  `Expenses:Subscriptions`) without seeing his list, and the R4-2 grounding then dropped every
+  name it could not match. Fix `42c4490`: the extractor is given his spending accounts as the
+  only choices (mail and capture paths); a line that still does not ground takes the payee's
+  past account when all past entries agree. Found alongside: Porkbun dated 2028-02-01 (the
+  renewal date) and Amazon 2026-01-01; `8feee65` replaces a date more than 31 days from the
+  email's arrival with the arrival date, with a review warning (31, not "never after": a Hydro
+  reminder names a withdrawal 3 days ahead).
+- R4-11 Topic tags, his go-ahead 2026-10-12 ("clean up the tags"). Before: 62 tags on 876
+  documents, 27 used once; `social` on 395. Causes: the reader prompt seeded `receipt` and
+  `newsletter` as examples, and never saw the tags in use. `5821f50`: the reader tags the area of
+  life only (never sender or message kind), kind labels are dropped in code
+  (`tag_vocabulary::is_topic`), and the reader is shown the tags in use to reuse. One-time dev
+  cleanup (`~/omni-dev-tools/tag_cleanup.py`, my mapping, recorded in the script): 635 documents
+  rewritten at `model:tag-cleanup` rank, 535 left with no topic tag, 62 tags down to 20, checked
+  on the S9. `r3-junk` was mine, from an R3 on-device test written at human rank (his
+  correction: he never set it); removed with a human-rank write, the only rank above it. Backup
+  `pre-tag-cleanup`. Live needs no cleanup: it predates model tags (v1.1.2). Judgement calls he
+  may want changed: dance and strava as fitness, pension as employment.
+- Dev now: server `5821f50` (receipt accounts, receipt dates, tags), APK 1.1.39-dev on the S9
+  (Accent row wraps, checked at 360px).
+- R4-10 His report: Settings › Appearance › Accent overflowed on the phone (six accents plus
+  Follow in one row). `SegmentedNav` now wraps, which covers all six users; the viewport sweep
+  now opens every settings row, since an expanded row was never measured. `42c4490`.
 
 **Stage 2, round 4 checklist (1.1.30-dev).**
 1. Archive: no badge; Unchecked only still filters; confirm a document's values and the next
