@@ -1315,6 +1315,22 @@ pub async fn document_tags(db: &Database) -> Result<Vec<String>, DbError> {
     Ok(tags)
 }
 
+/// Every account a live transaction posts to, in one read. The shape is
+/// [`document_tags`]' and so is its warning: flatten in the database, dedupe here.
+pub async fn ledger_account_names(db: &Database) -> Result<Vec<String>, DbError> {
+    let mut resp = db
+        .query(
+            "SELECT VALUE array::flatten(array::group(postings.account))
+                 FROM transactions WHERE removed = false AND superseded_by IS NONE GROUP ALL",
+        )
+        .await?;
+    let rows: Vec<Vec<String>> = resp.take(0)?;
+    let mut names = rows.into_iter().next().unwrap_or_default();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
 /// The id and `text_source` of an unpurged document holding exactly these
 /// bytes, if any. What lets a bulk upload be re-run without filing every
 /// document twice.

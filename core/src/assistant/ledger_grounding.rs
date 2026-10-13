@@ -70,21 +70,14 @@ pub async fn known_accounts(db: &Database) -> BTreeSet<String> {
     known
 }
 
+/// Read in one query: loading every transaction for its names cost a full ledger
+/// scan on each proposal and each emailed receipt (P-I1).
 async fn ledger_accounts(db: &Database) -> BTreeSet<String> {
-    let rows = queries::query_candidate_transactions(db)
+    queries::ledger_account_names(db)
         .await
-        .unwrap_or_default();
-    let mut out = BTreeSet::new();
-    for row in rows {
-        if let Value::Array(postings) = row.postings.into_json_value() {
-            out.extend(
-                postings
-                    .iter()
-                    .filter_map(|p| p.get("account")?.as_str().map(str::to_string)),
-            );
-        }
-    }
-    out
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
 }
 
 /// The known accounts closest to `wanted`: same top level, most name parts in
@@ -526,6 +519,43 @@ mod tests {
         let mut unknown_payee = vec![line("Expenses:Web:Registration")];
         ground_hints(&db, "Namecheap", &mut unknown_payee).await;
         assert_eq!(unknown_payee[0].account_hint, None);
+    }
+
+    /// P-I1: with no conventions note the ledger's own accounts are the list, read
+    /// in one query. A wrong but parseable query returns nothing, so this pins it.
+    #[tokio::test]
+    async fn without_a_note_the_ledgers_accounts_are_known() {
+        let db = crate::db::test_db().await;
+        use crate::events::Projection;
+        crate::events::BudgetProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        crate::events::NotesProjection
+            .init_schema(&db)
+            .await
+            .unwrap();
+        db.query(
+            "CREATE transactions:a CONTENT { removed: false, superseded_by: NONE, \
+             date: '2026-09-01', description: 'Uber trip', cleared: false, \
+             postings: [{ account: 'Expenses:Transport', amount: '18.00', commodity: 'CAD' }, \
+             { account: 'Assets:Cash', amount: '-18.00', commodity: 'CAD' }], \
+             tags_top: [], merged_ids: [], created_at: time::now(), updated_at: time::now() };
+             CREATE transactions:b CONTENT { removed: true, superseded_by: NONE, \
+             date: '2026-09-02', description: 'gone', cleared: false, \
+             postings: [{ account: 'Expenses:Removed', amount: '1.00', commodity: 'CAD' }, \
+             { account: 'Assets:Cash', amount: '-1.00', commodity: 'CAD' }], \
+             tags_top: [], merged_ids: [], created_at: time::now(), updated_at: time::now() };",
+        )
+        .await
+        .unwrap();
+        let known = known_accounts(&db).await;
+        assert!(known.contains("Expenses:Transport"), "{known:?}");
+        assert!(known.contains("Assets:Cash"), "{known:?}");
+        assert!(
+            !known.contains("Expenses:Removed"),
+            "a removed entry's account: {known:?}"
+        );
     }
 
     /// L-W10: past "Uber" rides were transport, and "Uber Eats" is food. The
