@@ -17,7 +17,8 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 Dev workflows: `--ref dev/untested-overlay`. Dev actions need no permission; live ones do.
 
 ## ⛔ Waiting on him
-- **Triage**: security doc done (all fixed or accepted); logic next, then bloat, performance.
+- **Triage**: security done; logic TRIAGED (every Disposition line filled) and being fixed in
+  order, each one marked `fixed <hash>` as it lands. Then bloat, performance.
   Explain each finding in plain consequences, never by ID alone: he could not follow the shorthand.
 - **Rulings inside the docs**: L-W2 (does the capture form count as review), L-W6 (vendor-scoped order keys).
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
