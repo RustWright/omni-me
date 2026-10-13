@@ -5082,10 +5082,9 @@ they are backlog rather than threads from the current stretch):**
 
 ## Owed at cycle close
 
-- **Curiosities→concepts pass** — deferred once already; do not skip again at cycle close.
-  (The *code review* half of this item was struck 2026-09-05: the pre-v1 gate was a full
-  end-to-end read-the-code pass and it is closed, which subsumes Cycle 3's code. The item had
-  been double-counting a review that already happened.)
+- ✅ **Curiosities→concepts pass** DONE 2026-10-13 (stage 3, Phase D): his ruling, "wipe the
+  curiosity log, nothing there needs to proceed to concepts posts". `cycle-4.md` cleared in the
+  parent (`1ca05ef`), then on his follow-up ("wipe everything") `cycle-3.md` too.
 - **Memory prune pass** — `MEMORY.md` index is the retrieval surface and is near its cap.
   Content-first, per note; classifying by filename is what went wrong last attempt.
 - **Session-start staleness signal for artifacts beyond `NEXT.md`** — queued by the user
