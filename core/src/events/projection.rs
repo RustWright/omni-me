@@ -52,6 +52,18 @@ impl ProjectionRunner {
     ///
     /// Exposed so an auto-import source can *read* the projections it feeds —
     /// chiefly to ask what it has already contributed before proposing more.
+    /// Record that a full rebuild is owed, in the same breath as the deletion that
+    /// owes it. [`Self::rebuild`] clears it; [`Self::init_all`] honours it.
+    pub async fn mark_rebuild_owed(db: &Database) -> Result<(), EventError> {
+        db.query(
+            "DEFINE TABLE IF NOT EXISTS rebuild_owed SCHEMALESS;
+             UPSERT rebuild_owed:wipe SET at = time::now()",
+        )
+        .await?
+        .check()?;
+        Ok(())
+    }
+
     /// Sources hold a `ProjectionRunner` already, so this avoids threading a
     /// second `Database` through every source constructor.
     pub fn db(&self) -> &Database {
@@ -71,10 +83,23 @@ impl ProjectionRunner {
                  -- kept through sync, so they are not monotonic in *this* store's
                  -- insertion order. `received_at` is, because this node stamps it.
                  DEFINE FIELD IF NOT EXISTS last_received_at ON projection_versions TYPE option<datetime>;
-                 DEFINE INDEX IF NOT EXISTS idx_pv_name ON projection_versions FIELDS name UNIQUE;",
+                 DEFINE INDEX IF NOT EXISTS idx_pv_name ON projection_versions FIELDS name UNIQUE;
+                 DEFINE TABLE IF NOT EXISTS rebuild_owed SCHEMALESS;",
             )
             .await?
             .check()?;
+
+        // A pulled server wipe deleted events this store's tables still show. The
+        // rebuild that removes them is owed until it completes, across a kill.
+        let mut owed = self
+            .db
+            .query("SELECT VALUE id FROM rebuild_owed LIMIT 1")
+            .await?;
+        let owed: Vec<surrealdb::types::RecordId> = owed.take(0).unwrap_or_default();
+        if !owed.is_empty() {
+            tracing::info!("a rebuild after a server wipe was owed; running it");
+            return self.rebuild().await;
+        }
 
         let mut stale: Vec<String> = Vec::new();
 
@@ -413,7 +438,12 @@ impl ProjectionRunner {
     /// ⚠️ Wanted by `wipe_all_data`, which really does mean all of them. A version
     /// bump wants [`Self::rebuild_only`] instead — see the note there.
     pub async fn rebuild(&self) -> Result<(), EventError> {
-        self.rebuild_inner(None).await
+        self.rebuild_inner(None).await?;
+        self.db
+            .query("DEFINE TABLE IF NOT EXISTS rebuild_owed SCHEMALESS; DELETE rebuild_owed")
+            .await?
+            .check()?;
+        Ok(())
     }
 
     /// Rebuild only the named projections, leaving the others as they are.
@@ -656,6 +686,39 @@ mod tests {
             3,
             "the next launch replays from the start"
         );
+    }
+
+    /// L-W14: a wipe's rebuild owed when the app died runs at the next launch,
+    /// and once done is not run again.
+    #[tokio::test]
+    async fn an_owed_rebuild_runs_at_the_next_launch_once() {
+        let db = test_db().await;
+        SurrealEventStore::new(db.clone())
+            .append(NewEvent {
+                id: None,
+                event_type: "note_created".into(),
+                aggregate_id: "agg".into(),
+                timestamp: Utc::now(),
+                device_id: "d1".into(),
+                payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+            })
+            .await
+            .unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let runner = ProjectionRunner::new(
+            db.clone(),
+            vec![Box::new(RecordingProjection { seen: seen.clone() })],
+        );
+        runner.init_all().await.unwrap();
+        seen.lock().unwrap().push("stale row".into());
+
+        ProjectionRunner::mark_rebuild_owed(&db).await.unwrap();
+        runner.init_all().await.unwrap();
+        assert_eq!(*seen.lock().unwrap(), ["agg"], "cleared and replayed");
+
+        seen.lock().unwrap().push("kept".into());
+        runner.init_all().await.unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 2, "the debt was paid once");
     }
 
     /// The equivalence the whole change rests on: folding the log in pages is

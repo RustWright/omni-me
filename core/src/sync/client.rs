@@ -237,6 +237,11 @@ impl SyncClient {
                 // Applied in log order: what precedes the wipe record is what the
                 // server destroyed, and what follows it (a re-import) must stay.
                 if let Some(wipe) = self.remote_wipe(event) {
+                    // Marked before the delete: a kill between them owes a rebuild
+                    // that finds nothing to remove, never the reverse (L-W14).
+                    crate::events::ProjectionRunner::mark_rebuild_owed(db)
+                        .await
+                        .map_err(|e| SyncError::Local(e.to_string()))?;
                     wiped += store
                         .purge_features_before(&wipe.known_features(), Some(wipe.initiated_at))
                         .await
