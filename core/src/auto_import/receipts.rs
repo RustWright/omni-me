@@ -129,10 +129,26 @@ fn looks_like_pdf(att: &MimeAttachment) -> bool {
 static NUMBER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\d[\d,]*(?:\.\d+)?").expect("valid number regex"));
 
+/// Thousands grouped by a space or a point, with an optional comma decimal: how
+/// fr-CA (`1 234,56`) and much of Europe (`1.234,56`) print an amount.
+static GROUPED_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\d{1,3}(?:[ \u{a0}\u{202f}.]\d{3})+(?:,\d{1,2})?").expect("valid grouped regex")
+});
+
 /// Every number the text prints. A comma is read both ways where it could be
 /// either: `1,234` as thousands, `12,34` as a decimal point.
 fn printed_numbers(text: &str) -> HashSet<Decimal> {
     let mut out = HashSet::new();
+    for m in GROUPED_NUMBER.find_iter(text) {
+        let digits: String = m
+            .as_str()
+            .chars()
+            .filter(|c| c.is_ascii_digit() || *c == ',')
+            .collect();
+        if let Ok(d) = Decimal::from_str(&digits.replace(',', ".")) {
+            out.insert(d.normalize());
+        }
+    }
     for m in NUMBER.find_iter(text) {
         let s = m.as_str().trim_end_matches(',');
         if let Ok(d) = Decimal::from_str(&s.replace(',', "")) {
@@ -1238,6 +1254,17 @@ mod tests {
     fn printed_numbers_read_separators_both_ways() {
         let n = printed_numbers("Total $1,234.50, tax 12,34 EUR, qty 3.");
         for want in ["1234.5", "12.34", "1234", "3"] {
+            let d = rust_decimal::Decimal::from_str(want).unwrap().normalize();
+            assert!(n.contains(&d), "{want} missing from {n:?}");
+        }
+    }
+
+    /// L-W8: an fr-CA or European amount over 1000 is printed, so a receipt
+    /// carrying one is not dropped as made up.
+    #[test]
+    fn grouped_thousands_with_a_comma_decimal_are_read() {
+        let n = printed_numbers("Total : 1 234,56 $, TPS 1\u{a0}061,73 $, Summe 2.345,67 €");
+        for want in ["1234.56", "1061.73", "2345.67"] {
             let d = rust_decimal::Decimal::from_str(want).unwrap().normalize();
             assert!(n.contains(&d), "{want} missing from {n:?}");
         }
