@@ -8,9 +8,10 @@ use std::fmt;
 /// What the provider concluded about the sender of one message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SenderAuth {
-    /// At least one of DMARC, DKIM or SPF passed.
+    /// DMARC passed: the provider vouches for the From a person reads.
     Authenticated,
-    /// The provider checked and nothing passed. Worth surfacing in review.
+    /// DMARC failed, or with no DMARC every method reported failed. Worth
+    /// surfacing in review.
     Unauthenticated,
     /// No verdict to read. A mailbox provider that stamps no header, or a
     /// message that reached the store by some other route.
@@ -39,10 +40,6 @@ impl fmt::Display for SenderAuth {
     }
 }
 
-/// The methods this reads, strongest first. DMARC subsumes the other two, so a
-/// DMARC verdict is taken alone when present.
-const METHODS: [&str; 3] = ["dmarc", "dkim", "spf"];
-
 /// Read a verdict out of an `Authentication-Results` header value.
 ///
 /// The caller must pass the topmost such header and nothing else. Anything
@@ -53,14 +50,22 @@ pub fn verdict(header: Option<&str>) -> SenderAuth {
         return SenderAuth::Unknown;
     };
     let lower = header.to_ascii_lowercase();
-    for method in METHODS {
-        match result_for(&lower, method) {
-            Some(true) => return SenderAuth::Authenticated,
-            Some(false) => return SenderAuth::Unauthenticated,
-            None => continue,
-        }
+    match result_for(&lower, "dmarc") {
+        Some(true) => return SenderAuth::Authenticated,
+        Some(false) => return SenderAuth::Unauthenticated,
+        None => {}
     }
-    SenderAuth::Unknown
+    // Without DMARC a DKIM or SPF pass vouches for the signer or the envelope,
+    // which a spoofer can own; only "everything reported failed" says something.
+    let others: Vec<bool> = ["dkim", "spf"]
+        .iter()
+        .filter_map(|method| result_for(&lower, method))
+        .collect();
+    if !others.is_empty() && others.iter().all(|passed| !passed) {
+        SenderAuth::Unauthenticated
+    } else {
+        SenderAuth::Unknown
+    }
 }
 
 /// `Some(passed)` when this method reported at all, `None` when it is absent.
@@ -131,25 +136,24 @@ mod tests {
         assert_eq!(verdict(Some(header)), SenderAuth::Authenticated);
     }
 
+    /// A spoofer can DKIM-sign with their own domain, so without DMARC a pass
+    /// proves nothing about the From a person reads.
     #[test]
-    fn dkim_answers_when_dmarc_is_absent() {
-        assert_eq!(
-            verdict(Some(
-                "mx.google.com; spf=fail; dkim=pass header.i=@v.example"
-            )),
-            SenderAuth::Authenticated
-        );
-        assert_eq!(
-            verdict(Some("mx.google.com; spf=pass; dkim=fail")),
-            SenderAuth::Unauthenticated
-        );
+    fn without_dmarc_a_pass_is_unknown() {
+        for header in [
+            "mx.google.com; spf=fail; dkim=pass header.i=@attacker.example",
+            "mx.google.com; spf=pass; dkim=fail",
+            "mx.google.com; spf=pass smtp.mailfrom=v.example",
+        ] {
+            assert_eq!(verdict(Some(header)), SenderAuth::Unknown, "{header}");
+        }
     }
 
     #[test]
-    fn spf_alone_still_answers() {
+    fn without_dmarc_everything_failing_is_unauthenticated() {
         assert_eq!(
-            verdict(Some("mx.google.com; spf=pass smtp.mailfrom=v.example")),
-            SenderAuth::Authenticated
+            verdict(Some("mx.google.com; spf=fail; dkim=fail")),
+            SenderAuth::Unauthenticated
         );
     }
 
