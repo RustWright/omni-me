@@ -2318,6 +2318,8 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
     // Only arm 1 carries a verification verdict. A resumed draft is the user's
     // own edits by then, so replaying the model's doubts about the original
     // extraction would be stale advice about fields they have already fixed.
+    // Arm 1 only, like the verdict: a resumed draft is the user's own by then.
+    let from_reading = initial.is_some();
     let verdict = initial.as_ref().map(|d| ExtractionVerdict {
         confidence: d.confidence,
         needs_review: d.needs_review,
@@ -2472,6 +2474,7 @@ fn TransactionForm(initial: Option<ExtractedDraft>, on_done: EventHandler<()>) -
             description: desc_v,
             postings: postings_out,
             attachment: attachment.read().clone(),
+            from_reading,
         };
         spawn(async move {
             match bridge::invoke_record_transaction(submission).await {

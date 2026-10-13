@@ -835,6 +835,9 @@ pub struct TransactionFormDraft {
     pub postings: Vec<PostingInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment: Option<AttachmentRef>,
+    /// Filled from a model's reading, so the backend holds its date to the review rule.
+    #[serde(default)]
+    pub from_reading: bool,
 }
 
 // ---------------------------------------------------------------------------

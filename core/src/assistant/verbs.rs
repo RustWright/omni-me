@@ -454,6 +454,14 @@ async fn propose(db: &Database, config: &ResolvedConfig, args: &Value) -> Value 
     {
         return refusal;
     }
+    // R4-15 covers moving an entry's date as much as recording one.
+    if action.name == "transaction.update"
+        && let Some(date) = validated.get("date").and_then(Value::as_str)
+        && let Ok(date) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        && let Some(why) = crate::future_dated::refusal(date, super::session::today(config))
+    {
+        return json!({ "error": why });
+    }
     {
         json!({
             "proposed": true,
@@ -1200,6 +1208,26 @@ mod tests {
         )
         .await;
         assert!(out["error"].as_str().unwrap().contains("body"), "{out}");
+        assert!(out["proposed"].is_null(), "{out}");
+    }
+
+    /// L-W2: moving an entry to a day that has not happened is refused like
+    /// recording one there.
+    #[tokio::test]
+    async fn propose_refuses_moving_a_transaction_into_the_future() {
+        let db = test_db().await;
+        let out = dispatch(
+            &db,
+            &config(),
+            "propose",
+            &json!({
+                "action": "transaction.update",
+                "args": { "txn_id": "01J0000000000000000000000", "date": "2099-02-01" },
+                "rationale": "the renewal date"
+            }),
+        )
+        .await;
+        assert!(out["error"].as_str().unwrap().contains("Dated"), "{out}");
         assert!(out["proposed"].is_null(), "{out}");
     }
 

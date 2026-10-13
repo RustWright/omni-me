@@ -99,6 +99,10 @@ pub struct TransactionDraft {
     pub postings: Vec<Posting>,
     #[serde(default)]
     pub attachment: Option<AttachmentRef>,
+    /// The form was filled from a model's reading of a document (Photo, PDF,
+    /// Email), so its date is held to the review rule. Typed by hand, it is not.
+    #[serde(default)]
+    pub from_reading: bool,
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -107,6 +111,14 @@ pub async fn record_transaction(
     draft: TransactionDraft,
 ) -> Result<TransactionRow, String> {
     refuse_imbalance(&draft.postings)?;
+    if draft.from_reading
+        && let Some(why) = omni_me_core::future_dated::refusal(
+            draft.date,
+            super::timezone::user_today(&state).await,
+        )
+    {
+        return Err(why);
+    }
 
     let txn_id = ulid::Ulid::new().to_string();
     tracing::info!(txn_id = %txn_id, "record_transaction");

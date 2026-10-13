@@ -8,6 +8,16 @@ pub struct TimezoneInfo {
     pub is_override: bool,
 }
 
+/// Today where the user is, by the same zone the screens use. The phone's own
+/// zone only when the stored one does not parse.
+pub(crate) async fn user_today(state: &AppState) -> chrono::NaiveDate {
+    let now = chrono::Utc::now();
+    match state.timezone.read().await.parse::<chrono_tz::Tz>() {
+        Ok(tz) => now.with_timezone(&tz).date_naive(),
+        Err(_) => now.with_timezone(&chrono::Local).date_naive(),
+    }
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_timezone(state: State<'_, AppState>) -> Result<TimezoneInfo, String> {
     let tz = state.timezone.read().await.clone();
