@@ -487,8 +487,9 @@ pub async fn commit_batch(
     if indices.is_empty() && added.is_empty() {
         return Err("nothing to commit: no row selected and none added".into());
     }
-    // After corrections, so a fixed date is the one judged. The phone's own day.
-    let today = chrono::Local::now().date_naive();
+    // After corrections, so a fixed date is the one judged. In the zone the
+    // screens use, so the button and this check agree near midnight.
+    let today = super::timezone::user_today(&state).await;
     let dates = effective
         .iter()
         .map(|r| r.date)

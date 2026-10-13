@@ -395,12 +395,22 @@ impl ImapHandler for ReceiptHandler {
         // the unattended path: nobody is watching to re-run a mail that came back
         // unpriced, and one measured document returned no line items on half its runs
         // against a total it stated correctly every time.
+        // The day it arrived where the user is: in UTC, evening mail west of
+        // Greenwich lands on tomorrow, which commit then refuses (L-W1).
+        let zone = match &self.accounts {
+            Some(db) => crate::events::load_persisted(db)
+                .await
+                .map(|global| crate::config::ResolvedConfig::new(global, Default::default()))
+                .map_or(chrono_tz::Tz::UTC, |config| config.user_zone()),
+            None => chrono_tz::Tz::UTC,
+        };
+        let arrived = message.date.with_timezone(&zone).date_naive();
         let context = crate::extraction::ExtractionContext {
             accounts: match &self.accounts {
                 Some(db) => crate::assistant::ledger_grounding::spending_accounts(db).await,
                 None => Vec::new(),
             },
-            received_on: Some(message.date.date_naive()),
+            received_on: Some(arrived),
         };
         let (result, report) = extract_reconciled(
             self.extractor.as_ref(),
@@ -489,7 +499,7 @@ impl ImapHandler for ReceiptHandler {
 
         let source_prefix = format!("{}-uid-{}", self.name, message.uid);
         let mut result = result;
-        let (date, date_warning) = charge_date(result.date, message.date.date_naive());
+        let (date, date_warning) = charge_date(result.date, arrived);
         result.date = Some(date);
         if let Some(db) = &self.accounts {
             let description = result.description.clone().unwrap_or_default();
@@ -1136,6 +1146,37 @@ mod tests {
         let meta = &event.payload["source_metadata"];
         assert_eq!(meta[GROUP_MEMBER_KEY].as_str(), Some("uid-4242"));
         assert_eq!(meta[ORDER_GROUP_KEY].as_str(), Some("118762884"));
+    }
+
+    /// L-W1: 01:30 UTC on the 13th is the evening of the 12th in Winnipeg. A
+    /// receipt with no readable date takes the day it arrived where the user is.
+    #[tokio::test]
+    async fn the_arrival_day_is_the_users_not_utcs() {
+        use crate::config::{ConfigKey, ConfigValue};
+        use crate::events::{ConfigProjection, EventStore, ProjectionRunner, SurrealEventStore};
+        let db = crate::db::test_db().await;
+        let runner = ProjectionRunner::new(db.clone(), vec![Box::new(ConfigProjection)]);
+        runner.init_all().await.unwrap();
+        let set = NewEvent::config_set(
+            "d1",
+            ConfigKey::AssistantCheckInTimezone,
+            Some(ConfigValue::Text("America/Winnipeg".into())),
+        )
+        .unwrap();
+        let stored = SurrealEventStore::new(db.clone())
+            .append(set)
+            .await
+            .unwrap();
+        runner.apply_events(&[stored]).await.unwrap();
+
+        let extractor = Arc::new(StubExtractor(stub_result(Some("receipt"), "105.43")));
+        let handler = ReceiptHandler::new("shop", "device-test", extractor).with_accounts(db);
+        let mut msg = imap_msg_from("shop@northwind.example", plain_eml());
+        msg.date = chrono::Utc
+            .with_ymd_and_hms(2026, 10, 13, 1, 30, 0)
+            .unwrap();
+        let events = handler.handle(&msg).await.expect("handler ok");
+        assert_eq!(events[0].payload["draft_postings"][0]["date"], "2026-10-12");
     }
 
     /// An oversized email reaches review with no drafts, so the model never saw it:

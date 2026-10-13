@@ -189,7 +189,9 @@ pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
     // Notes and budget because receipt import runs here and holds its accounts to
     // the conventions note and the ledger. Without these tables the account list
     // was empty and every emailed receipt landed in `Expenses:Unknown` (R4-9).
+    // Config because mail intake reads the skip-senders list and the user's zone.
     vec![
+        Box::new(ConfigProjection),
         Box::new(DocumentsProjection),
         Box::new(NotesProjection),
         Box::new(BudgetProjection),
@@ -223,6 +225,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Mail intake on the server reads config (skip-senders, the user's zone).
+    /// Without the table, both read as unset and nothing says so.
+    #[test]
+    fn the_server_folds_config() {
+        let server = build_projections_server();
+        let names: Vec<&str> = server.iter().map(|p| p.name()).collect();
+        assert!(names.contains(&ConfigProjection::NAME), "{names:?}");
     }
 
     /// Everything else a feature owns still registers — the exclusion must be

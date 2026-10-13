@@ -693,6 +693,13 @@ impl ResolvedConfig {
         self.bool_of(feature.key())
     }
 
+    /// The zone "today" is judged in, everywhere: the one the user set.
+    pub fn user_zone(&self) -> chrono_tz::Tz {
+        self.text_of(ConfigKey::AssistantCheckInTimezone)
+            .parse()
+            .unwrap_or(chrono_tz::Tz::UTC)
+    }
+
     /// The effective value of a text key, with the same fall-back reasoning as
     /// [`ResolvedConfig::bool_of`].
     pub fn text_of(&self, key: ConfigKey) -> String {
