@@ -177,21 +177,23 @@ pub fn build_projections_headless(config: &ResolvedConfig) -> Vec<Box<dyn Projec
 
 /// The projections the sync server maintains: only what its own background work reads.
 ///
-/// Devices project everything else themselves. Not feature-gated, because the server
-/// resolves no config. Why `documents` is here: `docs/src/archive.md`.
+/// Devices project everything else themselves. Not feature-gated: the server folds
+/// config but serves every feature. Why `documents` is here: `docs/src/archive.md`.
 pub fn build_projections_server() -> Vec<Box<dyn Projection>> {
     // ⚠️ `document_retention` is deliberately absent: retention is evaluated on a
     // device, because the group it forms is confirmed by the person sitting at it.
     // The rules still reach the server as events and fold on any device that
     // rebuilds — ⛔ this is the line to change if evaluation ever moves here, and
-    // the server would then also need the config read it does not do today.
+    // the server would then also need to read the rules.
     //
     // Notes and budget because receipt import runs here and holds its accounts to
     // the conventions note and the ledger. Without these tables the account list
     // was empty and every emailed receipt landed in `Expenses:Unknown` (R4-9).
     // Config because mail intake reads the skip-senders list and the user's zone.
+    // Auto-import because the triage scorecard scores the review queue's outcomes.
     vec![
         Box::new(ConfigProjection),
+        Box::new(AutoImportProjection),
         Box::new(DocumentsProjection),
         Box::new(NotesProjection),
         Box::new(BudgetProjection),
@@ -227,13 +229,18 @@ mod tests {
         }
     }
 
-    /// Mail intake on the server reads config (skip-senders, the user's zone).
-    /// Without the table, both read as unset and nothing says so.
+    /// Server code reads these tables: mail intake reads config (skip-senders, the
+    /// user's zone) and the triage route reads the review queue. Without a table,
+    /// the read comes back empty and nothing says so.
     #[test]
-    fn the_server_folds_config() {
+    fn the_server_folds_what_its_own_code_reads() {
         let server = build_projections_server();
         let names: Vec<&str> = server.iter().map(|p| p.name()).collect();
         assert!(names.contains(&ConfigProjection::NAME), "{names:?}");
+        assert!(
+            names.contains(&AutoImportProjection::NAME),
+            "GET /auto_import/triage reads its table: {names:?}"
+        );
     }
 
     /// Everything else a feature owns still registers — the exclusion must be
