@@ -120,6 +120,12 @@ async fn a_confirm_purges_what_was_kept_and_spares_the_bytes_of_what_was_not() {
     );
     let token = view["token"].as_str().unwrap().to_string();
 
+    // A cached preview of `c`, as the route leaves behind for an encrypted PDF.
+    let previews = omni_me_core::blob::preview_dir(&blobs);
+    std::fs::create_dir_all(&previews).unwrap();
+    let c_preview = previews.join(format!("{sha_c}.pdf"));
+    std::fs::write(&c_preview, b"unlocked copy").unwrap();
+
     // Spare `b`. Its bytes are `a`'s bytes, which is what makes this the
     // interesting confirm rather than a smaller version of the same one.
     let resp = confirm(&client, &url, &token, &[&a, &c]).await;
@@ -151,6 +157,17 @@ async fn a_confirm_purges_what_was_kept_and_spares_the_bytes_of_what_was_not() {
         .await
         .unwrap();
     assert_eq!(gone.status(), 404, "a purged document's blob is gone");
+    let gone_preview = client
+        .get(format!("{url}/blobs/{sha_c}/preview"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        gone_preview.status(),
+        404,
+        "its preview is not served either"
+    );
+    assert!(!c_preview.exists(), "its cached preview left the disk");
     let kept = client
         .get(format!("{url}/blobs/{sha_ab}"))
         .send()

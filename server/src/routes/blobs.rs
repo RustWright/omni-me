@@ -116,15 +116,6 @@ fn blob_response(bytes: Vec<u8>) -> Response {
         .into_response()
 }
 
-/// Previews live beside the blob directory, never in it: they are derived and
-/// disposable, and deleting this directory is always safe.
-fn preview_dir(blob_dir: &std::path::Path) -> std::path::PathBuf {
-    match blob_dir.parent() {
-        Some(parent) => parent.join("previews"),
-        None => blob_dir.join("previews"),
-    }
-}
-
 /// `GET /blobs/{hash}/preview` — what a device should show first: a small upright
 /// JPEG for a photo, an unencrypted copy of an encrypted PDF, otherwise the
 /// original. Derived copies are made once and cached.
@@ -133,9 +124,13 @@ async fn get_preview_handler(
     Path(hash): Path<String>,
 ) -> Result<Response, BlobError> {
     let hash = validate_hash_format(&hash)?;
-    let dir = preview_dir(&state.blob_dir);
-    for name in [format!("{hash}.jpg"), format!("{hash}.pdf")] {
-        if let Ok(bytes) = tokio::fs::read(dir.join(name)).await {
+    // A cached copy outliving its original is a purged document still being served.
+    if !tokio::fs::try_exists(state.blob_dir.join(&hash)).await? {
+        return Err(BlobError::NotFound);
+    }
+    let dir = blob::preview_dir(&state.blob_dir);
+    for ext in blob::PREVIEW_EXTENSIONS {
+        if let Ok(bytes) = tokio::fs::read(dir.join(format!("{hash}.{ext}"))).await {
             return Ok(blob_response(bytes));
         }
     }
@@ -180,7 +175,12 @@ async fn pdf_preview(state: &AppState, hash: &str, original: Vec<u8>) -> Respons
         .await
     {
         Ok(Some(copy)) => {
-            cache_preview(&preview_dir(&state.blob_dir), &format!("{hash}.pdf"), &copy).await;
+            cache_preview(
+                &blob::preview_dir(&state.blob_dir),
+                &format!("{hash}.pdf"),
+                &copy,
+            )
+            .await;
             blob_response(copy)
         }
         Ok(None) => blob_response(original),

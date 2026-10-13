@@ -74,9 +74,32 @@ pub fn path_for(dir: &Path, hash: &str) -> Result<PathBuf, BlobError> {
 /// ⚠️ Absent is success, not an error. Purge is a batch over documents that may
 /// share bytes, so the second document to release a hash finds it already gone —
 /// which is the normal path, not a failure to report.
+///
+/// Derived copies go with it, even when the blob was already gone: an encrypted
+/// PDF's preview is its unlocked copy, and a purge that left it reclaimed nothing.
 pub async fn delete(dir: &Path, hash: &str) -> Result<bool, BlobError> {
     let path = path_for(dir, hash)?;
-    match tokio::fs::remove_file(&path).await {
+    let deleted = remove_if_present(&path).await?;
+    for ext in PREVIEW_EXTENSIONS {
+        remove_if_present(&preview_dir(dir).join(format!("{hash}.{ext}"))).await?;
+    }
+    Ok(deleted)
+}
+
+/// The extensions a derived copy of a blob is cached under, in `preview_dir`.
+pub const PREVIEW_EXTENSIONS: [&str; 2] = ["jpg", "pdf"];
+
+/// Where derived copies of the blobs in `dir` are cached: beside it, never in it,
+/// so deleting the previews directory is always safe.
+pub fn preview_dir(dir: &Path) -> PathBuf {
+    match dir.parent() {
+        Some(parent) => parent.join("previews"),
+        None => dir.join("previews"),
+    }
+}
+
+async fn remove_if_present(path: &Path) -> Result<bool, BlobError> {
+    match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(io("delete")(e)),
@@ -187,6 +210,32 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp-"))
             .collect();
         assert!(leftovers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_a_blob_takes_its_previews_with_it() {
+        let d = dir();
+        // Nested, so the previews land in this test's dir and not a shared /tmp.
+        let blobs = d.path().join("blobs");
+        std::fs::create_dir(&blobs).unwrap();
+        let h = store(&blobs, b"an encrypted statement").await.unwrap();
+        let previews = preview_dir(&blobs);
+        std::fs::create_dir(&previews).unwrap();
+        for ext in PREVIEW_EXTENSIONS {
+            std::fs::write(previews.join(format!("{h}.{ext}")), b"unlocked copy").unwrap();
+        }
+
+        assert!(delete(&blobs, &h).await.unwrap());
+        for ext in PREVIEW_EXTENSIONS {
+            assert!(
+                !previews.join(format!("{h}.{ext}")).exists(),
+                "the {ext} preview outlived its blob"
+            );
+        }
+        assert!(
+            !delete(&blobs, &h).await.unwrap(),
+            "a second delete finds nothing and is not an error"
+        );
     }
 
     #[tokio::test]

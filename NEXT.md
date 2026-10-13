@@ -6,6 +6,7 @@ site. ⛔ If a line here could be derived from either, it does not belong here �
 
 ## ▶ NEXT ACTION — stage 3, Phase C: triage the review docs with him
 Phase A+B done 2026-10-12: `reviews/2026-10-12-{logic,security,performance,bloat,test-gaps}.md`.
+⚠️ `reviews/` is gitignored and lives ONLY on the WSL laptop (his choice): triage there.
 One doc at a time in his order, one finding at a time: fix / defer / accept, written into the
 doc's `Disposition:` line. Fixes land as small commits per finding. ⛔ Do not re-review: the docs
 are the record. Items marked "per reviewer" get re-read at the code before deciding.
@@ -16,8 +17,7 @@ goes to CI. `project-dev-machines-and-build-limits`. Tooling: `~/omni-dev-tools/
 Dev workflows: `--ref dev/untested-overlay`. Dev actions need no permission; live ones do.
 
 ## ⛔ Waiting on him
-- **Triage order** across the five docs.
-- **S-W1**: a real belief sits in public `case_bench.rs`; replace it, and rewrite pushed history or not.
+- **Triage**: security doc in progress (S-W1 done), then logic, bloat, performance.
 - **Rulings inside the docs**: L-W2 (does the capture form count as review), L-W6 (vendor-scoped order keys).
 - **F3's open half**: whether multi-page reading should be told pages can repeat.
 - **Tap targets**: a visual redesign across screens, his call. `tasks.md` § Open.
