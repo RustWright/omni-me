@@ -499,7 +499,7 @@ impl ImapHandler for ReceiptHandler {
         // same message keyed two ways on two polls, which mints two review
         // items for one email. Both are recorded below when they disagree.
         let printed_key = order_ref::from_document(&combined_text);
-        let model_key = order_ref::group_key(result.order_ref.as_deref())
+        let model_key = order_ref::model_group_key(result.order_ref.as_deref())
             .filter(|key| order_ref::printed_in(key, &combined_text));
         let order_group = result
             .kind()

@@ -41,6 +41,25 @@ pub fn group_key(order_ref: Option<&str>) -> Option<String> {
     Some(key)
 }
 
+/// A date or a phone number in reference shape. The printed path refuses these by
+/// requiring a label separator; the model's answer has no label, so it is checked here.
+static NOT_A_REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\+?1?[-.]?\d{3}[-.]\d{3}[-.]\d{4})$",
+    )
+    .expect("valid date-or-phone regex")
+});
+
+/// [`group_key`] for a reference the model returned, which may be a date or phone
+/// number it lifted from the email. Keying on one merges unrelated purchases.
+pub fn model_group_key(order_ref: Option<&str>) -> Option<String> {
+    let raw = order_ref?.trim();
+    if NOT_A_REFERENCE.is_match(raw) {
+        return None;
+    }
+    group_key(Some(raw))
+}
+
 /// A reference the document prints beside a label naming it.
 ///
 /// A separator is required: `:` or `#`, or the `.` of an abbreviated `no.`.
@@ -85,6 +104,24 @@ pub fn from_document(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_model_reference_that_is_a_date_or_phone_number_keys_nothing() {
+        for junk in [
+            "2026-09-06",
+            "06/09/2026",
+            "9.6.26",
+            "204-555-0142",
+            "+1-204-555-0142",
+        ] {
+            assert_eq!(model_group_key(Some(junk)), None, "{junk}");
+        }
+        assert_eq!(
+            model_group_key(Some("#118-762-884")),
+            Some("118762884".into()),
+            "a real reference still keys"
+        );
+    }
 
     #[test]
     fn a_labelled_order_number_is_read() {
