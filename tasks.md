@@ -1013,6 +1013,10 @@ Four stages, in this order. ⛔ Each stage finishes before the next starts.
 4. **Merge dev to live**, then a go-live sequence still to be worked out. His examples of its
    ordering: the finances tab goes on only after both server and app are updated; the official
    import needs the updated live server AND a wipe first.
+   🔴 RULED 2026-10-12 (stage 3, S-W1): before merging, rewrite the branch history to drop a
+   real belief quoted in `agent/src/case_bench.rs` (introduced in `e92b3e7`, replaced in a new
+   commit at stage 3), then re-merge the overlay once. Optionally ask GitHub Support to purge the
+   old SHA. Details: `reviews/2026-10-12-security.md` S-W1.
 
 **Stage 1, the list (my order).** Decisions first, while he is present to answer them; then code;
 then spends, so the phone test runs on the chosen models.

@@ -115,8 +115,9 @@ const CASES: &[Case] = &[
         id: "belief retire",
         request: "The belief that I read in the mornings on weekdays and late at night \
                   on weekends no longer holds. Retire it.",
-        // Retired on dev on 2026-10-11, so "already retired" is the right answer
-        // now; only the universal checks apply.
+        // Invented, like every request here that quotes a record: this repo is
+        // public and the corpus is a clone of real data. No such belief exists,
+        // so "none found" is the right answer; only the universal checks apply.
         checks: &[],
     },
     Case {
