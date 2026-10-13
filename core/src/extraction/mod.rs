@@ -310,7 +310,16 @@ pub async fn extract_reconciled(
     let mut best: Option<(ExtractionResult, VerificationReport)> = None;
 
     for attempt in 1..=attempts.max(1) {
-        let result = extractor.extract_with(parts, hint, context).await?;
+        // A failed retry ends the loop on the reading already in hand. Propagating
+        // it dropped that reading, and the email never reached review.
+        let result = match extractor.extract_with(parts, hint, context).await {
+            Ok(result) => result,
+            Err(e) if best.is_some() => {
+                tracing::warn!(extractor = extractor.name(), attempt, error = %e, "retry failed; keeping the closest attempt");
+                break;
+            }
+            Err(e) => return Err(e),
+        };
         let report = verify(&result, hint, threshold);
         let Some(gap) = report.total_mismatch else {
             // Nothing to compare, or it reconciled. Either way another call
@@ -838,6 +847,18 @@ const CURRENCY_CODES: &[&str] = &["CAD", "USD", "EUR", "NGN", "GBP", "JPY"];
 /// number survives. A document states its total as printed — `$116.47` — and the
 /// unnormalised form is what silently cost the authoritative total on real mail.
 fn normalize_amount(raw: &str) -> Option<String> {
+    // Bare digits with one point are the form the prompt asks for, not a printed
+    // amount, so the point is a decimal: `1.459` a litre is not 1459 (L-W7).
+    let trimmed = raw.trim();
+    let unsigned = trimmed.strip_prefix('-').unwrap_or(trimmed);
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    let bare = match unsigned.split_once('.') {
+        Some((whole, frac)) => digits(whole) && digits(frac),
+        None => digits(unsigned),
+    };
+    if bare {
+        return Some(trimmed.to_string());
+    }
     let stripped = strip_currency(raw);
     if stripped.is_empty() {
         return None;
@@ -1062,6 +1083,16 @@ mod reconcile_tests {
         .await
         .expect("scripted extraction should succeed");
         (result, report, ex.calls())
+    }
+
+    /// L-W3: a retry that fails (here, the script runs out) keeps the reading in
+    /// hand rather than losing it, and the email with it.
+    #[tokio::test]
+    async fn a_failed_retry_keeps_the_reading_already_made() {
+        let (result, report, calls) = run(vec![result_with(&["10.00"], Some("10.40"), 0.9)]).await;
+        assert_eq!(calls, 2, "it did retry");
+        assert_eq!(result.postings.len(), 1);
+        assert!(report.total_mismatch.is_some(), "the gap is still reported");
     }
 
     /// The whole point: a first attempt that reconciles costs exactly one call.
@@ -1614,6 +1645,12 @@ mod tests {
             ("7.96", "7.96"),
             ("(25.74)", "-25.74"),
             ("-25.74", "-25.74"),
+            // Bare, as the prompt asks: a point is a decimal whatever follows it.
+            ("1.459", "1.459"),
+            ("0.125", "0.125"),
+            ("12.500", "12.500"),
+            ("-3.000", "-3.000"),
+            ("42", "42"),
         ] {
             assert_eq!(
                 normalize_amount(printed).as_deref(),
