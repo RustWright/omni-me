@@ -96,6 +96,10 @@ const MAX_PDF_BYTES: usize = 25 * 1024 * 1024;
 /// achieve even when poppler itself exits cleanly.
 const MAX_PDF_TEXT_BYTES: usize = 4 * 1024 * 1024;
 
+/// Past this much text (about 50 pages) an email is not sent to the model. It
+/// reaches review empty instead, pointing at its archived copy (his ruling, S-W4).
+const MAX_EXTRACTION_TEXT_BYTES: usize = 200 * 1024;
+
 /// Wall-clock bound on one `pdftotext` run.
 const PDFTOTEXT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -321,6 +325,35 @@ impl ImapHandler for ReceiptHandler {
                 "receipt: message {} from {} produced no extractable text",
                 message.uid, message.from
             )));
+        }
+        if combined_text.len() > MAX_EXTRACTION_TEXT_BYTES {
+            let kb = combined_text.len() / 1024;
+            tracing::info!(
+                handler = self.name(),
+                uid = message.uid,
+                kb,
+                "receipt: held, too large"
+            );
+            let source_metadata = serde_json::json!({
+                "from": message.from,
+                "subject": parsed.subject,
+                "uid": message.uid,
+                "needs_manual_review": true,
+                "warnings": [format!(
+                    "Too large to read automatically ({kb} KB of text), so it was not sent to \
+                     the model. The email is in Archive; enter it by hand if it is a real charge."
+                )],
+                ORDER_GROUP_KEY: serde_json::Value::Null,
+                GROUP_MEMBER_KEY: format!("uid-{}", message.uid),
+                "triage": triage,
+            });
+            return Ok(vec![to_proposed_event(
+                self.name(),
+                format!("{}-uid-{}", self.name, message.uid),
+                Vec::new(),
+                Some(source_metadata),
+                self.device_id.clone(),
+            )]);
         }
 
         // HARD CONSTRAINT — read before wiring any auto-commit path.
@@ -1087,6 +1120,26 @@ mod tests {
         let meta = &event.payload["source_metadata"];
         assert_eq!(meta[GROUP_MEMBER_KEY].as_str(), Some("uid-4242"));
         assert_eq!(meta[ORDER_GROUP_KEY].as_str(), Some("118762884"));
+    }
+
+    /// An oversized email reaches review with no drafts, so the model never saw it:
+    /// the stub would have produced one.
+    #[tokio::test]
+    async fn an_oversized_email_is_held_for_review_unread() {
+        let extractor = Arc::new(StubExtractor(stub_result(Some("receipt"), "105.43")));
+        let handler = ReceiptHandler::new("shop", "device-test", extractor);
+        let mut eml = String::from_utf8(plain_eml()).unwrap();
+        eml.push_str(&"105.43 charged. ".repeat(MAX_EXTRACTION_TEXT_BYTES / 16 + 1));
+        let events = handler
+            .handle(&imap_msg_from("shop@northwind.example", eml.into_bytes()))
+            .await
+            .expect("handler ok");
+
+        assert_eq!(events.len(), 1, "held, not dropped");
+        assert_eq!(events[0].payload["draft_postings"], serde_json::json!([]));
+        let meta = &events[0].payload["source_metadata"];
+        assert_eq!(meta["needs_manual_review"], true);
+        assert!(meta["warnings"][0].as_str().unwrap().contains("Archive"));
     }
 
     /// An unrecognised label maps to `Other`, which means unknown, so the money
