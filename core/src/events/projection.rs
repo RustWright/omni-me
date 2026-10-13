@@ -432,6 +432,26 @@ impl ProjectionRunner {
     }
 
     async fn rebuild_inner(&self, only: Option<&[&str]>) -> Result<(), EventError> {
+        let selected: Vec<String> = self
+            .projections
+            .iter()
+            .filter(|p| only.is_none_or(|names| names.contains(&p.name())))
+            .map(|p| p.name().to_string())
+            .collect();
+        // Bookmarks back to the start before anything is cleared. A kill between
+        // the clear and the first page left them at the head, so the next launch
+        // found nothing to replay and the tables stayed partial (L-W13).
+        self.db
+            .query(
+                "UPDATE projection_versions SET last_event_id = '',
+                    last_received_at = type::datetime($epoch)
+                 WHERE name IN $names",
+            )
+            .bind(("epoch", chrono::DateTime::UNIX_EPOCH.to_rfc3339()))
+            .bind(("names", selected))
+            .await?
+            .check()?;
+
         // Clear the selected projections' tables, then re-initialize their schemas
         let mut rebuilding: Vec<&str> = Vec::new();
         for proj in self
@@ -571,6 +591,71 @@ mod tests {
             self.seen.lock().unwrap().clear();
             Ok(())
         }
+    }
+
+    /// "recording", dying where a kill would land: in the clear, before any replay.
+    struct KilledInRebuild;
+
+    #[async_trait]
+    impl Projection for KilledInRebuild {
+        fn name(&self) -> &str {
+            "recording"
+        }
+        fn version(&self) -> u32 {
+            1
+        }
+        async fn apply(&self, _event: &Event, _db: &Database) -> Result<(), EventError> {
+            Ok(())
+        }
+        async fn init_schema(&self, _db: &Database) -> Result<(), EventError> {
+            Ok(())
+        }
+        async fn clear_tables(&self, _db: &Database) -> Result<(), EventError> {
+            Err(EventError::Validation("killed".into()))
+        }
+    }
+
+    /// L-W13: a rebuild cut off after its clear left the bookmark at the head, so
+    /// the next launch replayed nothing and the tables stayed empty.
+    #[tokio::test]
+    async fn a_rebuild_cut_off_is_finished_by_the_next_launch() {
+        let db = test_db().await;
+        let store = SurrealEventStore::new(db.clone());
+        for i in 0..3 {
+            store
+                .append(NewEvent {
+                    id: None,
+                    event_type: "note_created".into(),
+                    aggregate_id: format!("agg-{i}"),
+                    timestamp: Utc::now(),
+                    device_id: "d1".into(),
+                    payload: serde_json::json!({"raw_text": "x", "date": "2026-05-01"}),
+                })
+                .await
+                .unwrap();
+        }
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let first =
+            vec![Box::new(RecordingProjection { seen: seen.clone() }) as Box<dyn Projection>];
+        ProjectionRunner::new(db.clone(), first)
+            .init_all()
+            .await
+            .unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 3);
+
+        let killed = ProjectionRunner::new(db.clone(), vec![Box::new(KilledInRebuild)]);
+        assert!(killed.rebuild().await.is_err());
+
+        let after = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let next = vec![Box::new(RecordingProjection {
+            seen: after.clone(),
+        }) as Box<dyn Projection>];
+        ProjectionRunner::new(db, next).init_all().await.unwrap();
+        assert_eq!(
+            after.lock().unwrap().len(),
+            3,
+            "the next launch replays from the start"
+        );
     }
 
     /// The equivalence the whole change rests on: folding the log in pages is
