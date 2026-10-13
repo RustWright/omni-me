@@ -1496,6 +1496,7 @@ pub async fn documents_archived_before(
     boundary: &str,
     any_of_tags: &[String],
     limit: u32,
+    offset: u32,
 ) -> Result<Vec<DocumentRow>, DbError> {
     // The tag filter is here, not in the caller: filtering after LIMIT took the
     // oldest untagged documents and never reached a tagged one in a large archive.
@@ -1504,8 +1505,8 @@ pub async fn documents_archived_before(
          FROM documents
          WHERE {OLDER_THAN_CUTOFF} AND {NOT_PURGED}
            AND (tags ?? []) CONTAINSANY $tags
-         ORDER BY archived_at ASC
-         LIMIT $limit"
+         ORDER BY archived_at ASC, document_id ASC
+         LIMIT $limit START $offset"
     );
     let mut resp = db
         .query(sql)
@@ -1513,6 +1514,7 @@ pub async fn documents_archived_before(
         .bind(("cutoff_day", cutoff_day(boundary)))
         .bind(("tags", any_of_tags.to_vec()))
         .bind(("limit", limit))
+        .bind(("offset", offset))
         .await?;
     Ok(resp.take(0)?)
 }

@@ -157,46 +157,73 @@ pub async fn candidates(
     let boundary = now
         .checked_sub_signed(Duration::days(i64::from(shortest)))
         .unwrap_or(DateTime::<Utc>::MIN_UTC);
-    let governed: Vec<String> = rules.keys().cloned().collect();
-    let rows =
-        queries::documents_archived_before(db, &boundary.to_rfc3339(), &governed, limit).await?;
+    // Keep forever never makes a document due, so it is not worth fetching for.
+    let governed: Vec<String> = rules
+        .iter()
+        .filter(|(_, days)| **days != KEEP_FOREVER)
+        .map(|(tag, _)| tag.clone())
+        .collect();
 
+    // Paged until `limit` candidates, not `limit` rows: the rule runs after the
+    // query, and long-kept documents filled one page so nothing due was seen (L-W12).
     let mut out = Vec::new();
-    for row in rows {
-        let tags = row.tags.clone().unwrap_or_default();
-        if tags.is_empty() {
-            continue;
+    let mut offset = 0;
+    for _ in 0..MAX_SCAN_PAGES {
+        let rows = queries::documents_archived_before(
+            db,
+            &boundary.to_rfc3339(),
+            &governed,
+            limit,
+            offset,
+        )
+        .await?;
+        let last_page = (rows.len() as u32) < limit;
+        offset += limit;
+        out.extend(rows.iter().filter_map(|row| candidate(row, &rules, now)));
+        if last_page || out.len() >= limit as usize {
+            break;
         }
-        let Some(longest) = keep_days(&tags, &rules) else {
-            continue;
-        };
-        let Some(archived_at) = row.archived_at.clone() else {
-            // Nothing to measure from. `archived_at` is written by ingest, so this
-            // is a row from a build that did not, and guessing a date here would
-            // be guessing about a deletion.
-            continue;
-        };
-        let Ok(archived) = DateTime::parse_from_rfc3339(&archived_at) else {
-            continue;
-        };
-        let due = age_from(archived.with_timezone(&Utc), row.document_date.as_deref())
-            .checked_add_signed(Duration::days(i64::from(longest)));
-        if due.is_none_or(|due| due > now) {
-            continue;
-        }
-        out.push(RetentionCandidate {
-            document_id: row.document_id.clone(),
-            label: row
-                .title
-                .clone()
-                .or_else(|| row.filename.clone())
-                .unwrap_or_else(|| row.document_id.clone()),
-            tags,
-            archived_at,
-            keep_days: longest,
-        });
     }
+    out.truncate(limit as usize);
     Ok(out)
+}
+
+/// Pages one scan reads at most, so a huge archive of kept documents costs a
+/// bounded read rather than all of it.
+const MAX_SCAN_PAGES: u32 = 20;
+
+/// The candidate `row` is under `rules`, or `None` when it is kept.
+fn candidate(
+    row: &queries::DocumentRow,
+    rules: &HashMap<String, u32>,
+    now: DateTime<Utc>,
+) -> Option<RetentionCandidate> {
+    let tags = row.tags.clone().unwrap_or_default();
+    if tags.is_empty() {
+        return None;
+    }
+    let longest = keep_days(&tags, rules)?;
+    // Nothing to measure from. `archived_at` is written by ingest, so this is a
+    // row from a build that did not, and guessing a date would be guessing about
+    // a deletion.
+    let archived_at = row.archived_at.clone()?;
+    let archived = DateTime::parse_from_rfc3339(&archived_at).ok()?;
+    let due = age_from(archived.with_timezone(&Utc), row.document_date.as_deref())
+        .checked_add_signed(Duration::days(i64::from(longest)));
+    if due.is_none_or(|due| due > now) {
+        return None;
+    }
+    Some(RetentionCandidate {
+        document_id: row.document_id.clone(),
+        label: row
+            .title
+            .clone()
+            .or_else(|| row.filename.clone())
+            .unwrap_or_else(|| row.document_id.clone()),
+        tags,
+        archived_at,
+        keep_days: longest,
+    })
 }
 
 #[cfg(test)]
@@ -345,6 +372,30 @@ mod tests {
             archive(&store, &runner, &format!("untagged-{i}.eml"), 300, &[]).await;
         }
         let promo = archive(&store, &runner, "promo.eml", 10, &["promo"]).await;
+
+        let found = candidates(&db, Utc::now(), 2).await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].document_id, promo);
+    }
+
+    /// L-W12: older documents under a long rule fill the first page and are all
+    /// kept. The scan reads on until it has candidates, so the due one is seen.
+    #[tokio::test]
+    async fn kept_documents_do_not_crowd_out_a_due_one() {
+        let (db, store, runner) = harness().await;
+        set_rule(&store, &runner, "receipt", Some(3650)).await;
+        set_rule(&store, &runner, "promo", Some(14)).await;
+        for i in 0..3 {
+            archive(
+                &store,
+                &runner,
+                &format!("receipt-{i}.pdf"),
+                300,
+                &["receipt"],
+            )
+            .await;
+        }
+        let promo = archive(&store, &runner, "promo.eml", 30, &["promo"]).await;
 
         let found = candidates(&db, Utc::now(), 2).await.unwrap();
         assert_eq!(found.len(), 1);
